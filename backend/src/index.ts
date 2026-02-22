@@ -782,6 +782,14 @@ if (process.env.NODE_ENV === "production") {
 // Server Configuration
 // =====================================================
 const port = Number(process.env.PORT) || 3000;
+const databaseUrl = process.env.DATABASE_URL || "";
+const databaseLabel = databaseUrl.includes("file:")
+  ? "SQLite (file)"
+  : (databaseUrl.includes("supabase.com") || databaseUrl.includes("supabase.co"))
+    ? "Supabase Postgres"
+    : databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://")
+      ? "PostgreSQL (external)"
+      : "External DB";
 
 // Log startup info
 console.log(`
@@ -790,7 +798,7 @@ console.log(`
 ====================================
   Port: ${port}
   Environment: ${process.env.NODE_ENV || "development"}
-  Database: ${process.env.DATABASE_URL?.includes("file:") ? "SQLite (file)" : "External DB"}
+  Database: ${databaseLabel}
   Auth: Better Auth (email/password)
 ====================================
 `);

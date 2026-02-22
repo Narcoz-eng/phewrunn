@@ -57,6 +57,9 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
   const isPostgres =
     parsed.DATABASE_URL.startsWith("postgres://") ||
     parsed.DATABASE_URL.startsWith("postgresql://");
+  const isSupabase =
+    parsed.DATABASE_URL.includes("supabase.com") ||
+    parsed.DATABASE_URL.includes("supabase.co");
 
   return {
     PORT: parsed.PORT,
@@ -64,6 +67,8 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     BACKEND_URL: parsed.BACKEND_URL,
     DATABASE_URL: parsed.DATABASE_URL.includes("file:")
       ? "SQLite (file-based)"
+      : isSupabase
+        ? "Supabase PostgreSQL"
       : isPostgres
         ? "PostgreSQL (external)"
         : "External database",

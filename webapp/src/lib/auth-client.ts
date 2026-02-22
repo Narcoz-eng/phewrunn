@@ -421,29 +421,38 @@ export async function syncPrivySession(
   email?: string,
   name?: string,
   privyIdToken?: string
-): Promise<{ token: string; user: AuthUser } | null> {
+): Promise<{ token: string; user: AuthUser }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
   try {
     const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
+      signal: controller.signal,
       body: JSON.stringify({ privyUserId, email, name, privyIdToken }),
     });
 
     const text = await response.text();
-    if (!text) return null;
+    if (!text) {
+      throw new Error("Empty response from auth server");
+    }
 
     let data: { token?: string; user?: AuthUser; error?: { message?: string } } | null = null;
     try {
       data = JSON.parse(text);
     } catch {
       console.error("[Auth] Failed to parse privy-sync response:", text);
-      return null;
+      throw new Error("Invalid response from auth server");
     }
 
     if (!response.ok || !data?.token || !data?.user) {
-      console.error("[Auth] privy-sync failed:", data?.error?.message ?? "unknown error");
-      return null;
+      const message =
+        data?.error?.message ??
+        (response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
+      console.error("[Auth] privy-sync failed:", message);
+      throw new Error(message);
     }
 
     // Store the session token for Bearer auth
@@ -451,7 +460,15 @@ export async function syncPrivySession(
     return { token: data.token, user: data.user };
   } catch (error) {
     console.error("[Auth] syncPrivySession error:", error);
-    return null;
+    if (error instanceof Error) {
+      if (error.name === "AbortError") {
+        throw new Error("Sign-in timed out while connecting to the server");
+      }
+      throw error;
+    }
+    throw new Error("Failed to sync Privy session");
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

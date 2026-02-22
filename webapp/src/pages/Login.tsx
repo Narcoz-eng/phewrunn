@@ -35,14 +35,7 @@ const stats = [
 
 // Inner component that uses Privy hooks — only rendered when Privy is available
 function PrivyLoginButton() {
-  const { login, ready: privyReady } = usePrivyLogin();
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  const handleLogin = () => {
-    setIsSyncing(true);
-    login();
-    setTimeout(() => setIsSyncing(false), 30000);
-  };
+  const { login, ready: privyReady, isSyncing } = usePrivyLogin();
 
   const isLoading = !privyReady || isSyncing;
 
@@ -50,7 +43,7 @@ function PrivyLoginButton() {
     <Button
       type="button"
       className="w-full h-12 font-semibold gap-3 shadow-glow hover:shadow-glow-lg transition-all duration-300"
-      onClick={handleLogin}
+      onClick={login}
       disabled={isLoading}
     >
       {isLoading ? (
