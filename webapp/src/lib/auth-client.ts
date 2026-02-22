@@ -4,9 +4,7 @@ import type { ReactNode } from "react";
 
 // Get the backend URL
 const getBaseUrl = () => {
-  if (import.meta.env.VITE_BACKEND_URL) {
-    return import.meta.env.VITE_BACKEND_URL;
-  }
+  const envBackendUrl = import.meta.env.VITE_BACKEND_URL?.trim();
   if (typeof window !== "undefined") {
     const { hostname, origin, protocol } = window.location;
     const isLocalhost =
@@ -22,9 +20,14 @@ const getBaseUrl = () => {
       hostname === "www.phew.run" ||
       hostname.endsWith(".phew.run");
 
+    // Prefer same-origin in deployed environments so a committed preview URL
+    // does not send auth/session traffic to a different backend.
     if (isKnownDeployedHost || (!isLocalhost && protocol === "https:")) {
       return origin;
     }
+  }
+  if (envBackendUrl) {
+    return envBackendUrl;
   }
   return "http://localhost:3000";
 };
