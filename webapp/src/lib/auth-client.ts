@@ -397,13 +397,18 @@ export async function resetPassword(newPassword: string, token: string) {
 }
 
 // Sync a Privy-authenticated user to our backend, getting back a Better Auth session token
-export async function syncPrivySession(privyUserId: string, email: string, name?: string): Promise<{ token: string; user: AuthUser } | null> {
+export async function syncPrivySession(
+  privyUserId: string,
+  email?: string,
+  name?: string,
+  privyIdToken?: string
+): Promise<{ token: string; user: AuthUser } | null> {
   try {
     const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ privyUserId, email, name }),
+      body: JSON.stringify({ privyUserId, email, name, privyIdToken }),
     });
 
     const text = await response.text();

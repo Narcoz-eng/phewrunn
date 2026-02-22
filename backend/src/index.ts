@@ -149,6 +149,7 @@ app.get("/health", (c) => {
 import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
+import { PrivyClient } from "@privy-io/server-auth";
 
 // Verify Solana wallet signature
 function verifySolanaSignature(
@@ -321,18 +322,13 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   try {
-    const body = await c.req.json() as { privyUserId?: unknown; email?: unknown; name?: unknown };
-    const { privyUserId, email, name } = body;
+    const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
+    const { privyUserId, privyIdToken, email, name } = body;
 
-    if (!privyUserId || typeof privyUserId !== "string") {
-      return c.json({ error: { message: "privyUserId is required", code: "INVALID_INPUT" } }, 400);
+    if ((!privyUserId || typeof privyUserId !== "string") && (!privyIdToken || typeof privyIdToken !== "string")) {
+      return c.json({ error: { message: "privyUserId or privyIdToken is required", code: "INVALID_INPUT" } }, 400);
     }
 
-    if (!email || typeof email !== "string" || !email.includes("@")) {
-      return c.json({ error: { message: "Valid email is required", code: "INVALID_INPUT" } }, 400);
-    }
-
-    // Verify the Privy user exists by calling the Privy API with Basic auth
     const privyAppId = process.env.PRIVY_APP_ID;
     const privyAppSecret = process.env.PRIVY_APP_SECRET;
 
@@ -341,31 +337,93 @@ app.post("/api/auth/privy-sync", async (c) => {
       return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
     }
 
-    const credentials = Buffer.from(`${privyAppId}:${privyAppSecret}`).toString("base64");
-    const privyRes = await fetch(`https://auth.privy.io/api/v1/users/${encodeURIComponent(privyUserId)}`, {
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        "privy-app-id": privyAppId,
-        "Content-Type": "application/json",
-      },
-    });
+    const privyClient = new PrivyClient(privyAppId, privyAppSecret);
 
-    if (!privyRes.ok) {
-      console.error("[privy-sync] Privy API returned:", privyRes.status);
+    type PrivyUserLike = {
+      id?: unknown;
+      email?: { address?: unknown } | null;
+      linkedAccounts?: Array<{ type?: unknown; address?: unknown }> | null;
+    };
+
+    const getPrivyEmail = (user: PrivyUserLike): string | null => {
+      const directEmail = user.email?.address;
+      if (typeof directEmail === "string" && directEmail.includes("@")) return directEmail;
+
+      const linkedEmail = user.linkedAccounts?.find(
+        (account) => account?.type === "email" && typeof account.address === "string" && account.address.includes("@")
+      );
+      return typeof linkedEmail?.address === "string" ? linkedEmail.address : null;
+    };
+
+    let verifiedPrivyUserId: string | null = null;
+    let verifiedEmail: string | null = null;
+
+    if (typeof privyIdToken === "string" && privyIdToken.length > 0) {
+      try {
+        const tokenUser = await privyClient.getUser({ idToken: privyIdToken }) as PrivyUserLike;
+        verifiedPrivyUserId = typeof tokenUser.id === "string" ? tokenUser.id : null;
+        verifiedEmail = getPrivyEmail(tokenUser);
+
+        if (!verifiedEmail && verifiedPrivyUserId) {
+          const fullUser = await privyClient.getUserById(verifiedPrivyUserId) as PrivyUserLike;
+          verifiedEmail = getPrivyEmail(fullUser);
+        }
+      } catch (error) {
+        console.error("[privy-sync] Failed to verify Privy identity token:", error);
+        return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
+      }
+    }
+
+    if (typeof privyUserId === "string" && verifiedPrivyUserId && privyUserId !== verifiedPrivyUserId) {
+      console.error("[privy-sync] Privy user ID mismatch", { privyUserId, verifiedPrivyUserId });
       return c.json({ error: { message: "Invalid Privy user", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    if (!verifiedPrivyUserId && typeof privyUserId === "string") {
+      try {
+        const fullUser = await privyClient.getUserById(privyUserId) as PrivyUserLike;
+        verifiedPrivyUserId = typeof fullUser.id === "string" ? fullUser.id : privyUserId;
+        verifiedEmail = getPrivyEmail(fullUser);
+      } catch (error) {
+        console.error("[privy-sync] Failed to fetch Privy user:", error);
+        return c.json({ error: { message: "Invalid Privy user", code: "UNAUTHORIZED" } }, 401);
+      }
+    }
+
+    if (!verifiedPrivyUserId) {
+      return c.json({ error: { message: "Invalid Privy user", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    if (!verifiedEmail) {
+      return c.json({ error: { message: "Privy user email is unavailable", code: "INVALID_PRIVY_USER" } }, 400);
     }
 
     const now = new Date();
 
-    // Find or create the user by email
-    let user = await prisma.user.findFirst({ where: { email } });
+    // Prefer the Privy account link first to support email changes in Privy.
+    const existingPrivyAccount = await prisma.account.findUnique({
+      where: {
+        providerId_accountId: {
+          providerId: "privy",
+          accountId: verifiedPrivyUserId,
+        },
+      },
+      include: { user: true },
+    });
+
+    let user = existingPrivyAccount?.user ?? null;
+
+    // If no linked Privy account exists yet, find/create the local user by verified email.
+    if (!user) {
+      user = await prisma.user.findFirst({ where: { email: verifiedEmail } });
+    }
 
     if (!user) {
-      const displayName = typeof name === "string" && name.trim() ? name.trim() : email.split("@")[0] ?? "User";
+      const displayName = typeof name === "string" && name.trim() ? name.trim() : verifiedEmail.split("@")[0] ?? "User";
       user = await prisma.user.create({
         data: {
           id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          email,
+          email: verifiedEmail,
           name: displayName,
           emailVerified: true,
           level: 0,
@@ -377,11 +435,13 @@ app.post("/api/auth/privy-sync", async (c) => {
         },
       });
 
-      // Create a privy account record
+    }
+
+    if (!existingPrivyAccount) {
       await prisma.account.create({
         data: {
           id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          accountId: privyUserId,
+          accountId: verifiedPrivyUserId,
           providerId: "privy",
           userId: user.id,
           createdAt: now,

@@ -1,4 +1,4 @@
-import { usePrivy, useLogin } from "@privy-io/react-auth";
+import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
 
 // This hook MUST only be called inside a component rendered within PrivyProvider
@@ -10,6 +10,7 @@ export function usePrivyLogin() {
     onComplete: async (params) => {
       try {
         const privyUser = params.user;
+        const privyIdToken = await getIdentityToken();
         const email =
           privyUser.email?.address ??
           (privyUser.linkedAccounts?.find(
@@ -17,14 +18,14 @@ export function usePrivyLogin() {
           ) as { type: string; address?: string } | undefined)?.address ??
           "";
 
-        if (!email) {
+        if (!email && !privyIdToken) {
           console.error("[usePrivyLogin] No email found in Privy user:", privyUser);
           return;
         }
 
         const name = (privyUser.google as { name?: string } | undefined)?.name ?? email.split("@")[0] ?? "";
 
-        const result = await syncPrivySession(privyUser.id, email, name);
+        const result = await syncPrivySession(privyUser.id, email, name, privyIdToken ?? undefined);
         if (result) {
           await refetch();
         } else {
