@@ -3,6 +3,27 @@
 
 ENVIRONMENT="${ENVIRONMENT:-development}"
 
+# Load backend-local env files so Studio/start scripts use the same DB config
+# as local `bun` commands (e.g. `.env.local` with Supabase URLs).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+load_env_file() {
+  local file="$1"
+  if [[ -f "${file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${file}"
+    set +a
+  fi
+}
+
+# Follow common precedence: base, environment, local overrides
+load_env_file "${BACKEND_DIR}/.env"
+load_env_file "${BACKEND_DIR}/.env.${ENVIRONMENT}"
+load_env_file "${BACKEND_DIR}/.env.local"
+load_env_file "${BACKEND_DIR}/.env.${ENVIRONMENT}.local"
+
 if [[ "${ENVIRONMENT}" == "production" ]]; then
   echo "Starting in production mode..."
   export NODE_ENV="production"
