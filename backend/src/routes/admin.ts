@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import type { AuthVariables } from "../auth";
 import {
@@ -10,6 +11,8 @@ import {
   AdminAnnouncementsQuerySchema,
   CreateAnnouncementSchema,
   UpdateAnnouncementSchema,
+  MIN_LEVEL,
+  MAX_LEVEL,
   type AdminStats,
   type AdminUser,
   type AdminUsersResponse,
@@ -20,6 +23,50 @@ import {
 } from "../types";
 
 const adminRouter = new Hono<{ Variables: AuthVariables }>();
+const ADMIN_EMAIL_ALLOWLIST = new Set(["rengarro@gmail.com"]);
+
+const AdminUpdateUserSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    username: z.preprocess(
+      (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+      z
+        .string()
+        .trim()
+        .min(3)
+        .max(32)
+        .regex(/^[a-zA-Z0-9_]+$/)
+        .nullable()
+        .optional()
+    ),
+    bio: z.preprocess(
+      (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+      z.string().trim().max(280).nullable().optional()
+    ),
+    level: z.number().int().min(MIN_LEVEL).max(MAX_LEVEL).optional(),
+    xp: z.number().int().min(0).max(1_000_000_000).optional(),
+    isVerified: z.boolean().optional(),
+    isBanned: z.boolean().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field is required",
+  });
+
+const AdminUpdatePostSchema = z
+  .object({
+    content: z.string().trim().min(1).max(2000).optional(),
+    tokenName: z.preprocess(
+      (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+      z.string().trim().max(100).nullable().optional()
+    ),
+    tokenSymbol: z.preprocess(
+      (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+      z.string().trim().max(32).nullable().optional()
+    ),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field is required",
+  });
 
 /**
  * Middleware to check if the current user is an admin
@@ -38,12 +85,13 @@ const requireAdmin = createMiddleware<{ Variables: AuthVariables }>(
     // Check if user is admin in database
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { isAdmin: true },
+      select: { email: true, isAdmin: true },
     });
 
-    if (!dbUser?.isAdmin) {
+    const email = dbUser?.email?.trim().toLowerCase();
+    if (!email || !ADMIN_EMAIL_ALLOWLIST.has(email)) {
       return c.json(
-        { error: { message: "Forbidden - Admin access required", code: "FORBIDDEN" } },
+        { error: { message: "Forbidden - Admin access is restricted", code: "FORBIDDEN" } },
         403
       );
     }
@@ -159,10 +207,12 @@ adminRouter.get(
           email: true,
           username: true,
           image: true,
+          bio: true,
           walletAddress: true,
           level: true,
           xp: true,
           isAdmin: true,
+          isBanned: true,
           isVerified: true,
           createdAt: true,
           _count: {
@@ -184,10 +234,12 @@ adminRouter.get(
         email: user.email,
         username: user.username,
         image: user.image,
+        bio: user.bio,
         walletAddress: user.walletAddress,
         level: user.level,
         xp: user.xp,
         isAdmin: user.isAdmin,
+        isBanned: user.isBanned,
         isVerified: user.isVerified,
         createdAt: user.createdAt.toISOString(),
         _count: user._count,
@@ -199,6 +251,84 @@ adminRouter.get(
     };
 
     return c.json({ data: response });
+  }
+);
+
+/**
+ * PATCH /api/admin/users/:id - Edit user profile/moderation fields
+ */
+adminRouter.patch(
+  "/users/:id",
+  zValidator("json", AdminUpdateUserSchema),
+  async (c) => {
+    const userId = c.req.param("id");
+    const currentUser = c.get("user");
+    const updates = c.req.valid("json");
+
+    const existing = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true },
+    });
+
+    if (!existing) {
+      return c.json(
+        { error: { message: "User not found", code: "NOT_FOUND" } },
+        404
+      );
+    }
+
+    if (currentUser?.id === userId && updates.isBanned === true) {
+      return c.json(
+        { error: { message: "Cannot ban the current admin user", code: "INVALID_OPERATION" } },
+        400
+      );
+    }
+
+    try {
+      const updated = await prisma.user.update({
+        where: { id: userId },
+        data: updates,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          username: true,
+          image: true,
+          bio: true,
+          walletAddress: true,
+          level: true,
+          xp: true,
+          isAdmin: true,
+          isBanned: true,
+          isVerified: true,
+          createdAt: true,
+        },
+      });
+
+      return c.json({
+        data: {
+          success: true,
+          message: `User ${existing.name} updated successfully`,
+          user: {
+            ...updated,
+            createdAt: updated.createdAt.toISOString(),
+          },
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        return c.json(
+          { error: { message: "Username already exists", code: "CONFLICT" } },
+          409
+        );
+      }
+
+      console.error("[Admin] Failed to update user:", error);
+      return c.json(
+        { error: { message: "Failed to update user", code: "INTERNAL_ERROR" } },
+        500
+      );
+    }
   }
 );
 
@@ -242,6 +372,7 @@ adminRouter.get(
           },
           contractAddress: true,
           chainType: true,
+          tokenName: true,
           tokenSymbol: true,
           entryMcap: true,
           currentMcap: true,
@@ -270,6 +401,7 @@ adminRouter.get(
         author: post.author,
         contractAddress: post.contractAddress,
         chainType: post.chainType,
+        tokenName: post.tokenName,
         tokenSymbol: post.tokenSymbol,
         entryMcap: post.entryMcap,
         currentMcap: post.currentMcap,
@@ -287,6 +419,53 @@ adminRouter.get(
     };
 
     return c.json({ data: response });
+  }
+);
+
+/**
+ * PATCH /api/admin/posts/:id - Edit post content/token labels
+ */
+adminRouter.patch(
+  "/posts/:id",
+  zValidator("json", AdminUpdatePostSchema),
+  async (c) => {
+    const postId = c.req.param("id");
+    const updates = c.req.valid("json");
+
+    const existing = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return c.json(
+        { error: { message: "Post not found", code: "NOT_FOUND" } },
+        404
+      );
+    }
+
+    const updated = await prisma.post.update({
+      where: { id: postId },
+      data: updates,
+      select: {
+        id: true,
+        content: true,
+        tokenName: true,
+        tokenSymbol: true,
+        updatedAt: true,
+      },
+    });
+
+    return c.json({
+      data: {
+        success: true,
+        message: "Post updated successfully",
+        post: {
+          ...updated,
+          updatedAt: updated.updatedAt.toISOString(),
+        },
+      },
+    });
   }
 );
 

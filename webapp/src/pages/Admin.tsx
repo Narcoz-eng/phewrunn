@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import {
   type AdminStats,
+  type AdminUser,
   type AdminUsersResponse,
   type AdminPostsResponse,
   type AdminPost,
@@ -12,6 +13,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -56,6 +68,7 @@ import {
   Megaphone,
   Trash2,
   BadgeCheck,
+  Pencil,
 } from "lucide-react";
 import {
   BarChart,
@@ -71,6 +84,8 @@ import {
 } from "recharts";
 import { AnnouncementManager } from "@/components/admin/AnnouncementManager";
 import { toast } from "sonner";
+
+const ADMIN_EMAIL = "rengarro@gmail.com";
 
 // Stats card component
 function StatsCard({
@@ -255,6 +270,16 @@ function UsersTab() {
   const [searchInput, setSearchInput] = useState("");
   const [sortBy, setSortBy] = useState<"createdAt" | "level" | "xp" | "posts">("createdAt");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [editUserForm, setEditUserForm] = useState({
+    name: "",
+    username: "",
+    bio: "",
+    level: "0",
+    xp: "0",
+    isVerified: false,
+    isBanned: false,
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin", "users", page, search, sortBy, sortOrder],
@@ -276,6 +301,30 @@ function UsersTab() {
     },
   });
 
+  const editUserMutation = useMutation({
+    mutationFn: (payload: {
+      userId: string;
+      data: {
+        name: string;
+        username: string | null;
+        bio: string | null;
+        level: number;
+        xp: number;
+        isVerified: boolean;
+        isBanned: boolean;
+      };
+    }) => api.patch(`/api/admin/users/${payload.userId}`, payload.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "stats"] });
+      setEditingUser(null);
+      toast.success("User updated");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to update user");
+    },
+  });
+
   const handleSearch = () => {
     setSearch(searchInput);
     setPage(1);
@@ -285,6 +334,43 @@ function UsersTab() {
     if (e.key === "Enter") {
       handleSearch();
     }
+  };
+
+  const openEditUser = (user: AdminUser) => {
+    setEditingUser(user);
+    setEditUserForm({
+      name: user.name ?? "",
+      username: user.username ?? "",
+      bio: user.bio ?? "",
+      level: String(user.level),
+      xp: String(user.xp),
+      isVerified: user.isVerified,
+      isBanned: user.isBanned ?? false,
+    });
+  };
+
+  const saveUserEdit = () => {
+    if (!editingUser) return;
+    const level = Number.parseInt(editUserForm.level, 10);
+    const xp = Number.parseInt(editUserForm.xp, 10);
+
+    if (Number.isNaN(level) || Number.isNaN(xp)) {
+      toast.error("Level and XP must be valid numbers");
+      return;
+    }
+
+    editUserMutation.mutate({
+      userId: editingUser.id,
+      data: {
+        name: editUserForm.name.trim(),
+        username: editUserForm.username.trim() ? editUserForm.username.trim() : null,
+        bio: editUserForm.bio.trim() ? editUserForm.bio.trim() : null,
+        level,
+        xp,
+        isVerified: editUserForm.isVerified,
+        isBanned: editUserForm.isBanned,
+      },
+    });
   };
 
   return (
@@ -347,7 +433,7 @@ function UsersTab() {
               <TableHead>Posts</TableHead>
               <TableHead>Followers</TableHead>
               <TableHead>Joined</TableHead>
-              <TableHead className="text-right">Verify</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -385,6 +471,9 @@ function UsersTab() {
                         <span className="text-xs text-muted-foreground">
                           {user.username ? `@${user.username}` : user.email}
                         </span>
+                        {user.isBanned ? (
+                          <span className="text-xs text-destructive">Banned</span>
+                        ) : null}
                       </div>
                     </div>
                   </TableCell>
@@ -404,19 +493,30 @@ function UsersTab() {
                     {new Date(user.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant={user.isVerified ? "default" : "outline"}
-                      size="sm"
-                      onClick={() =>
-                        verifyMutation.mutate({ userId: user.id, isVerified: !user.isVerified })
-                      }
-                      disabled={verifyMutation.isPending}
-                      className={user.isVerified ? "bg-blue-500 hover:bg-blue-600 text-white" : ""}
-                      title={user.isVerified ? "Unverify user" : "Verify user"}
-                    >
-                      <BadgeCheck className="h-3.5 w-3.5 mr-1" />
-                      {user.isVerified ? "Verified" : "Verify"}
-                    </Button>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant={user.isVerified ? "default" : "outline"}
+                        size="sm"
+                        onClick={() =>
+                          verifyMutation.mutate({ userId: user.id, isVerified: !user.isVerified })
+                        }
+                        disabled={verifyMutation.isPending}
+                        className={user.isVerified ? "bg-blue-500 hover:bg-blue-600 text-white" : ""}
+                        title={user.isVerified ? "Unverify user" : "Verify user"}
+                      >
+                        <BadgeCheck className="h-3.5 w-3.5 mr-1" />
+                        {user.isVerified ? "Verified" : "Verify"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditUser(user)}
+                        title="Edit user"
+                      >
+                        <Pencil className="h-3.5 w-3.5 mr-1" />
+                        Edit
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -452,6 +552,111 @@ function UsersTab() {
           </div>
         </div>
       ) : null}
+
+      <Dialog open={editingUser !== null} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>
+              Update profile/moderation fields for {editingUser?.email ?? "user"}.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="admin-user-name">Name</Label>
+              <Input
+                id="admin-user-name"
+                value={editUserForm.name}
+                onChange={(e) => setEditUserForm((p) => ({ ...p, name: e.target.value }))}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="admin-user-username">Username</Label>
+              <Input
+                id="admin-user-username"
+                value={editUserForm.username}
+                onChange={(e) => setEditUserForm((p) => ({ ...p, username: e.target.value }))}
+                placeholder="Leave empty to clear"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="admin-user-bio">Bio</Label>
+              <Textarea
+                id="admin-user-bio"
+                value={editUserForm.bio}
+                onChange={(e) => setEditUserForm((p) => ({ ...p, bio: e.target.value }))}
+                placeholder="Leave empty to clear"
+                rows={3}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-level">Level</Label>
+                <Input
+                  id="admin-user-level"
+                  type="number"
+                  value={editUserForm.level}
+                  onChange={(e) => setEditUserForm((p) => ({ ...p, level: e.target.value }))}
+                  min={-5}
+                  max={10}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-xp">XP</Label>
+                <Input
+                  id="admin-user-xp"
+                  type="number"
+                  value={editUserForm.xp}
+                  onChange={(e) => setEditUserForm((p) => ({ ...p, xp: e.target.value }))}
+                  min={0}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <div>
+                  <Label htmlFor="admin-user-verified">Verified</Label>
+                  <p className="text-xs text-muted-foreground">Show blue check badge</p>
+                </div>
+                <Switch
+                  id="admin-user-verified"
+                  checked={editUserForm.isVerified}
+                  onCheckedChange={(checked) =>
+                    setEditUserForm((p) => ({ ...p, isVerified: checked }))
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <div>
+                  <Label htmlFor="admin-user-banned">Banned</Label>
+                  <p className="text-xs text-muted-foreground">Blocks posting/commenting</p>
+                </div>
+                <Switch
+                  id="admin-user-banned"
+                  checked={editUserForm.isBanned}
+                  onCheckedChange={(checked) =>
+                    setEditUserForm((p) => ({ ...p, isBanned: checked }))
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingUser(null)}>
+              Cancel
+            </Button>
+            <Button onClick={saveUserEdit} disabled={editUserMutation.isPending}>
+              {editUserMutation.isPending ? "Saving..." : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -462,6 +667,12 @@ function PostsTab() {
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState<"all" | "settled" | "unsettled">("all");
   const [deletingPost, setDeletingPost] = useState<AdminPost | null>(null);
+  const [editingPost, setEditingPost] = useState<AdminPost | null>(null);
+  const [editPostForm, setEditPostForm] = useState({
+    content: "",
+    tokenName: "",
+    tokenSymbol: "",
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin", "posts", page, filter],
@@ -485,10 +696,52 @@ function PostsTab() {
     },
   });
 
+  const editPostMutation = useMutation({
+    mutationFn: (payload: {
+      postId: string;
+      data: { content: string; tokenName: string | null; tokenSymbol: string | null };
+    }) => api.patch(`/api/admin/posts/${payload.postId}`, payload.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "posts"] });
+      setEditingPost(null);
+      toast.success("Post updated");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to update post");
+    },
+  });
+
   const handleDelete = () => {
     if (deletingPost) {
       deleteMutation.mutate(deletingPost.id);
     }
+  };
+
+  const openEditPost = (post: AdminPost) => {
+    setEditingPost(post);
+    setEditPostForm({
+      content: post.content ?? "",
+      tokenName: post.tokenName ?? "",
+      tokenSymbol: post.tokenSymbol ?? "",
+    });
+  };
+
+  const savePostEdit = () => {
+    if (!editingPost) return;
+    const content = editPostForm.content.trim();
+    if (!content) {
+      toast.error("Post content cannot be empty");
+      return;
+    }
+
+    editPostMutation.mutate({
+      postId: editingPost.id,
+      data: {
+        content,
+        tokenName: editPostForm.tokenName.trim() ? editPostForm.tokenName.trim() : null,
+        tokenSymbol: editPostForm.tokenSymbol.trim() ? editPostForm.tokenSymbol.trim() : null,
+      },
+    });
   };
 
   return (
@@ -600,15 +853,25 @@ function PostsTab() {
                     {new Date(post.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeletingPost(post)}
-                      className="text-destructive hover:text-destructive"
-                      title="Delete post"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openEditPost(post)}
+                        title="Edit post"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setDeletingPost(post)}
+                        className="text-destructive hover:text-destructive"
+                        title="Delete post"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -645,6 +908,58 @@ function PostsTab() {
         </div>
       ) : null}
 
+      <Dialog open={editingPost !== null} onOpenChange={(open) => !open && setEditingPost(null)}>
+        <DialogContent className="sm:max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>Edit Post</DialogTitle>
+            <DialogDescription>
+              Update post content or token labels for moderation/corrections.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="admin-post-content">Content</Label>
+              <Textarea
+                id="admin-post-content"
+                value={editPostForm.content}
+                onChange={(e) => setEditPostForm((p) => ({ ...p, content: e.target.value }))}
+                rows={5}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="admin-post-token-name">Token Name</Label>
+                <Input
+                  id="admin-post-token-name"
+                  value={editPostForm.tokenName}
+                  onChange={(e) => setEditPostForm((p) => ({ ...p, tokenName: e.target.value }))}
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-post-token-symbol">Token Symbol</Label>
+                <Input
+                  id="admin-post-token-symbol"
+                  value={editPostForm.tokenSymbol}
+                  onChange={(e) => setEditPostForm((p) => ({ ...p, tokenSymbol: e.target.value }))}
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingPost(null)}>
+              Cancel
+            </Button>
+            <Button onClick={savePostEdit} disabled={editPostMutation.isPending}>
+              {editPostMutation.isPending ? "Saving..." : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Post Confirmation Dialog */}
       <AlertDialog
         open={deletingPost !== null}
@@ -678,7 +993,7 @@ export default function Admin() {
   const { data: currentUser, isLoading: userLoading, error } = useQuery({
     queryKey: ["admin", "me"],
     queryFn: async () => {
-      const res = await api.get<{ id: string; isAdmin?: boolean }>("/api/me");
+      const res = await api.get<{ id: string; email?: string | null; isAdmin?: boolean }>("/api/me");
       return res;
     },
     retry: false,
@@ -707,6 +1022,10 @@ export default function Admin() {
   // If not authenticated, redirect to login
   if (error || !currentUser) {
     return <Navigate to="/login" replace />;
+  }
+
+  if ((currentUser.email ?? "").toLowerCase() !== ADMIN_EMAIL) {
+    return <Navigate to="/" replace />;
   }
 
   // If admin stats failed (forbidden), redirect to home
