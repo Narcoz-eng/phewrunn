@@ -1,10 +1,8 @@
 // In production/custom domains, use same-origin API calls.
 // In local development, use localhost:3000.
 const API_BASE_URL = (() => {
-  // Check env var first
-  if (import.meta.env.VITE_BACKEND_URL) {
-    return import.meta.env.VITE_BACKEND_URL;
-  }
+  const envBackendUrl = import.meta.env.VITE_BACKEND_URL?.trim();
+
   // Auto-detect deployed environments and custom domains (e.g. phew.run)
   if (typeof window !== "undefined") {
     const { hostname, origin, protocol } = window.location;
@@ -21,9 +19,16 @@ const API_BASE_URL = (() => {
       hostname === "www.phew.run" ||
       hostname.endsWith(".phew.run");
 
+    // Prefer same-origin in deployed environments so a committed dev preview URL
+    // doesn't accidentally send production traffic to an outdated backend.
     if (isKnownDeployedHost || (!isLocalhost && protocol === "https:")) {
       return origin;
     }
+  }
+
+  // Use explicit backend override for local/dev setups
+  if (envBackendUrl) {
+    return envBackendUrl;
   }
   // Default to localhost for development
   return "http://localhost:3000";
