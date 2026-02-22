@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite only accepts file: URLs (e.g. file:./dev.db). Do not use https:// URLs here.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model - Better Auth compatible with SocialFi extensions
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // SocialFi specific fields
+  walletAddress     String?   @unique
+  walletProvider    String?              // 'phantom', 'solflare', 'metamask', 'other'
+  walletConnectedAt DateTime?            // When wallet was connected
+  username          String?   @unique
+  level         Int       @default(0)  // -5 to 10
+  xp            Int       @default(0)  // numerical XP for leveling
+  bio           String?                // user bio
+  isAdmin       Boolean   @default(false) // for admin dashboard access
+  isBanned      Boolean   @default(false) // banned users cannot post/comment
+  isVerified    Boolean   @default(false) // blue checkmark verification
+
+  // Update frequency guards
+  lastUsernameUpdate DateTime?  // Can only change username once per 7 days
+  lastPhotoUpdate    DateTime?  // Can only change photo once per 24 hours
+
+  // Better Auth relations
+  sessions      Session[]
+  accounts      Account[]
+
+  // SocialFi relations
+  posts         Post[]
+  followers     Follow[]  @relation("Following") // users following this user
+  following     Follow[]  @relation("Followers") // users this user follows
+  likes         Like[]
+  comments      Comment[]
+  reposts       Repost[]
+  notifications Notification[] @relation("UserNotifications") // notifications received
+  notificationsSent Notification[] @relation("NotificationsFrom") // notifications triggered
+  announcements Announcement[] // announcements created by admin
+  viewedAnnouncements AnnouncementView[] // track which announcements user has seen
+}
+
+// Better Auth Session model
+model Session {
+  id            String    @id
+  expiresAt     DateTime
+  token         String    @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  ipAddress     String?
+  userAgent     String?
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Better Auth Account model (for OAuth providers)
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+}
+
+// Better Auth Verification model (for email verification, password reset)
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Follow relationship between users
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String   // user who follows
+  followingId String   // user being followed
+  createdAt   DateTime @default(now())
+
+  follower    User     @relation("Followers", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+}
+
+// SocialFi Post model for crypto calls
+model Post {
+  id              String    @id @default(cuid())
+  content         String
+  authorId        String
+  author          User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Contract Address tracking
+  contractAddress String?
+  chainType       String?   // 'solana' or 'evm'
+
+  // Token display info
+  tokenSymbol     String?   // for display
+  tokenName       String?   // for display
+  tokenImage      String?   // token logo URL from DexScreener
+  dexscreenerUrl  String?   // direct link to dexscreener
+
+  // Market cap tracking
+  entryMcap       Float?
+  currentMcap     Float?
+  mcap1h          Float?    // Market cap snapshot at 1 hour
+  mcap6h          Float?    // Market cap snapshot at 6 hours
+  lastMcapUpdate  DateTime? // When mcap was last updated
+  trackingMode    String?   // 'active' (first hour, update every 30s) or 'settled' (after 1h, update every 5min)
+
+  // Engagement tracking
+  viewCount       Int       @default(0)
+
+  // Settlement (1H - official settlement)
+  settled         Boolean   @default(false)
+  settledAt       DateTime?
+  isWin           Boolean?
+
+  // Enhanced settlement tracking for 1H/6H leveling system
+  isWin1h         Boolean?  // Win status at 1H settlement
+  isWin6h         Boolean?  // Win status at 6H settlement
+  percentChange1h Float?    // Percent change at 1H settlement
+  percentChange6h Float?    // Percent change at 6H settlement
+  recoveryEligible Boolean? // True if loss was <30% at 1H (can recover at 6H)
+  settled6h       Boolean   @default(false) // Whether 6H settlement has been processed
+  levelChange1h   Int?      // Level change applied at 1H
+  levelChange6h   Int?      // Level change applied at 6H (recovery bonus or additional penalty)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  likes           Like[]
+  comments        Comment[]
+  reposts         Repost[]
+  notifications   Notification[]
+
+  // Indexes for efficient queries
+  @@index([authorId, settled]) // For user stats queries
+  @@index([authorId, settledAt]) // For time-based stats queries
+  @@index([settled, settledAt]) // For settlement batch queries
+}
+
+// Like model for post likes
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+// Comment model for post comments
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  authorId  String
+  postId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+}
+
+// Repost model for sharing posts
+model Repost {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+// Notification model for alerts
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String    // user receiving the notification
+  type      String    // 'new_post', 'like', 'comment', 'follow', 'repost', 'settlement', 'win_1h', 'loss_1h', 'win_6h', 'loss_6h', 'level_up', 'achievement'
+  message   String    // notification text
+  read      Boolean   @default(false)
+  dismissed Boolean   @default(false) // soft delete - user dismissed but kept for analytics
+  clickedAt DateTime? // track when notification was clicked (for analytics)
+
+  // Deep linking data
+  postId    String?  // link to post if applicable
+  fromUserId String? // user who triggered the notification
+
+  createdAt DateTime @default(now())
+
+  user      User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  fromUser  User?    @relation("NotificationsFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+}
+
+// Announcement model for admin announcements shown in feed
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  isPinned  Boolean  @default(false)
+  priority  Int      @default(0)  // for ordering pinned announcements (higher = first)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Author relation (admin who created)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Track which users have viewed this announcement
+  views     AnnouncementView[]
+}
+
+// Many-to-many relation for tracking announcement views
+model AnnouncementView {
+  id             String   @id @default(cuid())
+  userId         String
+  announcementId String
+  viewedAt       DateTime @default(now())
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, announcementId])
+}

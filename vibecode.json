@@ -1,0 +1,20 @@
+ {
+  "version": "1.0",
+  "build": {
+    "frontend": {
+      "directory": "webapp",
+      "buildCommand": "npm install && npm run build",
+      "outputDirectory": "webapp/dist"
+    },
+    "backend": {
+      "directory": "backend",
+      "buildCommand": "bun install && bunx prisma generate",
+      "startCommand": "bun start",
+      "port": 3000
+    }
+  },
+  "routes": {
+    "/api/*": "backend",
+    "/*": "frontend"
+  }
+}
