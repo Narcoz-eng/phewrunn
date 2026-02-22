@@ -38,8 +38,10 @@ export function TrendingSection() {
     refetchInterval: 120000, // 2 minutes
   });
 
-  // Only show if there are trending tokens with 2+ callers (relaxed for testing)
-  const qualifiedTokens = trendingTokens.filter((t) => t.callCount >= 2);
+  // Backend enforces trending eligibility; keep a matching client-side guard.
+  const qualifiedTokens = trendingTokens.filter(
+    (t) => t.callCount >= 10 && (t.avgGain ?? Number.NEGATIVE_INFINITY) > 0
+  );
 
   if (isLoading) {
     return <TrendingSkeleton />;
@@ -70,6 +72,7 @@ export function TrendingSection() {
             const isWinner = token.avgGain !== null && token.avgGain !== undefined && token.avgGain > 0;
             const avgGain = token.avgGain ?? 0;
             const winRate = token.winRate ?? 0;
+            const hiddenCallerCount = Math.max(token.callCount - 3, 0);
 
             return (
             <motion.div
@@ -211,9 +214,9 @@ export function TrendingSection() {
                       </Avatar>
                     ))}
                   </div>
-                  {token.topCallers.length > 3 && (
+                  {hiddenCallerCount > 0 && (
                     <span className="ml-2 text-[10px] text-muted-foreground">
-                      +{token.topCallers.length - 3} more
+                      +{hiddenCallerCount} more
                     </span>
                   )}
                 </div>
