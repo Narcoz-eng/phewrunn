@@ -23,8 +23,12 @@
       "dest": "/backend/src/index.ts"
     },
     {
-      "src": "/(.*)",
+      "src": "/(.*\\..*)",
       "dest": "/webapp/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/webapp/index.html"
     }
   ],
   "env": {
