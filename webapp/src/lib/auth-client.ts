@@ -7,8 +7,24 @@ const getBaseUrl = () => {
   if (import.meta.env.VITE_BACKEND_URL) {
     return import.meta.env.VITE_BACKEND_URL;
   }
-  if (typeof window !== "undefined" && window.location.hostname.endsWith(".vibecode.run")) {
-    return window.location.origin;
+  if (typeof window !== "undefined") {
+    const { hostname, origin, protocol } = window.location;
+    const isLocalhost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]" ||
+      hostname === "0.0.0.0";
+
+    const isKnownDeployedHost =
+      hostname.endsWith(".vibecode.run") ||
+      hostname.endsWith(".vibecodeapp.com") ||
+      hostname === "phew.run" ||
+      hostname === "www.phew.run" ||
+      hostname.endsWith(".phew.run");
+
+    if (isKnownDeployedHost || (!isLocalhost && protocol === "https:")) {
+      return origin;
+    }
   }
   return "http://localhost:3000";
 };

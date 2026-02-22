@@ -1,13 +1,29 @@
-// In production (vibecode.run domain), use same-origin API calls
-// In development, use localhost:3000
+// In production/custom domains, use same-origin API calls.
+// In local development, use localhost:3000.
 const API_BASE_URL = (() => {
   // Check env var first
   if (import.meta.env.VITE_BACKEND_URL) {
     return import.meta.env.VITE_BACKEND_URL;
   }
-  // Auto-detect production: if we're on vibecode.run, use same origin
-  if (typeof window !== 'undefined' && window.location.hostname.endsWith('.vibecode.run')) {
-    return window.location.origin;
+  // Auto-detect deployed environments and custom domains (e.g. phew.run)
+  if (typeof window !== "undefined") {
+    const { hostname, origin, protocol } = window.location;
+    const isLocalhost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]" ||
+      hostname === "0.0.0.0";
+
+    const isKnownDeployedHost =
+      hostname.endsWith(".vibecode.run") ||
+      hostname.endsWith(".vibecodeapp.com") ||
+      hostname === "phew.run" ||
+      hostname === "www.phew.run" ||
+      hostname.endsWith(".phew.run");
+
+    if (isKnownDeployedHost || (!isLocalhost && protocol === "https:")) {
+      return origin;
+    }
   }
   // Default to localhost for development
   return "http://localhost:3000";
