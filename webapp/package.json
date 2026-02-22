@@ -47,6 +47,7 @@
     "@solana/wallet-adapter-wallets": "^0.19.37",
     "@solana/web3.js": "^1.98.4",
     "@tanstack/react-query": "^5.90.10",
+    "baseline-browser-mapping": "^2.10.0",
     "better-auth": "^1.4.14",
     "bs58": "^6.0.0",
     "buffer": "^6.0.3",
@@ -73,12 +74,12 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@vibecodeapp/webapp": "^1.0.7",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/typography": "^0.5.19",
     "@types/node": "^22.19.1",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.3.7",
+    "@vibecodeapp/webapp": "^1.0.7",
     "@vitejs/plugin-react-swc": "^3.11.0",
     "autoprefixer": "^10.4.22",
     "eslint": "^9.39.1",
