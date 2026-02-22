@@ -10,7 +10,7 @@ import { prisma } from "../prisma";
  */
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
-    provider: "sqlite",
+    provider: "postgresql",
   }),
 
   // Base URL for OAuth callbacks - use frontend URL for proper redirects

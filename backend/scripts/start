@@ -6,10 +6,18 @@ set -o pipefail
 # Load shared environment setup
 source "$(dirname "$0")/env.sh"
 
-# Backup the database before proceeding.
-if [[ "${ENVIRONMENT}" == "production" ]] && [[ -f "${DATABASE_FILE}" ]]; then
-  DATABASE_BACKUP_FILE="${DATABASE_FILE}-$(date +%s)"
-  echo "VACUUM INTO '${DATABASE_BACKUP_FILE}'" | sqlite3 "${DATABASE_FILE}"
+# Detect SQLite file DBs so we can keep local/legacy behavior without assuming it.
+IS_SQLITE=0
+SQLITE_DB_PATH=""
+if [[ "${DATABASE_URL:-}" == file:* ]]; then
+  IS_SQLITE=1
+  SQLITE_DB_PATH="${DATABASE_URL#file:}"
+fi
+
+# Backup SQLite databases before proceeding (legacy/local only).
+if [[ "${ENVIRONMENT}" == "production" ]] && [[ "${IS_SQLITE}" == "1" ]] && [[ -f "${SQLITE_DB_PATH}" ]]; then
+  DATABASE_BACKUP_FILE="${SQLITE_DB_PATH}-$(date +%s)"
+  echo "VACUUM INTO '${DATABASE_BACKUP_FILE}'" | sqlite3 "${SQLITE_DB_PATH}"
 fi
  
 
@@ -21,8 +29,18 @@ bun install
 if [[ -f "prisma/schema.prisma" ]]; then
   echo "Generating Prisma client..."
   bunx prisma generate
-  echo "Pushing schema to database..."
-  bunx prisma db push --accept-data-loss
+  if [[ "${ENVIRONMENT}" == "production" ]]; then
+    if compgen -G "prisma/migrations/*/migration.sql" > /dev/null; then
+      echo "Applying Prisma migrations..."
+      bunx prisma migrate deploy
+    else
+      echo "No Prisma migrations found; pushing schema to database..."
+      bunx prisma db push
+    fi
+  else
+    echo "Pushing schema to database..."
+    bunx prisma db push
+  fi
 
   # Enable DB viewer (idempotent, safe to call multiple times)
   if [[ -n "${VIBECODE_PROJECT_ID:-}" ]]; then

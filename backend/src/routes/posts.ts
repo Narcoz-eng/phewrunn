@@ -1032,8 +1032,8 @@ postsRouter.get("/trending", async (c) => {
     }
   }
 
-  // Filter tokens with sufficient callers (50+ for production, 2+ for testing)
-  const TRENDING_THRESHOLD = process.env.NODE_ENV === "production" ? 50 : 2;
+  // Trending requires broad confirmation (10+ unique callers) before surfacing.
+  const TRENDING_THRESHOLD = 10;
 
   const trendingTokens = Array.from(addressMap.values())
     .filter((t) => t.callers.size >= TRENDING_THRESHOLD)
@@ -1073,6 +1073,8 @@ postsRouter.get("/trending", async (c) => {
         topCallers,
       };
     })
+    // Only show tokens with positive average gains.
+    .filter((t) => t.avgGain !== null && t.avgGain > 0)
     // Sort by: 1) Positive avg gain first, 2) avgGain DESC, 3) callCount DESC
     .sort((a, b) => {
       // 1. Tokens with positive avgGain come first
@@ -1730,4 +1732,3 @@ postsRouter.get("/:id/price", async (c) => {
     },
   });
 });
-

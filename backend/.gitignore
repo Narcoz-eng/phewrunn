@@ -38,3 +38,8 @@ server.log
 
 # Prisma generated files (bunx prisma generate)
 /generated/prisma
+
+# Local SQLite databases (Prisma)
+prisma/*.db
+prisma/*.db-shm
+prisma/*.db-wal

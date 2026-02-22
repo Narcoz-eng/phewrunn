@@ -27,6 +27,8 @@ const prisma = new PrismaClient({
   })),
 });
 
+const isSqlite = (process.env.DATABASE_URL || "").startsWith("file:");
+
 // Log slow queries in production (queries taking > 1 second)
 const SLOW_QUERY_THRESHOLD_MS = 1000;
 
@@ -60,7 +62,7 @@ prisma.$on("error", (e: Prisma.LogEvent) => {
   console.error(`[Prisma Error] ${e.message}`);
 });
 
-// IMPORTANT: SQLite optimizations for better performance
+// IMPORTANT: SQLite optimizations for local file databases only
 async function initSqlitePragmas(prisma: PrismaClient) {
   await prisma.$queryRawUnsafe("PRAGMA journal_mode = WAL;");
   await prisma.$queryRawUnsafe("PRAGMA foreign_keys = ON;");
@@ -68,6 +70,10 @@ async function initSqlitePragmas(prisma: PrismaClient) {
   await prisma.$queryRawUnsafe("PRAGMA synchronous = NORMAL;");
 }
 
-initSqlitePragmas(prisma);
+if (isSqlite) {
+  initSqlitePragmas(prisma).catch((error) => {
+    console.warn("[Prisma] Failed to apply SQLite PRAGMAs:", error);
+  });
+}
 
 export { prisma };

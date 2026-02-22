@@ -11,7 +11,7 @@ const envSchema = z.object({
   BACKEND_URL: z.string().url("BACKEND_URL must be a valid URL").default("http://localhost:3000"),
 
   // Database
-  DATABASE_URL: z.string().default("file:./dev.db"),
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
 
   // Privy Auth
   PRIVY_APP_ID: z.string().min(1, "PRIVY_APP_ID is required"),
@@ -54,13 +54,19 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
  * Get safe configuration for logging (no secrets)
  */
 function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string> {
+  const isPostgres =
+    parsed.DATABASE_URL.startsWith("postgres://") ||
+    parsed.DATABASE_URL.startsWith("postgresql://");
+
   return {
     PORT: parsed.PORT,
     NODE_ENV: parsed.NODE_ENV,
     BACKEND_URL: parsed.BACKEND_URL,
     DATABASE_URL: parsed.DATABASE_URL.includes("file:")
       ? "SQLite (file-based)"
-      : "External database",
+      : isPostgres
+        ? "PostgreSQL (external)"
+        : "External database",
     PRIVY_APP_ID: `${parsed.PRIVY_APP_ID.substring(0, 8)}...`,
     DEBUG: parsed.DEBUG,
     LOG_LEVEL: parsed.LOG_LEVEL,

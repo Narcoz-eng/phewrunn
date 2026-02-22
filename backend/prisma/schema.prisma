@@ -2,10 +2,11 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// SQLite only accepts file: URLs (e.g. file:./dev.db). Do not use https:// URLs here.
+// Use PostgreSQL for production (e.g. Supabase). DATABASE_URL should be a postgres:// URI.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // User model - Better Auth compatible with SocialFi extensions
