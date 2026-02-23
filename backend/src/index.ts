@@ -133,12 +133,38 @@ app.use("*", betterAuthMiddleware);
 // Health Check
 // =====================================================
 app.get("/health", (c) => {
-  return c.json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || "development",
-    // Don't expose version in production for security
-    ...(isProduction ? {} : { version: "1.0.0" }),
+  const databaseUrl = process.env.DATABASE_URL || "";
+  const database =
+    databaseUrl.includes("supabase.com") || databaseUrl.includes("supabase.co")
+      ? "supabase-postgres"
+      : databaseUrl.includes("file:")
+        ? "sqlite"
+        : databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://")
+          ? "postgres"
+          : "unknown";
+
+  return prisma.$queryRawUnsafe("SELECT 1").then(() =>
+    c.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development",
+      database,
+      dbConnected: true,
+      // Don't expose version in production for security
+      ...(isProduction ? {} : { version: "1.0.0" }),
+    })
+  ).catch((error) => {
+    console.error("[health] DB connectivity check failed:", error);
+    return c.json(
+      {
+        status: "degraded",
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || "development",
+        database,
+        dbConnected: false,
+      },
+      503
+    );
   });
 });
 

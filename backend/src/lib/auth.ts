@@ -2,6 +2,13 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "../prisma";
 
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+
+if (!googleClientId || !googleClientSecret) {
+  console.warn("[Auth] Google OAuth env vars are missing; Google sign-in is disabled.");
+}
+
 /**
  * Better Auth configuration
  *
@@ -38,17 +45,21 @@ export const auth = betterAuth({
     },
   },
 
-  // Social providers - Google OAuth
-  socialProviders: {
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID as string,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-      // Force account selection on each login
-      prompt: "select_account",
-      // Redirect URI must match what's configured in Google Cloud Console
-      redirectURI: `${process.env.BACKEND_URL || "http://localhost:3000"}/api/auth/callback/google`,
-    },
-  },
+  // Social providers - Google OAuth (optional in environments where Google keys are not set)
+  ...(googleClientId && googleClientSecret
+    ? {
+        socialProviders: {
+          google: {
+            clientId: googleClientId,
+            clientSecret: googleClientSecret,
+            // Force account selection on each login
+            prompt: "select_account",
+            // Redirect URI must match what's configured in Google Cloud Console
+            redirectURI: `${process.env.BACKEND_URL || "http://localhost:3000"}/api/auth/callback/google`,
+          },
+        },
+      }
+    : {}),
 
   // Session configuration
   session: {
