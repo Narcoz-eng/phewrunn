@@ -1,7 +1,5 @@
-import "@vibecodeapp/proxy"; // DO NOT REMOVE OTHERWISE VIBECODE PROXY WILL NOT WORK
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { serveStatic } from "hono/bun";
 import "./env.js";
 import {
   betterAuthMiddleware,
@@ -176,6 +174,16 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PrivyClient } from "@privy-io/server-auth";
+
+// Vibecode proxy patches global fetch for the Vibecode runtime, but it can break or add
+// noise in generic Node serverless environments (e.g. Vercel).
+if (!process.env.VERCEL) {
+  try {
+    await import("@vibecodeapp/proxy");
+  } catch (error) {
+    console.warn("[Startup] Failed to initialize Vibecode proxy:", error);
+  }
+}
 
 // Verify Solana wallet signature
 function verifySolanaSignature(
@@ -792,6 +800,13 @@ app.route("/api/leaderboard", leaderboardRouter);
 // =====================================================
 // In production, serve the frontend build from ../webapp/dist
 if (process.env.NODE_ENV === "production") {
+  const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+
+  if (!isBunRuntime) {
+    console.log("[Startup] Skipping Bun static file middleware (non-Bun runtime; handled by platform routes)");
+  } else {
+    const { serveStatic } = await import("hono/bun");
+
   // Serve static assets (JS, CSS, images, etc.)
   app.use("/assets/*", serveStatic({ root: "../webapp/dist" }));
   app.use("/favicon.ico", serveStatic({ root: "../webapp/dist", path: "favicon.ico" }));
@@ -802,6 +817,7 @@ if (process.env.NODE_ENV === "production") {
   // Fallback to index.html for client-side routing (SPA)
   // This must come after API routes and static assets
   app.get("*", serveStatic({ root: "../webapp/dist", path: "index.html" }));
+  }
 }
 
 // =====================================================
