@@ -1,6 +1,6 @@
 import { createMiddleware } from "hono/factory";
-import { auth } from "../lib/auth";
-import { prisma } from "../prisma";
+import { auth } from "../lib/auth.js";
+import { prisma } from "../prisma.js";
 
 // Define the user type that will be available in context
 // This matches the Better Auth user structure

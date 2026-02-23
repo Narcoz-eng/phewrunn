@@ -12,4 +12,4 @@ export {
   type AuthUser,
   type SimpleUser,
   type AuthVariables,
-} from "./middleware/auth";
+} from "./middleware/auth.js";

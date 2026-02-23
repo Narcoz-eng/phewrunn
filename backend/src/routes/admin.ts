@@ -3,8 +3,8 @@ import { createMiddleware } from "hono/factory";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { prisma } from "../prisma";
-import type { AuthVariables } from "../auth";
+import { prisma } from "../prisma.js";
+import type { AuthVariables } from "../auth.js";
 import {
   AdminUsersQuerySchema,
   AdminPostsQuerySchema,
@@ -20,7 +20,7 @@ import {
   type AdminPostsResponse,
   type Announcement,
   type AdminAnnouncementsResponse,
-} from "../types";
+} from "../types.js";
 
 const adminRouter = new Hono<{ Variables: AuthVariables }>();
 const ADMIN_EMAIL_ALLOWLIST = new Set(["rengarro@gmail.com"]);

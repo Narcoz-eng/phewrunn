@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { prisma } from "../prisma";
-import { type AuthVariables, requireAuth } from "../auth";
-import { NotificationsQuerySchema } from "../types";
+import { prisma } from "../prisma.js";
+import { type AuthVariables, requireAuth } from "../auth.js";
+import { NotificationsQuerySchema } from "../types.js";
 
 export const notificationsRouter = new Hono<{ Variables: AuthVariables }>();
 

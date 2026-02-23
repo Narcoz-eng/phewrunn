@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { prisma } from "../prisma";
-import { type AuthVariables } from "../auth";
+import { prisma } from "../prisma.js";
+import { type AuthVariables } from "../auth.js";
 import {
   LeaderboardQuerySchema,
   MIN_LEVEL,
   MAX_LEVEL,
-} from "../types";
+} from "../types.js";
 
 export const leaderboardRouter = new Hono<{ Variables: AuthVariables }>();
 

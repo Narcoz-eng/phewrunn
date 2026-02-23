@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { prisma } from "../prisma";
-import { type AuthVariables, requireAuth } from "../auth";
+import { prisma } from "../prisma.js";
+import { type AuthVariables, requireAuth } from "../auth.js";
 import {
   CreatePostSchema,
   CreateCommentSchema,
@@ -20,7 +20,7 @@ import {
   DAILY_REPOST_LIMIT,
   SETTLEMENT_1H_MS,
   SETTLEMENT_6H_MS,
-} from "../types";
+} from "../types.js";
 import {
   fetchMarketCap as fetchMarketCapService,
   needsMcapUpdate,
@@ -30,7 +30,7 @@ import {
   TRACKING_MODE_ACTIVE,
   TRACKING_MODE_SETTLED,
   type MarketCapResult,
-} from "../services/marketcap";
+} from "../services/marketcap.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 

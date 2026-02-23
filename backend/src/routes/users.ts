@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { prisma } from "../prisma";
-import { type AuthVariables, requireAuth } from "../auth";
-import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types";
+import { prisma } from "../prisma.js";
+import { type AuthVariables, requireAuth } from "../auth.js";
+import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
 
 export const usersRouter = new Hono<{ Variables: AuthVariables }>();
 

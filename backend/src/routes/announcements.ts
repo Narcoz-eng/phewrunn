@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { prisma } from "../prisma";
-import { type AuthVariables, requireAuth } from "../auth";
-import { type Announcement } from "../types";
+import { prisma } from "../prisma.js";
+import { type AuthVariables, requireAuth } from "../auth.js";
+import { type Announcement } from "../types.js";
 
 // Public announcement routes for feed display and view tracking
 export const announcementsRouter = new Hono<{ Variables: AuthVariables }>();
