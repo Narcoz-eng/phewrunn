@@ -316,7 +316,7 @@ app.post("/api/auth/wallet", async (c) => {
     // Set session cookie
     const isProduction = process.env.NODE_ENV === "production";
     const cookieOptions = [
-      `better-auth.session_token=${sessionToken}`,
+      `phew.session_token=${sessionToken}`,
       `Path=/`,
       `HttpOnly`,
       `SameSite=Lax`,
@@ -504,7 +504,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     // Also set a session cookie for cookie-based auth
     const isProd = process.env.NODE_ENV === "production";
     const cookieOptions = [
-      `better-auth.session_token=${sessionToken}`,
+      `phew.session_token=${sessionToken}`,
       "Path=/",
       "HttpOnly",
       "SameSite=Lax",
@@ -533,13 +533,26 @@ app.post("/api/auth/privy-sync", async (c) => {
 });
 
 // =====================================================
-// Better Auth Routes
+// Privy Session Auth Routes
 // =====================================================
 
-// Mount Better Auth handler at /api/auth/*
-// This handles: sign-up, sign-in, sign-out, session, etc.
-app.on(["GET", "POST"], "/api/auth/*", (c) => {
-  return auth.handler(c.req.raw);
+// Sign out and clear server-side session/cookie.
+app.post("/api/auth/logout", async (c) => {
+  try {
+    const result = await auth.api.signOut({ headers: c.req.raw.headers });
+
+    result.clearedCookies.forEach((cookie, index) => {
+      c.header("Set-Cookie", cookie, index === 0 ? undefined : { append: true });
+    });
+
+    return c.json({ data: { success: true } });
+  } catch (error) {
+    console.error("[auth/logout] Error:", error);
+    return c.json(
+      { error: { message: "Failed to sign out", code: "INTERNAL_ERROR" } },
+      500
+    );
+  }
 });
 
 // =====================================================

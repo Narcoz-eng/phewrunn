@@ -1,163 +1,148 @@
-import { betterAuth } from "better-auth";
-import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "../prisma.js";
 
-const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
-const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+type SessionRecord = {
+  session: {
+    id: string;
+    userId: string;
+    token: string;
+    expiresAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    emailVerified: boolean;
+    image: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    walletAddress: string | null;
+    walletProvider: string | null;
+    walletConnectedAt: Date | null;
+    username: string | null;
+    level: number;
+    xp: number;
+    bio: string | null;
+    isAdmin: boolean;
+    isBanned: boolean;
+    isVerified: boolean;
+    lastUsernameUpdate: Date | null;
+    lastPhotoUpdate: Date | null;
+  };
+};
 
-if (!googleClientId || !googleClientSecret) {
-  console.warn("[Auth] Google OAuth env vars are missing; Google sign-in is disabled.");
+function getCookieValue(cookieHeader: string | null | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rest] = part.trim().split("=");
+    if (rawKey !== name) continue;
+    const value = rest.join("=");
+    if (!value) return null;
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return null;
 }
 
-/**
- * Better Auth configuration
- *
- * This replaces Privy authentication with Better Auth's email/password flow.
- * Better Auth handles sessions automatically via cookies.
- */
-export const auth = betterAuth({
-  database: prismaAdapter(prisma, {
-    provider: "postgresql",
-  }),
+function getSessionTokenFromHeaders(headers: Headers): string | null {
+  const cookieHeader = headers.get("cookie");
+  return (
+    getCookieValue(cookieHeader, "phew.session_token") ??
+    getCookieValue(cookieHeader, "better-auth.session_token") ??
+    getCookieValue(cookieHeader, "auth.session_token")
+  );
+}
 
-  // Base URL for OAuth callbacks - use frontend URL for proper redirects
-  baseURL: process.env.BACKEND_URL || "http://localhost:3000",
+async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
+  if (!token) return null;
 
-  // Email and password authentication
-  emailAndPassword: {
-    enabled: true,
-    // Require email verification before login
-    requireEmailVerification: false,
-    // Password requirements
-    minPasswordLength: 8,
-    // Password reset configuration
-    sendResetPassword: async ({ user, url }) => {
-      // Log the reset link for development
-      // In production, integrate with an email service (Resend, SendGrid, etc.)
-      console.log(`[Auth] Password reset requested for ${user.email}`);
-      console.log(`[Auth] Reset URL: ${url}`);
-      // TODO: Send email with reset link
-      // await sendEmail({
-      //   to: user.email,
-      //   subject: "Reset your password",
-      //   html: `Click <a href="${url}">here</a> to reset your password.`,
-      // });
+  const dbSession = await prisma.session.findFirst({
+    where: {
+      token,
+      expiresAt: { gt: new Date() },
     },
-  },
+    include: { user: true },
+  });
 
-  // Social providers - Google OAuth (optional in environments where Google keys are not set)
-  ...(googleClientId && googleClientSecret
-    ? {
-        socialProviders: {
-          google: {
-            clientId: googleClientId,
-            clientSecret: googleClientSecret,
-            // Force account selection on each login
-            prompt: "select_account",
-            // Redirect URI must match what's configured in Google Cloud Console
-            redirectURI: `${process.env.BACKEND_URL || "http://localhost:3000"}/api/auth/callback/google`,
-          },
-        },
+  if (!dbSession?.user) return null;
+
+  return {
+    session: {
+      id: dbSession.id,
+      userId: dbSession.userId,
+      token: dbSession.token,
+      expiresAt: dbSession.expiresAt,
+      createdAt: dbSession.createdAt,
+      updatedAt: dbSession.updatedAt,
+    },
+    user: dbSession.user as SessionRecord["user"],
+  };
+}
+
+function buildExpiredCookie(name: string): string {
+  const isProd = process.env.NODE_ENV === "production";
+  return [
+    `${name}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+    isProd ? "Secure" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+export const auth = {
+  api: {
+    getSession: async ({ headers }: { headers: Headers }): Promise<SessionRecord | null> => {
+      const token = getSessionTokenFromHeaders(headers);
+      return getSessionFromToken(token);
+    },
+
+    signOut: async ({ headers }: { headers: Headers }) => {
+      const cookieToken = getSessionTokenFromHeaders(headers);
+      const authHeader = headers.get("authorization");
+      const bearerToken =
+        authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+      const tokens = [...new Set([cookieToken, bearerToken].filter(Boolean) as string[])];
+
+      if (tokens.length > 0) {
+        await prisma.session.deleteMany({
+          where: { token: { in: tokens } },
+        });
       }
-    : {}),
 
-  // Session configuration
-  session: {
-    // Cookie-based sessions
-    cookieCache: {
-      enabled: true,
-      maxAge: 5 * 60, // 5 minutes cache
-    },
-    expiresIn: 60 * 60 * 24 * 7, // 7 days
-    updateAge: 60 * 60 * 24, // Update session every 24 hours
-  },
-
-  // Trusted origins for CORS - Better Auth validates these for OAuth callbacks
-  // List all allowed origins explicitly - also support wildcards
-  trustedOrigins: [
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:8000",
-    "https://preview-vzniiddqqxtf.dev.vibecode.run",
-    "https://qkopfoiaakof.dev.vibecode.run",
-    "https://phew.vibecode.run",
-    "https://phew.run",
-    "https://www.phew.run",
-    // Wildcard patterns for Vibecode domains
-    "https://*.dev.vibecode.run",
-    "https://*.vibecode.run",
-    "https://*.vibecodeapp.com",
-  ],
-
-  // Advanced options
-  advanced: {
-    // Use less restrictive cookie settings for development
-    cookiePrefix: "auth",
-    useSecureCookies: process.env.NODE_ENV === "production",
-  },
-
-  // User configuration - map to existing User model
-  user: {
-    // Additional fields to store on user
-    additionalFields: {
-      walletAddress: {
-        type: "string",
-        required: false,
-      },
-      walletProvider: {
-        type: "string",
-        required: false,
-      },
-      walletConnectedAt: {
-        type: "date",
-        required: false,
-      },
-      username: {
-        type: "string",
-        required: false,
-      },
-      level: {
-        type: "number",
-        required: false,
-        defaultValue: 0,
-      },
-      xp: {
-        type: "number",
-        required: false,
-        defaultValue: 0,
-      },
-      bio: {
-        type: "string",
-        required: false,
-      },
-      isAdmin: {
-        type: "boolean",
-        required: false,
-        defaultValue: false,
-      },
-      isBanned: {
-        type: "boolean",
-        required: false,
-        defaultValue: false,
-      },
-      isVerified: {
-        type: "boolean",
-        required: false,
-        defaultValue: false,
-      },
-      lastUsernameUpdate: {
-        type: "date",
-        required: false,
-      },
-      lastPhotoUpdate: {
-        type: "date",
-        required: false,
-      },
+      return {
+        clearedCookies: [
+          buildExpiredCookie("phew.session_token"),
+          buildExpiredCookie("better-auth.session_token"),
+          buildExpiredCookie("auth.session_token"),
+        ],
+      };
     },
   },
-});
 
-// Export auth types
-export type Session = typeof auth.$Infer.Session.session;
-export type User = typeof auth.$Infer.Session.user;
+  // Legacy compatibility for routes still expecting an auth handler.
+  handler: async () =>
+    new Response(
+      JSON.stringify({
+        error: { message: "Email/password auth is disabled. Use Privy sign-in.", code: "UNSUPPORTED_AUTH" },
+      }),
+      {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      }
+    ),
+};
+
+export type Session = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["session"];
+export type User = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["user"];
+

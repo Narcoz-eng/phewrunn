@@ -1,4 +1,3 @@
-import { createAuthClient } from "better-auth/react";
 import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
 
@@ -35,20 +34,29 @@ const getBaseUrl = () => {
 const baseURL = getBaseUrl();
 console.log("[Auth] Using backend URL:", baseURL);
 
-// Create the Better Auth client
-// Better Auth expects baseURL to be the server root, it appends /api/auth/* itself
-export const authClient = createAuthClient({
-  baseURL,
-  basePath: "/api/auth", // Explicitly set the auth path
-  fetchOptions: {
+// Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
+export async function signIn() {
+  throw new Error("Email/password auth has been removed. Use Privy sign-in.");
+}
+
+export async function signUp() {
+  throw new Error("Email/password auth has been removed. Use Privy sign-in.");
+}
+
+export async function signOut() {
+  const token = localStorage.getItem("auth-token");
+  await fetch(`${baseURL}/api/auth/logout`, {
+    method: "POST",
     credentials: "include",
-  },
-});
-
-console.log("[Auth] Better Auth client initialized with baseURL:", baseURL);
-
-// Export auth functions from client
-export const { signIn, signUp, signOut } = authClient;
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  }).catch((error) => {
+    // We still clear local state/tokens in callers, but log the server-side logout failure.
+    console.error("[Auth] signOut request failed:", error);
+  });
+}
 
 // Auth user interface
 export interface AuthUser {
