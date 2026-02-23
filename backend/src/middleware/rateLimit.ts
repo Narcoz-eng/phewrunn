@@ -24,6 +24,12 @@ interface RateLimitEntry {
   resetTime: number;
 }
 
+const SESSION_COOKIE_NAMES = [
+  "phew.session_token",
+  "better-auth.session_token",
+  "auth.session_token",
+] as const;
+
 // In-memory store for rate limits
 // TODO: Replace with Redis for production multi-instance deployment
 const rateLimitStore = new Map<string, RateLimitEntry>();
@@ -76,25 +82,74 @@ export function clearRateLimitStore(): void {
  * Get client identifier from request
  * Uses X-Forwarded-For for proxied requests, falls back to connection info
  */
-function getClientKey(c: Context): string {
-  // Try X-Forwarded-For first (for proxied requests)
-  const forwarded = c.req.header("x-forwarded-for");
-  if (forwarded) {
-    // Take the first IP in the chain (original client)
-    const parts = forwarded.split(",");
-    const firstPart = parts[0];
-    if (firstPart) {
-      const clientIp = firstPart.trim();
-      if (clientIp) return clientIp;
+function parseFirstForwardedIp(value: string | undefined): string | null {
+  if (!value) return null;
+  const first = value.split(",")[0]?.trim();
+  return first || null;
+}
+
+function parseRfcForwardedFor(value: string | undefined): string | null {
+  if (!value) return null;
+  const match = value.match(/for="?([^;,\s"]+)"?/i);
+  if (!match?.[1]) return null;
+  const ip = match[1].replace(/^\[|\]$/g, "");
+  return ip || null;
+}
+
+function getCookieValue(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rest] = part.trim().split("=");
+    if (rawKey !== name) continue;
+    const rawValue = rest.join("=");
+    if (!rawValue) return null;
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
     }
   }
 
-  // Try X-Real-IP (nginx)
-  const realIp = c.req.header("x-real-ip");
-  if (realIp) return realIp;
+  return null;
+}
 
-  // Fall back to "unknown" - in production, consider blocking these
-  return "unknown";
+function getSessionFingerprint(c: Context): string | null {
+  const authHeader = c.req.header("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token) return `bearer:${token.slice(0, 24)}`;
+  }
+
+  const cookieHeader = c.req.header("cookie");
+  for (const name of SESSION_COOKIE_NAMES) {
+    const token = getCookieValue(cookieHeader, name);
+    if (token) return `cookie:${token.slice(0, 24)}`;
+  }
+
+  return null;
+}
+
+function getClientKey(c: Context): string {
+  // Prefer proxy/client IP headers set by Vercel/CDNs
+  const ip =
+    parseFirstForwardedIp(c.req.header("x-forwarded-for")) ??
+    parseFirstForwardedIp(c.req.header("x-vercel-forwarded-for")) ??
+    parseFirstForwardedIp(c.req.header("cf-connecting-ip")) ??
+    parseFirstForwardedIp(c.req.header("x-real-ip")) ??
+    parseRfcForwardedFor(c.req.header("forwarded"));
+
+  if (ip) return `ip:${ip}`;
+
+  // Fall back to a session/token-based fingerprint so all clients do not share "unknown"
+  const sessionFingerprint = getSessionFingerprint(c);
+  if (sessionFingerprint) return sessionFingerprint;
+
+  // Last resort: low-cardinality but better than a single global bucket
+  const host = c.req.header("host") ?? "unknown-host";
+  const origin = c.req.header("origin") ?? c.req.header("referer") ?? "unknown-origin";
+  const userAgent = c.req.header("user-agent") ?? "unknown-ua";
+  return `fallback:${host}|${origin.slice(0, 120)}|${userAgent.slice(0, 120)}`;
 }
 
 /**
@@ -109,6 +164,11 @@ export function rateLimit(config: RateLimitConfig) {
   } = config;
 
   return async (c: Context, next: Next) => {
+    // Do not count CORS preflight requests toward application limits.
+    if (c.req.method === "OPTIONS") {
+      return next();
+    }
+
     const key = keyGenerator(c);
     const now = Date.now();
 
@@ -139,6 +199,14 @@ export function rateLimit(config: RateLimitConfig) {
     // Check if limit exceeded
     if (entry.count > max) {
       c.header("Retry-After", String(resetSeconds));
+      console.warn("[RateLimit] Exceeded", {
+        method: c.req.method,
+        path: c.req.path,
+        key,
+        count: entry.count,
+        max,
+        windowMs,
+      });
 
       return c.json(
         {
@@ -165,11 +233,11 @@ export function userAwareRateLimit(config: RateLimitConfig) {
     ...config,
     keyGenerator: (c: Context) => {
       const user = c.get("user") as { id: string } | null;
-      const ip = getClientKey(c);
+      const clientKey = getClientKey(c);
 
       // Authenticated users get their own bucket (typically more lenient)
-      // Anonymous users share the IP bucket (more restrictive)
-      return user ? `user:${user.id}` : `ip:${ip}`;
+      // Anonymous users fall back to the client fingerprint key
+      return user ? `user:${user.id}` : clientKey;
     },
   });
 }
