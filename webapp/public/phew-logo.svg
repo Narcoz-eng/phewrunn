@@ -1,35 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 320" fill="none">
   <defs>
-    <linearGradient id="brandStroke" x1="32" y1="150" x2="230" y2="36" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7BFF5C"/>
-      <stop offset="1" stop-color="#08DBFF"/>
+    <radialGradient id="heroGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(410 142) rotate(90) scale(165 215)">
+      <stop offset="0" stop-color="#89FF46" stop-opacity=".95"/>
+      <stop offset=".52" stop-color="#39EAD7" stop-opacity=".58"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="runnerStroke" x1="290" y1="190" x2="520" y2="68" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7DFF4A"/>
+      <stop offset="1" stop-color="#10DDF1"/>
     </linearGradient>
-    <linearGradient id="brandText" x1="250" y1="86" x2="470" y2="186" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#74FF58"/>
-      <stop offset="1" stop-color="#35E3D1"/>
-    </linearGradient>
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="4" result="blur"/>
-      <feColorMatrix in="blur" type="matrix"
-        values="1 0 0 0 0
-                0 1 0 0 0
-                0 0 1 0 0
-                0 0 0 .35 0" />
-    </filter>
   </defs>
 
-  <g filter="url(#glow)">
-    <path d="M44 116h36c8 0 14-2 19-8l17-18c4-4 8-6 14-6h58" stroke="url(#brandStroke)" stroke-width="10" stroke-linecap="round"/>
-    <path d="M84 130L108 52h31c16 0 20 16 10 23l-10 7 26 38" stroke="url(#brandStroke)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M150 46l12-14m44 20l12-14" stroke="#10E4EA" stroke-width="6" stroke-linecap="round"/>
-    <circle cx="168" cy="30" r="7.5" fill="#77FF63"/>
-    <circle cx="213" cy="30" r="7.5" fill="#10E4EA"/>
-    <path d="M34 84h16m-10 12h20m140 28h18m-12 12h24" stroke="rgba(16,228,234,0.5)" stroke-width="4" stroke-linecap="round"/>
+  <rect width="920" height="320" fill="transparent"/>
+  <ellipse cx="414" cy="146" rx="185" ry="132" fill="url(#heroGlow)"/>
+
+  <g opacity=".5" stroke="#35E8D6" stroke-width="3" stroke-linecap="round">
+    <path d="M308 108h20"/>
+    <path d="M294 122h34"/>
+    <path d="M512 202h28"/>
+    <path d="M526 216h34"/>
   </g>
 
-  <text x="252" y="144" font-family="Inter,Arial,sans-serif" font-weight="800" font-size="76" fill="url(#brandText)">Phew</text>
-  <text x="456" y="144" font-family="Inter,Arial,sans-serif" font-weight="800" font-size="76" fill="#F5F7FB">.run</text>
-  <text x="255" y="182" font-family="Inter,Arial,sans-serif" font-weight="500" font-size="24" fill="rgba(245,247,251,0.86)" letter-spacing=".08em">
+  <g stroke="url(#runnerStroke)" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="395" cy="66" r="13" fill="none" stroke-width="2.6"/>
+    <circle cx="463" cy="66" r="13" fill="none" stroke-width="2.6"/>
+    <path d="M356 96l28-26h35l-22 29" stroke-width="9.5"/>
+    <path d="M385 103l-35 76 45-39" stroke-width="10.5"/>
+    <path d="M397 109l38 5-20 25" stroke-width="8.2"/>
+    <path d="M427 81l19 24" stroke-width="7"/>
+    <path d="M441 111l38 66" stroke-width="10.5"/>
+    <path d="M411 149l44 6" stroke-width="7.5"/>
+    <path d="M395 150l-8 39" stroke-width="6"/>
+  </g>
+
+  <text x="256" y="248" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="88" font-weight="800" fill="#59E22C" stroke="#0B1012" stroke-opacity=".28" stroke-width="2">
+    Phew
+  </text>
+  <text x="462" y="248" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="88" font-weight="800" fill="#0D1116" stroke="#FFFFFF" stroke-opacity=".08" stroke-width="1.5">
+    .run
+  </text>
+  <text x="274" y="286" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="29" font-weight="500" letter-spacing="0.08em" fill="#0D1116">
     A PHEW RUNNING THE INTERNET
   </text>
 </svg>
