@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, BookOpen, FileText, Scale, Shield, Zap } from "lucide-react";
+import { ArrowLeft, BookOpen, FileText, Scale, Shield } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BrandLogo } from "@/components/BrandLogo";
 import { cn } from "@/lib/utils";
 
 interface TocItem {
@@ -110,12 +111,11 @@ export function LegalPageLayout({
               Back
             </Link>
             <Link to="/login" className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-                <Zap className="w-4 h-4 text-primary" />
-              </div>
-              <div className="leading-tight min-w-0">
-                <div className="text-sm font-semibold tracking-tight truncate">Phew.run</div>
-                <div className="text-[11px] text-muted-foreground">{meta.label}</div>
+              <BrandLogo size="sm" showTagline className="shrink-0" />
+              <div className="hidden sm:flex items-center">
+                <span className="ml-1 rounded-full border border-border/50 bg-background/40 px-2.5 py-1 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                  {meta.label}
+                </span>
               </div>
             </Link>
           </div>

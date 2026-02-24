@@ -43,9 +43,9 @@ export function BrandLogo({
           alt="Phew.run"
           className={cn(
             "w-auto object-contain drop-shadow-[0_8px_24px_rgba(0,0,0,0.42)]",
-            size === "sm" && "h-7 sm:h-8",
-            size === "md" && "h-9",
-            size === "lg" && "h-11"
+            size === "sm" && "h-10 sm:h-11",
+            size === "md" && "h-12",
+            size === "lg" && "h-14"
           )}
         />
       </div>
