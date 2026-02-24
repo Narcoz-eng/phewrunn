@@ -338,19 +338,8 @@ export default function Feed() {
 
   // Comment mutation
   const commentMutation = useMutation({
-    mutationFn: async ({
-      postId,
-      content,
-      parentCommentId,
-    }: {
-      postId: string;
-      content: string;
-      parentCommentId?: string | null;
-    }) => {
-      await api.post(`/api/posts/${postId}/comments`, {
-        content,
-        ...(parentCommentId ? { parentCommentId } : {}),
-      });
+    mutationFn: async ({ postId, content }: { postId: string; content: string }) => {
+      await api.post(`/api/posts/${postId}/comments`, { content });
       return { postId };
     },
     onSuccess: ({ postId }) => {
@@ -401,8 +390,8 @@ export default function Feed() {
     }
   };
 
-  const handleComment = async (postId: string, content: string, parentCommentId?: string | null) => {
-    await commentMutation.mutateAsync({ postId, content, parentCommentId });
+  const handleComment = async (postId: string, content: string) => {
+    await commentMutation.mutateAsync({ postId, content });
   };
 
   const handleTabChange = (tab: FeedTab) => {

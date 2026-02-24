@@ -41,10 +41,6 @@ export interface Comment {
   authorId: string;
   author: PostAuthor;
   postId: string;
-  parentCommentId?: string | null;
-  likeCount?: number;
-  replyCount?: number;
-  isLiked?: boolean;
   createdAt: string;
 }
 

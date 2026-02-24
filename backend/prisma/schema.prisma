@@ -45,7 +45,6 @@ model User {
   following     Follow[]  @relation("Followers") // users this user follows
   likes         Like[]
   comments      Comment[]
-  commentLikes  CommentLike[]
   reposts       Repost[]
   notifications Notification[] @relation("UserNotifications") // notifications received
   notificationsSent Notification[] @relation("NotificationsFrom") // notifications triggered
@@ -186,31 +185,11 @@ model Comment {
   content   String
   authorId  String
   postId    String
-  parentCommentId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  parentComment Comment? @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
-  replies   Comment[] @relation("CommentReplies")
-  likes     CommentLike[]
-
-  @@index([postId, createdAt])
-  @@index([parentCommentId, createdAt])
-}
-
-model CommentLike {
-  id        String   @id @default(cuid())
-  userId    String
-  commentId String
-  createdAt DateTime @default(now())
-
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, commentId])
-  @@index([commentId, createdAt])
 }
 
 // Repost model for sharing posts
