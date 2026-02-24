@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 type BrandLogoSize = "sm" | "md" | "lg";
-const EXACT_LOGO_IMAGE_SRC = "/mnt/data/13afe668-ecf5-4567-b9da-c08a4a0327ed.png";
+const EXACT_LOGO_IMAGE_SRC = "https://i.imgur.com/yDZerPC.png";
 
 interface BrandLogoProps {
   size?: BrandLogoSize;
