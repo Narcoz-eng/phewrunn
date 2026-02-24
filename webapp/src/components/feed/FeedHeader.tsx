@@ -47,7 +47,14 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
       return response;
     },
     enabled: !!user,
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 30000;
+    },
     staleTime: 15000,
   });
 

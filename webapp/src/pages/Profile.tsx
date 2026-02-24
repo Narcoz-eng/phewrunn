@@ -47,6 +47,7 @@ import {
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -58,6 +59,8 @@ interface ExtendedUser extends User {
 
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
+const PROFILE_ME_CACHE_TTL_MS = 60_000;
+const PROFILE_POSTS_CACHE_TTL_MS = 45_000;
 
 const AVATAR_CROP_BOX_SIZE = 280;
 const AVATAR_CROP_OUTPUT_SIZE = 512;
@@ -117,22 +120,45 @@ export default function Profile() {
 
   const cropRenderScale = cropBaseScale * cropZoom;
 
+  const meProfileCacheKey = session?.user?.id ? `phew.profile.me:${session.user.id}` : null;
+  const cachedProfile = useMemo(
+    () => (meProfileCacheKey ? readSessionCache<ExtendedUser>(meProfileCacheKey, PROFILE_ME_CACHE_TTL_MS) : null),
+    [meProfileCacheKey]
+  );
+  const cachedPosts = useMemo(
+    () =>
+      session?.user?.id
+        ? readSessionCache<Post[]>(`phew.profile.posts:${session.user.id}`, PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [session?.user?.id]
+  );
+  const cachedReposts = useMemo(
+    () =>
+      session?.user?.id
+        ? readSessionCache<Post[]>(`phew.profile.reposts:${session.user.id}`, PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [session?.user?.id]
+  );
+
   // Fetch user data with React Query
   const {
     data: user,
     isLoading: isLoadingUser,
     error: userError,
     refetch: refetchUser,
+    isFetched: isUserFetched,
   } = useQuery({
     queryKey: ["profile", "me"],
     queryFn: async () => {
       const userData = await api.get<ExtendedUser>("/api/me");
       return userData;
     },
+    initialData: cachedProfile ?? undefined,
     enabled: !!session?.user,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   });
 
@@ -148,6 +174,7 @@ export default function Profile() {
   const {
     data: posts = [],
     isLoading: isLoadingPosts,
+    isFetched: isPostsFetched,
   } = useQuery({
     queryKey: ["profile", "posts", user?.id],
     queryFn: async () => {
@@ -155,10 +182,12 @@ export default function Profile() {
       const postsData = await api.get<Post[]>(`/api/users/${user.id}/posts`);
       return postsData;
     },
+    initialData: user?.id ? (cachedPosts ?? undefined) : undefined,
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   });
 
@@ -166,6 +195,7 @@ export default function Profile() {
   const {
     data: reposts = [],
     isLoading: isLoadingReposts,
+    isFetched: isRepostsFetched,
   } = useQuery({
     queryKey: ["profile", "reposts", user?.id],
     queryFn: async () => {
@@ -173,12 +203,29 @@ export default function Profile() {
       const repostsData = await api.get<Post[]>(`/api/users/${user.id}/reposts`);
       return repostsData;
     },
+    initialData: user?.id ? (cachedReposts ?? undefined) : undefined,
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   });
+
+  useEffect(() => {
+    if (!meProfileCacheKey || !user || !isUserFetched) return;
+    writeSessionCache(meProfileCacheKey, user);
+  }, [isUserFetched, meProfileCacheKey, user]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !isPostsFetched) return;
+    writeSessionCache(`phew.profile.posts:${session.user.id}`, posts);
+  }, [isPostsFetched, posts, session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !isRepostsFetched) return;
+    writeSessionCache(`phew.profile.reposts:${session.user.id}`, reposts);
+  }, [isRepostsFetched, reposts, session?.user?.id]);
 
   // Mutation for updating profile
   const updateProfileMutation = useMutation({

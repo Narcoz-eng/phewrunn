@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -7,6 +8,10 @@ import { Bell, CheckCheck, ArrowLeft, BellOff } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
 import { AnimatePresence, motion } from "framer-motion";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+
+const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
+const NOTIFICATIONS_CACHE_TTL_MS = 45_000;
 
 function EmptyState() {
   return (
@@ -27,6 +32,10 @@ function EmptyState() {
 export default function Notifications() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const cachedNotifications = useMemo(
+    () => readSessionCache<Notification[]>(NOTIFICATIONS_CACHE_KEY, NOTIFICATIONS_CACHE_TTL_MS),
+    []
+  );
 
   // Fetch notifications
   const {
@@ -34,15 +43,29 @@ export default function Notifications() {
     isLoading,
     error,
     refetch,
+    isFetched,
   } = useQuery({
     queryKey: ["notifications"],
     queryFn: async () => {
       const data = await api.get<Notification[]>("/api/notifications");
       return data;
     },
+    initialData: cachedNotifications ?? undefined,
     staleTime: 30000,
-    refetchInterval: 60000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 60000;
+    },
   });
+
+  useEffect(() => {
+    if (!isFetched) return;
+    writeSessionCache(NOTIFICATIONS_CACHE_KEY, notifications);
+  }, [isFetched, notifications]);
 
   // Mark notification as clicked (read)
   const markClickedMutation = useMutation({

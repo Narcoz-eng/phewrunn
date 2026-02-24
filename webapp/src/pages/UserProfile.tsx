@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
@@ -34,6 +34,7 @@ import {
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 
 interface UserProfileData {
   id: string;
@@ -65,6 +66,8 @@ interface UserProfileData {
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
 type FollowMutationResponse = { following: boolean; followerCount: number };
+const USER_PROFILE_CACHE_TTL_MS = 60_000;
+const USER_PROFILE_POSTS_CACHE_TTL_MS = 45_000;
 
 export default function UserProfile() {
   const navigate = useNavigate();
@@ -74,52 +77,103 @@ export default function UserProfile() {
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [walletCopied, setWalletCopied] = useState(false);
+  const cachedUserProfile = useMemo(
+    () =>
+      userId
+        ? readSessionCache<UserProfileData>(`phew.user-profile:${userId}`, USER_PROFILE_CACHE_TTL_MS)
+        : null,
+    [userId]
+  );
+  const cachedUserPosts = useMemo(
+    () =>
+      userId
+        ? readSessionCache<Post[]>(`phew.user-posts:${userId}`, USER_PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [userId]
+  );
+  const cachedUserReposts = useMemo(
+    () =>
+      userId
+        ? readSessionCache<Post[]>(`phew.user-reposts:${userId}`, USER_PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [userId]
+  );
 
   // Fetch user profile
   const {
     data: user,
     isLoading: isLoadingUser,
     error: userError,
+    isFetched: isUserFetched,
   } = useQuery({
     queryKey: ["userProfile", userId],
     queryFn: async () => {
       const data = await api.get<UserProfileData>(`/api/users/${userId}`);
       return data;
     },
+    initialData: cachedUserProfile ?? undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
   });
 
   // Fetch user posts
   const {
     data: posts = [],
     isLoading: isLoadingPosts,
+    isFetched: isPostsFetched,
   } = useQuery({
     queryKey: ["userPosts", userId],
     queryFn: async () => {
       const data = await api.get<Post[]>(`/api/users/${userId}/posts`);
       return data;
     },
+    initialData: cachedUserPosts ?? undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
   });
 
   // Fetch user reposts
   const {
     data: reposts = [],
     isLoading: isLoadingReposts,
+    isFetched: isRepostsFetched,
   } = useQuery({
     queryKey: ["userReposts", userId],
     queryFn: async () => {
       const data = await api.get<Post[]>(`/api/users/${userId}/reposts`);
       return data;
     },
+    initialData: cachedUserReposts ?? undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
   });
+
+  useEffect(() => {
+    if (!userId || !user || !isUserFetched) return;
+    writeSessionCache(`phew.user-profile:${userId}`, user);
+  }, [isUserFetched, user, userId]);
+
+  useEffect(() => {
+    if (!userId || !isPostsFetched) return;
+    writeSessionCache(`phew.user-posts:${userId}`, posts);
+  }, [isPostsFetched, posts, userId]);
+
+  useEffect(() => {
+    if (!userId || !isRepostsFetched) return;
+    writeSessionCache(`phew.user-reposts:${userId}`, reposts);
+  }, [isRepostsFetched, reposts, userId]);
 
   // Follow mutation
   const followMutation = useMutation({
