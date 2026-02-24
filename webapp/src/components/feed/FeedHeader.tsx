@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BrandLogo } from "@/components/BrandLogo";
 import { User, getAvatarUrl } from "@/types";
 import { api } from "@/lib/api";
 import { LevelBadge } from "./LevelBar";
@@ -67,7 +68,7 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
       {/* Top Row - Branding & Actions */}
       <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
         {/* Branding - Clean and minimal */}
-        <span className="font-bold text-lg tracking-tight">Phew.run</span>
+        <BrandLogo size="sm" className="gap-2.5" />
 
         {/* Actions */}
         <div className="flex items-center gap-2">

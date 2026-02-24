@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BrandLogo } from "@/components/BrandLogo";
 import { LevelBar } from "@/components/feed/LevelBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +16,6 @@ import {
   Target,
   TrendingUp,
   Users,
-  Zap,
 } from "lucide-react";
 import { AccuracyScoreCard } from "@/components/AccuracyScoreCard";
 import { cn } from "@/lib/utils";
@@ -163,15 +163,7 @@ export default function Login() {
 
       <header className={cn("fixed top-0 left-0 right-0 z-50 transition-all duration-500", isLoaded ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4")}>
         <div className="max-w-7xl mx-auto px-5 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]">
-              <Zap className="w-4 h-4 text-primary" />
-            </div>
-            <div className="leading-tight">
-              <div className="font-semibold text-sm tracking-tight">Phew.run</div>
-              <div className="text-[11px] text-muted-foreground">Proof over noise</div>
-            </div>
-          </div>
+          <BrandLogo size="sm" showTagline />
           <ThemeToggle size="icon" className="h-9 w-9" />
         </div>
       </header>
@@ -375,12 +367,7 @@ export default function Login() {
 
       <footer className="relative z-10 border-t border-border/50 py-8">
         <div className="max-w-7xl mx-auto px-5 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <Zap className="w-4 h-4 text-primary" />
-            <span>Phew.run</span>
-            <span className="text-muted-foreground/50">|</span>
-            <span>Proof over noise</span>
-          </div>
+          <BrandLogo size="sm" showTagline className="text-sm" />
           <div className="flex items-center gap-6 text-sm text-muted-foreground">
             <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
             <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
