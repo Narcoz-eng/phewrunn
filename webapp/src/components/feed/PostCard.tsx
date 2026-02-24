@@ -5,6 +5,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { LevelBadge, LevelBar } from "./LevelBar";
 import { RepostersDialog } from "./RepostersDialog";
 import { SharedAlphaDialog } from "./SharedAlphaDialog";
@@ -76,6 +84,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [commentCount, setCommentCount] = useState(post._count?.comments ?? 0);
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
+  const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
 
   // Sync follow state when post data changes
   useEffect(() => {
@@ -245,6 +254,37 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const isGain = percentChange !== null && percentChange > 0;
   const isLoss = percentChange !== null && percentChange < 0;
   const hasContractAddress = post.contractAddress !== null;
+  const winCardProfitLossValue =
+    post.entryMcap !== null && officialMcap !== null ? officialMcap - post.entryMcap : null;
+  const winCardSettledWin = localSettled && localIsWin === true;
+  const winCardSettledLoss = localSettled && localIsWin === false;
+  const winCardAccentClass =
+    winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
+      ? "text-gain"
+      : winCardSettledLoss
+        ? "text-loss"
+        : "text-muted-foreground";
+  const winCardResultLabel = localSettled ? (winCardSettledWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD";
+  const winCardResultText =
+    percentChange !== null ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%` : "N/A";
+  const winCardProfitLabel =
+    winCardProfitLossValue === null
+      ? "Total P/L"
+      : winCardProfitLossValue >= 0
+        ? "Total Profit"
+        : "Total Loss";
+  const winCardProfitText =
+    winCardProfitLossValue === null
+      ? "N/A"
+      : `${winCardProfitLossValue >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(winCardProfitLossValue))}`;
+  const winCardTokenPrimary = post.tokenSymbol || post.tokenName || "TOKEN";
+  const winCardTokenSecondary =
+    post.tokenName && post.tokenSymbol
+      ? post.tokenName
+      : post.contractAddress
+        ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}`
+        : "No contract";
+  const winCardPostPreview = (stripContractAddress(post.content) || post.content || "No description").slice(0, 220);
 
   // Calculate multiplier displays for each mcap field
   const multiplierLive = formatMultiplier(post.entryMcap, currentMcap);
@@ -315,6 +355,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setCopied(true);
     toast.success("Link copied to clipboard");
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleOpenWinCardPreview = () => {
+    setIsWinCardPreviewOpen(true);
   };
 
   const handleDownloadWinCard = async () => {
@@ -1235,20 +1279,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               {copied ? <Check className="h-4 w-4 text-gain" /> : <Share className="h-4 w-4" />}
             </Button>
 
-            {/* Wincard / Result card download */}
+            {/* Wincard / Result card preview */}
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleDownloadWinCard}
-              disabled={isWinCardDownloading}
+              onClick={handleOpenWinCardPreview}
               className="h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
-              title="Download shareable win card"
+              title="Preview shareable win card"
             >
-              {isWinCardDownloading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
+              <Download className="h-4 w-4" />
             </Button>
           </div>
 
@@ -1367,6 +1406,154 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           )}
         </AnimatePresence>
       </div>
+
+      <Dialog open={isWinCardPreviewOpen} onOpenChange={setIsWinCardPreviewOpen}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden border-border/60 bg-background/95">
+          <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-border/50">
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Download className="h-4 w-4 text-primary" />
+              Preview Wincard
+            </DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm">
+              Review the shareable result card before downloading the PNG.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="p-4 sm:p-5">
+            <div className="mx-auto max-w-3xl">
+              <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-[#090d13] shadow-[0_24px_80px_-40px_rgba(0,0,0,0.8)]">
+                <div
+                  className="absolute inset-0 opacity-[0.04]"
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)",
+                    backgroundSize: "34px 34px",
+                  }}
+                />
+                <div
+                  className={cn(
+                    "absolute -top-16 right-[-6%] h-52 w-52 rounded-full blur-3xl",
+                    winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
+                      ? "bg-gain/20"
+                      : winCardSettledLoss
+                        ? "bg-loss/20"
+                        : "bg-slate-400/20"
+                  )}
+                />
+                <div className="absolute -bottom-16 left-[-8%] h-52 w-52 rounded-full blur-3xl bg-primary/10" />
+
+                <div className="relative p-4 sm:p-6">
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+                      <span className="text-xs font-semibold tracking-wide text-white">PHEW.RUN</span>
+                    </div>
+                    <div
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-[11px] font-semibold tracking-wide",
+                        winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
+                          ? "border-gain/40 bg-gain/10 text-gain"
+                          : winCardSettledLoss
+                            ? "border-loss/40 bg-loss/10 text-loss"
+                            : "border-border/60 bg-white/5 text-muted-foreground"
+                      )}
+                    >
+                      {winCardResultLabel}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="h-11 w-11 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-sm font-bold text-white">
+                          {(post.author.username || post.author.name || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-lg font-semibold text-white">
+                            {post.author.username ? `@${post.author.username}` : post.author.name}
+                          </div>
+                          <div className="truncate text-xs text-slate-300/80">
+                            Level {post.author.level > 0 ? `+${post.author.level}` : post.author.level} • {formatTimeAgo(post.createdAt)} • {post.chainType?.toUpperCase() || "CHAIN"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="text-sm font-semibold text-white truncate">{winCardTokenPrimary}</div>
+                        <div className="mt-1 text-xs text-slate-300/80 truncate">{winCardTokenSecondary}</div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="text-xs uppercase tracking-[0.14em] text-slate-300/70">Performance</div>
+                      <div className={cn("mt-2 text-3xl sm:text-4xl font-bold tracking-tight", winCardAccentClass)}>
+                        {winCardResultText}
+                      </div>
+                      <div className="mt-3 text-xs text-slate-300/75">{winCardProfitLabel}</div>
+                      <div className={cn("mt-1 text-lg font-semibold", winCardAccentClass)}>
+                        {winCardProfitText}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Entry MCAP</div>
+                      <div className="mt-1 text-base font-semibold text-white">{formatMarketCap(post.entryMcap)}</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                        {localSettled ? "Official MCAP" : "Current MCAP"}
+                      </div>
+                      <div className="mt-1 text-base font-semibold text-white">{formatMarketCap(officialMcap)}</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Engagement</div>
+                      <div className="mt-1 text-sm font-medium text-white">
+                        {likeCount} likes • {commentCount} comments • {repostCount} reposts
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Post</div>
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
+                      {winCardPostPreview}
+                    </p>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-300/70">
+                    <span>Generated on PHEW.RUN</span>
+                    <span>Post ID: {post.id.slice(0, 10)}...</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsWinCardPreviewOpen(false)}
+              className="w-full sm:w-auto"
+            >
+              Close
+            </Button>
+            <Button
+              type="button"
+              onClick={handleDownloadWinCard}
+              disabled={isWinCardDownloading}
+              className="w-full sm:w-auto gap-2"
+            >
+              {isWinCardDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              Download PNG
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Reposters Dialog */}
       <RepostersDialog
