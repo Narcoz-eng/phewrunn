@@ -98,6 +98,8 @@ async function fetchSession(): Promise<AuthUser | null> {
   }
 
   sessionFetchInFlight = (async () => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
     // Get token from localStorage as fallback for cross-origin issues
     const token = localStorage.getItem("auth-token");
@@ -112,6 +114,7 @@ async function fetchSession(): Promise<AuthUser | null> {
     const response = await fetch(`${baseURL}/api/me`, {
       credentials: "include",
       headers,
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -161,9 +164,14 @@ async function fetchSession(): Promise<AuthUser | null> {
 
     return null;
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      console.warn("[Auth] /api/me timed out, treating session as unauthenticated");
+      return null;
+    }
     console.error("[Auth] Failed to fetch session:", error);
     return null;
   } finally {
+    clearTimeout(timeoutId);
     sessionFetchInFlight = null;
   }
   })();
