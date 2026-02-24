@@ -870,6 +870,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     return `https://dexscreener.com/${chain}/${post.contractAddress}`;
   };
 
+  const getPumpFunUrl = () => {
+    if (!post.contractAddress || post.chainType !== "solana") return null;
+    const normalizedCa = post.contractAddress.trim().toLowerCase();
+    const sourceUrl = (post.dexscreenerUrl ?? "").toLowerCase();
+    const looksLikePumpFun =
+      normalizedCa.endsWith("pump") ||
+      sourceUrl.includes("pump.fun") ||
+      sourceUrl.includes("pumpfun");
+    return looksLikePumpFun ? `https://pump.fun/coin/${post.contractAddress}` : null;
+  };
+
   // Navigate to user profile (prefer username over ID for cleaner URLs)
   const handleProfileClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1024,24 +1035,44 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     )}
                   </div>
 
-                  {/* Dexscreener Link */}
-                  {getDexscreenerUrl() && (
-                    <a
-                      href={getDexscreenerUrl() ?? ""}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={cn(
-                        "flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
-                        "bg-gradient-to-r from-gain/90 to-accent/90 hover:from-gain hover:to-accent",
-                        "text-primary-foreground shadow-lg shadow-gain/20",
-                        "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                      )}
-                    >
-                      <BarChart3 className="h-4 w-4" />
-                      <span>Dexscreener</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Dexscreener Link */}
+                    {getDexscreenerUrl() && (
+                      <a
+                        href={getDexscreenerUrl() ?? ""}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(
+                          "flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
+                          "bg-gradient-to-r from-gain/90 to-accent/90 hover:from-gain hover:to-accent",
+                          "text-primary-foreground shadow-lg shadow-gain/20",
+                          "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                        )}
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                        <span>Dexscreener</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+
+                    {getPumpFunUrl() && (
+                      <a
+                        href={getPumpFunUrl() ?? ""}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(
+                          "flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
+                          "bg-green-600 hover:bg-green-500 border border-green-500/80",
+                          "text-white shadow-lg shadow-green-600/20",
+                          "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                        )}
+                      >
+                        <Coins className="h-4 w-4" />
+                        <span>Trade on Pump</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
                 </div>
 
                 {/* Entry Market Cap - Prominent Display */}
@@ -1511,7 +1542,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       </div>
 
       <Dialog open={isWinCardPreviewOpen} onOpenChange={setIsWinCardPreviewOpen}>
-        <DialogContent className="max-w-4xl p-0 overflow-hidden border-border/60 bg-background/95">
+        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-4xl max-h-[92vh] p-0 overflow-y-auto border-border/60 bg-background/95">
           <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-border/50">
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Download className="h-4 w-4 text-primary" />
@@ -1522,9 +1553,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             </DialogDescription>
           </DialogHeader>
 
-          <div className="p-4 sm:p-5">
+          <div className="p-3 sm:p-5">
             <div className="mx-auto max-w-3xl">
-              <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-[#090d13] shadow-[0_24px_80px_-40px_rgba(0,0,0,0.8)]">
+              <div className="relative overflow-hidden rounded-xl sm:rounded-2xl border border-border/60 bg-[#090d13] shadow-[0_24px_80px_-40px_rgba(0,0,0,0.8)]">
                 <div
                   className="absolute inset-0 opacity-[0.04]"
                   style={{
@@ -1545,8 +1576,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 />
                 <div className="absolute -bottom-16 left-[-8%] h-52 w-52 rounded-full blur-3xl bg-primary/10" />
 
-                <div className="relative p-4 sm:p-6">
-                  <div className="flex items-center justify-between gap-3 mb-4">
+                <div className="relative p-3.5 sm:p-6">
+                  <div className="mb-4 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                       <span className="text-xs font-semibold tracking-wide text-white">PHEW.RUN</span>
                     </div>
@@ -1564,8 +1595,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                  <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3.5 sm:p-4">
                       <div className="flex items-center gap-3">
                         <div className="h-11 w-11 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-sm font-bold text-white">
                           {(post.author.username || post.author.name || "?").charAt(0).toUpperCase()}
@@ -1574,8 +1605,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <div className="truncate text-lg font-semibold text-white">
                             {post.author.username ? `@${post.author.username}` : post.author.name}
                           </div>
-                          <div className="truncate text-xs text-slate-300/80">
-                            Level {post.author.level > 0 ? `+${post.author.level}` : post.author.level} • {formatTimeAgo(post.createdAt)} • {post.chainType?.toUpperCase() || "CHAIN"}
+                          <div className="truncate text-[11px] sm:text-xs text-slate-300/80">
+                            Level {post.author.level > 0 ? `+${post.author.level}` : post.author.level} | {formatTimeAgo(post.createdAt)} | {post.chainType?.toUpperCase() || "CHAIN"}
                           </div>
                         </div>
                       </div>
@@ -1585,13 +1616,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3.5 sm:p-4">
                       <div className="text-xs uppercase tracking-[0.14em] text-slate-300/70">Performance</div>
-                      <div className={cn("mt-2 text-3xl sm:text-4xl font-bold tracking-tight", winCardAccentClass)}>
+                      <div className={cn("mt-2 text-2xl sm:text-4xl font-bold tracking-tight", winCardAccentClass)}>
                         {winCardResultText}
                       </div>
                       <div className="mt-3 text-xs text-slate-300/75">{winCardProfitLabel}</div>
-                      <div className={cn("mt-1 text-lg font-semibold", winCardAccentClass)}>
+                      <div className={cn("mt-1 text-base sm:text-lg font-semibold", winCardAccentClass)}>
                         {winCardProfitText}
                       </div>
                     </div>
@@ -1610,8 +1641,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                       <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Engagement</div>
-                      <div className="mt-1 text-sm font-medium text-white">
-                        {likeCount} likes • {commentCount} comments • {repostCount} reposts
+                      <div className="mt-1 text-xs sm:text-sm font-medium text-white">
+                        {likeCount} likes | {commentCount} comments | {repostCount} reposts
                       </div>
                     </div>
                   </div>
@@ -1623,7 +1654,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </p>
                   </div>
 
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-300/70">
+                  <div className="mt-4 flex flex-col items-start gap-1.5 text-[11px] text-slate-300/70 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                     <span>Generated on PHEW.RUN</span>
                     <span>Post ID: {post.id.slice(0, 10)}...</span>
                   </div>

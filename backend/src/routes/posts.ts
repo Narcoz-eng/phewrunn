@@ -111,6 +111,18 @@ async function getFeedMarketCapSnapshot(address: string): Promise<MarketCapResul
   return request;
 }
 
+function isMissingCommentFeatureSchemaError(error: unknown): boolean {
+  const maybe = error as { code?: string; message?: string };
+  if (maybe?.code === "P2021" || maybe?.code === "P2022") return true;
+  const message = String(maybe?.message ?? "");
+  return (
+    message.includes("commentLike") ||
+    message.includes("parentCommentId") ||
+    message.includes("likes") ||
+    message.includes("replies")
+  );
+}
+
 async function notifyFollowersOfBigGain(params: {
   postId: string;
   authorId: string;
@@ -1910,45 +1922,79 @@ postsRouter.get("/:id/comments", async (c) => {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
-  const comments = await prisma.comment.findMany({
-    where: { postId },
-    orderBy: { createdAt: "asc" },
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          xp: true,
-          isVerified: true,
+  try {
+    const comments = await prisma.comment.findMany({
+      where: { postId },
+      orderBy: { createdAt: "asc" },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            replies: true,
+          },
+        },
+        likes: {
+          where: {
+            userId: c.get("user")?.id ?? "__no_user__",
+          },
+          select: { id: true },
         },
       },
-      _count: {
-        select: {
-          likes: true,
-          replies: true,
-        },
-      },
-      likes: {
-        where: {
-          userId: c.get("user")?.id ?? "__no_user__",
-        },
-        select: { id: true },
-      },
-    },
-  });
+    });
 
-  return c.json({
-    data: comments.map((comment) => ({
-      ...comment,
-      parentCommentId: comment.parentCommentId,
-      likeCount: comment._count.likes,
-      replyCount: comment._count.replies,
-      isLiked: comment.likes.length > 0,
-    }))
-  });
+    return c.json({
+      data: comments.map((comment) => ({
+        ...comment,
+        parentCommentId: comment.parentCommentId,
+        likeCount: comment._count.likes,
+        replyCount: comment._count.replies,
+        isLiked: comment.likes.length > 0,
+      }))
+    });
+  } catch (error) {
+    if (!isMissingCommentFeatureSchemaError(error)) {
+      throw error;
+    }
+
+    console.warn("[comments] Falling back to legacy comments query (schema upgrade pending)");
+    const comments = await prisma.comment.findMany({
+      where: { postId },
+      orderBy: { createdAt: "asc" },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+      },
+    });
+
+    return c.json({
+      data: comments.map((comment) => ({
+        ...comment,
+        likeCount: 0,
+        replyCount: 0,
+        isLiked: false,
+      })),
+    });
+  }
 });
 
 // Add a comment to a post
@@ -2010,10 +2056,22 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
 
   let parentComment: { id: string; authorId: string; postId: string; parentCommentId: string | null } | null = null;
   if (parentCommentId) {
-    parentComment = await prisma.comment.findUnique({
-      where: { id: parentCommentId },
-      select: { id: true, authorId: true, postId: true, parentCommentId: true },
-    });
+    try {
+      parentComment = await prisma.comment.findUnique({
+        where: { id: parentCommentId },
+        select: { id: true, authorId: true, postId: true, parentCommentId: true },
+      });
+    } catch (error) {
+      if (isMissingCommentFeatureSchemaError(error)) {
+        return c.json({
+          error: {
+            message: "Replies are temporarily unavailable until the database update is applied",
+            code: "REPLIES_UNAVAILABLE",
+          },
+        }, 503);
+      }
+      throw error;
+    }
     if (!parentComment || parentComment.postId !== postId) {
       return c.json({ error: { message: "Parent comment not found", code: "NOT_FOUND" } }, 404);
     }
@@ -2021,67 +2079,139 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
 
   // Check for duplicate comment (same user, same post, same content within 10 seconds)
   const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
-  const duplicateComment = await prisma.comment.findFirst({
-    where: {
-      authorId: user.id,
-      postId,
-      parentCommentId: parentCommentId ?? null,
-      content: content.trim(),
-      createdAt: { gte: tenSecondsAgo },
-    },
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          xp: true,
-          isVerified: true,
+  let duplicateComment;
+  try {
+    duplicateComment = await prisma.comment.findFirst({
+      where: {
+        authorId: user.id,
+        postId,
+        parentCommentId: parentCommentId ?? null,
+        content: content.trim(),
+        createdAt: { gte: tenSecondsAgo },
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (!isMissingCommentFeatureSchemaError(error)) throw error;
+    if (parentCommentId) {
+      return c.json({
+        error: {
+          message: "Replies are temporarily unavailable until the database update is applied",
+          code: "REPLIES_UNAVAILABLE",
+        },
+      }, 503);
+    }
+
+    duplicateComment = await prisma.comment.findFirst({
+      where: {
+        authorId: user.id,
+        postId,
+        content: content.trim(),
+        createdAt: { gte: tenSecondsAgo },
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+      },
+    });
+  }
 
   if (duplicateComment) {
     // Return the existing comment instead of creating a duplicate
     return c.json({ data: duplicateComment });
   }
 
-  const comment = await prisma.comment.create({
-    data: {
-      content,
-      authorId: user.id,
-      postId,
-      parentCommentId: parentCommentId ?? null,
-    },
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          xp: true,
-          isVerified: true,
+  let comment;
+  let usedLegacyCommentFallback = false;
+  try {
+    comment = await prisma.comment.create({
+      data: {
+        content,
+        authorId: user.id,
+        postId,
+        parentCommentId: parentCommentId ?? null,
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            replies: true,
+          },
+        },
+        likes: {
+          where: { userId: user.id },
+          select: { id: true },
         },
       },
-      _count: {
-        select: {
-          likes: true,
-          replies: true,
+    });
+  } catch (error) {
+    if (!isMissingCommentFeatureSchemaError(error)) throw error;
+    if (parentCommentId) {
+      return c.json({
+        error: {
+          message: "Replies are temporarily unavailable until the database update is applied",
+          code: "REPLIES_UNAVAILABLE",
         },
-      },
-      likes: {
-        where: { userId: user.id },
-        select: { id: true },
-      },
-    },
-  });
+      }, 503);
+    }
 
-  if (parentComment && parentComment.authorId !== user.id) {
+    usedLegacyCommentFallback = true;
+    console.warn("[comments] Falling back to legacy comment create (schema upgrade pending)");
+    comment = await prisma.comment.create({
+      data: {
+        content,
+        authorId: user.id,
+        postId,
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+      },
+    });
+  }
+
+  if (!usedLegacyCommentFallback && parentComment && parentComment.authorId !== user.id) {
     await prisma.notification.create({
       data: {
         userId: parentComment.authorId,
@@ -2095,14 +2225,27 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
     });
   }
 
+  const normalizedComment = comment as typeof comment & {
+    _count?: { likes: number; replies: number };
+    likes?: Array<{ id: string }>;
+    parentCommentId?: string | null;
+  };
+
   return c.json({
-    data: {
-      ...comment,
-      parentCommentId: comment.parentCommentId,
-      likeCount: comment._count.likes,
-      replyCount: comment._count.replies,
-      isLiked: comment.likes.length > 0,
-    }
+    data: usedLegacyCommentFallback
+      ? {
+          ...normalizedComment,
+          likeCount: 0,
+          replyCount: 0,
+          isLiked: false,
+        }
+      : {
+          ...normalizedComment,
+          parentCommentId: normalizedComment.parentCommentId ?? null,
+          likeCount: normalizedComment._count?.likes ?? 0,
+          replyCount: normalizedComment._count?.replies ?? 0,
+          isLiked: (normalizedComment.likes?.length ?? 0) > 0,
+        }
   });
 });
 
@@ -2161,19 +2304,31 @@ postsRouter.post("/:id/comments/:commentId/like", requireAuth, async (c) => {
     return c.json({ error: { message: "Comment not found", code: "NOT_FOUND" } }, 404);
   }
 
-  await prisma.commentLike.upsert({
-    where: {
-      userId_commentId: {
+  try {
+    await prisma.commentLike.upsert({
+      where: {
+        userId_commentId: {
+          userId: user.id,
+          commentId,
+        },
+      },
+      update: {},
+      create: {
         userId: user.id,
         commentId,
       },
-    },
-    update: {},
-    create: {
-      userId: user.id,
-      commentId,
-    },
-  });
+    });
+  } catch (error) {
+    if (isMissingCommentFeatureSchemaError(error)) {
+      return c.json({
+        error: {
+          message: "Comment likes are temporarily unavailable until the database update is applied",
+          code: "COMMENT_LIKES_UNAVAILABLE",
+        },
+      }, 503);
+    }
+    throw error;
+  }
 
   const likeCount = await prisma.commentLike.count({ where: { commentId } });
 
@@ -2212,12 +2367,24 @@ postsRouter.delete("/:id/comments/:commentId/like", requireAuth, async (c) => {
     return c.json({ error: { message: "Comment not found", code: "NOT_FOUND" } }, 404);
   }
 
-  await prisma.commentLike.deleteMany({
-    where: {
-      userId: user.id,
-      commentId,
-    },
-  });
+  try {
+    await prisma.commentLike.deleteMany({
+      where: {
+        userId: user.id,
+        commentId,
+      },
+    });
+  } catch (error) {
+    if (isMissingCommentFeatureSchemaError(error)) {
+      return c.json({
+        error: {
+          message: "Comment likes are temporarily unavailable until the database update is applied",
+          code: "COMMENT_LIKES_UNAVAILABLE",
+        },
+      }, 503);
+    }
+    throw error;
+  }
 
   const likeCount = await prisma.commentLike.count({ where: { commentId } });
 
