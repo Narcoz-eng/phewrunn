@@ -75,7 +75,7 @@ export function DailyGainersTable() {
       }
       return 5 * 60 * 1000; // Auto-refresh every 5 minutes when tab is visible
     },
-    staleTime: 3 * 60 * 1000, // Consider data stale after 3 minutes
+    staleTime: 5 * 60 * 1000, // Keep in sync with 5-minute refresh cadence
     gcTime: 10 * 60 * 1000,
   });
 

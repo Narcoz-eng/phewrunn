@@ -25,7 +25,7 @@ type TopUsersResponsePayload = {
   };
 };
 
-const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
+const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 10_000;
 const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 10_000;
 const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 180_000 : 30_000;
 
@@ -121,27 +121,45 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     },
   });
 
-  // Calculate gain percent and filter for positive gains
+  // Calculate best displayed gain after settlement:
+  // use the highest gain reached across 1H snapshot, 6H snapshot, and current mcap.
   const postsWithGains = posts
     .map((post) => {
       if (!post.entryMcap || !post.currentMcap) return null;
 
-      // Use whichever percent change is higher (1h or 6h)
-      let gainPercent: number;
-      if (post.percentChange1h !== null && post.percentChange6h !== null) {
-        gainPercent = Math.max(post.percentChange1h, post.percentChange6h);
-      } else if (post.percentChange1h !== null) {
-        gainPercent = post.percentChange1h;
-      } else if (post.percentChange6h !== null) {
-        gainPercent = post.percentChange6h;
-      } else {
-        // Fallback to calculating from entry/current mcap
-        gainPercent = ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
+      const candidates: Array<{ gainPercent: number; displayMcap: number; source: "1h" | "6h" | "current" }> = [];
+
+      if (post.mcap1h !== null && post.percentChange1h !== null) {
+        candidates.push({
+          gainPercent: post.percentChange1h,
+          displayMcap: post.mcap1h,
+          source: "1h",
+        });
       }
+      if (post.mcap6h !== null && post.percentChange6h !== null) {
+        candidates.push({
+          gainPercent: post.percentChange6h,
+          displayMcap: post.mcap6h,
+          source: "6h",
+        });
+      }
+
+      const currentPercent = ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
+      candidates.push({
+        gainPercent: currentPercent,
+        displayMcap: post.currentMcap,
+        source: "current",
+      });
+
+      const best = candidates.reduce((max, item) =>
+        item.gainPercent > max.gainPercent ? item : max
+      );
 
       return {
         post,
-        gainPercent,
+        gainPercent: best.gainPercent,
+        displayMcap: best.displayMcap,
+        gainSource: best.source,
       };
     })
     .filter((item): item is NonNullable<typeof item> =>
@@ -167,7 +185,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     },
     gainPercent: Math.round(item.gainPercent * 100) / 100,
     entryMcap: item.post.entryMcap!,
-    currentMcap: item.post.currentMcap!,
+    currentMcap: item.displayMcap,
     settledAt: item.post.settledAt!.toISOString(),
   }));
 
