@@ -337,7 +337,7 @@ export default function Feed() {
   };
 
   const handleComment = async (postId: string, content: string) => {
-    commentMutation.mutate({ postId, content });
+    await commentMutation.mutateAsync({ postId, content });
   };
 
   const handleTabChange = (tab: FeedTab) => {

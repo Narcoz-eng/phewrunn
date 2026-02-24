@@ -48,13 +48,18 @@ const stats = [
 const levelBarSnapshots = [
   {
     level: STARTING_LEVEL,
-    title: "Starting",
-    note: "Everyone starts neutral at LVL 0.",
+    title: "Neutral",
+    note: "Everyone begins here and builds reputation from real outcomes.",
   },
   {
     level: 4,
     title: "Veteran",
     note: "Consistency moves you into stronger reputation tiers.",
+  },
+  {
+    level: 9,
+    title: "Elite",
+    note: "Top performers sit near the cap with the strongest public track records.",
   },
   {
     level: -4,
@@ -295,19 +300,19 @@ export default function Login() {
                     </div>
                     <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Start</div>
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Neutral Entry</div>
                         <div className="text-sm font-semibold">LVL {STARTING_LEVEL}</div>
                       </div>
                       <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Floor</div>
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Liquidation</div>
                         <div className="text-sm font-semibold">LVL {MIN_LEVEL}</div>
                       </div>
                       <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Cap</div>
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Elite Ceiling</div>
                         <div className="text-sm font-semibold">LVL +{MAX_LEVEL}</div>
                       </div>
                       <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Risk</div>
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Posting Lock</div>
                         <div className="text-sm font-semibold">LVL {LIQUIDATION_LEVEL}</div>
                       </div>
                     </div>

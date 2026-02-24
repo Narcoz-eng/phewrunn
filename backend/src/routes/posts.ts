@@ -41,6 +41,10 @@ const priceRefreshInFlight = new Map<string, Promise<number | null>>();
 const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
+const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
+const FEED_MCAP_ENRICHMENT_MAX_CONTRACTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 4 : 10;
+const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
+const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 
 /**
  * Helper to fetch market cap using the enhanced service
@@ -49,6 +53,34 @@ let trendingInFlight: Promise<unknown> | null = null;
 async function fetchMarketCap(address: string): Promise<number | null> {
   const result = await fetchMarketCapService(address);
   return result.mcap;
+}
+
+async function getFeedMarketCapSnapshot(address: string): Promise<MarketCapResult> {
+  const now = Date.now();
+  const cached = feedMcapCache.get(address);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.result;
+  }
+
+  const existingInFlight = feedMcapInFlight.get(address);
+  if (existingInFlight) {
+    return existingInFlight;
+  }
+
+  const request = fetchMarketCapService(address)
+    .then((result) => {
+      feedMcapCache.set(address, {
+        result,
+        expiresAtMs: Date.now() + FEED_MCAP_CACHE_TTL_MS,
+      });
+      return result;
+    })
+    .finally(() => {
+      feedMcapInFlight.delete(address);
+    });
+
+  feedMcapInFlight.set(address, request);
+  return request;
 }
 
 // Background settlement check - runs automatically on feed fetch
@@ -557,6 +589,21 @@ postsRouter.get("/", async (c) => {
     sharedAlphaByContract.set(candidate.contractAddress, existing);
   }
 
+  const shouldRunFeedEnrichment = !cursor;
+  const contractsSelectedForEnrichment = new Set<string>();
+  if (shouldRunFeedEnrichment) {
+    for (const post of postsWithSocial) {
+      if (!post.contractAddress) continue;
+      if (contractsSelectedForEnrichment.size >= FEED_MCAP_ENRICHMENT_MAX_CONTRACTS_PER_REQUEST) break;
+
+      const shouldUpdate = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+      const needsTokenMetadata = !post.tokenName || !post.tokenSymbol;
+      if (shouldUpdate || needsTokenMetadata) {
+        contractsSelectedForEnrichment.add(post.contractAddress);
+      }
+    }
+  }
+
   const postsWithUpdatedMcap = await Promise.all(
     postsWithSocial.map(async (post) => {
       try {
@@ -574,8 +621,11 @@ postsRouter.get("/", async (c) => {
           // Check if token metadata is missing
           const needsTokenMetadata = !post.tokenName || !post.tokenSymbol;
 
-          if (shouldUpdate || needsTokenMetadata) {
-            const marketCapResult = await fetchMarketCapService(post.contractAddress);
+          const canEnrichThisPost =
+            shouldRunFeedEnrichment && contractsSelectedForEnrichment.has(post.contractAddress);
+
+          if ((shouldUpdate || needsTokenMetadata) && canEnrichThisPost) {
+            const marketCapResult = await getFeedMarketCapSnapshot(post.contractAddress);
             const currentMcap = marketCapResult.mcap;
             if (currentMcap !== null || needsTokenMetadata) {
               const trackingMode = determineTrackingMode(post.createdAt);
@@ -608,9 +658,14 @@ postsRouter.get("/", async (c) => {
               }
 
               if (Object.keys(updateData).length > 0) {
-                await prisma.post.update({
+                void prisma.post.update({
                   where: { id: post.id },
                   data: updateData,
+                }).catch((error) => {
+                  console.error("[posts/feed] Failed to persist enrichment update", {
+                    postId: post.id,
+                    error,
+                  });
                 });
               }
 

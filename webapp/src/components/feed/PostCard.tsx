@@ -53,7 +53,7 @@ interface PostCardProps {
   currentUserId?: string;
   onLike?: (postId: string) => void;
   onRepost?: (postId: string) => void;
-  onComment?: (postId: string, content: string) => void;
+  onComment?: (postId: string, content: string) => Promise<void> | void;
 }
 
 export function PostCard({ post, className, currentUserId, onLike, onRepost, onComment }: PostCardProps) {
@@ -156,8 +156,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             const isWin = post.entryMcap !== null && data.mcap1h > post.entryMcap;
             setLocalIsWin(isWin);
           }
-          // Invalidate posts query to refresh the entire feed
-          queryClient.invalidateQueries({ queryKey: ["posts"] });
+          // Avoid refetching the full feed from every visible card when many posts settle at once.
+          // The card already has the updated settlement state locally.
         }
 
         // Update 6H mcap if available
@@ -314,14 +314,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleSubmitComment = async () => {
     if (!commentText.trim() || !currentUserId) return;
+    const trimmedComment = commentText.trim();
 
     try {
-      await api.post(`/api/posts/${post.id}/comments`, { content: commentText.trim() });
+      if (onComment) {
+        await onComment(post.id, trimmedComment);
+      } else {
+        await api.post(`/api/posts/${post.id}/comments`, { content: trimmedComment });
+      }
       setCommentText("");
       setCommentCount(prev => prev + 1);
       refetchComments();
-      onComment?.(post.id, commentText.trim());
-      toast.success("Comment added!");
     } catch (error: unknown) {
       const err = error as { message?: string };
       toast.error(err.message || "Failed to add comment");
