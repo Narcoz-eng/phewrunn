@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,6 +41,7 @@ interface PlatformStats {
   levelDistribution: Array<{ level: number; count: number }>;
   topUsersThisWeek: Array<{
     id: string;
+    name: string | null;
     username: string | null;
     image: string | null;
     level: number;
@@ -113,6 +115,7 @@ function StatCardSkeleton() {
 }
 
 export function StatsOverview() {
+  const navigate = useNavigate();
   const { data: stats, isLoading, error } = useQuery({
     queryKey: ["leaderboard", "stats"],
     queryFn: async () => {
@@ -260,9 +263,11 @@ export function StatsOverview() {
               </p>
             ) : (
               stats.topUsersThisWeek.map((user, index) => (
-                <div
+                <button
                   key={user.id}
-                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors"
+                  type="button"
+                  onClick={() => navigate(`/profile/${user.username || user.id}`)}
+                  className="w-full text-left flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors"
                 >
                   <span className="text-sm font-mono text-muted-foreground w-4">
                     {index + 1}
@@ -270,13 +275,13 @@ export function StatsOverview() {
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={getAvatarUrl(user.id, user.image)} />
                     <AvatarFallback className="text-xs">
-                      {user.username?.charAt(0) || "?"}
+                      {(user.username || user.name)?.charAt(0) || "?"}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium truncate">
-                        @{user.username || "anonymous"}
+                        {user.username ? `@${user.username}` : (user.name || "anonymous")}
                       </span>
                       <LevelBadge level={user.level} size="sm" />
                     </div>
@@ -284,7 +289,7 @@ export function StatsOverview() {
                   <span className="text-sm font-medium text-primary">
                     {user.postsThisWeek} posts
                   </span>
-                </div>
+                </button>
               ))
             )}
           </div>

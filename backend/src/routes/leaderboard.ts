@@ -35,6 +35,14 @@ const topUsersCache = new Map<string, CacheEntry<TopUsersResponsePayload>>();
 let statsCache: CacheEntry<unknown> | null = null;
 let statsInFlight: Promise<unknown> | null = null;
 
+export function invalidateLeaderboardCaches() {
+  dailyGainersCache = null;
+  dailyGainersInFlight = null;
+  topUsersCache.clear();
+  statsCache = null;
+  statsInFlight = null;
+}
+
 function readCache<T>(entry: CacheEntry<T> | null): T | null {
   if (!entry) return null;
   if (entry.expiresAtMs <= Date.now()) return null;
@@ -596,6 +604,7 @@ leaderboardRouter.get("/stats", async (c) => {
     where: { id: { in: topUserIds } },
     select: {
       id: true,
+      name: true,
       username: true,
       image: true,
       level: true,
@@ -606,6 +615,7 @@ leaderboardRouter.get("/stats", async (c) => {
     const userDetail = topUserDetails.find((u) => u.id === tu.authorId);
     return {
       id: tu.authorId,
+      name: userDetail?.name ?? null,
       username: userDetail?.username ?? null,
       image: userDetail?.image ?? null,
       level: userDetail?.level ?? 0,

@@ -4,6 +4,7 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { prisma } from "../prisma.js";
+import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
 
@@ -765,6 +766,9 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
       lastPhotoUpdate: true,
     },
   });
+
+  // Username/image updates affect leaderboard profile chips and cached stats.
+  invalidateLeaderboardCaches();
 
   return c.json({ data: user });
 });
