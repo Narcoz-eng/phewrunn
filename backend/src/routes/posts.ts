@@ -69,6 +69,7 @@ const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 2
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
 const MARKET_REFRESH_MAX_CONTRACTS_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 8;
 const HOURLY_POST_LIMIT = 3;
+const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
@@ -108,6 +109,36 @@ async function getFeedMarketCapSnapshot(address: string): Promise<MarketCapResul
 
   feedMcapInFlight.set(address, request);
   return request;
+}
+
+async function notifyFollowersOfBigGain(params: {
+  postId: string;
+  authorId: string;
+  authorName: string;
+  authorUsername?: string | null;
+  percentChange1h: number;
+}): Promise<void> {
+  if (params.percentChange1h < FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT) return;
+
+  const followers = await prisma.follow.findMany({
+    where: { followingId: params.authorId },
+    select: { followerId: true },
+    take: 500,
+  });
+  if (followers.length === 0) return;
+
+  const displayName = params.authorUsername || params.authorName || "A trader";
+  const message = `${displayName} posted a runner: +${params.percentChange1h.toFixed(1)}% at 1H`;
+
+  await prisma.notification.createMany({
+    data: followers.map((f) => ({
+      userId: f.followerId,
+      type: "alpha_gain_alert",
+      message,
+      postId: params.postId,
+      fromUserId: params.authorId,
+    })),
+  });
 }
 
 // Background settlement check - runs automatically on feed fetch
@@ -222,6 +253,13 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             message: settlementMsg,
             postId: post.id,
           },
+        });
+        await notifyFollowersOfBigGain({
+          postId: post.id,
+          authorId: post.authorId,
+          authorName: post.author.name,
+          authorUsername: post.author.username,
+          percentChange1h,
         });
 
         settled1hCount++;
@@ -1243,6 +1281,14 @@ postsRouter.post("/settle", async (c) => {
       }),
     ]);
 
+    await notifyFollowersOfBigGain({
+      postId: post.id,
+      authorId: post.authorId,
+      authorName: post.author.name,
+      authorUsername: post.author.username,
+      percentChange1h,
+    });
+
     results1h.push({
       postId: post.id,
       userId: post.authorId,
@@ -1866,7 +1912,7 @@ postsRouter.get("/:id/comments", async (c) => {
 
   const comments = await prisma.comment.findMany({
     where: { postId },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
     include: {
       author: {
         select: {
@@ -1879,17 +1925,40 @@ postsRouter.get("/:id/comments", async (c) => {
           isVerified: true,
         },
       },
+      _count: {
+        select: {
+          likes: true,
+          replies: true,
+        },
+      },
+      likes: {
+        where: {
+          userId: c.get("user")?.id ?? "__no_user__",
+        },
+        select: { id: true },
+      },
     },
   });
 
-  return c.json({ data: comments });
+  return c.json({
+    data: comments.map((comment) => ({
+      ...comment,
+      parentCommentId: comment.parentCommentId,
+      likeCount: comment._count.likes,
+      replyCount: comment._count.replies,
+      isLiked: comment.likes.length > 0,
+    }))
+  });
 });
 
 // Add a comment to a post
 postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentSchema), async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
-  const { content } = c.req.valid("json");
+  const { content, parentCommentId } = c.req.valid("json");
+  const actorDisplayName = ((user as { username?: string | null; name?: string | null }).username
+    || (user as { username?: string | null; name?: string | null }).name
+    || "Someone");
 
   if (!user) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
@@ -1939,12 +2008,24 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
+  let parentComment: { id: string; authorId: string; postId: string; parentCommentId: string | null } | null = null;
+  if (parentCommentId) {
+    parentComment = await prisma.comment.findUnique({
+      where: { id: parentCommentId },
+      select: { id: true, authorId: true, postId: true, parentCommentId: true },
+    });
+    if (!parentComment || parentComment.postId !== postId) {
+      return c.json({ error: { message: "Parent comment not found", code: "NOT_FOUND" } }, 404);
+    }
+  }
+
   // Check for duplicate comment (same user, same post, same content within 10 seconds)
   const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
   const duplicateComment = await prisma.comment.findFirst({
     where: {
       authorId: user.id,
       postId,
+      parentCommentId: parentCommentId ?? null,
       content: content.trim(),
       createdAt: { gte: tenSecondsAgo },
     },
@@ -1973,6 +2054,7 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
       content,
       authorId: user.id,
       postId,
+      parentCommentId: parentCommentId ?? null,
     },
     include: {
       author: {
@@ -1986,10 +2068,42 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
           isVerified: true,
         },
       },
+      _count: {
+        select: {
+          likes: true,
+          replies: true,
+        },
+      },
+      likes: {
+        where: { userId: user.id },
+        select: { id: true },
+      },
     },
   });
 
-  return c.json({ data: comment });
+  if (parentComment && parentComment.authorId !== user.id) {
+    await prisma.notification.create({
+      data: {
+        userId: parentComment.authorId,
+        type: "comment_reply",
+        message: `${actorDisplayName} replied to your comment`,
+        postId,
+        fromUserId: user.id,
+      },
+    }).catch((error) => {
+      console.error("[comments] Failed to create reply notification", { postId, parentCommentId, error });
+    });
+  }
+
+  return c.json({
+    data: {
+      ...comment,
+      parentCommentId: comment.parentCommentId,
+      likeCount: comment._count.likes,
+      replyCount: comment._count.replies,
+      isLiked: comment.likes.length > 0,
+    }
+  });
 });
 
 // Delete a comment
@@ -2024,6 +2138,90 @@ postsRouter.delete("/:id/comments/:commentId", requireAuth, async (c) => {
   await prisma.comment.delete({ where: { id: commentId } });
 
   return c.json({ data: { deleted: true } });
+});
+
+// Like a comment
+postsRouter.post("/:id/comments/:commentId/like", requireAuth, async (c) => {
+  const user = c.get("user");
+  const postId = c.req.param("id");
+  const commentId = c.req.param("commentId");
+  const actorDisplayName = ((user as { username?: string | null; name?: string | null }).username
+    || (user as { username?: string | null; name?: string | null }).name
+    || "Someone");
+
+  if (!user) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const comment = await prisma.comment.findUnique({
+    where: { id: commentId },
+    select: { id: true, postId: true, authorId: true },
+  });
+  if (!comment || comment.postId !== postId) {
+    return c.json({ error: { message: "Comment not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  await prisma.commentLike.upsert({
+    where: {
+      userId_commentId: {
+        userId: user.id,
+        commentId,
+      },
+    },
+    update: {},
+    create: {
+      userId: user.id,
+      commentId,
+    },
+  });
+
+  const likeCount = await prisma.commentLike.count({ where: { commentId } });
+
+  if (comment.authorId !== user.id) {
+    await prisma.notification.create({
+      data: {
+        userId: comment.authorId,
+        type: "comment_like",
+        message: `${actorDisplayName} liked your comment`,
+        postId,
+        fromUserId: user.id,
+      },
+    }).catch((error) => {
+      console.error("[comment-like] Failed to create notification", { commentId, error });
+    });
+  }
+
+  return c.json({ data: { liked: true, likeCount } });
+});
+
+// Unlike a comment
+postsRouter.delete("/:id/comments/:commentId/like", requireAuth, async (c) => {
+  const user = c.get("user");
+  const postId = c.req.param("id");
+  const commentId = c.req.param("commentId");
+
+  if (!user) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const comment = await prisma.comment.findUnique({
+    where: { id: commentId },
+    select: { id: true, postId: true },
+  });
+  if (!comment || comment.postId !== postId) {
+    return c.json({ error: { message: "Comment not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  await prisma.commentLike.deleteMany({
+    where: {
+      userId: user.id,
+      commentId,
+    },
+  });
+
+  const likeCount = await prisma.commentLike.count({ where: { commentId } });
+
+  return c.json({ data: { liked: false, likeCount } });
 });
 
 // Increment view count

@@ -52,6 +52,7 @@ import {
   UserCheck,
   Loader2,
   Download,
+  CornerDownRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -62,7 +63,7 @@ interface PostCardProps {
   currentUserId?: string;
   onLike?: (postId: string) => void;
   onRepost?: (postId: string) => void;
-  onComment?: (postId: string, content: string) => Promise<void> | void;
+  onComment?: (postId: string, content: string, parentCommentId?: string | null) => Promise<void> | void;
 }
 
 export function PostCard({ post, className, currentUserId, onLike, onRepost, onComment }: PostCardProps) {
@@ -71,6 +72,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
+  const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
+  const [replyToCommentName, setReplyToCommentName] = useState<string | null>(null);
   const [isLiked, setIsLiked] = useState(post.isLiked);
   const [isReposted, setIsReposted] = useState(post.isReposted);
   const [likeCount, setLikeCount] = useState(post._count?.likes ?? 0);
@@ -206,6 +209,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     enabled: isCommentsOpen,
     staleTime: 30000,
   });
+
+  const commentList = comments ?? [];
+  const topLevelComments = commentList.filter((comment) => !comment.parentCommentId);
+  const repliesByParent = new Map<string, Comment[]>();
+  for (const comment of commentList) {
+    if (!comment.parentCommentId) continue;
+    const existing = repliesByParent.get(comment.parentCommentId) ?? [];
+    existing.push(comment);
+    repliesByParent.set(comment.parentCommentId, existing);
+  }
 
   // Fetch shared alpha users (other traders who called the same token)
   const { data: sharedAlphaUsers } = useQuery({
@@ -730,17 +743,124 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
     try {
       if (onComment) {
-        await onComment(post.id, trimmedComment);
+        await onComment(post.id, trimmedComment, replyToCommentId);
       } else {
-        await api.post(`/api/posts/${post.id}/comments`, { content: trimmedComment });
+        await api.post(`/api/posts/${post.id}/comments`, {
+          content: trimmedComment,
+          ...(replyToCommentId ? { parentCommentId: replyToCommentId } : {}),
+        });
       }
       setCommentText("");
+      setReplyToCommentId(null);
+      setReplyToCommentName(null);
       setCommentCount(prev => prev + 1);
       refetchComments();
     } catch (error: unknown) {
       const err = error as { message?: string };
       toast.error(err.message || "Failed to add comment");
     }
+  };
+
+  const handleReplyToComment = (comment: Comment) => {
+    if (!currentUserId) {
+      toast.error("Sign in to reply");
+      return;
+    }
+    setIsCommentsOpen(true);
+    setReplyToCommentId(comment.id);
+    setReplyToCommentName(comment.author.username || comment.author.name || "user");
+  };
+
+  const handleToggleCommentLike = async (comment: Comment) => {
+    if (!currentUserId) {
+      toast.error("Sign in to like comments");
+      return;
+    }
+    try {
+      if (comment.isLiked) {
+        await api.delete(`/api/posts/${post.id}/comments/${comment.id}/like`);
+      } else {
+        await api.post(`/api/posts/${post.id}/comments/${comment.id}/like`);
+      }
+      await refetchComments();
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      toast.error(err.message || "Failed to update comment like");
+    }
+  };
+
+  const renderCommentItem = (comment: Comment, isReply = false) => {
+    const commentLikeCount = comment.likeCount ?? 0;
+    const commentReplies = repliesByParent.get(comment.id) ?? [];
+
+    return (
+      <motion.div
+        key={comment.id}
+        variants={{
+          hidden: { opacity: 0, y: -10 },
+          visible: { opacity: 1, y: 0 }
+        }}
+        className={cn(
+          "flex items-start gap-2 p-2 rounded-lg",
+          isReply ? "bg-background/40 ml-6 border border-border/30" : "bg-secondary/30"
+        )}
+      >
+        <Avatar
+          className="h-7 w-7 cursor-pointer border border-border"
+          onClick={() => navigate(`/profile/${comment.author.username || comment.author.id}`)}
+        >
+          <AvatarImage src={getAvatarUrl(comment.author.id, comment.author.image)} />
+          <AvatarFallback className="text-[10px] bg-muted">
+            {comment.author.name?.charAt(0) || "?"}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => navigate(`/profile/${comment.author.username || comment.author.id}`)}
+              className="text-xs font-semibold text-foreground hover:text-primary hover:underline transition-colors"
+            >
+              {comment.author.username || comment.author.name}
+            </button>
+            <LevelBadge level={comment.author.level} className="text-[8px] px-1 py-0" />
+            <span className="text-[10px] text-muted-foreground">
+              {formatTimeAgo(comment.createdAt)}
+            </span>
+          </div>
+          <p className="text-sm text-foreground mt-0.5 break-words">
+            {comment.content}
+          </p>
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void handleToggleCommentLike(comment)}
+              className={cn(
+                "inline-flex items-center gap-1 text-[11px] transition-colors",
+                comment.isLiked ? "text-primary" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Heart className={cn("h-3 w-3", comment.isLiked && "fill-current")} />
+              <span>{commentLikeCount > 0 ? commentLikeCount : "Like"}</span>
+            </button>
+            {!isReply && (
+              <button
+                type="button"
+                onClick={() => handleReplyToComment(comment)}
+                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <CornerDownRight className="h-3 w-3" />
+                <span>{(comment.replyCount ?? commentReplies.length) > 0 ? `Reply (${comment.replyCount ?? commentReplies.length})` : "Reply"}</span>
+              </button>
+            )}
+          </div>
+          {!isReply && commentReplies.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {commentReplies.map((reply) => renderCommentItem(reply, true))}
+            </div>
+          ) : null}
+        </div>
+      </motion.div>
+    );
   };
 
   const getDexscreenerUrl = () => {
@@ -1315,23 +1435,42 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ type: "spring", damping: 25, stiffness: 300, delay: 0.1 }}
-                  className="flex items-center gap-2"
+                  className="space-y-2"
                 >
-                  <Input
-                    placeholder="Add a comment..."
-                    value={commentText}
-                    onChange={(e) => setCommentText(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
-                    className="flex-1 h-9 text-sm bg-secondary/50 border-border/50"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleSubmitComment}
-                    disabled={!commentText.trim()}
-                    className="h-9 px-3"
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
+                  {replyToCommentId ? (
+                    <div className="flex items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+                      <span className="text-primary truncate">
+                        Replying to @{replyToCommentName || "user"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReplyToCommentId(null);
+                          setReplyToCommentName(null);
+                        }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder={replyToCommentId ? "Write a reply..." : "Add a comment..."}
+                      value={commentText}
+                      onChange={(e) => setCommentText(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
+                      className="flex-1 h-9 text-sm bg-secondary/50 border-border/50"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleSubmitComment}
+                      disabled={!commentText.trim()}
+                      className="h-9 px-3"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </motion.div>
 
                 {/* Comments List */}
@@ -1351,44 +1490,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     <div className="flex items-center justify-center py-4">
                       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                     </div>
-                  ) : comments && comments.length > 0 ? (
-                    comments.map((comment) => (
-                      <motion.div
-                        key={comment.id}
-                        variants={{
-                          hidden: { opacity: 0, y: -10 },
-                          visible: { opacity: 1, y: 0 }
-                        }}
-                        className="flex items-start gap-2 p-2 bg-secondary/30 rounded-lg"
-                      >
-                        <Avatar
-                          className="h-7 w-7 cursor-pointer border border-border"
-                          onClick={() => navigate(`/profile/${comment.author.username || comment.author.id}`)}
-                        >
-                          <AvatarImage src={getAvatarUrl(comment.author.id, comment.author.image)} />
-                          <AvatarFallback className="text-[10px] bg-muted">
-                            {comment.author.name?.charAt(0) || "?"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => navigate(`/profile/${comment.author.username || comment.author.id}`)}
-                              className="text-xs font-semibold text-foreground hover:text-primary hover:underline transition-colors"
-                            >
-                              {comment.author.username || comment.author.name}
-                            </button>
-                            <LevelBadge level={comment.author.level} className="text-[8px] px-1 py-0" />
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatTimeAgo(comment.createdAt)}
-                            </span>
-                          </div>
-                          <p className="text-sm text-foreground mt-0.5 break-words">
-                            {comment.content}
-                          </p>
-                        </div>
-                      </motion.div>
-                    ))
+                  ) : topLevelComments.length > 0 ? (
+                    topLevelComments.map((comment) => renderCommentItem(comment))
                   ) : (
                     <motion.p
                       variants={{

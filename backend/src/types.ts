@@ -373,6 +373,7 @@ export type AuthSyncResponse = z.infer<typeof AuthSyncResponseSchema>;
 
 export const CreateCommentSchema = z.object({
   content: z.string().min(1).max(500),
+  parentCommentId: z.string().optional(),
 });
 
 export type CreateComment = z.infer<typeof CreateCommentSchema>;
@@ -382,6 +383,7 @@ export const CommentSchema = z.object({
   content: z.string(),
   authorId: z.string(),
   postId: z.string(),
+  parentCommentId: z.string().nullable().optional(),
   author: z.object({
     id: z.string(),
     name: z.string(),
@@ -390,6 +392,9 @@ export const CommentSchema = z.object({
     level: z.number(),
     xp: z.number(),
   }),
+  likeCount: z.number().optional(),
+  replyCount: z.number().optional(),
+  isLiked: z.boolean().optional(),
   createdAt: z.string(),
 });
 

@@ -49,9 +49,12 @@ export function TokenInfoCard({
   const getPumpFunUrl = () => {
     if (chainType !== "solana") return null;
 
+    const normalizedCa = contractAddress.trim().toLowerCase();
     const sourceUrl = (dexscreenerUrl ?? "").toLowerCase();
-    // Conservative detection so we never send users to Pump.fun for non-Pump.fun tokens.
+    // Pump.fun convention: many Solana meme CAs end with "pump".
+    // Keep URL-based fallback when DexScreener explicitly identifies Pump.fun.
     const looksLikePumpFun =
+      normalizedCa.endsWith("pump") ||
       sourceUrl.includes("pump.fun") ||
       sourceUrl.includes("pumpfun");
 
