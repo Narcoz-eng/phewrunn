@@ -54,8 +54,8 @@ export const WalletProviderSchema = z.enum(['phantom', 'solflare', 'metamask', '
 export const ConnectWalletSchema = z.object({
   walletAddress: WalletAddressSchema,
   walletProvider: WalletProviderSchema.optional(),
-  signature: z.string().optional(),
-  message: z.string().optional(),
+  signature: z.string().max(1024).optional(),
+  message: z.string().max(4096).optional(),
 });
 
 export type ConnectWallet = z.infer<typeof ConnectWalletSchema>;

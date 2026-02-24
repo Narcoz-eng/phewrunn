@@ -122,36 +122,43 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
   const solanaRegex = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
   const isSolanaWallet = solanaRegex.test(walletAddress);
 
+  if (!isSolanaWallet) {
+    return c.json({
+      error: {
+        message: "Only Solana wallet verification is supported right now",
+        code: "UNSUPPORTED_WALLET_PROVIDER",
+      }
+    }, 400);
+  }
+
   // Require proof-of-ownership for Solana wallets (profile linking)
-  if (isSolanaWallet) {
-    if (!signature || !message) {
-      return c.json({
-        error: {
-          message: "Signature confirmation is required to connect a Solana wallet",
-          code: "SIGNATURE_REQUIRED",
-        }
-      }, 400);
-    }
+  if (!signature || !message) {
+    return c.json({
+      error: {
+        message: "Signature confirmation is required to connect a Solana wallet",
+        code: "SIGNATURE_REQUIRED",
+      }
+    }, 400);
+  }
 
-    const challengeCheck = validateWalletLinkMessage(message, walletAddress, sessionUser.id);
-    if (!challengeCheck.ok) {
-      return c.json({
-        error: {
-          message: challengeCheck.reason,
-          code: "INVALID_WALLET_CHALLENGE",
-        }
-      }, 400);
-    }
+  const challengeCheck = validateWalletLinkMessage(message, walletAddress, sessionUser.id);
+  if (!challengeCheck.ok) {
+    return c.json({
+      error: {
+        message: challengeCheck.reason,
+        code: "INVALID_WALLET_CHALLENGE",
+      }
+    }, 400);
+  }
 
-    const isValidSignature = verifySolanaSignature(message, signature, walletAddress);
-    if (!isValidSignature) {
-      return c.json({
-        error: {
-          message: "Invalid wallet signature. Please confirm the signature again.",
-          code: "INVALID_SIGNATURE",
-        }
-      }, 401);
-    }
+  const isValidSignature = verifySolanaSignature(message, signature, walletAddress);
+  if (!isValidSignature) {
+    return c.json({
+      error: {
+        message: "Invalid wallet signature. Please confirm the signature again.",
+        code: "INVALID_SIGNATURE",
+      }
+    }, 401);
   }
 
   // Rate limiting: Check how many wallet connections this user has made in the last hour
@@ -207,7 +214,7 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
     where: { id: sessionUser.id },
     data: {
       walletAddress,
-      walletProvider: walletProvider || (isSolanaWallet ? 'phantom' : 'other'),
+      walletProvider: walletProvider || "phantom",
       walletConnectedAt: new Date(),
     },
     select: {

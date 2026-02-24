@@ -93,10 +93,10 @@ app.use("/api/*", sanitizeBody());
 app.use("/api/*", sanitizeQuery());
 
 // 5. CSRF Protection - validate origin for state-changing requests
-// Skip CSRF for Better Auth routes (it handles its own security)
 app.use("/api/*", async (c, next) => {
-  // Skip CSRF check for Better Auth routes
-  if (c.req.path.startsWith("/api/auth/")) {
+  // Explicitly exempt auth bootstrap endpoints that may be called before a cookie session exists.
+  // Keep logout and other state-changing routes protected.
+  if (c.req.path === "/api/auth/privy-sync" || c.req.path === "/api/auth/wallet") {
     return next();
   }
   return csrfProtection()(c, next);
@@ -204,6 +204,65 @@ function verifySolanaSignature(
   }
 }
 
+const WALLET_AUTH_MESSAGE_MAX_AGE_MS = 5 * 60 * 1000;
+const walletAuthNonceReplayCache = new Map<string, number>();
+
+function validateWalletAuthMessage(
+  message: string,
+  walletAddress: string
+): { ok: true; nonce: string } | { ok: false; reason: string } {
+  const normalized = message.trim();
+
+  if (normalized.length === 0 || normalized.length > 4096) {
+    return { ok: false, reason: "Invalid auth message length" };
+  }
+
+  if (!normalized.includes("verify your wallet ownership")) {
+    return { ok: false, reason: "Invalid wallet auth challenge" };
+  }
+
+  if (!normalized.includes(`Wallet: ${walletAddress}`)) {
+    return { ok: false, reason: "Wallet address mismatch in auth message" };
+  }
+
+  const lines = normalized.split("\n").map((line) => line.trim());
+
+  const nonceLine = lines.find((line) => line.startsWith("Nonce: "));
+  const nonce = nonceLine?.slice("Nonce: ".length).trim() ?? "";
+  if (!/^[a-f0-9]{16,128}$/i.test(nonce)) {
+    return { ok: false, reason: "Missing or invalid nonce in auth message" };
+  }
+
+  const timestampLine = lines.find((line) => line.startsWith("Timestamp: "));
+  const timestampValue = timestampLine?.slice("Timestamp: ".length).trim();
+  const timestampMs = timestampValue ? Date.parse(timestampValue) : Number.NaN;
+  if (!Number.isFinite(timestampMs)) {
+    return { ok: false, reason: "Missing or invalid timestamp in auth message" };
+  }
+
+  if (Math.abs(Date.now() - timestampMs) > WALLET_AUTH_MESSAGE_MAX_AGE_MS) {
+    return { ok: false, reason: "Wallet auth message expired. Please sign again." };
+  }
+
+  return { ok: true, nonce };
+}
+
+function consumeWalletAuthNonce(walletAddress: string, nonce: string): boolean {
+  const now = Date.now();
+  for (const [key, expiresAtMs] of walletAuthNonceReplayCache) {
+    if (expiresAtMs <= now) walletAuthNonceReplayCache.delete(key);
+  }
+
+  const replayKey = `${walletAddress}:${nonce}`;
+  const existing = walletAuthNonceReplayCache.get(replayKey);
+  if (existing && existing > now) {
+    return false;
+  }
+
+  walletAuthNonceReplayCache.set(replayKey, now + WALLET_AUTH_MESSAGE_MAX_AGE_MS);
+  return true;
+}
+
 // Sign up / Sign in with wallet address
 // This creates a user account using wallet address as identifier
 app.post("/api/auth/wallet", async (c) => {
@@ -218,39 +277,61 @@ app.post("/api/auth/wallet", async (c) => {
       );
     }
 
+    const normalizedWalletAddress = walletAddress.trim();
+
     // Validate wallet address format (Solana or EVM)
     const solanaRegex = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
     const evmRegex = /^0x[a-fA-F0-9]{40}$/;
 
-    if (!solanaRegex.test(walletAddress) && !evmRegex.test(walletAddress)) {
+    if (!solanaRegex.test(normalizedWalletAddress) && !evmRegex.test(normalizedWalletAddress)) {
       return c.json(
         { error: { message: "Invalid wallet address format", code: "INVALID_INPUT" } },
         400
       );
     }
 
+    // Security hardening: EVM auth is disabled until signature verification is implemented.
+    if (evmRegex.test(normalizedWalletAddress)) {
+      return c.json(
+        {
+          error: {
+            message: "EVM wallet sign-in is not enabled yet. Use Solana wallet sign-in or Privy email sign-in.",
+            code: "UNSUPPORTED_WALLET_AUTH",
+          },
+        },
+        400
+      );
+    }
+
     // For Solana wallets, verify the signature
-    if (solanaRegex.test(walletAddress)) {
-      if (!signature || !message) {
+    if (solanaRegex.test(normalizedWalletAddress)) {
+      if (typeof signature !== "string" || typeof message !== "string" || !signature || !message) {
         return c.json(
           { error: { message: "Signature and message are required for wallet authentication", code: "INVALID_INPUT" } },
           400
         );
       }
 
-      // Verify the signature
-      const isValid = verifySolanaSignature(message, signature, walletAddress);
-      if (!isValid) {
+      const challenge = validateWalletAuthMessage(message, normalizedWalletAddress);
+      if (!challenge.ok) {
         return c.json(
-          { error: { message: "Invalid signature. Please try again.", code: "INVALID_SIGNATURE" } },
+          { error: { message: challenge.reason, code: "INVALID_MESSAGE" } },
           401
         );
       }
 
-      // Verify the message contains the correct wallet address
-      if (!message.includes(walletAddress)) {
+      if (!consumeWalletAuthNonce(normalizedWalletAddress, challenge.nonce)) {
         return c.json(
-          { error: { message: "Message does not match wallet address", code: "INVALID_MESSAGE" } },
+          { error: { message: "This wallet auth message was already used. Please sign a new message.", code: "REPLAY_DETECTED" } },
+          409
+        );
+      }
+
+      // Verify the signature
+      const isValid = verifySolanaSignature(message, signature, normalizedWalletAddress);
+      if (!isValid) {
+        return c.json(
+          { error: { message: "Invalid signature. Please try again.", code: "INVALID_SIGNATURE" } },
           401
         );
       }
@@ -258,7 +339,7 @@ app.post("/api/auth/wallet", async (c) => {
 
     // Check if user exists with this wallet
     let user = await prisma.user.findFirst({
-      where: { walletAddress },
+      where: { walletAddress: normalizedWalletAddress },
     });
 
     const now = new Date();
@@ -268,9 +349,9 @@ app.post("/api/auth/wallet", async (c) => {
       user = await prisma.user.create({
         data: {
           id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          email: `${walletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
-          name: `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`,
-          walletAddress,
+          email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
+          name: `${normalizedWalletAddress.slice(0, 6)}...${normalizedWalletAddress.slice(-4)}`,
+          walletAddress: normalizedWalletAddress,
           walletProvider: walletProvider || "unknown",
           walletConnectedAt: now,
           emailVerified: false,
@@ -287,7 +368,7 @@ app.post("/api/auth/wallet", async (c) => {
       await prisma.account.create({
         data: {
           id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          accountId: walletAddress,
+          accountId: normalizedWalletAddress,
           providerId: "wallet",
           userId: user.id,
           createdAt: now,
