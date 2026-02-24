@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSession, useAuth } from "@/lib/auth-client";
@@ -84,7 +84,7 @@ export default function Profile() {
   });
 
   // Update edit form state when user data loads
-  useMemo(() => {
+  useEffect(() => {
     if (user) {
       setEditUsername(user.username || user.name || "");
       setEditBio(user.bio || "");

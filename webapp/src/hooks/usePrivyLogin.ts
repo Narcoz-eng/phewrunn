@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
@@ -9,9 +9,15 @@ export function usePrivyLogin() {
   const { refetch } = useAuth();
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const syncGuardRef = useRef(false);
 
   const { login } = useLogin({
     onComplete: async (params) => {
+      if (syncGuardRef.current) {
+        console.warn("[usePrivyLogin] Duplicate onComplete callback ignored");
+        return;
+      }
+      syncGuardRef.current = true;
       setSyncError(null);
       try {
         const privyUser = params.user;
@@ -45,10 +51,12 @@ export function usePrivyLogin() {
           // Ignore cleanup errors; the backend sync failure is the primary issue.
         }
       } finally {
+        syncGuardRef.current = false;
         setIsSyncing(false);
       }
     },
     onError: (error) => {
+      syncGuardRef.current = false;
       console.error("[usePrivyLogin] Privy login error:", error);
       setIsSyncing(false);
       setSyncError(error instanceof Error ? error.message : "Privy sign-in failed");
@@ -57,6 +65,9 @@ export function usePrivyLogin() {
   });
 
   const startLogin = () => {
+    if (syncGuardRef.current || isSyncing) {
+      return;
+    }
     setSyncError(null);
     setIsSyncing(true);
     login();

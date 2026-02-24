@@ -356,6 +356,12 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   try {
+    const isUniqueConstraintError = (error: unknown): error is { code: string } =>
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "P2002";
+
     const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
     const { privyUserId, privyIdToken, email, name } = body;
 
@@ -454,8 +460,12 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!user) {
       const displayName = typeof name === "string" && name.trim() ? name.trim() : verifiedEmail.split("@")[0] ?? "User";
-      user = await prisma.user.create({
-        data: {
+      user = await prisma.user.upsert({
+        where: { email: verifiedEmail },
+        update: {
+          emailVerified: true,
+        },
+        create: {
           id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
           email: verifiedEmail,
           name: displayName,
@@ -468,20 +478,51 @@ app.post("/api/auth/privy-sync", async (c) => {
           updatedAt: now,
         },
       });
-
     }
 
     if (!existingPrivyAccount) {
-      await prisma.account.create({
-        data: {
-          id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          accountId: verifiedPrivyUserId,
-          providerId: "privy",
-          userId: user.id,
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
+      try {
+        const linkedAccount = await prisma.account.upsert({
+          where: {
+            providerId_accountId: {
+              providerId: "privy",
+              accountId: verifiedPrivyUserId,
+            },
+          },
+          update: { updatedAt: now },
+          create: {
+            id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+            accountId: verifiedPrivyUserId,
+            providerId: "privy",
+            userId: user.id,
+            createdAt: now,
+            updatedAt: now,
+          },
+          include: { user: true },
+        });
+        if (linkedAccount.user) {
+          user = linkedAccount.user;
+        }
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          throw error;
+        }
+
+        // Another concurrent sync may have created the account between our check and create.
+        const linkedAccount = await prisma.account.findUnique({
+          where: {
+            providerId_accountId: {
+              providerId: "privy",
+              accountId: verifiedPrivyUserId,
+            },
+          },
+          include: { user: true },
+        });
+        if (!linkedAccount?.user) {
+          throw error;
+        }
+        user = linkedAccount.user;
+      }
     }
 
     // Issue a session token
