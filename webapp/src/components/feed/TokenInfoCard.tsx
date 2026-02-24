@@ -46,6 +46,21 @@ export function TokenInfoCard({
     return `https://dexscreener.com/${chain}/${contractAddress}`;
   };
 
+  const getPumpFunUrl = () => {
+    if (chainType !== "solana") return null;
+
+    const sourceUrl = (dexscreenerUrl ?? "").toLowerCase();
+    // Conservative detection so we never send users to Pump.fun for non-Pump.fun tokens.
+    const looksLikePumpFun =
+      sourceUrl.includes("pump.fun") ||
+      sourceUrl.includes("pumpfun");
+
+    if (!looksLikePumpFun) return null;
+    return `https://pump.fun/coin/${contractAddress}`;
+  };
+
+  const pumpFunUrl = getPumpFunUrl();
+
   // Show placeholder if no image or if image failed to load
   const showPlaceholder = !tokenImage || imageError;
 
@@ -183,6 +198,18 @@ export function TokenInfoCard({
               Chart
               <ExternalLink className="h-2.5 w-2.5" />
             </a>
+            {pumpFunUrl && (
+              <a
+                href={pumpFunUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-gain bg-gain/10 hover:bg-gain/20 rounded-md border border-gain/20 transition-colors"
+              >
+                <Coins className="h-3 w-3" />
+                Trade on Pump
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
           </div>
         </div>
       </div>

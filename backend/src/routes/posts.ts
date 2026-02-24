@@ -518,6 +518,35 @@ async function runMaintenanceCycle(): Promise<MaintenanceRunResult> {
   return summary;
 }
 
+function triggerMaintenanceCycleNonBlocking(reason: string): void {
+  const now = Date.now();
+  if (maintenanceRunInFlight) return;
+  if (now - lastMaintenanceRunStartedAt < MAINTENANCE_RUN_MIN_INTERVAL_MS) return;
+
+  lastMaintenanceRunStartedAt = now;
+  maintenanceRunInFlight = runMaintenanceCycle()
+    .then((result) => {
+      if (
+        result.settlement.settled1h ||
+        result.settlement.snapshot6h ||
+        result.settlement.levelChanges6h ||
+        result.settlement.errors ||
+        result.marketRefresh.updatedPosts ||
+        result.marketRefresh.errors
+      ) {
+        console.log("[Maintenance] Opportunistic trigger completed", { reason, result });
+      }
+      return result;
+    })
+    .catch((error) => {
+      console.error("[Maintenance] Opportunistic trigger failed", { reason, error });
+      throw error;
+    })
+    .finally(() => {
+      maintenanceRunInFlight = null;
+    });
+}
+
 // Get all posts (feed) with sorting and filtering
 postsRouter.get("/", async (c) => {
   const user = c.get("user");
@@ -528,6 +557,12 @@ postsRouter.get("/", async (c) => {
   const { sort, following, limit, cursor, search } = parsed.success
     ? parsed.data
     : { sort: "latest" as const, following: false, limit: 50, cursor: undefined, search: undefined };
+
+  // Safety fallback when scheduled maintenance is not running (e.g. no Vercel cron).
+  // This is throttled + non-blocking, and only runs on the first page to avoid feed jitter.
+  if (!cursor && !search) {
+    triggerMaintenanceCycleNonBlocking(`feed:${sort}${following ? ":following" : ""}`);
+  }
 
   // Build the where clause - use Prisma's AND/OR operators
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2059,6 +2094,16 @@ postsRouter.get("/:id/price", async (c) => {
         lastMcapUpdate: post.lastMcapUpdate?.toISOString() ?? null,
       }
     });
+  }
+
+  // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable.
+  // Keeps feed request path clean while still allowing 1H/6H status to catch up.
+  if (
+    (isReadyFor1HSettlement(post.createdAt, post.settled) ||
+      isReadyFor6HSnapshot(post.createdAt, post.mcap6h)) &&
+    post.entryMcap !== null
+  ) {
+    triggerMaintenanceCycleNonBlocking(`price:${postId}`);
   }
 
   const trackingMode = determineTrackingMode(post.createdAt);
