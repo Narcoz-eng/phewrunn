@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DailyGainersTable } from "@/components/leaderboard/DailyGainersTable";
@@ -37,6 +38,7 @@ export default function Leaderboard() {
   const navigate = useNavigate();
   const { data: session } = useSession();
   const { signOut } = useAuth();
+  const { logout: privyLogout } = usePrivy();
 
   // Fetch current user
   const { data: user } = useQuery({
@@ -65,6 +67,11 @@ export default function Leaderboard() {
 
   const handleLogout = async () => {
     await signOut();
+    try {
+      await privyLogout();
+    } catch (error) {
+      console.error("[Leaderboard] Privy logout failed:", error);
+    }
     navigate("/login");
   };
 

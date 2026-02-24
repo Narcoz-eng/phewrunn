@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { usePrivy } from "@privy-io/react-auth";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
 import { Post, User } from "@/types";
@@ -43,6 +44,7 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
 export default function Feed() {
   const { data: session } = useSession();
   const { signOut } = useAuth();
+  const { logout: privyLogout } = usePrivy();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<FeedTab>("latest");
@@ -227,6 +229,11 @@ export default function Feed() {
 
   const handleSignOut = async () => {
     await signOut();
+    try {
+      await privyLogout();
+    } catch (error) {
+      console.error("[Feed] Privy logout failed:", error);
+    }
   };
 
   const handleLike = async (postId: string) => {

@@ -30,15 +30,19 @@ export function usePrivyLogin() {
           "";
 
         if (!email && !privyIdToken) {
-          console.error("[usePrivyLogin] No email found in Privy user:", privyUser);
-          setSyncError("Privy login succeeded, but no email/identity token was available.");
-          toast.error("No verified Privy identity data returned");
-          return;
+          // Privy can occasionally omit email / identity token on repeat sign-ins.
+          // Backend can still resolve the user via privyUserId using Privy server API.
+          console.warn("[usePrivyLogin] Privy returned no email/idToken; falling back to privyUserId sync");
         }
 
         const name = (privyUser.google as { name?: string } | undefined)?.name ?? email.split("@")[0] ?? "";
 
-        await syncPrivySession(privyUser.id, email, name, privyIdToken ?? undefined);
+        await syncPrivySession(
+          privyUser.id,
+          email || undefined,
+          name || undefined,
+          privyIdToken ?? undefined
+        );
         await refetch();
       } catch (err) {
         console.error("[usePrivyLogin] onComplete error:", err);
