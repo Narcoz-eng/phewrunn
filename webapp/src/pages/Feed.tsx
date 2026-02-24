@@ -56,6 +56,58 @@ export default function Feed() {
   const [activeTab, setActiveTab] = useState<FeedTab>("latest");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const [hasUserScrolledForAutoLoad, setHasUserScrolledForAutoLoad] = useState(false);
+
+  const getFeedQueryKey = useCallback((tab: FeedTab, search: string) => ["posts", tab, search] as const, []);
+
+  const fetchFeedPage = useCallback(async (
+    tab: FeedTab,
+    search: string,
+    pageParam?: string
+  ): Promise<FeedPage> => {
+    let endpoint = "/api/posts";
+    const params = new URLSearchParams();
+
+    if (tab === "latest") {
+      params.set("sort", "latest");
+    } else if (tab === "trending") {
+      params.set("sort", "trending");
+    } else if (tab === "following") {
+      params.set("following", "true");
+    }
+
+    if (search && search.length >= 3) {
+      params.set("search", search);
+    }
+    params.set("limit", "20");
+    if (pageParam) {
+      params.set("cursor", pageParam);
+    }
+
+    if (params.toString()) {
+      endpoint += `?${params.toString()}`;
+    }
+
+    const response = await api.raw(endpoint);
+    if (!response.ok) {
+      const json = await response.json().catch(() => null);
+      throw new ApiError(
+        json?.error?.message || `Request failed with status ${response.status}`,
+        response.status,
+        json?.error || json
+      );
+    }
+
+    const json = await response.json().catch(() => ({}));
+    const items = Array.isArray(json?.data) ? (json.data as Post[]) : [];
+    const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
+
+    return {
+      items,
+      nextCursor,
+      hasMore: Boolean(json?.hasMore && nextCursor),
+    } satisfies FeedPage;
+  }, []);
 
   // Update URL when search changes
   const handleSearchChange = useCallback((value: string) => {
@@ -96,59 +148,17 @@ export default function Feed() {
     fetchNextPage,
     hasNextPage,
   } = useInfiniteQuery({
-    queryKey: ["posts", activeTab, searchQuery],
+    queryKey: getFeedQueryKey(activeTab, searchQuery),
     initialPageParam: undefined as string | undefined,
-    queryFn: async ({ pageParam }) => {
-      let endpoint = "/api/posts";
-      const params = new URLSearchParams();
-
-      if (activeTab === "latest") {
-        params.set("sort", "latest");
-      } else if (activeTab === "trending") {
-        params.set("sort", "trending");
-      } else if (activeTab === "following") {
-        params.set("following", "true");
-      }
-
-      // Add search query if present
-      if (searchQuery && searchQuery.length >= 3) {
-        params.set("search", searchQuery);
-      }
-      params.set("limit", "20");
-      if (pageParam) {
-        params.set("cursor", pageParam);
-      }
-
-      if (params.toString()) {
-        endpoint += `?${params.toString()}`;
-      }
-
-      const response = await api.raw(endpoint);
-      if (!response.ok) {
-        const json = await response.json().catch(() => null);
-        throw new ApiError(
-          json?.error?.message || `Request failed with status ${response.status}`,
-          response.status,
-          json?.error || json
-        );
-      }
-
-      const json = await response.json().catch(() => ({}));
-      const items = Array.isArray(json?.data) ? (json.data as Post[]) : [];
-      const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
-
-      return {
-        items,
-        nextCursor,
-        hasMore: Boolean(json?.hasMore && nextCursor),
-      } satisfies FeedPage;
-    },
+    queryFn: ({ pageParam }) => fetchFeedPage(activeTab, searchQuery, pageParam),
     getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
     maxPages: 8,
     enabled: !!session?.user,
     retry: 2,
-    staleTime: 15000, // 15 seconds
+    staleTime: 60_000, // 1 minute; reduces tab-switch reloads
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
     refetchInterval: false,
   });
 
@@ -172,8 +182,51 @@ export default function Feed() {
   }, [activeTab, queryClient, searchQuery]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onScroll = () => {
+      if (window.scrollY > 120) {
+        setHasUserScrolledForAutoLoad(true);
+      }
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user) return;
+    if (activeTab !== "latest") return;
+    if (searchQuery.trim().length >= 3) return;
+    if (!postsPages?.pages?.length) return;
+
+    const timer = window.setTimeout(() => {
+      const tabsToPrefetch: FeedTab[] = ["trending", "following"];
+
+      for (const tab of tabsToPrefetch) {
+        const key = getFeedQueryKey(tab, "");
+        const state = queryClient.getQueryState(key);
+        if (state?.status === "success" && Date.now() - state.dataUpdatedAt < 45_000) {
+          continue;
+        }
+
+        void queryClient.prefetchInfiniteQuery({
+          queryKey: key,
+          initialPageParam: undefined as string | undefined,
+          queryFn: ({ pageParam }) => fetchFeedPage(tab, "", pageParam),
+          getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
+          staleTime: 60_000,
+        });
+      }
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [activeTab, fetchFeedPage, getFeedQueryKey, postsPages?.pages?.length, queryClient, searchQuery, session?.user]);
+
+  useEffect(() => {
     if (!hasNextPage || isFetchingNextPage) return;
     if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") return;
+    if (!hasUserScrolledForAutoLoad) return;
     const node = loadMoreRef.current;
     if (!node) return;
 
@@ -186,14 +239,14 @@ export default function Feed() {
       },
       {
         root: null,
-        rootMargin: "800px 0px",
+        rootMargin: "220px 0px",
         threshold: 0,
       }
     );
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+  }, [fetchNextPage, hasNextPage, hasUserScrolledForAutoLoad, isFetchingNextPage]);
 
   // Create post mutation
   const createPostMutation = useMutation({
@@ -346,10 +399,21 @@ export default function Feed() {
   };
 
   const handleRefresh = () => {
-    refetchPosts();
+    queryClient.setQueryData<InfiniteData<FeedPage>>(
+      getFeedQueryKey(activeTab, searchQuery),
+      (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          pages: oldData.pages.slice(0, 1),
+          pageParams: oldData.pageParams.slice(0, 1),
+        };
+      }
+    );
+    void refetchPosts();
   };
 
-  const autoLoadEnabled = Boolean(hasNextPage);
+  const autoLoadEnabled = Boolean(hasNextPage && hasUserScrolledForAutoLoad);
   const showLoadMoreControls = Boolean(hasNextPage);
   const showTrendingSection = activeTab === "latest" && searchQuery.trim().length < 3;
 
