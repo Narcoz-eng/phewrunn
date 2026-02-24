@@ -74,6 +74,9 @@ interface SessionState {
   isAuthenticated: boolean;
 }
 
+let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
+let sessionRateLimitedUntil = 0;
+
 // Auth context
 interface AuthContextType extends SessionState {
   refetch: () => Promise<void>;
@@ -85,6 +88,16 @@ const AuthContext = createContext<AuthContextType | null>(null);
 // Fetch session from backend using /api/me endpoint
 // This endpoint uses our custom middleware that supports Bearer tokens
 async function fetchSession(): Promise<AuthUser | null> {
+  const now = Date.now();
+  if (sessionRateLimitedUntil > now) {
+    return null;
+  }
+
+  if (sessionFetchInFlight) {
+    return sessionFetchInFlight;
+  }
+
+  sessionFetchInFlight = (async () => {
   try {
     // Get token from localStorage as fallback for cross-origin issues
     const token = localStorage.getItem("auth-token");
@@ -103,6 +116,16 @@ async function fetchSession(): Promise<AuthUser | null> {
 
     if (!response.ok) {
       console.log("[Auth] Session response not ok:", response.status);
+      if (response.status === 429) {
+        const retryAfterHeader = response.headers.get("retry-after");
+        const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
+        const backoffMs =
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+            ? retryAfterSeconds * 1000
+            : 5000;
+        sessionRateLimitedUntil = Date.now() + backoffMs;
+        console.warn(`[Auth] /api/me rate limited. Backing off for ${Math.ceil(backoffMs / 1000)}s`);
+      }
       // Clear invalid token
       if (response.status === 401) {
         localStorage.removeItem("auth-token");
@@ -140,7 +163,12 @@ async function fetchSession(): Promise<AuthUser | null> {
   } catch (error) {
     console.error("[Auth] Failed to fetch session:", error);
     return null;
+  } finally {
+    sessionFetchInFlight = null;
   }
+  })();
+
+  return sessionFetchInFlight;
 }
 
 // Auth Provider component

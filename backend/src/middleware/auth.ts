@@ -100,7 +100,7 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
         c.set("session", null);
       }
     } catch (error) {
-      console.error("Failed to get Better Auth session:", error);
+      console.error("Failed to resolve session:", error);
       c.set("user", null);
       c.set("session", null);
     }

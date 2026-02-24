@@ -34,6 +34,10 @@ import {
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
+let settlementCheckInFlight: Promise<void> | null = null;
+let lastSettlementCheckStartedAt = 0;
+const SETTLEMENT_CHECK_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
+
 /**
  * Helper to fetch market cap using the enhanced service
  * Returns just the mcap value for backward compatibility
@@ -281,6 +285,26 @@ async function checkAndSettlePosts(): Promise<{ settled1h: number; snapshot6h: n
   return { settled1h: settled1hCount, snapshot6h: snapshot6hCount, levelChanges6h: levelChanges6hCount, errors: errorCount };
 }
 
+function triggerSettlementCheck(): void {
+  const now = Date.now();
+  if (settlementCheckInFlight) return;
+  if (now - lastSettlementCheckStartedAt < SETTLEMENT_CHECK_MIN_INTERVAL_MS) return;
+
+  lastSettlementCheckStartedAt = now;
+  settlementCheckInFlight = checkAndSettlePosts()
+    .then((result) => {
+      if (result.settled1h || result.snapshot6h || result.levelChanges6h || result.errors) {
+        console.log("[Settlement] Background check result:", result);
+      }
+    })
+    .catch((err) => {
+      console.error("[Settlement] Background check failed:", err);
+    })
+    .finally(() => {
+      settlementCheckInFlight = null;
+    });
+}
+
 // Get all posts (feed) with sorting and filtering
 postsRouter.get("/", async (c) => {
   const user = c.get("user");
@@ -288,7 +312,7 @@ postsRouter.get("/", async (c) => {
 
   // Run background settlement check (non-blocking)
   // This ensures trades settle for ALL users regardless of who fetches the feed
-  checkAndSettlePosts().catch(err => console.error("[Settlement] Background check failed:", err));
+  triggerSettlementCheck();
 
   // Parse query params
   const parsed = FeedQuerySchema.safeParse(queryParams);
@@ -481,89 +505,118 @@ postsRouter.get("/", async (c) => {
   // - Active mode (< 1 hour old): Update if lastMcapUpdate > 30 seconds ago
   // - Settled mode (>= 1 hour old): Update if lastMcapUpdate > 5 minutes ago
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const contractAddresses = [...new Set(
+    postsWithSocial
+      .map((post) => post.contractAddress)
+      .filter((address): address is string => typeof address === "string" && address.length > 0)
+  )];
+
+  const sharedAlphaCandidates = contractAddresses.length > 0
+    ? await prisma.post.findMany({
+      where: {
+        contractAddress: { in: contractAddresses },
+        createdAt: { gte: fortyEightHoursAgo },
+      },
+      select: {
+        id: true,
+        contractAddress: true,
+        authorId: true,
+      },
+    })
+    : [];
+
+  const sharedAlphaByContract = new Map<string, Array<{ id: string; authorId: string }>>();
+  for (const candidate of sharedAlphaCandidates) {
+    if (!candidate.contractAddress) continue;
+    const existing = sharedAlphaByContract.get(candidate.contractAddress) ?? [];
+    existing.push({ id: candidate.id, authorId: candidate.authorId });
+    sharedAlphaByContract.set(candidate.contractAddress, existing);
+  }
 
   const postsWithUpdatedMcap = await Promise.all(
     postsWithSocial.map(async (post) => {
-      let updatedPost = { ...post, sharedAlphaCount: 0 };
+      try {
+        let updatedPost = { ...post, sharedAlphaCount: 0 };
 
-      // Update current mcap based on tracking mode
-      // Also update token metadata if missing (for older posts created before this feature)
-      if (post.contractAddress) {
-        const shouldUpdate = needsMcapUpdate(
-          post.createdAt,
-          post.lastMcapUpdate,
-          post.settled
-        );
+        // Update current mcap based on tracking mode
+        // Also update token metadata if missing (for older posts created before this feature)
+        if (post.contractAddress) {
+          const shouldUpdate = needsMcapUpdate(
+            post.createdAt,
+            post.lastMcapUpdate,
+            post.settled
+          );
 
-        // Check if token metadata is missing
-        const needsTokenMetadata = !post.tokenName || !post.tokenSymbol;
+          // Check if token metadata is missing
+          const needsTokenMetadata = !post.tokenName || !post.tokenSymbol;
 
-        if (shouldUpdate || needsTokenMetadata) {
-          const marketCapResult = await fetchMarketCapService(post.contractAddress);
-          const currentMcap = marketCapResult.mcap;
-          if (currentMcap !== null || needsTokenMetadata) {
-            const trackingMode = determineTrackingMode(post.createdAt);
+          if (shouldUpdate || needsTokenMetadata) {
+            const marketCapResult = await fetchMarketCapService(post.contractAddress);
+            const currentMcap = marketCapResult.mcap;
+            if (currentMcap !== null || needsTokenMetadata) {
+              const trackingMode = determineTrackingMode(post.createdAt);
 
-            // Build update data
-            const updateData: {
-              currentMcap?: number;
-              lastMcapUpdate?: Date;
-              trackingMode?: string;
-              tokenName?: string | null;
-              tokenSymbol?: string | null;
-              tokenImage?: string | null;
-            } = {};
+              // Build update data
+              const updateData: {
+                currentMcap?: number;
+                lastMcapUpdate?: Date;
+                trackingMode?: string;
+                tokenName?: string | null;
+                tokenSymbol?: string | null;
+                tokenImage?: string | null;
+              } = {};
 
-            if (currentMcap !== null) {
-              updateData.currentMcap = currentMcap;
-              updateData.lastMcapUpdate = new Date();
-              updateData.trackingMode = trackingMode;
+              if (currentMcap !== null) {
+                updateData.currentMcap = currentMcap;
+                updateData.lastMcapUpdate = new Date();
+                updateData.trackingMode = trackingMode;
+              }
+
+              // Update token metadata only if missing
+              if (!post.tokenName && marketCapResult.tokenName) {
+                updateData.tokenName = marketCapResult.tokenName;
+              }
+              if (!post.tokenSymbol && marketCapResult.tokenSymbol) {
+                updateData.tokenSymbol = marketCapResult.tokenSymbol;
+              }
+              if (!post.tokenImage && marketCapResult.tokenImage) {
+                updateData.tokenImage = marketCapResult.tokenImage;
+              }
+
+              if (Object.keys(updateData).length > 0) {
+                await prisma.post.update({
+                  where: { id: post.id },
+                  data: updateData,
+                });
+              }
+
+              updatedPost = {
+                ...updatedPost,
+                currentMcap: currentMcap ?? updatedPost.currentMcap,
+                trackingMode: trackingMode ?? updatedPost.trackingMode,
+                tokenName: updateData.tokenName ?? updatedPost.tokenName,
+                tokenSymbol: updateData.tokenSymbol ?? updatedPost.tokenSymbol,
+                tokenImage: updateData.tokenImage ?? updatedPost.tokenImage,
+              };
             }
-
-            // Update token metadata only if missing
-            if (!post.tokenName && marketCapResult.tokenName) {
-              updateData.tokenName = marketCapResult.tokenName;
-            }
-            if (!post.tokenSymbol && marketCapResult.tokenSymbol) {
-              updateData.tokenSymbol = marketCapResult.tokenSymbol;
-            }
-            if (!post.tokenImage && marketCapResult.tokenImage) {
-              updateData.tokenImage = marketCapResult.tokenImage;
-            }
-
-            if (Object.keys(updateData).length > 0) {
-              await prisma.post.update({
-                where: { id: post.id },
-                data: updateData,
-              });
-            }
-
-            updatedPost = {
-              ...updatedPost,
-              currentMcap: currentMcap ?? updatedPost.currentMcap,
-              trackingMode: trackingMode ?? updatedPost.trackingMode,
-              tokenName: updateData.tokenName ?? updatedPost.tokenName,
-              tokenSymbol: updateData.tokenSymbol ?? updatedPost.tokenSymbol,
-              tokenImage: updateData.tokenImage ?? updatedPost.tokenImage,
-            };
           }
         }
-      }
 
-      // Get shared alpha count (other users who posted same CA in 48h)
-      if (post.contractAddress) {
-        const sharedCount = await prisma.post.count({
-          where: {
-            contractAddress: post.contractAddress,
-            id: { not: post.id },
-            authorId: { not: post.authorId },
-            createdAt: { gte: fortyEightHoursAgo },
-          },
-        });
-        updatedPost.sharedAlphaCount = sharedCount;
-      }
+        // Get shared alpha count (other users who posted same CA in 48h)
+        if (post.contractAddress) {
+          const candidates = sharedAlphaByContract.get(post.contractAddress) ?? [];
+          updatedPost.sharedAlphaCount = candidates.reduce((count, candidate) => {
+            if (candidate.id === post.id) return count;
+            if (candidate.authorId === post.authorId) return count;
+            return count + 1;
+          }, 0);
+        }
 
-      return updatedPost;
+        return updatedPost;
+      } catch (error) {
+        console.error("[posts/feed] Failed to enrich post", { postId: post.id, error });
+        return { ...post, sharedAlphaCount: 0 };
+      }
     })
   );
 
