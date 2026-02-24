@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 
 type BrandLogoSize = "sm" | "md" | "lg";
+const EXACT_LOGO_IMAGE_SRC = "/mnt/data/13afe668-ecf5-4567-b9da-c08a4a0327ed.png";
 
 interface BrandLogoProps {
   size?: BrandLogoSize;
@@ -31,12 +32,30 @@ export function BrandLogo({
   size = "md",
   showTagline = false,
   className,
-  markClassName: _markClassName,
+  markClassName,
 }: BrandLogoProps) {
   const styles = sizeMap[size];
 
   return (
-    <div className={cn("flex items-center", className)}>
+    <div className={cn("flex items-center gap-2.5", className)}>
+      <div
+        className={cn(
+          "relative shrink-0 overflow-hidden border border-white/10 bg-[linear-gradient(180deg,rgba(8,12,16,0.94),rgba(6,10,14,0.9))] p-0.5",
+          "shadow-[0_0_0_1px_hsl(var(--primary)/0.08),0_10px_25px_-14px_rgba(0,0,0,0.7)]",
+          styles.mark,
+          markClassName
+        )}
+      >
+        <img
+          src={EXACT_LOGO_IMAGE_SRC}
+          alt=""
+          aria-hidden="true"
+          className="h-full w-full object-cover"
+          loading="eager"
+          decoding="async"
+        />
+      </div>
+
       <div className="leading-tight min-w-0">
         <div
           className={cn(
