@@ -610,9 +610,10 @@ leaderboardRouter.get("/stats", async (c) => {
       level: true,
     },
   });
+  const topUserDetailsById = new Map(topUserDetails.map((u) => [u.id, u]));
 
   const topUsersWithDetails = topUsersThisWeek.map((tu) => {
-    const userDetail = topUserDetails.find((u) => u.id === tu.authorId);
+    const userDetail = topUserDetailsById.get(tu.authorId);
     return {
       id: tu.authorId,
       name: userDetail?.name ?? null,

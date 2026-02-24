@@ -34,17 +34,43 @@ import {
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
-let settlementCheckInFlight: Promise<void> | null = null;
-let lastSettlementCheckStartedAt = 0;
-const SETTLEMENT_CHECK_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
+type SettlementRunResult = {
+  settled1h: number;
+  snapshot6h: number;
+  levelChanges6h: number;
+  errors: number;
+};
+
+type MarketRefreshRunResult = {
+  scannedPosts: number;
+  eligiblePosts: number;
+  refreshedContracts: number;
+  updatedPosts: number;
+  errors: number;
+};
+
+type MaintenanceRunResult = {
+  startedAt: string;
+  durationMs: number;
+  settlement: SettlementRunResult;
+  marketRefresh: MarketRefreshRunResult;
+};
+
+let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
+let lastMaintenanceRunStartedAt = 0;
+const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
 const priceRefreshInFlight = new Map<string, Promise<number | null>>();
 const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
-const FEED_MCAP_ENRICHMENT_MAX_CONTRACTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 4 : 10;
+const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
+const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
+const MARKET_REFRESH_MAX_CONTRACTS_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 8;
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
+const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
 
 /**
  * Helper to fetch market cap using the enhanced service
@@ -92,7 +118,7 @@ async function getFeedMarketCapSnapshot(address: string): Promise<MarketCapResul
  * are updated when the feed is fetched. For production, consider implementing
  * a proper background job system (see services/marketcap.ts for details).
  */
-async function checkAndSettlePosts(): Promise<{ settled1h: number; snapshot6h: number; levelChanges6h: number; errors: number }> {
+async function checkAndSettlePosts(): Promise<SettlementRunResult> {
   const now = Date.now();
   const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
   const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);
@@ -321,34 +347,181 @@ async function checkAndSettlePosts(): Promise<{ settled1h: number; snapshot6h: n
   return { settled1h: settled1hCount, snapshot6h: snapshot6hCount, levelChanges6h: levelChanges6hCount, errors: errorCount };
 }
 
-function triggerSettlementCheck(): void {
-  const now = Date.now();
-  if (settlementCheckInFlight) return;
-  if (now - lastSettlementCheckStartedAt < SETTLEMENT_CHECK_MIN_INTERVAL_MS) return;
+async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
+  const result: MarketRefreshRunResult = {
+    scannedPosts: 0,
+    eligiblePosts: 0,
+    refreshedContracts: 0,
+    updatedPosts: 0,
+    errors: 0,
+  };
 
-  lastSettlementCheckStartedAt = now;
-  settlementCheckInFlight = checkAndSettlePosts()
-    .then((result) => {
-      if (result.settled1h || result.snapshot6h || result.levelChanges6h || result.errors) {
-        console.log("[Settlement] Background check result:", result);
-      }
-    })
-    .catch((err) => {
-      console.error("[Settlement] Background check failed:", err);
-    })
-    .finally(() => {
-      settlementCheckInFlight = null;
+  try {
+    const lookback = new Date(Date.now() - MARKET_REFRESH_LOOKBACK_MS);
+    const candidates = await prisma.post.findMany({
+      where: {
+        contractAddress: { not: null },
+        createdAt: { gte: lookback },
+      },
+      select: {
+        id: true,
+        contractAddress: true,
+        createdAt: true,
+        settled: true,
+        lastMcapUpdate: true,
+        trackingMode: true,
+        tokenName: true,
+        tokenSymbol: true,
+        tokenImage: true,
+      },
+      orderBy: [
+        { lastMcapUpdate: "asc" },
+        { createdAt: "desc" },
+      ],
+      take: MARKET_REFRESH_SCAN_LIMIT,
     });
+
+    result.scannedPosts = candidates.length;
+
+    const postsByContract = new Map<string, typeof candidates>();
+    for (const post of candidates) {
+      const contractAddress = post.contractAddress;
+      if (!contractAddress) continue;
+
+      const shouldUpdateMcap = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+      const needsTokenMetadata = !post.tokenName || !post.tokenSymbol || !post.tokenImage;
+      if (!shouldUpdateMcap && !needsTokenMetadata) continue;
+
+      result.eligiblePosts++;
+
+      let bucket = postsByContract.get(contractAddress);
+      if (!bucket) {
+        if (postsByContract.size >= MARKET_REFRESH_MAX_CONTRACTS_PER_RUN) continue;
+        bucket = [];
+        postsByContract.set(contractAddress, bucket);
+      }
+      bucket.push(post);
+    }
+
+    for (const [contractAddress, posts] of postsByContract) {
+      let marketCapResult: MarketCapResult;
+
+      try {
+        marketCapResult = await getFeedMarketCapSnapshot(contractAddress);
+        result.refreshedContracts++;
+      } catch (error) {
+        console.error("[Maintenance] Failed to fetch market cap for contract", {
+          contractAddress,
+          error,
+        });
+        result.errors++;
+        continue;
+      }
+
+      for (const post of posts) {
+        try {
+          const shouldUpdateMcap = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+          const trackingMode = determineTrackingMode(post.createdAt);
+          const updateData: {
+            currentMcap?: number;
+            lastMcapUpdate?: Date;
+            trackingMode?: string;
+            tokenName?: string | null;
+            tokenSymbol?: string | null;
+            tokenImage?: string | null;
+          } = {};
+
+          if (shouldUpdateMcap && marketCapResult.mcap !== null) {
+            updateData.currentMcap = marketCapResult.mcap;
+            updateData.lastMcapUpdate = new Date();
+            updateData.trackingMode = trackingMode;
+          }
+
+          if (!post.tokenName && marketCapResult.tokenName) {
+            updateData.tokenName = marketCapResult.tokenName;
+          }
+          if (!post.tokenSymbol && marketCapResult.tokenSymbol) {
+            updateData.tokenSymbol = marketCapResult.tokenSymbol;
+          }
+          if (!post.tokenImage && marketCapResult.tokenImage) {
+            updateData.tokenImage = marketCapResult.tokenImage;
+          }
+
+          if (Object.keys(updateData).length === 0) continue;
+
+          await prisma.post.update({
+            where: { id: post.id },
+            data: updateData,
+          });
+          result.updatedPosts++;
+        } catch (error) {
+          console.error("[Maintenance] Failed to persist market cap update", {
+            postId: post.id,
+            contractAddress,
+            error,
+          });
+          result.errors++;
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[Maintenance] Market refresh scan failed:", error);
+    result.errors++;
+  }
+
+  return result;
+}
+
+function isAuthorizedMaintenanceRequest(c: { req: { header: (name: string) => string | undefined } }): boolean {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) return false;
+
+  const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice("Bearer ".length).trim();
+    if (token && token === cronSecret) return true;
+  }
+
+  const rawSecret = c.req.header("x-cron-secret")?.trim();
+  return !!rawSecret && rawSecret === cronSecret;
+}
+
+async function runMaintenanceCycle(): Promise<MaintenanceRunResult> {
+  const startedAtMs = Date.now();
+  const settlement = await checkAndSettlePosts();
+  const marketRefresh = await refreshTrackedMarketCaps();
+
+  const summary: MaintenanceRunResult = {
+    startedAt: new Date(startedAtMs).toISOString(),
+    durationMs: Date.now() - startedAtMs,
+    settlement,
+    marketRefresh,
+  };
+
+  if (
+    settlement.settled1h ||
+    settlement.snapshot6h ||
+    settlement.levelChanges6h ||
+    settlement.errors ||
+    marketRefresh.refreshedContracts ||
+    marketRefresh.updatedPosts ||
+    marketRefresh.errors
+  ) {
+    console.log("[Maintenance] Run result:", summary);
+  }
+
+  // Trending and feed caches may depend on currentMcap updates.
+  if (marketRefresh.updatedPosts > 0) {
+    trendingCache = null;
+  }
+
+  return summary;
 }
 
 // Get all posts (feed) with sorting and filtering
 postsRouter.get("/", async (c) => {
   const user = c.get("user");
   const queryParams = c.req.query();
-
-  // Run background settlement check (non-blocking)
-  // This ensures trades settle for ALL users regardless of who fetches the feed
-  triggerSettlementCheck();
 
   // Parse query params
   const parsed = FeedQuerySchema.safeParse(queryParams);
@@ -372,6 +545,14 @@ postsRouter.get("/", async (c) => {
       select: { followingId: true },
     });
     const followedIds = followedUsers.map((f) => f.followingId);
+
+    if (followedIds.length === 0) {
+      return c.json({
+        data: [],
+        hasMore: false,
+        nextCursor: null,
+      });
+    }
 
     // Only show posts from users the current user follows (excluding own posts)
     whereConditions.push({ authorId: { in: followedIds } });
@@ -467,7 +648,7 @@ postsRouter.get("/", async (c) => {
   let userReposts: Set<string> = new Set();
   let userFollowing: Set<string> = new Set();
 
-  if (user) {
+  if (user && posts.length > 0) {
     const postIds = posts.map((p) => p.id);
     const authorIds = [...new Set(posts.map((p) => p.authorId))];
 
@@ -567,143 +748,150 @@ postsRouter.get("/", async (c) => {
       .filter((address): address is string => typeof address === "string" && address.length > 0)
   )];
 
-  const sharedAlphaCandidates = contractAddresses.length > 0
-    ? await prisma.post.findMany({
-      where: {
-        contractAddress: { in: contractAddresses },
-        createdAt: { gte: fortyEightHoursAgo },
-      },
-      select: {
-        id: true,
-        contractAddress: true,
-        authorId: true,
-      },
-    })
-    : [];
+  const sharedAlphaAuthorsByContract = new Map<string, Set<string>>();
+  if (contractAddresses.length > 0) {
+    const nowMs = Date.now();
+    const missingContracts: string[] = [];
 
-  const sharedAlphaByContract = new Map<string, Array<{ id: string; authorId: string }>>();
-  for (const candidate of sharedAlphaCandidates) {
-    if (!candidate.contractAddress) continue;
-    const existing = sharedAlphaByContract.get(candidate.contractAddress) ?? [];
-    existing.push({ id: candidate.id, authorId: candidate.authorId });
-    sharedAlphaByContract.set(candidate.contractAddress, existing);
-  }
+    for (const contractAddress of contractAddresses) {
+      const cached = sharedAlphaAuthorCache.get(contractAddress);
+      if (cached && cached.expiresAtMs > nowMs) {
+        sharedAlphaAuthorsByContract.set(contractAddress, cached.authorIds);
+      } else {
+        if (cached) sharedAlphaAuthorCache.delete(contractAddress);
+        missingContracts.push(contractAddress);
+      }
+    }
 
-  const shouldRunFeedEnrichment = !cursor;
-  const contractsSelectedForEnrichment = new Set<string>();
-  if (shouldRunFeedEnrichment) {
-    for (const post of postsWithSocial) {
-      if (!post.contractAddress) continue;
-      if (contractsSelectedForEnrichment.size >= FEED_MCAP_ENRICHMENT_MAX_CONTRACTS_PER_REQUEST) break;
+    if (missingContracts.length > 0) {
+      const sharedAlphaCandidates = await prisma.post.findMany({
+        where: {
+          contractAddress: { in: missingContracts },
+          createdAt: { gte: fortyEightHoursAgo },
+        },
+        select: {
+          contractAddress: true,
+          authorId: true,
+        },
+      });
 
-      const shouldUpdate = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
-      const needsTokenMetadata = !post.tokenName || !post.tokenSymbol;
-      if (shouldUpdate || needsTokenMetadata) {
-        contractsSelectedForEnrichment.add(post.contractAddress);
+      const fetchedAuthorsByContract = new Map<string, Set<string>>();
+      for (const contractAddress of missingContracts) {
+        fetchedAuthorsByContract.set(contractAddress, new Set<string>());
+      }
+
+      for (const candidate of sharedAlphaCandidates) {
+        if (!candidate.contractAddress) continue;
+        const authorSet = fetchedAuthorsByContract.get(candidate.contractAddress);
+        if (authorSet) {
+          authorSet.add(candidate.authorId);
+        }
+      }
+
+      for (const [contractAddress, authorIds] of fetchedAuthorsByContract) {
+        sharedAlphaAuthorCache.set(contractAddress, {
+          authorIds,
+          expiresAtMs: nowMs + SHARED_ALPHA_CACHE_TTL_MS,
+        });
+        sharedAlphaAuthorsByContract.set(contractAddress, authorIds);
       }
     }
   }
 
-  const postsWithUpdatedMcap = await Promise.all(
-    postsWithSocial.map(async (post) => {
-      try {
-        let updatedPost = { ...post, sharedAlphaCount: 0 };
+  // Feed is intentionally read-only for market data/settlement updates.
+  // Maintenance work is handled by a cron endpoint to keep request latency stable.
+  const postsWithUpdatedMcap = postsWithSocial.map((post) => {
+    const postWithSharedAlpha = { ...post, sharedAlphaCount: 0 };
 
-        // Update current mcap based on tracking mode
-        // Also update token metadata if missing (for older posts created before this feature)
-        if (post.contractAddress) {
-          const shouldUpdate = needsMcapUpdate(
-            post.createdAt,
-            post.lastMcapUpdate,
-            post.settled
-          );
-
-          // Check if token metadata is missing
-          const needsTokenMetadata = !post.tokenName || !post.tokenSymbol;
-
-          const canEnrichThisPost =
-            shouldRunFeedEnrichment && contractsSelectedForEnrichment.has(post.contractAddress);
-
-          if ((shouldUpdate || needsTokenMetadata) && canEnrichThisPost) {
-            const marketCapResult = await getFeedMarketCapSnapshot(post.contractAddress);
-            const currentMcap = marketCapResult.mcap;
-            if (currentMcap !== null || needsTokenMetadata) {
-              const trackingMode = determineTrackingMode(post.createdAt);
-
-              // Build update data
-              const updateData: {
-                currentMcap?: number;
-                lastMcapUpdate?: Date;
-                trackingMode?: string;
-                tokenName?: string | null;
-                tokenSymbol?: string | null;
-                tokenImage?: string | null;
-              } = {};
-
-              if (currentMcap !== null) {
-                updateData.currentMcap = currentMcap;
-                updateData.lastMcapUpdate = new Date();
-                updateData.trackingMode = trackingMode;
-              }
-
-              // Update token metadata only if missing
-              if (!post.tokenName && marketCapResult.tokenName) {
-                updateData.tokenName = marketCapResult.tokenName;
-              }
-              if (!post.tokenSymbol && marketCapResult.tokenSymbol) {
-                updateData.tokenSymbol = marketCapResult.tokenSymbol;
-              }
-              if (!post.tokenImage && marketCapResult.tokenImage) {
-                updateData.tokenImage = marketCapResult.tokenImage;
-              }
-
-              if (Object.keys(updateData).length > 0) {
-                void prisma.post.update({
-                  where: { id: post.id },
-                  data: updateData,
-                }).catch((error) => {
-                  console.error("[posts/feed] Failed to persist enrichment update", {
-                    postId: post.id,
-                    error,
-                  });
-                });
-              }
-
-              updatedPost = {
-                ...updatedPost,
-                currentMcap: currentMcap ?? updatedPost.currentMcap,
-                trackingMode: trackingMode ?? updatedPost.trackingMode,
-                tokenName: updateData.tokenName ?? updatedPost.tokenName,
-                tokenSymbol: updateData.tokenSymbol ?? updatedPost.tokenSymbol,
-                tokenImage: updateData.tokenImage ?? updatedPost.tokenImage,
-              };
-            }
-          }
-        }
-
-        // Get shared alpha count (other users who posted same CA in 48h)
-        if (post.contractAddress) {
-          const candidates = sharedAlphaByContract.get(post.contractAddress) ?? [];
-          updatedPost.sharedAlphaCount = candidates.reduce((count, candidate) => {
-            if (candidate.id === post.id) return count;
-            if (candidate.authorId === post.authorId) return count;
-            return count + 1;
-          }, 0);
-        }
-
-        return updatedPost;
-      } catch (error) {
-        console.error("[posts/feed] Failed to enrich post", { postId: post.id, error });
-        return { ...post, sharedAlphaCount: 0 };
+    if (post.contractAddress) {
+      const authorIds = sharedAlphaAuthorsByContract.get(post.contractAddress);
+      if (authorIds) {
+        postWithSharedAlpha.sharedAlphaCount = Math.max(
+          0,
+          authorIds.size - (authorIds.has(post.authorId) ? 1 : 0)
+        );
       }
-    })
-  );
+    }
+
+    return postWithSharedAlpha;
+  });
 
   return c.json({
     data: postsWithUpdatedMcap,
     hasMore,
     nextCursor,
   });
+});
+
+// Protected cron/maintenance runner for settlement + market refresh.
+// Vercel Cron can call this with Authorization: Bearer <CRON_SECRET>.
+postsRouter.get("/maintenance/run", async (c) => {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) {
+    return c.json({
+      error: {
+        message: "CRON_SECRET is not configured",
+        code: "CRON_NOT_CONFIGURED",
+      },
+    }, 503);
+  }
+
+  if (!isAuthorizedMaintenanceRequest(c)) {
+    return c.json({
+      error: {
+        message: "Unauthorized",
+        code: "UNAUTHORIZED",
+      },
+    }, 401);
+  }
+
+  const now = Date.now();
+  if (maintenanceRunInFlight) {
+    const result = await maintenanceRunInFlight;
+    return c.json({
+      data: {
+        ...result,
+        reusedInFlight: true,
+      },
+    });
+  }
+
+  const cooldownRemainingMs = Math.max(
+    0,
+    MAINTENANCE_RUN_MIN_INTERVAL_MS - (now - lastMaintenanceRunStartedAt)
+  );
+
+  if (cooldownRemainingMs > 0) {
+    return c.json({
+      data: {
+        skipped: true,
+        reason: "cooldown",
+        retryAfterMs: cooldownRemainingMs,
+      },
+    }, 202);
+  }
+
+  lastMaintenanceRunStartedAt = now;
+  maintenanceRunInFlight = runMaintenanceCycle()
+    .catch((error) => {
+      console.error("[Maintenance] Run failed:", error);
+      throw error;
+    })
+    .finally(() => {
+      maintenanceRunInFlight = null;
+    });
+
+  try {
+    const result = await maintenanceRunInFlight;
+    return c.json({ data: result });
+  } catch {
+    return c.json({
+      error: {
+        message: "Maintenance run failed",
+        code: "INTERNAL_ERROR",
+      },
+    }, 500);
+  }
 });
 
 // Create a new post
@@ -848,6 +1036,25 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
 // Settle posts (called periodically or on-demand)
 // Handles 1H settlement (official XP calculation) and 6H snapshot + settlement (for ALL posts)
 postsRouter.post("/settle", async (c) => {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) {
+    return c.json({
+      error: {
+        message: "CRON_SECRET is not configured",
+        code: "CRON_NOT_CONFIGURED",
+      },
+    }, 503);
+  }
+
+  if (!isAuthorizedMaintenanceRequest(c)) {
+    return c.json({
+      error: {
+        message: "Unauthorized",
+        code: "UNAUTHORIZED",
+      },
+    }, 401);
+  }
+
   const now = Date.now();
   const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
   const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);

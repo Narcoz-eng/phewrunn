@@ -31,6 +31,12 @@
       "dest": "/webapp/index.html"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/posts/maintenance/run",
+      "schedule": "* * * * *"
+    }
+  ],
   "env": {
     "NODE_ENV": "production"
   }

@@ -29,13 +29,20 @@ export function TrendingSection() {
 
   // Fetch trending tokens
   const { data: trendingTokens = [], isLoading } = useQuery({
-    queryKey: ["posts", "trending-tokens"],
+    queryKey: ["trending-tokens"],
     queryFn: async () => {
       const data = await api.get<TrendingToken[]>("/api/posts/trending");
       return data;
     },
     staleTime: 60000, // 1 minute
-    refetchInterval: 120000, // 2 minutes
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 120000; // 2 minutes
+    },
   });
 
   // Backend enforces trending eligibility; keep a matching client-side guard.

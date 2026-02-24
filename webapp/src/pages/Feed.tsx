@@ -144,6 +144,7 @@ export default function Feed() {
       } satisfies FeedPage;
     },
     getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
+    maxPages: 8,
     enabled: !!session?.user,
     retry: 2,
     staleTime: 15000, // 15 seconds
@@ -350,6 +351,7 @@ export default function Feed() {
 
   const autoLoadEnabled = Boolean(hasNextPage);
   const showLoadMoreControls = Boolean(hasNextPage);
+  const showTrendingSection = activeTab === "latest" && searchQuery.trim().length < 3;
 
   return (
     <div className="min-h-screen bg-background">
@@ -366,7 +368,7 @@ export default function Feed() {
         <AnnouncementBanner />
 
         {/* 2. Trending Now Section */}
-        <TrendingSection />
+        {showTrendingSection ? <TrendingSection /> : null}
 
         {/* 3. Search Bar (prominent, always visible) */}
         <SearchBar

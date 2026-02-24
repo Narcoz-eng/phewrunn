@@ -22,6 +22,9 @@ const envSchema = z.object({
 
   // Optional: Log level
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
+
+  // Optional: Vercel Cron / maintenance endpoint auth
+  CRON_SECRET: z.string().min(16, "CRON_SECRET must be at least 16 characters").optional(),
 });
 
 /**
@@ -44,6 +47,10 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
     // Check debug mode
     if (parsed.DEBUG === "true") {
       warnings.push("DEBUG mode is enabled in production");
+    }
+
+    if (!parsed.CRON_SECRET) {
+      warnings.push("CRON_SECRET is not configured; scheduled maintenance endpoint will be disabled");
     }
   }
 
@@ -75,6 +82,7 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     PRIVY_APP_ID: `${parsed.PRIVY_APP_ID.substring(0, 8)}...`,
     DEBUG: parsed.DEBUG,
     LOG_LEVEL: parsed.LOG_LEVEL,
+    CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
   };
 }
 
