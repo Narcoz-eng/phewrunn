@@ -13,17 +13,17 @@ const sizeMap: Record<BrandLogoSize, { mark: string; title: string; subtitle: st
   sm: {
     mark: "h-9 w-9 rounded-xl",
     title: "text-sm",
-    subtitle: "text-[9px]",
+    subtitle: "text-[8px]",
   },
   md: {
-    mark: "h-10 w-10 rounded-xl",
-    title: "text-sm",
-    subtitle: "text-[11px]",
+    mark: "h-11 w-11 rounded-xl",
+    title: "text-base",
+    subtitle: "text-[10px]",
   },
   lg: {
-    mark: "h-12 w-12 rounded-2xl",
-    title: "text-base",
-    subtitle: "text-xs",
+    mark: "h-14 w-14 rounded-2xl",
+    title: "text-lg",
+    subtitle: "text-[11px]",
   },
 };
 
@@ -34,44 +34,43 @@ export function BrandLogo({
   markClassName,
 }: BrandLogoProps) {
   const styles = sizeMap[size];
-
-  if (showTagline) {
-    return (
-      <div className={cn("flex items-center", className)}>
-        <img
-          src="/phew-logo.svg"
-          alt="Phew.run"
-          className={cn(
-            "w-auto object-contain drop-shadow-[0_8px_24px_rgba(0,0,0,0.42)]",
-            size === "sm" && "h-10 sm:h-11",
-            size === "md" && "h-12",
-            size === "lg" && "h-14"
-          )}
-        />
-      </div>
-    );
-  }
+  const gapClass = showTagline ? (size === "lg" ? "gap-3.5" : "gap-3") : "gap-2.5";
 
   return (
-    <div className={cn("flex items-center gap-3", className)}>
+    <div className={cn("flex items-center", gapClass, className)}>
       <div
         className={cn(
-          "relative shrink-0 border border-white/10 bg-background/90 shadow-[0_0_0_1px_hsl(var(--primary)/0.08)] overflow-hidden p-1",
+          "relative shrink-0 overflow-hidden p-1.5",
+          "border border-white/10 bg-[linear-gradient(180deg,rgba(10,14,18,0.92),rgba(8,10,14,0.86))]",
+          "shadow-[0_0_0_1px_hsl(var(--primary)/0.08),0_10px_25px_-14px_rgba(0,0,0,0.7)]",
           styles.mark,
           markClassName
         )}
       >
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_35%_32%,rgba(123,255,92,0.13),transparent_55%),radial-gradient(circle_at_75%_30%,rgba(52,227,210,0.12),transparent_58%)]" />
         <img src="/phew-mark.svg" alt="" aria-hidden="true" className="h-full w-full object-contain" />
       </div>
 
       <div className="leading-tight min-w-0">
-        <div className={cn("font-semibold tracking-tight", styles.title)}>
-          <span className="bg-gradient-to-r from-[#7BFF5C] to-[#34E3D2] bg-clip-text text-transparent">Phew</span>
-          <span className="text-foreground">.run</span>
+        <div
+          className={cn(
+            "font-extrabold tracking-tight uppercase leading-none",
+            showTagline && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.35)]",
+            styles.title
+          )}
+        >
+          <span className="text-foreground">PHEW</span>
+          <span className="bg-gradient-to-r from-[#A9FF34] via-[#76FF44] to-[#41E8CF] bg-clip-text text-transparent">.RUN</span>
         </div>
         {showTagline ? (
-          <div className={cn("text-muted-foreground/90 tracking-[0.12em] uppercase", styles.subtitle)}>
-            A Phew Running The Internet
+          <div
+            className={cn(
+              "mt-0.5 text-white/80 tracking-[0.14em] uppercase leading-none",
+              "drop-shadow-[0_1px_6px_rgba(0,0,0,0.28)]",
+              styles.subtitle
+            )}
+          >
+            Phew Running The Internet
           </div>
         ) : null}
       </div>
