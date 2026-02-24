@@ -537,9 +537,30 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           ? "Wallet Profit"
           : "Wallet Loss";
     const postPreview = stripContractAddress(post.content) || post.content || "No description";
+    const logoMarkSrc = "/phew-mark.svg";
+    const authorAvatarSrc = getAvatarUrl(post.author.id, post.author.image);
+    const loadCanvasImage = (src: string | null | undefined) =>
+      new Promise<HTMLImageElement | null>((resolve) => {
+        if (!src) {
+          resolve(null);
+          return;
+        }
+        const img = new Image();
+        if (/^https?:\/\//i.test(src)) {
+          img.crossOrigin = "anonymous";
+        }
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = src;
+      });
 
     setIsWinCardDownloading(true);
     try {
+      const [brandMarkImg, authorAvatarImg] = await Promise.all([
+        loadCanvasImage(logoMarkSrc),
+        loadCanvasImage(authorAvatarSrc),
+      ]);
+
       // Background
       const gradient = ctx.createLinearGradient(0, 0, width, height);
       gradient.addColorStop(0, bgTop);
@@ -585,15 +606,34 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.stroke();
 
       // Header brand
-      drawRoundedRect(68, 62, 120, 36, 18);
+      drawRoundedRect(68, 62, 280, 40, 20);
       ctx.fillStyle = "rgba(255,255,255,0.04)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.08)";
       ctx.stroke();
 
-      ctx.fillStyle = "#e5e7eb";
-      ctx.font = "700 18px Inter, system-ui, sans-serif";
-      ctx.fillText("PHEW.RUN", 84, 86);
+      drawRoundedRect(76, 69, 26, 26, 9);
+      ctx.fillStyle = "rgba(255,255,255,0.05)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.07)";
+      ctx.stroke();
+      if (brandMarkImg) {
+        ctx.save();
+        ctx.beginPath();
+        drawRoundedRect(77, 70, 24, 24, 8);
+        ctx.clip();
+        ctx.drawImage(brandMarkImg, 77, 70, 24, 24);
+        ctx.restore();
+      }
+
+      ctx.font = "800 18px Inter, system-ui, sans-serif";
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillText("PHEW", 112, 88);
+      ctx.fillStyle = "#84ff57";
+      ctx.fillText(".RUN", 167, 88);
+      ctx.fillStyle = "rgba(226,232,240,0.62)";
+      ctx.font = "600 9px Inter, system-ui, sans-serif";
+      ctx.fillText("PHEW RUNNING THE INTERNET", 112, 77);
 
       drawRoundedRect(932, 62, 160, 36, 18);
       ctx.fillStyle = accentSoft;
@@ -611,18 +651,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
       ctx.stroke();
 
-      // avatar placeholder
+      // avatar
       ctx.beginPath();
       ctx.arc(108, 170, 24, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(255,255,255,0.07)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.09)";
       ctx.stroke();
-      ctx.fillStyle = "#f8fafc";
-      ctx.font = "700 18px Inter, system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText((post.author.username || post.author.name || "?").charAt(0).toUpperCase(), 108, 177);
-      ctx.textAlign = "start";
+      if (authorAvatarImg) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(108, 170, 22.5, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(authorAvatarImg, 85.5, 147.5, 45, 45);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "700 18px Inter, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText((post.author.username || post.author.name || "?").charAt(0).toUpperCase(), 108, 177);
+        ctx.textAlign = "start";
+      }
 
       ctx.fillStyle = "#f8fafc";
       ctx.font = "700 28px Inter, system-ui, sans-serif";
@@ -1654,8 +1703,24 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
                 <div className="relative p-3.5 sm:p-6">
                   <div className="mb-4 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                      <span className="text-xs font-semibold tracking-wide text-white">PHEW.RUN</span>
+                    <div className="inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5">
+                      <div className="h-7 w-7 rounded-md border border-white/10 bg-white/5 p-0.5">
+                        <img
+                          src="/phew-mark.svg"
+                          alt="Phew"
+                          className="h-full w-full object-contain"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="leading-tight">
+                        <div className="text-xs font-semibold tracking-wide">
+                          <span className="text-white">PHEW</span>
+                          <span className="text-[#84ff57]">.RUN</span>
+                        </div>
+                        <div className="hidden sm:block text-[9px] tracking-[0.12em] text-slate-300/70">
+                          PHEW RUNNING THE INTERNET
+                        </div>
+                      </div>
                     </div>
                     <div
                       className={cn(
@@ -1674,9 +1739,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.2fr_0.8fr]">
                     <div className="rounded-xl border border-white/10 bg-white/5 p-3.5 sm:p-4">
                       <div className="flex items-center gap-3">
-                        <div className="h-11 w-11 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-sm font-bold text-white">
-                          {(post.author.username || post.author.name || "?").charAt(0).toUpperCase()}
-                        </div>
+                        <Avatar className="h-11 w-11 border border-white/10">
+                          <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
+                          <AvatarFallback className="bg-white/5 text-sm font-bold text-white">
+                            {(post.author.username || post.author.name || "?").charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
                         <div className="min-w-0">
                           <div className="truncate text-lg font-semibold text-white">
                             {post.author.username ? `@${post.author.username}` : post.author.name}
