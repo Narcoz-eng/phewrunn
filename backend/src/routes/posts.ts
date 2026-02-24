@@ -12,6 +12,7 @@ import {
   MAX_LEVEL,
   LIQUIDATION_LEVEL,
   calculateXpChange,
+  calculate6HXpChange,
   calculateFinalLevel,
   calculate1HSettlement,
   calculate6HSettlement,
@@ -239,7 +240,10 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
 
         let settlementMsg: string;
         if (isWin1h) {
-          settlementMsg = `1H WIN! +${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
+          settlementMsg =
+            levelDiff !== 0
+              ? `1H WIN! +${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`
+              : `1H WIN! +${percentChange1h.toFixed(1)}% | XP ${xpDisplay}`;
         } else if (recoveryEligible) {
           settlementMsg = `1H: ${percentChange1h.toFixed(1)}% | Recovery chance at 6H!`;
         } else {
@@ -313,10 +317,11 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         const isWin1h = post.isWin1h ?? post.isWin ?? false;
         const recoveryEligible = post.recoveryEligible ?? false;
         const levelChange6h = calculate6HSettlement(isWin1h, percentChange6h, recoveryEligible);
+        const xpChange6h = calculate6HXpChange(percentChange6h, levelChange6h);
         const snapshotUpdatedAt = new Date();
 
-        // Keep 6H snapshot + user level change atomic when a level change applies.
-        if (levelChange6h !== 0) {
+        // Keep 6H snapshot + user rewards atomic when XP and/or level changes apply.
+        if (levelChange6h !== 0 || xpChange6h !== 0) {
           const currentUser = await prisma.user.findUnique({
             where: { id: post.authorId },
             select: { id: true, level: true, xp: true },
@@ -326,8 +331,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             continue;
           }
           const newLevel = calculateFinalLevel(currentUser.level, levelChange6h);
-          const xpChange = calculateXpChange(percentChange6h);
-          const newXp = Math.max(0, currentUser.xp + xpChange);
+          const newXp = Math.max(0, currentUser.xp + xpChange6h);
           await prisma.$transaction([
             prisma.post.update({
               where: { id: post.id },
@@ -356,15 +360,17 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           // Create notification for the user about level change
           const levelDiff = newLevel - currentUser.level;
           const levelDisplay = levelDiff >= 0 ? `+${levelDiff}` : levelDiff;
-          const xpDisplay = xpChange >= 0 ? `+${xpChange}` : xpChange;
+          const xpDisplay = xpChange6h >= 0 ? `+${xpChange6h}` : xpChange6h;
 
           let msg6h: string;
           if (levelChange6h > 0 && recoveryEligible) {
             msg6h = `6H RECOVERY! +${percentChange6h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
           } else if (levelChange6h > 0) {
             msg6h = `6H BONUS! +${percentChange6h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
-          } else {
+          } else if (levelChange6h < 0) {
             msg6h = `6H: ${percentChange6h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
+          } else {
+            msg6h = `6H SNAPSHOT WIN! +${percentChange6h.toFixed(1)}% | XP ${xpDisplay}`;
           }
 
           await prisma.notification.create({
@@ -376,8 +382,12 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             },
           });
 
-          levelChanges6hCount++;
-          console.log(`[Settlement 6H Level] Post ${post.id}: levelChange6h=${levelChange6h}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
+          if (levelChange6h !== 0) {
+            levelChanges6hCount++;
+            console.log(`[Settlement 6H Level] Post ${post.id}: levelChange6h=${levelChange6h}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
+          } else {
+            console.log(`[Settlement 6H XP] Post ${post.id}: +${percentChange6h.toFixed(2)}%, XP ${xpDisplay}, User ${post.authorId}`);
+          }
         } else {
           await prisma.post.update({
             where: { id: post.id },
@@ -1340,19 +1350,18 @@ postsRouter.post("/settle", async (c) => {
     const isWin1h = post.isWin1h ?? post.isWin ?? false;
     const recoveryEligible = post.recoveryEligible ?? false;
     const levelChange6h = calculate6HSettlement(isWin1h, percentChange6h, recoveryEligible);
-    let xpChange = 0;
+    let xpChange = calculate6HXpChange(percentChange6h, levelChange6h);
     let oldLevel = post.author.level;
     let newLevel = oldLevel;
 
     const snapshotUpdatedAt = new Date();
-    if (levelChange6h !== 0) {
+    if (levelChange6h !== 0 || xpChange !== 0) {
       const currentUser = await prisma.user.findUnique({
         where: { id: post.authorId },
         select: { id: true, level: true, xp: true },
       });
       if (!currentUser) continue;
 
-      xpChange = calculateXpChange(percentChange6h);
       oldLevel = currentUser.level;
       newLevel = calculateFinalLevel(currentUser.level, levelChange6h);
       const newXp = Math.max(0, currentUser.xp + xpChange);

@@ -77,6 +77,16 @@ export interface Post {
   sharedBy?: PostAuthor[];
   // Shared Alpha - users who posted same CA within 48h
   sharedAlphaCount?: number;
+  walletTradeSnapshot?: {
+    source?: string | null; // e.g. "helius"
+    totalPnlUsd?: number | null;
+    realizedPnlUsd?: number | null;
+    unrealizedPnlUsd?: number | null;
+    boughtUsd?: number | null;
+    soldUsd?: number | null;
+    holdingUsd?: number | null;
+    holdingAmount?: number | null;
+  } | null;
 }
 
 // Shared Alpha user type

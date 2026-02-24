@@ -257,6 +257,28 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const hasContractAddress = post.contractAddress !== null;
   const winCardProfitLossValue =
     post.entryMcap !== null && officialMcap !== null ? officialMcap - post.entryMcap : null;
+  const walletTradeSnapshot = post.walletTradeSnapshot ?? null;
+  const walletTradeSource = walletTradeSnapshot?.source?.toUpperCase() ?? null;
+  const verifiedTotalPnlUsd =
+    typeof walletTradeSnapshot?.totalPnlUsd === "number" ? walletTradeSnapshot.totalPnlUsd : null;
+  const boughtUsd = typeof walletTradeSnapshot?.boughtUsd === "number" ? walletTradeSnapshot.boughtUsd : null;
+  const soldUsd = typeof walletTradeSnapshot?.soldUsd === "number" ? walletTradeSnapshot.soldUsd : null;
+  const holdingUsd = typeof walletTradeSnapshot?.holdingUsd === "number" ? walletTradeSnapshot.holdingUsd : null;
+  const holdingAmount =
+    typeof walletTradeSnapshot?.holdingAmount === "number" ? walletTradeSnapshot.holdingAmount : null;
+  const hasWalletTradeInfo =
+    verifiedTotalPnlUsd !== null ||
+    boughtUsd !== null ||
+    soldUsd !== null ||
+    holdingUsd !== null ||
+    holdingAmount !== null;
+  const formatUsdCompact = (value: number) =>
+    new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      notation: Math.abs(value) >= 1000 ? "compact" : "standard",
+      maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 2,
+    }).format(value);
   const winCardSettledWin = localSettled && localIsWin === true;
   const winCardSettledLoss = localSettled && localIsWin === false;
   const winCardAccentClass =
@@ -268,13 +290,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const winCardResultLabel = localSettled ? (winCardSettledWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD";
   const winCardResultText =
     percentChange !== null ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%` : "N/A";
-  const winCardProfitLabel =
+  const winCardVerifiedPnlLabel =
+    verifiedTotalPnlUsd === null
+      ? null
+      : verifiedTotalPnlUsd >= 0
+        ? "Verified Total Profit"
+        : "Verified Total Loss";
+  const winCardVerifiedPnlText =
+    verifiedTotalPnlUsd === null ? null : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdCompact(Math.abs(verifiedTotalPnlUsd))}`;
+  const winCardMarketMoveLabel =
     winCardProfitLossValue === null
-      ? "Total P/L"
+      ? "MCAP Delta"
       : winCardProfitLossValue >= 0
-        ? "Total Profit"
-        : "Total Loss";
-  const winCardProfitText =
+        ? "MCAP Gain"
+        : "MCAP Drop";
+  const winCardMarketMoveText =
     winCardProfitLossValue === null
       ? "N/A"
       : `${winCardProfitLossValue >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(winCardProfitLossValue))}`;
@@ -286,6 +316,33 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}`
         : "No contract";
   const winCardPostPreview = (stripContractAddress(post.content) || post.content || "No description").slice(0, 220);
+  const buildWinCardSnapshotMetric = (label: string, snapshotMcap: number | null) => {
+    if (post.entryMcap === null || snapshotMcap === null) {
+      return {
+        label,
+        percentText: "Pending",
+        profitText: "N/A",
+        toneClass: "text-muted-foreground",
+        positive: null as boolean | null,
+      };
+    }
+    const snapshotPercent = calculatePercentChange(post.entryMcap, snapshotMcap);
+    const snapshotProfit = snapshotMcap - post.entryMcap;
+    const isPositive = snapshotProfit >= 0;
+    return {
+      label,
+      percentText:
+        snapshotPercent === null ? "N/A" : `${snapshotPercent >= 0 ? "+" : ""}${snapshotPercent.toFixed(2)}%`,
+      profitText: `${snapshotProfit >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(snapshotProfit))}`,
+      toneClass: isPositive ? "text-gain" : "text-loss",
+      positive: isPositive,
+    };
+  };
+  const winCardSnapshotMetrics = [
+    buildWinCardSnapshotMetric("1H Snapshot", localMcap1h),
+    buildWinCardSnapshotMetric("6H Snapshot", localMcap6h),
+    buildWinCardSnapshotMetric("Current", currentMcap),
+  ];
 
   // Calculate multiplier displays for each mcap field
   const multiplierLive = formatMultiplier(post.entryMcap, currentMcap);
@@ -464,16 +521,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       percentChange !== null
         ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%`
         : "N/A";
-    const totalProfitLossText =
-      profitLossValue !== null
-        ? `${profitLossValue >= 0 ? "+" : ""}${formatMarketCap(Math.abs(profitLossValue)).replace("$", "$")}${profitLossValue >= 0 ? "" : ""}`
-        : "N/A";
-    const totalProfitLossLabel =
-      profitLossValue === null
-        ? "Total P/L"
-        : profitLossValue >= 0
-          ? "Total Profit"
-          : "Total Loss";
+    const verifiedPnlText =
+      verifiedTotalPnlUsd === null
+        ? null
+        : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdCompact(Math.abs(verifiedTotalPnlUsd))}`;
+    const verifiedPnlLabel =
+      verifiedTotalPnlUsd === null
+        ? null
+        : verifiedTotalPnlUsd >= 0
+          ? "Verified Total Profit"
+          : "Verified Total Loss";
     const postPreview = stripContractAddress(post.content) || post.content || "No description";
 
     setIsWinCardDownloading(true);
@@ -598,12 +655,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.font = "800 44px Inter, system-ui, sans-serif";
       ctx.fillText(resultText, 786, 205);
 
-      ctx.fillStyle = "rgba(226,232,240,0.72)";
-      ctx.font = "600 14px Inter, system-ui, sans-serif";
-      ctx.fillText(totalProfitLossLabel, 786, 235);
-      ctx.fillStyle = profitLossValue !== null ? (profitLossValue >= 0 ? "#bbf7d0" : "#fecaca") : "#cbd5e1";
-      ctx.font = "700 18px Inter, system-ui, sans-serif";
-      ctx.fillText(totalProfitLossText, 786, 257);
+      if (verifiedPnlText && verifiedPnlLabel) {
+        ctx.fillStyle = "rgba(226,232,240,0.72)";
+        ctx.font = "600 14px Inter, system-ui, sans-serif";
+        ctx.fillText(verifiedPnlLabel, 786, 235);
+        ctx.fillStyle = verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0 ? "#bbf7d0" : "#fecaca";
+        ctx.font = "700 18px Inter, system-ui, sans-serif";
+        ctx.fillText(verifiedPnlText, 786, 257);
+      }
 
       // Metrics row
       const metricY = 296;
@@ -636,15 +695,45 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         }
       };
 
+      const drawSnapshotsCard = (x: number) => {
+        drawRoundedRect(x, metricY, metricW, metricH, 18);
+        ctx.fillStyle = "rgba(255,255,255,0.025)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.06)";
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(226,232,240,0.72)";
+        ctx.font = "600 12px Inter, system-ui, sans-serif";
+        ctx.fillText("Snapshots", x + 18, metricY + 28);
+
+        const rows = [
+          { short: "1H", ...winCardSnapshotMetrics[0] },
+          { short: "6H", ...winCardSnapshotMetrics[1] },
+          { short: "NOW", ...winCardSnapshotMetrics[2] },
+        ];
+
+        rows.forEach((row, index) => {
+          const rowY = metricY + 52 + index * 22;
+          ctx.fillStyle = "rgba(226,232,240,0.7)";
+          ctx.font = "700 11px Inter, system-ui, sans-serif";
+          ctx.fillText(row.short, x + 18, rowY);
+
+          ctx.fillStyle =
+            row.positive === null ? "#cbd5e1" : row.positive ? "#22c55e" : "#ef4444";
+          ctx.font = "700 12px Inter, system-ui, sans-serif";
+          ctx.fillText(row.percentText, x + 56, rowY);
+
+          ctx.textAlign = "right";
+          ctx.fillStyle =
+            row.positive === null ? "rgba(226,232,240,0.72)" : row.positive ? "#bbf7d0" : "#fecaca";
+          ctx.fillText(row.profitText, x + metricW - 18, rowY);
+          ctx.textAlign = "start";
+        });
+      };
+
       drawMetricCard(metricX1, "Entry MCAP", formatMarketCap(post.entryMcap), "Position open");
       drawMetricCard(metricX2, localSettled ? "Official MCAP" : "Current MCAP", formatMarketCap(officialValue), localSettled ? "1H settlement benchmark" : "Live market snapshot");
-      drawMetricCard(
-        metricX3,
-        "Outcome",
-        profitLossValue === null ? "N/A" : `${profitLossValue >= 0 ? "+" : "-"}${Math.abs(profitLossValue).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
-        "MCAP delta",
-        profitLossValue === null ? "#f8fafc" : profitLossValue >= 0 ? "#22c55e" : "#ef4444"
-      );
+      drawSnapshotsCard(metricX3);
 
       // Post text panel
       drawRoundedRect(68, 442, width - 136, 150, 20);
@@ -653,13 +742,35 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.stroke();
 
+      let postPanelTextY = 504;
+      let postPanelMaxLines = 3;
       ctx.fillStyle = "rgba(226,232,240,0.72)";
       ctx.font = "600 12px Inter, system-ui, sans-serif";
       ctx.fillText("Post", 88, 470);
 
+      if (hasWalletTradeInfo) {
+        const parts: string[] = [];
+        if (verifiedPnlText && verifiedPnlLabel) parts.push(`Verified P/L ${verifiedPnlText}`);
+        if (boughtUsd !== null) parts.push(`Bought ${formatUsdCompact(boughtUsd)}`);
+        if (soldUsd !== null) parts.push(`Sold ${formatUsdCompact(soldUsd)}`);
+        if (holdingUsd !== null) parts.push(`Held ${formatUsdCompact(holdingUsd)}`);
+        if (holdingAmount !== null) parts.push(`Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
+
+        if (parts.length > 0) {
+          ctx.fillStyle = "rgba(226,232,240,0.72)";
+          ctx.font = "600 12px Inter, system-ui, sans-serif";
+          ctx.fillText(`Wallet ${walletTradeSource ? `(${walletTradeSource})` : ""}`.trim(), 88, 492);
+          ctx.fillStyle = "rgba(226,232,240,0.9)";
+          ctx.font = "500 11px Inter, system-ui, sans-serif";
+          drawWrappedText(parts.join(" • "), 88, 512, width - 176, 18, 2);
+          postPanelTextY = 548;
+          postPanelMaxLines = 2;
+        }
+      }
+
       ctx.fillStyle = "#e5e7eb";
       ctx.font = "500 20px Inter, system-ui, sans-serif";
-      drawWrappedText(postPreview, 88, 504, width - 176, 30, 3);
+      drawWrappedText(postPreview, 88, postPanelTextY, width - 176, 26, postPanelMaxLines);
 
       // Footer
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
@@ -1199,6 +1310,57 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   </div>
                 )}
 
+                {hasWalletTradeInfo && (
+                  <div className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-wider font-semibold text-cyan-200/90">
+                        Wallet Trade Summary
+                      </p>
+                      {walletTradeSource ? (
+                        <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border border-cyan-300/30 bg-cyan-300/10 text-cyan-200">
+                          {walletTradeSource}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {verifiedTotalPnlUsd !== null && (
+                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Verified P/L</p>
+                          <p className={cn("mt-1 text-xs font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
+                            {winCardVerifiedPnlText}
+                          </p>
+                        </div>
+                      )}
+                      {boughtUsd !== null && (
+                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Bought</p>
+                          <p className="mt-1 text-xs font-semibold text-foreground">{formatUsdCompact(boughtUsd)}</p>
+                        </div>
+                      )}
+                      {soldUsd !== null && (
+                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sold</p>
+                          <p className="mt-1 text-xs font-semibold text-foreground">{formatUsdCompact(soldUsd)}</p>
+                        </div>
+                      )}
+                      {(holdingUsd !== null || holdingAmount !== null) && (
+                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Holding</p>
+                          <p className="mt-1 text-xs font-semibold text-foreground">
+                            {holdingUsd !== null ? formatUsdCompact(holdingUsd) : "N/A"}
+                          </p>
+                          {holdingAmount !== null && (
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              Qty {holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Settlement Timer */}
                 {isSettlementPending && (
                   <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1519,9 +1681,24 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className={cn("mt-2 text-2xl sm:text-4xl font-bold tracking-tight", winCardAccentClass)}>
                         {winCardResultText}
                       </div>
-                      <div className="mt-3 text-xs text-slate-300/75">{winCardProfitLabel}</div>
-                      <div className={cn("mt-1 text-base sm:text-lg font-semibold", winCardAccentClass)}>
-                        {winCardProfitText}
+                      {winCardVerifiedPnlLabel && winCardVerifiedPnlText ? (
+                        <>
+                          <div className="mt-3 text-xs text-slate-300/75">{winCardVerifiedPnlLabel}</div>
+                          <div
+                            className={cn(
+                              "mt-1 text-base sm:text-lg font-semibold",
+                              verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss"
+                            )}
+                          >
+                            {winCardVerifiedPnlText}
+                          </div>
+                        </>
+                      ) : null}
+                      <div className={cn("mt-3 text-xs", winCardVerifiedPnlLabel ? "text-slate-300/60" : "text-slate-300/75")}>
+                        {winCardMarketMoveLabel}
+                      </div>
+                      <div className={cn("mt-1 text-sm sm:text-base font-semibold", winCardAccentClass)}>
+                        {winCardMarketMoveText}
                       </div>
                     </div>
                   </div>
@@ -1544,6 +1721,85 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
                   </div>
+
+                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                      Snapshot Profit Breakdown
+                    </div>
+                    <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+                      {winCardSnapshotMetrics.map((metric) => (
+                        <div
+                          key={metric.label}
+                          className="rounded-lg border border-white/10 bg-black/20 p-3"
+                        >
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">
+                            {metric.label}
+                          </div>
+                          <div className={cn("mt-1 text-sm sm:text-base font-semibold", metric.toneClass)}>
+                            {metric.percentText}
+                          </div>
+                          <div
+                            className={cn(
+                              "mt-0.5 text-xs sm:text-sm",
+                              metric.positive === null ? "text-slate-300/75" : metric.toneClass
+                            )}
+                          >
+                            {metric.profitText}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {hasWalletTradeInfo ? (
+                    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                          Wallet Trade Summary
+                        </div>
+                        {walletTradeSource ? (
+                          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-cyan-300">
+                            {walletTradeSource}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                        {verifiedTotalPnlUsd !== null ? (
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Verified P/L</div>
+                            <div className={cn("mt-1 text-sm font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
+                              {winCardVerifiedPnlText}
+                            </div>
+                          </div>
+                        ) : null}
+                        {boughtUsd !== null ? (
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Bought</div>
+                            <div className="mt-1 text-sm font-semibold text-white">{formatUsdCompact(boughtUsd)}</div>
+                          </div>
+                        ) : null}
+                        {soldUsd !== null ? (
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Sold</div>
+                            <div className="mt-1 text-sm font-semibold text-white">{formatUsdCompact(soldUsd)}</div>
+                          </div>
+                        ) : null}
+                        {holdingUsd !== null || holdingAmount !== null ? (
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Holding</div>
+                            <div className="mt-1 text-sm font-semibold text-white">
+                              {holdingUsd !== null ? formatUsdCompact(holdingUsd) : "N/A"}
+                            </div>
+                            {holdingAmount !== null ? (
+                              <div className="mt-0.5 text-[11px] text-slate-300/75">
+                                Qty {holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
                     <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Post</div>

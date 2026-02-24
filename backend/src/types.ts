@@ -186,6 +186,10 @@ export const MAX_XP_GAIN_PER_POST = 100;
 export const MAX_XP_LOSS_PER_POST = 50;
 export const XP_PROFIT_MULTIPLIER = 10; // XP = percentChange * 10
 export const XP_LOSS_MULTIPLIER = 5;    // XP = percentChange * 5
+export const SMALL_PROFIT_XP_ONLY_MAX_PCT = 3; // 1-3% wins = XP only, no level
+// "3-4x" (200-300%) should still only award a single level.
+// Only very large runners (10x-20x+) can award two levels.
+export const DOUBLE_LEVEL_PROFIT_MIN_PCT = 900; // +900% profit = 10x
 
 // Rate limiting constants
 export const DAILY_POST_LIMIT = 10;        // Max 10 posts per 24 hours
@@ -212,6 +216,38 @@ export function calculateXpChange(percentChange: number): number {
     // Loss: -XP capped at MAX_XP_LOSS_PER_POST
     return -Math.min(Math.floor(Math.abs(percentChange) * XP_LOSS_MULTIPLIER), MAX_XP_LOSS_PER_POST);
   }
+}
+
+/**
+ * Positive level reward scaling:
+ * - <= 3% profit: XP only (no level)
+ * - > 3% and < 10x: +1 level
+ * - >= 10x profit: +2 levels (capped by MAX_LEVEL in calculateFinalLevel)
+ */
+export function calculatePositiveLevelGain(percentChange: number): number {
+  if (percentChange <= SMALL_PROFIT_XP_ONLY_MAX_PCT) {
+    return 0;
+  }
+  if (percentChange >= DOUBLE_LEVEL_PROFIT_MIN_PCT) {
+    return 2;
+  }
+  return 1;
+}
+
+/**
+ * 6H XP rules:
+ * - If 6H causes a level change, apply normal XP.
+ * - If 6H is a positive snapshot but level gain is 0 (small win), still grant XP.
+ * - Otherwise no extra XP at 6H.
+ */
+export function calculate6HXpChange(percentChange6h: number, levelChange6h: number): number {
+  if (levelChange6h !== 0) {
+    return calculateXpChange(percentChange6h);
+  }
+  if (percentChange6h > 0) {
+    return calculateXpChange(percentChange6h);
+  }
+  return 0;
 }
 
 /**
@@ -268,7 +304,8 @@ export function isLiquidated(level: number): boolean {
  * Enhanced Leveling System - 1H Settlement Rules
  *
  * At 1H settlement:
- * - Win (profit): +1 level immediately
+ * - Small win (<= 3%): XP only, no level
+ * - Win (> 3%): scaled level reward (+1, or +2 for 10x+)
  * - Loss < 30%: No level change yet, mark as recovery eligible for 6H check
  * - Loss >= 30% (severe): -1 level immediately, no 6H recovery chance
  *
@@ -280,8 +317,7 @@ export function calculate1HSettlement(
   const isWin = percentChange > 0;
 
   if (isWin) {
-    // Win at 1H: +1 level immediately
-    return { levelChange: 1, recoveryEligible: false };
+    return { levelChange: calculatePositiveLevelGain(percentChange), recoveryEligible: false };
   }
 
   // Loss scenarios
@@ -302,11 +338,11 @@ export function calculate1HSettlement(
  * For posts that were settled at 1H:
  *
  * If user WON at 1H:
- *   - 6H win: +1 additional level (reward for sustained performance)
+ *   - 6H win: scaled level reward (+0/+1/+2 based on profit; small wins can be XP-only)
  *   - 6H loss: No change (still keep the +1 from 1H - reward early alpha)
  *
  * If user LOST at 1H with recoveryEligible = true (loss was < 30%):
- *   - 6H win: +1 level (recovery bonus!)
+ *   - 6H win: scaled level reward (+0/+1/+2; small wins can recover XP-only)
  *   - 6H loss: -1 level (delayed penalty)
  *
  * If user LOST at 1H with recoveryEligible = false (loss was >= 30%):
@@ -324,8 +360,8 @@ export function calculate6HSettlement(
   if (isWin1h) {
     // User won at 1H
     if (isWin6h) {
-      // Also won at 6H: +1 additional level
-      return 1;
+      // Also won at 6H: reward scales with profit (small wins can be XP-only)
+      return calculatePositiveLevelGain(percentChange6h);
     }
     // Lost at 6H but won at 1H: No change (keep the 1H reward)
     return 0;
@@ -335,8 +371,8 @@ export function calculate6HSettlement(
   if (recoveryEligible) {
     // Was a soft loss (< 30%), check 6H for recovery
     if (isWin6h) {
-      // Recovery success: +1 level
-      return 1;
+      // Recovery success scales with profit (small wins can recover XP-only)
+      return calculatePositiveLevelGain(percentChange6h);
     }
     // Recovery failed: -1 level (delayed penalty)
     return -1;
