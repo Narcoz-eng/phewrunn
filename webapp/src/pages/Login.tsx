@@ -47,6 +47,11 @@ const stats = [
 
 const levelBarSnapshots = [
   {
+    level: -4,
+    title: "Danger Zone",
+    note: "You are close to liquidation. Recovery calls matter the most here.",
+  },
+  {
     level: STARTING_LEVEL,
     title: "Neutral",
     note: "Everyone begins here and builds reputation from real outcomes.",
@@ -57,14 +62,14 @@ const levelBarSnapshots = [
     note: "Consistency moves you into stronger reputation tiers.",
   },
   {
+    level: 5,
+    title: "High Conviction",
+    note: "Strong hit rate and discipline push you into upper-tier visibility.",
+  },
+  {
     level: 9,
     title: "Elite",
     note: "Top performers sit near the cap with the strongest public track records.",
-  },
-  {
-    level: -4,
-    title: "Danger Zone",
-    note: "Near liquidation. One more loss can block posting.",
   },
 ];
 
@@ -288,57 +293,56 @@ export default function Login() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-border/60 bg-background/75 backdrop-blur-xl overflow-hidden">
-                  <div className="px-5 sm:px-6 py-4 border-b border-border/50 bg-gradient-to-b from-accent/[0.05] to-transparent">
+                <div className="mt-4 rounded-2xl sm:rounded-3xl border border-border/60 bg-background/80 backdrop-blur-xl overflow-hidden shadow-[0_20px_70px_-38px_hsl(var(--foreground)/0.45)]">
+                  <div className="px-5 sm:px-6 lg:px-7 py-5 sm:py-6 border-b border-border/50 bg-gradient-to-b from-accent/[0.06] via-primary/[0.02] to-transparent">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="text-base sm:text-lg font-semibold tracking-tight">Level System</h3>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                        <h3 className="text-lg sm:text-xl font-semibold tracking-tight">Level System</h3>
+                        <p className="text-xs sm:text-sm text-muted-foreground mt-1.5 leading-relaxed">
                           Same level bar used in feed, profile, and leaderboard.
                         </p>
                       </div>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Neutral Entry</div>
-                        <div className="text-sm font-semibold">LVL {STARTING_LEVEL}</div>
-                      </div>
-                      <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                      <div className="rounded-xl border border-border/50 bg-background/50 p-3 sm:p-3.5">
                         <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Liquidation</div>
-                        <div className="text-sm font-semibold">LVL {MIN_LEVEL}</div>
+                        <div className="text-sm sm:text-base font-semibold">LVL {MIN_LEVEL}</div>
                       </div>
-                      <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+                      <div className="rounded-xl border border-border/50 bg-background/50 p-3 sm:p-3.5">
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Neutral Entry</div>
+                        <div className="text-sm sm:text-base font-semibold">LVL {STARTING_LEVEL}</div>
+                      </div>
+                      <div className="rounded-xl border border-border/50 bg-background/50 p-3 sm:p-3.5">
                         <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Elite Ceiling</div>
-                        <div className="text-sm font-semibold">LVL +{MAX_LEVEL}</div>
-                      </div>
-                      <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Posting Lock</div>
-                        <div className="text-sm font-semibold">LVL {LIQUIDATION_LEVEL}</div>
+                        <div className="text-sm sm:text-base font-semibold">LVL +{MAX_LEVEL}</div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="px-5 sm:px-6 py-4">
-                    <div className="rounded-xl border border-border/50 bg-card/50 p-3.5">
-                      <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground mb-2.5">
+                  <div className="px-5 sm:px-6 lg:px-7 py-5 sm:py-6">
+                    <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr] lg:items-start">
+                    <div className="rounded-2xl border border-border/50 bg-card/55 p-4 sm:p-5">
+                      <div className="text-[11px] sm:text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground mb-3">
                         Level Bar Snapshots
                       </div>
-                      <div className="grid gap-2.5 sm:grid-cols-2">
+                      <div className="grid gap-3 sm:grid-cols-2">
                         {levelBarSnapshots.map((snapshot) => (
-                          <div key={`${snapshot.title}-${snapshot.level}`} className="rounded-lg border border-border/50 bg-background/40 p-3">
-                            <div className="flex items-center justify-between gap-3 mb-1.5">
+                          <div key={`${snapshot.title}-${snapshot.level}`} className="rounded-xl border border-border/50 bg-background/40 p-3.5 sm:p-4">
+                            <div className="flex items-center justify-between gap-3 mb-2">
                               <div className="text-xs sm:text-sm font-medium">{snapshot.title}</div>
-                              <div className="text-[10px] text-muted-foreground">Example</div>
+                              <div className="text-[10px] sm:text-[11px] px-2 py-0.5 rounded-full border border-border/60 bg-background/60 text-muted-foreground">
+                                LVL {snapshot.level > 0 ? `+${snapshot.level}` : snapshot.level}
+                              </div>
                             </div>
                             <LevelBar level={snapshot.level} size="sm" />
-                            <p className="mt-1.5 text-[11px] text-muted-foreground leading-relaxed">{snapshot.note}</p>
+                            <p className="mt-2 text-[11px] sm:text-xs text-muted-foreground leading-relaxed">{snapshot.note}</p>
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    <div className="mt-3 rounded-xl border border-border/50 bg-background/40 p-3.5">
-                      <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground mb-2">
+                    <div className="rounded-2xl border border-border/50 bg-background/40 p-4 sm:p-5">
+                      <div className="text-[11px] sm:text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground mb-2.5">
                         Grow / Level Down Rules
                       </div>
                       <ul className="space-y-2">
@@ -349,11 +353,12 @@ export default function Login() {
                           </li>
                         ))}
                       </ul>
-                      <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-2.5">
+                      <div className="mt-3.5 rounded-xl border border-red-500/20 bg-red-500/5 p-3">
                         <p className="text-[11px] sm:text-xs text-red-300 leading-relaxed">
                           At <span className="font-semibold">LVL {LIQUIDATION_LEVEL}</span> you are liquidated and cannot post until your reputation improves.
                         </p>
                       </div>
+                    </div>
                     </div>
                   </div>
                 </div>
