@@ -64,6 +64,7 @@ interface UserProfileData {
 
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
+type FollowMutationResponse = { following: boolean; followerCount: number };
 
 export default function UserProfile() {
   const navigate = useNavigate();
@@ -124,14 +125,38 @@ export default function UserProfile() {
   const followMutation = useMutation({
     mutationFn: async () => {
       if (user?.isFollowing) {
-        await api.delete(`/api/users/${userId}/follow`);
+        return await api.delete<FollowMutationResponse>(`/api/users/${userId}/follow`);
       } else {
-        await api.post(`/api/users/${userId}/follow`);
+        return await api.post<FollowMutationResponse>(`/api/users/${userId}/follow`);
       }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const nextFollowing = result.following;
+
+      queryClient.setQueryData<UserProfileData | undefined>(["userProfile", userId], (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          isFollowing: nextFollowing,
+          _count: {
+            ...prev._count,
+            followers: result.followerCount,
+          },
+        };
+      });
+
+      const syncPostFollowState = (prev?: Post[]) =>
+        prev?.map((post) =>
+          post.author.id === user?.id ? { ...post, isFollowingAuthor: nextFollowing } : post
+        ) ?? prev;
+
+      queryClient.setQueryData<Post[] | undefined>(["userPosts", userId], syncPostFollowState);
+      queryClient.setQueryData<Post[] | undefined>(["userReposts", userId], syncPostFollowState);
+
       queryClient.invalidateQueries({ queryKey: ["userProfile", userId] });
-      toast.success(user?.isFollowing ? "Unfollowed" : "Following");
+      queryClient.invalidateQueries({ queryKey: ["userPosts", userId] });
+      queryClient.invalidateQueries({ queryKey: ["userReposts", userId] });
+      toast.success(nextFollowing ? "Following" : "Unfollowed");
     },
     onError: () => {
       toast.error("Failed to update follow status");

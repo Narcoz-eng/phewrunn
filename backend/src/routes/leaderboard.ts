@@ -112,6 +112,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
       author: {
         select: {
           id: true,
+          name: true,
           username: true,
           image: true,
           level: true,
@@ -155,9 +156,11 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     postId: item.post.id,
     tokenName: item.post.tokenName,
     tokenSymbol: item.post.tokenSymbol,
+    tokenImage: item.post.tokenImage,
     contractAddress: item.post.contractAddress!,
     user: {
       id: item.post.author.id,
+      name: item.post.author.name,
       username: item.post.author.username,
       image: item.post.author.image,
       level: item.post.author.level,

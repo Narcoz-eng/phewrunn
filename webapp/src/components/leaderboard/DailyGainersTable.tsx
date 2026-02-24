@@ -14,9 +14,11 @@ interface DailyGainer {
   postId: string;
   tokenName: string | null;
   tokenSymbol: string | null;
+  tokenImage?: string | null;
   contractAddress: string;
   user: {
     id: string;
+    name?: string | null;
     username: string | null;
     image: string | null;
     level: number;
@@ -117,7 +119,7 @@ export function DailyGainersTable() {
       {gainers.map((gainer, index) => (
         <div
           key={gainer.postId}
-          onClick={() => navigate(`/profile/${gainer.user.id}`)}
+          onClick={() => navigate(`/profile/${gainer.user.username || gainer.user.id}`)}
           className={cn(
             "flex items-center gap-4 p-4 rounded-lg bg-card border transition-all cursor-pointer",
             "hover:border-primary/50 hover:shadow-md hover:shadow-primary/5",
@@ -135,7 +137,13 @@ export function DailyGainersTable() {
 
           {/* Token Info */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Avatar className="h-7 w-7 border border-border/60 shrink-0">
+                <AvatarImage src={gainer.tokenImage || undefined} />
+                <AvatarFallback className="text-[10px] font-semibold bg-secondary">
+                  {(gainer.tokenSymbol || gainer.tokenName || "?").charAt(0)}
+                </AvatarFallback>
+              </Avatar>
               <span className="font-semibold truncate">
                 {gainer.tokenSymbol || "Unknown Token"}
               </span>
@@ -150,11 +158,11 @@ export function DailyGainersTable() {
               <Avatar className="h-5 w-5">
                 <AvatarImage src={getAvatarUrl(gainer.user.id, gainer.user.image)} />
                 <AvatarFallback className="text-[10px]">
-                  {gainer.user.username?.charAt(0) || "?"}
+                  {(gainer.user.username || gainer.user.name || "?").charAt(0)}
                 </AvatarFallback>
               </Avatar>
               <span className="text-sm text-muted-foreground truncate">
-                @{gainer.user.username || "anonymous"}
+                {gainer.user.username ? `@${gainer.user.username}` : (gainer.user.name || "Anonymous")}
               </span>
               <LevelBadge level={gainer.user.level} size="sm" />
             </div>

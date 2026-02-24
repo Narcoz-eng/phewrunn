@@ -43,6 +43,7 @@ import {
   UserPlus,
   UserCheck,
   Loader2,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -74,6 +75,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [commentCount, setCommentCount] = useState(post._count?.comments ?? 0);
   const [isInViewport, setIsInViewport] = useState(true);
+  const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
 
   // Sync follow state when post data changes
   useEffect(() => {
@@ -225,6 +227,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       // Invalidate relevant queries to refresh data
       queryClient.invalidateQueries({ queryKey: ["posts"] });
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+      queryClient.invalidateQueries({ queryKey: ["userPosts"] });
+      queryClient.invalidateQueries({ queryKey: ["userReposts"] });
     } catch (error) {
       // Revert on error
       setIsFollowing(wasFollowing);
@@ -310,6 +315,369 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setCopied(true);
     toast.success("Link copied to clipboard");
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadWinCard = async () => {
+    if (isWinCardDownloading) return;
+
+    const canvas = document.createElement("canvas");
+    const width = 1200;
+    const height = 700;
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      toast.error("Failed to generate win card");
+      return;
+    }
+
+    ctx.scale(dpr, dpr);
+
+    const officialValue = officialMcap;
+    const profitLossValue =
+      post.entryMcap !== null && officialValue !== null ? officialValue - post.entryMcap : null;
+    const isSettledWin = localSettled && localIsWin === true;
+    const isSettledLoss = localSettled && localIsWin === false;
+    const isPositive = profitLossValue !== null ? profitLossValue >= 0 : false;
+    const accent = isSettledWin || (!localSettled && isPositive) ? "#22c55e" : isSettledLoss ? "#ef4444" : "#94a3b8";
+    const accentSoft = isSettledWin || (!localSettled && isPositive) ? "rgba(34,197,94,0.18)" : isSettledLoss ? "rgba(239,68,68,0.16)" : "rgba(148,163,184,0.16)";
+    const bgTop = "#0a0f16";
+    const bgBottom = "#080b10";
+
+    const drawRoundedRect = (
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      r: number
+    ) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    };
+
+    const drawWrappedText = (
+      text: string,
+      x: number,
+      y: number,
+      maxWidth: number,
+      lineHeight: number,
+      maxLines: number
+    ) => {
+      const words = text.trim().split(/\s+/);
+      const lines: string[] = [];
+      let current = "";
+
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (ctx.measureText(next).width <= maxWidth) {
+          current = next;
+          continue;
+        }
+        if (current) {
+          lines.push(current);
+          current = word;
+        } else {
+          lines.push(word);
+          current = "";
+        }
+        if (lines.length >= maxLines) break;
+      }
+
+      if (lines.length < maxLines && current) {
+        lines.push(current);
+      }
+
+      const trimmedLines = lines.slice(0, maxLines);
+      if (lines.length > maxLines && trimmedLines.length > 0) {
+        trimmedLines[trimmedLines.length - 1] = `${trimmedLines[trimmedLines.length - 1]}…`;
+      }
+
+      trimmedLines.forEach((line, index) => {
+        ctx.fillText(line, x, y + index * lineHeight);
+      });
+      return trimmedLines.length;
+    };
+
+    const titleName = post.author.username ? `@${post.author.username}` : post.author.name;
+    const tokenPrimary = post.tokenSymbol || post.tokenName || "TOKEN";
+    const tokenSecondary = post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}` : "No contract");
+    const resultLabel = localSettled ? (isSettledWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD";
+    const resultText =
+      percentChange !== null
+        ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%`
+        : "N/A";
+    const totalProfitLossText =
+      profitLossValue !== null
+        ? `${profitLossValue >= 0 ? "+" : ""}${formatMarketCap(Math.abs(profitLossValue)).replace("$", "$")}${profitLossValue >= 0 ? "" : ""}`
+        : "N/A";
+    const totalProfitLossLabel =
+      profitLossValue === null
+        ? "Total P/L"
+        : profitLossValue >= 0
+          ? "Total Profit"
+          : "Total Loss";
+    const postPreview = stripContractAddress(post.content) || post.content || "No description";
+
+    setIsWinCardDownloading(true);
+    try {
+      // Background
+      const gradient = ctx.createLinearGradient(0, 0, width, height);
+      gradient.addColorStop(0, bgTop);
+      gradient.addColorStop(1, bgBottom);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      // Subtle grid
+      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < width; x += 48) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < height; y += 48) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Accent glows
+      const glow1 = ctx.createRadialGradient(980, 80, 20, 980, 80, 220);
+      glow1.addColorStop(0, accentSoft);
+      glow1.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow1;
+      ctx.fillRect(760, -60, 420, 320);
+
+      const glow2 = ctx.createRadialGradient(160, 640, 20, 160, 640, 220);
+      glow2.addColorStop(0, "rgba(59,130,246,0.12)");
+      glow2.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow2;
+      ctx.fillRect(-80, 420, 420, 280);
+
+      // Main card container
+      drawRoundedRect(40, 36, width - 80, height - 72, 28);
+      ctx.fillStyle = "rgba(10,14,20,0.82)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Header brand
+      drawRoundedRect(68, 62, 120, 36, 18);
+      ctx.fillStyle = "rgba(255,255,255,0.04)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.stroke();
+
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = "700 18px Inter, system-ui, sans-serif";
+      ctx.fillText("PHEW.RUN", 84, 86);
+
+      drawRoundedRect(932, 62, 160, 36, 18);
+      ctx.fillStyle = accentSoft;
+      ctx.fill();
+      ctx.strokeStyle = accent;
+      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.font = "700 15px Inter, system-ui, sans-serif";
+      ctx.fillText(resultLabel, 964, 86);
+
+      // User / token block
+      drawRoundedRect(68, 120, 670, 150, 22);
+      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.07)";
+      ctx.stroke();
+
+      // avatar placeholder
+      ctx.beginPath();
+      ctx.arc(108, 170, 24, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.09)";
+      ctx.stroke();
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "700 18px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText((post.author.username || post.author.name || "?").charAt(0).toUpperCase(), 108, 177);
+      ctx.textAlign = "start";
+
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "700 28px Inter, system-ui, sans-serif";
+      ctx.fillText(titleName, 146, 162);
+
+      ctx.fillStyle = "rgba(226,232,240,0.75)";
+      ctx.font = "500 14px Inter, system-ui, sans-serif";
+      ctx.fillText(`Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}  •  ${formatTimeAgo(post.createdAt)}  •  ${post.chainType?.toUpperCase() || "CHAIN"}`, 146, 188);
+
+      drawRoundedRect(146, 204, 560, 46, 14);
+      ctx.fillStyle = "rgba(255,255,255,0.025)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.stroke();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "700 18px Inter, system-ui, sans-serif";
+      ctx.fillText(tokenPrimary, 162, 225);
+      ctx.fillStyle = "rgba(226,232,240,0.75)";
+      ctx.font = "500 13px Inter, system-ui, sans-serif";
+      ctx.fillText(tokenSecondary, 162, 244);
+
+      // Result hero
+      drawRoundedRect(760, 120, 332, 150, 22);
+      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.07)";
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(226,232,240,0.75)";
+      ctx.font = "600 13px Inter, system-ui, sans-serif";
+      ctx.fillText("Post Performance", 786, 150);
+
+      ctx.fillStyle = accent;
+      ctx.font = "800 44px Inter, system-ui, sans-serif";
+      ctx.fillText(resultText, 786, 205);
+
+      ctx.fillStyle = "rgba(226,232,240,0.72)";
+      ctx.font = "600 14px Inter, system-ui, sans-serif";
+      ctx.fillText(totalProfitLossLabel, 786, 235);
+      ctx.fillStyle = profitLossValue !== null ? (profitLossValue >= 0 ? "#bbf7d0" : "#fecaca") : "#cbd5e1";
+      ctx.font = "700 18px Inter, system-ui, sans-serif";
+      ctx.fillText(totalProfitLossText, 786, 257);
+
+      // Metrics row
+      const metricY = 296;
+      const metricW = 328;
+      const metricGap = 18;
+      const metricX1 = 68;
+      const metricX2 = metricX1 + metricW + metricGap;
+      const metricX3 = metricX2 + metricW + metricGap;
+      const metricH = 126;
+
+      const drawMetricCard = (x: number, title: string, value: string, sub?: string, valueColor = "#f8fafc") => {
+        drawRoundedRect(x, metricY, metricW, metricH, 18);
+        ctx.fillStyle = "rgba(255,255,255,0.025)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.06)";
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(226,232,240,0.72)";
+        ctx.font = "600 12px Inter, system-ui, sans-serif";
+        ctx.fillText(title, x + 18, metricY + 28);
+
+        ctx.fillStyle = valueColor;
+        ctx.font = "800 30px Inter, system-ui, sans-serif";
+        ctx.fillText(value, x + 18, metricY + 70);
+
+        if (sub) {
+          ctx.fillStyle = "rgba(226,232,240,0.6)";
+          ctx.font = "500 12px Inter, system-ui, sans-serif";
+          ctx.fillText(sub, x + 18, metricY + 96);
+        }
+      };
+
+      drawMetricCard(metricX1, "Entry MCAP", formatMarketCap(post.entryMcap), "Position open");
+      drawMetricCard(metricX2, localSettled ? "Official MCAP" : "Current MCAP", formatMarketCap(officialValue), localSettled ? "1H settlement benchmark" : "Live market snapshot");
+      drawMetricCard(
+        metricX3,
+        "Outcome",
+        profitLossValue === null ? "N/A" : `${profitLossValue >= 0 ? "+" : "-"}${Math.abs(profitLossValue).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+        "MCAP delta",
+        profitLossValue === null ? "#f8fafc" : profitLossValue >= 0 ? "#22c55e" : "#ef4444"
+      );
+
+      // Post text panel
+      drawRoundedRect(68, 442, width - 136, 150, 20);
+      ctx.fillStyle = "rgba(255,255,255,0.02)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(226,232,240,0.72)";
+      ctx.font = "600 12px Inter, system-ui, sans-serif";
+      ctx.fillText("Post", 88, 470);
+
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = "500 20px Inter, system-ui, sans-serif";
+      drawWrappedText(postPreview, 88, 504, width - 176, 30, 3);
+
+      // Footer
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.beginPath();
+      ctx.moveTo(68, 614);
+      ctx.lineTo(width - 68, 614);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(226,232,240,0.68)";
+      ctx.font = "500 12px Inter, system-ui, sans-serif";
+      ctx.fillText("Generated on PHEW.RUN", 88, 642);
+      ctx.fillText(`Post ID: ${post.id.slice(0, 10)}…`, 88, 662);
+
+      const interactions = `${likeCount} likes  •  ${commentCount} comments  •  ${repostCount} reposts`;
+      ctx.textAlign = "right";
+      ctx.fillText(interactions, width - 88, 642);
+      ctx.fillText(
+        localSettled ? "Settlement-based result snapshot" : "Live result snapshot (updates over time)",
+        width - 88,
+        662
+      );
+      ctx.textAlign = "start";
+
+      const filenameBase = (post.tokenSymbol || post.author.username || post.author.name || "phew-post")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32) || "phew-post";
+      const filename = `phew-${localSettled && isSettledWin ? "wincard" : "result-card"}-${filenameBase}.png`;
+
+      const triggerDownload = (url: string) => {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      };
+
+      if (canvas.toBlob) {
+        await new Promise<void>((resolve, reject) => {
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error("Failed to render image"));
+              return;
+            }
+            const objectUrl = URL.createObjectURL(blob);
+            triggerDownload(objectUrl);
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+            resolve();
+          }, "image/png");
+        });
+      } else {
+        triggerDownload(canvas.toDataURL("image/png"));
+      }
+
+      toast.success(localSettled && isSettledWin ? "Wincard downloaded" : "Result card downloaded");
+    } catch (error) {
+      console.error("[wincard] Failed to generate card", error);
+      toast.error("Failed to generate win card");
+    } finally {
+      setIsWinCardDownloading(false);
+    }
   };
 
   const handleSubmitComment = async () => {
@@ -865,6 +1233,22 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               className="h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
             >
               {copied ? <Check className="h-4 w-4 text-gain" /> : <Share className="h-4 w-4" />}
+            </Button>
+
+            {/* Wincard / Result card download */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDownloadWinCard}
+              disabled={isWinCardDownloading}
+              className="h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
+              title="Download shareable win card"
+            >
+              {isWinCardDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
             </Button>
           </div>
 

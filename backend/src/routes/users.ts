@@ -818,11 +818,12 @@ usersRouter.get("/:identifier/posts", async (c) => {
   // Get current user's interactions with these posts
   let userLikes: Set<string> = new Set();
   let userReposts: Set<string> = new Set();
+  let isFollowingAuthor = false;
 
   if (currentUser) {
     const postIds = posts.map((p) => p.id);
 
-    const [likes, reposts] = await Promise.all([
+    const [likes, reposts, follow] = await Promise.all([
       prisma.like.findMany({
         where: {
           userId: currentUser.id,
@@ -837,16 +838,28 @@ usersRouter.get("/:identifier/posts", async (c) => {
         },
         select: { postId: true },
       }),
+      currentUser.id !== user.id
+        ? prisma.follow.findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: currentUser.id,
+                followingId: user.id,
+              },
+            },
+          })
+        : Promise.resolve(null),
     ]);
 
     userLikes = new Set(likes.map((l) => l.postId));
     userReposts = new Set(reposts.map((r) => r.postId));
+    isFollowingAuthor = !!follow;
   }
 
   const postsWithSocial = posts.map((post) => ({
     ...post,
     isLiked: userLikes.has(post.id),
     isReposted: userReposts.has(post.id),
+    isFollowingAuthor,
   }));
 
   return c.json({ data: postsWithSocial });
@@ -902,12 +915,14 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   // Get current user's interactions with these posts
   let userLikes: Set<string> = new Set();
   let userRepostsSet: Set<string> = new Set();
+  let followingAuthorIds: Set<string> = new Set();
 
   const posts = reposts.map((r) => r.post);
   const postIds = posts.map((p) => p.id);
 
   if (currentUser) {
-    const [likes, repostInteractions] = await Promise.all([
+    const authorIds = [...new Set(posts.map((p) => p.authorId).filter((id) => id !== currentUser.id))];
+    const [likes, repostInteractions, follows] = await Promise.all([
       prisma.like.findMany({
         where: {
           userId: currentUser.id,
@@ -922,16 +937,27 @@ usersRouter.get("/:identifier/reposts", async (c) => {
         },
         select: { postId: true },
       }),
+      authorIds.length > 0
+        ? prisma.follow.findMany({
+            where: {
+              followerId: currentUser.id,
+              followingId: { in: authorIds },
+            },
+            select: { followingId: true },
+          })
+        : Promise.resolve([]),
     ]);
 
     userLikes = new Set(likes.map((l) => l.postId));
     userRepostsSet = new Set(repostInteractions.map((r) => r.postId));
+    followingAuthorIds = new Set(follows.map((f) => f.followingId));
   }
 
   const postsWithSocial = posts.map((post) => ({
     ...post,
     isLiked: userLikes.has(post.id),
     isReposted: userRepostsSet.has(post.id),
+    isFollowingAuthor: currentUser ? followingAuthorIds.has(post.authorId) : false,
   }));
 
   return c.json({ data: postsWithSocial });

@@ -272,17 +272,6 @@ export default function Login() {
                       <div className="space-y-3">
                         {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
 
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="rounded-lg border border-border/50 bg-background/40 px-3 py-2">
-                            <div className="text-[11px] text-muted-foreground">Auth</div>
-                            <div className="text-xs font-medium">Privy email code</div>
-                          </div>
-                          <div className="rounded-lg border border-border/50 bg-background/40 px-3 py-2">
-                            <div className="text-[11px] text-muted-foreground">Onboarding</div>
-                            <div className="text-xs font-medium">Auto account creation</div>
-                          </div>
-                        </div>
-
                         <div className="flex items-start gap-2 rounded-lg bg-secondary/25 px-3 py-2 border border-border/40">
                           <Shield className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
                           <p className="text-[11px] sm:text-xs text-muted-foreground leading-relaxed">
