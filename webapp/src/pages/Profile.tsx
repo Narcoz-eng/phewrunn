@@ -12,6 +12,14 @@ import { ProfileDashboard, UserStats, RecentTrade, WalletData } from "@/componen
 import { WalletConnection } from "@/components/profile/WalletConnection";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -32,6 +40,9 @@ import {
   Repeat2,
   AlertTriangle,
   Skull,
+  ZoomIn,
+  Move,
+  RotateCcw,
 } from "lucide-react";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { toast } from "sonner";
@@ -48,12 +59,38 @@ interface ExtendedUser extends User {
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
 
+const AVATAR_CROP_BOX_SIZE = 280;
+const AVATAR_CROP_OUTPUT_SIZE = 512;
+
+type CropOffset = { x: number; y: number };
+type CropImageMeta = { width: number; height: number };
+
+function clampCropOffset(offset: CropOffset, image: CropImageMeta, scale: number): CropOffset {
+  const scaledWidth = image.width * scale;
+  const scaledHeight = image.height * scale;
+  const maxX = Math.max(0, (scaledWidth - AVATAR_CROP_BOX_SIZE) / 2);
+  const maxY = Math.max(0, (scaledHeight - AVATAR_CROP_BOX_SIZE) / 2);
+
+  return {
+    x: Math.min(maxX, Math.max(-maxX, offset.x)),
+    y: Math.min(maxY, Math.max(-maxY, offset.y)),
+  };
+}
+
 export default function Profile() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { signOut } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cropDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const cropPreviewImgRef = useRef<HTMLImageElement>(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [mainTab, setMainTab] = useState<MainTab>("posts");
@@ -63,6 +100,22 @@ export default function Profile() {
   const [editUsername, setEditUsername] = useState("");
   const [editBio, setEditBio] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isCropDialogOpen, setIsCropDialogOpen] = useState(false);
+  const [cropSourceImage, setCropSourceImage] = useState<string | null>(null);
+  const [cropImageMeta, setCropImageMeta] = useState<CropImageMeta | null>(null);
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropOffset, setCropOffset] = useState<CropOffset>({ x: 0, y: 0 });
+  const [isApplyingCrop, setIsApplyingCrop] = useState(false);
+
+  const cropBaseScale = useMemo(() => {
+    if (!cropImageMeta) return 1;
+    return Math.max(
+      AVATAR_CROP_BOX_SIZE / cropImageMeta.width,
+      AVATAR_CROP_BOX_SIZE / cropImageMeta.height
+    );
+  }, [cropImageMeta]);
+
+  const cropRenderScale = cropBaseScale * cropZoom;
 
   // Fetch user data with React Query
   const {
@@ -208,12 +261,131 @@ export default function Profile() {
       return;
     }
 
-    // Convert to base64
+    // Convert to base64 and open crop dialog
     const reader = new FileReader();
     reader.onload = (event) => {
-      setPreviewImage(event.target?.result as string);
+      const result = event.target?.result as string;
+      setCropSourceImage(result);
+      setCropImageMeta(null);
+      setCropZoom(1);
+      setCropOffset({ x: 0, y: 0 });
+      setIsCropDialogOpen(true);
     };
     reader.readAsDataURL(file);
+  };
+
+  useEffect(() => {
+    if (!cropImageMeta) return;
+    setCropOffset((prev) => clampCropOffset(prev, cropImageMeta, cropRenderScale));
+  }, [cropImageMeta, cropRenderScale]);
+
+  const resetCropDialog = () => {
+    setIsCropDialogOpen(false);
+    setCropSourceImage(null);
+    setCropImageMeta(null);
+    setCropZoom(1);
+    setCropOffset({ x: 0, y: 0 });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleCropImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setCropImageMeta({
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+    });
+    setCropOffset({ x: 0, y: 0 });
+  };
+
+  const handleCropPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!cropImageMeta) return;
+    cropDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: cropOffset.x,
+      originY: cropOffset.y,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleCropPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = cropDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId || !cropImageMeta) return;
+
+    const next = clampCropOffset(
+      {
+        x: drag.originX + (e.clientX - drag.startX),
+        y: drag.originY + (e.clientY - drag.startY),
+      },
+      cropImageMeta,
+      cropRenderScale
+    );
+    setCropOffset(next);
+  };
+
+  const handleCropPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = cropDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    cropDragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // no-op
+    }
+  };
+
+  const handleApplyCrop = async () => {
+    if (!cropSourceImage || !cropImageMeta || !cropPreviewImgRef.current) {
+      toast.error("Image crop is not ready yet");
+      return;
+    }
+
+    setIsApplyingCrop(true);
+    try {
+      const img = cropPreviewImgRef.current;
+      const canvas = document.createElement("canvas");
+      canvas.width = AVATAR_CROP_OUTPUT_SIZE;
+      canvas.height = AVATAR_CROP_OUTPUT_SIZE;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas not supported");
+
+      const scaledWidth = cropImageMeta.width * cropRenderScale;
+      const scaledHeight = cropImageMeta.height * cropRenderScale;
+      const left = (AVATAR_CROP_BOX_SIZE - scaledWidth) / 2 + cropOffset.x;
+      const top = (AVATAR_CROP_BOX_SIZE - scaledHeight) / 2 + cropOffset.y;
+
+      const srcX = Math.max(0, (0 - left) / cropRenderScale);
+      const srcY = Math.max(0, (0 - top) / cropRenderScale);
+      const srcW = Math.min(cropImageMeta.width - srcX, AVATAR_CROP_BOX_SIZE / cropRenderScale);
+      const srcH = Math.min(cropImageMeta.height - srcY, AVATAR_CROP_BOX_SIZE / cropRenderScale);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(
+        AVATAR_CROP_OUTPUT_SIZE / 2,
+        AVATAR_CROP_OUTPUT_SIZE / 2,
+        AVATAR_CROP_OUTPUT_SIZE / 2,
+        0,
+        Math.PI * 2
+      );
+      ctx.clip();
+      ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      const croppedPng = canvas.toDataURL("image/png");
+      setPreviewImage(croppedPng);
+      toast.success("Profile picture cropped");
+      resetCropDialog();
+    } catch (error) {
+      console.error("[profile] Failed to crop image", error);
+      toast.error("Failed to crop image");
+    } finally {
+      setIsApplyingCrop(false);
+    }
   };
 
   // Save profile changes
@@ -241,6 +413,7 @@ export default function Profile() {
     setEditUsername(user?.username || user?.name || "");
     setEditBio(user?.bio || "");
     setPreviewImage(null);
+    resetCropDialog();
   };
 
   // Filter posts
@@ -389,6 +562,122 @@ export default function Profile() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6">
+        <Dialog
+          open={isCropDialogOpen}
+          onOpenChange={(open) => {
+            if (!open && !isApplyingCrop) {
+              resetCropDialog();
+              return;
+            }
+            setIsCropDialogOpen(open);
+          }}
+        >
+          <DialogContent className="sm:max-w-md p-0 overflow-hidden">
+            <DialogHeader className="px-5 pt-5">
+              <DialogTitle className="flex items-center gap-2">
+                <Camera className="h-4 w-4" />
+                Crop profile photo
+              </DialogTitle>
+              <DialogDescription>
+                Drag to position your image and zoom for a perfect round profile picture.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="px-5 pb-4">
+              <div className="mx-auto rounded-2xl border border-border/60 bg-secondary/20 p-3">
+                <div
+                  className="relative mx-auto h-[280px] w-[280px] rounded-2xl overflow-hidden bg-black touch-none select-none"
+                  onPointerDown={handleCropPointerDown}
+                  onPointerMove={handleCropPointerMove}
+                  onPointerUp={handleCropPointerEnd}
+                  onPointerCancel={handleCropPointerEnd}
+                >
+                  {cropSourceImage ? (
+                    <img
+                      ref={cropPreviewImgRef}
+                      src={cropSourceImage}
+                      alt="Crop preview"
+                      draggable={false}
+                      onLoad={handleCropImageLoad}
+                      className="absolute max-w-none pointer-events-none"
+                      style={{
+                        width: cropImageMeta ? `${cropImageMeta.width * cropRenderScale}px` : undefined,
+                        height: cropImageMeta ? `${cropImageMeta.height * cropRenderScale}px` : undefined,
+                        left: cropImageMeta
+                          ? `${(AVATAR_CROP_BOX_SIZE - cropImageMeta.width * cropRenderScale) / 2 + cropOffset.x}px`
+                          : "50%",
+                        top: cropImageMeta
+                          ? `${(AVATAR_CROP_BOX_SIZE - cropImageMeta.height * cropRenderScale) / 2 + cropOffset.y}px`
+                          : "50%",
+                        transform: cropImageMeta ? undefined : "translate(-50%, -50%)",
+                      }}
+                    />
+                  ) : null}
+
+                  <div className="absolute inset-0 pointer-events-none">
+                    <div className="absolute left-1/2 top-1/2 h-[236px] w-[236px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/85 shadow-[0_0_0_9999px_rgba(0,0,0,0.52)]" />
+                    <div className="absolute left-1/2 top-1/2 h-[236px] w-[236px] -translate-x-1/2 -translate-y-1/2 rounded-full ring-1 ring-primary/50" />
+                  </div>
+
+                  <div className="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] text-white/85 backdrop-blur-sm pointer-events-none">
+                    <Move className="h-3.5 w-3.5" />
+                    Drag to reposition
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    <ZoomIn className="h-3.5 w-3.5" />
+                    Zoom
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCropZoom(1);
+                      setCropOffset({ x: 0, y: 0 });
+                    }}
+                    className="inline-flex items-center gap-1 text-xs hover:text-foreground transition-colors"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.01}
+                  value={cropZoom}
+                  onChange={(e) => setCropZoom(Number(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="px-5 pb-5 pt-0 flex-row justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={resetCropDialog}
+                disabled={isApplyingCrop}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleApplyCrop}
+                disabled={!cropSourceImage || !cropImageMeta || isApplyingCrop}
+                className="gap-2"
+              >
+                {isApplyingCrop ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Apply crop
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {isLoadingUser ? (
           // Loading skeleton
           <div className="space-y-6">
