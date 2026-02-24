@@ -31,26 +31,12 @@ export function BrandLogo({
   size = "md",
   showTagline = false,
   className,
-  markClassName,
+  markClassName: _markClassName,
 }: BrandLogoProps) {
   const styles = sizeMap[size];
-  const gapClass = showTagline ? (size === "lg" ? "gap-3.5" : "gap-3") : "gap-2.5";
 
   return (
-    <div className={cn("flex items-center", gapClass, className)}>
-      <div
-        className={cn(
-          "relative shrink-0 overflow-hidden p-1",
-          "border border-white/10 bg-[linear-gradient(180deg,rgba(8,12,16,0.94),rgba(6,10,14,0.9))]",
-          "shadow-[0_0_0_1px_hsl(var(--primary)/0.08),0_10px_25px_-14px_rgba(0,0,0,0.7)]",
-          styles.mark,
-          markClassName
-        )}
-      >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_28%,rgba(123,255,92,0.16),transparent_58%),radial-gradient(circle_at_76%_30%,rgba(52,227,210,0.14),transparent_60%)]" />
-        <img src="/phew-mark.svg" alt="" aria-hidden="true" className="relative h-full w-full object-contain" />
-      </div>
-
+    <div className={cn("flex items-center", className)}>
       <div className="leading-tight min-w-0">
         <div
           className={cn(
