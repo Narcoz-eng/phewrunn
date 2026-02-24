@@ -1367,26 +1367,43 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 )}
 
                 {hasWalletTradeInfo && (
-                  <div className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-3">
+                  <div className="mt-3 rounded-lg border border-border/60 bg-background/25 p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-[10px] uppercase tracking-wider font-semibold text-cyan-200/90">
+                      <p className="text-[10px] uppercase tracking-wider font-semibold text-foreground/80">
                         Wallet Trade Summary
                       </p>
                     </div>
 
-                    <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {(holdingUsd !== null || holdingAmount !== null) && (
+                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5 sm:col-span-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Holding</p>
+                            {holdingAmount !== null && (
+                              <p className="text-[11px] font-mono text-muted-foreground">
+                                Qty {holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                              </p>
+                            )}
+                          </div>
+                          <p className="mt-1 text-sm font-semibold text-foreground">
+                            {holdingUsd !== null ? formatUsdCompact(holdingUsd) : "N/A"}
+                          </p>
+                        </div>
+                      )}
+
                       {verifiedTotalPnlUsd !== null && (
-                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Wallet P/L</p>
-                          <p className={cn("mt-1 text-xs font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
+                          <p className={cn("mt-1 text-sm font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
                             {winCardVerifiedPnlText}
                           </p>
                         </div>
                       )}
+
                       {(boughtUsd !== null || boughtAmount !== null) && (
-                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Bought</p>
-                          <p className="mt-1 text-xs font-semibold text-foreground">
+                          <p className="mt-1 text-sm font-semibold text-foreground">
                             {boughtUsd !== null ? formatUsdCompact(boughtUsd) : "N/A"}
                           </p>
                           {boughtAmount !== null && (
@@ -1396,28 +1413,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           )}
                         </div>
                       )}
+
                       {(soldUsd !== null || soldAmount !== null) && (
-                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
+                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sold</p>
-                          <p className="mt-1 text-xs font-semibold text-foreground">
+                          <p className="mt-1 text-sm font-semibold text-foreground">
                             {soldUsd !== null ? formatUsdCompact(soldUsd) : "N/A"}
                           </p>
                           {soldAmount !== null && (
                             <p className="mt-0.5 text-[10px] text-muted-foreground">
                               Qty {soldAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                      {(holdingUsd !== null || holdingAmount !== null) && (
-                        <div className="rounded-md border border-white/10 bg-background/30 p-2">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Holding</p>
-                          <p className="mt-1 text-xs font-semibold text-foreground">
-                            {holdingUsd !== null ? formatUsdCompact(holdingUsd) : "N/A"}
-                          </p>
-                          {holdingAmount !== null && (
-                            <p className="mt-0.5 text-[10px] text-muted-foreground">
-                              Qty {holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                             </p>
                           )}
                         </div>
