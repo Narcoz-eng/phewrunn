@@ -36,7 +36,31 @@ function PageSkeleton() {
   );
 }
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
+      retry: (failureCount, error) => {
+        const maybeStatus =
+          typeof error === "object" && error !== null && "status" in error
+            ? Number((error as { status?: unknown }).status)
+            : null;
+
+        if (maybeStatus === 401 || maybeStatus === 403 || maybeStatus === 404) {
+          return false;
+        }
+        if (maybeStatus === 429) {
+          return failureCount < 1;
+        }
+        return failureCount < 2;
+      },
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
+      staleTime: 15_000,
+      gcTime: 5 * 60 * 1000,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

@@ -75,6 +75,7 @@ export default function Feed() {
     enabled: !!session?.user,
     retry: 2,
     staleTime: 30000, // 30 seconds
+    refetchOnWindowFocus: false,
   });
 
   // Fetch posts with React Query
@@ -113,7 +114,13 @@ export default function Feed() {
     enabled: !!session?.user,
     retry: 2,
     staleTime: 15000, // 15 seconds
-    refetchInterval: 30000, // Auto-refresh every 30 seconds
+    refetchOnWindowFocus: false,
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 60000; // Auto-refresh every 60 seconds when tab is visible
+    },
   });
 
   // Create post mutation

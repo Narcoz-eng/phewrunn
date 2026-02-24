@@ -82,6 +82,9 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   } = useQuery({
     queryKey: ["wallet-status"],
     queryFn: () => api.get<WalletStatus>("/api/users/me/wallet"),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 
   // Connect wallet mutation

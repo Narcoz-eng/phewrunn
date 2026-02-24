@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -59,6 +59,7 @@ interface PostCardProps {
 export function PostCard({ post, className, currentUserId, onLike, onRepost, onComment }: PostCardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [isLiked, setIsLiked] = useState(post.isLiked);
@@ -72,11 +73,38 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isFollowing, setIsFollowing] = useState(post.isFollowingAuthor ?? false);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [commentCount, setCommentCount] = useState(post._count?.comments ?? 0);
+  const [isInViewport, setIsInViewport] = useState(true);
 
   // Sync follow state when post data changes
   useEffect(() => {
     setIsFollowing(post.isFollowingAuthor ?? false);
   }, [post.isFollowingAuthor]);
+
+  // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    const node = cardRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry) {
+          setIsInViewport(entry.isIntersecting);
+        }
+      },
+      {
+        root: null,
+        rootMargin: "300px 0px",
+        threshold: 0,
+      }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   // Real-time price state
   const [currentMcap, setCurrentMcap] = useState(post.currentMcap);
@@ -100,6 +128,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   // Also auto-refresh when post settles to show final 1H result
   useEffect(() => {
     if (!post.contractAddress) return;
+    if (!isInViewport) return;
 
     const fetchPrice = async () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -154,7 +183,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       clearTimeout(initialTimer);
       clearInterval(intervalTimer);
     };
-  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, localSettled, localMcap6h, queryClient]);
+  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, localSettled, localMcap6h, isInViewport, queryClient]);
 
   // Fetch comments when expanded
   const { data: comments, isLoading: isCommentsLoading, refetch: refetchComments } = useQuery({
@@ -315,6 +344,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   return (
     <div
+      ref={cardRef}
       className={cn(
         "group relative bg-card border border-border rounded-xl transition-all duration-300",
         "hover:border-primary/30 hover:shadow-lg",
