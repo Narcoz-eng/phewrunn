@@ -21,6 +21,9 @@ const Leaderboard = lazy(() => import("./pages/Leaderboard"));
 const Admin = lazy(() => import("./pages/Admin"));
 const Login = lazy(() => import("./pages/Login"));
 const PostDetail = lazy(() => import("./pages/PostDetail"));
+const Terms = lazy(() => import("./pages/Terms"));
+const Privacy = lazy(() => import("./pages/Privacy"));
+const Docs = lazy(() => import("./pages/Docs"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 // Loading fallback component
@@ -139,6 +142,9 @@ const App = () => (
                       </GuestRoute>
                     }
                   />
+                  <Route path="/terms" element={<Terms />} />
+                  <Route path="/privacy" element={<Privacy />} />
+                  <Route path="/docs" element={<Docs />} />
                   <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Suspense>

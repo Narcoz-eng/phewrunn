@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
@@ -393,9 +393,9 @@ export default function Login() {
             <span>Proof over noise</span>
           </div>
           <div className="flex items-center gap-6 text-sm text-muted-foreground">
-            <a href="#" className="hover:text-foreground transition-colors">Terms</a>
-            <a href="#" className="hover:text-foreground transition-colors">Privacy</a>
-            <a href="#" className="hover:text-foreground transition-colors">Docs</a>
+            <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
+            <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+            <Link to="/docs" className="hover:text-foreground transition-colors">Docs</Link>
           </div>
         </div>
       </footer>
