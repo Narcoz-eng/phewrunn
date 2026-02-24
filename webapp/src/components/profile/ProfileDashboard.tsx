@@ -40,8 +40,23 @@ export interface WalletData {
   totalVolumeSoldSol?: number;
   totalVolumeBoughtUsd?: number;
   totalVolumeSoldUsd?: number;
+  totalProfitUsd?: number | null;
   balanceSol?: number;
+  balanceUsd?: number;
   balanceUsdc?: number;
+  tokenPositions?: WalletTokenPosition[];
+}
+
+export interface WalletTokenPosition {
+  mint: string;
+  tokenName?: string | null;
+  tokenSymbol?: string | null;
+  tokenImage?: string | null;
+  holdingAmount?: number | null;
+  holdingUsd?: number | null;
+  boughtAmount?: number | null;
+  soldAmount?: number | null;
+  totalPnlUsd?: number | null;
 }
 
 // Simplified trade interface for recent trades display
@@ -155,6 +170,21 @@ export function ProfileDashboard({
   const isPositiveLevel = level > 0;
   const isNegativeLevel = level < 0;
   const isLiquidated = level <= MIN_LEVEL;
+  const walletBalanceUsd = walletData?.balanceUsd ?? walletData?.balanceUsdc ?? null;
+  const walletTokenPositions = (walletData?.tokenPositions ?? []).slice(0, 6);
+  const formatUsdValue = (value: number | null | undefined) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      notation: Math.abs(value) >= 1000 ? "compact" : "standard",
+      maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 2,
+    }).format(value);
+  };
+  const formatTokenAmount = (value: number | null | undefined) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  };
 
   return (
     <div className={cn("space-y-6", className)}>
@@ -359,7 +389,7 @@ export function ProfileDashboard({
             )}
 
             {/* Volume Stats */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className={cn("grid gap-3", walletData.totalProfitUsd != null ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-2")}>
               {/* Total Bought */}
               <div className="p-3 bg-gain/5 rounded-lg border border-gain/20">
                 <div className="flex items-center gap-1.5 text-gain mb-1">
@@ -391,6 +421,42 @@ export function ProfileDashboard({
                   </p>
                 </div>
               </div>
+
+              {walletData.totalProfitUsd != null && (
+                <div
+                  className={cn(
+                    "p-3 rounded-lg border",
+                    walletData.totalProfitUsd >= 0
+                      ? "bg-emerald-500/5 border-emerald-400/20"
+                      : "bg-rose-500/5 border-rose-400/20"
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "flex items-center gap-1.5 mb-1",
+                      walletData.totalProfitUsd >= 0 ? "text-gain" : "text-loss"
+                    )}
+                  >
+                    {walletData.totalProfitUsd >= 0 ? (
+                      <TrendingUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <TrendingDown className="h-3.5 w-3.5" />
+                    )}
+                    <span className="text-xs uppercase tracking-wider font-medium">Wallet P/L</span>
+                  </div>
+                  <div className="space-y-1">
+                    <p
+                      className={cn(
+                        "text-lg font-bold font-mono",
+                        walletData.totalProfitUsd >= 0 ? "text-gain" : "text-loss"
+                      )}
+                    >
+                      {formatUsdValue(walletData.totalProfitUsd)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Across posted Solana tokens</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Wallet Balances */}
@@ -403,11 +469,90 @@ export function ProfileDashboard({
               </div>
               <div className="h-4 w-px bg-border" />
               <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">USD:</span>
                 <span className="text-sm font-mono font-semibold text-foreground">
-                  {walletData.balanceUsdc?.toFixed(2) ?? "0"} USDC
+                  {walletBalanceUsd != null ? formatUsdValue(walletBalanceUsd) : "N/A"}
                 </span>
               </div>
             </div>
+
+            {walletTokenPositions.length > 0 && (
+              <div className="pt-2 border-t border-border/50">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Posted Token Positions
+                  </p>
+                  <Badge variant="outline" className="text-[10px]">
+                    {walletTokenPositions.length} shown
+                  </Badge>
+                </div>
+                <div className="space-y-2">
+                  {walletTokenPositions.map((token) => {
+                    const label = token.tokenSymbol || token.tokenName || `${token.mint.slice(0, 6)}...${token.mint.slice(-4)}`;
+                    const subtitle =
+                      token.tokenSymbol && token.tokenName ? token.tokenName : `${token.mint.slice(0, 6)}...${token.mint.slice(-4)}`;
+                    const pnl = token.totalPnlUsd ?? null;
+                    return (
+                      <div
+                        key={token.mint}
+                        className="rounded-lg border border-border/50 bg-background/35 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <div className="h-9 w-9 overflow-hidden rounded-full border border-border/50 bg-secondary/60 flex items-center justify-center">
+                              {token.tokenImage ? (
+                                <img
+                                  src={token.tokenImage}
+                                  alt={label}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <Coins className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-foreground">{label}</p>
+                              <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
+                            </div>
+                          </div>
+                          {pnl != null && (
+                            <div
+                              className={cn(
+                                "text-right text-xs font-semibold",
+                                pnl >= 0 ? "text-gain" : "text-loss"
+                              )}
+                            >
+                              <div>{pnl >= 0 ? "+" : "-"}{formatUsdValue(Math.abs(pnl))}</div>
+                              <div className="text-[10px] text-muted-foreground">Wallet P/L</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                          <div className="rounded-md border border-border/40 bg-background/40 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Holding</div>
+                            <div className="mt-1 font-mono text-foreground">{formatTokenAmount(token.holdingAmount)}</div>
+                          </div>
+                          <div className="rounded-md border border-border/40 bg-background/40 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Holding USD</div>
+                            <div className="mt-1 font-mono text-foreground">{formatUsdValue(token.holdingUsd)}</div>
+                          </div>
+                          <div className="rounded-md border border-border/40 bg-background/40 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Bought</div>
+                            <div className="mt-1 font-mono text-foreground">{formatTokenAmount(token.boughtAmount)}</div>
+                          </div>
+                          <div className="rounded-md border border-border/40 bg-background/40 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Sold</div>
+                            <div className="mt-1 font-mono text-foreground">{formatTokenAmount(token.soldAmount)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

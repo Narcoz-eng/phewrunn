@@ -7,8 +7,65 @@ import { prisma } from "../prisma.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
+import { getWalletPortfolioOverviewForPostedTokens, isHeliusConfigured } from "../services/helius.js";
 
 export const usersRouter = new Hono<{ Variables: AuthVariables }>();
+
+function isLikelySolanaWalletAddress(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+}
+
+async function attachWalletTradeSnapshotsForUserPosts<
+  T extends {
+    contractAddress: string | null;
+    chainType: string | null;
+    createdAt: Date;
+  },
+>(posts: T[], walletAddress: string | null | undefined): Promise<Array<T & { walletTradeSnapshot?: unknown }>> {
+  if (!isHeliusConfigured() || !isLikelySolanaWalletAddress(walletAddress) || posts.length === 0) {
+    return posts as Array<T & { walletTradeSnapshot?: unknown }>;
+  }
+
+  const uniqueMints = [...new Set(
+    posts
+      .filter((post) => post.chainType === "solana" && isLikelySolanaWalletAddress(post.contractAddress))
+      .map((post) => post.contractAddress as string)
+  )];
+
+  if (uniqueMints.length === 0) {
+    return posts as Array<T & { walletTradeSnapshot?: unknown }>;
+  }
+
+  const earliestPostMs = posts.reduce<number | null>((earliest, post) => {
+    const timestamp = post.createdAt.getTime();
+    if (earliest === null || timestamp < earliest) return timestamp;
+    return earliest;
+  }, null);
+
+  const portfolio = await getWalletPortfolioOverviewForPostedTokens({
+    walletAddress,
+    tokens: uniqueMints.map((mint) => ({ mint, chainType: "solana" })),
+    sinceMs: earliestPostMs,
+  });
+
+  if (!portfolio) {
+    return posts as Array<T & { walletTradeSnapshot?: unknown }>;
+  }
+
+  return posts.map((post) => {
+    if (post.chainType !== "solana" || !post.contractAddress) {
+      return post as T & { walletTradeSnapshot?: unknown };
+    }
+    const walletTradeSnapshot = portfolio.tokens[post.contractAddress];
+    if (!walletTradeSnapshot) {
+      return post as T & { walletTradeSnapshot?: unknown };
+    }
+    return {
+      ...post,
+      walletTradeSnapshot,
+    };
+  });
+}
 
 function verifySolanaSignature(message: string, signature: string, publicKeyStr: string): boolean {
   try {
@@ -543,6 +600,162 @@ usersRouter.get("/:userId/stats", async (c) => {
   return c.json({ data: stats });
 });
 
+// Get wallet overview for a user (balances + posted-token position summaries)
+// Must be defined before /:identifier to avoid route conflicts
+usersRouter.get("/:identifier/wallet/overview", async (c) => {
+  const identifier = c.req.param("identifier");
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [{ id: identifier }, { username: identifier }],
+    },
+    select: {
+      id: true,
+      walletAddress: true,
+    },
+  });
+
+  if (!user) {
+    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  if (!user.walletAddress || !isLikelySolanaWalletAddress(user.walletAddress) || !isHeliusConfigured()) {
+    return c.json({
+      data: {
+        connected: Boolean(user.walletAddress),
+        balanceSol: null,
+        balanceUsd: null,
+        totalVolumeBoughtSol: null,
+        totalVolumeSoldSol: null,
+        totalVolumeBoughtUsd: null,
+        totalVolumeSoldUsd: null,
+        totalProfitUsd: null,
+        tokenPositions: [],
+      }
+    });
+  }
+
+  const postedTokens = await prisma.post.findMany({
+    where: {
+      authorId: user.id,
+      chainType: "solana",
+      contractAddress: { not: null },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      contractAddress: true,
+      chainType: true,
+      tokenName: true,
+      tokenSymbol: true,
+      tokenImage: true,
+      createdAt: true,
+    },
+  });
+
+  if (postedTokens.length === 0) {
+    return c.json({
+      data: {
+        connected: true,
+        balanceSol: null,
+        balanceUsd: null,
+        totalVolumeBoughtSol: null,
+        totalVolumeSoldSol: null,
+        totalVolumeBoughtUsd: null,
+        totalVolumeSoldUsd: null,
+        totalProfitUsd: null,
+        tokenPositions: [],
+      }
+    });
+  }
+
+  const tokenMetaByMint = new Map<string, {
+    mint: string;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    firstPostedAt: Date;
+  }>();
+
+  let earliestPostMs: number | null = null;
+  for (const post of postedTokens) {
+    const mint = post.contractAddress;
+    if (!mint) continue;
+    const createdAtMs = post.createdAt.getTime();
+    if (earliestPostMs === null || createdAtMs < earliestPostMs) {
+      earliestPostMs = createdAtMs;
+    }
+
+    if (!tokenMetaByMint.has(mint)) {
+      tokenMetaByMint.set(mint, {
+        mint,
+        tokenName: post.tokenName,
+        tokenSymbol: post.tokenSymbol,
+        tokenImage: post.tokenImage,
+        firstPostedAt: post.createdAt,
+      });
+    }
+  }
+
+  const portfolio = await getWalletPortfolioOverviewForPostedTokens({
+    walletAddress: user.walletAddress,
+    tokens: [...tokenMetaByMint.values()].map((t) => ({ mint: t.mint, chainType: "solana" })),
+    sinceMs: earliestPostMs,
+  });
+
+  if (!portfolio) {
+    return c.json({
+      data: {
+        connected: true,
+        balanceSol: null,
+        balanceUsd: null,
+        totalVolumeBoughtSol: null,
+        totalVolumeSoldSol: null,
+        totalVolumeBoughtUsd: null,
+        totalVolumeSoldUsd: null,
+        totalProfitUsd: null,
+        tokenPositions: [],
+      }
+    });
+  }
+
+  const tokenPositions = [...tokenMetaByMint.values()]
+    .map((meta) => {
+      const wallet = portfolio.tokens[meta.mint];
+      if (!wallet) return null;
+      return {
+        mint: meta.mint,
+        tokenName: meta.tokenName,
+        tokenSymbol: meta.tokenSymbol,
+        tokenImage: meta.tokenImage,
+        holdingAmount: wallet.holdingAmount ?? null,
+        holdingUsd: wallet.holdingUsd ?? null,
+        boughtAmount: wallet.boughtAmount ?? null,
+        soldAmount: wallet.soldAmount ?? null,
+        totalPnlUsd: wallet.totalPnlUsd ?? null,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => {
+      const aValue = a.holdingUsd ?? a.totalPnlUsd ?? 0;
+      const bValue = b.holdingUsd ?? b.totalPnlUsd ?? 0;
+      return bValue - aValue;
+    });
+
+  return c.json({
+    data: {
+      connected: true,
+      balanceSol: portfolio.balanceSol,
+      balanceUsd: portfolio.balanceUsd,
+      totalVolumeBoughtSol: portfolio.totalVolumeBoughtSol,
+      totalVolumeSoldSol: portfolio.totalVolumeSoldSol,
+      totalVolumeBoughtUsd: portfolio.totalVolumeBoughtUsd,
+      totalVolumeSoldUsd: portfolio.totalVolumeSoldUsd,
+      totalProfitUsd: portfolio.totalProfitUsd,
+      tokenPositions,
+    }
+  });
+});
+
 // Get user profile by ID or username
 usersRouter.get("/:identifier", async (c) => {
   const identifier = c.req.param("identifier");
@@ -815,13 +1028,15 @@ usersRouter.get("/:identifier/posts", async (c) => {
     },
   });
 
+  const postsWithWalletTrade = await attachWalletTradeSnapshotsForUserPosts(posts, user.walletAddress);
+
   // Get current user's interactions with these posts
   let userLikes: Set<string> = new Set();
   let userReposts: Set<string> = new Set();
   let isFollowingAuthor = false;
 
   if (currentUser) {
-    const postIds = posts.map((p) => p.id);
+    const postIds = postsWithWalletTrade.map((p) => p.id);
 
     const [likes, reposts, follow] = await Promise.all([
       prisma.like.findMany({
@@ -855,7 +1070,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
     isFollowingAuthor = !!follow;
   }
 
-  const postsWithSocial = posts.map((post) => ({
+  const postsWithSocial = postsWithWalletTrade.map((post) => ({
     ...post,
     isLiked: userLikes.has(post.id),
     isReposted: userReposts.has(post.id),

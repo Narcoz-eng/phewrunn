@@ -258,18 +258,23 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const winCardProfitLossValue =
     post.entryMcap !== null && officialMcap !== null ? officialMcap - post.entryMcap : null;
   const walletTradeSnapshot = post.walletTradeSnapshot ?? null;
-  const walletTradeSource = walletTradeSnapshot?.source?.toUpperCase() ?? null;
   const verifiedTotalPnlUsd =
     typeof walletTradeSnapshot?.totalPnlUsd === "number" ? walletTradeSnapshot.totalPnlUsd : null;
   const boughtUsd = typeof walletTradeSnapshot?.boughtUsd === "number" ? walletTradeSnapshot.boughtUsd : null;
   const soldUsd = typeof walletTradeSnapshot?.soldUsd === "number" ? walletTradeSnapshot.soldUsd : null;
   const holdingUsd = typeof walletTradeSnapshot?.holdingUsd === "number" ? walletTradeSnapshot.holdingUsd : null;
+  const boughtAmount =
+    typeof walletTradeSnapshot?.boughtAmount === "number" ? walletTradeSnapshot.boughtAmount : null;
+  const soldAmount =
+    typeof walletTradeSnapshot?.soldAmount === "number" ? walletTradeSnapshot.soldAmount : null;
   const holdingAmount =
     typeof walletTradeSnapshot?.holdingAmount === "number" ? walletTradeSnapshot.holdingAmount : null;
   const hasWalletTradeInfo =
     verifiedTotalPnlUsd !== null ||
     boughtUsd !== null ||
     soldUsd !== null ||
+    boughtAmount !== null ||
+    soldAmount !== null ||
     holdingUsd !== null ||
     holdingAmount !== null;
   const formatUsdCompact = (value: number) =>
@@ -294,8 +299,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     verifiedTotalPnlUsd === null
       ? null
       : verifiedTotalPnlUsd >= 0
-        ? "Verified Total Profit"
-        : "Verified Total Loss";
+        ? "Wallet Profit"
+        : "Wallet Loss";
   const winCardVerifiedPnlText =
     verifiedTotalPnlUsd === null ? null : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdCompact(Math.abs(verifiedTotalPnlUsd))}`;
   const winCardMarketMoveLabel =
@@ -529,8 +534,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       verifiedTotalPnlUsd === null
         ? null
         : verifiedTotalPnlUsd >= 0
-          ? "Verified Total Profit"
-          : "Verified Total Loss";
+          ? "Wallet Profit"
+          : "Wallet Loss";
     const postPreview = stripContractAddress(post.content) || post.content || "No description";
 
     setIsWinCardDownloading(true);
@@ -750,16 +755,18 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       if (hasWalletTradeInfo) {
         const parts: string[] = [];
-        if (verifiedPnlText && verifiedPnlLabel) parts.push(`Verified P/L ${verifiedPnlText}`);
+        if (verifiedPnlText && verifiedPnlLabel) parts.push(`Wallet P/L ${verifiedPnlText}`);
         if (boughtUsd !== null) parts.push(`Bought ${formatUsdCompact(boughtUsd)}`);
         if (soldUsd !== null) parts.push(`Sold ${formatUsdCompact(soldUsd)}`);
+        if (boughtAmount !== null) parts.push(`Bought Qty ${boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
+        if (soldAmount !== null) parts.push(`Sold Qty ${soldAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
         if (holdingUsd !== null) parts.push(`Held ${formatUsdCompact(holdingUsd)}`);
         if (holdingAmount !== null) parts.push(`Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
 
         if (parts.length > 0) {
           ctx.fillStyle = "rgba(226,232,240,0.72)";
           ctx.font = "600 12px Inter, system-ui, sans-serif";
-          ctx.fillText(`Wallet ${walletTradeSource ? `(${walletTradeSource})` : ""}`.trim(), 88, 492);
+          ctx.fillText("Wallet Summary", 88, 492);
           ctx.fillStyle = "rgba(226,232,240,0.9)";
           ctx.font = "500 11px Inter, system-ui, sans-serif";
           drawWrappedText(parts.join(" • "), 88, 512, width - 176, 18, 2);
@@ -1316,32 +1323,41 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <p className="text-[10px] uppercase tracking-wider font-semibold text-cyan-200/90">
                         Wallet Trade Summary
                       </p>
-                      {walletTradeSource ? (
-                        <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border border-cyan-300/30 bg-cyan-300/10 text-cyan-200">
-                          {walletTradeSource}
-                        </span>
-                      ) : null}
                     </div>
 
                     <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {verifiedTotalPnlUsd !== null && (
                         <div className="rounded-md border border-white/10 bg-background/30 p-2">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Verified P/L</p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Wallet P/L</p>
                           <p className={cn("mt-1 text-xs font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
                             {winCardVerifiedPnlText}
                           </p>
                         </div>
                       )}
-                      {boughtUsd !== null && (
+                      {(boughtUsd !== null || boughtAmount !== null) && (
                         <div className="rounded-md border border-white/10 bg-background/30 p-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Bought</p>
-                          <p className="mt-1 text-xs font-semibold text-foreground">{formatUsdCompact(boughtUsd)}</p>
+                          <p className="mt-1 text-xs font-semibold text-foreground">
+                            {boughtUsd !== null ? formatUsdCompact(boughtUsd) : "N/A"}
+                          </p>
+                          {boughtAmount !== null && (
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              Qty {boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                            </p>
+                          )}
                         </div>
                       )}
-                      {soldUsd !== null && (
+                      {(soldUsd !== null || soldAmount !== null) && (
                         <div className="rounded-md border border-white/10 bg-background/30 p-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sold</p>
-                          <p className="mt-1 text-xs font-semibold text-foreground">{formatUsdCompact(soldUsd)}</p>
+                          <p className="mt-1 text-xs font-semibold text-foreground">
+                            {soldUsd !== null ? formatUsdCompact(soldUsd) : "N/A"}
+                          </p>
+                          {soldAmount !== null && (
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              Qty {soldAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                            </p>
+                          )}
                         </div>
                       )}
                       {(holdingUsd !== null || holdingAmount !== null) && (
@@ -1757,31 +1773,40 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
                           Wallet Trade Summary
                         </div>
-                        {walletTradeSource ? (
-                          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-cyan-300">
-                            {walletTradeSource}
-                          </div>
-                        ) : null}
                       </div>
                       <div className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                         {verifiedTotalPnlUsd !== null ? (
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Verified P/L</div>
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Wallet P/L</div>
                             <div className={cn("mt-1 text-sm font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
                               {winCardVerifiedPnlText}
                             </div>
                           </div>
                         ) : null}
-                        {boughtUsd !== null ? (
+                        {boughtUsd !== null || boughtAmount !== null ? (
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Bought</div>
-                            <div className="mt-1 text-sm font-semibold text-white">{formatUsdCompact(boughtUsd)}</div>
+                            <div className="mt-1 text-sm font-semibold text-white">
+                              {boughtUsd !== null ? formatUsdCompact(boughtUsd) : "N/A"}
+                            </div>
+                            {boughtAmount !== null ? (
+                              <div className="mt-0.5 text-[11px] text-slate-300/75">
+                                Qty {boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
-                        {soldUsd !== null ? (
+                        {soldUsd !== null || soldAmount !== null ? (
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Sold</div>
-                            <div className="mt-1 text-sm font-semibold text-white">{formatUsdCompact(soldUsd)}</div>
+                            <div className="mt-1 text-sm font-semibold text-white">
+                              {soldUsd !== null ? formatUsdCompact(soldUsd) : "N/A"}
+                            </div>
+                            {soldAmount !== null ? (
+                              <div className="mt-0.5 text-[11px] text-slate-300/75">
+                                Qty {soldAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                         {holdingUsd !== null || holdingAmount !== null ? (

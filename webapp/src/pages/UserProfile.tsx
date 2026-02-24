@@ -68,6 +68,7 @@ type MainTab = "posts" | "reposts";
 type FollowMutationResponse = { following: boolean; followerCount: number };
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_PROFILE_POSTS_CACHE_TTL_MS = 45_000;
+const USER_PROFILE_WALLET_CACHE_TTL_MS = 60_000;
 
 export default function UserProfile() {
   const navigate = useNavigate();
@@ -95,6 +96,13 @@ export default function UserProfile() {
     () =>
       userId
         ? readSessionCache<Post[]>(`phew.user-reposts:${userId}`, USER_PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [userId]
+  );
+  const cachedUserWalletOverview = useMemo(
+    () =>
+      userId
+        ? readSessionCache<WalletData>(`phew.user-wallet:${userId}`, USER_PROFILE_WALLET_CACHE_TTL_MS)
         : null,
     [userId]
   );
@@ -160,6 +168,24 @@ export default function UserProfile() {
     retry: 1,
   });
 
+  const {
+    data: walletOverview,
+    isFetched: isWalletOverviewFetched,
+  } = useQuery({
+    queryKey: ["userWalletOverview", userId],
+    queryFn: async () => {
+      if (!userId) return null;
+      return await api.get<WalletData>(`/api/users/${userId}/wallet/overview`);
+    },
+    initialData: cachedUserWalletOverview ?? undefined,
+    enabled: !!userId,
+    staleTime: 60_000,
+    gcTime: 300_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
   useEffect(() => {
     if (!userId || !user || !isUserFetched) return;
     writeSessionCache(`phew.user-profile:${userId}`, user);
@@ -174,6 +200,11 @@ export default function UserProfile() {
     if (!userId || !isRepostsFetched) return;
     writeSessionCache(`phew.user-reposts:${userId}`, reposts);
   }, [isRepostsFetched, reposts, userId]);
+
+  useEffect(() => {
+    if (!userId || !isWalletOverviewFetched || !walletOverview) return;
+    writeSessionCache(`phew.user-wallet:${userId}`, walletOverview);
+  }, [isWalletOverviewFetched, userId, walletOverview]);
 
   // Follow mutation
   const followMutation = useMutation({
@@ -535,18 +566,13 @@ export default function UserProfile() {
               xp={user.xp ?? 0}
               stats={userStats}
               recentTrades={recentTrades}
-              walletData={user.walletAddress ? {
-                connected: true,
-                address: user.walletAddress,
-                // Note: These values would come from a Web3 API integration
-                platformCoinHoldings: undefined,
-                totalVolumeBoughtSol: undefined,
-                totalVolumeSoldSol: undefined,
-                totalVolumeBoughtUsd: undefined,
-                totalVolumeSoldUsd: undefined,
-                balanceSol: undefined,
-                balanceUsdc: undefined,
-              } : undefined}
+              walletData={
+                walletOverview
+                  ? { ...walletOverview, address: user.walletAddress ?? walletOverview.address }
+                  : user.walletAddress
+                    ? { connected: true, address: user.walletAddress }
+                    : undefined
+              }
               isLoading={isLoadingPosts}
             />
 

@@ -78,7 +78,7 @@ export interface Post {
   // Shared Alpha - users who posted same CA within 48h
   sharedAlphaCount?: number;
   walletTradeSnapshot?: {
-    source?: string | null; // e.g. "helius"
+    source?: string | null;
     totalPnlUsd?: number | null;
     realizedPnlUsd?: number | null;
     unrealizedPnlUsd?: number | null;
@@ -86,6 +86,9 @@ export interface Post {
     soldUsd?: number | null;
     holdingUsd?: number | null;
     holdingAmount?: number | null;
+    boughtAmount?: number | null;
+    soldAmount?: number | null;
+    netAmount?: number | null;
   } | null;
 }
 

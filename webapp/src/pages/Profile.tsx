@@ -61,6 +61,7 @@ type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
 const PROFILE_ME_CACHE_TTL_MS = 60_000;
 const PROFILE_POSTS_CACHE_TTL_MS = 45_000;
+const PROFILE_WALLET_CACHE_TTL_MS = 60_000;
 
 const AVATAR_CROP_BOX_SIZE = 280;
 const AVATAR_CROP_OUTPUT_SIZE = 512;
@@ -139,6 +140,13 @@ export default function Profile() {
         : null,
     [session?.user?.id]
   );
+  const cachedWalletOverview = useMemo(
+    () =>
+      session?.user?.id
+        ? readSessionCache<WalletData>(`phew.profile.wallet:${session.user.id}`, PROFILE_WALLET_CACHE_TTL_MS)
+        : null,
+    [session?.user?.id]
+  );
 
   // Fetch user data with React Query
   const {
@@ -191,6 +199,24 @@ export default function Profile() {
     retry: 1,
   });
 
+  const {
+    data: walletOverview,
+    isFetched: isWalletOverviewFetched,
+  } = useQuery({
+    queryKey: ["profile", "wallet-overview", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      return await api.get<WalletData>(`/api/users/${user.id}/wallet/overview`);
+    },
+    initialData: user?.id ? (cachedWalletOverview ?? undefined) : undefined,
+    enabled: !!user?.id,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
   // Fetch user reposts with React Query
   const {
     data: reposts = [],
@@ -226,6 +252,11 @@ export default function Profile() {
     if (!session?.user?.id || !isRepostsFetched) return;
     writeSessionCache(`phew.profile.reposts:${session.user.id}`, reposts);
   }, [isRepostsFetched, reposts, session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !isWalletOverviewFetched || !walletOverview) return;
+    writeSessionCache(`phew.profile.wallet:${session.user.id}`, walletOverview);
+  }, [isWalletOverviewFetched, session?.user?.id, walletOverview]);
 
   // Mutation for updating profile
   const updateProfileMutation = useMutation({
@@ -878,19 +909,13 @@ export default function Profile() {
               xp={user.xp ?? 0}
               stats={userStats}
               recentTrades={recentTrades}
-              walletData={user.walletAddress ? {
-                connected: true,
-                address: user.walletAddress,
-                // Note: These values would come from a Web3 API integration
-                // For now, showing placeholder structure for when API is connected
-                platformCoinHoldings: undefined,
-                totalVolumeBoughtSol: undefined,
-                totalVolumeSoldSol: undefined,
-                totalVolumeBoughtUsd: undefined,
-                totalVolumeSoldUsd: undefined,
-                balanceSol: undefined,
-                balanceUsdc: undefined,
-              } : undefined}
+              walletData={
+                walletOverview
+                  ? { ...walletOverview, address: user.walletAddress ?? walletOverview.address }
+                  : user.walletAddress
+                    ? { connected: true, address: user.walletAddress }
+                    : undefined
+              }
               isLoading={isLoadingPosts}
             />
 
