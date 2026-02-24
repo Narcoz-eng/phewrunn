@@ -76,7 +76,8 @@ const levelBarSnapshots = [
 const levelRules = [
   "1H win: +1 level immediately.",
   "Soft loss (<30%) gets a 6H recovery chance before penalty.",
-  `Severe loss (>=30%) can level you down. Range: LVL ${MIN_LEVEL} to LVL +${MAX_LEVEL}.`,
+  "Veteran protection starts at LVL +5, making drawdowns less punishing.",
+  "Severe loss (>=30%) can level you down.",
 ];
 
 // Inner component that uses Privy hooks — only rendered when Privy is available
@@ -293,17 +294,17 @@ export default function Login() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-2xl sm:rounded-3xl border border-border/60 bg-background/80 backdrop-blur-xl overflow-hidden shadow-[0_20px_70px_-38px_hsl(var(--foreground)/0.45)]">
-                  <div className="px-5 sm:px-6 lg:px-7 py-5 sm:py-6 border-b border-border/50 bg-gradient-to-b from-accent/[0.06] via-primary/[0.02] to-transparent">
+                <div className="mt-4 rounded-2xl sm:rounded-3xl border border-primary/20 bg-background/85 backdrop-blur-xl overflow-hidden shadow-[0_24px_90px_-42px_hsl(var(--primary)/0.45)] ring-1 ring-primary/10">
+                  <div className="px-5 sm:px-6 lg:px-7 py-5 sm:py-6 border-b border-border/50 bg-gradient-to-b from-primary/[0.10] via-accent/[0.06] to-transparent">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="text-lg sm:text-xl font-semibold tracking-tight">Level System</h3>
+                        <h3 className="text-xl sm:text-2xl font-semibold tracking-tight">Level System</h3>
                         <p className="text-xs sm:text-sm text-muted-foreground mt-1.5 leading-relaxed">
-                          Same level bar used in feed, profile, and leaderboard.
+                          Reputation moves in real time from liquidation risk to elite trader status.
                         </p>
                       </div>
                     </div>
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                    <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
                       <div className="rounded-xl border border-border/50 bg-background/50 p-3 sm:p-3.5">
                         <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Liquidation</div>
                         <div className="text-sm sm:text-base font-semibold">LVL {MIN_LEVEL}</div>
@@ -311,6 +312,10 @@ export default function Login() {
                       <div className="rounded-xl border border-border/50 bg-background/50 p-3 sm:p-3.5">
                         <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Neutral Entry</div>
                         <div className="text-sm sm:text-base font-semibold">LVL {STARTING_LEVEL}</div>
+                      </div>
+                      <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-3 sm:p-3.5 shadow-[0_0_0_1px_hsl(var(--primary)/0.06)]">
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Veteran Protection</div>
+                        <div className="text-sm sm:text-base font-semibold text-primary">LVL +5</div>
                       </div>
                       <div className="rounded-xl border border-border/50 bg-background/50 p-3 sm:p-3.5">
                         <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1">Elite Ceiling</div>
@@ -321,9 +326,9 @@ export default function Login() {
 
                   <div className="px-5 sm:px-6 lg:px-7 py-5 sm:py-6">
                     <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr] lg:items-start">
-                    <div className="rounded-2xl border border-border/50 bg-card/55 p-4 sm:p-5">
+                    <div className="rounded-2xl border border-primary/15 bg-card/60 p-4 sm:p-5 shadow-[0_10px_40px_-28px_hsl(var(--primary)/0.5)]">
                       <div className="text-[11px] sm:text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground mb-3">
-                        Level Bar Snapshots
+                        Key Level States
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         {levelBarSnapshots.map((snapshot) => (
@@ -334,7 +339,7 @@ export default function Login() {
                                 LVL {snapshot.level > 0 ? `+${snapshot.level}` : snapshot.level}
                               </div>
                             </div>
-                            <LevelBar level={snapshot.level} size="sm" />
+                            <LevelBar level={snapshot.level} size="sm" showLabel={false} />
                             <p className="mt-2 text-[11px] sm:text-xs text-muted-foreground leading-relaxed">{snapshot.note}</p>
                           </div>
                         ))}
@@ -355,7 +360,7 @@ export default function Login() {
                       </ul>
                       <div className="mt-3.5 rounded-xl border border-red-500/20 bg-red-500/5 p-3">
                         <p className="text-[11px] sm:text-xs text-red-300 leading-relaxed">
-                          At <span className="font-semibold">LVL {LIQUIDATION_LEVEL}</span> you are liquidated and cannot post until your reputation improves.
+                          Liquidation triggers at <span className="font-semibold">LVL {LIQUIDATION_LEVEL}</span>, and posting is disabled until your reputation improves.
                         </p>
                       </div>
                     </div>
