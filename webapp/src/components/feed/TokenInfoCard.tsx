@@ -203,7 +203,7 @@ export function TokenInfoCard({
                 href={pumpFunUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-gain bg-gain/10 hover:bg-gain/20 rounded-md border border-gain/20 transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-white bg-green-600 hover:bg-green-500 rounded-md border border-green-500/80 transition-colors"
               >
                 <Coins className="h-3 w-3" />
                 Trade on Pump
