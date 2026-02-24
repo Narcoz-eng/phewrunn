@@ -1,6 +1,5 @@
 import { createMiddleware } from "hono/factory";
 import { auth } from "../lib/auth.js";
-import { prisma } from "../prisma.js";
 
 // Define the user type that will be available in context
 // This matches the Better Auth user structure
@@ -48,59 +47,45 @@ export type AuthVariables = {
  */
 export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables }>(
   async (c, next) => {
+    let session: Awaited<ReturnType<typeof auth.api.getSession>> | null = null;
+
+    // First try cookie-based session.
     try {
-      // First try Better Auth session (cookie-based)
-      let session = await auth.api.getSession({
+      session = await auth.api.getSession({
         headers: c.req.raw.headers,
       });
+    } catch (error) {
+      console.error("Failed to resolve cookie session:", error);
+    }
 
-      // If no cookie session, try Bearer token
-      if (!session?.user) {
+    // If no cookie session, try Bearer token. Keep this separate so cookie lookup
+    // failures do not automatically skip bearer auth.
+    if (!session?.user) {
+      try {
         const authHeader = c.req.header("Authorization");
         if (authHeader?.startsWith("Bearer ")) {
           const token = authHeader.slice(7);
-          // Look up session by token
-          const dbSession = await prisma.session.findFirst({
-            where: {
-              token,
-              expiresAt: { gt: new Date() },
-            },
-            include: { user: true },
-          });
-
-          if (dbSession?.user) {
-            // Create a session-like object
-            session = {
-              session: {
-                id: dbSession.id,
-                userId: dbSession.userId,
-                token: dbSession.token,
-                expiresAt: dbSession.expiresAt,
-                createdAt: dbSession.createdAt,
-                updatedAt: dbSession.updatedAt,
-              },
-              user: dbSession.user as AuthUser,
-            } as Awaited<ReturnType<typeof auth.api.getSession>>;
+          const bearerSession = await auth.api.getSessionByToken(token);
+          if (bearerSession?.user) {
+            session = bearerSession as Awaited<ReturnType<typeof auth.api.getSession>>;
           }
         }
+      } catch (error) {
+        console.error("Failed to resolve bearer session:", error);
       }
+    }
 
-      if (session?.user) {
-        // Create simplified user object for backwards compatibility
-        const user: SimpleUser = {
-          id: session.user.id,
-          email: session.user.email || null,
-          walletAddress: (session.user as AuthUser).walletAddress || null,
-        };
+    if (session?.user) {
+      // Create simplified user object for backwards compatibility
+      const user: SimpleUser = {
+        id: session.user.id,
+        email: session.user.email || null,
+        walletAddress: (session.user as AuthUser).walletAddress || null,
+      };
 
-        c.set("user", user);
-        c.set("session", session);
-      } else {
-        c.set("user", null);
-        c.set("session", null);
-      }
-    } catch (error) {
-      console.error("Failed to resolve session:", error);
+      c.set("user", user);
+      c.set("session", session);
+    } else {
       c.set("user", null);
       c.set("session", null);
     }

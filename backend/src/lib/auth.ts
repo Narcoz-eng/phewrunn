@@ -32,6 +32,15 @@ type SessionRecord = {
   };
 };
 
+type SessionCacheEntry = {
+  value: SessionRecord | null;
+  expiresAtMs: number;
+};
+
+const sessionCache = new Map<string, SessionCacheEntry>();
+const SESSION_CACHE_TTL_MS = 5_000;
+const SESSION_CACHE_MISS_TTL_MS = 1_500;
+
 function getCookieValue(cookieHeader: string | null | undefined, name: string): string | null {
   if (!cookieHeader) return null;
 
@@ -62,6 +71,15 @@ function getSessionTokenFromHeaders(headers: Headers): string | null {
 async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
   if (!token) return null;
 
+  const now = Date.now();
+  const cached = sessionCache.get(token);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.value;
+  }
+  if (cached) {
+    sessionCache.delete(token);
+  }
+
   const dbSession = await prisma.session.findFirst({
     where: {
       token,
@@ -70,9 +88,15 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
     include: { user: true },
   });
 
-  if (!dbSession?.user) return null;
+  if (!dbSession?.user) {
+    sessionCache.set(token, {
+      value: null,
+      expiresAtMs: now + SESSION_CACHE_MISS_TTL_MS,
+    });
+    return null;
+  }
 
-  return {
+  const sessionRecord: SessionRecord = {
     session: {
       id: dbSession.id,
       userId: dbSession.userId,
@@ -83,6 +107,20 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
     },
     user: dbSession.user as SessionRecord["user"],
   };
+
+  const sessionExpiry = dbSession.expiresAt.getTime();
+  sessionCache.set(token, {
+    value: sessionRecord,
+    expiresAtMs: Math.min(now + SESSION_CACHE_TTL_MS, sessionExpiry),
+  });
+
+  return sessionRecord;
+}
+
+function clearSessionCache(tokens: string[]) {
+  for (const token of tokens) {
+    sessionCache.delete(token);
+  }
 }
 
 function buildExpiredCookie(name: string): string {
@@ -106,6 +144,10 @@ export const auth = {
       return getSessionFromToken(token);
     },
 
+    getSessionByToken: async (token: string | null): Promise<SessionRecord | null> => {
+      return getSessionFromToken(token);
+    },
+
     signOut: async ({ headers }: { headers: Headers }) => {
       const cookieToken = getSessionTokenFromHeaders(headers);
       const authHeader = headers.get("authorization");
@@ -118,6 +160,7 @@ export const auth = {
         await prisma.session.deleteMany({
           where: { token: { in: tokens } },
         });
+        clearSessionCache(tokens);
       }
 
       return {
@@ -145,4 +188,3 @@ export const auth = {
 
 export type Session = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["session"];
 export type User = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["user"];
-

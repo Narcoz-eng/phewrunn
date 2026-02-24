@@ -603,28 +603,66 @@ app.post("/api/auth/logout", async (c) => {
 // Get current user - returns full user data from database
 app.get("/api/me", async (c) => {
   const user = c.get("user");
+  const session = c.get("session");
   if (!user) return c.body(null, 401);
 
-  // Fetch full user data from database
-  const dbUser = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      walletAddress: true,
-      username: true,
-      level: true,
-      xp: true,
-      bio: true,
-      isAdmin: true,
-      isVerified: true,
-      createdAt: true,
-    },
-  });
+  let dbUser: {
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+    walletAddress: string | null;
+    username: string | null;
+    level: number;
+    xp: number;
+    bio: string | null;
+    isAdmin: boolean;
+    isVerified: boolean;
+    createdAt: Date;
+  } | null = null;
+
+  try {
+    // Fetch full user data from database
+    dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        walletAddress: true,
+        username: true,
+        level: true,
+        xp: true,
+        bio: true,
+        isAdmin: true,
+        isVerified: true,
+        createdAt: true,
+      },
+    });
+  } catch (error) {
+    console.error("[/api/me] Failed to fetch full user profile:", error);
+  }
 
   if (!dbUser) {
+    if (session?.user) {
+      return c.json({
+        data: {
+          id: session.user.id,
+          name: session.user.name,
+          email: session.user.email,
+          image: session.user.image,
+          walletAddress: session.user.walletAddress,
+          username: session.user.username,
+          level: session.user.level,
+          xp: session.user.xp,
+          bio: session.user.bio,
+          isAdmin: session.user.isAdmin,
+          isVerified: session.user.isVerified,
+          createdAt: session.user.createdAt,
+        },
+      });
+    }
     return c.json(
       { error: { message: "User not found", code: "NOT_FOUND" } },
       404

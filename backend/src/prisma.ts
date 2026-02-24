@@ -20,14 +20,51 @@ const logConfig: Prisma.LogLevel[] = isProduction
   ? ["warn", "error"]
   : ["query", "warn", "error"];
 
+function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undefined; notes: string[] } {
+  if (!rawUrl) return { url: rawUrl, notes: [] };
+  if (rawUrl.startsWith("file:")) return { url: rawUrl, notes: [] };
+
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    const notes: string[] = [];
+
+    // Supabase transaction pooler is very sensitive in serverless environments.
+    if (hostname.endsWith(".pooler.supabase.com")) {
+      if (!parsed.searchParams.has("pgbouncer")) {
+        parsed.searchParams.set("pgbouncer", "true");
+        notes.push("added pgbouncer=true");
+      }
+      if (!parsed.searchParams.has("connection_limit")) {
+        parsed.searchParams.set("connection_limit", "1");
+        notes.push("added connection_limit=1");
+      }
+      if (!parsed.searchParams.has("sslmode")) {
+        parsed.searchParams.set("sslmode", "require");
+        notes.push("added sslmode=require");
+      }
+    }
+
+    return { url: parsed.toString(), notes };
+  } catch {
+    return { url: rawUrl, notes: [] };
+  }
+}
+
+const normalizedDb = normalizeDatabaseUrl(process.env.DATABASE_URL);
+if (normalizedDb.notes.length > 0) {
+  console.warn(`[Prisma] Normalized DATABASE_URL for Supabase pooler (${normalizedDb.notes.join(", ")})`);
+}
+
 const prisma = new PrismaClient({
+  ...(normalizedDb.url ? { datasources: { db: { url: normalizedDb.url } } } : {}),
   log: logConfig.map((level) => ({
     emit: "event" as const,
     level,
   })),
 });
 
-const isSqlite = (process.env.DATABASE_URL || "").startsWith("file:");
+const isSqlite = (normalizedDb.url || process.env.DATABASE_URL || "").startsWith("file:");
 
 // Log slow queries in production (queries taking > 1 second)
 const SLOW_QUERY_THRESHOLD_MS = 1000;
@@ -60,6 +97,9 @@ prisma.$on("warn", (e: Prisma.LogEvent) => {
 // Log errors
 prisma.$on("error", (e: Prisma.LogEvent) => {
   console.error(`[Prisma Error] ${e.message}`);
+  if (e.message.toLowerCase().includes("prepared statement")) {
+    console.error("[Prisma] Hint: Supabase pooler URL should include pgbouncer=true and connection_limit=1");
+  }
 });
 
 // IMPORTANT: SQLite optimizations for local file databases only

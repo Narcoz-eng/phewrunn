@@ -211,6 +211,24 @@ export function createErrorHandler() {
       );
     }
 
+    if (err.name === "PrismaClientUnknownRequestError") {
+      const prismaUnknown = err as { message?: string };
+      console.error("[PrismaUnknownError]", {
+        ...logData,
+        prismaMessage: prismaUnknown.message,
+      });
+
+      return c.json(
+        {
+          error: {
+            message: isProduction ? "A database request failed" : (prismaUnknown.message || err.message),
+            code: ERROR_CODES.DATABASE_ERROR,
+          },
+        } satisfies ErrorResponse,
+        500
+      );
+    }
+
     // Unknown errors - don't leak details in production
     console.error("[UnknownError]", {
       ...logData,

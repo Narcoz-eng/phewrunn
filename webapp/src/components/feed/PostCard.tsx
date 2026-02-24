@@ -102,6 +102,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (!post.contractAddress) return;
 
     const fetchPrice = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
       try {
         const data = await api.get<{
           currentMcap: number | null;
@@ -137,15 +140,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
     };
 
-    // Fetch immediately on mount
-    fetchPrice();
-
     // Use 30s for unsettled posts, 5 minutes for settled posts
-    const interval = localSettled ? 5 * 60 * 1000 : 30000;
-    const timer = setInterval(fetchPrice, interval);
+    const baseInterval = localSettled ? 5 * 60 * 1000 : 30000;
+    const initialDelay =
+      post.currentMcap == null
+        ? 0
+        : Math.min(10_000, Math.floor(Math.random() * 4_000) + 1_000);
 
-    return () => clearInterval(timer);
-  }, [post.id, post.contractAddress, post.entryMcap, localSettled, localMcap6h, queryClient]);
+    const initialTimer = setTimeout(fetchPrice, initialDelay);
+    const intervalTimer = setInterval(fetchPrice, baseInterval);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(intervalTimer);
+    };
+  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, localSettled, localMcap6h, queryClient]);
 
   // Fetch comments when expanded
   const { data: comments, isLoading: isCommentsLoading, refetch: refetchComments } = useQuery({

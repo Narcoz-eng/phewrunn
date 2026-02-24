@@ -37,6 +37,10 @@ export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 let settlementCheckInFlight: Promise<void> | null = null;
 let lastSettlementCheckStartedAt = 0;
 const SETTLEMENT_CHECK_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
+const priceRefreshInFlight = new Map<string, Promise<number | null>>();
+const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
+let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
+let trendingInFlight: Promise<unknown> | null = null;
 
 /**
  * Helper to fetch market cap using the enhanced service
@@ -970,6 +974,16 @@ postsRouter.post("/settle", async (c) => {
 // For testing, we use a lower threshold (2+) since we may not have enough data
 // Sorted by: 1) Tokens with positive avg gain first, 2) avgGain DESC, 3) callCount DESC
 postsRouter.get("/trending", async (c) => {
+  const now = Date.now();
+  if (trendingCache && trendingCache.expiresAtMs > now) {
+    return c.json({ data: trendingCache.data });
+  }
+  if (trendingInFlight) {
+    const data = await trendingInFlight;
+    return c.json({ data });
+  }
+
+  trendingInFlight = (async () => {
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
   // Query posts with contract addresses from last 48 hours
@@ -1150,7 +1164,19 @@ postsRouter.get("/trending", async (c) => {
     // Limit to top 10
     .slice(0, 10);
 
-  return c.json({ data: trendingTokens });
+    trendingCache = {
+      data: trendingTokens,
+      expiresAtMs: Date.now() + TRENDING_CACHE_TTL_MS,
+    };
+    return trendingTokens;
+  })();
+
+  try {
+    const data = await trendingInFlight;
+    return c.json({ data });
+  } finally {
+    trendingInFlight = null;
+  }
 });
 
 // Get single post
@@ -1749,24 +1775,48 @@ postsRouter.get("/:id/price", async (c) => {
     });
   }
 
-  // Always fetch latest price (this is the force refresh endpoint)
-  const currentMcap = await fetchMarketCap(post.contractAddress);
-  const now = new Date();
   const trackingMode = determineTrackingMode(post.createdAt);
+  let finalMcap = post.currentMcap;
+  let responseUpdatedAt = post.lastMcapUpdate ?? new Date();
 
-  if (currentMcap !== null) {
-    // Update the post with new mcap
-    await prisma.post.update({
-      where: { id: postId },
-      data: {
-        currentMcap,
-        lastMcapUpdate: now,
-        trackingMode,
-      },
-    });
+  // Avoid a thundering herd: only refresh if the cached value is stale.
+  const shouldRefresh = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+
+  if (shouldRefresh) {
+    let refreshPromise = priceRefreshInFlight.get(postId);
+    if (!refreshPromise) {
+      refreshPromise = (async () => {
+        const latestMcap = await fetchMarketCap(post.contractAddress!);
+        if (latestMcap !== null) {
+          const now = new Date();
+          await prisma.post.update({
+            where: { id: postId },
+            data: {
+              currentMcap: latestMcap,
+              lastMcapUpdate: now,
+              trackingMode,
+            },
+          });
+        }
+        return latestMcap;
+      })()
+        .catch((error) => {
+          console.error("[posts/price] Failed to refresh market cap", { postId, error });
+          return null;
+        })
+        .finally(() => {
+          priceRefreshInFlight.delete(postId);
+        });
+      priceRefreshInFlight.set(postId, refreshPromise);
+    }
+
+    const refreshedMcap = await refreshPromise;
+    if (refreshedMcap !== null) {
+      finalMcap = refreshedMcap;
+      responseUpdatedAt = new Date();
+    }
   }
 
-  const finalMcap = currentMcap ?? post.currentMcap;
   const percentChange = post.entryMcap && finalMcap
     ? ((finalMcap - post.entryMcap) / post.entryMcap) * 100
     : null;
@@ -1779,7 +1829,7 @@ postsRouter.get("/:id/price", async (c) => {
       mcap6h: post.mcap6h,
       percentChange: percentChange !== null ? Math.round(percentChange * 100) / 100 : null,
       trackingMode: trackingMode,
-      lastMcapUpdate: now.toISOString(),
+      lastMcapUpdate: responseUpdatedAt.toISOString(),
       settled: post.settled,
       settledAt: post.settledAt?.toISOString() ?? null,
     },
