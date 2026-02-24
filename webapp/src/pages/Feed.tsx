@@ -26,6 +26,54 @@ interface FeedPage {
   nextCursor: string | null;
 }
 
+const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
+const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
+
+function getFeedFirstPageCacheKey(tab: FeedTab, search: string): string {
+  return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${tab}:${search}`;
+}
+
+function readCachedFirstFeedPage(tab: FeedTab, search: string): FeedPage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(getFeedFirstPageCacheKey(tab, search));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as {
+      cachedAt?: number;
+      page?: FeedPage;
+    };
+
+    if (
+      typeof parsed?.cachedAt !== "number" ||
+      !parsed.page ||
+      !Array.isArray(parsed.page.items) ||
+      Date.now() - parsed.cachedAt > FEED_FIRST_PAGE_CACHE_TTL_MS
+    ) {
+      return null;
+    }
+
+    return parsed.page;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedFirstFeedPage(tab: FeedTab, search: string, page: FeedPage): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      getFeedFirstPageCacheKey(tab, search),
+      JSON.stringify({
+        cachedAt: Date.now(),
+        page,
+      })
+    );
+  } catch {
+    // Ignore storage quota / privacy mode issues.
+  }
+}
+
 // Error Boundary Component for Feed
 function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
   return (
@@ -57,6 +105,8 @@ export default function Feed() {
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const [hasUserScrolledForAutoLoad, setHasUserScrolledForAutoLoad] = useState(false);
+  const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
+  const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
 
   const getFeedQueryKey = useCallback((tab: FeedTab, search: string) => ["posts", tab, search] as const, []);
 
@@ -148,11 +198,17 @@ export default function Feed() {
     fetchNextPage,
     hasNextPage,
   } = useInfiniteQuery({
-    queryKey: getFeedQueryKey(activeTab, searchQuery),
+    queryKey: getFeedQueryKey(activeTab, effectiveSearchQuery),
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => fetchFeedPage(activeTab, searchQuery, pageParam),
+    queryFn: ({ pageParam }) => fetchFeedPage(activeTab, effectiveSearchQuery, pageParam),
     getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
     maxPages: 8,
+    initialData: cachedFirstPage
+      ? {
+          pages: [cachedFirstPage],
+          pageParams: [undefined],
+        }
+      : undefined,
     enabled: !!session?.user,
     retry: 2,
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
@@ -165,9 +221,15 @@ export default function Feed() {
   const posts = postsPages?.pages.flatMap((page) => page.items) ?? [];
   const isRefreshing = isFetching && !isFetchingNextPage;
 
+  useEffect(() => {
+    const firstPage = postsPages?.pages?.[0];
+    if (!firstPage || !session?.user) return;
+    writeCachedFirstFeedPage(activeTab, effectiveSearchQuery, firstPage);
+  }, [activeTab, effectiveSearchQuery, postsPages?.pages, session?.user]);
+
   const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
     queryClient.setQueryData<InfiniteData<FeedPage>>(
-      ["posts", activeTab, searchQuery],
+      ["posts", activeTab, effectiveSearchQuery],
       (oldData) => {
         if (!oldData) return oldData;
         return {
@@ -179,7 +241,7 @@ export default function Feed() {
         };
       }
     );
-  }, [activeTab, queryClient, searchQuery]);
+  }, [activeTab, effectiveSearchQuery, queryClient]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -256,7 +318,7 @@ export default function Feed() {
     },
     onSuccess: (newPost) => {
       // Add new post to the beginning of the first loaded page (if present)
-      queryClient.setQueryData<InfiniteData<FeedPage>>(["posts", activeTab, searchQuery], (oldData) => {
+      queryClient.setQueryData<InfiniteData<FeedPage>>(["posts", activeTab, effectiveSearchQuery], (oldData) => {
         if (!oldData || oldData.pages.length === 0) {
           return oldData;
         }
@@ -400,7 +462,7 @@ export default function Feed() {
 
   const handleRefresh = () => {
     queryClient.setQueryData<InfiniteData<FeedPage>>(
-      getFeedQueryKey(activeTab, searchQuery),
+      getFeedQueryKey(activeTab, effectiveSearchQuery),
       (oldData) => {
         if (!oldData) return oldData;
         return {
