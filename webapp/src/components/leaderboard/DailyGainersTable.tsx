@@ -65,8 +65,16 @@ export function DailyGainersTable() {
       const data = await api.get<DailyGainer[]>("/api/leaderboard/daily-gainers");
       return data;
     },
-    refetchInterval: 5 * 60 * 1000, // Auto-refresh every 5 minutes
-    staleTime: 2 * 60 * 1000, // Consider data stale after 2 minutes
+    refetchOnWindowFocus: false,
+    retry: 1,
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 5 * 60 * 1000; // Auto-refresh every 5 minutes when tab is visible
+    },
+    staleTime: 3 * 60 * 1000, // Consider data stale after 3 minutes
+    gcTime: 10 * 60 * 1000,
   });
 
   if (isLoading) {

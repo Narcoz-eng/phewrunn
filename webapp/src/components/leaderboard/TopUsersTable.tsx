@@ -121,7 +121,10 @@ export function TopUsersTable() {
         throw err;
       }
     },
-    staleTime: 60 * 1000, // Consider data stale after 1 minute
+    refetchOnWindowFocus: false,
+    retry: 1,
+    staleTime: 2 * 60 * 1000, // Consider data stale after 2 minutes
+    gcTime: 10 * 60 * 1000,
     placeholderData: (previousData) => previousData,
   });
 

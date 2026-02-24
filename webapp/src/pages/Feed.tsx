@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import { useSession, useAuth } from "@/lib/auth-client";
@@ -19,6 +19,12 @@ import { Sparkles, RefreshCw, Trophy, TrendingUp, AlertCircle } from "lucide-rea
 import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+interface FeedPage {
+  items: Post[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
 
 // Error Boundary Component for Feed
 function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
@@ -49,6 +55,7 @@ export default function Feed() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<FeedTab>("latest");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // Update URL when search changes
   const handleSearchChange = useCallback((value: string) => {
@@ -80,14 +87,18 @@ export default function Feed() {
 
   // Fetch posts with React Query
   const {
-    data: posts = [],
+    data: postsPages,
     isLoading: isLoadingPosts,
     error: postsError,
     refetch: refetchPosts,
-    isFetching: isRefreshing,
-  } = useQuery({
+    isFetching,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+  } = useInfiniteQuery({
     queryKey: ["posts", activeTab, searchQuery],
-    queryFn: async () => {
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) => {
       let endpoint = "/api/posts";
       const params = new URLSearchParams();
 
@@ -103,25 +114,86 @@ export default function Feed() {
       if (searchQuery && searchQuery.length >= 3) {
         params.set("search", searchQuery);
       }
+      params.set("limit", "20");
+      if (pageParam) {
+        params.set("cursor", pageParam);
+      }
 
       if (params.toString()) {
         endpoint += `?${params.toString()}`;
       }
 
-      const data = await api.get<Post[]>(endpoint);
-      return data;
+      const response = await api.raw(endpoint);
+      if (!response.ok) {
+        const json = await response.json().catch(() => null);
+        throw new ApiError(
+          json?.error?.message || `Request failed with status ${response.status}`,
+          response.status,
+          json?.error || json
+        );
+      }
+
+      const json = await response.json().catch(() => ({}));
+      const items = Array.isArray(json?.data) ? (json.data as Post[]) : [];
+      const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
+
+      return {
+        items,
+        nextCursor,
+        hasMore: Boolean(json?.hasMore && nextCursor),
+      } satisfies FeedPage;
     },
+    getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
     enabled: !!session?.user,
     retry: 2,
     staleTime: 15000, // 15 seconds
     refetchOnWindowFocus: false,
-    refetchInterval: () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-        return false;
-      }
-      return 60000; // Auto-refresh every 60 seconds when tab is visible
-    },
+    refetchInterval: false,
   });
+
+  const posts = postsPages?.pages.flatMap((page) => page.items) ?? [];
+  const isRefreshing = isFetching && !isFetchingNextPage;
+
+  const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
+    queryClient.setQueryData<InfiniteData<FeedPage>>(
+      ["posts", activeTab, searchQuery],
+      (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          pages: oldData.pages.map((page) => ({
+            ...page,
+            items: page.items.map(updater),
+          })),
+        };
+      }
+    );
+  }, [activeTab, queryClient, searchQuery]);
+
+  useEffect(() => {
+    const autoLoadEnabled = activeTab !== "trending" && searchQuery.length < 3;
+    if (!autoLoadEnabled || !hasNextPage || isFetchingNextPage) return;
+    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") return;
+    const node = loadMoreRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          void fetchNextPage();
+        }
+      },
+      {
+        root: null,
+        rootMargin: "800px 0px",
+        threshold: 0,
+      }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [activeTab, fetchNextPage, hasNextPage, isFetchingNextPage, searchQuery.length]);
 
   // Create post mutation
   const createPostMutation = useMutation({
@@ -130,10 +202,25 @@ export default function Feed() {
       return newPost;
     },
     onSuccess: (newPost) => {
-      // Add new post to the beginning of the list
-      queryClient.setQueryData<Post[]>(["posts", activeTab, searchQuery], (oldPosts) =>
-        oldPosts ? [newPost, ...oldPosts] : [newPost]
-      );
+      // Add new post to the beginning of the first loaded page (if present)
+      queryClient.setQueryData<InfiniteData<FeedPage>>(["posts", activeTab, searchQuery], (oldData) => {
+        if (!oldData || oldData.pages.length === 0) {
+          return oldData;
+        }
+        const [firstPage, ...restPages] = oldData.pages;
+        if (!firstPage) return oldData;
+
+        return {
+          ...oldData,
+          pages: [
+            {
+              ...firstPage,
+              items: [newPost, ...firstPage.items],
+            },
+            ...restPages,
+          ],
+        };
+      });
       toast.success("Alpha posted!");
       // Refresh user data in case level changed
       refetchUser();
@@ -155,20 +242,17 @@ export default function Feed() {
       return { postId, isLiked };
     },
     onSuccess: ({ postId, isLiked }) => {
-      // Optimistically update the post
-      queryClient.setQueryData<Post[]>(["posts", activeTab, searchQuery], (oldPosts) =>
-        oldPosts?.map((post) =>
-          post.id === postId
-            ? {
-                ...post,
-                isLiked: !isLiked,
-                _count: {
-                  ...post._count,
-                  likes: post._count.likes + (isLiked ? -1 : 1),
-                },
-              }
-            : post
-        )
+      updateInfinitePosts((post) =>
+        post.id === postId
+          ? {
+              ...post,
+              isLiked: !isLiked,
+              _count: {
+                ...post._count,
+                likes: post._count.likes + (isLiked ? -1 : 1),
+              },
+            }
+          : post
       );
     },
   });
@@ -184,19 +268,17 @@ export default function Feed() {
       return { postId, isReposted };
     },
     onSuccess: ({ postId, isReposted }) => {
-      queryClient.setQueryData<Post[]>(["posts", activeTab, searchQuery], (oldPosts) =>
-        oldPosts?.map((post) =>
-          post.id === postId
-            ? {
-                ...post,
-                isReposted: !isReposted,
-                _count: {
-                  ...post._count,
-                  reposts: post._count.reposts + (isReposted ? -1 : 1),
-                },
-              }
-            : post
-        )
+      updateInfinitePosts((post) =>
+        post.id === postId
+          ? {
+              ...post,
+              isReposted: !isReposted,
+              _count: {
+                ...post._count,
+                reposts: post._count.reposts + (isReposted ? -1 : 1),
+              },
+            }
+          : post
       );
     },
   });
@@ -210,18 +292,16 @@ export default function Feed() {
     onSuccess: ({ postId }) => {
       toast.success("Comment added!");
       // Update comment count
-      queryClient.setQueryData<Post[]>(["posts", activeTab, searchQuery], (oldPosts) =>
-        oldPosts?.map((post) =>
-          post.id === postId
-            ? {
-                ...post,
-                _count: {
-                  ...post._count,
-                  comments: post._count.comments + 1,
-                },
-              }
-            : post
-        )
+      updateInfinitePosts((post) =>
+        post.id === postId
+          ? {
+              ...post,
+              _count: {
+                ...post._count,
+                comments: post._count.comments + 1,
+              },
+            }
+          : post
       );
     },
     onError: () => {
@@ -268,6 +348,9 @@ export default function Feed() {
   const handleRefresh = () => {
     refetchPosts();
   };
+
+  const autoLoadEnabled = activeTab !== "trending" && searchQuery.length < 3;
+  const showLoadMoreControls = activeTab !== "trending" && Boolean(hasNextPage);
 
   return (
     <div className="min-h-screen bg-background">
@@ -414,21 +497,50 @@ export default function Feed() {
               </div>
             </div>
           ) : (
-            posts.map((post, index) => (
-              <div
-                key={post.id}
-                className="animate-fade-in-up"
-                style={{ animationDelay: `${index * 0.05}s` }}
-              >
-                <PostCard
-                  post={post}
-                  currentUserId={user?.id}
-                  onLike={handleLike}
-                  onRepost={handleRepost}
-                  onComment={handleComment}
-                />
-              </div>
-            ))
+            <>
+              {posts.map((post, index) => (
+                <div
+                  key={post.id}
+                  className="animate-fade-in-up"
+                  style={{ animationDelay: `${index * 0.05}s` }}
+                >
+                  <PostCard
+                    post={post}
+                    currentUserId={user?.id}
+                    onLike={handleLike}
+                    onRepost={handleRepost}
+                    onComment={handleComment}
+                  />
+                </div>
+              ))}
+
+              {showLoadMoreControls ? (
+                <div className="pt-2">
+                  {autoLoadEnabled ? <div ref={loadMoreRef} className="h-1 w-full" aria-hidden="true" /> : null}
+
+                  <div className="flex flex-col items-center gap-3 py-2">
+                    {isFetchingNextPage ? (
+                      <>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          Loading more posts...
+                        </div>
+                        <PostCardSkeleton showMarketData={false} />
+                      </>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void fetchNextPage()}
+                        className="px-4"
+                      >
+                        Show more
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </main>

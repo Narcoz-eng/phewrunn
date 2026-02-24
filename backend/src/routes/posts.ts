@@ -320,9 +320,9 @@ postsRouter.get("/", async (c) => {
 
   // Parse query params
   const parsed = FeedQuerySchema.safeParse(queryParams);
-  const { sort, following, limit, search } = parsed.success
+  const { sort, following, limit, cursor, search } = parsed.success
     ? parsed.data
-    : { sort: "latest" as const, following: false, limit: 50, search: undefined };
+    : { sort: "latest" as const, following: false, limit: 50, cursor: undefined, search: undefined };
 
   // Build the where clause - use Prisma's AND/OR operators
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -373,21 +373,23 @@ postsRouter.get("/", async (c) => {
     ? { AND: whereConditions }
     : {};
 
-  // Build the orderBy clause based on sort type
-  let orderByClause: { createdAt?: "desc" | "asc" };
+  // Cursor pagination is supported for latest/following/search feeds.
+  // Trending uses app-layer sorting, so cursor pagination would be inconsistent.
+  const cursorPaginationEnabled = sort !== "trending";
 
-  if (sort === "trending") {
-    // For trending, we'll sort by engagement in the app layer
-    // First fetch recent posts (last 7 days)
-    orderByClause = { createdAt: "desc" };
-  } else {
-    orderByClause = { createdAt: "desc" };
-  }
-
-  const posts = await prisma.post.findMany({
+  const fetchedPosts = await prisma.post.findMany({
     where: whereClause,
-    orderBy: orderByClause,
-    take: limit,
+    orderBy: [
+      { createdAt: "desc" },
+      { id: "desc" },
+    ],
+    take: cursorPaginationEnabled ? limit + 1 : limit,
+    ...(cursorPaginationEnabled && cursor
+      ? {
+          cursor: { id: cursor },
+          skip: 1,
+        }
+      : {}),
     include: {
       author: {
         select: {
@@ -409,6 +411,19 @@ postsRouter.get("/", async (c) => {
       },
     },
   });
+
+  let hasMore = false;
+  let nextCursor: string | null = null;
+  const posts = (() => {
+    if (!cursorPaginationEnabled) {
+      return fetchedPosts;
+    }
+
+    hasMore = fetchedPosts.length > limit;
+    const pagePosts = hasMore ? fetchedPosts.slice(0, limit) : fetchedPosts;
+    nextCursor = hasMore ? pagePosts[pagePosts.length - 1]?.id ?? null : null;
+    return pagePosts;
+  })();
 
   // Get user's likes and reposts for these posts
   let userLikes: Set<string> = new Set();
@@ -624,7 +639,11 @@ postsRouter.get("/", async (c) => {
     })
   );
 
-  return c.json({ data: postsWithUpdatedMcap });
+  return c.json({
+    data: postsWithUpdatedMcap,
+    hasMore,
+    nextCursor,
+  });
 });
 
 // Create a new post

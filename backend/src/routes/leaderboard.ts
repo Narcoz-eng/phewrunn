@@ -10,12 +10,84 @@ import {
 
 export const leaderboardRouter = new Hono<{ Variables: AuthVariables }>();
 
+type CacheEntry<T> = {
+  data: T;
+  expiresAtMs: number;
+};
+
+type TopUsersResponsePayload = {
+  data: Array<unknown>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
+const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 10_000;
+const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 180_000 : 30_000;
+
+let dailyGainersCache: CacheEntry<Array<unknown>> | null = null;
+let dailyGainersInFlight: Promise<Array<unknown>> | null = null;
+const topUsersCache = new Map<string, CacheEntry<TopUsersResponsePayload>>();
+let statsCache: CacheEntry<unknown> | null = null;
+let statsInFlight: Promise<unknown> | null = null;
+
+function readCache<T>(entry: CacheEntry<T> | null): T | null {
+  if (!entry) return null;
+  if (entry.expiresAtMs <= Date.now()) return null;
+  return entry.data;
+}
+
+async function getWinLossStatsByAuthorIds(authorIds: string[]) {
+  const statsMap = new Map<string, { wins: number; losses: number }>();
+  const uniqueAuthorIds = [...new Set(authorIds)].filter(Boolean);
+
+  if (uniqueAuthorIds.length === 0) {
+    return statsMap;
+  }
+
+  const grouped = await prisma.post.groupBy({
+    by: ["authorId", "isWin"],
+    where: {
+      authorId: { in: uniqueAuthorIds },
+      settled: true,
+      isWin: { not: null },
+    },
+    _count: { id: true },
+  });
+
+  for (const row of grouped) {
+    const existing = statsMap.get(row.authorId) ?? { wins: 0, losses: 0 };
+    if (row.isWin === true) {
+      existing.wins = row._count.id;
+    } else if (row.isWin === false) {
+      existing.losses = row._count.id;
+    }
+    statsMap.set(row.authorId, existing);
+  }
+
+  return statsMap;
+}
+
 /**
  * GET /api/leaderboard/daily-gainers
  * Top 10 alphas by percentage gain today (posts created in last 24 hours)
  * Filter: Only settled posts with positive percent change
  */
 leaderboardRouter.get("/daily-gainers", async (c) => {
+  const cached = readCache(dailyGainersCache);
+  if (cached) {
+    return c.json({ data: cached });
+  }
+  if (dailyGainersInFlight) {
+    const data = await dailyGainersInFlight;
+    return c.json({ data });
+  }
+
+  dailyGainersInFlight = (async () => {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   // Find settled posts from last 24 hours with positive gains
@@ -88,7 +160,19 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     settledAt: item.post.settledAt!.toISOString(),
   }));
 
-  return c.json({ data: dailyGainers });
+    dailyGainersCache = {
+      data: dailyGainers,
+      expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
+    };
+    return dailyGainers;
+  })();
+
+  try {
+    const data = await dailyGainersInFlight;
+    return c.json({ data });
+  } finally {
+    dailyGainersInFlight = null;
+  }
 });
 
 /**
@@ -98,6 +182,11 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
  */
 leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema), async (c) => {
   const { page, limit, sortBy } = c.req.valid("query");
+  const topUsersCacheKey = `${sortBy}:${page}:${limit}`;
+  const cached = topUsersCache.get(topUsersCacheKey);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return c.json(cached.data);
+  }
   const skip = (page - 1) * limit;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -128,6 +217,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     });
 
     const userIds = recentPostsByUser.map((p) => p.authorId);
+    const winLossStats = await getWinLossStatsByAuthorIds(userIds);
 
     // Get user details
     const usersDetails = await prisma.user.findMany({
@@ -144,21 +234,15 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
         },
       },
     });
+    const usersById = new Map(usersDetails.map((u) => [u.id, u]));
 
     // Get win/loss stats for each user
-    const usersWithStats = await Promise.all(
-      recentPostsByUser.map(async (recentPost, index) => {
-        const user = usersDetails.find((u) => u.id === recentPost.authorId);
+    const usersWithStats = recentPostsByUser.map((recentPost, index) => {
+        const user = usersById.get(recentPost.authorId);
         if (!user) return null;
-
-        const [wins, losses] = await Promise.all([
-          prisma.post.count({
-            where: { authorId: user.id, settled: true, isWin: true },
-          }),
-          prisma.post.count({
-            where: { authorId: user.id, settled: true, isWin: false },
-          }),
-        ]);
+        const stats = winLossStats.get(user.id) ?? { wins: 0, losses: 0 };
+        const wins = stats.wins;
+        const losses = stats.losses;
 
         const totalSettled = wins + losses;
         const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
@@ -181,8 +265,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
             winRate: Math.round(winRate * 100) / 100,
           },
         };
-      })
-    );
+      });
 
     const filteredUsers = usersWithStats.filter((u): u is NonNullable<typeof u> => u !== null);
 
@@ -192,7 +275,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       where: { createdAt: { gte: sevenDaysAgo } },
     });
 
-    return c.json({
+    const responsePayload: TopUsersResponsePayload = {
       data: filteredUsers,
       pagination: {
         page,
@@ -200,7 +283,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
         total: totalActiveUsers.length,
         totalPages: Math.ceil(totalActiveUsers.length / limit),
       },
+    };
+    topUsersCache.set(topUsersCacheKey, {
+      data: responsePayload,
+      expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
+    return c.json(responsePayload);
   }
 
   if (sortBy === 'winrate') {
@@ -225,17 +313,13 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       },
     });
 
+    const winLossStats = await getWinLossStatsByAuthorIds(usersWithSettledPosts.map((user) => user.id));
+
     // Calculate win rates for all users
-    const usersWithWinRates = await Promise.all(
-      usersWithSettledPosts.map(async (user) => {
-        const [wins, losses] = await Promise.all([
-          prisma.post.count({
-            where: { authorId: user.id, settled: true, isWin: true },
-          }),
-          prisma.post.count({
-            where: { authorId: user.id, settled: true, isWin: false },
-          }),
-        ]);
+    const usersWithWinRates = usersWithSettledPosts.map((user) => {
+        const stats = winLossStats.get(user.id) ?? { wins: 0, losses: 0 };
+        const wins = stats.wins;
+        const losses = stats.losses;
 
         const totalSettled = wins + losses;
         const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
@@ -257,8 +341,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
             totalSettled,
           },
         };
-      })
-    );
+      });
 
     // Filter users with minimum posts and sort by win rate
     const qualifiedUsers = usersWithWinRates
@@ -285,7 +368,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       },
     }));
 
-    return c.json({
+    const responsePayload: TopUsersResponsePayload = {
       data: result,
       pagination: {
         page,
@@ -293,7 +376,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
         total: totalQualified,
         totalPages: Math.ceil(totalQualified / limit),
       },
+    };
+    topUsersCache.set(topUsersCacheKey, {
+      data: responsePayload,
+      expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
+    return c.json(responsePayload);
   }
 
   // Default: sortBy === 'level'
@@ -325,26 +413,13 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     take: limit,
   });
 
+  const winLossStats = await getWinLossStatsByAuthorIds(users.map((user) => user.id));
+
   // Get win/loss stats for each user
-  const usersWithStats = await Promise.all(
-    users.map(async (user, index) => {
-      // Count wins and losses from settled posts
-      const [wins, losses] = await Promise.all([
-        prisma.post.count({
-          where: {
-            authorId: user.id,
-            settled: true,
-            isWin: true,
-          },
-        }),
-        prisma.post.count({
-          where: {
-            authorId: user.id,
-            settled: true,
-            isWin: false,
-          },
-        }),
-      ]);
+  const usersWithStats = users.map((user, index) => {
+      const stats = winLossStats.get(user.id) ?? { wins: 0, losses: 0 };
+      const wins = stats.wins;
+      const losses = stats.losses;
 
       const totalSettled = wins + losses;
       const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
@@ -366,8 +441,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
           winRate: Math.round(winRate * 100) / 100,
         },
       };
-    })
-  );
+    });
 
   // Sort by level first, then by win rate for tie-breaking
   usersWithStats.sort((a, b) => {
@@ -382,7 +456,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     user.rank = skip + index + 1;
   });
 
-  return c.json({
+  const responsePayload: TopUsersResponsePayload = {
     data: usersWithStats,
     pagination: {
       page,
@@ -390,7 +464,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       total: totalCount,
       totalPages: Math.ceil(totalCount / limit),
     },
+  };
+  topUsersCache.set(topUsersCacheKey, {
+    data: responsePayload,
+    expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
   });
+  return c.json(responsePayload);
 });
 
 /**
@@ -398,6 +477,16 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
  * Platform-wide statistics
  */
 leaderboardRouter.get("/stats", async (c) => {
+  const cached = readCache(statsCache);
+  if (cached) {
+    return c.json({ data: cached });
+  }
+  if (statsInFlight) {
+    const data = await statsInFlight;
+    return c.json({ data });
+  }
+
+  statsInFlight = (async () => {
   const now = Date.now();
   const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
   const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
@@ -542,8 +631,7 @@ leaderboardRouter.get("/stats", async (c) => {
     });
   }
 
-  return c.json({
-    data: {
+    const data = {
       volume: {
         day: volumeDay._sum.entryMcap ?? 0,
         week: volumeWeek._sum.entryMcap ?? 0,
@@ -564,6 +652,19 @@ leaderboardRouter.get("/stats", async (c) => {
       totalUsers,
       levelDistribution: formattedLevelDist,
       topUsersThisWeek: topUsersWithDetails,
-    },
-  });
+    };
+
+    statsCache = {
+      data,
+      expiresAtMs: Date.now() + LEADERBOARD_STATS_CACHE_TTL_MS,
+    };
+    return data;
+  })();
+
+  try {
+    const data = await statsInFlight;
+    return c.json({ data });
+  } finally {
+    statsInFlight = null;
+  }
 });

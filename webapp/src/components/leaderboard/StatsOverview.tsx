@@ -119,8 +119,16 @@ export function StatsOverview() {
       const data = await api.get<PlatformStats>("/api/leaderboard/stats");
       return data;
     },
-    staleTime: 5 * 60 * 1000, // Consider data stale after 5 minutes
-    refetchInterval: 10 * 60 * 1000, // Refetch every 10 minutes
+    refetchOnWindowFocus: false,
+    retry: 1,
+    staleTime: 10 * 60 * 1000, // Consider data stale after 10 minutes
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 10 * 60 * 1000; // Refetch every 10 minutes when tab is visible
+    },
+    gcTime: 20 * 60 * 1000,
   });
 
   if (isLoading) {

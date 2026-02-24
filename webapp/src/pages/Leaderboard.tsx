@@ -49,6 +49,8 @@ export default function Leaderboard() {
     },
     enabled: !!session?.user,
     staleTime: 30000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 
   // Fetch unread notification count
@@ -59,8 +61,15 @@ export default function Leaderboard() {
       return response;
     },
     enabled: !!user,
-    refetchInterval: 30000,
-    staleTime: 15000,
+    refetchOnWindowFocus: false,
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 60000;
+    },
+    staleTime: 30000,
+    retry: 1,
   });
 
   const unreadCount = unreadData?.count ?? 0;
