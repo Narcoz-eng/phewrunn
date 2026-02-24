@@ -1,14 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 320" fill="none">
   <defs>
     <radialGradient id="heroGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(410 142) rotate(90) scale(165 215)">
-      <stop offset="0" stop-color="#89FF46" stop-opacity=".95"/>
+      <stop offset="0" stop-color="#8BFF46" stop-opacity=".95"/>
       <stop offset=".52" stop-color="#39EAD7" stop-opacity=".58"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="runnerStroke" x1="290" y1="190" x2="520" y2="68" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7DFF4A"/>
-      <stop offset="1" stop-color="#10DDF1"/>
+      <stop stop-color="#D5FF34"/>
+      <stop offset=".52" stop-color="#60FF58"/>
+      <stop offset="1" stop-color="#11E5EE"/>
     </linearGradient>
+    <filter id="textGlow" x="-20%" y="-30%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="2.6" result="b"/>
+      <feColorMatrix in="b" type="matrix"
+        values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 .35 0"/>
+    </filter>
   </defs>
 
   <rect width="920" height="320" fill="transparent"/>
@@ -33,13 +42,16 @@
     <path d="M395 150l-8 39" stroke-width="6"/>
   </g>
 
-  <text x="256" y="248" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="88" font-weight="800" fill="#59E22C" stroke="#0B1012" stroke-opacity=".28" stroke-width="2">
-    Phew
-  </text>
-  <text x="462" y="248" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="88" font-weight="800" fill="#0D1116" stroke="#FFFFFF" stroke-opacity=".08" stroke-width="1.5">
-    .run
-  </text>
-  <text x="274" y="286" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="29" font-weight="500" letter-spacing="0.08em" fill="#0D1116">
+  <g filter="url(#textGlow)">
+    <text x="256" y="248" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="88" font-weight="800" fill="#FFFFFF">
+      Phew
+    </text>
+    <text x="462" y="248" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="88" font-weight="800" fill="#7FFF2F">
+      .run
+    </text>
+  </g>
+
+  <text x="274" y="286" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="29" font-weight="500" letter-spacing="0.08em" fill="#F1F6F8">
     A PHEW RUNNING THE INTERNET
   </text>
 </svg>

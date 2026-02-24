@@ -38,18 +38,16 @@ export function BrandLogo({
   if (showTagline) {
     return (
       <div className={cn("flex items-center", className)}>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.88] px-2.5 py-1.5 shadow-[0_12px_40px_-24px_rgba(0,0,0,0.55)] backdrop-blur">
-          <img
-            src="/phew-logo.svg"
-            alt="Phew.run"
-            className={cn(
-              "w-auto object-contain",
-              size === "sm" && "h-7 sm:h-8",
-              size === "md" && "h-9",
-              size === "lg" && "h-11"
-            )}
-          />
-        </div>
+        <img
+          src="/phew-logo.svg"
+          alt="Phew.run"
+          className={cn(
+            "w-auto object-contain drop-shadow-[0_8px_24px_rgba(0,0,0,0.42)]",
+            size === "sm" && "h-7 sm:h-8",
+            size === "md" && "h-9",
+            size === "lg" && "h-11"
+          )}
+        />
       </div>
     );
   }
