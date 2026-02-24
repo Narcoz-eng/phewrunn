@@ -32,6 +32,7 @@ import {
   TRACKING_MODE_SETTLED,
   type MarketCapResult,
 } from "../services/marketcap.js";
+import { getWalletTradeSnapshotForSolanaToken, isHeliusConfigured } from "../services/helius.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -71,9 +72,47 @@ const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 
 const MARKET_REFRESH_MAX_CONTRACTS_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 8;
 const HOURLY_POST_LIMIT = 3;
 const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
+const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 6 : 3;
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
+
+async function attachWalletTradeSnapshots<T extends {
+  [key: string]: unknown;
+  contractAddress: string | null;
+  chainType: string | null;
+  author: { [key: string]: unknown; walletAddress?: string | null };
+}>(posts: T[], maxToEnrich = FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST): Promise<Array<T & { walletTradeSnapshot?: unknown }>> {
+  if (!isHeliusConfigured()) {
+    return posts as Array<T & { walletTradeSnapshot?: unknown }>;
+  }
+
+  let remaining = maxToEnrich;
+  const tasks = posts.map(async (post) => {
+    if (remaining <= 0) return post as T & { walletTradeSnapshot?: unknown };
+    if (post.chainType !== "solana" || !post.contractAddress || !post.author.walletAddress) {
+      return post as T & { walletTradeSnapshot?: unknown };
+    }
+
+    remaining -= 1;
+    const walletTradeSnapshot = await getWalletTradeSnapshotForSolanaToken({
+      walletAddress: post.author.walletAddress,
+      tokenMint: post.contractAddress,
+      chainType: post.chainType,
+    });
+
+    if (!walletTradeSnapshot) {
+      return post as T & { walletTradeSnapshot?: unknown };
+    }
+
+    return {
+      ...post,
+      walletTradeSnapshot,
+    };
+  });
+
+  return Promise.all(tasks);
+}
 
 /**
  * Helper to fetch market cap using the enhanced service
@@ -719,6 +758,7 @@ postsRouter.get("/", async (c) => {
           name: true,
           username: true,
           image: true,
+          walletAddress: true,
           level: true,
           xp: true,
           isVerified: true,
@@ -920,8 +960,17 @@ postsRouter.get("/", async (c) => {
     return postWithSharedAlpha;
   });
 
+  const postsWithWalletTrade = await attachWalletTradeSnapshots(postsWithUpdatedMcap);
+  const responsePosts = postsWithWalletTrade.map((post) => {
+    const { walletAddress: _walletAddress, ...publicAuthor } = post.author;
+    return {
+      ...post,
+      author: publicAuthor,
+    };
+  });
+
   return c.json({
-    data: postsWithUpdatedMcap,
+    data: responsePosts,
     hasMore,
     nextCursor,
   });
@@ -1652,6 +1701,7 @@ postsRouter.get("/:id", async (c) => {
           name: true,
           username: true,
           image: true,
+          walletAddress: true,
           level: true,
           xp: true,
           isVerified: true,
@@ -1689,11 +1739,17 @@ postsRouter.get("/:id", async (c) => {
     isReposted = !!repost;
   }
 
+  const [postWithWalletTrade] = await attachWalletTradeSnapshots(
+    [{ ...post, isLiked, isReposted }],
+    1
+  );
+  const safePostWithWalletTrade = postWithWalletTrade ?? { ...post, isLiked, isReposted };
+  const { walletAddress: _walletAddress, ...publicAuthor } = safePostWithWalletTrade.author;
+
   return c.json({
     data: {
-      ...post,
-      isLiked,
-      isReposted,
+      ...safePostWithWalletTrade,
+      author: publicAuthor,
     }
   });
 });

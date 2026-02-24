@@ -25,6 +25,9 @@ const envSchema = z.object({
 
   // Optional: Vercel Cron / maintenance endpoint auth
   CRON_SECRET: z.string().min(16, "CRON_SECRET must be at least 16 characters").optional(),
+
+  // Optional: Helius Solana RPC (wallet holdings/trade snapshot enrichment)
+  HELIUS_RPC_URL: z.string().url("HELIUS_RPC_URL must be a valid URL").optional(),
 });
 
 /**
@@ -83,6 +86,7 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     DEBUG: parsed.DEBUG,
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
+    HELIUS_RPC_URL: parsed.HELIUS_RPC_URL ? "configured" : "not set",
   };
 }
 
