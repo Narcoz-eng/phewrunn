@@ -1,41 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
-    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(63 62) rotate(90) scale(54)">
-      <stop offset="0" stop-color="#8BFF4A" stop-opacity=".95" />
-      <stop offset=".55" stop-color="#41EFD3" stop-opacity=".5" />
-      <stop offset="1" stop-color="#0A0C10" stop-opacity="0" />
+    <radialGradient id="phew-glow-left" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(194 232) rotate(90) scale(190)">
+      <stop offset="0" stop-color="#A7FF2D" stop-opacity=".95"/>
+      <stop offset=".58" stop-color="#7BFF49" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#7BFF49" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="runnerG" x1="28" y1="88" x2="96" y2="28" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7BFF49" />
-      <stop offset="1" stop-color="#17E3EF" />
+    <radialGradient id="phew-glow-right" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(318 226) rotate(90) scale(182)">
+      <stop offset="0" stop-color="#20E6F4" stop-opacity=".88"/>
+      <stop offset=".58" stop-color="#20E6F4" stop-opacity=".36"/>
+      <stop offset="1" stop-color="#20E6F4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="runner-left-fill" x1="115" y1="390" x2="282" y2="142" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5BDE13"/>
+      <stop offset=".45" stop-color="#93FF2F"/>
+      <stop offset="1" stop-color="#CFFF4A"/>
     </linearGradient>
-    <linearGradient id="splitG" x1="44" y1="84" x2="90" y2="36" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#70FF4A" />
-      <stop offset="1" stop-color="#0FD9FF" />
+    <linearGradient id="runner-left-edge" x1="162" y1="160" x2="258" y2="312" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14220E"/>
+      <stop offset=".55" stop-color="#1A3210"/>
+      <stop offset="1" stop-color="#0A1208"/>
     </linearGradient>
+    <linearGradient id="runner-right-fill" x1="273" y1="382" x2="420" y2="136" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#04C6D6"/>
+      <stop offset=".52" stop-color="#20E4F1"/>
+      <stop offset="1" stop-color="#58F5FF"/>
+    </linearGradient>
+    <linearGradient id="runner-right-edge" x1="314" y1="166" x2="392" y2="306" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#081F24"/>
+      <stop offset=".55" stop-color="#072930"/>
+      <stop offset="1" stop-color="#05161A"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+    <filter id="deepShadow" x="-20%" y="-20%" width="150%" height="170%">
+      <feDropShadow dx="10" dy="16" stdDeviation="8" flood-color="#000" flood-opacity=".42"/>
+    </filter>
   </defs>
 
-  <rect width="128" height="128" rx="24" fill="#0B0E12"/>
-  <rect x="1" y="1" width="126" height="126" rx="23" stroke="rgba(255,255,255,.08)"/>
-  <circle cx="64" cy="64" r="52" fill="url(#glow)"/>
+  <circle cx="195" cy="230" r="182" fill="url(#phew-glow-left)"/>
+  <circle cx="322" cy="224" r="174" fill="url(#phew-glow-right)"/>
 
-  <g opacity=".45" stroke="#44E8D8" stroke-width="2.4" stroke-linecap="round">
-    <path d="M20 56h8"/>
-    <path d="M16 63h14"/>
-    <path d="M96 88h10"/>
-    <path d="M102 95h12"/>
+  <g opacity=".62" stroke-linecap="round" filter="url(#softShadow)">
+    <path d="M74 216h22" stroke="#8BFF42" stroke-width="7"/>
+    <path d="M56 232h50" stroke="#89FF41" stroke-width="8"/>
+    <path d="M65 248h70" stroke="#88FF41" stroke-width="8"/>
+    <path d="M73 265h55" stroke="#88FF41" stroke-width="7"/>
+    <path d="M400 268h28" stroke="#1EE2EF" stroke-width="7"/>
+    <path d="M414 286h46" stroke="#1EE2EF" stroke-width="8"/>
+    <path d="M401 305h70" stroke="#1EE2EF" stroke-width="8"/>
+    <path d="M422 324h44" stroke="#1EE2EF" stroke-width="7"/>
   </g>
 
-  <g stroke="url(#runnerG)" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="60" cy="34" r="6.5" fill="none" stroke-width="2"/>
-    <circle cx="86" cy="34" r="6.5" fill="none" stroke-width="2"/>
-    <path d="M46 48l11-10h13l-9 12" stroke-width="5.2"/>
-    <path d="M57 50l-14 30 18-16" stroke="url(#splitG)" stroke-width="5.6"/>
-    <path d="M61 52l15 2-8 10" stroke-width="4.8"/>
-    <path d="M72 42l8 10" stroke-width="4.4"/>
-    <path d="M78 51l15 26" stroke-width="5.8"/>
-    <path d="M68 68l18 2" stroke-width="4.6"/>
-    <path d="M62 70l-4 17" stroke-width="3.8"/>
+  <g filter="url(#deepShadow)">
+    <circle cx="232" cy="126" r="28" fill="url(#runner-left-fill)" stroke="#1D370B" stroke-width="4"/>
+    <circle cx="348" cy="128" r="28" fill="url(#runner-right-fill)" stroke="#083238" stroke-width="4"/>
+
+    <path
+      d="M140 174c16-14 35-27 49-36l53 5c23 2 44 17 59 30l-24 28c-13-10-24-18-38-20l-38-4-45 33c-7 5-17 4-23-2-7-7-6-18 2-24Z"
+      fill="url(#runner-left-fill)"
+      stroke="url(#runner-left-edge)"
+      stroke-width="4"
+      stroke-linejoin="round"
+    />
+
+    <path
+      d="M278 178c15-14 27-25 40-38 6-6 17-6 23 0 7 6 7 17 1 24l-17 19 28 28 28-37c6-7 17-8 24-2 7 6 8 17 2 24l-40 52c-6 8-18 9-25 2l-50-48c-7-7-8-17-2-24Z"
+      fill="url(#runner-right-fill)"
+      stroke="url(#runner-right-edge)"
+      stroke-width="4"
+      stroke-linejoin="round"
+    />
+
+    <path
+      d="M164 229h94l-42 37 43 13-104 104 45-83-37-15 27-56c4-8 13-12 22-10Z"
+      fill="url(#runner-left-fill)"
+      stroke="url(#runner-left-edge)"
+      stroke-width="4"
+      stroke-linejoin="round"
+    />
+
+    <path
+      d="M300 226c8-3 18-2 24 4l58 59c8 8 8 21 0 29l-18 18 36 28h-94l-60-58c-9-8-8-22 1-29l39-31-26-15c-8-5-7-17 2-21l38-14Z"
+      fill="url(#runner-right-fill)"
+      stroke="url(#runner-right-edge)"
+      stroke-width="4"
+      stroke-linejoin="round"
+    />
+
+    <path
+      d="M236 192l31 22-15 26-34-25"
+      fill="#12CDEA"
+      fill-opacity=".8"
+      stroke="#083740"
+      stroke-width="3"
+      stroke-linejoin="round"
+    />
   </g>
 </svg>
 

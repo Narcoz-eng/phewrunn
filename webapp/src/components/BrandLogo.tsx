@@ -11,7 +11,7 @@ interface BrandLogoProps {
 
 const sizeMap: Record<BrandLogoSize, { mark: string; title: string; subtitle: string }> = {
   sm: {
-    mark: "h-9 w-9 rounded-xl",
+    mark: "h-10 w-10 rounded-xl",
     title: "text-sm",
     subtitle: "text-[8px]",
   },
@@ -40,15 +40,15 @@ export function BrandLogo({
     <div className={cn("flex items-center", gapClass, className)}>
       <div
         className={cn(
-          "relative shrink-0 overflow-hidden p-1.5",
-          "border border-white/10 bg-[linear-gradient(180deg,rgba(10,14,18,0.92),rgba(8,10,14,0.86))]",
+          "relative shrink-0 overflow-hidden p-1",
+          "border border-white/10 bg-[linear-gradient(180deg,rgba(8,12,16,0.94),rgba(6,10,14,0.9))]",
           "shadow-[0_0_0_1px_hsl(var(--primary)/0.08),0_10px_25px_-14px_rgba(0,0,0,0.7)]",
           styles.mark,
           markClassName
         )}
       >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_35%_32%,rgba(123,255,92,0.13),transparent_55%),radial-gradient(circle_at_75%_30%,rgba(52,227,210,0.12),transparent_58%)]" />
-        <img src="/phew-mark.svg" alt="" aria-hidden="true" className="h-full w-full object-contain" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_28%,rgba(123,255,92,0.16),transparent_58%),radial-gradient(circle_at_76%_30%,rgba(52,227,210,0.14),transparent_60%)]" />
+        <img src="/phew-mark.svg" alt="" aria-hidden="true" className="relative h-full w-full object-contain scale-[1.04]" />
       </div>
 
       <div className="leading-tight min-w-0">
