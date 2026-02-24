@@ -328,6 +328,11 @@ postsRouter.get("/", async (c) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const whereConditions: any[] = [];
 
+  if (sort === "trending") {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    whereConditions.push({ createdAt: { gte: sevenDaysAgo } });
+  }
+
   // If following filter is true, only show posts from followed users (NOT including user's own posts)
   if (following && user) {
     const followedUsers = await prisma.follow.findMany({
@@ -373,9 +378,9 @@ postsRouter.get("/", async (c) => {
     ? { AND: whereConditions }
     : {};
 
-  // Cursor pagination is supported for latest/following/search feeds.
-  // Trending uses app-layer sorting, so cursor pagination would be inconsistent.
-  const cursorPaginationEnabled = sort !== "trending";
+  // Cursor pagination uses recency keyset pagination (createdAt + id).
+  // For trending, each page is then ranked by the existing app-layer trending sort.
+  const cursorPaginationEnabled = true;
 
   const fetchedPosts = await prisma.post.findMany({
     where: whereClause,

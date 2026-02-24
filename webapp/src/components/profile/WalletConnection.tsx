@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import bs58 from "bs58";
 import { api } from "@/lib/api";
-import { WalletSelector } from "./WalletSelector";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,10 +28,12 @@ import {
   Sun,
   Calendar,
   Loader2,
+  ShieldCheck,
+  AlertTriangle,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 
-// Wallet status type from backend
 interface WalletStatus {
   connected: boolean;
   address?: string | null;
@@ -37,12 +41,12 @@ interface WalletStatus {
   connectedAt?: string | null;
 }
 
-// Truncate wallet address for display
+type WalletProviderId = "phantom" | "solflare" | "other";
+
 function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-// Get provider display info
 function getProviderInfo(provider: string | null | undefined) {
   switch (provider) {
     case "phantom":
@@ -54,7 +58,6 @@ function getProviderInfo(provider: string | null | undefined) {
   }
 }
 
-// Format connected date
 function formatConnectedDate(dateString: string): string {
   const date = new Date(dateString);
   return date.toLocaleDateString("en-US", {
@@ -64,17 +67,45 @@ function formatConnectedDate(dateString: string): string {
   });
 }
 
+function detectProviderId(adapterName: string | null | undefined): WalletProviderId {
+  const lower = (adapterName || "").toLowerCase();
+  if (lower.includes("phantom")) return "phantom";
+  if (lower.includes("solflare")) return "solflare";
+  return "other";
+}
+
+function buildWalletLinkMessage(userId: string, walletAddress: string) {
+  return [
+    "Phew.run Wallet Link",
+    "Confirm this signature to verify wallet ownership and link it to your profile.",
+    `Wallet: ${walletAddress}`,
+    `User: ${userId}`,
+    `Timestamp: ${new Date().toISOString()}`,
+  ].join("\n");
+}
+
 interface WalletConnectionProps {
   className?: string;
 }
 
 export function WalletConnection({ className }: WalletConnectionProps) {
   const queryClient = useQueryClient();
-  const [selectorOpen, setSelectorOpen] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
-  // Fetch wallet status
+  const {
+    connected: adapterConnected,
+    connecting: adapterConnecting,
+    publicKey,
+    wallet: adapterWallet,
+    signMessage,
+    disconnect: disconnectAdapter,
+  } = useWallet();
+
+  const adapterWalletAddress = publicKey?.toBase58() ?? null;
+  const adapterProviderId = detectProviderId(adapterWallet?.adapter.name);
+
   const {
     data: walletStatus,
     isLoading,
@@ -87,22 +118,23 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     retry: 1,
   });
 
-  // Connect wallet mutation
   const connectMutation = useMutation({
-    mutationFn: (data: { walletAddress: string; walletProvider: string; signature?: string }) =>
-      api.post("/api/users/me/wallet", data),
+    mutationFn: (data: {
+      walletAddress: string;
+      walletProvider: WalletProviderId;
+      signature: string;
+      message: string;
+    }) => api.post("/api/users/me/wallet", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["wallet-status"] });
       queryClient.invalidateQueries({ queryKey: ["profile", "me"] });
-      setSelectorOpen(false);
-      toast.success("Wallet connected successfully!");
+      toast.success("Wallet verified and linked");
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to connect wallet");
+      toast.error(error.message || "Failed to verify wallet");
     },
   });
 
-  // Disconnect wallet mutation
   const disconnectMutation = useMutation({
     mutationFn: () => api.delete("/api/users/me/wallet"),
     onSuccess: () => {
@@ -116,7 +148,6 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     },
   });
 
-  // Copy address to clipboard
   const handleCopyAddress = async () => {
     if (!walletStatus?.address) return;
     try {
@@ -129,9 +160,35 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     }
   };
 
-  // Handle connect - supports signature verification
-  const handleConnect = (address: string, provider: string, signature?: string) => {
-    connectMutation.mutate({ walletAddress: address, walletProvider: provider, signature });
+  const handleVerifyAndLink = async () => {
+    if (!adapterConnected || !adapterWalletAddress) {
+      toast.error("Connect a Solana wallet first");
+      return;
+    }
+    if (!signMessage) {
+      toast.error("This wallet does not support message signing");
+      return;
+    }
+
+    try {
+      setIsVerifying(true);
+      const me = await api.get<{ id: string }>("/api/me");
+      const message = buildWalletLinkMessage(me.id, adapterWalletAddress);
+      const signatureBytes = await signMessage(new TextEncoder().encode(message));
+      const signature = bs58.encode(signatureBytes);
+
+      await connectMutation.mutateAsync({
+        walletAddress: adapterWalletAddress,
+        walletProvider: adapterProviderId,
+        signature,
+        message,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Wallet verification failed";
+      toast.error(message);
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   if (isLoading) {
@@ -154,10 +211,10 @@ export function WalletConnection({ className }: WalletConnectionProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Wallet className="h-5 w-5" />
-            Wallet Connection
+            Wallet Verification
           </CardTitle>
           <CardDescription>
-            Connect your crypto wallet for enhanced features
+            Connect and verify your Solana wallet
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -169,9 +226,12 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     );
   }
 
-  const isConnected = walletStatus?.connected && walletStatus?.address;
+  const isLinked = Boolean(walletStatus?.connected && walletStatus?.address);
   const providerInfo = getProviderInfo(walletStatus?.provider);
   const ProviderIcon = providerInfo.icon;
+  const adapterMatchesLinkedWallet =
+    Boolean(isLinked && adapterWalletAddress && walletStatus?.address) &&
+    walletStatus!.address!.toLowerCase() === adapterWalletAddress!.toLowerCase();
 
   return (
     <>
@@ -179,17 +239,15 @@ export function WalletConnection({ className }: WalletConnectionProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Wallet className="h-5 w-5" />
-            Wallet Connection
+            Wallet Verification
           </CardTitle>
           <CardDescription>
-            Connect your crypto wallet for enhanced features
+            Link a real Solana wallet by signing a verification message
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isConnected ? (
-            // Connected State
+          {isLinked ? (
             <div className="space-y-4">
-              {/* Wallet Info */}
               <div className="p-4 bg-secondary/50 rounded-lg border border-border/50">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
@@ -199,34 +257,62 @@ export function WalletConnection({ className }: WalletConnectionProps) {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-medium">
-                          {truncateAddress(walletStatus.address!)}
+                          {truncateAddress(walletStatus!.address!)}
                         </span>
                         <Badge variant="secondary" className="text-xs">
                           {providerInfo.name}
                         </Badge>
                       </div>
-                      {walletStatus.connectedAt && (
+                      {walletStatus?.connectedAt ? (
                         <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground">
                           <Calendar className="h-3 w-3" />
-                          Connected {formatConnectedDate(walletStatus.connectedAt)}
+                          Linked {formatConnectedDate(walletStatus.connectedAt)}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                   <Badge variant="outline" className="bg-gain/10 text-gain border-gain/30">
-                    Connected
+                    Verified
                   </Badge>
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              <div className="space-y-3">
+                <div className="wallet-adapter-button-wrap [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:rounded-md [&_.wallet-adapter-button]:h-10">
+                  <WalletMultiButton />
+                </div>
+
+                {adapterConnected && adapterWalletAddress && !adapterMatchesLinkedWallet ? (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mb-2 flex items-start gap-1.5">
+                      <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                      A different wallet is selected in your browser wallet. Signing will replace the currently linked wallet.
+                    </p>
+                    <div className="font-mono text-xs break-all mb-3">{adapterWalletAddress}</div>
+                    <Button
+                      onClick={handleVerifyAndLink}
+                      disabled={isVerifying || connectMutation.isPending || adapterConnecting}
+                      className="w-full gap-2"
+                      size="sm"
+                    >
+                      {isVerifying || connectMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Waiting for signature...
+                        </>
+                      ) : (
+                        <>
+                          <Link2 className="h-4 w-4" />
+                          Verify & Replace Linked Wallet
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCopyAddress}
-                  className="gap-1.5"
-                >
+                <Button variant="outline" size="sm" onClick={handleCopyAddress} className="gap-1.5">
                   {copied ? (
                     <>
                       <Check className="h-3.5 w-3.5" />
@@ -239,6 +325,19 @@ export function WalletConnection({ className }: WalletConnectionProps) {
                     </>
                   )}
                 </Button>
+
+                {adapterConnected ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void disconnectAdapter().catch(() => {})}
+                    className="gap-1.5"
+                  >
+                    <Wallet className="h-3.5 w-3.5" />
+                    Disconnect Wallet App
+                  </Button>
+                ) : null}
+
                 <Button
                   variant="outline"
                   size="sm"
@@ -246,53 +345,69 @@ export function WalletConnection({ className }: WalletConnectionProps) {
                   className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
                 >
                   <Unplug className="h-3.5 w-3.5" />
-                  Disconnect
+                  Unlink Wallet
                 </Button>
               </div>
             </div>
           ) : (
-            // Not Connected State
             <div className="space-y-4">
               <div className="p-4 bg-secondary/30 rounded-lg border border-dashed border-border text-center">
                 <div className="w-12 h-12 rounded-full bg-muted mx-auto flex items-center justify-center mb-3">
                   <Wallet className="h-6 w-6 text-muted-foreground" />
                 </div>
-                <p className="text-sm text-muted-foreground mb-1">
-                  No wallet connected
-                </p>
+                <p className="text-sm text-muted-foreground mb-1">No verified wallet linked</p>
                 <p className="text-xs text-muted-foreground">
-                  Connect your Phantom or Solflare wallet
+                  Connect Phantom or Solflare and sign a message to verify ownership
                 </p>
               </div>
 
-              <Button
-                onClick={() => setSelectorOpen(true)}
-                className="w-full gap-2"
-              >
-                <Wallet className="h-4 w-4" />
-                Connect Wallet
-              </Button>
+              <div className="space-y-3">
+                <div className="wallet-adapter-button-wrap [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:rounded-md [&_.wallet-adapter-button]:h-10">
+                  <WalletMultiButton />
+                </div>
+
+                {adapterConnected && adapterWalletAddress ? (
+                  <div className="p-3 rounded-lg border border-border/50 bg-secondary/30 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-muted-foreground">Selected wallet</div>
+                      <Badge variant="outline">{adapterWallet?.adapter.name || "Solana Wallet"}</Badge>
+                    </div>
+                    <div className="font-mono text-sm break-all">{adapterWalletAddress}</div>
+                    <Button
+                      onClick={handleVerifyAndLink}
+                      disabled={isVerifying || connectMutation.isPending || adapterConnecting}
+                      className="w-full gap-2"
+                    >
+                      {isVerifying || connectMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Waiting for signature...
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="h-4 w-4" />
+                          Verify & Link Wallet
+                        </>
+                      )}
+                    </Button>
+                    <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                      <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                      Your wallet will prompt you to sign a verification message. No funds are moved.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Wallet Selector Dialog */}
-      <WalletSelector
-        open={selectorOpen}
-        onOpenChange={setSelectorOpen}
-        onConnect={handleConnect}
-        isConnecting={connectMutation.isPending}
-      />
-
-      {/* Disconnect Confirmation Dialog */}
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect Wallet?</AlertDialogTitle>
+            <AlertDialogTitle>Unlink Wallet?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to disconnect your wallet? You can reconnect
-              it at any time.
+              This removes the verified wallet from your profile. You can link it again by signing another verification message.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -310,10 +425,10 @@ export function WalletConnection({ className }: WalletConnectionProps) {
               {disconnectMutation.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Disconnecting...
+                  Unlinking...
                 </>
               ) : (
-                "Disconnect"
+                "Unlink"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

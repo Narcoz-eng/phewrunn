@@ -171,8 +171,7 @@ export default function Feed() {
   }, [activeTab, queryClient, searchQuery]);
 
   useEffect(() => {
-    const autoLoadEnabled = activeTab !== "trending" && searchQuery.length < 3;
-    if (!autoLoadEnabled || !hasNextPage || isFetchingNextPage) return;
+    if (!hasNextPage || isFetchingNextPage) return;
     if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") return;
     const node = loadMoreRef.current;
     if (!node) return;
@@ -193,7 +192,7 @@ export default function Feed() {
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [activeTab, fetchNextPage, hasNextPage, isFetchingNextPage, searchQuery.length]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   // Create post mutation
   const createPostMutation = useMutation({
@@ -349,8 +348,8 @@ export default function Feed() {
     refetchPosts();
   };
 
-  const autoLoadEnabled = activeTab !== "trending" && searchQuery.length < 3;
-  const showLoadMoreControls = activeTab !== "trending" && Boolean(hasNextPage);
+  const autoLoadEnabled = Boolean(hasNextPage);
+  const showLoadMoreControls = Boolean(hasNextPage);
 
   return (
     <div className="min-h-screen bg-background">

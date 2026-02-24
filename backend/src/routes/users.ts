@@ -1,10 +1,56 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { PublicKey } from "@solana/web3.js";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
 import { prisma } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
 
 export const usersRouter = new Hono<{ Variables: AuthVariables }>();
+
+function verifySolanaSignature(message: string, signature: string, publicKeyStr: string): boolean {
+  try {
+    const messageBytes = new TextEncoder().encode(message);
+    const signatureBytes = bs58.decode(signature);
+    const publicKey = new PublicKey(publicKeyStr);
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, publicKey.toBytes());
+  } catch (error) {
+    console.error("[users/wallet] Signature verification error:", error);
+    return false;
+  }
+}
+
+function validateWalletLinkMessage(message: string, walletAddress: string, userId: string): { ok: true } | { ok: false; reason: string } {
+  const normalized = message.trim();
+  if (!normalized.includes("Phew.run Wallet Link")) {
+    return { ok: false, reason: "Missing wallet link challenge prefix" };
+  }
+  if (!normalized.includes(`Wallet: ${walletAddress}`)) {
+    return { ok: false, reason: "Wallet address mismatch in signed message" };
+  }
+  if (!normalized.includes(`User: ${userId}`)) {
+    return { ok: false, reason: "User mismatch in signed message" };
+  }
+
+  const tsLine = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("Timestamp: "));
+
+  const timestampValue = tsLine?.slice("Timestamp: ".length);
+  const timestampMs = timestampValue ? Date.parse(timestampValue) : Number.NaN;
+  if (!Number.isFinite(timestampMs)) {
+    return { ok: false, reason: "Missing or invalid timestamp in signed message" };
+  }
+
+  const maxAgeMs = 5 * 60 * 1000;
+  if (Math.abs(Date.now() - timestampMs) > maxAgeMs) {
+    return { ok: false, reason: "Signed message expired. Please sign again." };
+  }
+
+  return { ok: true };
+}
 
 // Get leaderboard (must be before /:identifier to avoid conflict)
 usersRouter.get("/", async (c) => {
@@ -65,16 +111,48 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
   });
 });
 
-// Connect wallet
-// TODO: For production, implement wallet signature verification using Privy paid tier
-// Currently we just store the wallet address provided by the client
 usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSchema), async (c) => {
   const sessionUser = c.get("user");
   if (!sessionUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const { walletAddress, walletProvider } = c.req.valid("json");
+  const { walletAddress, walletProvider, signature, message } = c.req.valid("json");
+
+  const solanaRegex = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  const isSolanaWallet = solanaRegex.test(walletAddress);
+
+  // Require proof-of-ownership for Solana wallets (profile linking)
+  if (isSolanaWallet) {
+    if (!signature || !message) {
+      return c.json({
+        error: {
+          message: "Signature confirmation is required to connect a Solana wallet",
+          code: "SIGNATURE_REQUIRED",
+        }
+      }, 400);
+    }
+
+    const challengeCheck = validateWalletLinkMessage(message, walletAddress, sessionUser.id);
+    if (!challengeCheck.ok) {
+      return c.json({
+        error: {
+          message: challengeCheck.reason,
+          code: "INVALID_WALLET_CHALLENGE",
+        }
+      }, 400);
+    }
+
+    const isValidSignature = verifySolanaSignature(message, signature, walletAddress);
+    if (!isValidSignature) {
+      return c.json({
+        error: {
+          message: "Invalid wallet signature. Please confirm the signature again.",
+          code: "INVALID_SIGNATURE",
+        }
+      }, 401);
+    }
+  }
 
   // Rate limiting: Check how many wallet connections this user has made in the last hour
   // TODO: Implement proper rate limiting with a dedicated rate limit table for audit trail
@@ -129,7 +207,7 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
     where: { id: sessionUser.id },
     data: {
       walletAddress,
-      walletProvider: walletProvider || 'other',
+      walletProvider: walletProvider || (isSolanaWallet ? 'phantom' : 'other'),
       walletConnectedAt: new Date(),
     },
     select: {

@@ -10,6 +10,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
+import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
 
 // Lazy load page components
 const Feed = lazy(() => import("./pages/Feed"));
@@ -65,14 +66,15 @@ const queryClient = new QueryClient({
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <PrivyWalletProvider>
-        <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
-              <Suspense fallback={<PageSkeleton />}>
-                <Routes>
+      <SolanaWalletProvider>
+        <PrivyWalletProvider>
+          <AuthProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter>
+                <Suspense fallback={<PageSkeleton />}>
+                  <Routes>
                   <Route
                     path="/"
                     element={
@@ -138,12 +140,13 @@ const App = () => (
                     }
                   />
                   <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </BrowserRouter>
-          </TooltipProvider>
-        </AuthProvider>
-      </PrivyWalletProvider>
+                  </Routes>
+                </Suspense>
+              </BrowserRouter>
+            </TooltipProvider>
+          </AuthProvider>
+        </PrivyWalletProvider>
+      </SolanaWalletProvider>
     </ThemeProvider>
   </QueryClientProvider>
 );
