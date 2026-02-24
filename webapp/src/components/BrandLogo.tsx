@@ -48,7 +48,7 @@ export function BrandLogo({
         )}
       >
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_28%,rgba(123,255,92,0.16),transparent_58%),radial-gradient(circle_at_76%_30%,rgba(52,227,210,0.14),transparent_60%)]" />
-        <img src="/phew-mark.svg" alt="" aria-hidden="true" className="relative h-full w-full object-contain scale-[1.04]" />
+        <img src="/phew-mark.svg" alt="" aria-hidden="true" className="relative h-full w-full object-contain" />
       </div>
 
       <div className="leading-tight min-w-0">
