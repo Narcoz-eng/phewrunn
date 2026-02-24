@@ -26,8 +26,10 @@ interface FeedPage {
   nextCursor: string | null;
 }
 
+const FEED_PAGE_SIZE = 20;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
+const FEED_NEW_POSTS_POLL_MS = 30_000;
 
 function getFeedFirstPageCacheKey(tab: FeedTab, search: string): string {
   return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${tab}:${search}`;
@@ -105,6 +107,9 @@ export default function Feed() {
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const [hasUserScrolledForAutoLoad, setHasUserScrolledForAutoLoad] = useState(false);
+  const [pendingLatestFirstPage, setPendingLatestFirstPage] = useState<FeedPage | null>(null);
+  const [pendingLatestCount, setPendingLatestCount] = useState(0);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
 
@@ -129,7 +134,7 @@ export default function Feed() {
     if (search && search.length >= 3) {
       params.set("search", search);
     }
-    params.set("limit", "20");
+    params.set("limit", String(FEED_PAGE_SIZE));
     if (pageParam) {
       params.set("cursor", pageParam);
     }
@@ -219,7 +224,7 @@ export default function Feed() {
   });
 
   const posts = postsPages?.pages.flatMap((page) => page.items) ?? [];
-  const isRefreshing = isFetching && !isFetchingNextPage;
+  const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
 
   useEffect(() => {
     const firstPage = postsPages?.pages?.[0];
@@ -242,6 +247,43 @@ export default function Feed() {
       }
     );
   }, [activeTab, effectiveSearchQuery, queryClient]);
+
+  const applyFirstPageToCache = useCallback(
+    (tab: FeedTab, search: string, nextFirstPage: FeedPage) => {
+      queryClient.setQueryData<InfiniteData<FeedPage>>(getFeedQueryKey(tab, search), (oldData) => {
+        if (!oldData || oldData.pages.length === 0) {
+          return {
+            pages: [nextFirstPage],
+            pageParams: [undefined],
+          };
+        }
+
+        const nextIds = new Set(nextFirstPage.items.map((item) => item.id));
+        const nextPages: FeedPage[] = [nextFirstPage];
+
+        for (const page of oldData.pages.slice(1)) {
+          nextPages.push({
+            ...page,
+            items: page.items.filter((item) => !nextIds.has(item.id)),
+          });
+        }
+
+        return {
+          ...oldData,
+          pages: nextPages,
+        };
+      });
+    },
+    [getFeedQueryKey, queryClient]
+  );
+
+  const applyPendingLatestPosts = useCallback(() => {
+    if (!pendingLatestFirstPage) return;
+    applyFirstPageToCache("latest", "", pendingLatestFirstPage);
+    writeCachedFirstFeedPage("latest", "", pendingLatestFirstPage);
+    setPendingLatestFirstPage(null);
+    setPendingLatestCount(0);
+  }, [applyFirstPageToCache, pendingLatestFirstPage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -309,6 +351,91 @@ export default function Feed() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, hasUserScrolledForAutoLoad, isFetchingNextPage]);
+
+  // X-style lightweight new-post detection on Latest:
+  // poll only the first page every 30s, then show a "new posts" button (or auto-apply near top).
+  useEffect(() => {
+    if (!session?.user) return;
+    if (activeTab !== "latest") return;
+    if (effectiveSearchQuery) return;
+    if (typeof window === "undefined") return;
+
+    let cancelled = false;
+
+    const checkForNewPosts = async () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+      const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey("latest", ""));
+      const currentFirstPage = currentData?.pages?.[0];
+      if (!currentFirstPage || currentFirstPage.items.length === 0) return;
+
+      try {
+        const freshFirstPage = await fetchFeedPage("latest", "");
+        if (cancelled || freshFirstPage.items.length === 0) return;
+
+        const currentTopId = currentFirstPage.items[0]?.id;
+        const freshTopId = freshFirstPage.items[0]?.id;
+
+        if (!currentTopId || !freshTopId || currentTopId === freshTopId) {
+          setPendingLatestFirstPage((prev) => (prev && currentTopId === freshTopId ? null : prev));
+          if (currentTopId === freshTopId) {
+            setPendingLatestCount(0);
+          }
+          return;
+        }
+
+        const currentIds = new Set(currentFirstPage.items.map((item) => item.id));
+        let newCount = 0;
+        for (const item of freshFirstPage.items) {
+          if (currentIds.has(item.id)) break;
+          newCount++;
+        }
+        if (newCount <= 0) {
+          newCount = 1;
+        }
+
+        // If user is near the top, apply instantly for a seamless "live" feel.
+        if (window.scrollY < 96) {
+          applyFirstPageToCache("latest", "", freshFirstPage);
+          writeCachedFirstFeedPage("latest", "", freshFirstPage);
+          setPendingLatestFirstPage(null);
+          setPendingLatestCount(0);
+          return;
+        }
+
+        setPendingLatestFirstPage(freshFirstPage);
+        setPendingLatestCount(newCount);
+      } catch {
+        // Silent failure; polling should never break feed UX.
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void checkForNewPosts();
+    }, FEED_NEW_POSTS_POLL_MS);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void checkForNewPosts();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [
+    activeTab,
+    applyFirstPageToCache,
+    effectiveSearchQuery,
+    fetchFeedPage,
+    getFeedQueryKey,
+    queryClient,
+    session?.user,
+  ]);
 
   // Create post mutation
   const createPostMutation = useMutation({
@@ -461,18 +588,35 @@ export default function Feed() {
   };
 
   const handleRefresh = () => {
-    queryClient.setQueryData<InfiniteData<FeedPage>>(
-      getFeedQueryKey(activeTab, effectiveSearchQuery),
-      (oldData) => {
-        if (!oldData) return oldData;
-        return {
-          ...oldData,
-          pages: oldData.pages.slice(0, 1),
-          pageParams: oldData.pageParams.slice(0, 1),
-        };
+    void (async () => {
+      if (activeTab === "latest" && !effectiveSearchQuery && pendingLatestFirstPage) {
+        applyPendingLatestPosts();
+        return;
       }
-    );
-    void refetchPosts();
+
+      setIsManualRefreshing(true);
+      try {
+        const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
+        applyFirstPageToCache(activeTab, effectiveSearchQuery, freshFirstPage);
+        writeCachedFirstFeedPage(activeTab, effectiveSearchQuery, freshFirstPage);
+      } catch {
+        // Fallback to react-query refetch if manual refresh fails
+        queryClient.setQueryData<InfiniteData<FeedPage>>(
+          getFeedQueryKey(activeTab, effectiveSearchQuery),
+          (oldData) => {
+            if (!oldData) return oldData;
+            return {
+              ...oldData,
+              pages: oldData.pages.slice(0, 1),
+              pageParams: oldData.pageParams.slice(0, 1),
+            };
+          }
+        );
+        await refetchPosts();
+      } finally {
+        setIsManualRefreshing(false);
+      }
+    })();
   };
 
   const autoLoadEnabled = Boolean(hasNextPage && hasUserScrolledForAutoLoad);
@@ -580,6 +724,18 @@ export default function Feed() {
 
         {/* Feed */}
         <div className="space-y-4">
+          {activeTab === "latest" && !effectiveSearchQuery && pendingLatestCount > 0 ? (
+            <div className="sticky top-[7.25rem] z-20 flex justify-center">
+              <Button
+                type="button"
+                onClick={applyPendingLatestPosts}
+                className="h-9 rounded-full px-4 shadow-lg shadow-primary/20 border border-primary/30"
+              >
+                {pendingLatestCount > FEED_PAGE_SIZE ? `${FEED_PAGE_SIZE}+` : pendingLatestCount} new post{pendingLatestCount === 1 ? "" : "s"} • Show
+              </Button>
+            </div>
+          ) : null}
+
           {isLoadingPosts ? (
             // Loading Skeletons
             <>
