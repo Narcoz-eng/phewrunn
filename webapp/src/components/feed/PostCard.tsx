@@ -1323,12 +1323,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleTradeCtaClick = () => {
-    handleOpenBuyDialog();
     if (isSolanaTradeSupported && !wallet.connected) {
-      setTimeout(() => {
-        setWalletModalVisible(true);
-      }, 80);
+      setWalletModalVisible(true);
+      return;
     }
+    handleOpenBuyDialog();
   };
 
   const handleExecuteJupiterBuy = async () => {
@@ -1443,6 +1442,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 })
       : "—";
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
+  const jupiterQuoteErrorMessage =
+    jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
+  const jupiterNoRouteDetected =
+    !!jupiterQuoteErrorMessage &&
+    /route|not tradable|no route|could not find|TOKEN_NOT_TRADABLE/i.test(jupiterQuoteErrorMessage);
   const walletShortAddress = wallet.publicKey
     ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
     : null;
@@ -1484,6 +1488,20 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
     void handleExecuteJupiterBuy();
   };
+  const jupiterReceiveDisplay = jupiterQuoteQuery.isLoading
+    ? "Loading quote..."
+    : jupiterNoRouteDetected
+      ? "No route available"
+      : `${jupiterOutputAmountFormatted} ${post.tokenSymbol || "TOKEN"}`;
+  const jupiterMinReceiveDisplay = jupiterQuoteQuery.isLoading
+    ? "Loading quote..."
+    : jupiterNoRouteDetected
+      ? "No route available"
+      : `${jupiterMinReceiveFormatted} ${post.tokenSymbol || "TOKEN"}`;
+  const jupiterPriceImpactDisplay =
+    jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
+      ? "—"
+      : `${jupiterPriceImpactPct.toFixed(2)}%`;
 
   return (
     <div
@@ -2419,24 +2437,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                           <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Receive (Est.)</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">
-                            {jupiterOutputAmountFormatted} {post.tokenSymbol || "TOKEN"}
-                          </div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterReceiveDisplay}</div>
                         </div>
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                           <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Minimum Receive</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">
-                            {jupiterMinReceiveFormatted} {post.tokenSymbol || "TOKEN"}
-                          </div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterMinReceiveDisplay}</div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Price Impact</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
-                                ? "—"
-                                : `${jupiterPriceImpactPct.toFixed(2)}%`}
-                            </div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterPriceImpactDisplay}</div>
                           </div>
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Route Hops</div>
@@ -2460,7 +2470,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                       ) : (
                         <div className="text-sm text-muted-foreground">
-                          {jupiterQuoteQuery.isLoading ? "Loading route..." : "No route yet"}
+                          {jupiterQuoteQuery.isLoading
+                            ? "Loading route..."
+                            : jupiterNoRouteDetected
+                              ? "No Jupiter route available right now"
+                              : "No route yet"}
                         </div>
                       )}
                       <div className="mt-3 text-[11px] text-muted-foreground">
