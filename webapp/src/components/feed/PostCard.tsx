@@ -25,6 +25,8 @@ import {
   Post,
   Comment,
   SharedAlphaUser,
+  MIN_LEVEL,
+  MAX_LEVEL,
   formatMarketCap,
   calculatePercentChange,
   formatMultiplier,
@@ -348,6 +350,30 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     buildWinCardSnapshotMetric("6H Snapshot", localMcap6h),
     buildWinCardSnapshotMetric("Current", currentMcap),
   ];
+  const winCardLevelProgressRatio = Math.max(
+    0,
+    Math.min(1, (post.author.level - MIN_LEVEL) / (MAX_LEVEL - MIN_LEVEL))
+  );
+  const winCardLevelLabel =
+    post.author.level >= 8
+      ? "Elite"
+      : post.author.level >= 4
+        ? "Veteran"
+        : post.author.level >= 1
+          ? "Rising"
+          : post.author.level >= -2
+            ? "Neutral"
+            : "Danger";
+  const winCardLevelToneClass =
+    post.author.level >= 8
+      ? "text-amber-300"
+      : post.author.level >= 4
+        ? "text-slate-200"
+        : post.author.level >= 1
+          ? "text-orange-300"
+          : post.author.level >= -2
+            ? "text-rose-200"
+            : "text-red-300";
 
   // Calculate multiplier displays for each mcap field
   const multiplierLive = formatMultiplier(post.entryMcap, currentMcap);
@@ -597,6 +623,31 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.fillStyle = ambientBottom;
       ctx.fillRect(20, 420, 540, 260);
 
+      // Motion ribbons
+      ctx.save();
+      ctx.translate(860, 120);
+      ctx.rotate(-0.24);
+      const ribbon = ctx.createLinearGradient(-180, 0, 180, 0);
+      ribbon.addColorStop(0, "rgba(163,230,53,0.03)");
+      ribbon.addColorStop(0.5, "rgba(255,255,255,0.08)");
+      ribbon.addColorStop(1, "rgba(45,212,191,0.03)");
+      ctx.fillStyle = ribbon;
+      drawRoundedRect(-180, -22, 360, 44, 22);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(250, 510);
+      ctx.rotate(0.18);
+      const ribbon2 = ctx.createLinearGradient(-220, 0, 220, 0);
+      ribbon2.addColorStop(0, "rgba(45,212,191,0.03)");
+      ribbon2.addColorStop(0.5, "rgba(255,255,255,0.06)");
+      ribbon2.addColorStop(1, "rgba(163,230,53,0.03)");
+      ctx.fillStyle = ribbon2;
+      drawRoundedRect(-220, -20, 440, 40, 20);
+      ctx.fill();
+      ctx.restore();
+
       // Diagonal texture streaks
       ctx.save();
       ctx.globalAlpha = 0.08;
@@ -759,7 +810,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.font = "500 14px Inter, system-ui, sans-serif";
       ctx.fillText(`Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}  |  ${formatTimeAgo(post.createdAt)}  |  ${post.chainType?.toUpperCase() || "CHAIN"}`, 146, 188);
 
-      drawRoundedRect(146, 204, 560, 46, 14);
+      drawRoundedRect(146, 198, 560, 58, 14);
       const tokenChipFill = ctx.createLinearGradient(146, 204, 706, 250);
       tokenChipFill.addColorStop(0, "rgba(163,230,53,0.05)");
       tokenChipFill.addColorStop(0.4, "rgba(255,255,255,0.025)");
@@ -771,10 +822,46 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       ctx.fillStyle = "#ffffff";
       ctx.font = "700 18px Inter, system-ui, sans-serif";
-      ctx.fillText(tokenPrimary, 162, 225);
+      ctx.fillText(tokenPrimary, 162, 219);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(248,250,252,0.96)";
+      ctx.font = "700 14px Inter, system-ui, sans-serif";
+      ctx.fillText(`LVL ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}`, 690, 218);
+      ctx.textAlign = "start";
       ctx.fillStyle = "rgba(226,232,240,0.75)";
-      ctx.font = "500 13px Inter, system-ui, sans-serif";
-      ctx.fillText(tokenSecondary, 162, 244);
+      ctx.font = "500 12px Inter, system-ui, sans-serif";
+      ctx.fillText(`${tokenSecondary} | ${winCardLevelLabel}`, 162, 237);
+      const levelTrackX = 162;
+      const levelTrackY = 243;
+      const levelTrackW = 528;
+      const levelTrackH = 8;
+      drawRoundedRect(levelTrackX, levelTrackY, levelTrackW, levelTrackH, 4);
+      ctx.fillStyle = "rgba(255,255,255,0.10)";
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      drawRoundedRect(levelTrackX + levelTrackW * 0.333 - 1, levelTrackY - 1, 2, levelTrackH + 2, 1);
+      ctx.fill();
+      const levelFillW = Math.max(10, Math.round(levelTrackW * winCardLevelProgressRatio));
+      const levelFill = ctx.createLinearGradient(levelTrackX, levelTrackY, levelTrackX + levelFillW, levelTrackY);
+      if (post.author.level >= 8) {
+        levelFill.addColorStop(0, "#f59e0b");
+        levelFill.addColorStop(1, "#fde68a");
+      } else if (post.author.level >= 4) {
+        levelFill.addColorStop(0, "#94a3b8");
+        levelFill.addColorStop(1, "#e2e8f0");
+      } else if (post.author.level >= 1) {
+        levelFill.addColorStop(0, "#f97316");
+        levelFill.addColorStop(1, "#fdba74");
+      } else if (post.author.level >= -2) {
+        levelFill.addColorStop(0, "#fb7185");
+        levelFill.addColorStop(1, "#fecdd3");
+      } else {
+        levelFill.addColorStop(0, "#dc2626");
+        levelFill.addColorStop(1, "#f87171");
+      }
+      drawRoundedRect(levelTrackX, levelTrackY, levelFillW, levelTrackH, 4);
+      ctx.fillStyle = levelFill;
+      ctx.fill();
 
       // Result hero
       drawRoundedRect(760, 120, 332, 150, 22);
@@ -1843,6 +1930,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     backgroundSize: "34px 34px",
                   }}
                 />
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(163,230,53,0.14),transparent_42%),radial-gradient(circle_at_88%_16%,rgba(45,212,191,0.14),transparent_42%),radial-gradient(circle_at_22%_88%,rgba(148,163,184,0.08),transparent_48%)]" />
+                <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(120deg,transparent_0%,rgba(255,255,255,0.6)_48%,transparent_52%)] [background-size:260px_100%]" />
                 <div
                   className={cn(
                     "absolute -top-20 right-[-6%] h-64 w-64 rounded-full blur-3xl",
@@ -1922,6 +2011,22 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                         <div className="text-sm font-semibold text-white truncate">{winCardTokenPrimary}</div>
                         <div className="mt-1 text-xs text-slate-300/80 truncate">{winCardTokenSecondary}</div>
+                      </div>
+                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/25">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                            Reputation
+                          </div>
+                          <div className={cn("text-[11px] font-semibold tracking-wide", winCardLevelToneClass)}>
+                            {winCardLevelLabel} · LVL {post.author.level > 0 ? `+${post.author.level}` : post.author.level}
+                          </div>
+                        </div>
+                        <LevelBar
+                          level={post.author.level}
+                          size="sm"
+                          showLabel={false}
+                          className="space-y-0"
+                        />
                       </div>
                     </div>
 
