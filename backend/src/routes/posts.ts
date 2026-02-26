@@ -111,6 +111,52 @@ const JUPITER_SWAP_URLS = [
   "https://lite-api.jup.ag/swap/v1/swap",
   "https://quote-api.jup.ag/v6/swap",
 ];
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 5000;
+const MAX_POSTER_TRADE_FEE_SHARE_BPS = 10000;
+const platformFeeBpsFromEnv = Number(process.env.JUPITER_PLATFORM_FEE_BPS ?? "0");
+const JUPITER_PLATFORM_FEE_BPS =
+  Number.isFinite(platformFeeBpsFromEnv) && platformFeeBpsFromEnv > 0
+    ? Math.min(5000, Math.max(1, Math.round(platformFeeBpsFromEnv)))
+    : 0;
+const JUPITER_PLATFORM_FEE_ACCOUNT = process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || null;
+
+function getActivePlatformFeeBps(): number {
+  if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
+  return JUPITER_PLATFORM_FEE_BPS;
+}
+
+function clampPosterFeeShareBps(value: number | null | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_POSTER_TRADE_FEE_SHARE_BPS;
+  return Math.min(MAX_POSTER_TRADE_FEE_SHARE_BPS, Math.max(0, Math.round(Number(value))));
+}
+
+function safeRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function safeNumericString(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.floor(value);
+    return normalized >= 0 ? String(normalized) : null;
+  }
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  return normalized;
+}
+
+function safeString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell" {
+  const inputMint = safeString(quote.inputMint);
+  return inputMint === SOL_MINT ? "buy" : "sell";
+}
 
 async function attachWalletTradeSnapshots<T extends {
   [key: string]: unknown;
@@ -2511,13 +2557,22 @@ const JupiterQuoteProxySchema = z.object({
   amount: z.number().int().positive(),
   slippageBps: z.number().int().min(1).max(5000),
   swapMode: z.enum(["ExactIn", "ExactOut"]).optional().default("ExactIn"),
+  postId: z.string().min(1).optional(),
 });
 
 const JupiterSwapProxySchema = z.object({
   quoteResponse: z.record(z.string(), z.any()),
   userPublicKey: z.string().min(32).max(64),
+  postId: z.string().min(1).optional(),
+  tradeSide: z.enum(["buy", "sell"]).optional(),
   wrapAndUnwrapSol: z.boolean().optional(),
   dynamicComputeUnitLimit: z.boolean().optional(),
+});
+
+const JupiterFeeConfirmSchema = z.object({
+  tradeFeeEventId: z.string().min(1),
+  txSignature: z.string().min(40).max(128),
+  walletAddress: z.string().min(32).max(64),
 });
 
 type PriceRoutePostRecord = {
@@ -2660,6 +2715,7 @@ async function forwardJupiterRequest(
 
 postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), async (c) => {
   const payload = c.req.valid("json");
+  const platformFeeBps = getActivePlatformFeeBps();
 
   const params = new URLSearchParams({
     inputMint: payload.inputMint,
@@ -2668,6 +2724,9 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
     slippageBps: String(payload.slippageBps),
     swapMode: payload.swapMode ?? "ExactIn",
   });
+  if (platformFeeBps > 0) {
+    params.set("platformFeeBps", String(platformFeeBps));
+  }
 
   const result = await forwardJupiterRequest(
     JUPITER_QUOTE_URLS.map((base) => `${base}?${params.toString()}`),
@@ -2690,6 +2749,37 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
 
 postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), async (c) => {
   const payload = c.req.valid("json");
+  const currentUser = c.get("user");
+  const platformFeeBps = getActivePlatformFeeBps();
+  const quote = safeRecord(payload.quoteResponse) ?? {};
+
+  const postContext = payload.postId
+    ? await prisma.post.findUnique({
+        where: { id: payload.postId },
+        select: {
+          id: true,
+          chainType: true,
+          authorId: true,
+          author: {
+            select: {
+              id: true,
+              walletAddress: true,
+              tradeFeeRewardsEnabled: true,
+              tradeFeeShareBps: true,
+              tradeFeePayoutAddress: true,
+            },
+          },
+        },
+      })
+    : null;
+
+  const outboundPayload = {
+    quoteResponse: payload.quoteResponse,
+    userPublicKey: payload.userPublicKey,
+    wrapAndUnwrapSol: payload.wrapAndUnwrapSol,
+    dynamicComputeUnitLimit: payload.dynamicComputeUnitLimit,
+    ...(platformFeeBps > 0 ? { feeAccount: JUPITER_PLATFORM_FEE_ACCOUNT } : {}),
+  };
 
   const result = await forwardJupiterRequest(JUPITER_SWAP_URLS, {
     method: "POST",
@@ -2697,19 +2787,161 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
       "content-type": "application/json",
       accept: "application/json",
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(outboundPayload),
     timeoutMs: 10000,
   });
 
-  const contentType = result.contentType ?? "application/json";
-  return new Response(result.bodyText, {
-    status: result.status,
-    headers: {
-      "content-type": contentType,
-      "cache-control": "no-store",
-    },
-  });
+  if (result.status >= 400) {
+    const contentType = result.contentType ?? "application/json";
+    return new Response(result.bodyText, {
+      status: result.status,
+      headers: {
+        "content-type": contentType,
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  let parsedSwapBody: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(result.bodyText) as unknown;
+    parsedSwapBody = safeRecord(parsed);
+  } catch {
+    parsedSwapBody = null;
+  }
+
+  if (!parsedSwapBody) {
+    const contentType = result.contentType ?? "application/json";
+    return new Response(result.bodyText, {
+      status: result.status,
+      headers: {
+        "content-type": contentType,
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  let tradeFeeEventId: string | null = null;
+  let posterShareBpsApplied = 0;
+  const platformFeeInfo = safeRecord(quote.platformFee);
+  const platformFeeAmountAtomic = safeNumericString(platformFeeInfo?.amount);
+  const platformFeeAmountBigInt =
+    platformFeeAmountAtomic && platformFeeAmountAtomic !== "0"
+      ? BigInt(platformFeeAmountAtomic)
+      : 0n;
+  const platformFeeMint =
+    safeString(platformFeeInfo?.mint) ??
+    safeString(quote.outputMint) ??
+    safeString(quote.inputMint) ??
+    SOL_MINT;
+  const quotePlatformFeeBpsRaw = Number(platformFeeInfo?.feeBps);
+  const platformFeeBpsApplied =
+    Number.isFinite(quotePlatformFeeBpsRaw) && quotePlatformFeeBpsRaw > 0
+      ? Math.min(5000, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
+      : platformFeeBps;
+
+  if (
+    postContext &&
+    postContext.chainType === "solana" &&
+    platformFeeAmountBigInt > 0n &&
+    platformFeeBpsApplied > 0
+  ) {
+    const posterShareBps = postContext.author.tradeFeeRewardsEnabled
+      ? clampPosterFeeShareBps(postContext.author.tradeFeeShareBps)
+      : 0;
+    posterShareBpsApplied = posterShareBps;
+    const posterShareAmountAtomic =
+      ((platformFeeAmountBigInt * BigInt(posterShareBps)) / 10_000n).toString();
+
+    const createdEvent = await prisma.tradeFeeEvent.create({
+      data: {
+        postId: postContext.id,
+        posterUserId: postContext.authorId,
+        traderUserId: currentUser?.id ?? null,
+        traderWalletAddress: payload.userPublicKey,
+        tradeSide: payload.tradeSide ?? deriveTradeSideFromQuote(quote),
+        inputMint: safeString(quote.inputMint) ?? SOL_MINT,
+        outputMint: safeString(quote.outputMint) ?? SOL_MINT,
+        inAmountAtomic: safeNumericString(quote.inAmount) ?? "0",
+        outAmountAtomic: safeNumericString(quote.outAmount) ?? "0",
+        platformFeeBps: platformFeeBpsApplied,
+        platformFeeAmountAtomic: platformFeeAmountBigInt.toString(),
+        feeMint: platformFeeMint,
+        posterShareBps,
+        posterShareAmountAtomic,
+        posterPayoutAddress: postContext.author.tradeFeePayoutAddress ?? postContext.author.walletAddress,
+      },
+      select: { id: true },
+    });
+    tradeFeeEventId = createdEvent.id;
+  }
+
+  return new Response(
+    JSON.stringify({
+      ...parsedSwapBody,
+      tradeFeeEventId,
+      platformFeeBpsApplied,
+      posterShareBpsApplied,
+    }),
+    {
+      status: result.status,
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      },
+    }
+  );
 });
+
+postsRouter.post(
+  "/jupiter/fee-confirm",
+  requireAuth,
+  zValidator("json", JupiterFeeConfirmSchema),
+  async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    const payload = c.req.valid("json");
+    const existing = await prisma.tradeFeeEvent.findUnique({
+      where: { id: payload.tradeFeeEventId },
+      select: {
+        id: true,
+        traderUserId: true,
+        traderWalletAddress: true,
+        txSignature: true,
+      },
+    });
+
+    if (!existing) {
+      return c.json({ error: { message: "Trade fee event not found", code: "NOT_FOUND" } }, 404);
+    }
+
+    if (existing.traderUserId && existing.traderUserId !== user.id) {
+      return c.json({ error: { message: "Forbidden", code: "FORBIDDEN" } }, 403);
+    }
+
+    if (existing.traderWalletAddress !== payload.walletAddress) {
+      return c.json({ error: { message: "Wallet mismatch for fee event", code: "WALLET_MISMATCH" } }, 403);
+    }
+
+    if (existing.txSignature && existing.txSignature !== payload.txSignature) {
+      return c.json({ error: { message: "Fee event already confirmed", code: "ALREADY_CONFIRMED" } }, 409);
+    }
+
+    const updated = await prisma.tradeFeeEvent.update({
+      where: { id: existing.id },
+      data: { txSignature: payload.txSignature },
+      select: {
+        id: true,
+        txSignature: true,
+      },
+    });
+
+    return c.json({ data: updated });
+  }
+);
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
   const { ids } = c.req.valid("json");

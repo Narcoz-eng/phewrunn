@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
@@ -60,6 +60,7 @@ interface ExtendedUser extends User {
 
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
+type ProfileViewTab = "profile" | "settings";
 const PROFILE_ME_CACHE_TTL_MS = 60_000;
 const PROFILE_POSTS_CACHE_TTL_MS = 45_000;
 const PROFILE_WALLET_CACHE_TTL_MS = 60_000;
@@ -69,6 +70,36 @@ const AVATAR_CROP_OUTPUT_SIZE = 512;
 
 type CropOffset = { x: number; y: number };
 type CropImageMeta = { width: number; height: number };
+
+interface FeeSettingsData {
+  tradeFeeRewardsEnabled: boolean;
+  tradeFeeShareBps: number;
+  tradeFeePayoutAddress: string | null;
+  effectivePayoutAddress: string | null;
+  platformFeeBps: number;
+  platformFeeAccountConfigured: boolean;
+}
+
+interface FeeEarningsData {
+  totalTrades: number;
+  totalPosterShareAtomic: string;
+  byMint: Array<{
+    mint: string;
+    totalAtomic: string;
+    count: number;
+  }>;
+  recentEvents: Array<{
+    id: string;
+    postId: string;
+    feeMint: string;
+    tradeSide: string;
+    platformFeeAmountAtomic: string;
+    posterShareAmountAtomic: string;
+    txSignature: string;
+    traderWalletAddress: string;
+    createdAt: string;
+  }>;
+}
 
 function clampCropOffset(offset: CropOffset, image: CropImageMeta, scale: number): CropOffset {
   const scaledWidth = image.width * scale;
@@ -84,6 +115,7 @@ function clampCropOffset(offset: CropOffset, image: CropImageMeta, scale: number
 
 export default function Profile() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { signOut } = useAuth();
@@ -101,6 +133,10 @@ export default function Profile() {
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
+  const profileViewTab: ProfileViewTab = searchParams.get("tab") === "settings" ? "settings" : "profile";
+  const [feeRewardsEnabled, setFeeRewardsEnabled] = useState(true);
+  const [feeSharePercentInput, setFeeSharePercentInput] = useState("50.00");
+  const [feePayoutAddressInput, setFeePayoutAddressInput] = useState("");
 
   // Edit form state
   const [editUsername, setEditUsername] = useState("");
@@ -247,6 +283,38 @@ export default function Profile() {
     retry: 1,
   });
 
+  const {
+    data: feeSettings,
+    isLoading: isLoadingFeeSettings,
+  } = useQuery({
+    queryKey: ["profile", "fee-settings", user?.id],
+    queryFn: async () => {
+      return await api.get<FeeSettingsData>("/api/users/me/fee-settings");
+    },
+    enabled: !!user?.id && profileViewTab === "settings",
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
+  const {
+    data: feeEarnings,
+    isLoading: isLoadingFeeEarnings,
+  } = useQuery({
+    queryKey: ["profile", "fee-earnings", user?.id],
+    queryFn: async () => {
+      return await api.get<FeeEarningsData>("/api/users/me/fee-earnings");
+    },
+    enabled: !!user?.id && profileViewTab === "settings",
+    staleTime: 20_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
   useEffect(() => {
     if (!meProfileCacheKey || !user || !isUserFetched) return;
     writeSessionCache(meProfileCacheKey, user);
@@ -267,6 +335,13 @@ export default function Profile() {
     writeSessionCache(`phew.profile.wallet:${session.user.id}`, walletOverview);
   }, [isWalletOverviewFetched, session?.user?.id, walletOverview]);
 
+  useEffect(() => {
+    if (!feeSettings) return;
+    setFeeRewardsEnabled(feeSettings.tradeFeeRewardsEnabled);
+    setFeeSharePercentInput((feeSettings.tradeFeeShareBps / 100).toFixed(2));
+    setFeePayoutAddressInput(feeSettings.tradeFeePayoutAddress ?? "");
+  }, [feeSettings]);
+
   // Mutation for updating profile
   const updateProfileMutation = useMutation({
     mutationFn: async (updateData: { username?: string; bio?: string; image?: string }) => {
@@ -280,6 +355,33 @@ export default function Profile() {
     },
     onError: (error: ApiError) => {
       toast.error(error.message || "Failed to update profile");
+    },
+  });
+
+  const updateFeeSettingsMutation = useMutation({
+    mutationFn: async (payload: {
+      tradeFeeRewardsEnabled: boolean;
+      tradeFeeShareBps: number;
+      tradeFeePayoutAddress: string;
+    }) => {
+      return await api.patch<FeeSettingsData>("/api/users/me/fee-settings", payload);
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["profile", "fee-settings", user?.id], updated);
+      queryClient.setQueryData<ExtendedUser | undefined>(["profile", "me"], (prev) =>
+        prev
+          ? {
+              ...prev,
+              tradeFeeRewardsEnabled: updated.tradeFeeRewardsEnabled,
+              tradeFeeShareBps: updated.tradeFeeShareBps,
+              tradeFeePayoutAddress: updated.tradeFeePayoutAddress,
+            }
+          : prev
+      );
+      toast.success("Fee settings saved");
+    },
+    onError: (error: ApiError) => {
+      toast.error(error.message || "Failed to update fee settings");
     },
   });
 
@@ -591,6 +693,44 @@ export default function Profile() {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
+  const setProfileView = (nextTab: ProfileViewTab) => {
+    if (nextTab === "settings" && isEditing) {
+      setIsEditing(false);
+      setPreviewImage(null);
+      resetCropDialog();
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextTab === "settings") {
+      nextParams.set("tab", "settings");
+    } else {
+      nextParams.delete("tab");
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const handleSaveFeeSettings = () => {
+    const parsedSharePercent = Number(feeSharePercentInput);
+    if (!Number.isFinite(parsedSharePercent)) {
+      toast.error("Fee share must be a valid number");
+      return;
+    }
+    const normalizedShareBps = Math.min(10000, Math.max(0, Math.round(parsedSharePercent * 100)));
+    updateFeeSettingsMutation.mutate({
+      tradeFeeRewardsEnabled: feeRewardsEnabled,
+      tradeFeeShareBps: normalizedShareBps,
+      tradeFeePayoutAddress: feePayoutAddressInput.trim(),
+    });
+  };
+
+  const formatAtomicShort = (value: string) => {
+    try {
+      const big = BigInt(value);
+      return big.toLocaleString();
+    } catch {
+      return value;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -608,42 +748,46 @@ export default function Profile() {
             <h1 className="font-heading font-semibold text-lg">Profile</h1>
           </div>
 
-          {!isEditing ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsEditing(true)}
-              className="h-8 px-3 gap-1.5"
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-              Edit
-            </Button>
+          {profileViewTab === "profile" ? (
+            !isEditing ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsEditing(true)}
+                className="h-8 px-3 gap-1.5"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+                Edit
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancel}
+                  disabled={updateProfileMutation.isPending}
+                  className="h-8 px-3 gap-1.5"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={updateProfileMutation.isPending}
+                  className="h-8 px-3 gap-1.5"
+                >
+                  {updateProfileMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  Save
+                </Button>
+              </div>
+            )
           ) : (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancel}
-                disabled={updateProfileMutation.isPending}
-                className="h-8 px-3 gap-1.5"
-              >
-                <X className="h-3.5 w-3.5" />
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={updateProfileMutation.isPending}
-                className="h-8 px-3 gap-1.5"
-              >
-                {updateProfileMutation.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Check className="h-3.5 w-3.5" />
-                )}
-                Save
-              </Button>
-            </div>
+            <span className="text-xs text-muted-foreground">Trading Settings</span>
           )}
         </div>
       </header>
@@ -778,31 +922,40 @@ export default function Profile() {
           </div>
         ) : user ? (
           <div className="space-y-6 animate-fade-in">
-            {/* Danger Zone Warning Banner */}
-            {(user.level <= LIQUIDATION_LEVEL || isInDangerZone(user.level)) && (
-              <div
-                className={cn(
-                  "flex items-center gap-3 p-4 rounded-xl border animate-pulse",
-                  user.level <= LIQUIDATION_LEVEL
-                    ? "bg-red-600/20 border-red-600 text-red-500"
-                    : "bg-red-500/10 border-red-400 text-red-300"
+            <Tabs value={profileViewTab} onValueChange={(value) => setProfileView(value as ProfileViewTab)} className="w-full">
+              <TabsList className="w-full grid grid-cols-2 h-10">
+                <TabsTrigger value="profile">Profile</TabsTrigger>
+                <TabsTrigger value="settings">Settings</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            {profileViewTab === "profile" ? (
+              <>
+                {/* Danger Zone Warning Banner */}
+                {(user.level <= LIQUIDATION_LEVEL || isInDangerZone(user.level)) && (
+                  <div
+                    className={cn(
+                      "flex items-center gap-3 p-4 rounded-xl border animate-pulse",
+                      user.level <= LIQUIDATION_LEVEL
+                        ? "bg-red-600/20 border-red-600 text-red-500"
+                        : "bg-red-500/10 border-red-400 text-red-300"
+                    )}
+                  >
+                    {user.level <= LIQUIDATION_LEVEL ? (
+                      <Skull className="h-6 w-6 flex-shrink-0" />
+                    ) : (
+                      <AlertTriangle className="h-6 w-6 flex-shrink-0" />
+                    )}
+                    <div>
+                      <p className="font-bold text-sm">
+                        {user.level <= LIQUIDATION_LEVEL ? "ACCOUNT LIQUIDATED" : "REPUTATION AT RISK"}
+                      </p>
+                      <p className="text-xs opacity-80 mt-0.5">
+                        {getDangerMessage(user.level)}
+                      </p>
+                    </div>
+                  </div>
                 )}
-              >
-                {user.level <= LIQUIDATION_LEVEL ? (
-                  <Skull className="h-6 w-6 flex-shrink-0" />
-                ) : (
-                  <AlertTriangle className="h-6 w-6 flex-shrink-0" />
-                )}
-                <div>
-                  <p className="font-bold text-sm">
-                    {user.level <= LIQUIDATION_LEVEL ? "ACCOUNT LIQUIDATED" : "REPUTATION AT RISK"}
-                  </p>
-                  <p className="text-xs opacity-80 mt-0.5">
-                    {getDangerMessage(user.level)}
-                  </p>
-                </div>
-              </div>
-            )}
 
             {/* Profile Header */}
             <div className="flex flex-col items-center text-center">
@@ -1098,6 +1251,135 @@ export default function Profile() {
                 </TabsContent>
               </Tabs>
             </div>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-border/70 bg-card/70 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Trade Fee Settings</h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Configure how swap fee rewards are credited when users trade through your calls.
+                      </p>
+                    </div>
+                    {isLoadingFeeSettings ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Platform Fee</p>
+                      <p className="text-sm font-semibold text-foreground mt-1">
+                        {feeSettings?.platformFeeBps ? `${(feeSettings.platformFeeBps / 100).toFixed(2)}%` : "Not enabled"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Payout Wallet</p>
+                      <p className="text-sm font-semibold text-foreground mt-1 truncate">
+                        {feeSettings?.effectivePayoutAddress ?? user.walletAddress ?? "Not set"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/40 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Enable Fee Rewards</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Turn off if you don&apos;t want poster fee credits.
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={feeRewardsEnabled}
+                        onChange={(e) => setFeeRewardsEnabled(e.target.checked)}
+                        className="h-4 w-4 accent-primary"
+                      />
+                    </label>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Your Share (%)</label>
+                        <Input
+                          value={feeSharePercentInput}
+                          onChange={(e) => setFeeSharePercentInput(e.target.value)}
+                          inputMode="decimal"
+                          placeholder="50.00"
+                          className="mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Payout Wallet (optional)</label>
+                        <Input
+                          value={feePayoutAddressInput}
+                          onChange={(e) => setFeePayoutAddressInput(e.target.value)}
+                          placeholder="Solana address"
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      onClick={handleSaveFeeSettings}
+                      disabled={updateFeeSettingsMutation.isPending}
+                      className="w-full sm:w-auto"
+                    >
+                      {updateFeeSettingsMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                      ) : null}
+                      Save Fee Settings
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border/70 bg-card/70 p-4">
+                  <h3 className="text-sm font-semibold text-foreground">Fee Earnings</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Confirmed trades routed through your posts.
+                  </p>
+
+                  {isLoadingFeeEarnings ? (
+                    <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading fee earnings...
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+                          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Total Trades</p>
+                          <p className="text-lg font-bold text-foreground mt-1">{feeEarnings?.totalTrades ?? 0}</p>
+                        </div>
+                        <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+                          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Total Earned (Atomic)</p>
+                          <p className="text-lg font-bold text-foreground mt-1">
+                            {formatAtomicShort(feeEarnings?.totalPosterShareAtomic ?? "0")}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">By Mint</p>
+                        {feeEarnings?.byMint && feeEarnings.byMint.length > 0 ? (
+                          feeEarnings.byMint.map((mintItem) => (
+                            <div key={mintItem.mint} className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-sm">
+                              <span className="font-mono text-xs text-muted-foreground">{truncateAddress(mintItem.mint)}</span>
+                              <span className="text-foreground font-medium">
+                                {formatAtomicShort(mintItem.totalAtomic)} ({mintItem.count})
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No confirmed fee earnings yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           // Error state

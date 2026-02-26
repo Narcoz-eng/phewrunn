@@ -74,10 +74,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
-const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
-const JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
-const JUPITER_QUOTE_FALLBACK_URL = "https://quote-api.jup.ag/v6/quote";
-const JUPITER_SWAP_FALLBACK_URL = "https://quote-api.jup.ag/v6/swap";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
 const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
@@ -106,11 +102,19 @@ type JupiterQuoteResponse = {
   }>;
   contextSlot?: number;
   timeTaken?: number;
+  platformFee?: {
+    amount?: string;
+    feeBps?: number;
+    mint?: string;
+  };
 };
 
 type JupiterSwapResponse = {
   swapTransaction?: string;
   lastValidBlockHeight?: number;
+  tradeFeeEventId?: string | null;
+  platformFeeBpsApplied?: number;
+  posterShareBpsApplied?: number;
 };
 
 type DexscreenerImagePair = {
@@ -1559,60 +1563,30 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         amount: tradeAmountAtomic,
         slippageBps,
         swapMode: "ExactIn",
+        postId: post.id,
       };
 
-      const quoteTargets = [
-        {
-          type: "proxy" as const,
-          url: "/api/posts/jupiter/quote",
-        },
-        {
-          type: "direct" as const,
-          url: JUPITER_QUOTE_URL,
-        },
-        {
-          type: "direct" as const,
-          url: JUPITER_QUOTE_FALLBACK_URL,
-        },
-      ];
       let lastError = "Failed to load quote";
-      for (const target of quoteTargets) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 6000);
-          const res =
-            target.type === "proxy"
-              ? await fetch(target.url, {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify(quotePayload),
-                  signal: controller.signal,
-                  cache: "no-store",
-                  credentials: "same-origin",
-                })
-              : await fetch(
-                  `${target.url}?${new URLSearchParams({
-                    inputMint: quotePayload.inputMint,
-                    outputMint: quotePayload.outputMint,
-                    amount: String(quotePayload.amount),
-                    slippageBps: String(quotePayload.slippageBps),
-                    swapMode: quotePayload.swapMode,
-                  }).toString()}`,
-                  {
-                    signal: controller.signal,
-                    cache: "no-store",
-                  }
-                );
-          clearTimeout(timeout);
-          if (!res.ok) {
-            const body = await res.text().catch(() => "");
-            lastError = body || `Quote failed (${res.status})`;
-            continue;
-          }
-          return (await res.json()) as JupiterQuoteResponse;
-        } catch (error) {
-          lastError = error instanceof Error ? error.message : "Quote request failed";
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch("/api/posts/jupiter/quote", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(quotePayload),
+          signal: controller.signal,
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        clearTimeout(timeout);
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          lastError = body || `Quote failed (${res.status})`;
+          throw new Error(lastError);
         }
+        return (await res.json()) as JupiterQuoteResponse;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Quote request failed";
       }
       throw new Error(lastError);
     },
@@ -1765,31 +1739,22 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       const swapPayloadBody = JSON.stringify({
         quoteResponse: quote,
         userPublicKey: wallet.publicKey.toBase58(),
+        postId: post.id,
+        tradeSide,
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
       });
 
-      let swapRes: Response | null = null;
-      let lastSwapError = "";
-      for (const swapTarget of ["/api/posts/jupiter/swap", JUPITER_SWAP_URL, JUPITER_SWAP_FALLBACK_URL]) {
-        try {
-          swapRes = await fetch(swapTarget, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: swapPayloadBody,
-            credentials: swapTarget.startsWith("/") ? "same-origin" : "omit",
-          });
-          if (swapRes.ok) break;
-          lastSwapError = (await swapRes.text().catch(() => "")) || `Swap build failed (${swapRes.status})`;
-          swapRes = null;
-        } catch (error) {
-          lastSwapError = error instanceof Error ? error.message : "Swap build failed";
-          swapRes = null;
-        }
-      }
+      const swapRes = await fetch("/api/posts/jupiter/swap", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: swapPayloadBody,
+        credentials: "same-origin",
+      });
 
-      if (!swapRes) {
-        throw new Error(lastSwapError || "Swap build failed");
+      if (!swapRes.ok) {
+        const body = await swapRes.text().catch(() => "");
+        throw new Error(body || `Swap build failed (${swapRes.status})`);
       }
 
       const swapPayload = (await swapRes.json()) as JupiterSwapResponse;
@@ -1819,6 +1784,20 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
 
       setBuyTxSignature(signature);
+      if (swapPayload.tradeFeeEventId) {
+        void fetch("/api/posts/jupiter/fee-confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            tradeFeeEventId: swapPayload.tradeFeeEventId,
+            txSignature: signature,
+            walletAddress: wallet.publicKey.toBase58(),
+          }),
+        }).catch((error) => {
+          console.warn("[trade-fee] Failed to confirm fee event", error);
+        });
+      }
       toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} order sent successfully`);
       void jupiterQuoteQuery.refetch();
     } catch (error) {
@@ -1863,6 +1842,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 })
         : "-"
       : sellAmountToken || "-";
+  const jupiterPlatformFeeAtomic = jupiterQuote?.platformFee?.amount ?? null;
+  const jupiterPlatformFeeBps = jupiterQuote?.platformFee?.feeBps ?? null;
+  const jupiterPlatformFeeMint = jupiterQuote?.platformFee?.mint ?? null;
+  const jupiterPlatformFeeAmountDisplay =
+    !jupiterPlatformFeeAtomic || jupiterPlatformFeeAtomic === "0"
+      ? "-"
+      : jupiterPlatformFeeMint === SOL_MINT
+        ? `${formatSolAtomic(jupiterPlatformFeeAtomic)} SOL`
+        : `${jupiterPlatformFeeAtomic} atomic`;
+  const jupiterPlatformFeeDisplay =
+    jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterQuoteUnavailable
+      ? "-"
+      : jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
+        ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
+        : jupiterPlatformFeeAmountDisplay;
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
@@ -1896,6 +1890,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : connectWalletCtaLabel;
   const shouldPulseTradeCta =
     isSolanaTradeSupported && (!isWalletConnectedForTrade || !localSettled);
+  const connectWalletTone =
+    "border-emerald-200/70 bg-gradient-to-r from-emerald-300/95 via-teal-300/90 to-cyan-300/95 text-[#04251f] hover:from-emerald-200 hover:via-teal-200 hover:to-cyan-200 shadow-[0_20px_44px_-24px_rgba(45,212,191,0.90)]";
   const tradeButtonTone = !isSolanaTradeSupported
     ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
     : isWalletConnectedForTrade
@@ -1904,7 +1900,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         : localIsWin
           ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
           : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
-      : "border-amber-200/70 bg-gradient-to-r from-amber-300/95 via-yellow-200/85 to-orange-300/95 text-black hover:from-amber-200 hover:via-yellow-100 hover:to-amber-200 shadow-[0_20px_42px_-24px_rgba(251,191,36,0.92)]";
+      : connectWalletTone;
   const canTriggerWalletConnectFromFooter = isSolanaTradeSupported && !isWalletConnectedForTrade;
   const isBuyFooterDisabled = isSolanaTradeSupported
     ? isWalletConnectedForTrade
@@ -2823,7 +2819,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     "rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]",
                     walletShortAddress
                       ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
-                      : "border-amber-300/20 bg-amber-300/10 text-amber-100"
+                      : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
                   )}>
                     {walletShortAddress ? "READY" : "CONNECT"}
                   </span>
@@ -2833,7 +2829,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     type="button"
                     onClick={() => openWalletSelector({ closeWalletConnectDialog: true })}
                     disabled={wallet.connecting}
-                    className="h-11 gap-2 bg-amber-300 text-black hover:bg-amber-200"
+                    className={cn(
+                      "h-11 gap-2 font-semibold",
+                      connectWalletTone
+                    )}
                   >
                     {wallet.connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
                     {walletShortAddress ? "Change Wallet" : "Choose Wallet"}
@@ -3077,7 +3076,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             {walletShortAddress}
                           </span>
                         ) : (
-                          <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-medium text-amber-100">
+                          <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2 py-1 text-[11px] font-medium text-cyan-100">
                             Not connected
                           </span>
                         )}
@@ -3094,7 +3093,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             "h-11 w-full gap-2 text-sm font-semibold",
                             walletShortAddress
                               ? "border-white/10 bg-white/5 text-foreground hover:bg-white/10"
-                              : "border border-amber-200/70 bg-gradient-to-r from-amber-300 via-yellow-200 to-orange-300 text-black shadow-[0_18px_40px_-24px_rgba(251,191,36,0.88)] hover:from-amber-200 hover:to-amber-200"
+                              : connectWalletTone
                           )}
                           variant={walletShortAddress ? "outline" : "default"}
                         >
@@ -3238,7 +3237,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             {tradeSide === "buy" ? "Buying" : "Selling"}
                           </span>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-4">
                           <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
                             <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
                             <div className="mt-1 text-sm font-semibold text-foreground">
@@ -3254,6 +3253,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
                             <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Min Receive</div>
                             <div className="mt-1 text-sm font-semibold text-foreground">{jupiterMinReceiveDisplay}</div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Platform Fee</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterPlatformFeeDisplay}</div>
                           </div>
                         </div>
                       </div>
@@ -3497,8 +3500,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               disabled={isBuyFooterDisabled}
               className={cn(
                 "h-11 w-full sm:w-auto gap-2 text-sm font-semibold",
-                !isWalletConnectedForTrade &&
-                  "border border-amber-200/70 bg-gradient-to-r from-amber-300 via-yellow-200 to-orange-300 text-black shadow-[0_18px_40px_-24px_rgba(251,191,36,0.88)] hover:from-amber-200 hover:to-amber-200"
+                !isWalletConnectedForTrade && connectWalletTone
               )}
             >
               {isExecutingBuy ? (

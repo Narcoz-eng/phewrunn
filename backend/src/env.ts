@@ -29,6 +29,13 @@ const envSchema = z.object({
   // Optional: Helius Solana RPC (wallet holdings/trade snapshot enrichment)
   HELIUS_RPC_URL: z.string().url("HELIUS_RPC_URL must be a valid URL").optional(),
 
+  // Optional: Jupiter integrator fee settings
+  JUPITER_PLATFORM_FEE_BPS: z
+    .string()
+    .regex(/^\d+$/, "JUPITER_PLATFORM_FEE_BPS must be an integer string")
+    .optional(),
+  JUPITER_PLATFORM_FEE_ACCOUNT: z.string().min(32, "JUPITER_PLATFORM_FEE_ACCOUNT must be a valid Solana token account").optional(),
+
   // Optional: Upstash Redis REST (shared rate limiting + cache)
   UPSTASH_REDIS_REST_URL: z.string().url("UPSTASH_REDIS_REST_URL must be a valid URL").optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1, "UPSTASH_REDIS_REST_TOKEN cannot be empty").optional(),
@@ -94,6 +101,8 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
     HELIUS_RPC_URL: parsed.HELIUS_RPC_URL ? "configured" : "not set",
+    JUPITER_PLATFORM_FEE_BPS: parsed.JUPITER_PLATFORM_FEE_BPS ?? "0",
+    JUPITER_PLATFORM_FEE_ACCOUNT: parsed.JUPITER_PLATFORM_FEE_ACCOUNT ? "configured" : "not set",
     UPSTASH_REDIS_REST_URL: parsed.UPSTASH_REDIS_REST_URL ? "configured" : "not set",
     UPSTASH_REDIS_REST_TOKEN: parsed.UPSTASH_REDIS_REST_TOKEN ? "configured" : "not set",
     REDIS_URL: parsed.REDIS_URL ? "configured" : "not set",

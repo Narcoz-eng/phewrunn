@@ -35,6 +35,11 @@ model User {
   lastUsernameUpdate DateTime?  // Can only change username once per 7 days
   lastPhotoUpdate    DateTime?  // Can only change photo once per 24 hours
 
+  // Trade fee settings (poster rewards from swap fees)
+  tradeFeeRewardsEnabled Boolean @default(true)
+  tradeFeeShareBps       Int     @default(5000) // 0-10000; share of platform fee allocated to poster
+  tradeFeePayoutAddress  String? // optional Solana payout wallet; falls back to walletAddress
+
   // Better Auth relations
   sessions      Session[]
   accounts      Account[]
@@ -50,6 +55,8 @@ model User {
   notificationsSent Notification[] @relation("NotificationsFrom") // notifications triggered
   announcements Announcement[] // announcements created by admin
   viewedAnnouncements AnnouncementView[] // track which announcements user has seen
+  posterTradeFeeEvents TradeFeeEvent[] @relation("PosterTradeFeeEvents")
+  traderTradeFeeEvents TradeFeeEvent[] @relation("TraderTradeFeeEvents")
 
   @@index([createdAt])
   @@index([level, xp])
@@ -174,6 +181,7 @@ model Post {
   comments        Comment[]
   reposts         Repost[]
   notifications   Notification[]
+  tradeFeeEvents  TradeFeeEvent[]
 
   // Indexes for efficient queries
   @@index([authorId, settled]) // For user stats queries
@@ -186,6 +194,37 @@ model Post {
   @@index([trackingMode, lastMcapUpdate])
   @@index([lastMcapUpdate])
   @@index([chainType, contractAddress])
+}
+
+model TradeFeeEvent {
+  id                     String   @id @default(cuid())
+  postId                 String
+  posterUserId           String
+  traderUserId           String?
+  traderWalletAddress    String
+  tradeSide              String   // "buy" | "sell"
+  inputMint              String
+  outputMint             String
+  inAmountAtomic         String
+  outAmountAtomic        String
+  platformFeeBps         Int
+  platformFeeAmountAtomic String
+  feeMint                String
+  posterShareBps         Int
+  posterShareAmountAtomic String
+  posterPayoutAddress    String?
+  txSignature            String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  post   Post  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  poster User  @relation("PosterTradeFeeEvents", fields: [posterUserId], references: [id], onDelete: Cascade)
+  trader User? @relation("TraderTradeFeeEvents", fields: [traderUserId], references: [id], onDelete: SetNull)
+
+  @@index([posterUserId, createdAt])
+  @@index([postId, createdAt])
+  @@index([txSignature])
+  @@index([traderUserId, createdAt])
 }
 
 // Like model for post likes

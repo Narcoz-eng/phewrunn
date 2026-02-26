@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
 import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
@@ -17,6 +18,23 @@ export const usersRouter = new Hono<{ Variables: AuthVariables }>();
 const PROFILE_POST_WALLET_ENRICH_MAX_POSTS = process.env.NODE_ENV === "production" ? 12 : 6;
 const PROFILE_WALLET_OVERVIEW_MAX_TOKENS = process.env.NODE_ENV === "production" ? 40 : 20;
 const PROFILE_WALLET_OVERVIEW_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4000 : 8000;
+const platformFeeBpsFromEnv = Number(process.env.JUPITER_PLATFORM_FEE_BPS ?? "0");
+const userSettingsPlatformFeeBps =
+  Number.isFinite(platformFeeBpsFromEnv) && platformFeeBpsFromEnv > 0
+    ? Math.min(5000, Math.max(1, Math.round(platformFeeBpsFromEnv)))
+    : 0;
+const hasUserSettingsPlatformFeeAccount = !!process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim();
+const activeUserSettingsPlatformFeeBps = hasUserSettingsPlatformFeeAccount ? userSettingsPlatformFeeBps : 0;
+const MAX_POSTER_TRADE_FEE_SHARE_BPS = 10000;
+
+const UpdateFeeSettingsSchema = z.object({
+  tradeFeeRewardsEnabled: z.boolean().optional(),
+  tradeFeeShareBps: z.number().int().min(0).max(MAX_POSTER_TRADE_FEE_SHARE_BPS).optional(),
+  tradeFeePayoutAddress: z.union([
+    z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "Payout wallet must be a valid Solana address"),
+    z.literal(""),
+  ]).optional(),
+});
 
 function isLikelySolanaWalletAddress(value: string | null | undefined): value is string {
   return typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
@@ -801,6 +819,185 @@ usersRouter.get("/:identifier/wallet/overview", async (c) => {
   });
 });
 
+usersRouter.get("/me/fee-settings", requireAuth, async (c) => {
+  const sessionUser = c.get("user");
+  if (!sessionUser) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: sessionUser.id },
+    select: {
+      tradeFeeRewardsEnabled: true,
+      tradeFeeShareBps: true,
+      tradeFeePayoutAddress: true,
+      walletAddress: true,
+    },
+  });
+
+  if (!user) {
+    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  return c.json({
+    data: {
+      tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+      tradeFeeShareBps: user.tradeFeeShareBps,
+      tradeFeePayoutAddress: user.tradeFeePayoutAddress,
+      effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
+      platformFeeBps: activeUserSettingsPlatformFeeBps,
+      platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
+    },
+  });
+});
+
+usersRouter.patch(
+  "/me/fee-settings",
+  requireAuth,
+  zValidator("json", UpdateFeeSettingsSchema),
+  async (c) => {
+    const sessionUser = c.get("user");
+    if (!sessionUser) {
+      return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    const payload = c.req.valid("json");
+    const updateData: {
+      tradeFeeRewardsEnabled?: boolean;
+      tradeFeeShareBps?: number;
+      tradeFeePayoutAddress?: string | null;
+    } = {};
+
+    if (typeof payload.tradeFeeRewardsEnabled === "boolean") {
+      updateData.tradeFeeRewardsEnabled = payload.tradeFeeRewardsEnabled;
+    }
+    if (typeof payload.tradeFeeShareBps === "number" && Number.isFinite(payload.tradeFeeShareBps)) {
+      updateData.tradeFeeShareBps = Math.min(
+        MAX_POSTER_TRADE_FEE_SHARE_BPS,
+        Math.max(0, Math.round(payload.tradeFeeShareBps))
+      );
+    }
+    if (payload.tradeFeePayoutAddress !== undefined) {
+      updateData.tradeFeePayoutAddress = payload.tradeFeePayoutAddress || null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      const user = await prisma.user.findUnique({
+        where: { id: sessionUser.id },
+        select: {
+          tradeFeeRewardsEnabled: true,
+          tradeFeeShareBps: true,
+          tradeFeePayoutAddress: true,
+          walletAddress: true,
+        },
+      });
+      if (!user) {
+        return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+      }
+      return c.json({
+        data: {
+          tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+          tradeFeeShareBps: user.tradeFeeShareBps,
+          tradeFeePayoutAddress: user.tradeFeePayoutAddress,
+          effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
+          platformFeeBps: activeUserSettingsPlatformFeeBps,
+          platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
+        },
+      });
+    }
+
+    const user = await prisma.user.update({
+      where: { id: sessionUser.id },
+      data: updateData,
+      select: {
+        tradeFeeRewardsEnabled: true,
+        tradeFeeShareBps: true,
+        tradeFeePayoutAddress: true,
+        walletAddress: true,
+      },
+    });
+
+    return c.json({
+      data: {
+        tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+        tradeFeeShareBps: user.tradeFeeShareBps,
+        tradeFeePayoutAddress: user.tradeFeePayoutAddress,
+        effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
+        platformFeeBps: activeUserSettingsPlatformFeeBps,
+        platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
+      },
+    });
+  }
+);
+
+usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
+  const sessionUser = c.get("user");
+  if (!sessionUser) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const events = await prisma.tradeFeeEvent.findMany({
+    where: {
+      posterUserId: sessionUser.id,
+      txSignature: { not: null },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      postId: true,
+      feeMint: true,
+      tradeSide: true,
+      platformFeeAmountAtomic: true,
+      posterShareAmountAtomic: true,
+      txSignature: true,
+      createdAt: true,
+      traderWalletAddress: true,
+    },
+  });
+
+  let totalPosterShareAtomic = 0n;
+  const totalsByMint = new Map<string, { totalAtomic: bigint; count: number }>();
+
+  for (const event of events) {
+    const posterShareAmount = BigInt(event.posterShareAmountAtomic);
+    totalPosterShareAtomic += posterShareAmount;
+    const bucket = totalsByMint.get(event.feeMint) ?? { totalAtomic: 0n, count: 0 };
+    bucket.totalAtomic += posterShareAmount;
+    bucket.count += 1;
+    totalsByMint.set(event.feeMint, bucket);
+  }
+
+  const byMint = [...totalsByMint.entries()]
+    .map(([mint, bucket]) => ({
+      mint,
+      totalAtomic: bucket.totalAtomic.toString(),
+      count: bucket.count,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 12);
+
+  const recentEvents = events.slice(0, 20).map((event) => ({
+    id: event.id,
+    postId: event.postId,
+    feeMint: event.feeMint,
+    tradeSide: event.tradeSide,
+    platformFeeAmountAtomic: event.platformFeeAmountAtomic,
+    posterShareAmountAtomic: event.posterShareAmountAtomic,
+    txSignature: event.txSignature,
+    traderWalletAddress: event.traderWalletAddress,
+    createdAt: event.createdAt.toISOString(),
+  }));
+
+  return c.json({
+    data: {
+      totalTrades: events.length,
+      totalPosterShareAtomic: totalPosterShareAtomic.toString(),
+      byMint,
+      recentEvents,
+    },
+  });
+});
+
 // Get user profile by ID or username
 usersRouter.get("/:identifier", async (c) => {
   const identifier = c.req.param("identifier");
@@ -904,7 +1101,15 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const { username, walletAddress, bio, image } = c.req.valid("json");
+  const {
+    username,
+    walletAddress,
+    bio,
+    image,
+    tradeFeeRewardsEnabled,
+    tradeFeeShareBps,
+    tradeFeePayoutAddress,
+  } = c.req.valid("json");
 
   // Get current user data to check update timestamps
   const currentUserData = await prisma.user.findUnique({
@@ -983,6 +1188,18 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
   if (bio !== undefined) {
     updateData.bio = bio || null;
   }
+  if (tradeFeeRewardsEnabled !== undefined) {
+    updateData.tradeFeeRewardsEnabled = tradeFeeRewardsEnabled;
+  }
+  if (tradeFeeShareBps !== undefined && Number.isFinite(tradeFeeShareBps)) {
+    updateData.tradeFeeShareBps = Math.min(
+      MAX_POSTER_TRADE_FEE_SHARE_BPS,
+      Math.max(0, Math.round(tradeFeeShareBps))
+    );
+  }
+  if (tradeFeePayoutAddress !== undefined) {
+    updateData.tradeFeePayoutAddress = tradeFeePayoutAddress || null;
+  }
 
   // If no updates, return current user
   if (Object.keys(updateData).length === 0) {
@@ -998,6 +1215,9 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
         level: true,
         xp: true,
         bio: true,
+        tradeFeeRewardsEnabled: true,
+        tradeFeeShareBps: true,
+        tradeFeePayoutAddress: true,
         createdAt: true,
         lastUsernameUpdate: true,
         lastPhotoUpdate: true,
@@ -1019,6 +1239,9 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
       level: true,
       xp: true,
       bio: true,
+      tradeFeeRewardsEnabled: true,
+      tradeFeeShareBps: true,
+      tradeFeePayoutAddress: true,
       createdAt: true,
       lastUsernameUpdate: true,
       lastPhotoUpdate: true,

@@ -740,6 +740,9 @@ app.get("/api/me", async (c) => {
     bio: string | null;
     isAdmin: boolean;
     isVerified: boolean;
+    tradeFeeRewardsEnabled: boolean;
+    tradeFeeShareBps: number;
+    tradeFeePayoutAddress: string | null;
     createdAt: Date;
   } | null = null;
 
@@ -759,6 +762,9 @@ app.get("/api/me", async (c) => {
         bio: true,
         isAdmin: true,
         isVerified: true,
+        tradeFeeRewardsEnabled: true,
+        tradeFeeShareBps: true,
+        tradeFeePayoutAddress: true,
         createdAt: true,
       },
     });
@@ -781,6 +787,9 @@ app.get("/api/me", async (c) => {
           bio: session.user.bio,
           isAdmin: session.user.isAdmin,
           isVerified: session.user.isVerified,
+          tradeFeeRewardsEnabled: true,
+          tradeFeeShareBps: 5000,
+          tradeFeePayoutAddress: null,
           createdAt: session.user.createdAt,
         },
       });
