@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,9 +59,40 @@ import {
   Loader2,
   Download,
   Coins,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
+const JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
+
+type JupiterQuoteResponse = {
+  inputMint: string;
+  inAmount: string;
+  outputMint: string;
+  outAmount: string;
+  otherAmountThreshold: string;
+  swapMode: string;
+  slippageBps: number;
+  priceImpactPct?: string;
+  routePlan?: Array<{
+    swapInfo?: {
+      label?: string;
+      inAmount?: string;
+      outAmount?: string;
+    };
+    percent?: number;
+  }>;
+  contextSlot?: number;
+  timeTaken?: number;
+};
+
+type JupiterSwapResponse = {
+  swapTransaction?: string;
+  lastValidBlockHeight?: number;
+};
 
 interface PostCardProps {
   post: Post;
@@ -72,6 +106,8 @@ interface PostCardProps {
 export function PostCard({ post, className, currentUserId, onLike, onRepost, onComment }: PostCardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { connection } = useConnection();
+  const wallet = useWallet();
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -89,6 +125,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
+  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
+  const [buyAmountSol, setBuyAmountSol] = useState("0.10");
+  const [slippageBps, setSlippageBps] = useState(100);
+  const [isExecutingBuy, setIsExecutingBuy] = useState(false);
+  const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
 
   // Sync follow state when post data changes
@@ -1203,6 +1244,148 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : localIsWin
         ? "shadow-[0_0_0_1px_rgba(34,197,94,0.08),0_16px_38px_-24px_rgba(34,197,94,0.35)]"
         : "shadow-[0_0_0_1px_rgba(239,68,68,0.08),0_16px_38px_-24px_rgba(239,68,68,0.30)]";
+  const isSolanaTradeSupported = post.chainType === "solana" && !!post.contractAddress;
+  const parsedBuyAmountSol = Number(buyAmountSol);
+  const buyAmountLamports =
+    Number.isFinite(parsedBuyAmountSol) && parsedBuyAmountSol > 0
+      ? Math.max(1, Math.floor(parsedBuyAmountSol * LAMPORTS_PER_SOL))
+      : null;
+
+  const { data: outputTokenDecimals = 6 } = useQuery({
+    queryKey: ["jupiterTokenDecimals", post.contractAddress],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported,
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
+    queryFn: async () => {
+      if (!post.contractAddress) return 6;
+      const supply = await connection.getTokenSupply(new PublicKey(post.contractAddress));
+      return supply.value.decimals;
+    },
+  });
+
+  const jupiterQuoteQuery = useQuery({
+    queryKey: ["jupiterQuote", post.contractAddress, buyAmountLamports, slippageBps],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!buyAmountLamports,
+    staleTime: 2_000,
+    retry: 1,
+    refetchInterval: (q) => (q.state.data ? 6_000 : 2_500),
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      if (!post.contractAddress || !buyAmountLamports) throw new Error("Missing token or amount");
+      const params = new URLSearchParams({
+        inputMint: SOL_MINT,
+        outputMint: post.contractAddress,
+        amount: String(buyAmountLamports),
+        slippageBps: String(slippageBps),
+        swapMode: "ExactIn",
+      });
+      const res = await fetch(`${JUPITER_QUOTE_URL}?${params.toString()}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || `Quote failed (${res.status})`);
+      }
+      return (await res.json()) as JupiterQuoteResponse;
+    },
+  });
+
+  const formatTokenAmountFromAtomic = (amount: string | null | undefined, decimals: number) => {
+    if (!amount) return "N/A";
+    const raw = Number(amount);
+    if (!Number.isFinite(raw)) return "N/A";
+    const value = raw / Math.pow(10, decimals);
+    return value.toLocaleString(undefined, {
+      maximumFractionDigits: value >= 1000 ? 2 : value >= 1 ? 4 : 6,
+    });
+  };
+
+  const formatSolAtomic = (amount: string | null | undefined) => {
+    if (!amount) return "N/A";
+    const raw = Number(amount);
+    if (!Number.isFinite(raw)) return "N/A";
+    return (raw / LAMPORTS_PER_SOL).toLocaleString(undefined, {
+      maximumFractionDigits: 6,
+    });
+  };
+
+  const handleOpenBuyDialog = () => {
+    setBuyTxSignature(null);
+    setIsBuyDialogOpen(true);
+  };
+
+  const handleExecuteJupiterBuy = async () => {
+    if (!isSolanaTradeSupported || !post.contractAddress) {
+      toast.error("Jupiter buy is available for Solana posts only");
+      return;
+    }
+    if (!wallet.connected || !wallet.publicKey) {
+      toast.error("Connect a Solana wallet first");
+      return;
+    }
+    if (!wallet.signTransaction) {
+      toast.error("This wallet does not support transaction signing");
+      return;
+    }
+    const quote = jupiterQuoteQuery.data;
+    if (!quote) {
+      toast.error("Wait for quote to load");
+      return;
+    }
+
+    setIsExecutingBuy(true);
+    setBuyTxSignature(null);
+    try {
+      const swapRes = await fetch(JUPITER_SWAP_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          quoteResponse: quote,
+          userPublicKey: wallet.publicKey.toBase58(),
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+        }),
+      });
+      if (!swapRes.ok) {
+        const body = await swapRes.text().catch(() => "");
+        throw new Error(body || `Swap build failed (${swapRes.status})`);
+      }
+
+      const swapPayload = (await swapRes.json()) as JupiterSwapResponse;
+      if (!swapPayload.swapTransaction) {
+        throw new Error("No swap transaction returned");
+      }
+
+      const txBytes = Uint8Array.from(atob(swapPayload.swapTransaction), (c) => c.charCodeAt(0));
+      const tx = VersionedTransaction.deserialize(txBytes);
+      const signedTx = await wallet.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signedTx.serialize(), {
+        maxRetries: 3,
+        skipPreflight: false,
+      });
+
+      if (typeof swapPayload.lastValidBlockHeight === "number") {
+        await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: tx.message.recentBlockhash,
+            lastValidBlockHeight: swapPayload.lastValidBlockHeight,
+          },
+          "confirmed"
+        );
+      } else {
+        await connection.confirmTransaction(signature, "confirmed");
+      }
+
+      setBuyTxSignature(signature);
+      toast.success("Buy order sent successfully");
+      void jupiterQuoteQuery.refetch();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to execute buy";
+      console.error("[jupiter-buy] Failed to execute trade", error);
+      toast.error(message);
+    } finally {
+      setIsExecutingBuy(false);
+    }
+  };
 
   // Navigate to user profile (prefer username over ID for cleaner URLs)
   const handleProfileClick = (e: React.MouseEvent) => {
@@ -1210,6 +1393,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const profilePath = post.author.username || post.author.id;
     navigate(`/profile/${profilePath}`);
   };
+
+  const jupiterQuote = jupiterQuoteQuery.data;
+  const jupiterRouteLabels = Array.from(
+    new Set((jupiterQuote?.routePlan ?? []).map((r) => r.swapInfo?.label).filter(Boolean))
+  ) as string[];
+  const jupiterOutputAmountFormatted = jupiterQuote
+    ? formatTokenAmountFromAtomic(jupiterQuote.outAmount, outputTokenDecimals)
+    : "—";
+  const jupiterMinReceiveFormatted = jupiterQuote
+    ? formatTokenAmountFromAtomic(jupiterQuote.otherAmountThreshold, outputTokenDecimals)
+    : "—";
+  const jupiterInputAmountFormatted = jupiterQuote
+    ? formatSolAtomic(jupiterQuote.inAmount)
+    : buyAmountLamports
+      ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 })
+      : "—";
+  const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
+  const walletShortAddress = wallet.publicKey
+    ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
+    : null;
+  const buyQuickAmounts = ["0.05", "0.10", "0.25", "0.50", "1.00"];
 
   return (
     <div
@@ -1359,6 +1563,32 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   </div>
 
                   <div className={cn("flex items-center gap-2 flex-wrap rounded-xl border p-1.5", marketButtonsTone, marketButtonsGlow)}>
+                    <Button
+                      type="button"
+                      onClick={handleOpenBuyDialog}
+                      className={cn(
+                        "group/button relative overflow-hidden h-10 px-4 gap-2 rounded-lg border text-sm font-semibold",
+                        isSolanaTradeSupported
+                          ? !localSettled
+                            ? "border-lime-300/25 bg-gradient-to-r from-lime-400/20 via-lime-300/12 to-white/5 text-white hover:from-lime-400/25 hover:to-white/10 shadow-lg shadow-lime-400/10"
+                            : localIsWin
+                              ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
+                              : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
+                          : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+                      )}
+                      variant="ghost"
+                    >
+                      <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                      {!localSettled && isSolanaTradeSupported && (
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lime-300/70" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-300" />
+                        </span>
+                      )}
+                      <Zap className="h-4 w-4" />
+                      <span>{isSolanaTradeSupported ? "Buy" : "Buy (Solana only)"}</span>
+                    </Button>
+
                     {/* Dexscreener Link */}
                     {dexscreenerUrl && (
                       <a
@@ -1967,6 +2197,243 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           )}
         </AnimatePresence>
       </div>
+
+      <Dialog open={isBuyDialogOpen} onOpenChange={setIsBuyDialogOpen}>
+        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-2xl max-h-[92vh] overflow-y-auto border-border/60 bg-background/95 p-0">
+          <DialogHeader className="px-5 sm:px-6 pt-5 pb-4 border-b border-border/50">
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Zap className="h-4 w-4 text-primary" />
+              Buy {post.tokenSymbol || "Token"}
+            </DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm">
+              {isSolanaTradeSupported
+                ? "Professional Jupiter execution flow with live quotes and wallet signing."
+                : "Trading is available here for Solana posts. This post is on another chain."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="p-4 sm:p-6 space-y-4">
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <div className="flex items-start gap-3">
+                <div className="h-12 w-12 rounded-xl overflow-hidden border border-white/10 bg-black/20 flex items-center justify-center shrink-0">
+                  {post.tokenImage ? (
+                    <img src={post.tokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
+                  ) : (
+                    <Coins className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="truncate text-base font-semibold text-foreground">
+                      {post.tokenSymbol || post.tokenName || "Token"}
+                    </div>
+                    {post.chainType && (
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                        {post.chainType}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground truncate">
+                    {post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress || "No contract address")}
+                  </div>
+                  {post.contractAddress && (
+                    <div className="mt-1 text-[11px] font-mono text-muted-foreground break-all">
+                      {post.contractAddress}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {!isSolanaTradeSupported ? (
+              <div className="rounded-xl border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
+                This trade modal is ready for Solana posts only. Use the Dexscreener button above for this token.
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
+                        {walletShortAddress ? (
+                          <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[11px] font-medium text-foreground">
+                            {walletShortAddress}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="wallet-adapter-button-wrap [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:rounded-lg [&_.wallet-adapter-button]:h-10">
+                        <WalletMultiButton />
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Buy Amount (SOL)</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {jupiterQuoteQuery.isFetching ? "Refreshing quote..." : "Live quote"}
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <Input
+                          value={buyAmountSol}
+                          onChange={(e) => setBuyAmountSol(e.target.value)}
+                          inputMode="decimal"
+                          placeholder="0.10"
+                          className="h-12 pr-12 text-lg font-semibold bg-black/20 border-white/10"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">SOL</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {buyQuickAmounts.map((amount) => (
+                          <button
+                            key={amount}
+                            type="button"
+                            onClick={() => setBuyAmountSol(amount)}
+                            className={cn(
+                              "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                              buyAmountSol === amount
+                                ? "border-primary/40 bg-primary/10 text-foreground"
+                                : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                            )}
+                          >
+                            {amount} SOL
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="mb-2 text-xs uppercase tracking-[0.12em] text-muted-foreground">Slippage</div>
+                        <div className="flex flex-wrap gap-2">
+                          {[50, 100, 200].map((bps) => (
+                            <button
+                              key={bps}
+                              type="button"
+                              onClick={() => setSlippageBps(bps)}
+                              className={cn(
+                                "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                                slippageBps === bps
+                                  ? "border-primary/40 bg-primary/10 text-foreground"
+                                  : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                              )}
+                            >
+                              {(bps / 100).toFixed(2)}%
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
+                        {jupiterQuote?.timeTaken ? (
+                          <span className="text-[11px] text-muted-foreground">{(jupiterQuote.timeTaken * 1000).toFixed(0)} ms</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterInputAmountFormatted} SOL</div>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Receive (Est.)</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            {jupiterOutputAmountFormatted} {post.tokenSymbol || "TOKEN"}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Minimum Receive</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            {jupiterMinReceiveFormatted} {post.tokenSymbol || "TOKEN"}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Price Impact</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
+                                ? "—"
+                                : `${jupiterPriceImpactPct.toFixed(2)}%`}
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Route Hops</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {jupiterQuote?.routePlan?.length ?? 0}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground mb-2">Route</div>
+                      {jupiterRouteLabels.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {jupiterRouteLabels.map((label) => (
+                            <span key={label} className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-xs text-foreground">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          {jupiterQuoteQuery.isLoading ? "Loading route..." : "No route yet"}
+                        </div>
+                      )}
+                      <div className="mt-3 text-[11px] text-muted-foreground">
+                        Quotes update automatically while this modal is open.
+                      </div>
+                      {buyTxSignature ? (
+                        <a
+                          href={`https://solscan.io/tx/${buyTxSignature}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                        >
+                          View transaction
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
+                {jupiterQuoteQuery.error ? (
+                  <div className="rounded-xl border border-loss/30 bg-loss/10 px-3 py-2.5 text-sm text-loss">
+                    {jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : "Failed to load quote"}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
+            <Button type="button" variant="outline" onClick={() => setIsBuyDialogOpen(false)} className="w-full sm:w-auto">
+              Close
+            </Button>
+            <Button
+              type="button"
+              onClick={handleExecuteJupiterBuy}
+              disabled={
+                !isSolanaTradeSupported ||
+                !wallet.connected ||
+                !wallet.publicKey ||
+                !wallet.signTransaction ||
+                !jupiterQuote ||
+                isExecutingBuy
+              }
+              className="w-full sm:w-auto gap-2"
+            >
+              {isExecutingBuy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+              {wallet.connected ? "Buy with Jupiter" : "Connect Wallet to Buy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isWinCardPreviewOpen} onOpenChange={setIsWinCardPreviewOpen}>
         <DialogContent className="w-[calc(100vw-0.75rem)] max-w-4xl max-h-[92vh] p-0 overflow-y-auto border-border/60 bg-background/95">
