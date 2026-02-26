@@ -363,6 +363,14 @@ export function isRedisConfigured(): boolean {
   return hasRedisConfig();
 }
 
+// The lightweight TCP Redis shim is acceptable for lower-QPS cache reads/writes,
+// but it's too expensive for per-request hot-path rate limiting because it opens
+// a new connection for each command. Reserve distributed rate limiting for Upstash
+// REST (single HTTP call path) until a persistent Redis client is introduced.
+export function isRedisFastForRateLimiting(): boolean {
+  return hasUpstashConfig();
+}
+
 export async function redisGetString(key: string): Promise<string | null> {
   const result = await redisCommand<unknown>(["GET", key]);
   if (result == null) return null;

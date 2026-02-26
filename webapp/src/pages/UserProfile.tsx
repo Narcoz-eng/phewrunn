@@ -79,6 +79,7 @@ export default function UserProfile() {
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [walletCopied, setWalletCopied] = useState(false);
+  const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
   const cachedUserProfile = useMemo(
     () =>
       userId
@@ -161,7 +162,7 @@ export default function UserProfile() {
       return data;
     },
     initialData: cachedUserReposts ?? undefined,
-    enabled: !!userId,
+    enabled: !!userId && (mainTab === "reposts" || !!cachedUserReposts),
     staleTime: 60000,
     gcTime: 300000,
     refetchOnWindowFocus: false,
@@ -179,7 +180,7 @@ export default function UserProfile() {
       return await api.get<WalletData>(`/api/users/${userId}/wallet/overview`);
     },
     initialData: cachedUserWalletOverview ?? undefined,
-    enabled: !!userId,
+    enabled: !!userId && !!user?.walletAddress && enableWalletOverviewQuery,
     staleTime: 60_000,
     gcTime: 300_000,
     refetchOnWindowFocus: false,
@@ -191,6 +192,13 @@ export default function UserProfile() {
     if (!userId || !user || !isUserFetched) return;
     writeSessionCache(`phew.user-profile:${userId}`, user);
   }, [isUserFetched, user, userId]);
+
+  useEffect(() => {
+    setEnableWalletOverviewQuery(false);
+    if (!user?.walletAddress) return;
+    const timer = window.setTimeout(() => setEnableWalletOverviewQuery(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [user?.walletAddress]);
 
   useEffect(() => {
     if (!userId || !isPostsFetched) return;

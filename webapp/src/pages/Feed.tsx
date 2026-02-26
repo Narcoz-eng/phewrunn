@@ -20,6 +20,7 @@ import { Sparkles, RefreshCw, Trophy, TrendingUp, AlertCircle } from "lucide-rea
 import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 
 interface FeedPage {
   items: Post[];
@@ -31,6 +32,8 @@ const FEED_PAGE_SIZE = 20;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
 const FEED_NEW_POSTS_POLL_MS = 30_000;
+const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
+const FEED_CURRENT_USER_CACHE_TTL_MS = 45_000;
 
 function getFeedFirstPageCacheKey(tab: FeedTab, search: string): string {
   return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${tab}:${search}`;
@@ -113,6 +116,7 @@ export default function Feed() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
+  const cachedFeedUser = readSessionCache<User>(FEED_CURRENT_USER_CACHE_KEY, FEED_CURRENT_USER_CACHE_TTL_MS);
 
   const getFeedQueryKey = useCallback((tab: FeedTab, search: string) => ["posts", tab, search] as const, []);
 
@@ -181,17 +185,25 @@ export default function Feed() {
     isLoading: isLoadingUser,
     error: userError,
     refetch: refetchUser,
+    isFetched: isUserFetched,
   } = useQuery({
     queryKey: ["currentUser"],
     queryFn: async () => {
       const data = await api.get<User>("/api/me");
       return data;
     },
+    initialData: cachedFeedUser ?? undefined,
     enabled: !!session?.user,
     retry: 2,
     staleTime: 30000, // 30 seconds
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
+
+  useEffect(() => {
+    if (!isUserFetched || !user) return;
+    writeSessionCache(FEED_CURRENT_USER_CACHE_KEY, user);
+  }, [isUserFetched, user]);
 
   // Fetch posts with React Query
   const {

@@ -1,5 +1,5 @@
 import type { Context, Next } from "hono";
-import { isRedisConfigured, redisIncrementWithWindow } from "../lib/redis.js";
+import { isRedisFastForRateLimiting, redisIncrementWithWindow } from "../lib/redis.js";
 
 /**
  * Rate Limiting Middleware
@@ -173,7 +173,7 @@ export function rateLimit(config: RateLimitConfig) {
     const key = keyGenerator(c);
     const now = Date.now();
 
-    if (isRedisConfigured()) {
+    if (isRedisFastForRateLimiting()) {
       const redisKey = `ratelimit:${windowMs}:${max}:${key}`;
       const redisEntry = await redisIncrementWithWindow(redisKey, windowMs);
 

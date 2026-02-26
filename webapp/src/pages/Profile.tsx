@@ -100,6 +100,7 @@ export default function Profile() {
   const [isEditing, setIsEditing] = useState(false);
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
+  const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
 
   // Edit form state
   const [editUsername, setEditUsername] = useState("");
@@ -179,6 +180,13 @@ export default function Profile() {
     }
   }, [user]);
 
+  useEffect(() => {
+    setEnableWalletOverviewQuery(false);
+    if (!user?.walletAddress) return;
+    const timer = window.setTimeout(() => setEnableWalletOverviewQuery(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [user?.walletAddress]);
+
   // Fetch user posts with React Query
   const {
     data: posts = [],
@@ -210,7 +218,7 @@ export default function Profile() {
       return await api.get<WalletData>(`/api/users/${user.id}/wallet/overview`);
     },
     initialData: user?.id ? (cachedWalletOverview ?? undefined) : undefined,
-    enabled: !!user?.id,
+    enabled: !!user?.id && !!user?.walletAddress && enableWalletOverviewQuery,
     staleTime: 60_000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -231,7 +239,7 @@ export default function Profile() {
       return repostsData;
     },
     initialData: user?.id ? (cachedReposts ?? undefined) : undefined,
-    enabled: !!user?.id,
+    enabled: !!user?.id && (mainTab === "reposts" || !!cachedReposts),
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
