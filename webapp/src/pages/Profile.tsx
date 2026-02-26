@@ -925,7 +925,7 @@ export default function Profile() {
                     ? { connected: true, address: user.walletAddress }
                     : undefined
               }
-              isLoading={isLoadingPosts}
+              isLoading={isLoadingUser}
             />
 
             {/* Wallet Connection Section */}

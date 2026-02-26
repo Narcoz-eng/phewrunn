@@ -582,7 +582,7 @@ export default function UserProfile() {
                     ? { connected: true, address: user.walletAddress }
                     : undefined
               }
-              isLoading={isLoadingPosts}
+              isLoading={isLoadingUser}
             />
 
             {/* Followers/Following */}

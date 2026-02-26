@@ -7,9 +7,16 @@ import { prisma } from "../prisma.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
-import { getWalletPortfolioOverviewForPostedTokens, isHeliusConfigured } from "../services/helius.js";
+import {
+  getWalletPortfolioOverviewForPostedTokens,
+  getWalletTradeSnapshotsForSolanaTokens,
+  isHeliusConfigured,
+} from "../services/helius.js";
 
 export const usersRouter = new Hono<{ Variables: AuthVariables }>();
+const PROFILE_POST_WALLET_ENRICH_MAX_POSTS = process.env.NODE_ENV === "production" ? 12 : 6;
+const PROFILE_WALLET_OVERVIEW_MAX_TOKENS = process.env.NODE_ENV === "production" ? 40 : 20;
+const PROFILE_WALLET_OVERVIEW_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4000 : 8000;
 
 function isLikelySolanaWalletAddress(value: string | null | undefined): value is string {
   return typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
@@ -26,29 +33,32 @@ async function attachWalletTradeSnapshotsForUserPosts<
     return posts as Array<T & { walletTradeSnapshot?: unknown }>;
   }
 
-  const uniqueMints = [...new Set(
-    posts
-      .filter((post) => post.chainType === "solana" && isLikelySolanaWalletAddress(post.contractAddress))
-      .map((post) => post.contractAddress as string)
-  )];
+  const eligiblePosts = posts
+    .filter((post) => post.chainType === "solana" && isLikelySolanaWalletAddress(post.contractAddress))
+    .slice(0, PROFILE_POST_WALLET_ENRICH_MAX_POSTS);
+
+  const uniqueMints = [...new Set(eligiblePosts.map((post) => post.contractAddress as string))];
 
   if (uniqueMints.length === 0) {
     return posts as Array<T & { walletTradeSnapshot?: unknown }>;
   }
 
-  const earliestPostMs = posts.reduce<number | null>((earliest, post) => {
-    const timestamp = post.createdAt.getTime();
-    if (earliest === null || timestamp < earliest) return timestamp;
-    return earliest;
-  }, null);
+  let snapshots: Record<string, unknown> | null = null;
+  try {
+    const snapshotPromise = getWalletTradeSnapshotsForSolanaTokens({
+      walletAddress,
+      tokenMints: uniqueMints,
+    });
+    snapshots = await Promise.race([
+      snapshotPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+  } catch (error) {
+    console.warn("[users/profile-posts] wallet snapshot enrichment skipped:", error);
+    snapshots = null;
+  }
 
-  const portfolio = await getWalletPortfolioOverviewForPostedTokens({
-    walletAddress,
-    tokens: uniqueMints.map((mint) => ({ mint, chainType: "solana" })),
-    sinceMs: earliestPostMs,
-  });
-
-  if (!portfolio) {
+  if (!snapshots) {
     return posts as Array<T & { walletTradeSnapshot?: unknown }>;
   }
 
@@ -56,7 +66,7 @@ async function attachWalletTradeSnapshotsForUserPosts<
     if (post.chainType !== "solana" || !post.contractAddress) {
       return post as T & { walletTradeSnapshot?: unknown };
     }
-    const walletTradeSnapshot = portfolio.tokens[post.contractAddress];
+    const walletTradeSnapshot = snapshots[post.contractAddress];
     if (!walletTradeSnapshot) {
       return post as T & { walletTradeSnapshot?: unknown };
     }
@@ -642,6 +652,7 @@ usersRouter.get("/:identifier/wallet/overview", async (c) => {
       contractAddress: { not: null },
     },
     orderBy: { createdAt: "desc" },
+    take: 200,
     select: {
       contractAddress: true,
       chainType: true,
@@ -696,11 +707,45 @@ usersRouter.get("/:identifier/wallet/overview", async (c) => {
     }
   }
 
-  const portfolio = await getWalletPortfolioOverviewForPostedTokens({
-    walletAddress: user.walletAddress,
-    tokens: [...tokenMetaByMint.values()].map((t) => ({ mint: t.mint, chainType: "solana" })),
-    sinceMs: earliestPostMs,
-  });
+  if (tokenMetaByMint.size > PROFILE_WALLET_OVERVIEW_MAX_TOKENS) {
+    const limited = new Map<string, {
+      mint: string;
+      tokenName: string | null;
+      tokenSymbol: string | null;
+      tokenImage: string | null;
+      firstPostedAt: Date;
+    }>();
+    for (const [mint, meta] of tokenMetaByMint.entries()) {
+      if (limited.size >= PROFILE_WALLET_OVERVIEW_MAX_TOKENS) break;
+      limited.set(mint, meta);
+    }
+    tokenMetaByMint.clear();
+    for (const [mint, meta] of limited.entries()) {
+      tokenMetaByMint.set(mint, meta);
+    }
+  }
+  let portfolio: Awaited<ReturnType<typeof getWalletPortfolioOverviewForPostedTokens>> | null = null;
+  try {
+    portfolio = await Promise.race([
+      getWalletPortfolioOverviewForPostedTokens({
+        walletAddress: user.walletAddress,
+        tokens: [...tokenMetaByMint.values()].map((t) => ({ mint: t.mint, chainType: "solana" })),
+        sinceMs: earliestPostMs,
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), PROFILE_WALLET_OVERVIEW_TIMEOUT_MS)),
+    ]);
+    if (portfolio === null) {
+      console.warn("[users/wallet-overview] Timed out or unavailable; returning fallback", {
+        userId: user.id,
+      });
+    }
+  } catch (error) {
+    console.warn("[users/wallet-overview] Failed to build wallet overview; returning fallback", {
+      userId: user.id,
+      error,
+    });
+    portfolio = null;
+  }
 
   if (!portfolio) {
     return c.json({
