@@ -649,7 +649,65 @@ export async function getWalletTradeSnapshotForSolanaToken(params: {
   return value;
 }
 
+export async function getWalletTradeSnapshotsForSolanaTokens(params: {
+  walletAddress: string | null | undefined;
+  tokenMints: Array<string | null | undefined>;
+}): Promise<Record<string, WalletTradeSnapshot> | null> {
+  if (!HELIUS_RPC_URL) return null;
+  if (!isLikelySolanaAddress(params.walletAddress)) return null;
+
+  const uniqueMints = [...new Set(
+    params.tokenMints.filter((mint): mint is string => isLikelySolanaAddress(mint))
+  )];
+  if (uniqueMints.length === 0) return null;
+
+  // Lightweight feed path: holdings + token prices only (no enhanced tx history scan).
+  const holdingsByMint = await fetchWalletTokenHoldings(params.walletAddress);
+  if (!holdingsByMint) return null;
+
+  const snapshots: Record<string, WalletTradeSnapshot> = {};
+  const now = Date.now();
+
+  const missingPriceMints: string[] = [];
+  const priceByMint = new Map<string, number | null>();
+
+  for (const mint of uniqueMints) {
+    const cacheKey = `${params.walletAddress}:${mint}`;
+    const cached = heliusSnapshotCache.get(cacheKey);
+    if (cached && cached.expiresAtMs > now && cached.value) {
+      snapshots[mint] = cached.value;
+      continue;
+    }
+    missingPriceMints.push(mint);
+  }
+
+  if (missingPriceMints.length > 0) {
+    const prices = await Promise.all(
+      missingPriceMints.map(async (mint) => [mint, await fetchDexTokenPriceUsd(mint)] as const)
+    );
+    for (const [mint, priceUsd] of prices) {
+      priceByMint.set(mint, priceUsd);
+    }
+  }
+
+  for (const mint of missingPriceMints) {
+    const snapshot = buildEmptyTradeSnapshot();
+    const holdingAmount = holdingsByMint.get(mint)?.amount ?? 0;
+    snapshot.holdingAmount = holdingAmount;
+    const priceUsd = priceByMint.get(mint) ?? null;
+    if (priceUsd !== null) {
+      snapshot.holdingUsd = roundMoney(holdingAmount * priceUsd);
+    }
+    snapshots[mint] = snapshot;
+    heliusSnapshotCache.set(`${params.walletAddress}:${mint}`, {
+      value: snapshot,
+      expiresAtMs: now + HELIUS_CACHE_TTL_MS,
+    });
+  }
+
+  return snapshots;
+}
+
 export function isHeliusConfigured(): boolean {
   return !!HELIUS_RPC_URL;
 }
-

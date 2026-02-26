@@ -1,4 +1,5 @@
 import type { Context, Next } from "hono";
+import { isRedisConfigured, redisIncrementWithWindow } from "../lib/redis.js";
 
 /**
  * Rate Limiting Middleware
@@ -171,6 +172,47 @@ export function rateLimit(config: RateLimitConfig) {
 
     const key = keyGenerator(c);
     const now = Date.now();
+
+    if (isRedisConfigured()) {
+      const redisKey = `ratelimit:${windowMs}:${max}:${key}`;
+      const redisEntry = await redisIncrementWithWindow(redisKey, windowMs);
+
+      if (redisEntry) {
+        const remaining = Math.max(0, max - redisEntry.count);
+        const resetSeconds = Math.ceil((redisEntry.resetTimeMs - now) / 1000);
+
+        c.header("X-RateLimit-Limit", String(max));
+        c.header("X-RateLimit-Remaining", String(remaining));
+        c.header("X-RateLimit-Reset", String(Math.ceil(redisEntry.resetTimeMs / 1000)));
+
+        if (redisEntry.count > max) {
+          c.header("Retry-After", String(resetSeconds));
+          console.warn("[RateLimit] Exceeded", {
+            method: c.req.method,
+            path: c.req.path,
+            key,
+            count: redisEntry.count,
+            max,
+            windowMs,
+            backend: "redis",
+          });
+
+          return c.json(
+            {
+              error: {
+                message,
+                code: "RATE_LIMIT_EXCEEDED",
+                retryAfter: resetSeconds,
+              },
+            },
+            429
+          );
+        }
+
+        return next();
+      }
+      // Fall through to in-memory mode if Redis is unavailable.
+    }
 
     // Get or create entry for this key
     let entry = rateLimitStore.get(key);

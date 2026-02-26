@@ -32,7 +32,7 @@ import {
   TRACKING_MODE_SETTLED,
   type MarketCapResult,
 } from "../services/marketcap.js";
-import { getWalletTradeSnapshotForSolanaToken, isHeliusConfigured } from "../services/helius.js";
+import { getWalletTradeSnapshotsForSolanaTokens, isHeliusConfigured } from "../services/helius.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -87,31 +87,60 @@ async function attachWalletTradeSnapshots<T extends {
     return posts as Array<T & { walletTradeSnapshot?: unknown }>;
   }
 
-  let remaining = maxToEnrich;
-  const tasks = posts.map(async (post) => {
-    if (remaining <= 0) return post as T & { walletTradeSnapshot?: unknown };
+  const eligibleIndexes: number[] = [];
+  for (let i = 0; i < posts.length && eligibleIndexes.length < maxToEnrich; i++) {
+    const post = posts[i];
+    if (post?.chainType !== "solana" || !post?.contractAddress || !post?.author?.walletAddress) continue;
+    eligibleIndexes.push(i);
+  }
+
+  if (eligibleIndexes.length === 0) {
+    return posts as Array<T & { walletTradeSnapshot?: unknown }>;
+  }
+
+  const walletToMints = new Map<string, Set<string>>();
+  for (const index of eligibleIndexes) {
+    const post = posts[index];
+    if (!post || post.chainType !== "solana" || !post.contractAddress || !post.author.walletAddress) {
+      continue;
+    }
+    const wallet = post.author.walletAddress!;
+    const mint = post.contractAddress!;
+    let mintSet = walletToMints.get(wallet);
+    if (!mintSet) {
+      mintSet = new Set<string>();
+      walletToMints.set(wallet, mintSet);
+    }
+    mintSet.add(mint);
+  }
+
+  const snapshotsByWallet = new Map<string, Record<string, unknown>>();
+  await Promise.all(
+    [...walletToMints.entries()].map(async ([walletAddress, mintSet]) => {
+      const snapshots = await getWalletTradeSnapshotsForSolanaTokens({
+        walletAddress,
+        tokenMints: [...mintSet],
+      });
+      if (snapshots) {
+        snapshotsByWallet.set(walletAddress, snapshots as Record<string, unknown>);
+      }
+    })
+  );
+
+  return posts.map((post) => {
     if (post.chainType !== "solana" || !post.contractAddress || !post.author.walletAddress) {
       return post as T & { walletTradeSnapshot?: unknown };
     }
-
-    remaining -= 1;
-    const walletTradeSnapshot = await getWalletTradeSnapshotForSolanaToken({
-      walletAddress: post.author.walletAddress,
-      tokenMint: post.contractAddress,
-      chainType: post.chainType,
-    });
-
+    const byMint = snapshotsByWallet.get(post.author.walletAddress);
+    const walletTradeSnapshot = byMint?.[post.contractAddress];
     if (!walletTradeSnapshot) {
       return post as T & { walletTradeSnapshot?: unknown };
     }
-
     return {
       ...post,
       walletTradeSnapshot,
     };
   });
-
-  return Promise.all(tasks);
 }
 
 /**
@@ -2251,6 +2280,139 @@ postsRouter.get("/:id/shared-alpha", async (c) => {
 
 // Get real-time price update for a post's CA (force refresh)
 // This endpoint always fetches the latest price regardless of tracking mode
+const BatchPostPricesSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(50),
+});
+
+type PriceRoutePostRecord = {
+  id: string;
+  contractAddress: string | null;
+  entryMcap: number | null;
+  currentMcap: number | null;
+  mcap1h: number | null;
+  mcap6h: number | null;
+  settled: boolean;
+  settledAt: Date | null;
+  createdAt: Date;
+  lastMcapUpdate: Date | null;
+  trackingMode: string | null;
+};
+
+async function resolvePostPricePayload(post: PriceRoutePostRecord) {
+  // If no contract address, return current values
+  if (!post.contractAddress) {
+    return {
+      currentMcap: post.currentMcap,
+      entryMcap: post.entryMcap,
+      mcap1h: post.mcap1h,
+      mcap6h: post.mcap6h,
+      percentChange: null,
+      trackingMode: post.trackingMode,
+      lastMcapUpdate: post.lastMcapUpdate?.toISOString() ?? null,
+      settled: post.settled,
+      settledAt: post.settledAt?.toISOString() ?? null,
+    };
+  }
+
+  // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable.
+  // Keeps feed request path clean while still allowing 1H/6H status to catch up.
+  if (
+    (isReadyFor1HSettlement(post.createdAt, post.settled) ||
+      isReadyFor6HSnapshot(post.createdAt, post.mcap6h)) &&
+    post.entryMcap !== null
+  ) {
+    triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
+  }
+
+  const trackingMode = determineTrackingMode(post.createdAt);
+  let finalMcap = post.currentMcap;
+  let responseUpdatedAt = post.lastMcapUpdate ?? new Date();
+
+  // Avoid a thundering herd: only refresh if the cached value is stale.
+  const shouldRefresh = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+
+  if (shouldRefresh) {
+    let refreshPromise = priceRefreshInFlight.get(post.id);
+    if (!refreshPromise) {
+      refreshPromise = (async () => {
+        const latestMcap = await fetchMarketCap(post.contractAddress!);
+        if (latestMcap !== null) {
+          const now = new Date();
+          await prisma.post.update({
+            where: { id: post.id },
+            data: {
+              currentMcap: latestMcap,
+              lastMcapUpdate: now,
+              trackingMode,
+            },
+          });
+        }
+        return latestMcap;
+      })()
+        .catch((error) => {
+          console.error("[posts/price] Failed to refresh market cap", { postId: post.id, error });
+          return null;
+        })
+        .finally(() => {
+          priceRefreshInFlight.delete(post.id);
+        });
+      priceRefreshInFlight.set(post.id, refreshPromise);
+    }
+
+    const refreshedMcap = await refreshPromise;
+    if (refreshedMcap !== null) {
+      finalMcap = refreshedMcap;
+      responseUpdatedAt = new Date();
+    }
+  }
+
+  const percentChange = post.entryMcap && finalMcap
+    ? ((finalMcap - post.entryMcap) / post.entryMcap) * 100
+    : null;
+
+  return {
+    currentMcap: finalMcap,
+    entryMcap: post.entryMcap,
+    mcap1h: post.mcap1h,
+    mcap6h: post.mcap6h,
+    percentChange: percentChange !== null ? Math.round(percentChange * 100) / 100 : null,
+    trackingMode: trackingMode,
+    lastMcapUpdate: responseUpdatedAt.toISOString(),
+    settled: post.settled,
+    settledAt: post.settledAt?.toISOString() ?? null,
+  };
+}
+
+postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
+  const { ids } = c.req.valid("json");
+  const uniqueIds = [...new Set(ids)].slice(0, 50);
+
+  const posts = await prisma.post.findMany({
+    where: { id: { in: uniqueIds } },
+    select: {
+      id: true,
+      contractAddress: true,
+      entryMcap: true,
+      currentMcap: true,
+      mcap1h: true,
+      mcap6h: true,
+      settled: true,
+      settledAt: true,
+      createdAt: true,
+      lastMcapUpdate: true,
+      trackingMode: true,
+    },
+  });
+
+  const results = await Promise.all(
+    posts.map(async (post) => [post.id, await resolvePostPricePayload(post)] as const)
+  );
+
+  return c.json({
+    data: Object.fromEntries(results),
+  });
+});
+
 postsRouter.get("/:id/price", async (c) => {
   const postId = c.req.param("id");
 
@@ -2275,88 +2437,6 @@ postsRouter.get("/:id/price", async (c) => {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
-  // If no contract address, return current values
-  if (!post.contractAddress) {
-    return c.json({
-      data: {
-        currentMcap: post.currentMcap,
-        entryMcap: post.entryMcap,
-        mcap1h: post.mcap1h,
-        mcap6h: post.mcap6h,
-        percentChange: null,
-        trackingMode: post.trackingMode,
-        lastMcapUpdate: post.lastMcapUpdate?.toISOString() ?? null,
-      }
-    });
-  }
-
-  // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable.
-  // Keeps feed request path clean while still allowing 1H/6H status to catch up.
-  if (
-    (isReadyFor1HSettlement(post.createdAt, post.settled) ||
-      isReadyFor6HSnapshot(post.createdAt, post.mcap6h)) &&
-    post.entryMcap !== null
-  ) {
-    triggerMaintenanceCycleNonBlocking(`price:${postId}`);
-  }
-
-  const trackingMode = determineTrackingMode(post.createdAt);
-  let finalMcap = post.currentMcap;
-  let responseUpdatedAt = post.lastMcapUpdate ?? new Date();
-
-  // Avoid a thundering herd: only refresh if the cached value is stale.
-  const shouldRefresh = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
-
-  if (shouldRefresh) {
-    let refreshPromise = priceRefreshInFlight.get(postId);
-    if (!refreshPromise) {
-      refreshPromise = (async () => {
-        const latestMcap = await fetchMarketCap(post.contractAddress!);
-        if (latestMcap !== null) {
-          const now = new Date();
-          await prisma.post.update({
-            where: { id: postId },
-            data: {
-              currentMcap: latestMcap,
-              lastMcapUpdate: now,
-              trackingMode,
-            },
-          });
-        }
-        return latestMcap;
-      })()
-        .catch((error) => {
-          console.error("[posts/price] Failed to refresh market cap", { postId, error });
-          return null;
-        })
-        .finally(() => {
-          priceRefreshInFlight.delete(postId);
-        });
-      priceRefreshInFlight.set(postId, refreshPromise);
-    }
-
-    const refreshedMcap = await refreshPromise;
-    if (refreshedMcap !== null) {
-      finalMcap = refreshedMcap;
-      responseUpdatedAt = new Date();
-    }
-  }
-
-  const percentChange = post.entryMcap && finalMcap
-    ? ((finalMcap - post.entryMcap) / post.entryMcap) * 100
-    : null;
-
-  return c.json({
-    data: {
-      currentMcap: finalMcap,
-      entryMcap: post.entryMcap,
-      mcap1h: post.mcap1h,
-      mcap6h: post.mcap6h,
-      percentChange: percentChange !== null ? Math.round(percentChange * 100) / 100 : null,
-      trackingMode: trackingMode,
-      lastMcapUpdate: responseUpdatedAt.toISOString(),
-      settled: post.settled,
-      settledAt: post.settledAt?.toISOString() ?? null,
-    },
-  });
+  const data = await resolvePostPricePayload(post);
+  return c.json({ data });
 });

@@ -28,6 +28,10 @@ const envSchema = z.object({
 
   // Optional: Helius Solana RPC (wallet holdings/trade snapshot enrichment)
   HELIUS_RPC_URL: z.string().url("HELIUS_RPC_URL must be a valid URL").optional(),
+
+  // Optional: Upstash Redis REST (shared rate limiting + cache)
+  UPSTASH_REDIS_REST_URL: z.string().url("UPSTASH_REDIS_REST_URL must be a valid URL").optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1, "UPSTASH_REDIS_REST_TOKEN cannot be empty").optional(),
 });
 
 /**
@@ -87,6 +91,8 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
     HELIUS_RPC_URL: parsed.HELIUS_RPC_URL ? "configured" : "not set",
+    UPSTASH_REDIS_REST_URL: parsed.UPSTASH_REDIS_REST_URL ? "configured" : "not set",
+    UPSTASH_REDIS_REST_TOKEN: parsed.UPSTASH_REDIS_REST_TOKEN ? "configured" : "not set",
   };
 }
 

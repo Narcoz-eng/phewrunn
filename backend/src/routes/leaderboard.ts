@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../prisma.js";
 import { type AuthVariables } from "../auth.js";
+import { cacheGetJson, cacheSetJson, redisDelete, redisGetString, redisIncr, redisSetString } from "../lib/redis.js";
 import {
   LeaderboardQuerySchema,
   MIN_LEVEL,
@@ -26,8 +27,11 @@ type TopUsersResponsePayload = {
 };
 
 const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 10_000;
-const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 10_000;
-const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 180_000 : 30_000;
+const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 15_000;
+const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
+const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
+let leaderboardCacheVersionMemory = 1;
+let leaderboardCacheVersionReadCache: { value: number; expiresAtMs: number } | null = null;
 
 let dailyGainersCache: CacheEntry<Array<unknown>> | null = null;
 let dailyGainersInFlight: Promise<Array<unknown>> | null = null;
@@ -41,12 +45,44 @@ export function invalidateLeaderboardCaches() {
   topUsersCache.clear();
   statsCache = null;
   statsInFlight = null;
+  leaderboardCacheVersionReadCache = null;
+  leaderboardCacheVersionMemory += 1;
+  void redisIncr(LEADERBOARD_CACHE_VERSION_KEY);
+  // Best-effort cleanup of current known singleton keys; paged top-users keys are versioned.
+  void redisDelete(buildLeaderboardRedisKey("daily-gainers", leaderboardCacheVersionMemory));
+  void redisDelete(buildLeaderboardRedisKey("stats", leaderboardCacheVersionMemory));
 }
 
 function readCache<T>(entry: CacheEntry<T> | null): T | null {
   if (!entry) return null;
   if (entry.expiresAtMs <= Date.now()) return null;
   return entry.data;
+}
+
+async function getLeaderboardCacheVersion(): Promise<number> {
+  const cached = leaderboardCacheVersionReadCache;
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return cached.value;
+  }
+
+  const redisValue = await redisGetString(LEADERBOARD_CACHE_VERSION_KEY);
+  let version = Number.parseInt(redisValue ?? "", 10);
+  if (!Number.isFinite(version) || version <= 0) {
+    version = leaderboardCacheVersionMemory;
+    // Best effort initialize redis version key.
+    void redisSetString(LEADERBOARD_CACHE_VERSION_KEY, String(version), 24 * 60 * 60 * 1000);
+  }
+
+  leaderboardCacheVersionMemory = Math.max(leaderboardCacheVersionMemory, version);
+  leaderboardCacheVersionReadCache = {
+    value: leaderboardCacheVersionMemory,
+    expiresAtMs: Date.now() + 30_000,
+  };
+  return leaderboardCacheVersionMemory;
+}
+
+function buildLeaderboardRedisKey(kind: string, version: number, suffix?: string): string {
+  return `leaderboard:v${version}:${kind}${suffix ? `:${suffix}` : ""}`;
 }
 
 async function getWinLossStatsByAuthorIds(authorIds: string[]) {
@@ -86,9 +122,19 @@ async function getWinLossStatsByAuthorIds(authorIds: string[]) {
  * Filter: Only settled posts with positive percent change
  */
 leaderboardRouter.get("/daily-gainers", async (c) => {
+  const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(dailyGainersCache);
   if (cached) {
     return c.json({ data: cached });
+  }
+  const redisKey = buildLeaderboardRedisKey("daily-gainers", cacheVersion);
+  const redisCached = await cacheGetJson<Array<unknown>>(redisKey);
+  if (redisCached) {
+    dailyGainersCache = {
+      data: redisCached,
+      expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
+    };
+    return c.json({ data: redisCached });
   }
   if (dailyGainersInFlight) {
     const data = await dailyGainersInFlight;
@@ -193,6 +239,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
       data: dailyGainers,
       expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
     };
+    void cacheSetJson(redisKey, dailyGainers, DAILY_GAINERS_CACHE_TTL_MS);
     return dailyGainers;
   })();
 
@@ -211,10 +258,20 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
  */
 leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema), async (c) => {
   const { page, limit, sortBy } = c.req.valid("query");
+  const cacheVersion = await getLeaderboardCacheVersion();
   const topUsersCacheKey = `${sortBy}:${page}:${limit}`;
   const cached = topUsersCache.get(topUsersCacheKey);
   if (cached && cached.expiresAtMs > Date.now()) {
     return c.json(cached.data);
+  }
+  const redisKey = buildLeaderboardRedisKey("top-users", cacheVersion, topUsersCacheKey);
+  const redisCached = await cacheGetJson<TopUsersResponsePayload>(redisKey);
+  if (redisCached) {
+    topUsersCache.set(topUsersCacheKey, {
+      data: redisCached,
+      expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
+    });
+    return c.json(redisCached);
   }
   const skip = (page - 1) * limit;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -317,6 +374,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       data: responsePayload,
       expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
+    void cacheSetJson(redisKey, responsePayload, TOP_USERS_CACHE_TTL_MS);
     return c.json(responsePayload);
   }
 
@@ -410,6 +468,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       data: responsePayload,
       expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
+    void cacheSetJson(redisKey, responsePayload, TOP_USERS_CACHE_TTL_MS);
     return c.json(responsePayload);
   }
 
@@ -498,6 +557,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     data: responsePayload,
     expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
   });
+  void cacheSetJson(redisKey, responsePayload, TOP_USERS_CACHE_TTL_MS);
   return c.json(responsePayload);
 });
 
@@ -506,9 +566,19 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
  * Platform-wide statistics
  */
 leaderboardRouter.get("/stats", async (c) => {
+  const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(statsCache);
   if (cached) {
     return c.json({ data: cached });
+  }
+  const redisKey = buildLeaderboardRedisKey("stats", cacheVersion);
+  const redisCached = await cacheGetJson<unknown>(redisKey);
+  if (redisCached) {
+    statsCache = {
+      data: redisCached,
+      expiresAtMs: Date.now() + LEADERBOARD_STATS_CACHE_TTL_MS,
+    };
+    return c.json({ data: redisCached });
   }
   if (statsInFlight) {
     const data = await statsInFlight;
@@ -690,6 +760,7 @@ leaderboardRouter.get("/stats", async (c) => {
       data,
       expiresAtMs: Date.now() + LEADERBOARD_STATS_CACHE_TTL_MS,
     };
+    void cacheSetJson(redisKey, data, LEADERBOARD_STATS_CACHE_TTL_MS);
     return data;
   })();
 

@@ -20,6 +20,7 @@ import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api } from "@/lib/api";
+import { getPostPriceSnapshotBatched } from "@/lib/post-price-batch";
 import {
   Post,
   Comment,
@@ -148,13 +149,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         return;
       }
       try {
-        const data = await api.get<{
-          currentMcap: number | null;
-          entryMcap: number | null;
-          mcap1h: number | null;
-          mcap6h: number | null;
-          settled: boolean;
-        }>(`/api/posts/${post.id}/price`);
+        const data = await getPostPriceSnapshotBatched(post.id);
+        if (!data) return;
 
         if (data.currentMcap !== null) {
           setCurrentMcap(data.currentMcap);
