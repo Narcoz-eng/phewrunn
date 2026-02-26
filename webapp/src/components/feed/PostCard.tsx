@@ -1888,13 +1888,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     !sellBlockedByRpcTokenInfo &&
     !sellAmountExceedsBalance &&
     !isExecutingBuy;
+  const connectWalletCtaLabel = "Start Trading";
   const tradeCtaLabel = !isSolanaTradeSupported
     ? "Trade (Solana only)"
     : isWalletConnectedForTrade
       ? "Trade Now"
-      : "Connect Wallet";
+      : connectWalletCtaLabel;
   const shouldPulseTradeCta =
-    isSolanaTradeSupported && isWalletConnectedForTrade && !localSettled;
+    isSolanaTradeSupported && (!isWalletConnectedForTrade || !localSettled);
   const tradeButtonTone = !isSolanaTradeSupported
     ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
     : isWalletConnectedForTrade
@@ -1903,7 +1904,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         : localIsWin
           ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
           : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
-      : "border-amber-300/30 bg-gradient-to-r from-amber-300/15 via-yellow-200/10 to-white/5 text-white hover:from-amber-300/22 hover:to-white/10 shadow-lg shadow-amber-200/10";
+      : "border-amber-200/70 bg-gradient-to-r from-amber-300/95 via-yellow-200/85 to-orange-300/95 text-black hover:from-amber-200 hover:via-yellow-100 hover:to-amber-200 shadow-[0_20px_42px_-24px_rgba(251,191,36,0.92)]";
   const canTriggerWalletConnectFromFooter = isSolanaTradeSupported && !isWalletConnectedForTrade;
   const isBuyFooterDisabled = isSolanaTradeSupported
     ? isWalletConnectedForTrade
@@ -3090,15 +3091,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             setIsBuyDialogOpen(false);
                           }}
                           className={cn(
-                            "h-10 gap-2",
+                            "h-11 w-full gap-2 text-sm font-semibold",
                             walletShortAddress
                               ? "border-white/10 bg-white/5 text-foreground hover:bg-white/10"
-                              : "bg-amber-300 text-black hover:bg-amber-200"
+                              : "border border-amber-200/70 bg-gradient-to-r from-amber-300 via-yellow-200 to-orange-300 text-black shadow-[0_18px_40px_-24px_rgba(251,191,36,0.88)] hover:from-amber-200 hover:to-amber-200"
                           )}
                           variant={walletShortAddress ? "outline" : "default"}
                         >
                           {walletShortAddress ? <UserCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-                          {walletShortAddress ? "Change Wallet" : "Connect Wallet"}
+                          {walletShortAddress ? "Change Wallet" : connectWalletCtaLabel}
                         </Button>
                         <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground flex items-center">
                           {walletShortAddress ? `${walletDisplayName} connected` : "Connect a Solana wallet to enable swap execution"}
@@ -3495,8 +3496,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               onClick={handleBuyFooterAction}
               disabled={isBuyFooterDisabled}
               className={cn(
-                "w-full sm:w-auto gap-2",
-                !isWalletConnectedForTrade && "bg-amber-300 text-black hover:bg-amber-200"
+                "h-11 w-full sm:w-auto gap-2 text-sm font-semibold",
+                !isWalletConnectedForTrade &&
+                  "border border-amber-200/70 bg-gradient-to-r from-amber-300 via-yellow-200 to-orange-300 text-black shadow-[0_18px_40px_-24px_rgba(251,191,36,0.88)] hover:from-amber-200 hover:to-amber-200"
               )}
             >
               {isExecutingBuy ? (
@@ -3506,7 +3508,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               ) : (
                 <UserPlus className="h-4 w-4" />
               )}
-              {isWalletConnectedForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : "Connect Wallet"}
+              {isWalletConnectedForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : connectWalletCtaLabel}
             </Button>
           </DialogFooter>
         </DialogContent>
