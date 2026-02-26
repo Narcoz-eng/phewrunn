@@ -1851,13 +1851,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : jupiterPlatformFeeMint === SOL_MINT
         ? `${formatSolAtomic(jupiterPlatformFeeAtomic)} SOL`
         : `${jupiterPlatformFeeAtomic} atomic`;
-  const jupiterPlatformFeeDisplay =
-    jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterQuoteUnavailable
-      ? "-"
-      : jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
-        ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
-        : jupiterPlatformFeeAmountDisplay;
-  const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
   const jupiterNoRouteDetected =
@@ -1866,6 +1859,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterQuoteUnavailable =
     !!jupiterQuoteErrorMessage &&
     !jupiterNoRouteDetected;
+  const jupiterPlatformFeeDisplay =
+    jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterQuoteUnavailable
+      ? "-"
+      : jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
+        ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
+        : jupiterPlatformFeeAmountDisplay;
+  const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const walletShortAddress = wallet.publicKey
     ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
     : null;

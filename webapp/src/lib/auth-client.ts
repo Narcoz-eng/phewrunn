@@ -35,6 +35,11 @@ const getBaseUrl = () => {
 const baseURL = getBaseUrl();
 console.log("[Auth] Using backend URL:", baseURL);
 
+const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
+const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const SESSION_FETCH_TIMEOUT_MS = 3500;
+const SIGN_OUT_TIMEOUT_MS = 2500;
+
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
   throw new Error("Email/password auth has been removed. Use Privy sign-in.");
@@ -82,11 +87,6 @@ interface SessionState {
   isLoading: boolean;
   isAuthenticated: boolean;
 }
-
-const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
-const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
-const SESSION_FETCH_TIMEOUT_MS = 3500;
-const SIGN_OUT_TIMEOUT_MS = 2500;
 
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let sessionRateLimitedUntil = 0;

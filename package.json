@@ -6,7 +6,10 @@
     "install:all": "cd backend && npm install && cd ../webapp && npm install",
     "build": "cd webapp && npm run build",
     "start": "cd backend && npm start",
-    "dev": "concurrently \"cd backend && npm run dev\" \"cd webapp && npm run dev\""
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd webapp && npm run dev\"",
+    "db:push": "npm --prefix backend run db:push",
+    "db:generate": "npm --prefix backend run db:generate",
+    "db:migrate": "npm --prefix backend run db:migrate"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
