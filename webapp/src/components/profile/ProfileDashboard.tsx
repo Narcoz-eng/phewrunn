@@ -11,16 +11,12 @@ import {
   Percent,
   Sparkles,
   Zap,
-  BarChart3,
-  CheckCircle2,
-  XCircle,
-  Clock,
   Wallet,
   Coins,
   ArrowUpRight,
   ArrowDownRight,
 } from "lucide-react";
-import { MIN_LEVEL, MAX_LEVEL, formatTimeAgo, calculatePercentChange, formatMarketCap } from "@/types";
+import { MIN_LEVEL, MAX_LEVEL } from "@/types";
 
 // Stats interface for user trading statistics
 export interface UserStats {
@@ -123,29 +119,6 @@ export function ProfileDashboardSkeleton() {
         ))}
       </div>
 
-      {/* Recent Trades Skeleton */}
-      <Card>
-        <CardHeader className="pb-3">
-          <Skeleton className="h-5 w-32" />
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div
-              key={i}
-              className="p-3 bg-secondary/30 rounded-lg border border-border/50"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-5 w-14 rounded-full" />
-              </div>
-              <div className="flex items-center justify-between">
-                <Skeleton className="h-3 w-20" />
-                <Skeleton className="h-4 w-16" />
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -154,7 +127,7 @@ export function ProfileDashboard({
   level,
   xp,
   stats,
-  recentTrades,
+  recentTrades: _recentTrades,
   walletData,
   isLoading,
   className,
@@ -262,7 +235,7 @@ export function ProfileDashboard({
       </Card>
 
       {/* Statistics Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {/* Total Alpha Calls */}
         <Card className="hover:border-primary/30 transition-colors">
           <CardContent className="p-4 text-center">
@@ -278,13 +251,13 @@ export function ProfileDashboard({
           </CardContent>
         </Card>
 
-        {/* Success Rate */}
+        {/* Accuracy Score */}
         <Card className="hover:border-primary/30 transition-colors">
           <CardContent className="p-4 text-center">
             <div className="flex items-center justify-center gap-1.5 text-muted-foreground mb-1">
               <Percent className="h-4 w-4" />
               <span className="text-xs uppercase tracking-wider">
-                Success Rate
+                Accuracy Score
               </span>
             </div>
             <p
@@ -299,40 +272,6 @@ export function ProfileDashboard({
             >
               {stats.totalCalls > 0 ? `${stats.winRate.toFixed(1)}%` : "-"}
             </p>
-          </CardContent>
-        </Card>
-
-        {/* Total Profit/Loss */}
-        <Card className="hover:border-primary/30 transition-colors">
-          <CardContent className="p-4 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-muted-foreground mb-1">
-              <BarChart3 className="h-4 w-4" />
-              <span className="text-xs uppercase tracking-wider">
-                Total P/L
-              </span>
-            </div>
-            <div className="flex items-center justify-center gap-1">
-              {stats.totalProfitPercent > 0 && (
-                <TrendingUp className="h-4 w-4 text-gain" />
-              )}
-              {stats.totalProfitPercent < 0 && (
-                <TrendingDown className="h-4 w-4 text-loss" />
-              )}
-              <p
-                className={cn(
-                  "text-2xl font-bold font-mono",
-                  stats.totalProfitPercent > 0
-                    ? "text-gain"
-                    : stats.totalProfitPercent < 0
-                      ? "text-loss"
-                      : "text-muted-foreground"
-                )}
-              >
-                {stats.totalCalls > 0
-                  ? `${stats.totalProfitPercent >= 0 ? "+" : ""}${stats.totalProfitPercent.toFixed(1)}%`
-                  : "-"}
-              </p>
-            </div>
           </CardContent>
         </Card>
 
@@ -557,152 +496,6 @@ export function ProfileDashboard({
         </Card>
       )}
 
-      {/* Recent Trades (Last 5 Settled Posts) */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <span className="font-heading">Recent Trades</span>
-            <Badge variant="secondary" className="ml-auto text-xs">
-              Last 5
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {recentTrades.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
-                <BarChart3 className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-sm text-muted-foreground">
-                No settled trades yet
-              </p>
-              <p className="text-xs text-muted-foreground/70 mt-1">
-                Your recent trades will appear here once settled
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {recentTrades.slice(0, 5).map((trade, index) => {
-                const percentChange = calculatePercentChange(
-                  trade.entryMcap,
-                  trade.currentMcap
-                );
-                const isWin = trade.isWin === true;
-
-                return (
-                  <div
-                    key={trade.id}
-                    className={cn(
-                      "p-3 rounded-lg border transition-all duration-200",
-                      "bg-secondary/30 dark:bg-secondary/20 border-border/50",
-                      "hover:bg-secondary/50 dark:hover:bg-secondary/30",
-                      isWin
-                        ? "hover:border-gain/30"
-                        : "hover:border-loss/30",
-                      "animate-fade-in"
-                    )}
-                    style={{ animationDelay: `${index * 0.05}s` }}
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      {/* Trade Content Preview */}
-                      <p className="text-sm text-foreground line-clamp-1 flex-1">
-                        {trade.content.length > 50
-                          ? `${trade.content.substring(0, 50)}...`
-                          : trade.content}
-                      </p>
-
-                      {/* Win/Loss Badge */}
-                      <Badge
-                        className={cn(
-                          "flex-shrink-0 gap-1",
-                          isWin
-                            ? "bg-gain/20 text-gain border-gain/30 hover:bg-gain/30"
-                            : "bg-loss/20 text-loss border-loss/30 hover:bg-loss/30"
-                        )}
-                        variant="outline"
-                      >
-                        {isWin ? (
-                          <>
-                            <CheckCircle2 className="h-3 w-3" />
-                            WIN
-                          </>
-                        ) : (
-                          <>
-                            <XCircle className="h-3 w-3" />
-                            LOSS
-                          </>
-                        )}
-                      </Badge>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs">
-                      {/* Chain & Time */}
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        {trade.chainType && (
-                          <span
-                            className={cn(
-                              "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border",
-                              trade.chainType === "solana"
-                                ? "bg-accent/15 text-accent border-accent/30 dark:bg-accent/20 dark:border-accent/40"
-                                : "bg-primary/15 text-primary border-primary/30 dark:bg-primary/20 dark:border-primary/40"
-                            )}
-                          >
-                            {trade.chainType}
-                          </span>
-                        )}
-                        <span>{formatTimeAgo(trade.settledAt || trade.createdAt)}</span>
-                      </div>
-
-                      {/* Performance */}
-                      <div className="flex items-center gap-1">
-                        {percentChange !== null ? (
-                          <>
-                            {percentChange > 0 ? (
-                              <TrendingUp className="h-3 w-3 text-gain" />
-                            ) : (
-                              <TrendingDown className="h-3 w-3 text-loss" />
-                            )}
-                            <span
-                              className={cn(
-                                "font-mono font-semibold",
-                                percentChange > 0 ? "text-gain" : "text-loss"
-                              )}
-                            >
-                              {percentChange >= 0 ? "+" : ""}
-                              {percentChange.toFixed(1)}%
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-muted-foreground">N/A</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Entry & Current Market Cap */}
-                    {trade.entryMcap && (
-                      <div className="flex items-center gap-4 mt-2 pt-2 border-t border-border/30 text-[10px] text-muted-foreground">
-                        <span>
-                          Entry:{" "}
-                          <span className="font-mono font-medium text-foreground">
-                            {formatMarketCap(trade.entryMcap)}
-                          </span>
-                        </span>
-                        <span>
-                          Exit:{" "}
-                          <span className="font-mono font-medium text-foreground">
-                            {formatMarketCap(trade.currentMcap)}
-                          </span>
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

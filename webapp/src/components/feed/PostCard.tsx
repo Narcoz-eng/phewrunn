@@ -900,17 +900,43 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleSubmitComment = async () => {
     if (!commentText.trim() || !currentUserId) return;
     const trimmedComment = commentText.trim();
+    const previousComments = queryClient.getQueryData<Comment[]>(["comments", post.id]);
+    const optimisticCommentId = `optimistic-${post.id}-${Date.now()}`;
+    const optimisticComment: Comment = {
+      id: optimisticCommentId,
+      content: trimmedComment,
+      authorId: currentUserId,
+      author: {
+        id: currentUserId,
+        name: "You",
+        username: null,
+        image: null,
+        level: 0,
+        xp: 0,
+      },
+      postId: post.id,
+      createdAt: new Date().toISOString(),
+    };
 
     try {
+      setCommentText("");
+      setCommentCount((prev) => prev + 1);
+      if (isCommentsOpen && previousComments) {
+        queryClient.setQueryData<Comment[]>(["comments", post.id], [optimisticComment, ...previousComments]);
+      }
+
       if (onComment) {
         await onComment(post.id, trimmedComment);
       } else {
         await api.post(`/api/posts/${post.id}/comments`, { content: trimmedComment });
       }
-      setCommentText("");
-      setCommentCount(prev => prev + 1);
-      refetchComments();
+      void refetchComments();
     } catch (error: unknown) {
+      setCommentText(trimmedComment);
+      setCommentCount((prev) => Math.max(0, prev - 1));
+      if (isCommentsOpen && previousComments) {
+        queryClient.setQueryData<Comment[]>(["comments", post.id], previousComments);
+      }
       const err = error as { message?: string };
       toast.error(err.message || "Failed to add comment");
     }
