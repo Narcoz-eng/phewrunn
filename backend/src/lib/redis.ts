@@ -6,6 +6,10 @@ type RedisPrimitive = string | number | boolean;
 const UPSTASH_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL?.trim() || null;
 const UPSTASH_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || null;
 const REDIS_TCP_URL = process.env.REDIS_URL?.trim() || null;
+const REDIS_TCP_CONNECT_TIMEOUT_MS = 350;
+const REDIS_TCP_COMMAND_TIMEOUT_MS = 700;
+const REDIS_TCP_COOLDOWN_MS = 30_000;
+let redisTcpDisabledUntil = 0;
 
 function hasUpstashConfig(): boolean {
   return Boolean(UPSTASH_REDIS_URL && UPSTASH_REDIS_TOKEN);
@@ -17,6 +21,18 @@ function hasTcpRedisConfig(): boolean {
 
 function hasRedisConfig(): boolean {
   return hasUpstashConfig() || hasTcpRedisConfig();
+}
+
+function isTcpRedisTemporarilyDisabled(): boolean {
+  return redisTcpDisabledUntil > Date.now();
+}
+
+function markTcpRedisFailure(): void {
+  redisTcpDisabledUntil = Date.now() + REDIS_TCP_COOLDOWN_MS;
+}
+
+function markTcpRedisSuccess(): void {
+  redisTcpDisabledUntil = 0;
 }
 
 type RedisResponse<T = unknown> = {
@@ -35,7 +51,7 @@ async function redisCommand<T = unknown>(args: RedisPrimitive[]): Promise<T | nu
       if (!hasTcpRedisConfig()) return null;
     }
 
-    if (hasTcpRedisConfig()) {
+    if (hasTcpRedisConfig() && !isTcpRedisTemporarilyDisabled()) {
       return await redisCommandTcp<T>(args);
     }
 
@@ -160,7 +176,7 @@ function parseRespValue(
 
 async function readRespReply(
   socket: net.Socket | tls.TLSSocket,
-  timeoutMs = 4000
+  timeoutMs = REDIS_TCP_COMMAND_TIMEOUT_MS
 ): Promise<RespValue> {
   return await new Promise<RespValue>((resolve, reject) => {
     let buffer = Buffer.alloc(0);
@@ -220,6 +236,7 @@ function createRedisTcpSocket(url: URL): Promise<net.Socket | tls.TLSSocket> {
   const useTls = url.protocol === "rediss:";
 
   return new Promise((resolve, reject) => {
+    let settled = false;
     const socket = useTls
       ? tls.connect({
           host,
@@ -228,19 +245,32 @@ function createRedisTcpSocket(url: URL): Promise<net.Socket | tls.TLSSocket> {
         })
       : net.createConnection({ host, port });
 
+    const connectTimeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy(new Error("Redis TCP connect timeout"));
+      reject(new Error("Redis TCP connect timeout"));
+    }, REDIS_TCP_CONNECT_TIMEOUT_MS);
+
     const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       reject(error);
     };
 
     const onConnect = () => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      socket.setTimeout(5000);
+      socket.setTimeout(REDIS_TCP_COMMAND_TIMEOUT_MS);
       socket.on("timeout", () => socket.destroy(new Error("Redis TCP socket timeout")));
       resolve(socket);
     };
 
     const cleanup = () => {
+      clearTimeout(connectTimeout);
       socket.off("error", onError);
       socket.off("connect", onConnect);
       if (socket instanceof tls.TLSSocket) {
@@ -265,6 +295,10 @@ function respToPrimitive<T>(value: RespValue): T | null {
 }
 
 async function redisCommandTcp<T = unknown>(args: RedisPrimitive[]): Promise<T | null> {
+  if (isTcpRedisTemporarilyDisabled()) {
+    return null;
+  }
+
   const rawUrl = REDIS_TCP_URL;
   if (!rawUrl) return null;
 
@@ -311,8 +345,10 @@ async function redisCommandTcp<T = unknown>(args: RedisPrimitive[]): Promise<T |
     }
 
     const reply = await writeAndReadReply(socket, args);
+    markTcpRedisSuccess();
     return respToPrimitive<T>(reply);
   } catch (error) {
+    markTcpRedisFailure();
     console.warn("[redis] tcp command failed", { command: String(args[0]), error });
     return null;
   } finally {

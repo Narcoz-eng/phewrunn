@@ -45,17 +45,25 @@ export async function signUp() {
 
 export async function signOut() {
   const token = localStorage.getItem("auth-token");
-  await fetch(`${baseURL}/api/auth/logout`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  }).catch((error) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
+  try {
+    await fetch(`${baseURL}/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  } catch (error) {
     // We still clear local state/tokens in callers, but log the server-side logout failure.
     console.error("[Auth] signOut request failed:", error);
-  });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // Auth user interface
@@ -74,8 +82,50 @@ interface SessionState {
   isAuthenticated: boolean;
 }
 
+const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
+const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const SESSION_FETCH_TIMEOUT_MS = 3500;
+const SIGN_OUT_TIMEOUT_MS = 2500;
+
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let sessionRateLimitedUntil = 0;
+
+function readCachedAuthUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(AUTH_SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { user?: AuthUser; cachedAt?: number };
+    if (!parsed?.user || typeof parsed.cachedAt !== "number") return null;
+    if (Date.now() - parsed.cachedAt > AUTH_SESSION_CACHE_TTL_MS) return null;
+    return parsed.user;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAuthUser(user: AuthUser | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (!user) {
+      window.sessionStorage.removeItem(AUTH_SESSION_CACHE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(
+      AUTH_SESSION_CACHE_KEY,
+      JSON.stringify({
+        user,
+        cachedAt: Date.now(),
+      })
+    );
+  } catch {
+    // ignore sessionStorage errors
+  }
+}
+
+function clearCachedAuthUser(): void {
+  writeCachedAuthUser(null);
+}
 
 // Auth context
 interface AuthContextType extends SessionState {
@@ -89,8 +139,9 @@ const AuthContext = createContext<AuthContextType | null>(null);
 // This endpoint uses our custom middleware that supports Bearer tokens
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
+  const cachedUser = readCachedAuthUser();
   if (sessionRateLimitedUntil > now) {
-    return null;
+    return cachedUser;
   }
 
   if (sessionFetchInFlight) {
@@ -99,7 +150,7 @@ async function fetchSession(): Promise<AuthUser | null> {
 
   sessionFetchInFlight = (async () => {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), SESSION_FETCH_TIMEOUT_MS);
   try {
     // Get token from localStorage as fallback for cross-origin issues
     const token = localStorage.getItem("auth-token");
@@ -132,16 +183,17 @@ async function fetchSession(): Promise<AuthUser | null> {
       // Clear invalid token
       if (response.status === 401) {
         localStorage.removeItem("auth-token");
+        clearCachedAuthUser();
       }
-      return null;
+      return response.status === 401 ? null : cachedUser;
     }
 
+    sessionRateLimitedUntil = 0;
     const text = await response.text();
-    console.log("[Auth] Session response text:", text);
 
     // Handle null or empty responses
     if (!text || text === "null" || text === "undefined") {
-      return null;
+      return cachedUser;
     }
 
     try {
@@ -150,26 +202,28 @@ async function fetchSession(): Promise<AuthUser | null> {
       // /api/me returns user data directly wrapped in { data: user }
       const user = data.data || data;
       if (user && user.id) {
-        return {
+        const authUser = {
           id: user.id,
           email: user.email,
           name: user.name,
           image: user.image,
           isVerified: user.isVerified,
         };
+        writeCachedAuthUser(authUser);
+        return authUser;
       }
     } catch (parseError) {
       console.log("[Auth] Failed to parse session response:", parseError);
     }
 
-    return null;
+    return cachedUser;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      console.warn("[Auth] /api/me timed out, treating session as unauthenticated");
-      return null;
+      console.warn("[Auth] /api/me timed out, using cached session if available");
+      return cachedUser;
     }
     console.error("[Auth] Failed to fetch session:", error);
-    return null;
+    return cachedUser;
   } finally {
     clearTimeout(timeoutId);
     sessionFetchInFlight = null;
@@ -181,10 +235,13 @@ async function fetchSession(): Promise<AuthUser | null> {
 
 // Auth Provider component
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<SessionState>({
-    user: null,
-    isLoading: true,
-    isAuthenticated: false,
+  const [state, setState] = useState<SessionState>(() => {
+    const cachedUser = readCachedAuthUser();
+    return {
+      user: cachedUser,
+      isLoading: !cachedUser,
+      isAuthenticated: !!cachedUser,
+    };
   });
 
   const refetch = useCallback(async () => {
@@ -205,24 +262,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    localStorage.removeItem("auth-token");
+    clearCachedAuthUser();
+    sessionRateLimitedUntil = 0;
+    setState({
+      user: null,
+      isLoading: false,
+      isAuthenticated: false,
+    });
+
     try {
       await signOut();
-      // Clear stored token
-      localStorage.removeItem("auth-token");
-      setState({
-        user: null,
-        isLoading: false,
-        isAuthenticated: false,
-      });
     } catch (error) {
       console.error("[Auth] Logout error:", error);
-      // Still clear local state on error
-      localStorage.removeItem("auth-token");
-      setState({
-        user: null,
-        isLoading: false,
-        isAuthenticated: false,
-      });
     }
   }, []);
 
@@ -501,6 +553,7 @@ export async function syncPrivySession(
 
     // Store the session token for Bearer auth
     localStorage.setItem("auth-token", data.token);
+    writeCachedAuthUser(data.user);
     return { token: data.token, user: data.user };
   } catch (error) {
     console.error("[Auth] syncPrivySession error:", error);
