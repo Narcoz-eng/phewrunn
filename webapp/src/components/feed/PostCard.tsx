@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -138,6 +138,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
   const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
+  const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
+  const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
   const [buyAmountSol, setBuyAmountSol] = useState("0.10");
   const [slippageBps, setSlippageBps] = useState(100);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
@@ -148,6 +150,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   useEffect(() => {
     setIsFollowing(post.isFollowingAuthor ?? false);
   }, [post.isFollowingAuthor]);
+
+  // Complete the intended "connect then buy" flow without opening both popups at once.
+  useEffect(() => {
+    if (!wallet.publicKey) return;
+    if (isWalletConnectDialogOpen) {
+      setIsWalletConnectDialogOpen(false);
+    }
+    if (pendingBuyAfterWalletConnect) {
+      setPendingBuyAfterWalletConnect(false);
+      setBuyTxSignature(null);
+      setIsBuyDialogOpen(true);
+    }
+  }, [wallet.publicKey, isWalletConnectDialogOpen, pendingBuyAfterWalletConnect]);
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
@@ -1328,8 +1343,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleTradeCtaClick = () => {
-    if (isSolanaTradeSupported && !wallet.connected) {
-      setWalletModalVisible(true);
+    if (isSolanaTradeSupported && !wallet.publicKey) {
+      setPendingBuyAfterWalletConnect(true);
+      setIsWalletConnectDialogOpen(true);
       return;
     }
     handleOpenBuyDialog();
@@ -1455,11 +1471,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const walletShortAddress = wallet.publicKey
     ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
     : null;
+  const walletDisplayName = wallet.wallet?.adapter?.name ?? "Solana Wallet";
   const buyQuickAmounts = ["0.05", "0.10", "0.25", "0.50", "1.00"];
-  const isWalletConnectedForTrade = !!wallet.connected;
+  const isWalletConnectedForTrade = !!wallet.publicKey;
   const canExecuteJupiterBuy =
     isSolanaTradeSupported &&
-    !!wallet.connected &&
+    !!wallet.publicKey &&
     !!wallet.publicKey &&
     !!wallet.signTransaction &&
     !!jupiterQuote &&
@@ -1488,6 +1505,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleBuyFooterAction = () => {
     if (canTriggerWalletConnectFromFooter) {
+      setPendingBuyAfterWalletConnect(false);
       setWalletModalVisible(true);
       return;
     }
@@ -2292,6 +2310,96 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         </AnimatePresence>
       </div>
 
+      <Dialog open={isWalletConnectDialogOpen} onOpenChange={(open) => {
+        setIsWalletConnectDialogOpen(open);
+        if (!open) {
+          setPendingBuyAfterWalletConnect(false);
+        }
+      }}>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-md border-white/10 bg-[#080a0f]/95 p-0 overflow-hidden shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]">
+          <div className="relative">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(163,230,53,0.14),transparent_52%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.12),transparent_58%)]" />
+            <div className="absolute inset-0 opacity-[0.035]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
+            <DialogHeader className="relative px-5 pt-5 pb-4 border-b border-white/10">
+              <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <UserPlus className="h-4 w-4 text-amber-200" />
+                Connect Wallet to Buy
+              </DialogTitle>
+              <DialogDescription className="text-xs sm:text-sm text-muted-foreground">
+                Connect a Solana wallet first. Once connected, we will open the buy panel automatically.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="relative p-5 space-y-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Selected token</div>
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0">
+                    {post.tokenImage ? (
+                      <img src={post.tokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
+                    ) : (
+                      <Coins className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-foreground truncate">
+                      {post.tokenSymbol || post.tokenName || "Token"}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {post.contractAddress || "No contract"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Wallet status</div>
+                    <div className="mt-1 text-sm font-medium text-foreground">
+                      {wallet.connecting ? "Connecting..." : walletShortAddress ? `${walletDisplayName} • ${walletShortAddress}` : "Not connected"}
+                    </div>
+                  </div>
+                  <span className={cn(
+                    "rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]",
+                    walletShortAddress
+                      ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
+                      : "border-amber-300/20 bg-amber-300/10 text-amber-100"
+                  )}>
+                    {walletShortAddress ? "READY" : "CONNECT"}
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    onClick={() => setWalletModalVisible(true)}
+                    disabled={wallet.connecting}
+                    className="h-11 gap-2 bg-amber-300 text-black hover:bg-amber-200"
+                  >
+                    {wallet.connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                    {walletShortAddress ? "Change Wallet" : "Choose Wallet"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPendingBuyAfterWalletConnect(false);
+                      setIsWalletConnectDialogOpen(false);
+                    }}
+                    className="h-11 border-white/10 bg-white/5 hover:bg-white/10"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  If the wallet popup does not open, disable browser popup blocking for this site and ensure Phantom / Solflare is installed and unlocked.
+                </p>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isBuyDialogOpen} onOpenChange={setIsBuyDialogOpen}>
         <DialogContent className="w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] overflow-y-auto border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
           <DialogHeader className="relative overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
@@ -2491,8 +2599,24 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </span>
                         )}
                       </div>
-                      <div className="wallet-adapter-button-wrap [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:rounded-lg [&_.wallet-adapter-button]:h-10">
-                        <WalletMultiButton />
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Button
+                          type="button"
+                          onClick={() => setWalletModalVisible(true)}
+                          className={cn(
+                            "h-10 gap-2",
+                            walletShortAddress
+                              ? "border-white/10 bg-white/5 text-foreground hover:bg-white/10"
+                              : "bg-amber-300 text-black hover:bg-amber-200"
+                          )}
+                          variant={walletShortAddress ? "outline" : "default"}
+                        >
+                          {walletShortAddress ? <UserCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                          {walletShortAddress ? "Change Wallet" : "Connect Wallet"}
+                        </Button>
+                        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground flex items-center">
+                          {walletShortAddress ? `${walletDisplayName} connected` : "Connect a Solana wallet to enable swap execution"}
+                        </div>
                       </div>
                     </div>
 
