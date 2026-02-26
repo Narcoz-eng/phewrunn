@@ -2181,7 +2181,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           <DialogHeader className="px-5 sm:px-6 pt-5 pb-4 border-b border-border/50">
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Zap className="h-4 w-4 text-primary" />
-              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"} · {post.tokenSymbol || "Token"}
+              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"} - {post.tokenSymbol || "Token"}
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm">
               {isSolanaTradeSupported
@@ -2225,7 +2225,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
             {!isSolanaTradeSupported ? (
               <div className="rounded-xl border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
-                This trade modal is ready for Solana posts only. Use the Dexscreener button above for this token.
+                This buy flow is available for Solana posts only. You can still use the chart for this token.
               </div>
             ) : (
               <>
