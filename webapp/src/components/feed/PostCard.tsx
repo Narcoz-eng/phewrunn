@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,8 @@ import { toast } from "sonner";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
 const JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
+const JUPITER_QUOTE_FALLBACK_URL = "https://quote-api.jup.ag/v6/quote";
+const JUPITER_SWAP_FALLBACK_URL = "https://quote-api.jup.ag/v6/swap";
 
 type JupiterQuoteResponse = {
   inputMint: string;
@@ -108,6 +110,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const queryClient = useQueryClient();
   const { connection } = useConnection();
   const wallet = useWallet();
+  const { setVisible: setWalletModalVisible } = useWalletModal();
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -1255,19 +1258,43 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!post.contractAddress || !buyAmountLamports) throw new Error("Missing token or amount");
+      let outputMint = post.contractAddress.trim();
+      try {
+        outputMint = new PublicKey(outputMint).toBase58();
+      } catch {
+        throw new Error("Invalid Solana token address");
+      }
+
       const params = new URLSearchParams({
         inputMint: SOL_MINT,
-        outputMint: post.contractAddress,
+        outputMint,
         amount: String(buyAmountLamports),
         slippageBps: String(slippageBps),
         swapMode: "ExactIn",
       });
-      const res = await fetch(`${JUPITER_QUOTE_URL}?${params.toString()}`);
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(body || `Quote failed (${res.status})`);
+
+      const quoteUrls = [JUPITER_QUOTE_URL, JUPITER_QUOTE_FALLBACK_URL];
+      let lastError = "Failed to load quote";
+      for (const baseUrl of quoteUrls) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(`${baseUrl}?${params.toString()}`, {
+            signal: controller.signal,
+            cache: "no-store",
+          });
+          clearTimeout(timeout);
+          if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            lastError = body || `Quote failed (${res.status})`;
+            continue;
+          }
+          return (await res.json()) as JupiterQuoteResponse;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "Quote request failed";
+        }
       }
-      return (await res.json()) as JupiterQuoteResponse;
+      throw new Error(lastError);
     },
   });
 
@@ -1297,6 +1324,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleTradeCtaClick = () => {
     handleOpenBuyDialog();
+    if (isSolanaTradeSupported && !wallet.connected) {
+      setTimeout(() => {
+        setWalletModalVisible(true);
+      }, 80);
+    }
   };
 
   const handleExecuteJupiterBuy = async () => {
@@ -1321,19 +1353,33 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setIsExecutingBuy(true);
     setBuyTxSignature(null);
     try {
-      const swapRes = await fetch(JUPITER_SWAP_URL, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          quoteResponse: quote,
-          userPublicKey: wallet.publicKey.toBase58(),
-          wrapAndUnwrapSol: true,
-          dynamicComputeUnitLimit: true,
-        }),
+      const swapPayloadBody = JSON.stringify({
+        quoteResponse: quote,
+        userPublicKey: wallet.publicKey.toBase58(),
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
       });
-      if (!swapRes.ok) {
-        const body = await swapRes.text().catch(() => "");
-        throw new Error(body || `Swap build failed (${swapRes.status})`);
+
+      let swapRes: Response | null = null;
+      let lastSwapError = "";
+      for (const swapUrl of [JUPITER_SWAP_URL, JUPITER_SWAP_FALLBACK_URL]) {
+        try {
+          swapRes = await fetch(swapUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: swapPayloadBody,
+          });
+          if (swapRes.ok) break;
+          lastSwapError = (await swapRes.text().catch(() => "")) || `Swap build failed (${swapRes.status})`;
+          swapRes = null;
+        } catch (error) {
+          lastSwapError = error instanceof Error ? error.message : "Swap build failed";
+          swapRes = null;
+        }
+      }
+
+      if (!swapRes) {
+        throw new Error(lastSwapError || "Swap build failed");
       }
 
       const swapPayload = (await swapRes.json()) as JupiterSwapResponse;
@@ -1424,6 +1470,20 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
           : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
       : "border-amber-300/30 bg-gradient-to-r from-amber-300/15 via-yellow-200/10 to-white/5 text-white hover:from-amber-300/22 hover:to-white/10 shadow-lg shadow-amber-200/10";
+  const canTriggerWalletConnectFromFooter = isSolanaTradeSupported && !isWalletConnectedForTrade;
+  const isBuyFooterDisabled = isSolanaTradeSupported
+    ? isWalletConnectedForTrade
+      ? !canExecuteJupiterBuy
+      : false
+    : true;
+
+  const handleBuyFooterAction = () => {
+    if (canTriggerWalletConnectFromFooter) {
+      setWalletModalVisible(true);
+      return;
+    }
+    void handleExecuteJupiterBuy();
+  };
 
   return (
     <div
@@ -2229,10 +2289,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               </div>
             ) : (
               <>
-                <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
+                <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
                   <div className="space-y-4">
-                    <div className="rounded-xl border border-white/10 bg-black/20 overflow-hidden shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
-                      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
+                      <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
+                      <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
                         <div>
                           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Live Chart</div>
                           <div className="text-sm font-medium text-foreground">Dexscreener</div>
@@ -2253,13 +2314,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         <iframe
                           src={dexscreenerEmbedUrl}
                           title={`Dexscreener chart for ${post.tokenSymbol || post.tokenName || "token"}`}
-                          className="h-[280px] w-full md:h-[340px] xl:h-[420px]"
+                          className="h-[260px] w-full sm:h-[320px] lg:h-[420px] xl:h-[470px]"
                           loading="lazy"
-                          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                          referrerPolicy="no-referrer-when-downgrade"
+                          allow="clipboard-write; fullscreen"
                         />
                       ) : (
-                        <div className="flex h-[280px] md:h-[340px] xl:h-[420px] items-center justify-center p-6 text-center">
+                        <div className="flex h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] items-center justify-center p-6 text-center">
                           <div className="space-y-3">
                             <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
                             <p className="text-sm text-muted-foreground">Chart unavailable for this token yet.</p>
@@ -2344,7 +2404,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="space-y-4">
+                  <div className="space-y-4 self-start lg:sticky lg:top-0">
                     <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-4">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
@@ -2436,15 +2496,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             </Button>
             <Button
               type="button"
-              onClick={handleExecuteJupiterBuy}
-              disabled={!canExecuteJupiterBuy}
+              onClick={handleBuyFooterAction}
+              disabled={isBuyFooterDisabled}
               className={cn(
                 "w-full sm:w-auto gap-2",
                 !isWalletConnectedForTrade && "bg-amber-300 text-black hover:bg-amber-200"
               )}
             >
-              {isExecutingBuy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet to Buy"}
+              {isExecutingBuy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isWalletConnectedForTrade ? (
+                <Zap className="h-4 w-4" />
+              ) : (
+                <UserPlus className="h-4 w-4" />
+              )}
+              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"}
             </Button>
           </DialogFooter>
         </DialogContent>
