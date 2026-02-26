@@ -113,6 +113,86 @@ type JupiterSwapResponse = {
   lastValidBlockHeight?: number;
 };
 
+type DexscreenerImagePair = {
+  baseToken?: {
+    address?: string;
+  };
+  quoteToken?: {
+    address?: string;
+  };
+  info?: {
+    imageUrl?: string;
+    header?: string;
+    openGraph?: string;
+  };
+};
+
+type DexscreenerImagePayload =
+  | DexscreenerImagePair[]
+  | {
+      pairs?: DexscreenerImagePair[] | null;
+    }
+  | null;
+
+function normalizeDexAddress(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function pickDexImageUrlFromPair(pair: DexscreenerImagePair | undefined): string | null {
+  const candidates = [pair?.info?.imageUrl, pair?.info?.header, pair?.info?.openGraph];
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function pickDexImageUrlFromPayload(
+  payload: DexscreenerImagePayload,
+  contractAddress: string
+): string | null {
+  const pairs = Array.isArray(payload) ? payload : (payload?.pairs ?? []);
+  if (!pairs.length) return null;
+
+  const target = normalizeDexAddress(contractAddress);
+  const matchedPair =
+    pairs.find((pair) => normalizeDexAddress(pair.baseToken?.address) === target) ??
+    pairs.find((pair) => normalizeDexAddress(pair.quoteToken?.address) === target) ??
+    pairs[0];
+
+  return pickDexImageUrlFromPair(matchedPair);
+}
+
+async function fetchDexscreenerTokenImage(args: {
+  contractAddress: string;
+  chainType: string | null;
+}): Promise<string | null> {
+  const { contractAddress, chainType } = args;
+  const chain = chainType === "solana" ? "solana" : "ethereum";
+  const endpoints = [
+    `https://api.dexscreener.com/tokens/v1/${chain}/${contractAddress}`,
+    `https://api.dexscreener.com/latest/dex/tokens/${contractAddress}`,
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) continue;
+      const payload = (await response.json()) as DexscreenerImagePayload;
+      const image = pickDexImageUrlFromPayload(payload, contractAddress);
+      if (image) return image;
+    } catch {
+      // Quiet fallback to next endpoint.
+    }
+  }
+
+  return null;
+}
+
 interface PostCardProps {
   post: Post;
   className?: string;
@@ -1346,6 +1426,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     Number.isFinite(parsedBuyAmountSol) && parsedBuyAmountSol > 0
       ? Math.max(1, Math.floor(parsedBuyAmountSol * LAMPORTS_PER_SOL))
       : null;
+  const dexTokenImageQuery = useQuery({
+    queryKey: ["dexTokenImage", post.chainType, post.contractAddress],
+    enabled: hasContractAddress && !post.tokenImage,
+    staleTime: 30 * 60 * 1000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      if (!post.contractAddress) return null;
+      return fetchDexscreenerTokenImage({
+        contractAddress: post.contractAddress,
+        chainType: post.chainType ?? null,
+      });
+    },
+  });
+  const resolvedTokenImage = post.tokenImage ?? dexTokenImageQuery.data ?? null;
 
   const outputTokenDecimalsQuery = useQuery({
     queryKey: ["jupiterTokenDecimals", post.contractAddress],
@@ -1798,6 +1893,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     : isWalletConnectedForTrade
       ? "Trade Now"
       : "Connect Wallet";
+  const shouldPulseTradeCta =
+    isSolanaTradeSupported && isWalletConnectedForTrade && !localSettled;
   const tradeButtonTone = !isSolanaTradeSupported
     ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
     : isWalletConnectedForTrade
@@ -1991,7 +2088,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   chainType={post.chainType}
                   tokenName={post.tokenName}
                   tokenSymbol={post.tokenSymbol}
-                  tokenImage={post.tokenImage}
+                  tokenImage={resolvedTokenImage}
                   dexscreenerUrl={post.dexscreenerUrl}
                 />
               </div>
@@ -2049,27 +2146,43 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Button
-                      type="button"
-                      onClick={handleTradeCtaClick}
-                      className={cn(
-                        "group/button relative overflow-hidden h-10 px-4 gap-2 rounded-lg border text-sm font-semibold",
-                        tradeButtonTone
-                      )}
-                      variant="ghost"
+                  <div className="w-full sm:w-auto flex items-center sm:justify-end gap-2">
+                    <motion.div
+                      className="w-full sm:w-auto"
+                      whileHover={{ scale: 1.02, y: -1 }}
+                      whileTap={{ scale: 0.98 }}
+                      animate={shouldPulseTradeCta ? { scale: [1, 1.015, 1] } : { scale: 1 }}
+                      transition={
+                        shouldPulseTradeCta
+                          ? { duration: 2.2, repeat: Infinity, ease: "easeInOut" }
+                          : { duration: 0.2, ease: "easeOut" }
+                      }
                     >
-                      <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                      {!localSettled && isSolanaTradeSupported && isWalletConnectedForTrade && (
-                        <span className="relative flex h-2 w-2">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lime-300/70" />
-                          <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-300" />
-                        </span>
-                      )}
-                      {isWalletConnectedForTrade ? <Zap className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-                      <span>{tradeCtaLabel}</span>
-                    </Button>
-
+                      <Button
+                        type="button"
+                        onClick={handleTradeCtaClick}
+                        className={cn(
+                          "group/button relative w-full sm:w-auto min-w-[196px] h-11 px-5 gap-2 rounded-xl border text-[15px] font-extrabold tracking-[0.01em] shadow-[0_14px_36px_-20px_rgba(0,0,0,0.95)]",
+                          tradeButtonTone
+                        )}
+                        variant="ghost"
+                      >
+                        <motion.span
+                          aria-hidden
+                          className="pointer-events-none absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-transparent via-white/28 to-transparent"
+                          animate={isSolanaTradeSupported ? { x: ["-130%", "260%"] } : { x: "-130%" }}
+                          transition={isSolanaTradeSupported ? { duration: 2.6, repeat: Infinity, ease: "linear" } : undefined}
+                        />
+                        {!localSettled && isSolanaTradeSupported && isWalletConnectedForTrade && (
+                          <span className="relative flex h-2.5 w-2.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lime-300/80" />
+                            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lime-300" />
+                          </span>
+                        )}
+                        {isWalletConnectedForTrade ? <Zap className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                        <span className="whitespace-nowrap">{tradeCtaLabel}</span>
+                      </Button>
+                    </motion.div>
                   </div>
                 </div>
 
@@ -2680,8 +2793,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Selected token</div>
                 <div className="mt-3 flex items-center gap-3">
                   <div className="h-12 w-12 rounded-xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0">
-                    {post.tokenImage ? (
-                      <img src={post.tokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
+                    {resolvedTokenImage ? (
+                      <img src={resolvedTokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
                     ) : (
                       <Coins className="h-4 w-4 text-muted-foreground" />
                     )}
@@ -2769,8 +2882,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/[0.05] via-white/[0.03] to-transparent p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
               <div className="flex items-start gap-3">
                 <div className="h-14 w-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0 shadow-inner shadow-black/40">
-                  {post.tokenImage ? (
-                    <img src={post.tokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
+                  {resolvedTokenImage ? (
+                    <img src={resolvedTokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
                   ) : (
                     <Coins className="h-5 w-5 text-muted-foreground" />
                   )}
