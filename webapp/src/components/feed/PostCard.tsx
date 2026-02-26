@@ -78,6 +78,10 @@ const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
 const JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
 const JUPITER_QUOTE_FALLBACK_URL = "https://quote-api.jup.ag/v6/quote";
 const JUPITER_SWAP_FALLBACK_URL = "https://quote-api.jup.ag/v6/swap";
+const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
+const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
+
+type TradeSide = "buy" | "sell";
 
 type JupiterQuoteResponse = {
   inputMint: string;
@@ -140,8 +144,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
+  const [tradeSide, setTradeSide] = useState<TradeSide>("buy");
   const [buyAmountSol, setBuyAmountSol] = useState("0.10");
+  const [sellAmountToken, setSellAmountToken] = useState("");
   const [slippageBps, setSlippageBps] = useState(100);
+  const [slippageInputPercent, setSlippageInputPercent] = useState("1.00");
+  const [showSlippageSettings, setShowSlippageSettings] = useState(false);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
@@ -163,6 +171,23 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       setIsBuyDialogOpen(true);
     }
   }, [wallet.publicKey, isWalletConnectDialogOpen, pendingBuyAfterWalletConnect]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(TRADE_SLIPPAGE_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    const normalized = Math.min(5000, Math.max(1, Math.round(parsed)));
+    setSlippageBps(normalized);
+    setSlippageInputPercent((normalized / 100).toFixed(2));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TRADE_SLIPPAGE_STORAGE_KEY, String(slippageBps));
+    setSlippageInputPercent((slippageBps / 100).toFixed(2));
+  }, [slippageBps]);
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
@@ -1278,26 +1303,90 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   });
   const outputTokenDecimals = outputTokenDecimalsQuery.data ?? 6;
 
+  const parsedSellAmountToken = Number(sellAmountToken);
+  const sellAmountAtomic =
+    Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0
+      ? Math.max(1, Math.floor(parsedSellAmountToken * Math.pow(10, outputTokenDecimals)))
+      : null;
+  const tradeAmountAtomic = tradeSide === "buy" ? buyAmountLamports : sellAmountAtomic;
+  const quoteOutputDecimals = tradeSide === "buy" ? outputTokenDecimals : 9;
+  const tradeInputTokenLabel = tradeSide === "buy" ? "SOL" : (post.tokenSymbol || "TOKEN");
+  const tradeOutputTokenLabel = tradeSide === "buy" ? (post.tokenSymbol || "TOKEN") : "SOL";
+
+  const walletTokenBalanceQuery = useQuery({
+    queryKey: ["walletTokenBalance", wallet.publicKey?.toBase58(), post.contractAddress],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!wallet.publicKey,
+    staleTime: 8_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+    refetchInterval: isBuyDialogOpen ? 15_000 : false,
+    queryFn: async () => {
+      if (!wallet.publicKey || !post.contractAddress) return null;
+      const mint = new PublicKey(post.contractAddress);
+      const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint });
+      let totalUiAmount = 0;
+      for (const account of accounts.value) {
+        type ParsedTokenAmountLike = {
+          uiAmount?: number | null;
+          uiAmountString?: string;
+        };
+        type ParsedTokenAccountLike = {
+          parsed?: {
+            info?: {
+              tokenAmount?: ParsedTokenAmountLike;
+            };
+          };
+        };
+        // Parsed token account shape is stable, but web3 types are broad here.
+        const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
+        const tokenAmount = parsedData.parsed?.info?.tokenAmount;
+        const uiAmount =
+          typeof tokenAmount?.uiAmount === "number"
+            ? tokenAmount.uiAmount
+            : Number(tokenAmount?.uiAmountString ?? 0);
+        if (Number.isFinite(uiAmount)) {
+          totalUiAmount += uiAmount;
+        }
+      }
+      return totalUiAmount;
+    },
+  });
+  const walletTokenBalance =
+    typeof walletTokenBalanceQuery.data === "number" && Number.isFinite(walletTokenBalanceQuery.data)
+      ? walletTokenBalanceQuery.data
+      : null;
+  const walletTokenBalanceFormatted =
+    walletTokenBalance === null
+      ? "-"
+      : walletTokenBalance.toLocaleString(undefined, {
+          maximumFractionDigits: Math.min(8, Math.max(2, outputTokenDecimals)),
+        });
+  const sellAmountExceedsBalance =
+    tradeSide === "sell" &&
+    walletTokenBalance !== null &&
+    Number.isFinite(parsedSellAmountToken) &&
+    parsedSellAmountToken > walletTokenBalance + 1e-9;
+
   const jupiterQuoteQuery = useQuery({
-    queryKey: ["jupiterQuote", post.contractAddress, buyAmountLamports, slippageBps],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!buyAmountLamports,
+    queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeAmountAtomic,
     staleTime: 2_000,
     retry: 1,
     refetchInterval: (q) => (q.state.data ? 6_000 : 2_500),
     refetchOnWindowFocus: false,
     queryFn: async () => {
-      if (!post.contractAddress || !buyAmountLamports) throw new Error("Missing token or amount");
-      let outputMint = post.contractAddress.trim();
+      if (!post.contractAddress || !tradeAmountAtomic) throw new Error("Missing token or amount");
+      let tokenMint = post.contractAddress.trim();
       try {
-        outputMint = new PublicKey(outputMint).toBase58();
+        tokenMint = new PublicKey(tokenMint).toBase58();
       } catch {
         throw new Error("Invalid Solana token address");
       }
 
       const quotePayload = {
-        inputMint: SOL_MINT,
-        outputMint,
-        amount: buyAmountLamports,
+        inputMint: tradeSide === "buy" ? SOL_MINT : tokenMint,
+        outputMint: tradeSide === "buy" ? tokenMint : SOL_MINT,
+        amount: tradeAmountAtomic,
         slippageBps,
         swapMode: "ExactIn",
       };
@@ -1378,6 +1467,29 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     });
   };
 
+  const formatDecimalInputValue = (value: number, fractionDigits: number) => {
+    if (!Number.isFinite(value) || value <= 0) return "";
+    return value
+      .toFixed(Math.max(0, Math.min(8, fractionDigits)))
+      .replace(/\.?0+$/, "");
+  };
+
+  const applySlippagePercentInput = () => {
+    const parsed = Number(slippageInputPercent);
+    if (!Number.isFinite(parsed)) {
+      setSlippageInputPercent((slippageBps / 100).toFixed(2));
+      return;
+    }
+    const clamped = Math.min(50, Math.max(0.01, parsed));
+    setSlippageBps(Math.round(clamped * 100));
+  };
+
+  const setSellAmountFromPercent = (percent: number) => {
+    if (walletTokenBalance === null || walletTokenBalance <= 0) return;
+    const nextValue = (walletTokenBalance * percent) / 100;
+    setSellAmountToken(formatDecimalInputValue(nextValue, Math.max(2, outputTokenDecimals)));
+  };
+
   const handleOpenBuyDialog = () => {
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
@@ -1415,7 +1527,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleExecuteJupiterBuy = async () => {
     if (!isSolanaTradeSupported || !post.contractAddress) {
-      toast.error("Jupiter buy is available for Solana posts only");
+      toast.error("Jupiter trading is available for Solana posts only");
       return;
     }
     if (!wallet.publicKey) {
@@ -1429,6 +1541,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const quote = jupiterQuoteQuery.data;
     if (!quote) {
       toast.error("Wait for quote to load");
+      return;
+    }
+    if (sellAmountExceedsBalance) {
+      toast.error("Sell amount is higher than your current token balance");
       return;
     }
 
@@ -1492,11 +1608,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
 
       setBuyTxSignature(signature);
-      toast.success("Buy order sent successfully");
+      toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} order sent successfully`);
       void jupiterQuoteQuery.refetch();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to execute buy";
-      console.error("[jupiter-buy] Failed to execute trade", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : `Failed to execute ${tradeSide === "buy" ? "buy" : "sell"}`;
+      console.error("[jupiter-trade] Failed to execute trade", error);
       toast.error(message);
     } finally {
       setIsExecutingBuy(false);
@@ -1515,43 +1634,58 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     new Set((jupiterQuote?.routePlan ?? []).map((r) => r.swapInfo?.label).filter(Boolean))
   ) as string[];
   const jupiterOutputAmountFormatted = jupiterQuote
-    ? formatTokenAmountFromAtomic(jupiterQuote.outAmount, outputTokenDecimals)
+    ? tradeSide === "buy"
+      ? formatTokenAmountFromAtomic(jupiterQuote.outAmount, outputTokenDecimals)
+      : formatSolAtomic(jupiterQuote.outAmount)
     : "-";
   const jupiterMinReceiveFormatted = jupiterQuote
-    ? formatTokenAmountFromAtomic(jupiterQuote.otherAmountThreshold, outputTokenDecimals)
+    ? tradeSide === "buy"
+      ? formatTokenAmountFromAtomic(jupiterQuote.otherAmountThreshold, outputTokenDecimals)
+      : formatSolAtomic(jupiterQuote.otherAmountThreshold)
     : "-";
   const jupiterInputAmountFormatted = jupiterQuote
-    ? formatSolAtomic(jupiterQuote.inAmount)
-    : buyAmountLamports
-      ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 })
-      : "-";
+    ? tradeSide === "buy"
+      ? formatSolAtomic(jupiterQuote.inAmount)
+      : formatTokenAmountFromAtomic(jupiterQuote.inAmount, outputTokenDecimals)
+    : tradeSide === "buy"
+      ? buyAmountLamports
+        ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 })
+        : "-"
+      : sellAmountToken || "-";
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
   const tokenMintInfoErrorMessage =
     outputTokenDecimalsQuery.error instanceof Error ? outputTokenDecimalsQuery.error.message : null;
+  const walletTokenBalanceErrorMessage =
+    walletTokenBalanceQuery.error instanceof Error ? walletTokenBalanceQuery.error.message : null;
   const jupiterNoRouteDetected =
     !!jupiterQuoteErrorMessage &&
     /route|not tradable|no route|could not find|TOKEN_NOT_TRADABLE/i.test(jupiterQuoteErrorMessage);
+  const jupiterQuoteUnavailable =
+    !!jupiterQuoteErrorMessage &&
+    !jupiterNoRouteDetected;
   const walletShortAddress = wallet.publicKey
     ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
     : null;
   const walletDisplayName = wallet.wallet?.adapter?.name ?? "Solana Wallet";
   const buyQuickAmounts = ["0.05", "0.10", "0.25", "0.50", "1.00"];
+  const sellQuickPercents = [25, 50, 75, 100];
   const isWalletConnectedForTrade = !!wallet.publicKey;
   const canExecuteJupiterBuy =
     isSolanaTradeSupported &&
     !!wallet.publicKey &&
-    !!wallet.publicKey &&
     !!wallet.signTransaction &&
     !!jupiterQuote &&
+    !!tradeAmountAtomic &&
+    !sellAmountExceedsBalance &&
     !isExecutingBuy;
   const tradeCtaLabel = !isSolanaTradeSupported
-    ? "Buy (Solana only)"
+    ? "Trade (Solana only)"
     : isWalletConnectedForTrade
-      ? "Buy Now"
+      ? "Trade Now"
       : "Connect Wallet";
-  const tradeCtaSubtleLabel = isWalletConnectedForTrade ? "Jupiter" : "Jupiter setup";
+  const tradeCtaSubtleLabel = isWalletConnectedForTrade ? "Buy / Sell via Jupiter" : "Jupiter setup";
   const tradeButtonTone = !isSolanaTradeSupported
     ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
     : isWalletConnectedForTrade
@@ -1600,6 +1734,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ? "Fetching route..."
       : jupiterNoRouteDetected
         ? "No route on Jupiter"
+        : jupiterQuoteUnavailable
+          ? "Quote unavailable"
         : jupiterQuote
           ? "Route ready"
           : "Awaiting quote";
@@ -1607,6 +1743,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ? "border-white/10 bg-white/5 text-white/70"
     : jupiterNoRouteDetected
       ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+      : jupiterQuoteUnavailable
+        ? "border-loss/20 bg-loss/10 text-loss"
       : jupiterQuote
         ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
         : "border-white/10 bg-white/5 text-white/70";
@@ -1614,12 +1752,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ? "Loading quote..."
     : jupiterNoRouteDetected
       ? "No route available"
-      : `${jupiterOutputAmountFormatted} ${post.tokenSymbol || "TOKEN"}`;
+      : jupiterQuoteUnavailable
+        ? "Quote unavailable"
+      : `${jupiterOutputAmountFormatted} ${tradeOutputTokenLabel}`;
   const jupiterMinReceiveDisplay = jupiterQuoteQuery.isLoading
     ? "Loading quote..."
     : jupiterNoRouteDetected
       ? "No route available"
-      : `${jupiterMinReceiveFormatted} ${post.tokenSymbol || "TOKEN"}`;
+      : jupiterQuoteUnavailable
+        ? "Quote unavailable"
+      : `${jupiterMinReceiveFormatted} ${tradeOutputTokenLabel}`;
   const jupiterPriceImpactDisplay =
     jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
       ? "-"
@@ -2468,21 +2610,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       </Dialog>
 
       <Dialog open={isBuyDialogOpen} onOpenChange={setIsBuyDialogOpen}>
-        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] overflow-y-auto border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
-          <DialogHeader className="relative overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
+        <DialogContent className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
+          <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Zap className="h-4 w-4 text-primary" />
-              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"} - {post.tokenSymbol || "Token"}
+              {isWalletConnectedForTrade ? "Trade" : "Connect Wallet"} - {post.tokenSymbol || "Token"}
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm">
               {isSolanaTradeSupported
-                ? "Live chart + Jupiter buy controls in one view for faster entries."
+                ? "Live chart + buy/sell controls stay in one panel so users can trade while watching the chart."
                 : "Trading is available here for Solana posts. This post is on another chain."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="p-4 sm:p-6 space-y-4 bg-[radial-gradient(circle_at_15%_0%,rgba(163,230,53,0.06),transparent_35%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.06),transparent_35%)]">
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-[radial-gradient(circle_at_15%_0%,rgba(163,230,53,0.06),transparent_35%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.06),transparent_35%)]">
             <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/[0.05] via-white/[0.03] to-transparent p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
               <div className="flex items-start gap-3">
                 <div className="h-14 w-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0 shadow-inner shadow-black/40">
@@ -2654,6 +2796,44 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
 
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Order Ticket</div>
+                          <div className="text-sm font-medium text-foreground">Buy or sell without leaving the chart</div>
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-muted-foreground">
+                          Auto quote refresh
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTradeSide("buy")}
+                          className={cn(
+                            "h-10 rounded-xl border text-sm font-semibold transition-colors",
+                            tradeSide === "buy"
+                              ? "border-lime-300/35 bg-lime-300/10 text-lime-100"
+                              : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/5"
+                          )}
+                        >
+                          Buy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTradeSide("sell")}
+                          className={cn(
+                            "h-10 rounded-xl border text-sm font-semibold transition-colors",
+                            tradeSide === "sell"
+                              ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100"
+                              : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/5"
+                          )}
+                        >
+                          Sell
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
                         {walletShortAddress ? (
@@ -2693,58 +2873,186 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
-                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Buy Amount (SOL)</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {jupiterQuoteQuery.isFetching ? "Refreshing quote..." : "Live quote"}
+                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                          {tradeSide === "buy" ? "Buy Amount" : "Sell Amount"}
                         </div>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          value={buyAmountSol}
-                          onChange={(e) => setBuyAmountSol(e.target.value)}
-                          inputMode="decimal"
-                          placeholder="0.10"
-                          className="h-12 pr-12 text-lg font-semibold bg-black/20 border-white/10"
-                        />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">SOL</span>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {buyQuickAmounts.map((amount) => (
-                          <button
-                            key={amount}
-                            type="button"
-                            onClick={() => setBuyAmountSol(amount)}
+                        <div className="flex items-center gap-2">
+                          <span
                             className={cn(
-                              "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                              buyAmountSol === amount
-                                ? "border-primary/40 bg-primary/10 text-foreground"
-                                : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                              "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em]",
+                              tradeSide === "buy"
+                                ? "border-lime-300/25 bg-lime-300/10 text-lime-100"
+                                : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
                             )}
                           >
-                            {amount} SOL
-                          </button>
-                        ))}
+                            {tradeSide}
+                          </span>
+                          <div className="text-[11px] text-muted-foreground">
+                            {jupiterQuoteQuery.isFetching ? "Refreshing quote..." : "Live quote"}
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="mt-4">
-                        <div className="mb-2 text-xs uppercase tracking-[0.12em] text-muted-foreground">Slippage</div>
-                        <div className="flex flex-wrap gap-2">
-                          {[50, 100, 200].map((bps) => (
-                            <button
-                              key={bps}
-                              type="button"
-                              onClick={() => setSlippageBps(bps)}
-                              className={cn(
-                                "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                                slippageBps === bps
-                                  ? "border-primary/40 bg-primary/10 text-foreground"
-                                  : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                              )}
-                            >
-                              {(bps / 100).toFixed(2)}%
-                            </button>
-                          ))}
+                      {tradeSide === "buy" ? (
+                        <>
+                          <div className="relative">
+                            <Input
+                              value={buyAmountSol}
+                              onChange={(e) => setBuyAmountSol(e.target.value)}
+                              inputMode="decimal"
+                              placeholder="0.10"
+                              className="h-12 pr-12 text-lg font-semibold bg-black/20 border-white/10"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">SOL</span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {buyQuickAmounts.map((amount) => (
+                              <button
+                                key={amount}
+                                type="button"
+                                onClick={() => setBuyAmountSol(amount)}
+                                className={cn(
+                                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                                  buyAmountSol === amount
+                                    ? "border-primary/40 bg-primary/10 text-foreground"
+                                    : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                )}
+                              >
+                                {amount} SOL
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="relative">
+                            <Input
+                              value={sellAmountToken}
+                              onChange={(e) => setSellAmountToken(e.target.value)}
+                              inputMode="decimal"
+                              placeholder={`0.00 ${post.tokenSymbol || "TOKEN"}`}
+                              className="h-12 pr-20 text-lg font-semibold bg-black/20 border-white/10"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">
+                              {post.tokenSymbol || "TOKEN"}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex items-center justify-between gap-3 text-xs">
+                            <div className="text-muted-foreground">
+                              {walletShortAddress
+                                ? walletTokenBalanceQuery.isLoading
+                                  ? "Loading token balance..."
+                                  : `Available: ${walletTokenBalanceFormatted} ${post.tokenSymbol || "TOKEN"}`
+                                : "Connect wallet to load your token balance"}
+                            </div>
+                            {walletShortAddress && walletTokenBalance !== null ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSellAmountToken(
+                                    formatDecimalInputValue(walletTokenBalance, Math.max(2, outputTokenDecimals))
+                                  )
+                                }
+                                className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-medium text-foreground hover:bg-white/5 transition-colors"
+                              >
+                                Max
+                              </button>
+                            ) : null}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {sellQuickPercents.map((percent) => (
+                              <button
+                                key={percent}
+                                type="button"
+                                onClick={() => setSellAmountFromPercent(percent)}
+                                disabled={!walletShortAddress || walletTokenBalance === null || walletTokenBalance <= 0}
+                                className={cn(
+                                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+                                  "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                )}
+                              >
+                                Sell {percent}%
+                              </button>
+                            ))}
+                          </div>
+                          {sellAmountExceedsBalance ? (
+                            <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100">
+                              Sell amount exceeds your loaded wallet balance.
+                            </div>
+                          ) : null}
+                          {walletTokenBalanceErrorMessage ? (
+                            <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100">
+                              Could not load wallet token balance from Solana RPC. You can still enter a sell amount manually.
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+
+                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Slippage Settings</div>
+                          <button
+                            type="button"
+                            onClick={() => setShowSlippageSettings((prev) => !prev)}
+                            className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-white/10 transition-colors"
+                          >
+                            {showSlippageSettings ? "Hide" : "Edit"}
+                          </button>
                         </div>
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          Current: {(slippageBps / 100).toFixed(2)}% ({slippageBps} bps). Saved on this device.
+                        </div>
+                        {showSlippageSettings ? (
+                          <div className="mt-3 space-y-3">
+                            <div className="flex flex-wrap gap-2">
+                              {SLIPPAGE_PRESETS_BPS.map((bps) => (
+                                <button
+                                  key={bps}
+                                  type="button"
+                                  onClick={() => setSlippageBps(bps)}
+                                  className={cn(
+                                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                                    slippageBps === bps
+                                      ? "border-primary/40 bg-primary/10 text-foreground"
+                                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                  )}
+                                >
+                                  {(bps / 100).toFixed(2)}%
+                                </button>
+                              ))}
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                              <div className="relative">
+                                <Input
+                                  value={slippageInputPercent}
+                                  onChange={(e) => setSlippageInputPercent(e.target.value)}
+                                  onBlur={applySlippagePercentInput}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      applySlippagePercentInput();
+                                    }
+                                  }}
+                                  inputMode="decimal"
+                                  placeholder="1.00"
+                                  className="h-10 pr-9 bg-black/20 border-white/10"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">%</span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-10 border-white/10 bg-white/5 hover:bg-white/10"
+                                onClick={applySlippagePercentInput}
+                              >
+                                Apply
+                              </Button>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              Range: 0.01% to 50.00%. Higher slippage improves fill odds but increases execution risk.
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -2773,7 +3081,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="mt-3 grid gap-2">
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                           <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterInputAmountFormatted} SOL</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            {jupiterInputAmountFormatted} {tradeInputTokenLabel}
+                          </div>
                         </div>
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                           <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Receive (Est.)</div>
@@ -2817,9 +3127,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               : "No route yet"}
                         </div>
                       )}
-                      <div className="mt-3 text-[11px] text-muted-foreground">
-                        Quotes update automatically while this modal is open.
-                      </div>
                       {showPumpFallbackCta ? (
                         <div className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/5 p-3">
                           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-lime-100">
@@ -2840,28 +3147,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </a>
                         </div>
                       ) : null}
-                      {jupiterQuoteErrorMessage ? (
+                      {jupiterQuoteUnavailable && !jupiterQuoteQuery.isFetching ? (
                         <div className="mt-3 rounded-xl border border-loss/20 bg-loss/5 p-3">
                           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-loss">Provider Error</div>
                           <p className="mt-1 text-xs text-loss/90">
-                            We are not hiding the failure. Raw quote provider response is shown below.
+                            Quote temporarily unavailable. Retry in a moment, adjust amount/slippage, or use the full chart link.
                           </p>
-                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-200/85">
-{jupiterQuoteErrorMessage}
-                          </pre>
-                        </div>
-                      ) : null}
-                      {tokenMintInfoErrorMessage ? (
-                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/5 p-3">
-                          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-amber-100">
-                            Token Data Error
-                          </div>
-                          <p className="mt-1 text-xs text-amber-100/85">
-                            Token mint info could not be refreshed from the Solana RPC. Quote and swap can still work if Jupiter has a route.
-                          </p>
-                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-200/85">
-{tokenMintInfoErrorMessage}
-                          </pre>
                         </div>
                       ) : null}
                       <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
@@ -2909,7 +3200,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               ) : (
                 <UserPlus className="h-4 w-4" />
               )}
-              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"}
+              {isWalletConnectedForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : "Connect Wallet"}
             </Button>
           </DialogFooter>
         </DialogContent>

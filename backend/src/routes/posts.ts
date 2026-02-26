@@ -72,11 +72,14 @@ type MaintenanceRunResult = {
 
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
+let lastCronMaintenanceCompletedAt = 0;
 let lastLeaderboardSnapshotWarmAt = 0;
 let leaderboardSnapshotWarmCursor = 0;
 const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
 const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
+const CRON_MAINTENANCE_HEALTH_WINDOW_MS =
+  process.env.NODE_ENV === "production" ? 3 * 60_000 : 20_000;
 const priceRefreshInFlight = new Map<string, Promise<number | null>>();
 const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
 const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 25 : 15;
@@ -94,6 +97,12 @@ const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: nu
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
+
+function isCronMaintenanceHealthy(): boolean {
+  if (!hasCronMaintenanceConfigured) return false;
+  if (!lastCronMaintenanceCompletedAt) return false;
+  return Date.now() - lastCronMaintenanceCompletedAt < CRON_MAINTENANCE_HEALTH_WINDOW_MS;
+}
 const JUPITER_QUOTE_URLS = [
   "https://lite-api.jup.ag/swap/v1/quote",
   "https://quote-api.jup.ag/v6/quote",
@@ -878,12 +887,11 @@ postsRouter.get("/", async (c) => {
     ? parsed.data
     : { sort: "latest" as const, following: false, limit: 50, cursor: undefined, search: undefined };
 
-  // Safety fallback when scheduled maintenance is not running (e.g. no Vercel cron).
+  // Safety fallback when scheduled maintenance is not running or is unhealthy.
   // This is throttled + non-blocking, and only runs on the first page to avoid feed jitter.
   if (!cursor && !search) {
-    // If cron maintenance is configured, avoid piggybacking heavy maintenance work
-    // on user feed requests. This reduces DB spikes affecting feed reliability.
-    if (!hasCronMaintenanceConfigured && sort === "latest" && !following) {
+    // Only piggyback when cron is unavailable/unhealthy to avoid adding load to healthy setups.
+    if (!isCronMaintenanceHealthy() && sort === "latest" && !following) {
       triggerMaintenanceCycleNonBlocking(`feed:${sort}`);
     }
   }
@@ -1232,6 +1240,7 @@ postsRouter.get("/maintenance/run", async (c) => {
   const now = Date.now();
   if (maintenanceRunInFlight) {
     const result = await maintenanceRunInFlight;
+    lastCronMaintenanceCompletedAt = Date.now();
     return c.json({
       data: {
         ...result,
@@ -1267,6 +1276,7 @@ postsRouter.get("/maintenance/run", async (c) => {
 
   try {
     const result = await maintenanceRunInFlight;
+    lastCronMaintenanceCompletedAt = Date.now();
     return c.json({ data: result });
   } catch {
     return c.json({
@@ -2536,13 +2546,14 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     };
   }
 
-  // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable.
+  // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable
+  // or configured but unhealthy (e.g. cron stopped running).
   // Keeps feed request path clean while still allowing 1H/6H status to catch up.
   if (
     (isReadyFor1HSettlement(post.createdAt, post.settled) ||
       isReadyFor6HSnapshot(post.createdAt, post.mcap6h)) &&
     post.entryMcap !== null &&
-    !hasCronMaintenanceConfigured
+    !isCronMaintenanceHealthy()
   ) {
     triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
   }
