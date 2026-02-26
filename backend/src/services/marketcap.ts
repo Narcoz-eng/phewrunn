@@ -88,6 +88,49 @@ function calculateBackoffDelay(attempt: number): number {
   return Math.min(delay, MAX_DELAY_MS);
 }
 
+function normalizeDexAddress(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function selectBestDexPair(
+  pairs: DexscreenerPair[] | null | undefined,
+  requestedAddress: string
+): DexscreenerPair | undefined {
+  if (!pairs?.length) return undefined;
+
+  const target = normalizeDexAddress(requestedAddress);
+  if (!target) return pairs[0];
+
+  const exactBasePair = pairs.find(
+    (pair) => normalizeDexAddress(pair.baseToken?.address) === target
+  );
+  if (exactBasePair) return exactBasePair;
+
+  const quoteMatchPair = pairs.find(
+    (pair) => normalizeDexAddress(pair.quoteToken?.address) === target
+  );
+  if (quoteMatchPair) return quoteMatchPair;
+
+  return pairs[0];
+}
+
+function pickDexImageUrl(pair: DexscreenerPair | undefined): string | undefined {
+  const candidates = [
+    pair?.info?.imageUrl,
+    pair?.info?.header,
+    pair?.info?.openGraph,
+  ];
+
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+    if (value) return value;
+  }
+
+  return undefined;
+}
+
 /**
  * Fetch market cap from DexScreener API with rate limiting and exponential backoff
  * @param address - Token contract address
@@ -135,13 +178,13 @@ export async function fetchMarketCap(address: string): Promise<MarketCapResult> 
 
       const data = await response.json() as DexscreenerResponse;
 
-      const pair = data.pairs?.[0];
+      const pair = selectBestDexPair(data.pairs, address);
       if (pair) {
         return {
           mcap: pair.fdv ?? pair.marketCap ?? null,
           tokenName: pair.baseToken?.name,
           tokenSymbol: pair.baseToken?.symbol,
-          tokenImage: pair.info?.imageUrl,
+          tokenImage: pickDexImageUrl(pair),
         };
       }
 

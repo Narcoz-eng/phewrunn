@@ -593,7 +593,11 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
                 data: updateData,
               });
               result.updatedPosts++;
-              continue;
+              const stillMissingMetadata =
+                (!post.tokenName && !updateData.tokenName) ||
+                (!post.tokenSymbol && !updateData.tokenSymbol) ||
+                (!post.tokenImage && !updateData.tokenImage);
+              if (!stillMissingMetadata) continue;
             }
           }
         } catch (error) {
@@ -667,8 +671,8 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
           if (!post.tokenSymbol && (heliusMetadata?.tokenSymbol || marketCapResult.tokenSymbol)) {
             updateData.tokenSymbol = heliusMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol;
           }
-          if (!post.tokenImage && (heliusMetadata?.tokenImage || marketCapResult.tokenImage)) {
-            updateData.tokenImage = heliusMetadata?.tokenImage ?? marketCapResult.tokenImage;
+          if (!post.tokenImage && (marketCapResult.tokenImage || heliusMetadata?.tokenImage)) {
+            updateData.tokenImage = marketCapResult.tokenImage ?? heliusMetadata?.tokenImage;
           }
 
           if (Object.keys(updateData).length === 0) continue;
@@ -1413,10 +1417,10 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
       chainType: detected.chainType,
       entryMcap,
       currentMcap: entryMcap,
-      // Store token metadata (Helius-first for Solana, Dex fallback)
+      // Store token metadata (Helius-first for names/symbol, Dex-first for image)
       tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult.tokenName ?? null,
       tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol ?? null,
-      tokenImage: heliusTokenMetadata?.tokenImage ?? marketCapResult.tokenImage ?? null,
+      tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
       trackingMode: TRACKING_MODE_ACTIVE, // New posts start in active tracking mode
       lastMcapUpdate: new Date(),
     },
