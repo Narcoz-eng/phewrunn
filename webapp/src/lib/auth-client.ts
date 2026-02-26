@@ -44,7 +44,7 @@ export async function signUp() {
 }
 
 export async function signOut() {
-  const token = localStorage.getItem("auth-token");
+  const token = getStoredAuthToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -89,6 +89,33 @@ const SIGN_OUT_TIMEOUT_MS = 2500;
 
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let sessionRateLimitedUntil = 0;
+let lastPrivySyncAt = 0;
+
+function getStoredAuthToken(): string | null {
+  try {
+    return localStorage.getItem("auth-token");
+  } catch (error) {
+    console.warn("[Auth] Failed to read auth token from localStorage; using cookie auth only", error);
+    return null;
+  }
+}
+
+function setStoredAuthToken(token: string): void {
+  try {
+    localStorage.setItem("auth-token", token);
+  } catch (error) {
+    // Cookie-based auth is primary. localStorage token is only a fallback.
+    console.warn("[Auth] Failed to persist auth token to localStorage; continuing with cookie auth", error);
+  }
+}
+
+function clearStoredAuthToken(): void {
+  try {
+    localStorage.removeItem("auth-token");
+  } catch (error) {
+    console.warn("[Auth] Failed to clear auth token from localStorage", error);
+  }
+}
 
 function readCachedAuthUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
@@ -149,11 +176,12 @@ async function fetchSession(): Promise<AuthUser | null> {
   }
 
   sessionFetchInFlight = (async () => {
+  const requestStartedAt = Date.now();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SESSION_FETCH_TIMEOUT_MS);
   try {
     // Get token from localStorage as fallback for cross-origin issues
-    const token = localStorage.getItem("auth-token");
+    const token = getStoredAuthToken();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -182,8 +210,12 @@ async function fetchSession(): Promise<AuthUser | null> {
       }
       // Clear invalid token
       if (response.status === 401) {
-        localStorage.removeItem("auth-token");
-        clearCachedAuthUser();
+        if (lastPrivySyncAt <= requestStartedAt) {
+          clearStoredAuthToken();
+          clearCachedAuthUser();
+        } else {
+          console.warn("[Auth] Ignoring stale 401 from /api/me after newer Privy sync");
+        }
       }
       return response.status === 401 ? null : cachedUser;
     }
@@ -262,9 +294,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    localStorage.removeItem("auth-token");
+    clearStoredAuthToken();
     clearCachedAuthUser();
     sessionRateLimitedUntil = 0;
+    sessionFetchInFlight = null;
+    lastPrivySyncAt = 0;
     setState({
       user: null,
       isLoading: false,
@@ -385,7 +419,7 @@ export async function signUpWithEmail(email: string, password: string, name: str
 
     // Store token in localStorage for cross-origin auth
     if (data?.token) {
-      localStorage.setItem("auth-token", data.token);
+      setStoredAuthToken(data.token);
     }
 
     return { data: data || { success: true } };
@@ -424,7 +458,7 @@ export async function signInWithEmail(email: string, password: string) {
 
     // Store token in localStorage for cross-origin auth
     if (data?.token) {
-      localStorage.setItem("auth-token", data.token);
+      setStoredAuthToken(data.token);
     }
 
     return { data: data || { success: true } };
@@ -551,8 +585,13 @@ export async function syncPrivySession(
       throw new Error(message);
     }
 
-    // Store the session token for Bearer auth
-    localStorage.setItem("auth-token", data.token);
+    // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
+    lastPrivySyncAt = Date.now();
+    sessionRateLimitedUntil = 0;
+    sessionFetchInFlight = null;
+
+    // Store the session token for Bearer auth fallback
+    setStoredAuthToken(data.token);
     writeCachedAuthUser(data.user);
     return { token: data.token, user: data.user };
   } catch (error) {

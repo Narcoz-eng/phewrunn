@@ -522,6 +522,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     const now = new Date();
 
     // Prefer the Privy account link first to support email changes in Privy.
+    // We resolve the user in a second query so orphaned rows don't crash the route.
     const existingPrivyAccount = await prisma.account.findUnique({
       where: {
         providerId_accountId: {
@@ -529,10 +530,23 @@ app.post("/api/auth/privy-sync", async (c) => {
           accountId: verifiedPrivyUserId,
         },
       },
-      include: { user: true },
+      select: { id: true, userId: true },
     });
 
-    let user = existingPrivyAccount?.user ?? null;
+    let user = existingPrivyAccount?.userId
+      ? await prisma.user.findUnique({ where: { id: existingPrivyAccount.userId } })
+      : null;
+
+    if (existingPrivyAccount && !user) {
+      console.warn("[privy-sync] Found orphaned Privy account link; removing stale link", {
+        accountId: existingPrivyAccount.id,
+        userId: existingPrivyAccount.userId,
+      });
+      await prisma.account.delete({ where: { id: existingPrivyAccount.id } }).catch((error) => {
+        console.warn("[privy-sync] Failed to delete orphaned Privy account link:", error);
+      });
+    }
+    const hasValidPrivyAccountLink = !!(existingPrivyAccount && user);
 
     // If no linked Privy account exists yet, find/create the local user by verified email.
     if (!user) {
@@ -561,7 +575,7 @@ app.post("/api/auth/privy-sync", async (c) => {
       });
     }
 
-    if (!existingPrivyAccount) {
+    if (!hasValidPrivyAccountLink) {
       try {
         const linkedAccount = await prisma.account.upsert({
           where: {
@@ -579,10 +593,11 @@ app.post("/api/auth/privy-sync", async (c) => {
             createdAt: now,
             updatedAt: now,
           },
-          include: { user: true },
+          select: { userId: true },
         });
-        if (linkedAccount.user) {
-          user = linkedAccount.user;
+        const linkedUser = await prisma.user.findUnique({ where: { id: linkedAccount.userId } });
+        if (linkedUser) {
+          user = linkedUser;
         }
       } catch (error) {
         if (!isUniqueConstraintError(error)) {
@@ -597,31 +612,57 @@ app.post("/api/auth/privy-sync", async (c) => {
               accountId: verifiedPrivyUserId,
             },
           },
-          include: { user: true },
+          select: { id: true, userId: true },
         });
-        if (!linkedAccount?.user) {
+        if (!linkedAccount?.userId) {
           throw error;
         }
-        user = linkedAccount.user;
+        const linkedUser = await prisma.user.findUnique({ where: { id: linkedAccount.userId } });
+        if (!linkedUser) {
+          console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
+            accountId: linkedAccount.id,
+            userId: linkedAccount.userId,
+          });
+          await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
+            console.warn("[privy-sync] Failed to delete stale concurrent Privy link:", deleteError);
+          });
+          throw error;
+        }
+        user = linkedUser;
       }
     }
 
-    // Issue a session token
-    const sessionToken = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    // Issue a session token (retry once if an unlikely token collision occurs)
+    let sessionToken =
+      crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+    const userAgent = c.req.header("user-agent") ?? "unknown";
 
-    await prisma.session.create({
-      data: {
-        id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-        token: sessionToken,
-        userId: user.id,
-        expiresAt,
-        createdAt: now,
-        updatedAt: now,
-        ipAddress: c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown",
-        userAgent: c.req.header("user-agent") ?? "unknown",
-      },
-    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await prisma.session.create({
+          data: {
+            id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+            token: sessionToken,
+            userId: user.id,
+            expiresAt,
+            createdAt: now,
+            updatedAt: now,
+            ipAddress,
+            userAgent,
+          },
+        });
+        break;
+      } catch (error) {
+        if (attempt === 0 && isUniqueConstraintError(error)) {
+          sessionToken =
+            crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+          continue;
+        }
+        throw error;
+      }
+    }
 
     // Also set a session cookie for cookie-based auth
     const isProd = process.env.NODE_ENV === "production";
