@@ -9,6 +9,7 @@ type WindowVirtualListProps<T> = {
   className?: string;
   itemClassName?: string;
   emptyState?: ReactNode;
+  minItemsToVirtualize?: number;
 };
 
 type ViewportState = {
@@ -31,6 +32,7 @@ export function WindowVirtualList<T>({
   className,
   itemClassName,
   emptyState = null,
+  minItemsToVirtualize = 32,
 }: WindowVirtualListProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const itemHeightsRef = useRef(new Map<string, number>());
@@ -178,6 +180,21 @@ export function WindowVirtualList<T>({
 
   if (items.length === 0) {
     return <>{emptyState}</>;
+  }
+
+  if (items.length < minItemsToVirtualize) {
+    return (
+      <div ref={containerRef} className={className} style={{ position: "relative" }}>
+        {items.map((item, index) => {
+          const key = getItemKey(item, index);
+          return (
+            <div key={key} className={itemClassName}>
+              {renderItem(item, index)}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   const topSpacer = layout.startIndex > 0 ? layout.offsets[layout.startIndex] : 0;

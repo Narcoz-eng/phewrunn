@@ -726,11 +726,20 @@ async function prewarmLeaderboardSnapshots(): Promise<{
   };
 }
 
-async function runMaintenanceCycle(): Promise<MaintenanceRunResult> {
+async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Promise<MaintenanceRunResult> {
   const startedAtMs = Date.now();
   const settlement = await checkAndSettlePosts();
   const marketRefresh = await refreshTrackedMarketCaps();
-  const snapshotWarmup = await prewarmLeaderboardSnapshots();
+  const snapshotWarmup = options?.prewarmSnapshots
+    ? await prewarmLeaderboardSnapshots()
+    : {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        durationMs: 0,
+        skipped: true,
+        reason: "disabled_for_opportunistic_run",
+      };
 
   const summary: MaintenanceRunResult = {
     startedAt: new Date(startedAtMs).toISOString(),
@@ -1160,7 +1169,7 @@ postsRouter.get("/maintenance/run", async (c) => {
   }
 
   lastMaintenanceRunStartedAt = now;
-  maintenanceRunInFlight = runMaintenanceCycle()
+  maintenanceRunInFlight = runMaintenanceCycle({ prewarmSnapshots: true })
     .catch((error) => {
       console.error("[Maintenance] Run failed:", error);
       throw error;
