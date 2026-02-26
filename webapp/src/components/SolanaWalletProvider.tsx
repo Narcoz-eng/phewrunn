@@ -23,12 +23,13 @@ interface SolanaWalletProviderProps {
 export function SolanaWalletProvider({ children }: SolanaWalletProviderProps) {
   // Use mainnet-beta for production, devnet for development
   const endpoint = useMemo(() => {
-    // Check for custom RPC endpoint from environment
-    if (import.meta.env.VITE_SOLANA_RPC_URL) {
-      return import.meta.env.VITE_SOLANA_RPC_URL;
-    }
+    // Prefer Helius when configured (used for token metadata/balance reads + wallet RPC).
     if (import.meta.env.VITE_HELIUS_RPC_URL) {
       return import.meta.env.VITE_HELIUS_RPC_URL;
+    }
+    // Fallback to any custom RPC endpoint from environment.
+    if (import.meta.env.VITE_SOLANA_RPC_URL) {
+      return import.meta.env.VITE_SOLANA_RPC_URL;
     }
     // Default to mainnet for real wallet connections
     return clusterApiUrl("mainnet-beta");

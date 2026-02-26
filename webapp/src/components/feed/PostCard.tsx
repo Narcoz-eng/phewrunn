@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
+import { Connection, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -153,6 +153,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
+  const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
+  const tradeReadConnection = useMemo(
+    () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
+    [heliusReadRpcUrl, connection]
+  );
 
   // Sync follow state when post data changes
   useEffect(() => {
@@ -1296,19 +1301,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     staleTime: 60 * 60 * 1000,
     retry: 1,
     queryFn: async () => {
-      if (!post.contractAddress) {
-        return { decimals: 6, supplyUiAmountString: null as string | null };
-      }
-      const supply = await connection.getTokenSupply(new PublicKey(post.contractAddress));
-      return {
-        decimals: supply.value.decimals,
-        supplyUiAmountString: supply.value.uiAmountString ?? null,
-      };
+      if (!post.contractAddress) return 6;
+      const supply = await tradeReadConnection.getTokenSupply(new PublicKey(post.contractAddress));
+      return supply.value.decimals;
     },
   });
-  const outputTokenDecimals = outputTokenDecimalsQuery.data?.decimals ?? 6;
-  const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data?.decimals === "number";
-  const outputTokenSupplyUiAmountString = outputTokenDecimalsQuery.data?.supplyUiAmountString ?? null;
+  const outputTokenDecimals = outputTokenDecimalsQuery.data ?? 6;
+  const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data === "number";
 
   const parsedSellAmountToken = Number(sellAmountToken);
   const sellAmountAtomic =
@@ -1330,7 +1329,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     queryFn: async () => {
       if (!wallet.publicKey || !post.contractAddress) return null;
       const mint = new PublicKey(post.contractAddress);
-      const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint });
+      const accounts = await tradeReadConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint });
       let totalUiAmount = 0;
       for (const account of accounts.value) {
         type ParsedTokenAmountLike = {
@@ -1368,14 +1367,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : walletTokenBalance.toLocaleString(undefined, {
           maximumFractionDigits: Math.min(8, Math.max(2, outputTokenDecimals)),
         });
-  const tokenSupplyDisplay =
-    outputTokenSupplyUiAmountString === null
-      ? "-"
-      : Number.isFinite(Number(outputTokenSupplyUiAmountString))
-        ? Number(outputTokenSupplyUiAmountString).toLocaleString(undefined, {
-            maximumFractionDigits: Math.min(6, Math.max(2, outputTokenDecimals)),
-          })
-        : outputTokenSupplyUiAmountString;
   const sellAmountExceedsBalance =
     tradeSide === "sell" &&
     walletTokenBalance !== null &&
@@ -1671,8 +1662,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
-  const tokenMintInfoErrorMessage =
-    outputTokenDecimalsQuery.error instanceof Error ? outputTokenDecimalsQuery.error.message : null;
   const walletTokenBalanceErrorMessage =
     walletTokenBalanceQuery.error instanceof Error ? walletTokenBalanceQuery.error.message : null;
   const jupiterNoRouteDetected =
@@ -2864,44 +2853,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                       </div>
 
-                      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Token (RPC)</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">
-                            {outputTokenDecimalsQuery.isLoading
-                              ? "Loading..."
-                              : tokenMintInfoErrorMessage
-                                ? "Unavailable"
-                                : `${outputTokenDecimals} decimals`}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            Supply: {outputTokenDecimalsQuery.isLoading ? "Loading..." : tokenSupplyDisplay}
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Wallet Token (RPC)</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">
-                            {!walletShortAddress
-                              ? "Connect wallet"
-                              : walletTokenBalanceQuery.isLoading
-                                ? "Loading..."
-                                : `${walletTokenBalanceFormatted} ${post.tokenSymbol || "TOKEN"}`}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {walletShortAddress ? "Used for sell amount + balance checks" : "Required for sell quotes"}
-                          </div>
-                        </div>
-                      </div>
-
-                      {tradeSide === "sell" && (
+                      {tradeSide === "sell" && sellBlockedByRpcTokenInfo ? (
                         <div className="mb-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
-                          {sellBlockedByRpcTokenInfo
-                            ? (tokenMintInfoErrorMessage
-                                ? "Waiting for Solana RPC token mint info before sell quotes can be built."
-                                : "Loading Solana RPC token mint info for sell quotes...")
-                            : "Sell quotes use Solana RPC token decimals and your wallet token balance."}
+                          {outputTokenDecimalsQuery.isFetching
+                            ? "Loading token info from Helius..."
+                            : "Token info is still loading. Sell quote will unlock when Helius responds."}
                         </div>
-                      )}
+                      ) : null}
 
                       {tradeSide === "buy" ? (
                         <>
@@ -2992,11 +2950,45 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           ) : null}
                           {walletTokenBalanceErrorMessage ? (
                             <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100">
-                              Could not load wallet token balance from Solana RPC. You can still enter a sell amount manually.
+                              Could not load wallet token balance from Helius yet. You can still enter a sell amount manually.
                             </div>
                           ) : null}
                         </>
                       )}
+
+                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Trade Preview</div>
+                          <span
+                            className={cn(
+                              "rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]",
+                              tradeSide === "buy"
+                                ? "border-lime-300/25 bg-lime-300/10 text-lime-100"
+                                : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
+                            )}
+                          >
+                            {tradeSide === "buy" ? "Buying" : "Selling"}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {tradeSide === "buy"
+                                ? `${buyAmountLamports ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "-"} SOL`
+                                : `${sellAmountToken || "-"} ${post.tokenSymbol || "TOKEN"}`}
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">You Get (Est.)</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterReceiveDisplay}</div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Min Receive</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterMinReceiveDisplay}</div>
+                          </div>
+                        </div>
+                      </div>
 
                       <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
                         <div className="flex items-center justify-between gap-2">
