@@ -69,6 +69,7 @@ type MaintenanceRunResult = {
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
 let lastLeaderboardSnapshotWarmAt = 0;
+let leaderboardSnapshotWarmCursor = 0;
 const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
 const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
@@ -87,6 +88,7 @@ const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "produ
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
+const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
 
 async function attachWalletTradeSnapshots<T extends {
   [key: string]: unknown;
@@ -681,7 +683,7 @@ async function prewarmLeaderboardSnapshots(): Promise<{
 
   const fetchWithTimeout = async (path: string) => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), 4_000);
     try {
       attempted += 1;
       const url = new URL(path, baseUrl).toString();
@@ -709,14 +711,15 @@ async function prewarmLeaderboardSnapshots(): Promise<{
     }
   };
 
-  for (const path of endpoints) {
-    // Sequential on purpose to avoid stampeding the same serverless instance during cron runs.
-    await fetchWithTimeout(path);
+  const endpointToWarm = endpoints[leaderboardSnapshotWarmCursor % endpoints.length];
+  leaderboardSnapshotWarmCursor = (leaderboardSnapshotWarmCursor + 1) % endpoints.length;
+
+  if (endpointToWarm) {
+    await fetchWithTimeout(endpointToWarm);
   }
 
-  if (succeeded > 0) {
-    lastLeaderboardSnapshotWarmAt = now;
-  }
+  // Advance cooldown after each attempt to prevent repeated warm spikes if an endpoint fails.
+  lastLeaderboardSnapshotWarmAt = now;
 
   return {
     attempted,
@@ -813,7 +816,11 @@ postsRouter.get("/", async (c) => {
   // Safety fallback when scheduled maintenance is not running (e.g. no Vercel cron).
   // This is throttled + non-blocking, and only runs on the first page to avoid feed jitter.
   if (!cursor && !search) {
-    triggerMaintenanceCycleNonBlocking(`feed:${sort}${following ? ":following" : ""}`);
+    // If cron maintenance is configured, avoid piggybacking heavy maintenance work
+    // on user feed requests. This reduces DB spikes affecting feed reliability.
+    if (!hasCronMaintenanceConfigured && sort === "latest" && !following) {
+      triggerMaintenanceCycleNonBlocking(`feed:${sort}`);
+    }
   }
 
   // Build the where clause - use Prisma's AND/OR operators
@@ -2441,7 +2448,8 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   if (
     (isReadyFor1HSettlement(post.createdAt, post.settled) ||
       isReadyFor6HSnapshot(post.createdAt, post.mcap6h)) &&
-    post.entryMcap !== null
+    post.entryMcap !== null &&
+    !hasCronMaintenanceConfigured
   ) {
     triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
   }
