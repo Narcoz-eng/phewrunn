@@ -38,6 +38,7 @@ type SessionCacheEntry = {
 };
 
 const sessionCache = new Map<string, SessionCacheEntry>();
+const sessionFetchInFlight = new Map<string, Promise<SessionRecord | null>>();
 const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MISS_TTL_MS = 1_500;
 
@@ -80,46 +81,56 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
     sessionCache.delete(token);
   }
 
-  const dbSession = await prisma.session.findFirst({
-    where: {
-      token,
-      expiresAt: { gt: new Date() },
-    },
-    include: { user: true },
-  });
-
-  if (!dbSession?.user) {
-    sessionCache.set(token, {
-      value: null,
-      expiresAtMs: now + SESSION_CACHE_MISS_TTL_MS,
-    });
-    return null;
+  const existingInFlight = sessionFetchInFlight.get(token);
+  if (existingInFlight) {
+    return existingInFlight;
   }
 
-  const sessionRecord: SessionRecord = {
-    session: {
-      id: dbSession.id,
-      userId: dbSession.userId,
-      token: dbSession.token,
-      expiresAt: dbSession.expiresAt,
-      createdAt: dbSession.createdAt,
-      updatedAt: dbSession.updatedAt,
-    },
-    user: dbSession.user as SessionRecord["user"],
-  };
+  const lookupPromise = (async () => {
+    const dbSession = await prisma.session.findUnique({
+      where: { token },
+      include: { user: true },
+    });
 
-  const sessionExpiry = dbSession.expiresAt.getTime();
-  sessionCache.set(token, {
-    value: sessionRecord,
-    expiresAtMs: Math.min(now + SESSION_CACHE_TTL_MS, sessionExpiry),
+    if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
+      sessionCache.set(token, {
+        value: null,
+        expiresAtMs: now + SESSION_CACHE_MISS_TTL_MS,
+      });
+      return null;
+    }
+
+    const sessionRecord: SessionRecord = {
+      session: {
+        id: dbSession.id,
+        userId: dbSession.userId,
+        token: dbSession.token,
+        expiresAt: dbSession.expiresAt,
+        createdAt: dbSession.createdAt,
+        updatedAt: dbSession.updatedAt,
+      },
+      user: dbSession.user as SessionRecord["user"],
+    };
+
+    const sessionExpiry = dbSession.expiresAt.getTime();
+    sessionCache.set(token, {
+      value: sessionRecord,
+      expiresAtMs: Math.min(Date.now() + SESSION_CACHE_TTL_MS, sessionExpiry),
+    });
+
+    return sessionRecord;
+  })().finally(() => {
+    sessionFetchInFlight.delete(token);
   });
 
-  return sessionRecord;
+  sessionFetchInFlight.set(token, lookupPromise);
+  return lookupPromise;
 }
 
 function clearSessionCache(tokens: string[]) {
   for (const token of tokens) {
     sessionCache.delete(token);
+    sessionFetchInFlight.delete(token);
   }
 }
 

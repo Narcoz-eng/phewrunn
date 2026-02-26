@@ -826,6 +826,13 @@ postsRouter.get("/", async (c) => {
   }
 
   // If following filter is true, only show posts from followed users (NOT including user's own posts)
+  if (following && !user) {
+    return c.json(
+      { error: { message: "Unauthorized", code: "UNAUTHORIZED" } },
+      401
+    );
+  }
+
   if (following && user) {
     const followedUsers = await prisma.follow.findMany({
       where: { followerId: user.id },
