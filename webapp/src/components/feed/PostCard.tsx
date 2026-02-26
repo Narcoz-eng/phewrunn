@@ -326,11 +326,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         profitText: "N/A",
         toneClass: "text-muted-foreground",
         positive: null as boolean | null,
+        magnitudeRatio: 0,
       };
     }
     const snapshotPercent = calculatePercentChange(post.entryMcap, snapshotMcap);
     const snapshotProfit = snapshotMcap - post.entryMcap;
     const isPositive = snapshotProfit >= 0;
+    const absPercent = snapshotPercent === null ? 0 : Math.abs(snapshotPercent);
     return {
       label,
       percentText:
@@ -338,6 +340,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       profitText: `${snapshotProfit >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(snapshotProfit))}`,
       toneClass: isPositive ? "text-gain" : "text-loss",
       positive: isPositive,
+      magnitudeRatio: Math.max(0.12, Math.min(1, absPercent / 250)),
     };
   };
   const winCardSnapshotMetrics = [
@@ -566,15 +569,49 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         loadCanvasImage(authorAvatarSrc),
       ]);
 
-      // Background
+      // Background (playful / attention-grabbing, but still premium)
       const gradient = ctx.createLinearGradient(0, 0, width, height);
-      gradient.addColorStop(0, bgTop);
-      gradient.addColorStop(1, bgBottom);
+      gradient.addColorStop(0, "#070a10");
+      gradient.addColorStop(0.45, "#091018");
+      gradient.addColorStop(1, "#06080d");
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, width, height);
 
+      const ambientLeft = ctx.createRadialGradient(210, 180, 10, 210, 180, 340);
+      ambientLeft.addColorStop(0, "rgba(163,230,53,0.18)");
+      ambientLeft.addColorStop(0.45, "rgba(132,204,22,0.11)");
+      ambientLeft.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ambientLeft;
+      ctx.fillRect(-80, -40, 560, 520);
+
+      const ambientRight = ctx.createRadialGradient(980, 170, 12, 980, 170, 360);
+      ambientRight.addColorStop(0, "rgba(45,212,191,0.16)");
+      ambientRight.addColorStop(0.45, "rgba(20,184,166,0.10)");
+      ambientRight.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ambientRight;
+      ctx.fillRect(660, -60, 520, 520);
+
+      const ambientBottom = ctx.createRadialGradient(300, 640, 20, 300, 640, 300);
+      ambientBottom.addColorStop(0, accentSoft);
+      ambientBottom.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ambientBottom;
+      ctx.fillRect(20, 420, 540, 260);
+
+      // Diagonal texture streaks
+      ctx.save();
+      ctx.globalAlpha = 0.08;
+      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.lineWidth = 1;
+      for (let i = -height; i < width + height; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i - 120, height);
+        ctx.stroke();
+      }
+      ctx.restore();
+
       // Subtle grid
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.strokeStyle = "rgba(255,255,255,0.035)";
       ctx.lineWidth = 1;
       for (let x = 0; x < width; x += 48) {
         ctx.beginPath();
@@ -589,35 +626,52 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         ctx.stroke();
       }
 
-      // Accent glows
-      const glow1 = ctx.createRadialGradient(980, 80, 20, 980, 80, 220);
-      glow1.addColorStop(0, accentSoft);
-      glow1.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = glow1;
-      ctx.fillRect(760, -60, 420, 320);
-
-      const glow2 = ctx.createRadialGradient(160, 640, 20, 160, 640, 220);
-      glow2.addColorStop(0, "rgba(59,130,246,0.12)");
-      glow2.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = glow2;
-      ctx.fillRect(-80, 420, 420, 280);
+      // Confetti sparks for fast visual attention
+      const sparkColor = isSettledLoss ? "rgba(248,113,113,0.28)" : "rgba(163,230,53,0.24)";
+      ctx.strokeStyle = sparkColor;
+      ctx.lineWidth = 2;
+      const sparks = [
+        [94, 86, 18, -6],
+        [148, 96, 24, -8],
+        [1098, 112, -18, 6],
+        [1062, 124, -28, 10],
+        [104, 610, 16, 8],
+        [1088, 598, -20, -8],
+      ];
+      sparks.forEach(([sx, sy, dx, dy]) => {
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + dx, sy + dy);
+        ctx.stroke();
+      });
 
       // Main card container
       drawRoundedRect(40, 36, width - 80, height - 72, 28);
-      ctx.fillStyle = "rgba(10,14,20,0.82)";
+      const cardFill = ctx.createLinearGradient(40, 36, width - 40, height - 36);
+      cardFill.addColorStop(0, "rgba(9,12,18,0.92)");
+      cardFill.addColorStop(0.55, "rgba(10,14,20,0.88)");
+      cardFill.addColorStop(1, "rgba(7,10,15,0.90)");
+      ctx.fillStyle = cardFill;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.10)";
       ctx.lineWidth = 1.5;
       ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.05)";
+      drawRoundedRect(40, 36, width - 80, 10, 28);
+      ctx.fill();
 
       // Header brand
-      drawRoundedRect(68, 62, 280, 40, 20);
-      ctx.fillStyle = "rgba(255,255,255,0.04)";
+      drawRoundedRect(68, 58, 338, 46, 20);
+      const brandPillFill = ctx.createLinearGradient(68, 58, 406, 104);
+      brandPillFill.addColorStop(0, "rgba(163,230,53,0.07)");
+      brandPillFill.addColorStop(0.45, "rgba(255,255,255,0.04)");
+      brandPillFill.addColorStop(1, "rgba(45,212,191,0.07)");
+      ctx.fillStyle = brandPillFill;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.08)";
       ctx.stroke();
 
-      drawRoundedRect(76, 69, 26, 26, 9);
+      drawRoundedRect(76, 68, 28, 28, 10);
       ctx.fillStyle = "rgba(255,255,255,0.05)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
@@ -625,36 +679,55 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       if (brandMarkImg) {
         ctx.save();
         ctx.beginPath();
-        drawRoundedRect(77, 70, 24, 24, 8);
+        drawRoundedRect(78, 70, 24, 24, 8);
         ctx.clip();
-        ctx.drawImage(brandMarkImg, 77, 70, 24, 24);
+        ctx.drawImage(brandMarkImg, 78, 70, 24, 24);
         ctx.restore();
       }
 
       ctx.font = "800 18px Inter, system-ui, sans-serif";
       ctx.fillStyle = "rgba(248,250,252,0.92)";
-      ctx.fillText("PHEW", 112, 88);
-      ctx.fillStyle = "#b7e8c6";
-      ctx.fillText(".RUN", 167, 88);
-      ctx.fillStyle = "rgba(226,232,240,0.52)";
+      ctx.fillText("PHEW", 114, 89);
+      ctx.fillStyle = "#bfe8c8";
+      ctx.fillText(".RUN", 169, 89);
+      ctx.fillStyle = "rgba(226,232,240,0.55)";
       ctx.font = "600 9px Inter, system-ui, sans-serif";
-      ctx.fillText("PHEW RUNNING THE INTERNET", 112, 77);
+      ctx.fillText("PHEW RUNNING THE INTERNET", 114, 76);
+      ctx.fillStyle = "rgba(226,232,240,0.60)";
+      ctx.font = "700 10px Inter, system-ui, sans-serif";
+      ctx.fillText("ALPHA RECEIPT", 288, 86);
 
-      drawRoundedRect(932, 62, 160, 36, 18);
-      ctx.fillStyle = accentSoft;
+      drawRoundedRect(918, 58, 174, 40, 18);
+      const resultChipFill = ctx.createLinearGradient(918, 58, 1092, 98);
+      resultChipFill.addColorStop(0, accentSoft);
+      resultChipFill.addColorStop(1, "rgba(255,255,255,0.04)");
+      ctx.fillStyle = resultChipFill;
       ctx.fill();
       ctx.strokeStyle = accent;
       ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.05)";
+      drawRoundedRect(924, 64, 46, 28, 14);
+      ctx.fill();
       ctx.fillStyle = accent;
-      ctx.font = "700 15px Inter, system-ui, sans-serif";
-      ctx.fillText(resultLabel, 964, 86);
+      ctx.font = "800 10px Inter, system-ui, sans-serif";
+      ctx.fillText("SHARE", 936, 81);
+      ctx.font = "700 14px Inter, system-ui, sans-serif";
+      ctx.fillText(resultLabel, 977, 83);
 
       // User / token block
       drawRoundedRect(68, 120, 670, 150, 22);
-      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      const userPanelFill = ctx.createLinearGradient(68, 120, 738, 270);
+      userPanelFill.addColorStop(0, "rgba(255,255,255,0.035)");
+      userPanelFill.addColorStop(1, "rgba(255,255,255,0.02)");
+      ctx.fillStyle = userPanelFill;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
       ctx.stroke();
+      drawRoundedRect(68, 120, 8, 150, 22);
+      ctx.fillStyle = accent;
+      ctx.globalAlpha = 0.9;
+      ctx.fill();
+      ctx.globalAlpha = 1;
 
       // avatar
       ctx.beginPath();
@@ -684,10 +757,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       ctx.fillStyle = "rgba(226,232,240,0.75)";
       ctx.font = "500 14px Inter, system-ui, sans-serif";
-      ctx.fillText(`Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}  •  ${formatTimeAgo(post.createdAt)}  •  ${post.chainType?.toUpperCase() || "CHAIN"}`, 146, 188);
+      ctx.fillText(`Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}  |  ${formatTimeAgo(post.createdAt)}  |  ${post.chainType?.toUpperCase() || "CHAIN"}`, 146, 188);
 
       drawRoundedRect(146, 204, 560, 46, 14);
-      ctx.fillStyle = "rgba(255,255,255,0.025)";
+      const tokenChipFill = ctx.createLinearGradient(146, 204, 706, 250);
+      tokenChipFill.addColorStop(0, "rgba(163,230,53,0.05)");
+      tokenChipFill.addColorStop(0.4, "rgba(255,255,255,0.025)");
+      tokenChipFill.addColorStop(1, "rgba(45,212,191,0.05)");
+      ctx.fillStyle = tokenChipFill;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.stroke();
@@ -701,18 +778,34 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       // Result hero
       drawRoundedRect(760, 120, 332, 150, 22);
-      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      const resultPanelFill = ctx.createLinearGradient(760, 120, 1092, 270);
+      resultPanelFill.addColorStop(0, "rgba(255,255,255,0.035)");
+      resultPanelFill.addColorStop(0.55, "rgba(255,255,255,0.02)");
+      resultPanelFill.addColorStop(1, "rgba(255,255,255,0.028)");
+      ctx.fillStyle = resultPanelFill;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
       ctx.stroke();
+      drawRoundedRect(760, 120, 332, 10, 22);
+      const resultTopFill = ctx.createLinearGradient(760, 120, 1092, 130);
+      resultTopFill.addColorStop(0, accentSoft);
+      resultTopFill.addColorStop(1, "rgba(255,255,255,0.01)");
+      ctx.fillStyle = resultTopFill;
+      ctx.fill();
 
       ctx.fillStyle = "rgba(226,232,240,0.75)";
       ctx.font = "600 13px Inter, system-ui, sans-serif";
-      ctx.fillText("Post Performance", 786, 150);
+      ctx.fillText("Post Performance", 786, 148);
 
       ctx.fillStyle = accent;
+      ctx.shadowColor = `${accent}55`;
+      ctx.shadowBlur = 16;
       ctx.font = "800 44px Inter, system-ui, sans-serif";
       ctx.fillText(resultText, 786, 205);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(226,232,240,0.60)";
+      ctx.font = "700 10px Inter, system-ui, sans-serif";
+      ctx.fillText("SHARE-READY", 1004, 148);
 
       if (verifiedPnlText && verifiedPnlLabel) {
         ctx.fillStyle = "rgba(226,232,240,0.72)";
@@ -734,10 +827,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       const drawMetricCard = (x: number, title: string, value: string, sub?: string, valueColor = "#f8fafc") => {
         drawRoundedRect(x, metricY, metricW, metricH, 18);
-        ctx.fillStyle = "rgba(255,255,255,0.025)";
+        const metricFill = ctx.createLinearGradient(x, metricY, x + metricW, metricY + metricH);
+        metricFill.addColorStop(0, "rgba(255,255,255,0.03)");
+        metricFill.addColorStop(1, "rgba(255,255,255,0.02)");
+        ctx.fillStyle = metricFill;
         ctx.fill();
         ctx.strokeStyle = "rgba(255,255,255,0.06)";
         ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.045)";
+        drawRoundedRect(x, metricY, metricW, 8, 18);
+        ctx.fill();
 
         ctx.fillStyle = "rgba(226,232,240,0.72)";
         ctx.font = "600 12px Inter, system-ui, sans-serif";
@@ -756,7 +855,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       const drawSnapshotsCard = (x: number) => {
         drawRoundedRect(x, metricY, metricW, metricH, 18);
-        ctx.fillStyle = "rgba(255,255,255,0.025)";
+        const snapFill = ctx.createLinearGradient(x, metricY, x + metricW, metricY + metricH);
+        snapFill.addColorStop(0, "rgba(163,230,53,0.03)");
+        snapFill.addColorStop(0.5, "rgba(255,255,255,0.02)");
+        snapFill.addColorStop(1, "rgba(45,212,191,0.03)");
+        ctx.fillStyle = snapFill;
         ctx.fill();
         ctx.strokeStyle = "rgba(255,255,255,0.06)";
         ctx.stroke();
@@ -773,14 +876,26 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
         rows.forEach((row, index) => {
           const rowY = metricY + 52 + index * 22;
+          const barX = x + 18;
+          const barY = rowY + 4;
+          const barW = 28;
+          const fillW = Math.max(4, Math.round(barW * row.magnitudeRatio));
+          const barColor = row.positive === null ? "rgba(148,163,184,0.45)" : row.positive ? "rgba(34,197,94,0.75)" : "rgba(239,68,68,0.75)";
+          ctx.fillStyle = "rgba(255,255,255,0.08)";
+          drawRoundedRect(barX, barY, barW, 4, 2);
+          ctx.fill();
+          ctx.fillStyle = barColor;
+          drawRoundedRect(barX, barY, fillW, 4, 2);
+          ctx.fill();
+
           ctx.fillStyle = "rgba(226,232,240,0.7)";
           ctx.font = "700 11px Inter, system-ui, sans-serif";
-          ctx.fillText(row.short, x + 18, rowY);
+          ctx.fillText(row.short, x + 56, rowY);
 
           ctx.fillStyle =
             row.positive === null ? "#cbd5e1" : row.positive ? "#22c55e" : "#ef4444";
           ctx.font = "700 12px Inter, system-ui, sans-serif";
-          ctx.fillText(row.percentText, x + 56, rowY);
+          ctx.fillText(row.percentText, x + 94, rowY);
 
           ctx.textAlign = "right";
           ctx.fillStyle =
@@ -796,7 +911,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       // Post text panel
       drawRoundedRect(68, 442, width - 136, 150, 20);
-      ctx.fillStyle = "rgba(255,255,255,0.02)";
+      const postPanelFill = ctx.createLinearGradient(68, 442, width - 68, 592);
+      postPanelFill.addColorStop(0, "rgba(255,255,255,0.025)");
+      postPanelFill.addColorStop(1, "rgba(255,255,255,0.018)");
+      ctx.fillStyle = postPanelFill;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.stroke();
@@ -805,7 +923,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       let postPanelMaxLines = 3;
       ctx.fillStyle = "rgba(226,232,240,0.72)";
       ctx.font = "600 12px Inter, system-ui, sans-serif";
-      ctx.fillText("Post", 88, 470);
+      ctx.fillText("Alpha Call Notes", 88, 470);
 
       if (hasWalletTradeInfo) {
         const parts: string[] = [];
@@ -823,7 +941,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           ctx.fillText("Wallet Summary", 88, 492);
           ctx.fillStyle = "rgba(226,232,240,0.9)";
           ctx.font = "500 11px Inter, system-ui, sans-serif";
-          drawWrappedText(parts.join(" • "), 88, 512, width - 176, 18, 2);
+          drawWrappedText(parts.join(" | "), 88, 512, width - 176, 18, 2);
           postPanelTextY = 548;
           postPanelMaxLines = 2;
         }
@@ -842,10 +960,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       ctx.fillStyle = "rgba(226,232,240,0.68)";
       ctx.font = "500 12px Inter, system-ui, sans-serif";
-      ctx.fillText("Generated on PHEW.RUN", 88, 642);
-      ctx.fillText(`Post ID: ${post.id.slice(0, 10)}…`, 88, 662);
+      ctx.fillText("Generated on PHEW.RUN - Share your receipts", 88, 642);
+      ctx.fillText(`Post ID: ${post.id.slice(0, 10)}...`, 88, 662);
 
-      const interactions = `${likeCount} likes  •  ${commentCount} comments  •  ${repostCount} reposts`;
+      const interactions = `${likeCount} likes | ${commentCount} comments | ${repostCount} reposts`;
       ctx.textAlign = "right";
       ctx.fillText(interactions, width - 88, 642);
       ctx.fillText(
@@ -1704,19 +1822,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       <Dialog open={isWinCardPreviewOpen} onOpenChange={setIsWinCardPreviewOpen}>
         <DialogContent className="w-[calc(100vw-0.75rem)] max-w-4xl max-h-[92vh] p-0 overflow-y-auto border-border/60 bg-background/95">
-          <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-border/50">
-            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-              <Download className="h-4 w-4 text-primary" />
-              Preview Wincard
-            </DialogTitle>
-            <DialogDescription className="text-xs sm:text-sm">
-              Review the shareable result card before downloading the PNG.
-            </DialogDescription>
-          </DialogHeader>
+            <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-border/50">
+              <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <Sparkles className="h-4 w-4 text-primary" />
+                Wincard Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs sm:text-sm">
+                Review a share-ready card, then export a PNG built for fast attention.
+              </DialogDescription>
+            </DialogHeader>
 
           <div className="p-3 sm:p-5">
-            <div className="mx-auto max-w-3xl">
-              <div className="relative overflow-hidden rounded-xl sm:rounded-2xl border border-border/60 bg-[#090d13] shadow-[0_24px_80px_-40px_rgba(0,0,0,0.8)]">
+            <div className="mx-auto max-w-[980px]">
+              <div className="relative overflow-hidden rounded-2xl sm:rounded-[22px] border border-white/10 bg-[#090d13] shadow-[0_28px_90px_-36px_rgba(0,0,0,0.85)] ring-1 ring-white/5">
                 <div
                   className="absolute inset-0 opacity-[0.04]"
                   style={{
@@ -1727,7 +1845,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 />
                 <div
                   className={cn(
-                    "absolute -top-16 right-[-6%] h-52 w-52 rounded-full blur-3xl",
+                    "absolute -top-20 right-[-6%] h-64 w-64 rounded-full blur-3xl",
                     winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
                       ? "bg-gain/20"
                       : winCardSettledLoss
@@ -1735,11 +1853,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         : "bg-slate-400/20"
                   )}
                 />
-                <div className="absolute -bottom-16 left-[-8%] h-52 w-52 rounded-full blur-3xl bg-primary/10" />
+                <div className="absolute -bottom-20 left-[-8%] h-64 w-64 rounded-full blur-3xl bg-primary/10" />
+                <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-r from-lime-300/8 via-white/5 to-teal-300/8" />
+                <div className="absolute inset-x-8 top-20 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                <div className="absolute -left-8 top-52 h-32 w-32 rounded-full border border-white/5 bg-white/[0.015]" />
+                <div className="absolute -right-10 bottom-28 h-40 w-40 rounded-full border border-white/5 bg-white/[0.015]" />
 
                 <div className="relative p-3.5 sm:p-6">
-                  <div className="mb-4 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5">
+                  <div className="mb-4 flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-gradient-to-r from-white/5 via-white/4 to-white/5 px-2.5 py-1.5 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.9)]">
                       <div className="h-7 w-7 rounded-md border border-white/10 bg-white/5 p-0.5">
                         <img
                           src={exactLogoImageSrc}
@@ -1751,7 +1873,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="leading-tight">
                         <div className="text-xs font-semibold tracking-wide">
                           <span className="text-white/90">PHEW</span>
-                          <span className="text-[#b7e8c6]">.RUN</span>
+                          <span className="text-[#c0e5cb]">.RUN</span>
                         </div>
                         <div className="hidden sm:block text-[9px] tracking-[0.12em] text-slate-300/60">
                           PHEW RUNNING THE INTERNET
@@ -1760,7 +1882,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                     <div
                       className={cn(
-                        "rounded-full border px-3 py-1 text-[11px] font-semibold tracking-wide",
+                        "rounded-full border px-3 py-1 text-[11px] font-semibold tracking-[0.14em] shadow-[0_8px_24px_-18px_rgba(0,0,0,0.8)]",
                         winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
                           ? "border-gain/40 bg-gain/10 text-gain"
                           : winCardSettledLoss
@@ -1772,8 +1894,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
+                  <div className="mb-3 rounded-xl border border-white/10 bg-gradient-to-r from-lime-300/5 via-white/5 to-teal-300/5 px-3.5 py-2.5 text-[11px] sm:text-xs text-slate-200/85 shadow-[0_12px_32px_-24px_rgba(0,0,0,0.9)]">
+                    Share-ready alpha receipt with settlement snapshots and engagement proof.
+                  </div>
+
                   <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3.5 sm:p-4">
+                    <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-3.5 sm:p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.9)]">
                       <div className="flex items-center gap-3">
                         <Avatar className="h-11 w-11 border border-white/10">
                           <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
@@ -1790,13 +1916,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </div>
                         </div>
                       </div>
-                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/30">
+                        <div className="mb-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium tracking-[0.12em] text-slate-300/75">
+                          TOKEN CALL
+                        </div>
                         <div className="text-sm font-semibold text-white truncate">{winCardTokenPrimary}</div>
                         <div className="mt-1 text-xs text-slate-300/80 truncate">{winCardTokenSecondary}</div>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3.5 sm:p-4">
+                    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-3.5 sm:p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.9)]">
+                      <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-lime-300/70 via-white/30 to-teal-300/70" />
                       <div className="text-xs uppercase tracking-[0.14em] text-slate-300/70">Performance</div>
                       <div className={cn("mt-2 text-2xl sm:text-4xl font-bold tracking-tight", winCardAccentClass)}>
                         {winCardResultText}
@@ -1819,6 +1949,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                       <div className={cn("mt-1 text-sm sm:text-base font-semibold", winCardAccentClass)}>
                         {winCardMarketMoveText}
+                      </div>
+                      <div className="mt-4 flex items-center gap-2 text-[11px] text-slate-300/70">
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Instant proof card for fast sharing
                       </div>
                     </div>
                   </div>
@@ -1850,10 +1984,23 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       {winCardSnapshotMetrics.map((metric) => (
                         <div
                           key={metric.label}
-                          className="rounded-lg border border-white/10 bg-black/20 p-3"
+                          className="rounded-lg border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/20"
                         >
                           <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">
                             {metric.label}
+                          </div>
+                          <div className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full",
+                                metric.positive === null
+                                  ? "bg-white/20"
+                                  : metric.positive
+                                    ? "bg-gradient-to-r from-lime-300/80 to-green-400/80"
+                                    : "bg-gradient-to-r from-rose-400/80 to-red-500/80"
+                              )}
+                              style={{ width: `${Math.round(metric.magnitudeRatio * 100)}%` }}
+                            />
                           </div>
                           <div className={cn("mt-1 text-sm sm:text-base font-semibold", metric.toneClass)}>
                             {metric.percentText}
@@ -1930,16 +2077,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   ) : null}
 
-                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
+                  <div className="mt-4 rounded-xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.03] p-3.5">
                     <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Post</div>
                     <p className="mt-1.5 text-sm leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
                       {winCardPostPreview}
                     </p>
                   </div>
 
-                  <div className="mt-4 flex flex-col items-start gap-1.5 text-[11px] text-slate-300/70 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                    <span>Generated on PHEW.RUN</span>
-                    <span>Post ID: {post.id.slice(0, 10)}...</span>
+                  <div className="mt-4 flex flex-col items-start gap-2 text-[11px] text-slate-300/70 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                      <Sparkles className="h-3 w-3 text-slate-300/80" />
+                      Generated on PHEW.RUN
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1">
+                      Post ID: {post.id.slice(0, 10)}...
+                    </span>
                   </div>
                 </div>
               </div>
