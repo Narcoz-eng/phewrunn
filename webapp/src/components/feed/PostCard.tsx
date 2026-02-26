@@ -1340,18 +1340,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     post.chainType === "solana" &&
     !!post.contractAddress &&
     /pump$/i.test(post.contractAddress.trim());
-  const marketButtonsTone =
-    !localSettled
-      ? "border-primary/20 bg-primary/5"
-      : localIsWin
-        ? "border-gain/20 bg-gain/5"
-        : "border-loss/20 bg-loss/5";
-  const marketButtonsGlow =
-    !localSettled
-      ? "shadow-[0_0_0_1px_rgba(148,163,184,0.08),0_16px_38px_-24px_rgba(148,163,184,0.35)]"
-      : localIsWin
-        ? "shadow-[0_0_0_1px_rgba(34,197,94,0.08),0_16px_38px_-24px_rgba(34,197,94,0.35)]"
-        : "shadow-[0_0_0_1px_rgba(239,68,68,0.08),0_16px_38px_-24px_rgba(239,68,68,0.30)]";
   const isSolanaTradeSupported = post.chainType === "solana" && !!post.contractAddress;
   const parsedBuyAmountSol = Number(buyAmountSol);
   const buyAmountLamports =
@@ -1810,7 +1798,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     : isWalletConnectedForTrade
       ? "Trade Now"
       : "Connect Wallet";
-  const tradeCtaSubtleLabel = isWalletConnectedForTrade ? "Quick Trade" : "Wallet setup";
   const tradeButtonTone = !isSolanaTradeSupported
     ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
     : isWalletConnectedForTrade
@@ -2062,7 +2049,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     )}
                   </div>
 
-                  <div className={cn("flex items-center gap-2 flex-wrap rounded-xl border p-1.5", marketButtonsTone, marketButtonsGlow)}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       type="button"
                       onClick={handleTradeCtaClick}
@@ -2081,11 +2068,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       )}
                       {isWalletConnectedForTrade ? <Zap className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
                       <span>{tradeCtaLabel}</span>
-                      {isSolanaTradeSupported && (
-                        <span className="hidden sm:inline rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-white/75">
-                          {tradeCtaSubtleLabel}
-                        </span>
-                      )}
                     </Button>
 
                   </div>
