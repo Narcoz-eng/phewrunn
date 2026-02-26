@@ -79,6 +79,8 @@ const JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
 const JUPITER_QUOTE_FALLBACK_URL = "https://quote-api.jup.ag/v6/quote";
 const JUPITER_SWAP_FALLBACK_URL = "https://quote-api.jup.ag/v6/swap";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
+const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
+const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 
 type TradeSide = "buy" | "sell";
@@ -123,7 +125,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const queryClient = useQueryClient();
   const { connection } = useConnection();
   const wallet = useWallet();
-  const { setVisible: setWalletModalVisible } = useWalletModal();
+  const { visible: isWalletModalVisible, setVisible: setWalletModalVisible } = useWalletModal();
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -150,6 +152,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [slippageBps, setSlippageBps] = useState(100);
   const [slippageInputPercent, setSlippageInputPercent] = useState("1.00");
   const [showSlippageSettings, setShowSlippageSettings] = useState(false);
+  const [quickBuyPresetsSol, setQuickBuyPresetsSol] = useState<string[]>(DEFAULT_QUICK_BUY_PRESETS_SOL);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
@@ -158,6 +161,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
     [heliusReadRpcUrl, connection]
   );
+
+  const clearPotentialScrollLock = () => {
+    if (typeof document === "undefined") return;
+    if (document.body.style.pointerEvents === "none") {
+      document.body.style.pointerEvents = "";
+    }
+    if (document.documentElement.style.pointerEvents === "none") {
+      document.documentElement.style.pointerEvents = "";
+    }
+  };
 
   // Sync follow state when post data changes
   useEffect(() => {
@@ -175,7 +188,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       setBuyTxSignature(null);
       setIsBuyDialogOpen(true);
     }
+    if (typeof window !== "undefined") {
+      window.setTimeout(clearPotentialScrollLock, 120);
+    }
   }, [wallet.publicKey, isWalletConnectDialogOpen, pendingBuyAfterWalletConnect]);
+
+  useEffect(() => {
+    if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const timer = window.setTimeout(clearPotentialScrollLock, 80);
+    return () => window.clearTimeout(timer);
+  }, [isWalletModalVisible, isWalletConnectDialogOpen, isBuyDialogOpen, isWinCardPreviewOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -193,6 +218,33 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     window.localStorage.setItem(TRADE_SLIPPAGE_STORAGE_KEY, String(slippageBps));
     setSlippageInputPercent((slippageBps / 100).toFixed(2));
   }, [slippageBps]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(TRADE_QUICK_BUY_PRESETS_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const next = parsed
+        .slice(0, DEFAULT_QUICK_BUY_PRESETS_SOL.length)
+        .map((value) => String(value).trim())
+        .filter((value) => value.length > 0);
+      if (next.length === DEFAULT_QUICK_BUY_PRESETS_SOL.length) {
+        setQuickBuyPresetsSol(next);
+      }
+    } catch {
+      // Ignore malformed local settings.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      TRADE_QUICK_BUY_PRESETS_STORAGE_KEY,
+      JSON.stringify(quickBuyPresetsSol)
+    );
+  }, [quickBuyPresetsSol]);
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
@@ -1302,11 +1354,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     retry: 1,
     queryFn: async () => {
       if (!post.contractAddress) return 6;
-      const supply = await tradeReadConnection.getTokenSupply(new PublicKey(post.contractAddress));
-      return supply.value.decimals;
+      try {
+        const supply = await tradeReadConnection.getTokenSupply(new PublicKey(post.contractAddress));
+        return supply.value.decimals;
+      } catch {
+        return null;
+      }
     },
   });
-  const outputTokenDecimals = outputTokenDecimalsQuery.data ?? 6;
+  const outputTokenDecimals =
+    typeof outputTokenDecimalsQuery.data === "number" ? outputTokenDecimalsQuery.data : 6;
   const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data === "number";
 
   const parsedSellAmountToken = Number(sellAmountToken);
@@ -1328,33 +1385,38 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     refetchInterval: isBuyDialogOpen ? 15_000 : false,
     queryFn: async () => {
       if (!wallet.publicKey || !post.contractAddress) return null;
-      const mint = new PublicKey(post.contractAddress);
-      const accounts = await tradeReadConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint });
-      let totalUiAmount = 0;
-      for (const account of accounts.value) {
-        type ParsedTokenAmountLike = {
-          uiAmount?: number | null;
-          uiAmountString?: string;
-        };
-        type ParsedTokenAccountLike = {
-          parsed?: {
-            info?: {
-              tokenAmount?: ParsedTokenAmountLike;
+      try {
+        const mint = new PublicKey(post.contractAddress);
+        const accounts = await tradeReadConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint });
+        let totalUiAmount = 0;
+        for (const account of accounts.value) {
+          type ParsedTokenAmountLike = {
+            uiAmount?: number | null;
+            uiAmountString?: string;
+          };
+          type ParsedTokenAccountLike = {
+            parsed?: {
+              info?: {
+                tokenAmount?: ParsedTokenAmountLike;
+              };
             };
           };
-        };
-        // Parsed token account shape is stable, but web3 types are broad here.
-        const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
-        const tokenAmount = parsedData.parsed?.info?.tokenAmount;
-        const uiAmount =
-          typeof tokenAmount?.uiAmount === "number"
-            ? tokenAmount.uiAmount
-            : Number(tokenAmount?.uiAmountString ?? 0);
-        if (Number.isFinite(uiAmount)) {
-          totalUiAmount += uiAmount;
+          // Parsed token account shape is stable, but web3 types are broad here.
+          const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
+          const tokenAmount = parsedData.parsed?.info?.tokenAmount;
+          const uiAmount =
+            typeof tokenAmount?.uiAmount === "number"
+              ? tokenAmount.uiAmount
+              : Number(tokenAmount?.uiAmountString ?? 0);
+          if (Number.isFinite(uiAmount)) {
+            totalUiAmount += uiAmount;
+          }
         }
+        return totalUiAmount;
+      } catch {
+        // Treat lookup failures as "no visible balance" to keep sell UI quiet.
+        return 0;
       }
-      return totalUiAmount;
     },
   });
   const walletTokenBalance =
@@ -1372,7 +1434,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     walletTokenBalance !== null &&
     Number.isFinite(parsedSellAmountToken) &&
     parsedSellAmountToken > walletTokenBalance + 1e-9;
-  const sellBlockedByRpcTokenInfo = tradeSide === "sell" && !hasRpcTokenDecimals;
+  const sellHasNoTokens =
+    tradeSide === "sell" &&
+    !!wallet.publicKey &&
+    walletTokenBalance !== null &&
+    walletTokenBalance <= 0;
+  const sellBlockedByRpcTokenInfo =
+    tradeSide === "sell" && !hasRpcTokenDecimals && !sellHasNoTokens;
 
   const jupiterQuoteQuery = useQuery({
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
@@ -1479,6 +1547,46 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     return value
       .toFixed(Math.max(0, Math.min(8, fractionDigits)))
       .replace(/\.?0+$/, "");
+  };
+
+  const sanitizeQuickBuyPreset = (value: string) => {
+    const trimmed = value.trim();
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed <= 0) return "";
+    const clamped = Math.min(100, Math.max(0.001, parsed));
+    return formatDecimalInputValue(clamped, clamped >= 1 ? 2 : 3);
+  };
+
+  const updateQuickBuyPreset = (index: number, value: string) => {
+    setQuickBuyPresetsSol((prev) =>
+      prev.map((preset, i) => (i === index ? value : preset))
+    );
+  };
+
+  const commitQuickBuyPreset = (index: number) => {
+    setQuickBuyPresetsSol((prev) =>
+      prev.map((preset, i) => {
+        if (i !== index) return preset;
+        const next = sanitizeQuickBuyPreset(preset);
+        return next || DEFAULT_QUICK_BUY_PRESETS_SOL[index] || "0.10";
+      })
+    );
+  };
+
+  const resetQuickBuyPresets = () => {
+    setQuickBuyPresetsSol(DEFAULT_QUICK_BUY_PRESETS_SOL);
+  };
+
+  const handleQuickBuyPresetClick = (amount: string) => {
+    setTradeSide("buy");
+    setBuyAmountSol(amount);
+    setBuyTxSignature(null);
+    if (isSolanaTradeSupported && !wallet.publicKey) {
+      setPendingBuyAfterWalletConnect(true);
+      setIsWalletConnectDialogOpen(true);
+      return;
+    }
+    setIsBuyDialogOpen(true);
   };
 
   const applySlippagePercentInput = () => {
@@ -1662,8 +1770,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
-  const walletTokenBalanceErrorMessage =
-    walletTokenBalanceQuery.error instanceof Error ? walletTokenBalanceQuery.error.message : null;
   const jupiterNoRouteDetected =
     !!jupiterQuoteErrorMessage &&
     /route|not tradable|no route|could not find|TOKEN_NOT_TRADABLE/i.test(jupiterQuoteErrorMessage);
@@ -1674,7 +1780,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
     : null;
   const walletDisplayName = wallet.wallet?.adapter?.name ?? "Solana Wallet";
-  const buyQuickAmounts = ["0.05", "0.10", "0.25", "0.50", "1.00"];
+  const buyQuickAmounts = quickBuyPresetsSol;
   const sellQuickPercents = [25, 50, 75, 100];
   const isWalletConnectedForTrade = !!wallet.publicKey;
   const canExecuteJupiterBuy =
@@ -1946,6 +2052,34 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </span>
                       )}
                     </Button>
+
+                    {isSolanaTradeSupported && isWalletConnectedForTrade && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {buyQuickAmounts.map((amount) => (
+                          <button
+                            key={`feed-quick-buy-${amount}`}
+                            type="button"
+                            onClick={() => handleQuickBuyPresetClick(amount)}
+                            className="h-8 rounded-full border border-white/10 bg-white/5 px-2.5 text-[11px] font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                            title={`Quick buy ${amount} SOL`}
+                          >
+                            {amount} SOL
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTradeSide("buy");
+                            setShowSlippageSettings(true);
+                            setBuyTxSignature(null);
+                            setIsBuyDialogOpen(true);
+                          }}
+                          className="h-8 rounded-full border border-white/10 bg-black/20 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    )}
 
                   </div>
                 </div>
@@ -2646,7 +2780,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             ) : (
               <>
                 <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
-                  <div className="space-y-4 lg:sticky lg:top-4">
+                  <div className="space-y-4 lg:sticky lg:top-4 lg:relative lg:z-0">
                     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
                       <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
                       <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
@@ -2754,7 +2888,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
                   </div>
 
-                  <div className="flex flex-col gap-4 self-start">
+                  <div className="relative z-10 flex flex-col gap-4 self-start">
                     <div className="order-1 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
@@ -2855,9 +2989,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
                       {tradeSide === "sell" && sellBlockedByRpcTokenInfo ? (
                         <div className="mb-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
-                          {outputTokenDecimalsQuery.isFetching
-                            ? "Loading token info from Helius..."
-                            : "Token info is still loading. Sell quote will unlock when Helius responds."}
+                          Preparing sell quote...
                         </div>
                       ) : null}
 
@@ -2948,9 +3080,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               Sell amount exceeds your loaded wallet balance.
                             </div>
                           ) : null}
-                          {walletTokenBalanceErrorMessage ? (
-                            <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100">
-                              Could not load wallet token balance from Helius yet. You can still enter a sell amount manually.
+                          {sellHasNoTokens ? (
+                            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
+                              No {post.tokenSymbol || "token"} balance detected in this wallet.
                             </div>
                           ) : null}
                         </>
@@ -3006,6 +3138,43 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                         {showSlippageSettings ? (
                           <div className="mt-3 space-y-3">
+                            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                                  Quick Buy Presets (SOL)
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={resetQuickBuyPresets}
+                                  className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                                >
+                                  Reset
+                                </button>
+                              </div>
+                              <div className="mt-2 grid grid-cols-2 gap-2">
+                                {quickBuyPresetsSol.map((preset, index) => (
+                                  <div key={`quick-preset-input-${index}`} className="relative">
+                                    <Input
+                                      value={preset}
+                                      onChange={(e) => updateQuickBuyPreset(index, e.target.value)}
+                                      onBlur={() => commitQuickBuyPreset(index)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          commitQuickBuyPreset(index);
+                                        }
+                                      }}
+                                      inputMode="decimal"
+                                      className="h-9 border-white/10 bg-black/20 pr-10 text-sm"
+                                    />
+                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
+                                      SOL
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
                             <div className="flex flex-wrap gap-2">
                               {SLIPPAGE_PRESETS_BPS.map((bps) => (
                                 <button
@@ -3059,7 +3228,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="space-y-4 order-4">
+                  <div className="relative z-10 space-y-4 order-4">
                     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
@@ -3182,7 +3351,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             )}
           </div>
 
-          <DialogFooter className="px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
+          <DialogFooter className="relative z-20 px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
             <Button type="button" variant="outline" onClick={() => setIsBuyDialogOpen(false)} className="w-full sm:w-auto">
               Close
             </Button>
