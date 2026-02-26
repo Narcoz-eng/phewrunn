@@ -12,6 +12,13 @@ type WalletTradeSnapshot = {
   netAmount?: number | null;
 };
 
+export type HeliusTokenMetadata = {
+  source: "helius";
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  tokenImage: string | null;
+};
+
 export type WalletPortfolioOverview = {
   source: "helius";
   walletAddress: string;
@@ -122,6 +129,7 @@ const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const HELIUS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 10_000;
 const WALLET_BASE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const DEX_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
+const HELIUS_METADATA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 24 * 60 * 60_000 : 5 * 60_000;
 const HELIUS_MAX_TX_PAGES = process.env.NODE_ENV === "production" ? 5 : 2;
 const HELIUS_TX_PAGE_LIMIT = 100;
 
@@ -131,6 +139,8 @@ const walletBaseCache = new Map<string, { value: WalletBaseSnapshot | null; expi
 const walletBaseInFlight = new Map<string, Promise<WalletBaseSnapshot | null>>();
 const dexPriceCache = new Map<string, { priceUsd: number | null; expiresAtMs: number }>();
 const dexPriceInFlight = new Map<string, Promise<number | null>>();
+const heliusTokenMetadataCache = new Map<string, { value: HeliusTokenMetadata | null; expiresAtMs: number }>();
+const heliusTokenMetadataInFlight = new Map<string, Promise<HeliusTokenMetadata | null>>();
 
 function isLikelySolanaAddress(value: string | null | undefined): value is string {
   return typeof value === "string" && SOLANA_WALLET_REGEX.test(value);
@@ -202,6 +212,65 @@ async function heliusRpcCall<T>(method: string, params: unknown[], id: string): 
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readHeliusAssetImage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+
+  const links = obj.links as Record<string, unknown> | undefined;
+  const linksImage = readNonEmptyString(links?.image);
+  if (linksImage) return linksImage;
+
+  const content = obj.content as Record<string, unknown> | undefined;
+  const files = Array.isArray(content?.files) ? content?.files : null;
+  if (files) {
+    for (const file of files) {
+      if (!file || typeof file !== "object") continue;
+      const fileObj = file as Record<string, unknown>;
+      const image =
+        readNonEmptyString(fileObj.cdn_uri) ||
+        readNonEmptyString(fileObj.uri);
+      if (image) return image;
+    }
+  }
+
+  const metadata = obj.metadata as Record<string, unknown> | undefined;
+  return readNonEmptyString(metadata?.image);
+}
+
+function readHeliusAssetMetadata(payload: unknown): HeliusTokenMetadata | null {
+  if (!payload || typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+  const content = obj.content as Record<string, unknown> | undefined;
+  const contentMetadata = content?.metadata as Record<string, unknown> | undefined;
+  const metadata = obj.metadata as Record<string, unknown> | undefined;
+  const tokenInfo = obj.token_info as Record<string, unknown> | undefined;
+
+  const tokenName =
+    readNonEmptyString(contentMetadata?.name) ||
+    readNonEmptyString(metadata?.name) ||
+    readNonEmptyString(tokenInfo?.name);
+  const tokenSymbol =
+    readNonEmptyString(contentMetadata?.symbol) ||
+    readNonEmptyString(metadata?.symbol) ||
+    readNonEmptyString(tokenInfo?.symbol);
+  const tokenImage = readHeliusAssetImage(payload);
+
+  if (!tokenName && !tokenSymbol && !tokenImage) return null;
+
+  return {
+    source: "helius",
+    tokenName: tokenName ?? null,
+    tokenSymbol: tokenSymbol ?? null,
+    tokenImage: tokenImage ?? null,
+  };
 }
 
 function readUiTokenAmount(tokenAmount: RpcTokenAmount | undefined): number {
@@ -706,6 +775,37 @@ export async function getWalletTradeSnapshotsForSolanaTokens(params: {
   }
 
   return snapshots;
+}
+
+export async function getHeliusTokenMetadataForMint(params: {
+  mint: string | null | undefined;
+  chainType?: string | null | undefined;
+}): Promise<HeliusTokenMetadata | null> {
+  if (!HELIUS_RPC_URL) return null;
+  if (params.chainType && params.chainType !== "solana") return null;
+  if (!isLikelySolanaAddress(params.mint)) return null;
+
+  const mint = params.mint;
+  const now = Date.now();
+  const cached = heliusTokenMetadataCache.get(mint);
+  if (cached && cached.expiresAtMs > now) return cached.value;
+  const inFlight = heliusTokenMetadataInFlight.get(mint);
+  if (inFlight) return inFlight;
+
+  const request = (async (): Promise<HeliusTokenMetadata | null> => {
+    const asset = await heliusRpcCall<unknown>("getAsset", [mint], `asset-${mint.slice(0, 8)}`);
+    return readHeliusAssetMetadata(asset);
+  })().finally(() => {
+    heliusTokenMetadataInFlight.delete(mint);
+  });
+
+  heliusTokenMetadataInFlight.set(mint, request);
+  const value = await request;
+  heliusTokenMetadataCache.set(mint, {
+    value,
+    expiresAtMs: now + HELIUS_METADATA_CACHE_TTL_MS,
+  });
+  return value;
 }
 
 export function isHeliusConfigured(): boolean {

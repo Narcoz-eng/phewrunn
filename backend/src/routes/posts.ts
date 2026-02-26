@@ -32,7 +32,11 @@ import {
   TRACKING_MODE_SETTLED,
   type MarketCapResult,
 } from "../services/marketcap.js";
-import { getWalletTradeSnapshotsForSolanaTokens, isHeliusConfigured } from "../services/helius.js";
+import {
+  getWalletTradeSnapshotsForSolanaTokens,
+  getHeliusTokenMetadataForMint,
+  isHeliusConfigured,
+} from "../services/helius.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -516,6 +520,7 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
       select: {
         id: true,
         contractAddress: true,
+        chainType: true,
         createdAt: true,
         settled: true,
         lastMcapUpdate: true,
@@ -542,6 +547,47 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
       const needsTokenMetadata = !post.tokenName || !post.tokenSymbol || !post.tokenImage;
       if (!shouldUpdateMcap && !needsTokenMetadata) continue;
 
+      if (
+        !shouldUpdateMcap &&
+        needsTokenMetadata &&
+        post.chainType === "solana" &&
+        isHeliusConfigured()
+      ) {
+        try {
+          const heliusMetadata = await getHeliusTokenMetadataForMint({
+            mint: contractAddress,
+            chainType: post.chainType,
+          });
+          if (heliusMetadata) {
+            const updateData: {
+              tokenName?: string | null;
+              tokenSymbol?: string | null;
+              tokenImage?: string | null;
+            } = {};
+
+            if (!post.tokenName && heliusMetadata.tokenName) updateData.tokenName = heliusMetadata.tokenName;
+            if (!post.tokenSymbol && heliusMetadata.tokenSymbol) updateData.tokenSymbol = heliusMetadata.tokenSymbol;
+            if (!post.tokenImage && heliusMetadata.tokenImage) updateData.tokenImage = heliusMetadata.tokenImage;
+
+            if (Object.keys(updateData).length > 0) {
+              await prisma.post.update({
+                where: { id: post.id },
+                data: updateData,
+              });
+              result.updatedPosts++;
+              continue;
+            }
+          }
+        } catch (error) {
+          console.error("[Maintenance] Failed Helius metadata backfill", {
+            postId: post.id,
+            contractAddress,
+            error,
+          });
+          result.errors++;
+        }
+      }
+
       result.eligiblePosts++;
 
       let bucket = postsByContract.get(contractAddress);
@@ -555,9 +601,19 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
 
     for (const [contractAddress, posts] of postsByContract) {
       let marketCapResult: MarketCapResult;
+      let heliusMetadata: Awaited<ReturnType<typeof getHeliusTokenMetadataForMint>> | null = null;
 
       try {
         marketCapResult = await getFeedMarketCapSnapshot(contractAddress);
+        if (
+          isHeliusConfigured() &&
+          posts.some((p) => p.chainType === "solana" && (!p.tokenName || !p.tokenSymbol || !p.tokenImage))
+        ) {
+          heliusMetadata = await getHeliusTokenMetadataForMint({
+            mint: contractAddress,
+            chainType: "solana",
+          });
+        }
         result.refreshedContracts++;
       } catch (error) {
         console.error("[Maintenance] Failed to fetch market cap for contract", {
@@ -587,14 +643,14 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
             updateData.trackingMode = trackingMode;
           }
 
-          if (!post.tokenName && marketCapResult.tokenName) {
-            updateData.tokenName = marketCapResult.tokenName;
+          if (!post.tokenName && (heliusMetadata?.tokenName || marketCapResult.tokenName)) {
+            updateData.tokenName = heliusMetadata?.tokenName ?? marketCapResult.tokenName;
           }
-          if (!post.tokenSymbol && marketCapResult.tokenSymbol) {
-            updateData.tokenSymbol = marketCapResult.tokenSymbol;
+          if (!post.tokenSymbol && (heliusMetadata?.tokenSymbol || marketCapResult.tokenSymbol)) {
+            updateData.tokenSymbol = heliusMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol;
           }
-          if (!post.tokenImage && marketCapResult.tokenImage) {
-            updateData.tokenImage = marketCapResult.tokenImage;
+          if (!post.tokenImage && (heliusMetadata?.tokenImage || marketCapResult.tokenImage)) {
+            updateData.tokenImage = heliusMetadata?.tokenImage ?? marketCapResult.tokenImage;
           }
 
           if (Object.keys(updateData).length === 0) continue;
@@ -1313,8 +1369,13 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     }, 400);
   }
 
-  // Fetch market cap AND token metadata from DexScreener
-  const marketCapResult = await fetchMarketCapService(detected.address);
+  // Fetch market cap (Dex) and metadata (Helius-first for Solana) in parallel.
+  const [marketCapResult, heliusTokenMetadata] = await Promise.all([
+    fetchMarketCapService(detected.address),
+    detected.chainType === "solana" && isHeliusConfigured()
+      ? getHeliusTokenMetadataForMint({ mint: detected.address, chainType: detected.chainType })
+      : Promise.resolve(null),
+  ]);
   const entryMcap = marketCapResult.mcap;
 
   const post = await prisma.post.create({
@@ -1325,10 +1386,10 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
       chainType: detected.chainType,
       entryMcap,
       currentMcap: entryMcap,
-      // Store token metadata from DexScreener
-      tokenName: marketCapResult.tokenName ?? null,
-      tokenSymbol: marketCapResult.tokenSymbol ?? null,
-      tokenImage: marketCapResult.tokenImage ?? null,
+      // Store token metadata (Helius-first for Solana, Dex fallback)
+      tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult.tokenName ?? null,
+      tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol ?? null,
+      tokenImage: heliusTokenMetadata?.tokenImage ?? marketCapResult.tokenImage ?? null,
       trackingMode: TRACKING_MODE_ACTIVE, // New posts start in active tracking mode
       lastMcapUpdate: new Date(),
     },
