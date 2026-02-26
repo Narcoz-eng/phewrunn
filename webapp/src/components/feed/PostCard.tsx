@@ -1296,16 +1296,23 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     staleTime: 60 * 60 * 1000,
     retry: 1,
     queryFn: async () => {
-      if (!post.contractAddress) return 6;
+      if (!post.contractAddress) {
+        return { decimals: 6, supplyUiAmountString: null as string | null };
+      }
       const supply = await connection.getTokenSupply(new PublicKey(post.contractAddress));
-      return supply.value.decimals;
+      return {
+        decimals: supply.value.decimals,
+        supplyUiAmountString: supply.value.uiAmountString ?? null,
+      };
     },
   });
-  const outputTokenDecimals = outputTokenDecimalsQuery.data ?? 6;
+  const outputTokenDecimals = outputTokenDecimalsQuery.data?.decimals ?? 6;
+  const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data?.decimals === "number";
+  const outputTokenSupplyUiAmountString = outputTokenDecimalsQuery.data?.supplyUiAmountString ?? null;
 
   const parsedSellAmountToken = Number(sellAmountToken);
   const sellAmountAtomic =
-    Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0
+    Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0 && hasRpcTokenDecimals
       ? Math.max(1, Math.floor(parsedSellAmountToken * Math.pow(10, outputTokenDecimals)))
       : null;
   const tradeAmountAtomic = tradeSide === "buy" ? buyAmountLamports : sellAmountAtomic;
@@ -1361,11 +1368,20 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : walletTokenBalance.toLocaleString(undefined, {
           maximumFractionDigits: Math.min(8, Math.max(2, outputTokenDecimals)),
         });
+  const tokenSupplyDisplay =
+    outputTokenSupplyUiAmountString === null
+      ? "-"
+      : Number.isFinite(Number(outputTokenSupplyUiAmountString))
+        ? Number(outputTokenSupplyUiAmountString).toLocaleString(undefined, {
+            maximumFractionDigits: Math.min(6, Math.max(2, outputTokenDecimals)),
+          })
+        : outputTokenSupplyUiAmountString;
   const sellAmountExceedsBalance =
     tradeSide === "sell" &&
     walletTokenBalance !== null &&
     Number.isFinite(parsedSellAmountToken) &&
     parsedSellAmountToken > walletTokenBalance + 1e-9;
+  const sellBlockedByRpcTokenInfo = tradeSide === "sell" && !hasRpcTokenDecimals;
 
   const jupiterQuoteQuery = useQuery({
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
@@ -1678,6 +1694,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     !!wallet.signTransaction &&
     !!jupiterQuote &&
     !!tradeAmountAtomic &&
+    !sellBlockedByRpcTokenInfo &&
     !sellAmountExceedsBalance &&
     !isExecutingBuy;
   const tradeCtaLabel = !isSolanaTradeSupported
@@ -2640,8 +2657,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             ) : (
               <>
                 <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
-                  <div className="space-y-4 lg:space-y-0 lg:contents">
-                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)] lg:col-start-1 lg:row-start-1 lg:sticky lg:top-4">
+                  <div className="space-y-4 lg:sticky lg:top-4">
+                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
                       <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
                       <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
@@ -2746,7 +2763,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 lg:col-start-2">
+                  </div>
+
+                  <div className="flex flex-col gap-4 self-start">
+                    <div className="order-1 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
                           <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Order Ticket</div>
@@ -2784,7 +2804,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 lg:col-start-2">
+                    <div className="order-3 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
                         {walletShortAddress ? (
@@ -2822,7 +2842,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 lg:col-start-2">
+                    <div className="order-2 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
                           {tradeSide === "buy" ? "Buy Amount" : "Sell Amount"}
@@ -2843,6 +2863,45 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </div>
                         </div>
                       </div>
+
+                      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Token (RPC)</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            {outputTokenDecimalsQuery.isLoading
+                              ? "Loading..."
+                              : tokenMintInfoErrorMessage
+                                ? "Unavailable"
+                                : `${outputTokenDecimals} decimals`}
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            Supply: {outputTokenDecimalsQuery.isLoading ? "Loading..." : tokenSupplyDisplay}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Wallet Token (RPC)</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            {!walletShortAddress
+                              ? "Connect wallet"
+                              : walletTokenBalanceQuery.isLoading
+                                ? "Loading..."
+                                : `${walletTokenBalanceFormatted} ${post.tokenSymbol || "TOKEN"}`}
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {walletShortAddress ? "Used for sell amount + balance checks" : "Required for sell quotes"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {tradeSide === "sell" && (
+                        <div className="mb-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
+                          {sellBlockedByRpcTokenInfo
+                            ? (tokenMintInfoErrorMessage
+                                ? "Waiting for Solana RPC token mint info before sell quotes can be built."
+                                : "Loading Solana RPC token mint info for sell quotes...")
+                            : "Sell quotes use Solana RPC token decimals and your wallet token balance."}
+                        </div>
+                      )}
 
                       {tradeSide === "buy" ? (
                         <>
@@ -3008,7 +3067,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="space-y-4 self-start lg:col-start-2">
+                  <div className="space-y-4 order-4">
                     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
