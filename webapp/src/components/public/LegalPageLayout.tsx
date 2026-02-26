@@ -58,7 +58,7 @@ function DocLink({
     <Link
       to={to}
       className={cn(
-        "rounded-lg border px-3 py-2 text-sm transition-colors",
+        "inline-flex items-center justify-center whitespace-nowrap rounded-lg border px-3 py-2 text-sm transition-colors",
         active
           ? "border-primary/30 bg-primary/10 text-foreground"
           : "border-border/50 bg-background/40 text-muted-foreground hover:text-foreground hover:border-border"
@@ -101,45 +101,49 @@ export function LegalPageLayout({
       </div>
 
       <header className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-5 sm:px-6 py-3.5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <Link
-              to="/login"
-              className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </Link>
-            <Link to="/login" className="flex items-center gap-2 min-w-0">
-              <BrandLogo size="sm" showTagline className="shrink-0" />
-              <div className="hidden sm:flex items-center">
-                <span className="ml-1 rounded-full border border-border/50 bg-background/40 px-2.5 py-1 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Link
+                to="/login"
+                className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span className="hidden sm:inline">Back</span>
+              </Link>
+              <Link to="/login" className="flex items-center gap-2 min-w-0">
+                <BrandLogo size="sm" className="shrink-0" />
+                <span className="rounded-full border border-border/50 bg-background/40 px-2.5 py-1 text-[10px] sm:text-[11px] uppercase tracking-[0.12em] text-muted-foreground shrink-0">
                   {meta.label}
                 </span>
-              </div>
-            </Link>
-          </div>
+              </Link>
+            </div>
 
-          <div className="flex items-center gap-2">
-            <DocLink to="/terms" active={page === "terms"}>
-              Terms
-            </DocLink>
-            <DocLink to="/privacy" active={page === "privacy"}>
-              Privacy
-            </DocLink>
-            <DocLink to="/docs" active={page === "docs"}>
-              Docs
-            </DocLink>
-            <ThemeToggle size="icon" className="h-9 w-9 ml-1" />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex-1 sm:flex-none overflow-x-auto">
+                <div className="flex items-center gap-2 min-w-max pr-1">
+                  <DocLink to="/terms" active={page === "terms"}>
+                    Terms
+                  </DocLink>
+                  <DocLink to="/privacy" active={page === "privacy"}>
+                    Privacy
+                  </DocLink>
+                  <DocLink to="/docs" active={page === "docs"}>
+                    Docs
+                  </DocLink>
+                </div>
+              </div>
+              <ThemeToggle size="icon" className="h-9 w-9 shrink-0" />
+            </div>
           </div>
         </div>
       </header>
 
       <main className="relative z-10">
-        <div className="max-w-7xl mx-auto px-5 sm:px-6 py-8 sm:py-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px] items-start">
             <article className="rounded-2xl border border-border/60 bg-background/80 backdrop-blur-xl shadow-[0_20px_70px_-40px_hsl(var(--foreground)/0.45)] overflow-hidden">
-              <div className="border-b border-border/50 px-5 sm:px-7 py-5 sm:py-6 bg-gradient-to-b from-background via-background to-transparent">
+              <div className="border-b border-border/50 px-4 sm:px-7 py-5 sm:py-6 bg-gradient-to-b from-background via-background to-transparent">
                 <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground">
                   <Icon className="w-3.5 h-3.5" />
                   <span>{meta.label} Document</span>
@@ -163,15 +167,32 @@ export function LegalPageLayout({
                 </div>
               </div>
 
-              <div className="px-5 sm:px-7 py-5 sm:py-7 space-y-8">
+              <div className="px-4 sm:px-7 py-5 sm:py-7 space-y-8">
                 <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs sm:text-sm text-amber-200">
                   These pages were drafted from the current codebase and feature set. Review with qualified counsel before treating them as final legal documents.
+                </div>
+                <div className="xl:hidden rounded-xl border border-border/50 bg-background/40 p-3">
+                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <FileText className="w-3.5 h-3.5" />
+                    Contents
+                  </div>
+                  <nav className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                    {toc.map((item) => (
+                      <a
+                        key={item.id}
+                        href={`#${item.id}`}
+                        className="whitespace-nowrap rounded-lg border border-border/40 bg-background/50 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors"
+                      >
+                        {item.label}
+                      </a>
+                    ))}
+                  </nav>
                 </div>
                 {children}
               </div>
             </article>
 
-            <aside className="xl:sticky xl:top-24 rounded-2xl border border-border/60 bg-background/75 backdrop-blur-xl p-4 sm:p-5 shadow-[0_16px_50px_-42px_hsl(var(--foreground)/0.5)]">
+            <aside className="hidden xl:block xl:sticky xl:top-24 rounded-2xl border border-border/60 bg-background/75 backdrop-blur-xl p-4 sm:p-5 shadow-[0_16px_50px_-42px_hsl(var(--foreground)/0.5)]">
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-muted-foreground">
                 <FileText className="w-3.5 h-3.5" />
                 Contents

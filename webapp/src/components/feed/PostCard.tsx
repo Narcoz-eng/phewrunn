@@ -86,6 +86,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
+  const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
 
   // Sync follow state when post data changes
   useEffect(() => {
@@ -537,7 +538,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           ? "Wallet Profit"
           : "Wallet Loss";
     const postPreview = stripContractAddress(post.content) || post.content || "No description";
-    const logoMarkSrc = "/phew-mark.svg";
+    const logoMarkSrc = exactLogoImageSrc;
+    const logoMarkFallbackSrc = "/phew-mark.svg";
     const authorAvatarSrc = getAvatarUrl(post.author.id, post.author.image);
     const loadCanvasImage = (src: string | null | undefined) =>
       new Promise<HTMLImageElement | null>((resolve) => {
@@ -553,11 +555,18 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         img.onerror = () => resolve(null);
         img.src = src;
       });
+    const loadFirstCanvasImage = async (sources: Array<string | null | undefined>) => {
+      for (const src of sources) {
+        const img = await loadCanvasImage(src);
+        if (img) return img;
+      }
+      return null;
+    };
 
     setIsWinCardDownloading(true);
     try {
       const [brandMarkImg, authorAvatarImg] = await Promise.all([
-        loadCanvasImage(logoMarkSrc),
+        loadFirstCanvasImage([logoMarkSrc, logoMarkFallbackSrc]),
         loadCanvasImage(authorAvatarSrc),
       ]);
 
@@ -627,11 +636,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
 
       ctx.font = "800 18px Inter, system-ui, sans-serif";
-      ctx.fillStyle = "#f8fafc";
+      ctx.fillStyle = "rgba(248,250,252,0.92)";
       ctx.fillText("PHEW", 112, 88);
-      ctx.fillStyle = "#84ff57";
+      ctx.fillStyle = "#b7e8c6";
       ctx.fillText(".RUN", 167, 88);
-      ctx.fillStyle = "rgba(226,232,240,0.62)";
+      ctx.fillStyle = "rgba(226,232,240,0.52)";
       ctx.font = "600 9px Inter, system-ui, sans-serif";
       ctx.fillText("PHEW RUNNING THE INTERNET", 112, 77);
 
@@ -1711,18 +1720,18 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     <div className="inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5">
                       <div className="h-7 w-7 rounded-md border border-white/10 bg-white/5 p-0.5">
                         <img
-                          src="/phew-mark.svg"
+                          src={exactLogoImageSrc}
                           alt="Phew"
-                          className="h-full w-full object-contain"
+                          className="h-full w-full object-cover rounded-[5px]"
                           loading="lazy"
                         />
                       </div>
                       <div className="leading-tight">
                         <div className="text-xs font-semibold tracking-wide">
-                          <span className="text-white">PHEW</span>
-                          <span className="text-[#84ff57]">.RUN</span>
+                          <span className="text-white/90">PHEW</span>
+                          <span className="text-[#b7e8c6]">.RUN</span>
                         </div>
-                        <div className="hidden sm:block text-[9px] tracking-[0.12em] text-slate-300/70">
+                        <div className="hidden sm:block text-[9px] tracking-[0.12em] text-slate-300/60">
                           PHEW RUNNING THE INTERNET
                         </div>
                       </div>

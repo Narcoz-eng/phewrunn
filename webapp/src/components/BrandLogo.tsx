@@ -65,12 +65,12 @@ export function BrandLogo({
           )}
         >
           <span className="text-foreground">PHEW</span>
-          <span className="bg-gradient-to-r from-[#A9FF34] via-[#76FF44] to-[#41E8CF] bg-clip-text text-transparent">.RUN</span>
+          <span className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent">.RUN</span>
         </div>
         {showTagline ? (
           <div
             className={cn(
-              "mt-0.5 text-white/80 tracking-[0.14em] uppercase leading-none",
+              "mt-0.5 text-white/65 tracking-[0.14em] uppercase leading-none",
               "drop-shadow-[0_1px_6px_rgba(0,0,0,0.28)]",
               styles.subtitle
             )}
