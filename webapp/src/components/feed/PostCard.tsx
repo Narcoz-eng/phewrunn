@@ -1527,7 +1527,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleExecuteJupiterBuy = async () => {
     if (!isSolanaTradeSupported || !post.contractAddress) {
-      toast.error("Jupiter trading is available for Solana posts only");
+      toast.error("Trading is available for Solana posts only");
       return;
     }
     if (!wallet.publicKey) {
@@ -1733,7 +1733,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     : jupiterQuoteQuery.isLoading || jupiterQuoteQuery.isFetching
       ? "Fetching route..."
       : jupiterNoRouteDetected
-        ? "No route on Jupiter"
+        ? "No route available"
         : jupiterQuoteUnavailable
           ? "Quote unavailable"
         : jupiterQuote
@@ -1941,33 +1941,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       )}
                     </Button>
 
-                    {/* Dexscreener Link */}
-                    {dexscreenerUrl && (
-                      <a
-                        href={dexscreenerUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={cn(
-                          "group/button relative overflow-hidden flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
-                          "border border-white/10 text-white/95",
-                          !localSettled && "bg-gradient-to-r from-primary/25 via-primary/15 to-white/5 hover:from-primary/30 hover:to-white/10 shadow-lg shadow-primary/15",
-                          localSettled && localIsWin && "bg-gradient-to-r from-gain/25 via-gain/15 to-white/5 hover:from-gain/30 hover:to-white/10 shadow-lg shadow-gain/20",
-                          localSettled && !localIsWin && "bg-gradient-to-r from-loss/20 via-loss/12 to-white/5 hover:from-loss/25 hover:to-white/10 shadow-lg shadow-loss/15",
-                          "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                        )}
-                      >
-                        <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                        {!localSettled && (
-                          <span className="relative flex h-2 w-2">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-                          </span>
-                        )}
-                        <BarChart3 className="h-4 w-4" />
-                        <span>Open Chart</span>
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
                   </div>
                 </div>
 
@@ -2619,7 +2592,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm">
               {isSolanaTradeSupported
-                ? "Live chart + buy/sell controls stay in one panel so users can trade while watching the chart."
+                ? "Review the chart and place trades from the same panel."
                 : "Trading is available here for Solana posts. This post is on another chain."}
             </DialogDescription>
           </DialogHeader>
@@ -2763,24 +2736,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               <p className="text-sm text-muted-foreground">
                                 Waiting for more market snapshots to draw the chart.
                               </p>
-                              {dexscreenerUrl ? (
-                                <a
-                                  href={dexscreenerUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-                                >
-                                  Open Dexscreener instead
-                                  <ExternalLink className="h-3 w-3" />
-                                </a>
-                              ) : null}
                             </div>
                           </div>
                         )}
                       </div>
 
                       <div className="relative border-t border-white/10 px-4 py-3 text-[11px] text-muted-foreground">
-                        Dexscreener iframe embeds can be blocked by some browsers. This panel stays responsive using your live post market snapshots, with full chart access above.
+                        Dexscreener iframe embeds can be blocked by some browsers. This panel stays responsive using your live post market snapshots.
                       </div>
                     </div>
 
@@ -3056,14 +3018,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                       <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Jupiter Route Status</div>
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Route Status</div>
                           <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
                             {jupiterStatusLabel}
                           </span>
                         </div>
                         {jupiterNoRouteDetected && (
                           <p className="mt-2 text-xs text-amber-100/85">
-                            This token is not routable on Jupiter right now. Chart and token data still load, but swap execution is unavailable until a route exists.
+                            No route is available right now. Chart and token data still load, but swap execution is unavailable until routing returns.
                           </p>
                         )}
                       </div>
@@ -3112,7 +3074,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           {jupiterQuoteQuery.isLoading
                             ? "Loading route..."
                             : jupiterNoRouteDetected
-                              ? "No Jupiter route available right now"
+                              ? "No route available right now"
                               : "No route yet"}
                         </div>
                       )}
@@ -3122,7 +3084,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             Pump Token Fallback
                           </div>
                           <p className="mt-1 text-xs text-lime-100/80">
-                            Jupiter has no route for this token right now. Open the Pump market page to trade there instead.
+                            No route is available for this token right now. Open the Pump market page to trade there instead.
                           </p>
                           <a
                             href={pumpfunUrl}
@@ -3140,14 +3102,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         <div className="mt-3 rounded-xl border border-loss/20 bg-loss/5 p-3">
                           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-loss">Provider Error</div>
                           <p className="mt-1 text-xs text-loss/90">
-                            Quote temporarily unavailable. Retry in a moment, adjust amount/slippage, or use the full chart link.
+                            Quote temporarily unavailable. Retry in a moment or adjust amount/slippage.
                           </p>
                         </div>
                       ) : null}
                       <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
                         <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-foreground/90">Wallet Safety Prompt</div>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          If Phantom shows “Request blocked”, that is a wallet security warning for the site origin (domain reputation), not a Jupiter quote failure. Users can continue manually, but the long-term fix is to get the domain trusted/whitelisted by Phantom.
+                          If Phantom shows “Request blocked”, that is a wallet security warning for the site origin (domain reputation), not a quote-routing failure. Users can continue manually, but the long-term fix is to get the domain trusted/whitelisted by Phantom.
                         </p>
                       </div>
                       {buyTxSignature ? (
