@@ -2666,9 +2666,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               </div>
             ) : (
               <>
-                <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
-                  <div className="space-y-4">
-                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
+                <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
+                  <div className="space-y-4 lg:space-y-0 lg:contents">
+                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)] lg:col-start-1 lg:row-start-1 lg:sticky lg:top-4">
                       <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
                       <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
@@ -2784,7 +2784,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 lg:col-start-2">
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
                           <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Order Ticket</div>
@@ -2822,7 +2822,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 lg:col-start-2">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
                         {walletShortAddress ? (
@@ -2860,7 +2860,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 lg:col-start-2">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
                           {tradeSide === "buy" ? "Buy Amount" : "Sell Amount"}
@@ -3046,7 +3046,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="space-y-4 self-start lg:sticky lg:top-4">
+                  <div className="space-y-4 self-start lg:col-start-2">
                     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
