@@ -27,6 +27,9 @@ export function SolanaWalletProvider({ children }: SolanaWalletProviderProps) {
     if (import.meta.env.VITE_SOLANA_RPC_URL) {
       return import.meta.env.VITE_SOLANA_RPC_URL;
     }
+    if (import.meta.env.VITE_HELIUS_RPC_URL) {
+      return import.meta.env.VITE_HELIUS_RPC_URL;
+    }
     // Default to mainnet for real wallet connections
     return clusterApiUrl("mainnet-beta");
   }, []);
@@ -46,7 +49,7 @@ export function SolanaWalletProvider({ children }: SolanaWalletProviderProps) {
   // Always render wallet providers to ensure hooks work correctly
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect={false}>
+      <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

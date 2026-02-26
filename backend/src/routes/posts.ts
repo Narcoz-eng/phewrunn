@@ -94,6 +94,14 @@ const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: nu
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
+const JUPITER_QUOTE_URLS = [
+  "https://lite-api.jup.ag/swap/v1/quote",
+  "https://quote-api.jup.ag/v6/quote",
+];
+const JUPITER_SWAP_URLS = [
+  "https://lite-api.jup.ag/swap/v1/swap",
+  "https://quote-api.jup.ag/v6/swap",
+];
 
 async function attachWalletTradeSnapshots<T extends {
   [key: string]: unknown;
@@ -2483,6 +2491,21 @@ const BatchPostPricesSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(50),
 });
 
+const JupiterQuoteProxySchema = z.object({
+  inputMint: z.string().min(32).max(64),
+  outputMint: z.string().min(32).max(64),
+  amount: z.number().int().positive(),
+  slippageBps: z.number().int().min(1).max(5000),
+  swapMode: z.enum(["ExactIn", "ExactOut"]).optional().default("ExactIn"),
+});
+
+const JupiterSwapProxySchema = z.object({
+  quoteResponse: z.record(z.string(), z.any()),
+  userPublicKey: z.string().min(32).max(64),
+  wrapAndUnwrapSol: z.boolean().optional(),
+  dynamicComputeUnitLimit: z.boolean().optional(),
+});
+
 type PriceRoutePostRecord = {
   id: string;
   contractAddress: string | null;
@@ -2582,6 +2605,96 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     settledAt: post.settledAt?.toISOString() ?? null,
   };
 }
+
+async function forwardJupiterRequest(
+  targets: string[],
+  init: RequestInit & { timeoutMs?: number }
+): Promise<{ status: number; bodyText: string; contentType: string | null }> {
+  const { timeoutMs = 7000, ...requestInit } = init;
+  let lastStatus = 502;
+  let lastBody = "Failed to reach Jupiter";
+  let lastContentType: string | null = null;
+
+  for (const url of targets) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        ...requestInit,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const bodyText = await res.text();
+      const contentType = res.headers.get("content-type");
+      if (res.ok) {
+        return { status: res.status, bodyText, contentType };
+      }
+      lastStatus = res.status;
+      lastBody = bodyText || `Jupiter request failed (${res.status})`;
+      lastContentType = contentType;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastStatus = 502;
+      lastBody = error instanceof Error ? error.message : "Jupiter request failed";
+      lastContentType = "text/plain";
+    }
+  }
+
+  return { status: lastStatus, bodyText: lastBody, contentType: lastContentType };
+}
+
+postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), async (c) => {
+  const payload = c.req.valid("json");
+
+  const params = new URLSearchParams({
+    inputMint: payload.inputMint,
+    outputMint: payload.outputMint,
+    amount: String(payload.amount),
+    slippageBps: String(payload.slippageBps),
+    swapMode: payload.swapMode ?? "ExactIn",
+  });
+
+  const result = await forwardJupiterRequest(
+    JUPITER_QUOTE_URLS.map((base) => `${base}?${params.toString()}`),
+    {
+      method: "GET",
+      headers: { accept: "application/json" },
+      timeoutMs: 7000,
+    }
+  );
+
+  const contentType = result.contentType ?? "application/json";
+  return new Response(result.bodyText, {
+    status: result.status,
+    headers: {
+      "content-type": contentType,
+      "cache-control": "no-store",
+    },
+  });
+});
+
+postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), async (c) => {
+  const payload = c.req.valid("json");
+
+  const result = await forwardJupiterRequest(JUPITER_SWAP_URLS, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+    timeoutMs: 10000,
+  });
+
+  const contentType = result.contentType ?? "application/json";
+  return new Response(result.bodyText, {
+    status: result.status,
+    headers: {
+      "content-type": contentType,
+      "cache-control": "no-store",
+    },
+  });
+});
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
   const { ids } = c.req.valid("json");

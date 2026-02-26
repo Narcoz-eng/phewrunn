@@ -1257,7 +1257,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ? Math.max(1, Math.floor(parsedBuyAmountSol * LAMPORTS_PER_SOL))
       : null;
 
-  const { data: outputTokenDecimals = 6 } = useQuery({
+  const outputTokenDecimalsQuery = useQuery({
     queryKey: ["jupiterTokenDecimals", post.contractAddress],
     enabled: isBuyDialogOpen && isSolanaTradeSupported,
     staleTime: 60 * 60 * 1000,
@@ -1268,6 +1268,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       return supply.value.decimals;
     },
   });
+  const outputTokenDecimals = outputTokenDecimalsQuery.data ?? 6;
 
   const jupiterQuoteQuery = useQuery({
     queryKey: ["jupiterQuote", post.contractAddress, buyAmountLamports, slippageBps],
@@ -1285,24 +1286,56 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         throw new Error("Invalid Solana token address");
       }
 
-      const params = new URLSearchParams({
+      const quotePayload = {
         inputMint: SOL_MINT,
         outputMint,
-        amount: String(buyAmountLamports),
-        slippageBps: String(slippageBps),
+        amount: buyAmountLamports,
+        slippageBps,
         swapMode: "ExactIn",
-      });
+      };
 
-      const quoteUrls = [JUPITER_QUOTE_URL, JUPITER_QUOTE_FALLBACK_URL];
+      const quoteTargets = [
+        {
+          type: "proxy" as const,
+          url: "/api/posts/jupiter/quote",
+        },
+        {
+          type: "direct" as const,
+          url: JUPITER_QUOTE_URL,
+        },
+        {
+          type: "direct" as const,
+          url: JUPITER_QUOTE_FALLBACK_URL,
+        },
+      ];
       let lastError = "Failed to load quote";
-      for (const baseUrl of quoteUrls) {
+      for (const target of quoteTargets) {
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000);
-          const res = await fetch(`${baseUrl}?${params.toString()}`, {
-            signal: controller.signal,
-            cache: "no-store",
-          });
+          const res =
+            target.type === "proxy"
+              ? await fetch(target.url, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(quotePayload),
+                  signal: controller.signal,
+                  cache: "no-store",
+                  credentials: "same-origin",
+                })
+              : await fetch(
+                  `${target.url}?${new URLSearchParams({
+                    inputMint: quotePayload.inputMint,
+                    outputMint: quotePayload.outputMint,
+                    amount: String(quotePayload.amount),
+                    slippageBps: String(quotePayload.slippageBps),
+                    swapMode: quotePayload.swapMode,
+                  }).toString()}`,
+                  {
+                    signal: controller.signal,
+                    cache: "no-store",
+                  }
+                );
           clearTimeout(timeout);
           if (!res.ok) {
             const body = await res.text().catch(() => "");
@@ -1342,6 +1375,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setIsBuyDialogOpen(true);
   };
 
+  const openWalletSelector = ({
+    closeBuyDialog = false,
+    closeWalletConnectDialog = false,
+  }: {
+    closeBuyDialog?: boolean;
+    closeWalletConnectDialog?: boolean;
+  } = {}) => {
+    if (closeBuyDialog) {
+      setIsBuyDialogOpen(false);
+    }
+    if (closeWalletConnectDialog) {
+      setIsWalletConnectDialogOpen(false);
+    }
+    const openModal = () => setWalletModalVisible(true);
+    if (typeof window !== "undefined") {
+      window.setTimeout(openModal, 80);
+    } else {
+      openModal();
+    }
+  };
+
   const handleTradeCtaClick = () => {
     if (isSolanaTradeSupported && !wallet.publicKey) {
       setPendingBuyAfterWalletConnect(true);
@@ -1356,7 +1410,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       toast.error("Jupiter buy is available for Solana posts only");
       return;
     }
-    if (!wallet.connected || !wallet.publicKey) {
+    if (!wallet.publicKey) {
       toast.error("Connect a Solana wallet first");
       return;
     }
@@ -1382,12 +1436,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       let swapRes: Response | null = null;
       let lastSwapError = "";
-      for (const swapUrl of [JUPITER_SWAP_URL, JUPITER_SWAP_FALLBACK_URL]) {
+      for (const swapTarget of ["/api/posts/jupiter/swap", JUPITER_SWAP_URL, JUPITER_SWAP_FALLBACK_URL]) {
         try {
-          swapRes = await fetch(swapUrl, {
+          swapRes = await fetch(swapTarget, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: swapPayloadBody,
+            credentials: swapTarget.startsWith("/") ? "same-origin" : "omit",
           });
           if (swapRes.ok) break;
           lastSwapError = (await swapRes.text().catch(() => "")) || `Swap build failed (${swapRes.status})`;
@@ -1465,6 +1520,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
+  const tokenMintInfoErrorMessage =
+    outputTokenDecimalsQuery.error instanceof Error ? outputTokenDecimalsQuery.error.message : null;
   const jupiterNoRouteDetected =
     !!jupiterQuoteErrorMessage &&
     /route|not tradable|no route|could not find|TOKEN_NOT_TRADABLE/i.test(jupiterQuoteErrorMessage);
@@ -1505,8 +1562,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleBuyFooterAction = () => {
     if (canTriggerWalletConnectFromFooter) {
-      setPendingBuyAfterWalletConnect(false);
-      setWalletModalVisible(true);
+      setPendingBuyAfterWalletConnect(true);
+      setIsBuyDialogOpen(false);
+      setIsWalletConnectDialogOpen(true);
       return;
     }
     void handleExecuteJupiterBuy();
@@ -2372,7 +2430,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
                   <Button
                     type="button"
-                    onClick={() => setWalletModalVisible(true)}
+                    onClick={() => openWalletSelector({ closeWalletConnectDialog: true })}
                     disabled={wallet.connecting}
                     className="h-11 gap-2 bg-amber-300 text-black hover:bg-amber-200"
                   >
@@ -2602,7 +2660,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="grid gap-2 sm:grid-cols-2">
                         <Button
                           type="button"
-                          onClick={() => setWalletModalVisible(true)}
+                          onClick={() => {
+                            setPendingBuyAfterWalletConnect(true);
+                            setIsWalletConnectDialogOpen(true);
+                            setIsBuyDialogOpen(false);
+                          }}
                           className={cn(
                             "h-10 gap-2",
                             walletShortAddress
@@ -2757,6 +2819,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </p>
                           <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-200/85">
 {jupiterQuoteErrorMessage}
+                          </pre>
+                        </div>
+                      ) : null}
+                      {tokenMintInfoErrorMessage ? (
+                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/5 p-3">
+                          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-amber-100">
+                            Token Data Error
+                          </div>
+                          <p className="mt-1 text-xs text-amber-100/85">
+                            Token mint info could not be refreshed from the Solana RPC. Quote and swap can still work if Jupiter has a route.
+                          </p>
+                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-200/85">
+{tokenMintInfoErrorMessage}
                           </pre>
                         </div>
                       ) : null}
