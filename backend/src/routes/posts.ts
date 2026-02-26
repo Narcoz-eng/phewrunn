@@ -79,6 +79,7 @@ const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const priceRefreshInFlight = new Map<string, Promise<number | null>>();
 const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
+const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 25 : 15;
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
@@ -1070,28 +1071,36 @@ postsRouter.get("/", async (c) => {
           return (post._count.likes || 0) + (post._count.comments || 0) + (post._count.reposts || 0);
         };
 
-        // 1. Primary: Winners first (isWin or isWin1h or isWin6h)
-        const aIsWin = a.isWin || a.isWin1h || a.isWin6h || false;
-        const bIsWin = b.isWin || b.isWin1h || b.isWin6h || false;
+        const gainA = getPercentGain(a);
+        const gainB = getPercentGain(b);
+        const aHasHighLiveMomentum = !a.settled && gainA >= TRENDING_LIVE_GAIN_PRIORITY_PCT;
+        const bHasHighLiveMomentum = !b.settled && gainB >= TRENDING_LIVE_GAIN_PRIORITY_PCT;
+
+        // 1. Primary: Big live runners should surface with settled winners.
+        if (aHasHighLiveMomentum !== bHasHighLiveMomentum) {
+          return bHasHighLiveMomentum ? 1 : -1;
+        }
+
+        // 2. Positive performers / winners first (includes unsettled gains)
+        const aIsWin = !!(a.isWin || a.isWin1h || a.isWin6h || gainA > 0);
+        const bIsWin = !!(b.isWin || b.isWin1h || b.isWin6h || gainB > 0);
         if (aIsWin !== bIsWin) {
           return bIsWin ? 1 : -1; // Winners (true) come first
         }
 
-        // 2. Secondary: Sort by percentage gain (highest first)
-        const gainA = getPercentGain(a);
-        const gainB = getPercentGain(b);
+        // 3. Secondary: Sort by percentage gain (highest first)
         if (gainA !== gainB) {
           return gainB - gainA;
         }
 
-        // 3. Tertiary: Sort by engagement (likes + comments + reposts)
+        // 4. Tertiary: Sort by engagement (likes + comments + reposts)
         const engagementA = getEngagement(a);
         const engagementB = getEngagement(b);
         if (engagementA !== engagementB) {
           return engagementB - engagementA;
         }
 
-        // 4. Final tiebreaker: Most recent first
+        // 5. Final tiebreaker: Most recent first
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
   }

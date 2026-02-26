@@ -544,6 +544,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       return trimmedLines.length;
     };
 
+    const fitTextSingleLine = (text: string, maxWidth: number) => {
+      const source = text.trim();
+      if (!source) return "";
+      if (ctx.measureText(source).width <= maxWidth) return source;
+      let value = source;
+      while (value.length > 1) {
+        value = value.slice(0, -1);
+        const candidate = `${value}...`;
+        if (ctx.measureText(candidate).width <= maxWidth) {
+          return candidate;
+        }
+      }
+      return "...";
+    };
+
     const titleName = post.author.username ? `@${post.author.username}` : post.author.name;
     const tokenPrimary = post.tokenSymbol || post.tokenName || "TOKEN";
     const tokenSecondary = post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}` : "No contract");
@@ -804,7 +819,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       ctx.fillStyle = "#f8fafc";
       ctx.font = "700 28px Inter, system-ui, sans-serif";
-      ctx.fillText(titleName, 146, 162);
+      ctx.fillText(fitTextSingleLine(titleName, 570), 146, 162);
 
       ctx.fillStyle = "rgba(226,232,240,0.75)";
       ctx.font = "500 14px Inter, system-ui, sans-serif";
@@ -822,7 +837,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       ctx.fillStyle = "#ffffff";
       ctx.font = "700 18px Inter, system-ui, sans-serif";
-      ctx.fillText(tokenPrimary, 162, 219);
+      ctx.fillText(fitTextSingleLine(tokenPrimary, 450), 162, 219);
       ctx.textAlign = "right";
       ctx.fillStyle = "rgba(248,250,252,0.96)";
       ctx.font = "700 14px Inter, system-ui, sans-serif";
@@ -1154,7 +1169,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     return `https://dexscreener.com/${chain}/${post.contractAddress}`;
   };
 
-  const getPumpFunUrl = () => {
+  const isPumpFunToken = () => {
     if (!post.contractAddress || post.chainType !== "solana") return null;
     const normalizedCa = post.contractAddress.trim().toLowerCase();
     const sourceUrl = (post.dexscreenerUrl ?? "").toLowerCase();
@@ -1162,8 +1177,32 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       normalizedCa.endsWith("pump") ||
       sourceUrl.includes("pump.fun") ||
       sourceUrl.includes("pumpfun");
-    return looksLikePumpFun ? `https://pump.fun/coin/${post.contractAddress}` : null;
+    return looksLikePumpFun;
   };
+
+  const getPumpFunUrl = (allowFallback = false) => {
+    if (!post.contractAddress || post.chainType !== "solana") return null;
+    if (isPumpFunToken() || allowFallback) {
+      return `https://pump.fun/coin/${post.contractAddress}`;
+    }
+    return null;
+  };
+
+  const dexscreenerUrl = getDexscreenerUrl();
+  const pumpFunUrl = getPumpFunUrl(true);
+  const isPumpFunDetected = !!isPumpFunToken();
+  const marketButtonsTone =
+    !localSettled
+      ? "border-primary/20 bg-primary/5"
+      : localIsWin
+        ? "border-gain/20 bg-gain/5"
+        : "border-loss/20 bg-loss/5";
+  const marketButtonsGlow =
+    !localSettled
+      ? "shadow-[0_0_0_1px_rgba(148,163,184,0.08),0_16px_38px_-24px_rgba(148,163,184,0.35)]"
+      : localIsWin
+        ? "shadow-[0_0_0_1px_rgba(34,197,94,0.08),0_16px_38px_-24px_rgba(34,197,94,0.35)]"
+        : "shadow-[0_0_0_1px_rgba(239,68,68,0.08),0_16px_38px_-24px_rgba(239,68,68,0.30)]";
 
   // Navigate to user profile (prefer username over ID for cleaner URLs)
   const handleProfileClick = (e: React.MouseEvent) => {
@@ -1319,40 +1358,62 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className={cn("flex items-center gap-2 flex-wrap rounded-xl border p-1.5", marketButtonsTone, marketButtonsGlow)}>
                     {/* Dexscreener Link */}
-                    {getDexscreenerUrl() && (
+                    {dexscreenerUrl && (
                       <a
-                        href={getDexscreenerUrl() ?? ""}
+                        href={dexscreenerUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={cn(
-                          "flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
-                          "bg-gradient-to-r from-gain/90 to-accent/90 hover:from-gain hover:to-accent",
-                          "text-primary-foreground shadow-lg shadow-gain/20",
+                          "group/button relative overflow-hidden flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
+                          "border border-white/10 text-white/95",
+                          !localSettled && "bg-gradient-to-r from-primary/25 via-primary/15 to-white/5 hover:from-primary/30 hover:to-white/10 shadow-lg shadow-primary/15",
+                          localSettled && localIsWin && "bg-gradient-to-r from-gain/25 via-gain/15 to-white/5 hover:from-gain/30 hover:to-white/10 shadow-lg shadow-gain/20",
+                          localSettled && !localIsWin && "bg-gradient-to-r from-loss/20 via-loss/12 to-white/5 hover:from-loss/25 hover:to-white/10 shadow-lg shadow-loss/15",
                           "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                         )}
                       >
+                        <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                        {!localSettled && (
+                          <span className="relative flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                          </span>
+                        )}
                         <BarChart3 className="h-4 w-4" />
                         <span>Dexscreener</span>
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     )}
 
-                    {getPumpFunUrl() && (
+                    {pumpFunUrl && (
                       <a
-                        href={getPumpFunUrl() ?? ""}
+                        href={pumpFunUrl}
                         target="_blank"
                         rel="noopener noreferrer"
+                        title={isPumpFunDetected ? "Open Pump.fun coin page" : "Open Pump.fun coin page (if listed)"}
                         className={cn(
-                          "flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
-                          "bg-green-600 hover:bg-green-500 border border-green-500/80",
-                          "text-white shadow-lg shadow-green-600/20",
+                          "group/button relative overflow-hidden flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
+                          "border text-white",
+                          isPumpFunDetected
+                            ? "border-emerald-400/40 bg-gradient-to-r from-emerald-500/80 to-green-500/75 shadow-lg shadow-emerald-500/20 hover:from-emerald-400/90 hover:to-green-400/85"
+                            : "border-emerald-500/25 bg-gradient-to-r from-emerald-500/35 to-green-500/30 shadow-lg shadow-emerald-600/10 hover:from-emerald-500/45 hover:to-green-500/38",
+                          localSettled && !localIsWin && "saturate-[0.9]",
                           "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                         )}
                       >
+                        <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                        {!localSettled && (
+                          <Sparkles className="h-3.5 w-3.5 text-white/90" />
+                        )}
                         <Coins className="h-4 w-4" />
                         <span>Trade on Pump</span>
+                        {!isPumpFunDetected && (
+                          <span className="hidden sm:inline rounded-full border border-white/20 bg-white/10 px-1.5 py-0.5 text-[10px] font-medium">
+                            if listed
+                          </span>
+                        )}
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     )}
