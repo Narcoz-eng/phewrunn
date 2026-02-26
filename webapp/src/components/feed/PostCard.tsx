@@ -1685,7 +1685,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     : isWalletConnectedForTrade
       ? "Trade Now"
       : "Connect Wallet";
-  const tradeCtaSubtleLabel = isWalletConnectedForTrade ? "Buy / Sell via Jupiter" : "Jupiter setup";
+  const tradeCtaSubtleLabel = isWalletConnectedForTrade ? "Quick Trade" : "Wallet setup";
   const tradeButtonTone = !isSolanaTradeSupported
     ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
     : isWalletConnectedForTrade
@@ -2680,17 +2680,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
                             {jupiterStatusLabel}
                           </span>
-                          {dexscreenerUrl ? (
-                            <a
-                              href={dexscreenerUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-white/10 transition-colors"
-                            >
-                              Open Full Chart
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          ) : null}
                         </div>
                       </div>
                       <div className="relative px-4 pt-4">
