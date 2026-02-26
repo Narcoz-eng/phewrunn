@@ -6,7 +6,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 // User model - Better Auth compatible with SocialFi extensions
@@ -37,7 +36,7 @@ model User {
 
   // Trade fee settings (poster rewards from swap fees)
   tradeFeeRewardsEnabled Boolean @default(true)
-  tradeFeeShareBps       Int     @default(5000) // 0-10000; share of platform fee allocated to poster
+  tradeFeeShareBps       Int     @default(100) // 0-100 (max 1.00%)
   tradeFeePayoutAddress  String? // optional Solana payout wallet; falls back to walletAddress
 
   // Better Auth relations

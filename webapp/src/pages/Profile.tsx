@@ -135,7 +135,7 @@ export default function Profile() {
   const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
   const profileViewTab: ProfileViewTab = searchParams.get("tab") === "settings" ? "settings" : "profile";
   const [feeRewardsEnabled, setFeeRewardsEnabled] = useState(true);
-  const [feeSharePercentInput, setFeeSharePercentInput] = useState("50.00");
+  const [feeSharePercentInput, setFeeSharePercentInput] = useState("1.00");
   const [feePayoutAddressInput, setFeePayoutAddressInput] = useState("");
 
   // Edit form state
@@ -714,7 +714,7 @@ export default function Profile() {
       toast.error("Fee share must be a valid number");
       return;
     }
-    const normalizedShareBps = Math.min(10000, Math.max(0, Math.round(parsedSharePercent * 100)));
+    const normalizedShareBps = Math.min(100, Math.max(0, Math.round(parsedSharePercent * 100)));
     updateFeeSettingsMutation.mutate({
       tradeFeeRewardsEnabled: feeRewardsEnabled,
       tradeFeeShareBps: normalizedShareBps,
@@ -1300,7 +1300,7 @@ export default function Profile() {
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground">Your Share (%)</label>
+                        <label className="text-xs font-medium text-muted-foreground">Your Share (%) (max 1.00)</label>
                         <Input
                           value={feeSharePercentInput}
                           onChange={(e) => setFeeSharePercentInput(e.target.value)}

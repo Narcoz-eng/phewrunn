@@ -112,14 +112,13 @@ const JUPITER_SWAP_URLS = [
   "https://quote-api.jup.ag/v6/swap",
 ];
 const SOL_MINT = "So11111111111111111111111111111111111111112";
-const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 5000;
-const MAX_POSTER_TRADE_FEE_SHARE_BPS = 10000;
-const platformFeeBpsFromEnv = Number(process.env.JUPITER_PLATFORM_FEE_BPS ?? "0");
-const JUPITER_PLATFORM_FEE_BPS =
-  Number.isFinite(platformFeeBpsFromEnv) && platformFeeBpsFromEnv > 0
-    ? Math.min(5000, Math.max(1, Math.round(platformFeeBpsFromEnv)))
-    : 0;
-const JUPITER_PLATFORM_FEE_ACCOUNT = process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || null;
+const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
+const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
+const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 100;
+const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100; // max 1.00%
+const JUPITER_PLATFORM_FEE_BPS = FIXED_PLATFORM_FEE_BPS;
+const JUPITER_PLATFORM_FEE_ACCOUNT =
+  process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || PLATFORM_FEE_ACCOUNT_FALLBACK;
 
 function getActivePlatformFeeBps(): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
@@ -2837,7 +2836,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
   const quotePlatformFeeBpsRaw = Number(platformFeeInfo?.feeBps);
   const platformFeeBpsApplied =
     Number.isFinite(quotePlatformFeeBpsRaw) && quotePlatformFeeBpsRaw > 0
-      ? Math.min(5000, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
+      ? Math.min(FIXED_PLATFORM_FEE_BPS, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
       : platformFeeBps;
 
   if (

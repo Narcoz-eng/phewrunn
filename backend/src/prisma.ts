@@ -28,6 +28,13 @@ function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undef
     const parsed = new URL(rawUrl);
     const hostname = parsed.hostname.toLowerCase();
     const notes: string[] = [];
+    const isSupabaseHost =
+      hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
+
+    if (isSupabaseHost && !parsed.searchParams.has("sslmode")) {
+      parsed.searchParams.set("sslmode", "require");
+      notes.push("added sslmode=require");
+    }
 
     // Supabase transaction pooler is very sensitive in serverless environments.
     if (hostname.endsWith(".pooler.supabase.com")) {
@@ -39,10 +46,6 @@ function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undef
         parsed.searchParams.set("connection_limit", "1");
         notes.push("added connection_limit=1");
       }
-      if (!parsed.searchParams.has("sslmode")) {
-        parsed.searchParams.set("sslmode", "require");
-        notes.push("added sslmode=require");
-      }
     }
 
     return { url: parsed.toString(), notes };
@@ -53,7 +56,7 @@ function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undef
 
 const normalizedDb = normalizeDatabaseUrl(process.env.DATABASE_URL);
 if (normalizedDb.notes.length > 0) {
-  console.warn(`[Prisma] Normalized DATABASE_URL for Supabase pooler (${normalizedDb.notes.join(", ")})`);
+  console.warn(`[Prisma] Normalized DATABASE_URL for Supabase connection (${normalizedDb.notes.join(", ")})`);
 }
 
 const prisma = new PrismaClient({

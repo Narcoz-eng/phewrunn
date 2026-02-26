@@ -1,5 +1,27 @@
 import { prisma } from "../prisma.js";
 
+const SESSION_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  emailVerified: true,
+  image: true,
+  createdAt: true,
+  updatedAt: true,
+  walletAddress: true,
+  walletProvider: true,
+  walletConnectedAt: true,
+  username: true,
+  level: true,
+  xp: true,
+  bio: true,
+  isAdmin: true,
+  isBanned: true,
+  isVerified: true,
+  lastUsernameUpdate: true,
+  lastPhotoUpdate: true,
+} as const;
+
 type SessionRecord = {
   session: {
     id: string;
@@ -89,7 +111,17 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
   const lookupPromise = (async () => {
     const dbSession = await prisma.session.findUnique({
       where: { token },
-      include: { user: true },
+      select: {
+        id: true,
+        userId: true,
+        token: true,
+        expiresAt: true,
+        createdAt: true,
+        updatedAt: true,
+        user: {
+          select: SESSION_USER_SELECT,
+        },
+      },
     });
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {

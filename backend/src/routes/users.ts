@@ -18,14 +18,14 @@ export const usersRouter = new Hono<{ Variables: AuthVariables }>();
 const PROFILE_POST_WALLET_ENRICH_MAX_POSTS = process.env.NODE_ENV === "production" ? 12 : 6;
 const PROFILE_WALLET_OVERVIEW_MAX_TOKENS = process.env.NODE_ENV === "production" ? 40 : 20;
 const PROFILE_WALLET_OVERVIEW_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4000 : 8000;
-const platformFeeBpsFromEnv = Number(process.env.JUPITER_PLATFORM_FEE_BPS ?? "0");
-const userSettingsPlatformFeeBps =
-  Number.isFinite(platformFeeBpsFromEnv) && platformFeeBpsFromEnv > 0
-    ? Math.min(5000, Math.max(1, Math.round(platformFeeBpsFromEnv)))
-    : 0;
-const hasUserSettingsPlatformFeeAccount = !!process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim();
+const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
+const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
+const userSettingsPlatformFeeBps = FIXED_PLATFORM_FEE_BPS;
+const hasUserSettingsPlatformFeeAccount = !!(
+  process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || PLATFORM_FEE_ACCOUNT_FALLBACK
+);
 const activeUserSettingsPlatformFeeBps = hasUserSettingsPlatformFeeAccount ? userSettingsPlatformFeeBps : 0;
-const MAX_POSTER_TRADE_FEE_SHARE_BPS = 10000;
+const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100;
 
 const UpdateFeeSettingsSchema = z.object({
   tradeFeeRewardsEnabled: z.boolean().optional(),

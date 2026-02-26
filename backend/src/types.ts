@@ -16,7 +16,7 @@ export const UserSchema = z.object({
   isVerified: z.boolean().default(false),
   isAdmin: z.boolean().default(false),
   tradeFeeRewardsEnabled: z.boolean().default(true),
-  tradeFeeShareBps: z.number().int().min(0).max(10000).default(5000),
+  tradeFeeShareBps: z.number().int().min(0).max(100).default(100),
   tradeFeePayoutAddress: z.string().nullable().default(null),
   createdAt: z.string(),
 });
@@ -29,7 +29,7 @@ export const UpdateProfileSchema = z.object({
   bio: z.string().max(200).optional(),
   image: z.string().url().optional(),
   tradeFeeRewardsEnabled: z.boolean().optional(),
-  tradeFeeShareBps: z.number().int().min(0).max(10000).optional(),
+  tradeFeeShareBps: z.number().int().min(0).max(100).optional(),
   tradeFeePayoutAddress: z.union([
     z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "Payout wallet must be a valid Solana address"),
     z.literal(""),

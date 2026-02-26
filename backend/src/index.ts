@@ -175,6 +175,18 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PrivyClient } from "@privy-io/server-auth";
 
+const AUTH_RESPONSE_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+  walletAddress: true,
+  walletProvider: true,
+  level: true,
+  xp: true,
+  isVerified: true,
+} as const;
+
 // Vibecode proxy patches global fetch for the Vibecode runtime, but it can break or add
 // noise in generic Node serverless environments (e.g. Vercel).
 if (!process.env.VERCEL) {
@@ -340,6 +352,7 @@ app.post("/api/auth/wallet", async (c) => {
     // Check if user exists with this wallet
     let user = await prisma.user.findFirst({
       where: { walletAddress: normalizedWalletAddress },
+      select: AUTH_RESPONSE_USER_SELECT,
     });
 
     const now = new Date();
@@ -362,6 +375,7 @@ app.post("/api/auth/wallet", async (c) => {
           createdAt: now,
           updatedAt: now,
         },
+        select: AUTH_RESPONSE_USER_SELECT,
       });
 
       // Create account record for Better Auth
@@ -534,7 +548,10 @@ app.post("/api/auth/privy-sync", async (c) => {
     });
 
     let user = existingPrivyAccount?.userId
-      ? await prisma.user.findUnique({ where: { id: existingPrivyAccount.userId } })
+      ? await prisma.user.findUnique({
+        where: { id: existingPrivyAccount.userId },
+        select: AUTH_RESPONSE_USER_SELECT,
+      })
       : null;
 
     if (existingPrivyAccount && !user) {
@@ -550,7 +567,10 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // If no linked Privy account exists yet, find/create the local user by verified email.
     if (!user) {
-      user = await prisma.user.findFirst({ where: { email: verifiedEmail } });
+      user = await prisma.user.findFirst({
+        where: { email: verifiedEmail },
+        select: AUTH_RESPONSE_USER_SELECT,
+      });
     }
 
     if (!user) {
@@ -572,6 +592,7 @@ app.post("/api/auth/privy-sync", async (c) => {
           createdAt: now,
           updatedAt: now,
         },
+        select: AUTH_RESPONSE_USER_SELECT,
       });
     }
 
@@ -595,7 +616,10 @@ app.post("/api/auth/privy-sync", async (c) => {
           },
           select: { userId: true },
         });
-        const linkedUser = await prisma.user.findUnique({ where: { id: linkedAccount.userId } });
+        const linkedUser = await prisma.user.findUnique({
+          where: { id: linkedAccount.userId },
+          select: AUTH_RESPONSE_USER_SELECT,
+        });
         if (linkedUser) {
           user = linkedUser;
         }
@@ -617,7 +641,10 @@ app.post("/api/auth/privy-sync", async (c) => {
         if (!linkedAccount?.userId) {
           throw error;
         }
-        const linkedUser = await prisma.user.findUnique({ where: { id: linkedAccount.userId } });
+        const linkedUser = await prisma.user.findUnique({
+          where: { id: linkedAccount.userId },
+          select: AUTH_RESPONSE_USER_SELECT,
+        });
         if (!linkedUser) {
           console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
             accountId: linkedAccount.id,
@@ -788,7 +815,7 @@ app.get("/api/me", async (c) => {
           isAdmin: session.user.isAdmin,
           isVerified: session.user.isVerified,
           tradeFeeRewardsEnabled: true,
-          tradeFeeShareBps: 5000,
+          tradeFeeShareBps: 100,
           tradeFeePayoutAddress: null,
           createdAt: session.user.createdAt,
         },
