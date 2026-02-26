@@ -75,14 +75,24 @@ export function setAuthTokenGetter(getter: () => Promise<string | null>) {
   getAuthToken = getter;
 }
 
+function getStoredAuthTokenFallback(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem("auth-token");
+  } catch (error) {
+    console.warn("[API] localStorage auth token unavailable; using cookie auth only", error);
+    return null;
+  }
+}
+
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options;
 
   // Get auth token - try getter first, then localStorage fallback
   let token = getAuthToken ? await getAuthToken() : null;
-  if (!token && typeof window !== "undefined") {
-    token = localStorage.getItem("auth-token");
+  if (!token) {
+    token = getStoredAuthTokenFallback();
   }
 
   const config: RequestInit = {
@@ -148,8 +158,8 @@ async function rawRequest(endpoint: string, options: RequestOptions = {}): Promi
 
   // Get auth token - try getter first, then localStorage fallback
   let token = getAuthToken ? await getAuthToken() : null;
-  if (!token && typeof window !== "undefined") {
-    token = localStorage.getItem("auth-token");
+  if (!token) {
+    token = getStoredAuthTokenFallback();
   }
 
   const config: RequestInit = {

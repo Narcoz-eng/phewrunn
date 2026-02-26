@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
+import { setAuthTokenGetter } from "./api";
 
 // Get the backend URL
 const getBaseUrl = () => {
@@ -90,8 +91,10 @@ const SIGN_OUT_TIMEOUT_MS = 2500;
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
+let inMemoryAuthToken: string | null = null;
 
 function getStoredAuthToken(): string | null {
+  if (inMemoryAuthToken) return inMemoryAuthToken;
   try {
     return localStorage.getItem("auth-token");
   } catch (error) {
@@ -101,6 +104,7 @@ function getStoredAuthToken(): string | null {
 }
 
 function setStoredAuthToken(token: string): void {
+  inMemoryAuthToken = token;
   try {
     localStorage.setItem("auth-token", token);
   } catch (error) {
@@ -110,12 +114,15 @@ function setStoredAuthToken(token: string): void {
 }
 
 function clearStoredAuthToken(): void {
+  inMemoryAuthToken = null;
   try {
     localStorage.removeItem("auth-token");
   } catch (error) {
     console.warn("[Auth] Failed to clear auth token from localStorage", error);
   }
 }
+
+setAuthTokenGetter(async () => getStoredAuthToken());
 
 function readCachedAuthUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
