@@ -82,6 +82,8 @@ const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
 const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
+const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
+let lastRealtimeSettlementRefreshAt = 0;
 
 type TradeSide = "buy" | "sell";
 
@@ -153,6 +155,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [slippageInputPercent, setSlippageInputPercent] = useState("1.00");
   const [showSlippageSettings, setShowSlippageSettings] = useState(false);
   const [quickBuyPresetsSol, setQuickBuyPresetsSol] = useState<string[]>(DEFAULT_QUICK_BUY_PRESETS_SOL);
+  const [pendingQuickBuyAutoExecute, setPendingQuickBuyAutoExecute] = useState(false);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
@@ -317,8 +320,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             const isWin = post.entryMcap !== null && data.mcap1h > post.entryMcap;
             setLocalIsWin(isWin);
           }
-          // Avoid refetching the full feed from every visible card when many posts settle at once.
-          // The card already has the updated settlement state locally.
+          // Throttle feed/profile invalidation so level/xp badges refresh in near real time
+          // without every visible card spamming refetches when many posts settle together.
+          const nowMs = Date.now();
+          if (nowMs - lastRealtimeSettlementRefreshAt >= REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS) {
+            lastRealtimeSettlementRefreshAt = nowMs;
+            void queryClient.invalidateQueries({ queryKey: ["posts"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["users"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["userProfile"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["userPosts"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["userReposts"], refetchType: "active" });
+          }
         }
 
         // Update 6H mcap if available
@@ -1581,6 +1593,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setTradeSide("buy");
     setBuyAmountSol(amount);
     setBuyTxSignature(null);
+    setPendingQuickBuyAutoExecute(true);
     if (isSolanaTradeSupported && !wallet.publicKey) {
       setPendingBuyAfterWalletConnect(true);
       setIsWalletConnectDialogOpen(true);
@@ -1880,6 +1893,28 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
   const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
 
+  useEffect(() => {
+    if (!pendingQuickBuyAutoExecute) return;
+    if (!isBuyDialogOpen) return;
+
+    if (jupiterNoRouteDetected || jupiterQuoteUnavailable) {
+      setPendingQuickBuyAutoExecute(false);
+      return;
+    }
+
+    if (!canExecuteJupiterBuy) return;
+
+    setPendingQuickBuyAutoExecute(false);
+    void handleExecuteJupiterBuy();
+  }, [
+    pendingQuickBuyAutoExecute,
+    isBuyDialogOpen,
+    jupiterNoRouteDetected,
+    jupiterQuoteUnavailable,
+    canExecuteJupiterBuy,
+    handleExecuteJupiterBuy,
+  ]);
+
   return (
     <div
       ref={cardRef}
@@ -2053,36 +2088,39 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       )}
                     </Button>
 
-                    {isSolanaTradeSupported && isWalletConnectedForTrade && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {buyQuickAmounts.map((amount) => (
-                          <button
-                            key={`feed-quick-buy-${amount}`}
-                            type="button"
-                            onClick={() => handleQuickBuyPresetClick(amount)}
-                            className="h-8 rounded-full border border-white/10 bg-white/5 px-2.5 text-[11px] font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                            title={`Quick buy ${amount} SOL`}
-                          >
-                            {amount} SOL
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTradeSide("buy");
-                            setShowSlippageSettings(true);
-                            setBuyTxSignature(null);
-                            setIsBuyDialogOpen(true);
-                          }}
-                          className="h-8 rounded-full border border-white/10 bg-black/20 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    )}
-
                   </div>
                 </div>
+
+                {isSolanaTradeSupported && isWalletConnectedForTrade && (
+                  <div className="mt-2 flex items-center justify-end gap-1.5 flex-wrap">
+                    <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground mr-1">
+                      Quick Buy
+                    </span>
+                    {buyQuickAmounts.map((amount) => (
+                      <button
+                        key={`feed-quick-buy-${amount}`}
+                        type="button"
+                        onClick={() => handleQuickBuyPresetClick(amount)}
+                        className="h-8 rounded-full border border-lime-300/15 bg-lime-300/5 px-2.5 text-[11px] font-semibold text-lime-50/90 transition-colors hover:bg-lime-300/10 hover:border-lime-300/25"
+                        title={`Quick buy ${amount} SOL`}
+                      >
+                        {amount} SOL
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTradeSide("buy");
+                        setShowSlippageSettings(true);
+                        setBuyTxSignature(null);
+                        setIsBuyDialogOpen(true);
+                      }}
+                      className="h-8 rounded-full border border-white/10 bg-black/20 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                )}
 
                 {/* Entry Market Cap - Prominent Display */}
                 <div className="mt-4 p-3 bg-background/50 rounded-lg border border-border/50">
@@ -2636,6 +2674,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         setIsWalletConnectDialogOpen(open);
         if (!open) {
           setPendingBuyAfterWalletConnect(false);
+          if (!wallet.publicKey) {
+            setPendingQuickBuyAutoExecute(false);
+          }
         }
       }}>
         <DialogContent className="w-[calc(100vw-1rem)] max-w-md border-white/10 bg-[#080a0f]/95 p-0 overflow-hidden shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]">
@@ -2722,7 +2763,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isBuyDialogOpen} onOpenChange={setIsBuyDialogOpen}>
+      <Dialog open={isBuyDialogOpen} onOpenChange={(open) => {
+        setIsBuyDialogOpen(open);
+        if (!open) {
+          setPendingQuickBuyAutoExecute(false);
+        }
+      }}>
         <DialogContent className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
           <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
@@ -2987,12 +3033,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                       </div>
 
-                      {tradeSide === "sell" && sellBlockedByRpcTokenInfo ? (
-                        <div className="mb-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
-                          Preparing sell quote...
-                        </div>
-                      ) : null}
-
                       {tradeSide === "buy" ? (
                         <>
                           <div className="relative">
@@ -3228,7 +3268,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="relative z-10 space-y-4 order-4">
+                  <div className="relative z-10 space-y-4 order-4 lg:col-start-2">
                     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
