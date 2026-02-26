@@ -2,6 +2,15 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
@@ -1214,10 +1223,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const dexscreenerUrl = getDexscreenerUrl();
-  const dexscreenerEmbedUrl =
-    dexscreenerUrl && post.contractAddress
-      ? `${dexscreenerUrl}${dexscreenerUrl.includes("?") ? "&" : "?"}embed=1&theme=dark&trades=0&info=0`
-      : null;
   const marketButtonsTone =
     !localSettled
       ? "border-primary/20 bg-primary/5"
@@ -1432,15 +1437,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   ) as string[];
   const jupiterOutputAmountFormatted = jupiterQuote
     ? formatTokenAmountFromAtomic(jupiterQuote.outAmount, outputTokenDecimals)
-    : "—";
+    : "-";
   const jupiterMinReceiveFormatted = jupiterQuote
     ? formatTokenAmountFromAtomic(jupiterQuote.otherAmountThreshold, outputTokenDecimals)
-    : "—";
+    : "-";
   const jupiterInputAmountFormatted = jupiterQuote
     ? formatSolAtomic(jupiterQuote.inAmount)
     : buyAmountLamports
       ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 })
-      : "—";
+      : "-";
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const jupiterQuoteErrorMessage =
     jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
@@ -1488,6 +1493,39 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
     void handleExecuteJupiterBuy();
   };
+  const tradeChartData = [
+    { label: "Entry", short: "E", mcap: post.entryMcap, kind: "entry" as const },
+    ...(localMcap1h != null ? [{ label: "1H", short: "1H", mcap: localMcap1h, kind: "snap" as const }] : []),
+    ...(localMcap6h != null ? [{ label: "6H", short: "6H", mcap: localMcap6h, kind: "snap" as const }] : []),
+    ...(currentMcap != null ? [{ label: "Now", short: "Now", mcap: currentMcap, kind: "current" as const }] : []),
+  ]
+    .filter((point) => Number.isFinite(point.mcap))
+    .map((point) => ({
+      ...point,
+      mcap: Number(point.mcap),
+      deltaPct: calculatePercentChange(post.entryMcap, Number(point.mcap)),
+    }));
+  const currentTradePoint = tradeChartData[tradeChartData.length - 1] ?? null;
+  const currentTradeDeltaPct = currentTradePoint?.deltaPct ?? null;
+  const tradeChartTrendPositive = currentTradeDeltaPct == null ? true : currentTradeDeltaPct >= 0;
+  const tradeChartLineStroke = tradeChartTrendPositive ? "#74f37a" : "#ff6b6b";
+  const tradeChartFillStroke = tradeChartTrendPositive ? "rgba(116,243,122,0.22)" : "rgba(255,107,107,0.22)";
+  const jupiterStatusLabel = !isSolanaTradeSupported
+    ? "Unsupported chain"
+    : jupiterQuoteQuery.isLoading || jupiterQuoteQuery.isFetching
+      ? "Fetching route..."
+      : jupiterNoRouteDetected
+        ? "No route on Jupiter"
+        : jupiterQuote
+          ? "Route ready"
+          : "Awaiting quote";
+  const jupiterStatusTone = !isSolanaTradeSupported
+    ? "border-white/10 bg-white/5 text-white/70"
+    : jupiterNoRouteDetected
+      ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+      : jupiterQuote
+        ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
+        : "border-white/10 bg-white/5 text-white/70";
   const jupiterReceiveDisplay = jupiterQuoteQuery.isLoading
     ? "Loading quote..."
     : jupiterNoRouteDetected
@@ -1500,7 +1538,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : `${jupiterMinReceiveFormatted} ${post.tokenSymbol || "TOKEN"}`;
   const jupiterPriceImpactDisplay =
     jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
-      ? "—"
+      ? "-"
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
 
   return (
@@ -2255,8 +2293,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       </div>
 
       <Dialog open={isBuyDialogOpen} onOpenChange={setIsBuyDialogOpen}>
-        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] overflow-y-auto border-border/60 bg-background/95 p-0">
-          <DialogHeader className="px-5 sm:px-6 pt-5 pb-4 border-b border-border/50">
+        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] overflow-y-auto border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
+          <DialogHeader className="relative overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Zap className="h-4 w-4 text-primary" />
               {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"} - {post.tokenSymbol || "Token"}
@@ -2268,10 +2307,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             </DialogDescription>
           </DialogHeader>
 
-          <div className="p-4 sm:p-6 space-y-4">
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <div className="p-4 sm:p-6 space-y-4 bg-[radial-gradient(circle_at_15%_0%,rgba(163,230,53,0.06),transparent_35%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.06),transparent_35%)]">
+            <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/[0.05] via-white/[0.03] to-transparent p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
               <div className="flex items-start gap-3">
-                <div className="h-12 w-12 rounded-xl overflow-hidden border border-white/10 bg-black/20 flex items-center justify-center shrink-0">
+                <div className="h-14 w-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0 shadow-inner shadow-black/40">
                   {post.tokenImage ? (
                     <img src={post.tokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
                   ) : (
@@ -2288,12 +2327,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         {post.chainType}
                       </span>
                     )}
+                    <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", jupiterStatusTone)}>
+                      {jupiterStatusLabel}
+                    </span>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground truncate">
                     {post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress || "No contract address")}
                   </div>
                   {post.contractAddress && (
-                    <div className="mt-1 text-[11px] font-mono text-muted-foreground break-all">
+                    <div className="mt-2 inline-flex max-w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] font-mono text-muted-foreground break-all">
                       {post.contractAddress}
                     </div>
                   )}
@@ -2309,41 +2351,131 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               <>
                 <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
                   <div className="space-y-4">
-                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
-                      <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
+                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
+                      <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
+                      <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
                         <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Live Chart</div>
-                          <div className="text-sm font-medium text-foreground">Dexscreener</div>
+                          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
+                          <div className="text-sm font-medium text-foreground">Live snapshots + Dex source</div>
                         </div>
-                        {dexscreenerUrl ? (
-                          <a
-                            href={dexscreenerUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-white/10 transition-colors"
-                          >
-                            Open Full Chart
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : null}
+                        <div className="flex items-center gap-2">
+                          <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
+                            {jupiterStatusLabel}
+                          </span>
+                          {dexscreenerUrl ? (
+                            <a
+                              href={dexscreenerUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-white/10 transition-colors"
+                            >
+                              Open Full Chart
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : null}
+                        </div>
                       </div>
-                      {dexscreenerEmbedUrl ? (
-                        <iframe
-                          src={dexscreenerEmbedUrl}
-                          title={`Dexscreener chart for ${post.tokenSymbol || post.tokenName || "token"}`}
-                          className="h-[260px] w-full sm:h-[320px] lg:h-[420px] xl:h-[470px]"
-                          loading="lazy"
-                          allow="clipboard-write; fullscreen"
-                        />
-                      ) : (
-                        <div className="flex h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] items-center justify-center p-6 text-center">
-                          <div className="space-y-3">
-                            <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-                            <p className="text-sm text-muted-foreground">Chart unavailable for this token yet.</p>
+                      <div className="relative px-4 pt-4">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Entry MCap</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">{formatMarketCap(post.entryMcap)}</div>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Current</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {currentMcap != null ? formatMarketCap(currentMcap) : "Waiting..."}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Change</div>
+                            <div className={cn("mt-1 text-sm font-semibold", currentTradeDeltaPct == null ? "text-foreground" : currentTradeDeltaPct >= 0 ? "text-gain" : "text-loss")}>
+                              {currentTradeDeltaPct == null ? "-" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Status</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {!localSettled ? "Live" : localIsWin ? "Won" : "Lost"}
+                            </div>
                           </div>
                         </div>
-                      )}
+                      </div>
+
+                      <div className="relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3">
+                        {tradeChartData.length >= 2 ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={tradeChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
+                              <defs>
+                                <linearGradient id={`buyChartFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+                                  <stop offset="0%" stopColor={tradeChartLineStroke} stopOpacity={0.3} />
+                                  <stop offset="100%" stopColor={tradeChartFillStroke} stopOpacity={0.02} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                              <XAxis
+                                dataKey="label"
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
+                              />
+                              <YAxis
+                                axisLine={false}
+                                tickLine={false}
+                                width={68}
+                                tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 10 }}
+                                tickFormatter={(v: number) => formatMarketCap(Number(v)).replace("$", "")}
+                              />
+                              <RechartsTooltip
+                                cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
+                                contentStyle={{
+                                  background: "rgba(10,12,16,0.94)",
+                                  border: "1px solid rgba(255,255,255,0.12)",
+                                  borderRadius: 12,
+                                  color: "#fff",
+                                  boxShadow: "0 16px 40px -24px rgba(0,0,0,0.9)",
+                                }}
+                                labelStyle={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}
+                                formatter={(value: number) => [formatMarketCap(Number(value)), "Market Cap"]}
+                              />
+                              <Area
+                                type="monotone"
+                                dataKey="mcap"
+                                stroke={tradeChartLineStroke}
+                                fill={`url(#buyChartFill-${post.id})`}
+                                strokeWidth={2.5}
+                                dot={{ r: 4, stroke: "rgba(9,12,16,0.95)", strokeWidth: 2, fill: tradeChartLineStroke }}
+                                activeDot={{ r: 5, stroke: "#090c10", strokeWidth: 2, fill: tradeChartLineStroke }}
+                              />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <div className="flex h-full items-center justify-center p-6 text-center">
+                            <div className="space-y-3">
+                              <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
+                              <p className="text-sm text-muted-foreground">
+                                Waiting for more market snapshots to draw the chart.
+                              </p>
+                              {dexscreenerUrl ? (
+                                <a
+                                  href={dexscreenerUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                                >
+                                  Open Dexscreener instead
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              ) : null}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="relative border-t border-white/10 px-4 py-3 text-[11px] text-muted-foreground">
+                        Dexscreener iframe embeds can be blocked by some browsers. This panel stays responsive using your live post market snapshots, with full chart access above.
+                      </div>
                     </div>
 
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -2422,13 +2554,26 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="space-y-4 self-start lg:sticky lg:top-0">
-                    <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-4">
+                  <div className="space-y-4 self-start lg:sticky lg:top-4">
+                    <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
                         {jupiterQuote?.timeTaken ? (
                           <span className="text-[11px] text-muted-foreground">{(jupiterQuote.timeTaken * 1000).toFixed(0)} ms</span>
                         ) : null}
+                      </div>
+                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Jupiter Route Status</div>
+                          <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
+                            {jupiterStatusLabel}
+                          </span>
+                        </div>
+                        {jupiterNoRouteDetected && (
+                          <p className="mt-2 text-xs text-amber-100/85">
+                            This token is not routable on Jupiter right now. Chart and token data still load, but swap execution is unavailable until a route exists.
+                          </p>
+                        )}
                       </div>
                       <div className="mt-3 grid gap-2">
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
@@ -2458,7 +2603,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-transparent p-4">
                       <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground mb-2">Route</div>
                       {jupiterRouteLabels.length > 0 ? (
                         <div className="flex flex-wrap gap-2">
@@ -2480,6 +2625,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="mt-3 text-[11px] text-muted-foreground">
                         Quotes update automatically while this modal is open.
                       </div>
+                      {jupiterQuoteErrorMessage ? (
+                        <div className="mt-3 rounded-xl border border-loss/20 bg-loss/5 p-3">
+                          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-loss">Provider Error</div>
+                          <p className="mt-1 text-xs text-loss/90">
+                            We are not hiding the failure. Raw quote provider response is shown below.
+                          </p>
+                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-200/85">
+{jupiterQuoteErrorMessage}
+                          </pre>
+                        </div>
+                      ) : null}
                       {buyTxSignature ? (
                         <a
                           href={`https://solscan.io/tx/${buyTxSignature}`}
@@ -2495,11 +2651,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   </div>
                 </div>
 
-                {jupiterQuoteQuery.error ? (
-                  <div className="rounded-xl border border-loss/30 bg-loss/10 px-3 py-2.5 text-sm text-loss">
-                    {jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : "Failed to load quote"}
-                  </div>
-                ) : null}
               </>
             )}
           </div>
@@ -2870,3 +3021,4 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     </div>
   );
 }
+
