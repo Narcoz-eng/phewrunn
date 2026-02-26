@@ -1238,6 +1238,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const dexscreenerUrl = getDexscreenerUrl();
+  const pumpfunUrl =
+    post.chainType === "solana" && post.contractAddress
+      ? `https://pump.fun/coin/${post.contractAddress}`
+      : null;
+  const isLikelyPumpToken =
+    post.chainType === "solana" &&
+    !!post.contractAddress &&
+    /pump$/i.test(post.contractAddress.trim());
   const marketButtonsTone =
     !localSettled
       ? "border-primary/20 bg-primary/5"
@@ -1616,6 +1624,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
       ? "-"
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
+  const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
 
   return (
     <div
@@ -2811,6 +2820,26 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="mt-3 text-[11px] text-muted-foreground">
                         Quotes update automatically while this modal is open.
                       </div>
+                      {showPumpFallbackCta ? (
+                        <div className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/5 p-3">
+                          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-lime-100">
+                            Pump Token Fallback
+                          </div>
+                          <p className="mt-1 text-xs text-lime-100/80">
+                            Jupiter has no route for this token right now. Open the Pump market page to trade there instead.
+                          </p>
+                          <a
+                            href={pumpfunUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-lime-300/20 bg-lime-300/10 px-3 py-2 text-xs font-semibold text-lime-50 hover:bg-lime-300/15 transition-colors"
+                          >
+                            <Zap className="h-3.5 w-3.5" />
+                            Open on Pump.fun
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </div>
+                      ) : null}
                       {jupiterQuoteErrorMessage ? (
                         <div className="mt-3 rounded-xl border border-loss/20 bg-loss/5 p-3">
                           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-loss">Provider Error</div>
@@ -2835,6 +2864,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </pre>
                         </div>
                       ) : null}
+                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-foreground/90">Wallet Safety Prompt</div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          If Phantom shows “Request blocked”, that is a wallet security warning for the site origin (domain reputation), not a Jupiter quote failure. Users can continue manually, but the long-term fix is to get the domain trusted/whitelisted by Phantom.
+                        </p>
+                      </div>
                       {buyTxSignature ? (
                         <a
                           href={`https://solscan.io/tx/${buyTxSignature}`}
