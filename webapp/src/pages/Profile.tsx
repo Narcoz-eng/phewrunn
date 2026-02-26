@@ -10,6 +10,7 @@ import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { ProfileDashboard, UserStats, RecentTrade, WalletData } from "@/components/profile/ProfileDashboard";
 import { WalletConnection } from "@/components/profile/WalletConnection";
+import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -1009,21 +1010,28 @@ export default function Profile() {
                           </div>
                         </div>
                       ) : (
-                        filteredPosts.map((post, index) => (
-                          <div
-                            key={post.id}
-                            className="animate-fade-in-up"
-                            style={{ animationDelay: `${index * 0.05}s` }}
-                          >
-                            <PostCard
-                              post={post}
-                              currentUserId={user?.id}
-                              onLike={handleLike}
-                              onRepost={handleRepost}
-                              onComment={handleComment}
-                            />
-                          </div>
-                        ))
+                        <WindowVirtualList
+                          items={filteredPosts}
+                          getItemKey={(post) => post.id}
+                          estimateItemHeight={560}
+                          overscanPx={1200}
+                          renderItem={(post, index) => (
+                            <div className={index < filteredPosts.length - 1 ? "pb-4" : undefined}>
+                              <div
+                                className="animate-fade-in-up"
+                                style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
+                              >
+                                <PostCard
+                                  post={post}
+                                  currentUserId={user?.id}
+                                  onLike={handleLike}
+                                  onRepost={handleRepost}
+                                  onComment={handleComment}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        />
                       )}
                     </TabsContent>
                   </Tabs>
@@ -1056,21 +1064,28 @@ export default function Profile() {
                       </div>
                     </div>
                   ) : (
-                    reposts.map((post, index) => (
-                      <div
-                        key={post.id}
-                        className="animate-fade-in-up"
-                        style={{ animationDelay: `${index * 0.05}s` }}
-                      >
-                        <PostCard
-                          post={post}
-                          currentUserId={user?.id}
-                          onLike={handleLike}
-                          onRepost={handleRepost}
-                          onComment={handleComment}
-                        />
-                      </div>
-                    ))
+                    <WindowVirtualList
+                      items={reposts}
+                      getItemKey={(post) => post.id}
+                      estimateItemHeight={560}
+                      overscanPx={1200}
+                      renderItem={(post, index) => (
+                        <div className={index < reposts.length - 1 ? "pb-4" : undefined}>
+                          <div
+                            className="animate-fade-in-up"
+                            style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
+                          >
+                            <PostCard
+                              post={post}
+                              currentUserId={user?.id}
+                              onLike={handleLike}
+                              onRepost={handleRepost}
+                              onComment={handleComment}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    />
                   )}
                 </TabsContent>
               </Tabs>

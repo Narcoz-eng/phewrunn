@@ -50,6 +50,11 @@ model User {
   notificationsSent Notification[] @relation("NotificationsFrom") // notifications triggered
   announcements Announcement[] // announcements created by admin
   viewedAnnouncements AnnouncementView[] // track which announcements user has seen
+
+  @@index([createdAt])
+  @@index([level, xp])
+  @@index([isBanned, createdAt])
+  @@index([isVerified, createdAt])
 }
 
 // Better Auth Session model
@@ -63,6 +68,9 @@ model Session {
   userAgent     String?
   userId        String
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // Better Auth Account model (for OAuth providers)
@@ -83,6 +91,8 @@ model Account {
   updatedAt             DateTime  @updatedAt
 
   @@unique([providerId, accountId])
+  @@index([userId])
+  @@index([providerId])
 }
 
 // Better Auth Verification model (for email verification, password reset)
@@ -93,6 +103,9 @@ model Verification {
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@index([expiresAt])
 }
 
 // Follow relationship between users
@@ -106,6 +119,8 @@ model Follow {
   following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
 
   @@unique([followerId, followingId])
+  @@index([followerId, createdAt])
+  @@index([followingId, createdAt])
 }
 
 // SocialFi Post model for crypto calls
@@ -164,6 +179,13 @@ model Post {
   @@index([authorId, settled]) // For user stats queries
   @@index([authorId, settledAt]) // For time-based stats queries
   @@index([settled, settledAt]) // For settlement batch queries
+  @@index([createdAt])
+  @@index([authorId, createdAt])
+  @@index([contractAddress, createdAt])
+  @@index([settled, createdAt])
+  @@index([trackingMode, lastMcapUpdate])
+  @@index([lastMcapUpdate])
+  @@index([chainType, contractAddress])
 }
 
 // Like model for post likes
@@ -177,6 +199,8 @@ model Like {
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  @@index([postId])
+  @@index([userId, createdAt])
 }
 
 // Comment model for post comments
@@ -190,6 +214,9 @@ model Comment {
 
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
+  @@index([authorId, createdAt])
 }
 
 // Repost model for sharing posts
@@ -203,6 +230,8 @@ model Repost {
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  @@index([postId])
+  @@index([userId, createdAt])
 }
 
 // Notification model for alerts
@@ -224,6 +253,12 @@ model Notification {
   user      User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
   fromUser  User?    @relation("NotificationsFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
   post      Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, dismissed, createdAt])
+  @@index([userId, read, dismissed])
+  @@index([fromUserId, createdAt])
+  @@index([postId, createdAt])
 }
 
 // Announcement model for admin announcements shown in feed
@@ -242,6 +277,9 @@ model Announcement {
 
   // Track which users have viewed this announcement
   views     AnnouncementView[]
+
+  @@index([isPinned, priority, createdAt])
+  @@index([authorId, createdAt])
 }
 
 // Many-to-many relation for tracking announcement views
@@ -255,4 +293,6 @@ model AnnouncementView {
   announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
 
   @@unique([userId, announcementId])
+  @@index([userId, viewedAt])
+  @@index([announcementId, viewedAt])
 }

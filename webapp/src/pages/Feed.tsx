@@ -13,6 +13,7 @@ import { FeedHeader, FeedTab } from "@/components/feed/FeedHeader";
 import { AnnouncementBanner } from "@/components/feed/AnnouncementBanner";
 import { TrendingSection } from "@/components/feed/TrendingSection";
 import { SearchBar } from "@/components/feed/SearchBar";
+import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Sparkles, RefreshCw, Trophy, TrendingUp, AlertCircle } from "lucide-react";
@@ -781,21 +782,28 @@ export default function Feed() {
             </div>
           ) : (
             <>
-              {posts.map((post, index) => (
-                <div
-                  key={post.id}
-                  className="animate-fade-in-up"
-                  style={{ animationDelay: `${index * 0.05}s` }}
-                >
-                  <PostCard
-                    post={post}
-                    currentUserId={user?.id}
-                    onLike={handleLike}
-                    onRepost={handleRepost}
-                    onComment={handleComment}
-                  />
-                </div>
-              ))}
+              <WindowVirtualList
+                items={posts}
+                getItemKey={(post) => post.id}
+                estimateItemHeight={560}
+                overscanPx={1400}
+                renderItem={(post, index) => (
+                  <div className={index < posts.length - 1 ? "pb-4" : undefined}>
+                    <div
+                      className="animate-fade-in-up"
+                      style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
+                    >
+                      <PostCard
+                        post={post}
+                        currentUserId={user?.id}
+                        onLike={handleLike}
+                        onRepost={handleRepost}
+                        onComment={handleComment}
+                      />
+                    </div>
+                  </div>
+                )}
+              />
 
               {showLoadMoreControls ? (
                 <div className="pt-2">

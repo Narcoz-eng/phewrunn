@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Bell, CheckCheck, ArrowLeft, BellOff } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
-import { AnimatePresence, motion } from "framer-motion";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
 const NOTIFICATIONS_CACHE_TTL_MS = 45_000;
@@ -216,19 +216,22 @@ export default function Notifications() {
           ) : notifications.length === 0 ? (
             <EmptyState />
           ) : (
-            <motion.div layout>
-              <AnimatePresence mode="popLayout">
-                {notifications.map((notification) => (
+            <WindowVirtualList
+              items={notifications}
+              getItemKey={(notification) => notification.id}
+              estimateItemHeight={96}
+              overscanPx={900}
+              renderItem={(notification, index) => (
+                <div className={index < notifications.length - 1 ? "pb-0.5" : undefined}>
                   <NotificationItem
-                    key={notification.id}
                     notification={notification}
                     onMarkClicked={handleMarkClicked}
                     onDismiss={handleDismiss}
                     onProfileClick={handleProfileClick}
                   />
-                ))}
-              </AnimatePresence>
-            </motion.div>
+                </div>
+              )}
+            />
           )}
         </div>
       </main>

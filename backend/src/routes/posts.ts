@@ -56,11 +56,22 @@ type MaintenanceRunResult = {
   durationMs: number;
   settlement: SettlementRunResult;
   marketRefresh: MarketRefreshRunResult;
+  snapshotWarmup?: {
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    durationMs: number;
+    skipped?: boolean;
+    reason?: string;
+  };
 };
 
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
+let lastLeaderboardSnapshotWarmAt = 0;
 const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
+const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
+  process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const priceRefreshInFlight = new Map<string, Promise<number | null>>();
 const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
@@ -623,16 +634,110 @@ function isAuthorizedMaintenanceRequest(c: { req: { header: (name: string) => st
   return !!rawSecret && rawSecret === cronSecret;
 }
 
+async function prewarmLeaderboardSnapshots(): Promise<{
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  durationMs: number;
+  skipped?: boolean;
+  reason?: string;
+}> {
+  const now = Date.now();
+  if (now - lastLeaderboardSnapshotWarmAt < LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS) {
+    return {
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+      durationMs: 0,
+      skipped: true,
+      reason: "cooldown",
+    };
+  }
+
+  const baseUrl = process.env.BACKEND_URL?.trim();
+  if (!baseUrl) {
+    return {
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+      durationMs: 0,
+      skipped: true,
+      reason: "missing_backend_url",
+    };
+  }
+
+  const startedAtMs = Date.now();
+  const endpoints = [
+    "/api/leaderboard/daily-gainers",
+    "/api/leaderboard/stats",
+    "/api/leaderboard/top-users?sortBy=level&page=1&limit=20",
+    "/api/leaderboard/top-users?sortBy=activity&page=1&limit=20",
+    "/api/leaderboard/top-users?sortBy=winrate&page=1&limit=20",
+  ];
+
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  const fetchWithTimeout = async (path: string) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      attempted += 1;
+      const url = new URL(path, baseUrl).toString();
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "x-maintenance-prewarm": "1",
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        failed += 1;
+        console.warn("[Maintenance] Snapshot prewarm request failed", {
+          path,
+          status: response.status,
+        });
+        return;
+      }
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn("[Maintenance] Snapshot prewarm request error", { path, error });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  for (const path of endpoints) {
+    // Sequential on purpose to avoid stampeding the same serverless instance during cron runs.
+    await fetchWithTimeout(path);
+  }
+
+  if (succeeded > 0) {
+    lastLeaderboardSnapshotWarmAt = now;
+  }
+
+  return {
+    attempted,
+    succeeded,
+    failed,
+    durationMs: Date.now() - startedAtMs,
+  };
+}
+
 async function runMaintenanceCycle(): Promise<MaintenanceRunResult> {
   const startedAtMs = Date.now();
   const settlement = await checkAndSettlePosts();
   const marketRefresh = await refreshTrackedMarketCaps();
+  const snapshotWarmup = await prewarmLeaderboardSnapshots();
 
   const summary: MaintenanceRunResult = {
     startedAt: new Date(startedAtMs).toISOString(),
     durationMs: Date.now() - startedAtMs,
     settlement,
     marketRefresh,
+    snapshotWarmup,
   };
 
   if (
@@ -642,7 +747,8 @@ async function runMaintenanceCycle(): Promise<MaintenanceRunResult> {
     settlement.errors ||
     marketRefresh.refreshedContracts ||
     marketRefresh.updatedPosts ||
-    marketRefresh.errors
+    marketRefresh.errors ||
+    (snapshotWarmup.succeeded > 0 || snapshotWarmup.failed > 0)
   ) {
     console.log("[Maintenance] Run result:", summary);
   }
