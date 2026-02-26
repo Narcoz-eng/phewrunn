@@ -1210,28 +1210,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     return `https://dexscreener.com/${chain}/${post.contractAddress}`;
   };
 
-  const isPumpFunToken = () => {
-    if (!post.contractAddress || post.chainType !== "solana") return null;
-    const normalizedCa = post.contractAddress.trim().toLowerCase();
-    const sourceUrl = (post.dexscreenerUrl ?? "").toLowerCase();
-    const looksLikePumpFun =
-      normalizedCa.endsWith("pump") ||
-      sourceUrl.includes("pump.fun") ||
-      sourceUrl.includes("pumpfun");
-    return looksLikePumpFun;
-  };
-
-  const getPumpFunUrl = (allowFallback = false) => {
-    if (!post.contractAddress || post.chainType !== "solana") return null;
-    if (isPumpFunToken() || allowFallback) {
-      return `https://pump.fun/coin/${post.contractAddress}`;
-    }
-    return null;
-  };
-
   const dexscreenerUrl = getDexscreenerUrl();
-  const pumpFunUrl = getPumpFunUrl(true);
-  const isPumpFunDetected = !!isPumpFunToken();
+  const dexscreenerEmbedUrl =
+    dexscreenerUrl && post.contractAddress
+      ? `${dexscreenerUrl}${dexscreenerUrl.includes("?") ? "&" : "?"}embed=1&theme=dark&trades=0&info=0`
+      : null;
   const marketButtonsTone =
     !localSettled
       ? "border-primary/20 bg-primary/5"
@@ -1310,6 +1293,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleOpenBuyDialog = () => {
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
+  };
+
+  const handleTradeCtaClick = () => {
+    handleOpenBuyDialog();
   };
 
   const handleExecuteJupiterBuy = async () => {
@@ -1414,6 +1401,29 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
     : null;
   const buyQuickAmounts = ["0.05", "0.10", "0.25", "0.50", "1.00"];
+  const isWalletConnectedForTrade = !!wallet.connected;
+  const canExecuteJupiterBuy =
+    isSolanaTradeSupported &&
+    !!wallet.connected &&
+    !!wallet.publicKey &&
+    !!wallet.signTransaction &&
+    !!jupiterQuote &&
+    !isExecutingBuy;
+  const tradeCtaLabel = !isSolanaTradeSupported
+    ? "Buy (Solana only)"
+    : isWalletConnectedForTrade
+      ? "Buy Now"
+      : "Connect Wallet";
+  const tradeCtaSubtleLabel = isWalletConnectedForTrade ? "Jupiter" : "Jupiter setup";
+  const tradeButtonTone = !isSolanaTradeSupported
+    ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+    : isWalletConnectedForTrade
+      ? !localSettled
+        ? "border-lime-300/25 bg-gradient-to-r from-lime-400/20 via-lime-300/12 to-white/5 text-white hover:from-lime-400/25 hover:to-white/10 shadow-lg shadow-lime-400/10"
+        : localIsWin
+          ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
+          : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
+      : "border-amber-300/30 bg-gradient-to-r from-amber-300/15 via-yellow-200/10 to-white/5 text-white hover:from-amber-300/22 hover:to-white/10 shadow-lg shadow-amber-200/10";
 
   return (
     <div
@@ -1565,28 +1575,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   <div className={cn("flex items-center gap-2 flex-wrap rounded-xl border p-1.5", marketButtonsTone, marketButtonsGlow)}>
                     <Button
                       type="button"
-                      onClick={handleOpenBuyDialog}
+                      onClick={handleTradeCtaClick}
                       className={cn(
                         "group/button relative overflow-hidden h-10 px-4 gap-2 rounded-lg border text-sm font-semibold",
-                        isSolanaTradeSupported
-                          ? !localSettled
-                            ? "border-lime-300/25 bg-gradient-to-r from-lime-400/20 via-lime-300/12 to-white/5 text-white hover:from-lime-400/25 hover:to-white/10 shadow-lg shadow-lime-400/10"
-                            : localIsWin
-                              ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
-                              : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
-                          : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+                        tradeButtonTone
                       )}
                       variant="ghost"
                     >
                       <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                      {!localSettled && isSolanaTradeSupported && (
+                      {!localSettled && isSolanaTradeSupported && isWalletConnectedForTrade && (
                         <span className="relative flex h-2 w-2">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lime-300/70" />
                           <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-300" />
                         </span>
                       )}
-                      <Zap className="h-4 w-4" />
-                      <span>{isSolanaTradeSupported ? "Buy" : "Buy (Solana only)"}</span>
+                      {isWalletConnectedForTrade ? <Zap className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                      <span>{tradeCtaLabel}</span>
+                      {isSolanaTradeSupported && (
+                        <span className="hidden sm:inline rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-white/75">
+                          {tradeCtaSubtleLabel}
+                        </span>
+                      )}
                     </Button>
 
                     {/* Dexscreener Link */}
@@ -1612,38 +1621,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </span>
                         )}
                         <BarChart3 className="h-4 w-4" />
-                        <span>Dexscreener</span>
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
-
-                    {pumpFunUrl && (
-                      <a
-                        href={pumpFunUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={isPumpFunDetected ? "Open Pump.fun coin page" : "Open Pump.fun coin page (if listed)"}
-                        className={cn(
-                          "group/button relative overflow-hidden flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-semibold text-sm",
-                          "border text-white",
-                          isPumpFunDetected
-                            ? "border-emerald-400/40 bg-gradient-to-r from-emerald-500/80 to-green-500/75 shadow-lg shadow-emerald-500/20 hover:from-emerald-400/90 hover:to-green-400/85"
-                            : "border-emerald-500/25 bg-gradient-to-r from-emerald-500/35 to-green-500/30 shadow-lg shadow-emerald-600/10 hover:from-emerald-500/45 hover:to-green-500/38",
-                          localSettled && !localIsWin && "saturate-[0.9]",
-                          "transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                        )}
-                      >
-                        <span className="pointer-events-none absolute inset-0 opacity-0 group-hover/button:opacity-100 transition-opacity bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                        {!localSettled && (
-                          <Sparkles className="h-3.5 w-3.5 text-white/90" />
-                        )}
-                        <Coins className="h-4 w-4" />
-                        <span>Trade on Pump</span>
-                        {!isPumpFunDetected && (
-                          <span className="hidden sm:inline rounded-full border border-white/20 bg-white/10 px-1.5 py-0.5 text-[10px] font-medium">
-                            if listed
-                          </span>
-                        )}
+                        <span>Open Chart</span>
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     )}
@@ -2199,15 +2177,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       </div>
 
       <Dialog open={isBuyDialogOpen} onOpenChange={setIsBuyDialogOpen}>
-        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-2xl max-h-[92vh] overflow-y-auto border-border/60 bg-background/95 p-0">
+        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] overflow-y-auto border-border/60 bg-background/95 p-0">
           <DialogHeader className="px-5 sm:px-6 pt-5 pb-4 border-b border-border/50">
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Zap className="h-4 w-4 text-primary" />
-              Buy {post.tokenSymbol || "Token"}
+              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet"} · {post.tokenSymbol || "Token"}
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm">
               {isSolanaTradeSupported
-                ? "Professional Jupiter execution flow with live quotes and wallet signing."
+                ? "Live chart + Jupiter buy controls in one view for faster entries."
                 : "Trading is available here for Solana posts. This post is on another chain."}
             </DialogDescription>
           </DialogHeader>
@@ -2251,8 +2229,45 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               </div>
             ) : (
               <>
-                <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
                   <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-black/20 overflow-hidden shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
+                      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Live Chart</div>
+                          <div className="text-sm font-medium text-foreground">Dexscreener</div>
+                        </div>
+                        {dexscreenerUrl ? (
+                          <a
+                            href={dexscreenerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-white/10 transition-colors"
+                          >
+                            Open Full Chart
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : null}
+                      </div>
+                      {dexscreenerEmbedUrl ? (
+                        <iframe
+                          src={dexscreenerEmbedUrl}
+                          title={`Dexscreener chart for ${post.tokenSymbol || post.tokenName || "token"}`}
+                          className="h-[280px] w-full md:h-[340px] xl:h-[420px]"
+                          loading="lazy"
+                          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                          referrerPolicy="no-referrer-when-downgrade"
+                        />
+                      ) : (
+                        <div className="flex h-[280px] md:h-[340px] xl:h-[420px] items-center justify-center p-6 text-center">
+                          <div className="space-y-3">
+                            <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
+                            <p className="text-sm text-muted-foreground">Chart unavailable for this token yet.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
@@ -2260,7 +2275,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[11px] font-medium text-foreground">
                             {walletShortAddress}
                           </span>
-                        ) : null}
+                        ) : (
+                          <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-medium text-amber-100">
+                            Not connected
+                          </span>
+                        )}
                       </div>
                       <div className="wallet-adapter-button-wrap [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:rounded-lg [&_.wallet-adapter-button]:h-10">
                         <WalletMultiButton />
@@ -2418,18 +2437,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             <Button
               type="button"
               onClick={handleExecuteJupiterBuy}
-              disabled={
-                !isSolanaTradeSupported ||
-                !wallet.connected ||
-                !wallet.publicKey ||
-                !wallet.signTransaction ||
-                !jupiterQuote ||
-                isExecutingBuy
-              }
-              className="w-full sm:w-auto gap-2"
+              disabled={!canExecuteJupiterBuy}
+              className={cn(
+                "w-full sm:w-auto gap-2",
+                !isWalletConnectedForTrade && "bg-amber-300 text-black hover:bg-amber-200"
+              )}
             >
               {isExecutingBuy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-              {wallet.connected ? "Buy with Jupiter" : "Connect Wallet to Buy"}
+              {isWalletConnectedForTrade ? "Buy Now" : "Connect Wallet to Buy"}
             </Button>
           </DialogFooter>
         </DialogContent>
