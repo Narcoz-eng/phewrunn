@@ -22,13 +22,123 @@ interface CreatePostProps {
 interface TokenInfo {
   name: string;
   symbol: string;
-  priceUsd: string;
+  imageUrl: string | null;
+  priceUsd: number | null;
   marketCap: number;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  priceChange24hPct: number | null;
   dexscreenerUrl: string;
 }
 
 const MIN_CHARS = 10;
 const MAX_CHARS = 400;
+
+type DexTokenRef = {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  icon?: string;
+  logoURI?: string;
+};
+
+type DexPair = {
+  chainId?: string;
+  url?: string;
+  baseToken?: DexTokenRef;
+  quoteToken?: DexTokenRef;
+  priceUsd?: string | number;
+  marketCap?: string | number;
+  fdv?: string | number;
+  liquidity?: {
+    usd?: string | number;
+  };
+  volume?: {
+    h24?: string | number;
+  };
+  priceChange?: {
+    h24?: string | number;
+  };
+  info?: {
+    imageUrl?: string;
+    header?: string;
+    openGraph?: string;
+  };
+};
+
+function normalizeAddress(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizeChain(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "eth") return "ethereum";
+  if (normalized === "sol") return "solana";
+  return normalized;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function pickTokenFromPair(pair: DexPair, address: string): DexTokenRef | null {
+  const target = normalizeAddress(address);
+  if (target && normalizeAddress(pair.baseToken?.address) === target) return pair.baseToken ?? null;
+  if (target && normalizeAddress(pair.quoteToken?.address) === target) return pair.quoteToken ?? null;
+  return pair.baseToken ?? pair.quoteToken ?? null;
+}
+
+function pickPair(pairs: DexPair[], address: string, chainType: "solana" | "evm"): DexPair | null {
+  if (!pairs.length) return null;
+  const target = normalizeAddress(address);
+  const expectedChain = normalizeChain(chainType === "solana" ? "solana" : "ethereum");
+  const ranked = [...pairs].sort((a, b) => {
+    const score = (pair: DexPair): number => {
+      const baseMatch = normalizeAddress(pair.baseToken?.address) === target;
+      const quoteMatch = normalizeAddress(pair.quoteToken?.address) === target;
+      const chainMatch = normalizeChain(pair.chainId) === expectedChain;
+      let value = 0;
+      if (baseMatch && chainMatch) value += 120;
+      else if (quoteMatch && chainMatch) value += 95;
+      else if (baseMatch) value += 70;
+      else if (quoteMatch) value += 50;
+      if (chainMatch) value += 20;
+      if (pair.url) value += 5;
+      return value;
+    };
+
+    const scoreDelta = score(b) - score(a);
+    if (scoreDelta !== 0) return scoreDelta;
+    const liquidityDelta = (toFiniteNumber(b.liquidity?.usd) ?? 0) - (toFiniteNumber(a.liquidity?.usd) ?? 0);
+    if (liquidityDelta !== 0) return liquidityDelta;
+    return (toFiniteNumber(b.volume?.h24) ?? 0) - (toFiniteNumber(a.volume?.h24) ?? 0);
+  });
+  return ranked[0] ?? null;
+}
+
+function pickImageFromPair(pair: DexPair, token: DexTokenRef | null): string | null {
+  const candidates = [
+    token?.icon,
+    token?.logoURI,
+    pair.info?.imageUrl,
+    pair.info?.header,
+    pair.info?.openGraph,
+  ];
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+    if (value) return value;
+  }
+  return null;
+}
 
 export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
   const navigate = useNavigate();
@@ -46,24 +156,43 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
   const fetchTokenInfo = useCallback(async (address: string, chainType: "solana" | "evm") => {
     setIsFetchingToken(true);
     try {
-      const response = await fetch(
-        `https://api.dexscreener.com/latest/dex/tokens/${address}`
-      );
-      if (!response.ok) throw new Error("Failed to fetch");
+      const chain = chainType === "solana" ? "solana" : "ethereum";
+      const endpoints = [
+        `https://api.dexscreener.com/tokens/v1/${chain}/${address}`,
+        `https://api.dexscreener.com/latest/dex/tokens/${address}`,
+      ];
 
-      const data = await response.json();
-      if (data.pairs && data.pairs.length > 0) {
-        const pair = data.pairs[0];
-        setTokenInfo({
-          name: pair.baseToken?.name || "Unknown",
-          symbol: pair.baseToken?.symbol || "???",
-          priceUsd: pair.priceUsd || "N/A",
-          marketCap: pair.marketCap || 0,
-          dexscreenerUrl: pair.url || `https://dexscreener.com/${chainType === "solana" ? "solana" : "ethereum"}/${address}`,
-        });
-      } else {
-        setTokenInfo(null);
+      let bestPair: DexPair | null = null;
+      for (const endpoint of endpoints) {
+        const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
+        if (!response.ok) continue;
+        const payload = (await response.json()) as DexPair[] | { pairs?: DexPair[] | null };
+        const pairs = Array.isArray(payload) ? payload : (payload?.pairs ?? []);
+        const picked = pickPair(pairs, address, chainType);
+        if (picked) {
+          bestPair = picked;
+          break;
+        }
       }
+
+      if (!bestPair) {
+        setTokenInfo(null);
+        return;
+      }
+
+      const token = pickTokenFromPair(bestPair, address);
+      setTokenInfo({
+        name: token?.name || bestPair.baseToken?.name || "Unknown",
+        symbol: token?.symbol || bestPair.baseToken?.symbol || "???",
+        imageUrl: pickImageFromPair(bestPair, token),
+        priceUsd: toFiniteNumber(bestPair.priceUsd),
+        marketCap: toFiniteNumber(bestPair.marketCap) ?? toFiniteNumber(bestPair.fdv) ?? 0,
+        liquidityUsd: toFiniteNumber(bestPair.liquidity?.usd),
+        volume24hUsd: toFiniteNumber(bestPair.volume?.h24),
+        priceChange24hPct: toFiniteNumber(bestPair.priceChange?.h24),
+        dexscreenerUrl:
+          bestPair.url || `https://dexscreener.com/${chainType === "solana" ? "solana" : "ethereum"}/${address}`,
+      });
     } catch {
       setTokenInfo(null);
     } finally {
@@ -232,6 +361,14 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
               {tokenInfo && !isFetchingToken && (
                 <div className="mt-2 pt-2 border-t border-border/50 animate-fade-in">
                   <div className="flex items-center gap-2">
+                    {tokenInfo.imageUrl ? (
+                      <img
+                        src={tokenInfo.imageUrl}
+                        alt={tokenInfo.symbol}
+                        className="h-6 w-6 rounded-full border border-border/60 object-cover"
+                        loading="lazy"
+                      />
+                    ) : null}
                     <span className="text-sm font-semibold text-foreground">
                       {tokenInfo.symbol}
                     </span>
@@ -239,11 +376,20 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
                       {tokenInfo.name}
                     </span>
                   </div>
-                  {tokenInfo.marketCap > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Market Cap: ${tokenInfo.marketCap.toLocaleString()}
-                    </p>
-                  )}
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    {tokenInfo.priceUsd != null ? (
+                      <span>Price: ${tokenInfo.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
+                    ) : null}
+                    {tokenInfo.marketCap > 0 ? <span>MCap: ${tokenInfo.marketCap.toLocaleString()}</span> : null}
+                    {tokenInfo.liquidityUsd != null ? <span>Liquidity: ${tokenInfo.liquidityUsd.toLocaleString()}</span> : null}
+                    {tokenInfo.volume24hUsd != null ? <span>24h Vol: ${tokenInfo.volume24hUsd.toLocaleString()}</span> : null}
+                    {tokenInfo.priceChange24hPct != null ? (
+                      <span className={tokenInfo.priceChange24hPct >= 0 ? "text-gain" : "text-loss"}>
+                        24h: {tokenInfo.priceChange24hPct >= 0 ? "+" : ""}
+                        {tokenInfo.priceChange24hPct.toFixed(2)}%
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               )}
             </div>

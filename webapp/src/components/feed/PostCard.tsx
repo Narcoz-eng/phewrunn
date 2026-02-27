@@ -1579,6 +1579,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     staleTime: 3 * 60 * 1000,
     retry: 1,
     refetchOnWindowFocus: false,
+    refetchInterval: isBuyDialogOpen ? 20_000 : false,
     queryFn: async () => {
       if (!post.contractAddress) return null;
       return fetchDexscreenerTokenData({
@@ -3111,6 +3112,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       {post.contractAddress}
                     </div>
                   )}
+                  {isBuyDialogOpen && dexTokenDataQuery.isFetching ? (
+                    <div className="mt-2 text-[11px] text-muted-foreground">
+                      Refreshing token data...
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
