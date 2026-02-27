@@ -22,6 +22,39 @@ const SESSION_USER_SELECT = {
   lastPhotoUpdate: true,
 } as const;
 
+const SESSION_USER_FALLBACK_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  emailVerified: true,
+  image: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+function isPrismaSchemaDriftError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P2021" || code === "P2022") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+}
+
 type SessionRecord = {
   session: {
     id: string;
@@ -109,20 +142,78 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
   }
 
   const lookupPromise = (async () => {
-    const dbSession = await prisma.session.findUnique({
-      where: { token },
-      select: {
-        id: true,
-        userId: true,
-        token: true,
-        expiresAt: true,
-        createdAt: true,
-        updatedAt: true,
-        user: {
-          select: SESSION_USER_SELECT,
+    let dbSession:
+      | {
+          id: string;
+          userId: string;
+          token: string;
+          expiresAt: Date;
+          createdAt: Date;
+          updatedAt: Date;
+          user: SessionRecord["user"] | null;
+        }
+      | null = null;
+
+    try {
+      dbSession = await prisma.session.findUnique({
+        where: { token },
+        select: {
+          id: true,
+          userId: true,
+          token: true,
+          expiresAt: true,
+          createdAt: true,
+          updatedAt: true,
+          user: {
+            select: SESSION_USER_SELECT,
+          },
         },
-      },
-    });
+      }) as typeof dbSession;
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+
+      console.warn("[auth] Session user schema drift detected; using fallback select");
+
+      const fallbackSession = await prisma.session.findUnique({
+        where: { token },
+        select: {
+          id: true,
+          userId: true,
+          token: true,
+          expiresAt: true,
+          createdAt: true,
+          updatedAt: true,
+          user: {
+            select: SESSION_USER_FALLBACK_SELECT,
+          },
+        },
+      });
+
+      dbSession = fallbackSession
+        ? {
+            ...fallbackSession,
+            user: fallbackSession.user
+              ? {
+                  ...fallbackSession.user,
+                  walletAddress: null,
+                  walletProvider: null,
+                  walletConnectedAt: null,
+                  username: null,
+                  level: 0,
+                  xp: 0,
+                  bio: null,
+                  isAdmin: false,
+                  isBanned: false,
+                  isVerified: false,
+                  lastUsernameUpdate: null,
+                  lastPhotoUpdate: null,
+                }
+              : null,
+          }
+        : null;
+    }
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
       sessionCache.set(token, {
