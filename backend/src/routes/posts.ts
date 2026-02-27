@@ -284,36 +284,43 @@ async function attachWalletTradeSnapshots<T extends {
  * Helper to fetch market cap using the enhanced service
  * Returns just the mcap value for backward compatibility
  */
-async function fetchMarketCap(address: string): Promise<number | null> {
-  const result = await fetchMarketCapService(address);
+async function fetchMarketCap(
+  address: string,
+  chainType?: string | null
+): Promise<number | null> {
+  const result = await fetchMarketCapService(address, chainType);
   return result.mcap;
 }
 
-async function getFeedMarketCapSnapshot(address: string): Promise<MarketCapResult> {
+async function getFeedMarketCapSnapshot(
+  address: string,
+  chainType?: string | null
+): Promise<MarketCapResult> {
+  const cacheKey = `${chainType ?? "unknown"}:${address}`;
   const now = Date.now();
-  const cached = feedMcapCache.get(address);
+  const cached = feedMcapCache.get(cacheKey);
   if (cached && cached.expiresAtMs > now) {
     return cached.result;
   }
 
-  const existingInFlight = feedMcapInFlight.get(address);
+  const existingInFlight = feedMcapInFlight.get(cacheKey);
   if (existingInFlight) {
     return existingInFlight;
   }
 
-  const request = fetchMarketCapService(address)
+  const request = fetchMarketCapService(address, chainType)
     .then((result) => {
-      feedMcapCache.set(address, {
+      feedMcapCache.set(cacheKey, {
         result,
         expiresAtMs: Date.now() + FEED_MCAP_CACHE_TTL_MS,
       });
       return result;
     })
     .finally(() => {
-      feedMcapInFlight.delete(address);
+      feedMcapInFlight.delete(cacheKey);
     });
 
-  feedMcapInFlight.set(address, request);
+  feedMcapInFlight.set(cacheKey, request);
   return request;
 }
 
@@ -380,6 +387,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         id: true,
         authorId: true,
         contractAddress: true,
+        chainType: true,
         entryMcap: true,
         isWin: true,
         isWin1h: true,
@@ -398,7 +406,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
       if (!post.contractAddress || post.entryMcap === null) continue;
 
       try {
-        const mcap1h = await fetchMarketCap(post.contractAddress);
+        const mcap1h = await fetchMarketCap(post.contractAddress, post.chainType);
         if (mcap1h === null) {
           errorCount++;
           continue;
@@ -535,6 +543,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         id: true,
         authorId: true,
         contractAddress: true,
+        chainType: true,
         entryMcap: true,
         isWin: true,
         isWin1h: true,
@@ -550,7 +559,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
 
       try {
         // Fetch current market cap from DexScreener
-        const mcap6h = await fetchMarketCap(post.contractAddress);
+        const mcap6h = await fetchMarketCap(post.contractAddress, post.chainType);
         if (mcap6h === null) {
           console.warn(`[Snapshot 6H] Could not fetch mcap for post ${post.id} (CA: ${post.contractAddress})`);
           errorCount++;
@@ -735,7 +744,14 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
 
     result.scannedPosts = candidates.length;
 
-    const postsByContract = new Map<string, typeof candidates>();
+    const postsByContract = new Map<
+      string,
+      {
+        contractAddress: string;
+        chainType: string | null;
+        posts: typeof candidates;
+      }
+    >();
     for (const post of candidates) {
       const contractAddress = post.contractAddress;
       if (!contractAddress) continue;
@@ -791,21 +807,27 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
 
       result.eligiblePosts++;
 
-      let bucket = postsByContract.get(contractAddress);
+      const contractKey = `${post.chainType ?? "unknown"}:${contractAddress}`;
+      let bucket = postsByContract.get(contractKey);
       if (!bucket) {
         if (postsByContract.size >= MARKET_REFRESH_MAX_CONTRACTS_PER_RUN) continue;
-        bucket = [];
-        postsByContract.set(contractAddress, bucket);
+        bucket = {
+          contractAddress,
+          chainType: post.chainType,
+          posts: [],
+        };
+        postsByContract.set(contractKey, bucket);
       }
-      bucket.push(post);
+      bucket.posts.push(post);
     }
 
-    for (const [contractAddress, posts] of postsByContract) {
+    for (const [, bucket] of postsByContract) {
+      const { contractAddress, chainType, posts } = bucket;
       let marketCapResult: MarketCapResult;
       let heliusMetadata: Awaited<ReturnType<typeof getHeliusTokenMetadataForMint>> | null = null;
 
       try {
-        marketCapResult = await getFeedMarketCapSnapshot(contractAddress);
+        marketCapResult = await getFeedMarketCapSnapshot(contractAddress, chainType);
         if (
           isHeliusConfigured() &&
           posts.some((p) => p.chainType === "solana" && (!p.tokenName || !p.tokenSymbol || !p.tokenImage))
@@ -1843,6 +1865,7 @@ postsRouter.post("/settle", async (c) => {
       id: true,
       authorId: true,
       contractAddress: true,
+      chainType: true,
       entryMcap: true,
       isWin: true,
       isWin1h: true,
@@ -1859,7 +1882,7 @@ postsRouter.post("/settle", async (c) => {
   for (const post of postsToSettle1h) {
     if (!post.contractAddress || post.entryMcap === null) continue;
 
-    const mcap1h = await fetchMarketCap(post.contractAddress);
+    const mcap1h = await fetchMarketCap(post.contractAddress, post.chainType);
     if (mcap1h === null) continue;
 
     const percentChange1h = ((mcap1h - post.entryMcap) / post.entryMcap) * 100;
@@ -1971,6 +1994,7 @@ postsRouter.post("/settle", async (c) => {
       id: true,
       authorId: true,
       contractAddress: true,
+      chainType: true,
       entryMcap: true,
       isWin: true,
       isWin1h: true,
@@ -1983,7 +2007,7 @@ postsRouter.post("/settle", async (c) => {
   for (const post of postsToSnapshot6h) {
     if (!post.contractAddress || post.entryMcap === null) continue;
 
-    const mcap6h = await fetchMarketCap(post.contractAddress);
+    const mcap6h = await fetchMarketCap(post.contractAddress, post.chainType);
     if (mcap6h === null) continue;
 
     const percentChange6h = ((mcap6h - post.entryMcap) / post.entryMcap) * 100;
@@ -2918,6 +2942,7 @@ const ChartCandlesProxySchema = z.object({
 type PriceRoutePostRecord = {
   id: string;
   contractAddress: string | null;
+  chainType: string | null;
   entryMcap: number | null;
   currentMcap: number | null;
   mcap1h: number | null;
@@ -2968,7 +2993,7 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     let refreshPromise = priceRefreshInFlight.get(post.id);
     if (!refreshPromise) {
       refreshPromise = (async () => {
-        const latestMcap = await fetchMarketCap(post.contractAddress!);
+        const latestMcap = await fetchMarketCap(post.contractAddress!, post.chainType);
         if (latestMcap !== null) {
           const now = new Date();
           await prisma.post.update({
@@ -3479,6 +3504,7 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
     select: {
       id: true,
       contractAddress: true,
+      chainType: true,
       entryMcap: true,
       currentMcap: true,
       mcap1h: true,
@@ -3512,6 +3538,7 @@ postsRouter.get("/:id/price", async (c) => {
     select: {
       id: true,
       contractAddress: true,
+      chainType: true,
       entryMcap: true,
       currentMcap: true,
       mcap1h: true,

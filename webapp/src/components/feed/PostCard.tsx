@@ -535,11 +535,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   // Sync state when post prop changes
   useEffect(() => {
+    setCurrentMcap(post.currentMcap);
     setLocalSettled(post.settled);
     setLocalMcap1h(post.mcap1h);
     setLocalMcap6h(post.mcap6h);
     setLocalIsWin(post.isWin);
-  }, [post.settled, post.mcap1h, post.mcap6h, post.isWin]);
+  }, [post.currentMcap, post.settled, post.mcap1h, post.mcap6h, post.isWin]);
 
   // Real-time price updates with dynamic intervals:
   // - Unsettled posts (< 1 hour): Update every 30 seconds
@@ -561,15 +562,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           setCurrentMcap(data.currentMcap);
         }
 
-        // Check if post just settled - update local state to show final result
+        let shouldInvalidateRealtimeStats = false;
+
+        // Keep settlement state synchronized with server snapshots.
         if (data.settled && !localSettled) {
           setLocalSettled(true);
-          if (data.mcap1h !== null) {
-            setLocalMcap1h(data.mcap1h);
-            // Calculate if it's a win based on 1H mcap
-            const isWin = post.entryMcap !== null && data.mcap1h > post.entryMcap;
-            setLocalIsWin(isWin);
-          }
+          shouldInvalidateRealtimeStats = true;
+        }
+        if (data.mcap1h !== null && data.mcap1h !== localMcap1h) {
+          setLocalMcap1h(data.mcap1h);
+          const isWin = post.entryMcap !== null && data.mcap1h > post.entryMcap;
+          setLocalIsWin(isWin);
+          shouldInvalidateRealtimeStats = true;
+        }
+
+        // Update 6H mcap if available and refresh user stats in near-real time.
+        if (data.mcap6h !== null && data.mcap6h !== localMcap6h) {
+          setLocalMcap6h(data.mcap6h);
+          shouldInvalidateRealtimeStats = true;
+        }
+
+        if (shouldInvalidateRealtimeStats) {
           // Throttle feed/profile invalidation so level/xp badges refresh in near real time
           // without every visible card spamming refetches when many posts settle together.
           const nowMs = Date.now();
@@ -580,12 +593,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             void queryClient.invalidateQueries({ queryKey: ["userProfile"], refetchType: "active" });
             void queryClient.invalidateQueries({ queryKey: ["userPosts"], refetchType: "active" });
             void queryClient.invalidateQueries({ queryKey: ["userReposts"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["profile", "me"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["leaderboard"], refetchType: "active" });
           }
-        }
-
-        // Update 6H mcap if available
-        if (data.mcap6h !== null && data.mcap6h !== localMcap6h) {
-          setLocalMcap6h(data.mcap6h);
         }
       } catch (error) {
         // Silently fail - don't spam console
@@ -606,7 +616,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       clearTimeout(initialTimer);
       clearInterval(intervalTimer);
     };
-  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, localSettled, localMcap6h, isInViewport, queryClient]);
+  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, localSettled, localMcap1h, localMcap6h, isInViewport, queryClient]);
 
   // Fetch comments when expanded
   const { data: comments, isLoading: isCommentsLoading, refetch: refetchComments } = useQuery({
@@ -1623,7 +1633,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const resolvedTokenSymbol = post.tokenSymbol ?? dexTokenDataQuery.data?.tokenSymbol ?? null;
   const resolvedDexscreenerUrl = post.dexscreenerUrl ?? dexTokenDataQuery.data?.dexscreenerUrl ?? dexscreenerUrl;
   const resolvedPriceUsd = dexTokenDataQuery.data?.priceUsd ?? null;
-  const resolvedMarketCap = dexTokenDataQuery.data?.marketCap ?? currentMcap ?? null;
+  const resolvedMarketCap = currentMcap ?? dexTokenDataQuery.data?.marketCap ?? null;
   const resolvedLiquidityUsd = dexTokenDataQuery.data?.liquidityUsd ?? null;
   const resolvedVolume24hUsd = dexTokenDataQuery.data?.volume24hUsd ?? null;
   const resolvedPriceChange24hPct = dexTokenDataQuery.data?.priceChange24hPct ?? null;
@@ -2270,7 +2280,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     professionalChartFirst && professionalChartLast && professionalChartFirst.close > 0
       ? ((professionalChartLast.close - professionalChartFirst.close) / professionalChartFirst.close) * 100
       : null;
-  const displayChartDeltaPct = professionalChartDeltaPct ?? currentTradeDeltaPct;
   const professionalChartTrendPositive =
     professionalChartDeltaPct == null ? true : professionalChartDeltaPct >= 0;
   const professionalChartStroke = professionalChartTrendPositive ? "#74f37a" : "#ff6b6b";
@@ -3304,8 +3313,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </div>
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                             <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Change</div>
-                            <div className={cn("mt-1 text-sm font-semibold", displayChartDeltaPct == null ? "text-foreground" : displayChartDeltaPct >= 0 ? "text-gain" : "text-loss")}>
-                              {displayChartDeltaPct == null ? "-" : `${displayChartDeltaPct >= 0 ? "+" : ""}${displayChartDeltaPct.toFixed(1)}%`}
+                            <div className={cn("mt-1 text-sm font-semibold", currentTradeDeltaPct == null ? "text-foreground" : currentTradeDeltaPct >= 0 ? "text-gain" : "text-loss")}>
+                              {currentTradeDeltaPct == null ? "-" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
                             </div>
                           </div>
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">

@@ -36,18 +36,19 @@ const MIN_REQUEST_INTERVAL_MS = 200; // Min 200ms between requests
  * DexScreener API response types
  */
 interface DexscreenerPair {
-  fdv?: number;
-  marketCap?: number;
+  chainId?: string;
+  fdv?: number | string;
+  marketCap?: number | string;
   priceUsd?: string;
   baseToken?: {
-    address: string;
-    name: string;
-    symbol: string;
+    address?: string;
+    name?: string;
+    symbol?: string;
   };
   quoteToken?: {
-    address: string;
-    name: string;
-    symbol: string;
+    address?: string;
+    name?: string;
+    symbol?: string;
   };
   info?: {
     imageUrl?: string;
@@ -58,8 +59,16 @@ interface DexscreenerPair {
   };
 }
 
-interface DexscreenerResponse {
-  pairs?: DexscreenerPair[] | null;
+type DexscreenerResponse = DexscreenerPair[] | { pairs?: DexscreenerPair[] | null };
+
+interface DexMatchedTokenRef {
+  name?: string;
+  symbol?: string;
+}
+
+interface DexscreenerSelectedPair {
+  pair: DexscreenerPair;
+  matchedToken?: DexMatchedTokenRef;
 }
 
 /**
@@ -94,26 +103,84 @@ function normalizeDexAddress(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
+function normalizeDexChain(chainType: string | null | undefined): string | null {
+  if (!chainType) return null;
+  const normalized = chainType.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "eth" || normalized === "evm") return "ethereum";
+  if (normalized === "sol") return "solana";
+  return normalized;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function pickMatchedTokenFromPair(
+  pair: DexscreenerPair,
+  requestedAddress: string
+): DexMatchedTokenRef | undefined {
+  const target = normalizeDexAddress(requestedAddress);
+  if (!target) return pair.baseToken;
+
+  if (normalizeDexAddress(pair.baseToken?.address) === target) {
+    return pair.baseToken;
+  }
+  if (normalizeDexAddress(pair.quoteToken?.address) === target) {
+    return pair.quoteToken;
+  }
+  return pair.baseToken ?? pair.quoteToken;
+}
+
+function extractDexPairs(payload: DexscreenerResponse): DexscreenerPair[] {
+  return Array.isArray(payload) ? payload : (payload.pairs ?? []);
+}
+
 function selectBestDexPair(
   pairs: DexscreenerPair[] | null | undefined,
-  requestedAddress: string
-): DexscreenerPair | undefined {
+  requestedAddress: string,
+  chainType?: string | null
+): DexscreenerSelectedPair | undefined {
   if (!pairs?.length) return undefined;
 
   const target = normalizeDexAddress(requestedAddress);
-  if (!target) return pairs[0];
+  const expectedChain = normalizeDexChain(chainType);
+  const rankedPairs = [...pairs].sort((a, b) => {
+    const score = (pair: DexscreenerPair): number => {
+      const baseMatch = normalizeDexAddress(pair.baseToken?.address) === target;
+      const quoteMatch = normalizeDexAddress(pair.quoteToken?.address) === target;
+      const chainMatch =
+        expectedChain !== null && normalizeDexChain(pair.chainId) === expectedChain;
 
-  const exactBasePair = pairs.find(
-    (pair) => normalizeDexAddress(pair.baseToken?.address) === target
-  );
-  if (exactBasePair) return exactBasePair;
+      let value = 0;
+      if (baseMatch && chainMatch) value += 120;
+      else if (quoteMatch && chainMatch) value += 100;
+      else if (baseMatch) value += 70;
+      else if (quoteMatch) value += 55;
+      if (chainMatch) value += 20;
+      return value;
+    };
 
-  const quoteMatchPair = pairs.find(
-    (pair) => normalizeDexAddress(pair.quoteToken?.address) === target
-  );
-  if (quoteMatchPair) return quoteMatchPair;
+    const scoreDelta = score(b) - score(a);
+    if (scoreDelta !== 0) return scoreDelta;
 
-  return pairs[0];
+    const mcapDelta =
+      (toFiniteNumber(b.marketCap) ?? toFiniteNumber(b.fdv) ?? 0) -
+      (toFiniteNumber(a.marketCap) ?? toFiniteNumber(a.fdv) ?? 0);
+    return mcapDelta;
+  });
+
+  const pair = rankedPairs[0];
+  if (!pair) return undefined;
+  return {
+    pair,
+    matchedToken: pickMatchedTokenFromPair(pair, requestedAddress),
+  };
 }
 
 function pickDexImageUrl(pair: DexscreenerPair | undefined): string | undefined {
@@ -136,7 +203,10 @@ function pickDexImageUrl(pair: DexscreenerPair | undefined): string | undefined 
  * @param address - Token contract address
  * @returns Market cap result with optional token info
  */
-export async function fetchMarketCap(address: string): Promise<MarketCapResult> {
+export async function fetchMarketCap(
+  address: string,
+  chainType?: string | null
+): Promise<MarketCapResult> {
   // Rate limiting - ensure minimum interval between requests
   const now = Date.now();
   const timeSinceLastRequest = now - lastRequestTime;
@@ -150,41 +220,51 @@ export async function fetchMarketCap(address: string): Promise<MarketCapResult> 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       lastRequestTime = Date.now();
-
-      const response = await fetch(
+      const chain = chainType === "solana" ? "solana" : "ethereum";
+      const endpoints = [
+        `https://api.dexscreener.com/tokens/v1/${chain}/${address}`,
         `https://api.dexscreener.com/latest/dex/tokens/${address}`,
-        {
+      ];
+      let selectedPair: DexscreenerSelectedPair | undefined;
+
+      for (const endpoint of endpoints) {
+        const response = await fetch(endpoint, {
           headers: {
             'Accept': 'application/json',
           },
+        });
+
+        // Handle rate limiting
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After');
+          const waitTime = retryAfter
+            ? parseInt(retryAfter) * 1000
+            : calculateBackoffDelay(attempt);
+
+          console.warn(`[MarketCap] Rate limited, waiting ${waitTime}ms before retry`);
+          await sleep(waitTime);
+          continue;
         }
-      );
 
-      // Handle rate limiting
-      if (response.status === 429) {
-        const retryAfter = response.headers.get('Retry-After');
-        const waitTime = retryAfter
-          ? parseInt(retryAfter) * 1000
-          : calculateBackoffDelay(attempt);
+        if (!response.ok) {
+          continue;
+        }
 
-        console.warn(`[MarketCap] Rate limited, waiting ${waitTime}ms before retry`);
-        await sleep(waitTime);
-        continue;
+        const data = await response.json() as DexscreenerResponse;
+        const pairs = extractDexPairs(data);
+        selectedPair = selectBestDexPair(pairs, address, chainType);
+        if (selectedPair?.pair) break;
       }
 
-      if (!response.ok) {
-        throw new Error(`DexScreener API error: ${response.status}`);
-      }
-
-      const data = await response.json() as DexscreenerResponse;
-
-      const pair = selectBestDexPair(data.pairs, address);
-      if (pair) {
+      if (selectedPair?.pair) {
+        const marketCap = toFiniteNumber(selectedPair.pair.marketCap);
+        const fdv = toFiniteNumber(selectedPair.pair.fdv);
         return {
-          mcap: pair.fdv ?? pair.marketCap ?? null,
-          tokenName: pair.baseToken?.name,
-          tokenSymbol: pair.baseToken?.symbol,
-          tokenImage: pickDexImageUrl(pair),
+          // Prefer circulating market cap; fallback to FDV.
+          mcap: marketCap ?? fdv ?? null,
+          tokenName: selectedPair.matchedToken?.name ?? selectedPair.pair.baseToken?.name,
+          tokenSymbol: selectedPair.matchedToken?.symbol ?? selectedPair.pair.baseToken?.symbol,
+          tokenImage: pickDexImageUrl(selectedPair.pair),
         };
       }
 
