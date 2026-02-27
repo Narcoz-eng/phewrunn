@@ -594,6 +594,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             void queryClient.invalidateQueries({ queryKey: ["userPosts"], refetchType: "active" });
             void queryClient.invalidateQueries({ queryKey: ["userReposts"], refetchType: "active" });
             void queryClient.invalidateQueries({ queryKey: ["profile", "me"], refetchType: "active" });
+            void queryClient.invalidateQueries({ queryKey: ["currentUser"], refetchType: "active" });
             void queryClient.invalidateQueries({ queryKey: ["leaderboard"], refetchType: "active" });
           }
         }
@@ -670,8 +671,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
   };
 
-  // Use mcap1h for settled posts, currentMcap for live posts
-  const officialMcap = localSettled ? localMcap1h : currentMcap;
+  // Use settled 1H mcap when present, but fallback to live mcap for legacy rows missing mcap1h.
+  const officialMcap = localSettled ? (localMcap1h ?? currentMcap) : currentMcap;
   const percentChange = calculatePercentChange(post.entryMcap, officialMcap);
   const isGain = percentChange !== null && percentChange > 0;
   const isLoss = percentChange !== null && percentChange < 0;
@@ -804,12 +805,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const multiplierCurrent = formatMultiplier(post.entryMcap, currentMcap);
 
   // Calculate 6H percent change if available
-  const percentChange6h = localMcap6h ? calculatePercentChange(post.entryMcap, localMcap6h) : null;
+  const percentChange6h = localMcap6h !== null ? calculatePercentChange(post.entryMcap, localMcap6h) : null;
   const isGain6h = percentChange6h !== null && percentChange6h > 0;
   const isLoss6h = percentChange6h !== null && percentChange6h < 0;
 
   // Calculate current mcap vs entry (for settled posts showing current as reference)
-  const percentChangeCurrent = currentMcap ? calculatePercentChange(post.entryMcap, currentMcap) : null;
+  const percentChangeCurrent = currentMcap !== null ? calculatePercentChange(post.entryMcap, currentMcap) : null;
   const isGainCurrent = percentChangeCurrent !== null && percentChangeCurrent > 0;
   const isLossCurrent = percentChangeCurrent !== null && percentChangeCurrent < 0;
 

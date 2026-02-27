@@ -1616,7 +1616,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
 
   // Fetch market cap (Dex) and metadata (Helius-first for Solana) in parallel.
   const [marketCapResult, heliusTokenMetadata] = await Promise.all([
-    fetchMarketCapService(detected.address),
+    fetchMarketCapService(detected.address, detected.chainType),
     detected.chainType === "solana" && isHeliusConfigured()
       ? getHeliusTokenMetadataForMint({ mint: detected.address, chainType: detected.chainType })
       : Promise.resolve(null),

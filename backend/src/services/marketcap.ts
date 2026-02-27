@@ -112,6 +112,15 @@ function normalizeDexChain(chainType: string | null | undefined): string | null 
   return normalized;
 }
 
+function inferDexChainFromAddress(address: string | null | undefined): "solana" | "ethereum" | null {
+  const value = address?.trim();
+  if (!value) return null;
+  if (/^0x[a-fA-F0-9]{40}$/.test(value)) return "ethereum";
+  // Solana mints are base58 (32-44 chars, no 0/O/I/l characters)
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) return "solana";
+  return null;
+}
+
 function toFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -149,7 +158,8 @@ function selectBestDexPair(
   if (!pairs?.length) return undefined;
 
   const target = normalizeDexAddress(requestedAddress);
-  const expectedChain = normalizeDexChain(chainType);
+  const expectedChain =
+    normalizeDexChain(chainType) ?? inferDexChainFromAddress(requestedAddress);
   const rankedPairs = [...pairs].sort((a, b) => {
     const score = (pair: DexscreenerPair): number => {
       const baseMatch = normalizeDexAddress(pair.baseToken?.address) === target;
@@ -220,9 +230,16 @@ export async function fetchMarketCap(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       lastRequestTime = Date.now();
-      const chain = chainType === "solana" ? "solana" : "ethereum";
+      const preferredChain =
+        normalizeDexChain(chainType) ?? inferDexChainFromAddress(address);
+      const endpointChains = preferredChain
+        ? [preferredChain, preferredChain === "solana" ? "ethereum" : "solana"]
+        : ["solana", "ethereum"];
+      const uniqueEndpointChains = [...new Set(endpointChains)];
       const endpoints = [
-        `https://api.dexscreener.com/tokens/v1/${chain}/${address}`,
+        ...uniqueEndpointChains.map(
+          (chain) => `https://api.dexscreener.com/tokens/v1/${chain}/${address}`
+        ),
         `https://api.dexscreener.com/latest/dex/tokens/${address}`,
       ];
       let selectedPair: DexscreenerSelectedPair | undefined;
