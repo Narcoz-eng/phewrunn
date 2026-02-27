@@ -355,8 +355,20 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         contractAddress: { not: null },
         createdAt: { lt: oneHourAgo },
       },
-      include: {
-        author: true,
+      select: {
+        id: true,
+        authorId: true,
+        contractAddress: true,
+        entryMcap: true,
+        isWin: true,
+        isWin1h: true,
+        recoveryEligible: true,
+        author: {
+          select: {
+            name: true,
+            username: true,
+          },
+        },
       },
       take: 20, // Process max 20 posts per check to avoid timeout
     });
@@ -498,8 +510,14 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         // Must be at least 6 hours old
         createdAt: { lt: sixHoursAgo },
       },
-      include: {
-        author: true,
+      select: {
+        id: true,
+        authorId: true,
+        contractAddress: true,
+        entryMcap: true,
+        isWin: true,
+        isWin1h: true,
+        recoveryEligible: true,
       },
       take: 15, // Process max 15 posts per check
     });
@@ -541,27 +559,49 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           }
           const newLevel = calculateFinalLevel(currentUser.level, levelChange6h);
           const newXp = Math.max(0, currentUser.xp + xpChange6h);
-          await prisma.$transaction([
-            prisma.post.update({
-              where: { id: post.id },
-              data: {
-                mcap6h: mcap6h,
-                currentMcap: mcap6h,
-                isWin6h: isWin6h,
-                percentChange6h: percentChange6h,
-                settled6h: true,
-                levelChange6h: levelChange6h,
-                lastMcapUpdate: snapshotUpdatedAt,
-              },
-            }),
-            prisma.user.update({
-              where: { id: post.authorId },
-              data: {
-                level: newLevel,
-                xp: newXp,
-              },
-            }),
-          ]);
+          try {
+            await prisma.$transaction([
+              prisma.post.update({
+                where: { id: post.id },
+                data: {
+                  mcap6h: mcap6h,
+                  currentMcap: mcap6h,
+                  isWin6h: isWin6h,
+                  percentChange6h: percentChange6h,
+                  settled6h: true,
+                  levelChange6h: levelChange6h,
+                  lastMcapUpdate: snapshotUpdatedAt,
+                },
+              }),
+              prisma.user.update({
+                where: { id: post.authorId },
+                data: {
+                  level: newLevel,
+                  xp: newXp,
+                },
+              }),
+            ]);
+          } catch (error) {
+            if (!isPrismaSchemaDriftError(error)) {
+              throw error;
+            }
+
+            await prisma.$transaction([
+              prisma.post.update({
+                where: { id: post.id },
+                data: {
+                  currentMcap: mcap6h,
+                },
+              }),
+              prisma.user.update({
+                where: { id: post.authorId },
+                data: {
+                  level: newLevel,
+                  xp: newXp,
+                },
+              }),
+            ]);
+          }
 
           snapshot6hCount++;
           console.log(`[Snapshot 6H] Post ${post.id}: mcap6h=${mcap6h}, change=${percentChange6h.toFixed(2)}%, isWin6h=${isWin6h}`);
@@ -598,17 +638,29 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             console.log(`[Settlement 6H XP] Post ${post.id}: +${percentChange6h.toFixed(2)}%, XP ${xpDisplay}, User ${post.authorId}`);
           }
         } else {
-          await prisma.post.update({
-            where: { id: post.id },
-            data: {
-              mcap6h: mcap6h,
-              currentMcap: mcap6h,
-              isWin6h: isWin6h,
-              percentChange6h: percentChange6h,
-              settled6h: true,
-              lastMcapUpdate: snapshotUpdatedAt,
-            },
-          });
+          try {
+            await prisma.post.update({
+              where: { id: post.id },
+              data: {
+                mcap6h: mcap6h,
+                currentMcap: mcap6h,
+                isWin6h: isWin6h,
+                percentChange6h: percentChange6h,
+                settled6h: true,
+                lastMcapUpdate: snapshotUpdatedAt,
+              },
+            });
+          } catch (error) {
+            if (!isPrismaSchemaDriftError(error)) {
+              throw error;
+            }
+            await prisma.post.update({
+              where: { id: post.id },
+              data: {
+                currentMcap: mcap6h,
+              },
+            });
+          }
 
           snapshot6hCount++;
           console.log(`[Snapshot 6H] Post ${post.id}: mcap6h=${mcap6h}, change=${percentChange6h.toFixed(2)}%, isWin6h=${isWin6h}`);
@@ -1411,7 +1463,15 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
   }
 
   // Check if user is liquidated (level is -5)
-  const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: {
+      id: true,
+      level: true,
+      name: true,
+      username: true,
+    },
+  });
   if (!dbUser || dbUser.level <= LIQUIDATION_LEVEL) {
     return c.json({
       error: {
@@ -1657,16 +1717,32 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
   });
 
   if (followers.length > 0) {
-    const displayName = dbUser.username || dbUser.name;
-    await prisma.notification.createMany({
-      data: followers.map((follower) => ({
-        userId: follower.followerId,
-        type: "new_post",
-        message: `${displayName} just posted a new Alpha!`,
-        postId: post.id,
-        fromUserId: user.id,
-      })),
-    });
+    const displayName = dbUser.username || dbUser.name || "A trader";
+    try {
+      await prisma.notification.createMany({
+        data: followers.map((follower) => ({
+          userId: follower.followerId,
+          type: "new_post",
+          message: `${displayName} just posted a new Alpha!`,
+          postId: post.id,
+          fromUserId: user.id,
+        })),
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+
+      // Older schemas may not have all notification relation fields yet.
+      await prisma.notification.createMany({
+        data: followers.map((follower) => ({
+          userId: follower.followerId,
+          type: "new_post",
+          message: `${displayName} just posted a new Alpha!`,
+          postId: post.id,
+        })),
+      });
+    }
   }
 
   return c.json({
@@ -1742,8 +1818,20 @@ postsRouter.post("/settle", async (c) => {
       contractAddress: { not: null },
       createdAt: { lt: oneHourAgo },
     },
-    include: {
-      author: true,
+    select: {
+      id: true,
+      authorId: true,
+      contractAddress: true,
+      entryMcap: true,
+      isWin: true,
+      isWin1h: true,
+      recoveryEligible: true,
+      author: {
+        select: {
+          name: true,
+          username: true,
+        },
+      },
     },
   });
 
@@ -1858,8 +1946,14 @@ postsRouter.post("/settle", async (c) => {
       // Must be at least 6 hours old
       createdAt: { lt: sixHoursAgo },
     },
-    include: {
-      author: true,
+    select: {
+      id: true,
+      authorId: true,
+      contractAddress: true,
+      entryMcap: true,
+      isWin: true,
+      isWin1h: true,
+      recoveryEligible: true,
     },
   });
 
@@ -1879,23 +1973,68 @@ postsRouter.post("/settle", async (c) => {
     const recoveryEligible = post.recoveryEligible ?? false;
     const levelChange6h = calculate6HSettlement(isWin1h, percentChange6h, recoveryEligible);
     let xpChange = calculate6HXpChange(percentChange6h, levelChange6h);
-    let oldLevel = post.author.level;
+    const currentUser = await prisma.user.findUnique({
+      where: { id: post.authorId },
+      select: { level: true, xp: true },
+    });
+    if (!currentUser) continue;
+
+    let oldLevel = currentUser.level;
     let newLevel = oldLevel;
 
     const snapshotUpdatedAt = new Date();
     if (levelChange6h !== 0 || xpChange !== 0) {
-      const currentUser = await prisma.user.findUnique({
-        where: { id: post.authorId },
-        select: { id: true, level: true, xp: true },
-      });
-      if (!currentUser) continue;
-
       oldLevel = currentUser.level;
       newLevel = calculateFinalLevel(currentUser.level, levelChange6h);
       const newXp = Math.max(0, currentUser.xp + xpChange);
 
-      await prisma.$transaction([
-        prisma.post.update({
+      try {
+        await prisma.$transaction([
+          prisma.post.update({
+            where: { id: post.id },
+            data: {
+              mcap6h: mcap6h,
+              currentMcap: mcap6h,
+              isWin6h: isWin6h,
+              percentChange6h: percentChange6h,
+              settled6h: true,
+              levelChange6h: levelChange6h,
+              lastMcapUpdate: snapshotUpdatedAt,
+            },
+          }),
+          prisma.user.update({
+            where: { id: post.authorId },
+            data: {
+              level: newLevel,
+              xp: newXp,
+            },
+          }),
+        ]);
+      } catch (error) {
+        if (!isPrismaSchemaDriftError(error)) {
+          throw error;
+        }
+
+        await prisma.$transaction([
+          prisma.post.update({
+            where: { id: post.id },
+            data: {
+              currentMcap: mcap6h,
+            },
+          }),
+          prisma.user.update({
+            where: { id: post.authorId },
+            data: {
+              level: newLevel,
+              xp: newXp,
+            },
+          }),
+        ]);
+      }
+    } else {
+      // ALWAYS update post with 6H snapshot data (for ALL posts)
+      try {
+        await prisma.post.update({
           where: { id: post.id },
           data: {
             mcap6h: mcap6h,
@@ -1906,29 +2045,18 @@ postsRouter.post("/settle", async (c) => {
             levelChange6h: levelChange6h,
             lastMcapUpdate: snapshotUpdatedAt,
           },
-        }),
-        prisma.user.update({
-          where: { id: post.authorId },
+        });
+      } catch (error) {
+        if (!isPrismaSchemaDriftError(error)) {
+          throw error;
+        }
+        await prisma.post.update({
+          where: { id: post.id },
           data: {
-            level: newLevel,
-            xp: newXp,
+            currentMcap: mcap6h,
           },
-        }),
-      ]);
-    } else {
-      // ALWAYS update post with 6H snapshot data (for ALL posts)
-      await prisma.post.update({
-        where: { id: post.id },
-        data: {
-          mcap6h: mcap6h,
-          currentMcap: mcap6h,
-          isWin6h: isWin6h,
-          percentChange6h: percentChange6h,
-          settled6h: true,
-          levelChange6h: levelChange6h,
-          lastMcapUpdate: snapshotUpdatedAt,
-        },
-      });
+        });
+      }
     }
 
     results6h.push({
@@ -3207,6 +3335,10 @@ postsRouter.post(
 );
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
+  if (!isCronMaintenanceHealthy()) {
+    triggerMaintenanceCycleNonBlocking("prices:batch");
+  }
+
   const { ids } = c.req.valid("json");
   const uniqueIds = [...new Set(ids)].slice(0, 50);
 
@@ -3238,6 +3370,10 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
 
 postsRouter.get("/:id/price", async (c) => {
   const postId = c.req.param("id");
+
+  if (!isCronMaintenanceHealthy()) {
+    triggerMaintenanceCycleNonBlocking(`price:${postId}`);
+  }
 
   const post = await prisma.post.findUnique({
     where: { id: postId },
