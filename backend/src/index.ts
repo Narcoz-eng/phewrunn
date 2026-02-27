@@ -187,6 +187,29 @@ const AUTH_RESPONSE_USER_SELECT = {
   isVerified: true,
 } as const;
 
+function isPrismaSchemaDriftError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P2021" || code === "P2022") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+}
+
 // Vibecode proxy patches global fetch for the Vibecode runtime, but it can break or add
 // noise in generic Node serverless environments (e.g. Vercel).
 if (!process.env.VERCEL) {
@@ -773,6 +796,12 @@ app.get("/api/me", async (c) => {
     createdAt: Date;
   } | null = null;
 
+  const defaultFeeSettings = {
+    tradeFeeRewardsEnabled: true,
+    tradeFeeShareBps: 100,
+    tradeFeePayoutAddress: null as string | null,
+  };
+
   try {
     // Fetch full user data from database
     dbUser = await prisma.user.findUnique({
@@ -796,7 +825,38 @@ app.get("/api/me", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[/api/me] Failed to fetch full user profile:", error);
+    if (isPrismaSchemaDriftError(error)) {
+      try {
+        const fallbackUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            walletAddress: true,
+            username: true,
+            level: true,
+            xp: true,
+            bio: true,
+            isAdmin: true,
+            isVerified: true,
+            createdAt: true,
+          },
+        });
+
+        if (fallbackUser) {
+          dbUser = {
+            ...fallbackUser,
+            ...defaultFeeSettings,
+          };
+        }
+      } catch (fallbackError) {
+        console.error("[/api/me] Failed to fetch fallback user profile:", fallbackError);
+      }
+    } else {
+      console.error("[/api/me] Failed to fetch full user profile:", error);
+    }
   }
 
   if (!dbUser) {
@@ -814,9 +874,7 @@ app.get("/api/me", async (c) => {
           bio: session.user.bio,
           isAdmin: session.user.isAdmin,
           isVerified: session.user.isVerified,
-          tradeFeeRewardsEnabled: true,
-          tradeFeeShareBps: 100,
-          tradeFeePayoutAddress: null,
+          ...defaultFeeSettings,
           createdAt: session.user.createdAt,
         },
       });
@@ -1060,6 +1118,8 @@ if (process.env.NODE_ENV === "production") {
   // Serve static assets (JS, CSS, images, etc.)
   app.use("/assets/*", serveStatic({ root: "../webapp/dist" }));
   app.use("/favicon.ico", serveStatic({ root: "../webapp/dist", path: "favicon.ico" }));
+  app.use("/phew-mark.svg", serveStatic({ root: "../webapp/dist", path: "phew-mark.svg" }));
+  app.use("/phew-logo.svg", serveStatic({ root: "../webapp/dist", path: "phew-logo.svg" }));
   app.use("/robots.txt", serveStatic({ root: "../webapp/dist", path: "robots.txt" }));
   app.use("/og-base.png", serveStatic({ root: "../webapp/dist", path: "og-base.png" }));
   app.use("/placeholder.svg", serveStatic({ root: "../webapp/dist", path: "placeholder.svg" }));

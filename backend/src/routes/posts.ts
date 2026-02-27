@@ -391,31 +391,56 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         const settledAt = new Date();
 
         // Keep settlement + user rewards/penalties atomic to avoid "settled but no level/xp" failures.
-        await prisma.$transaction([
-          prisma.post.update({
-            where: { id: post.id },
-            data: {
-              settled: true,
-              settledAt,
-              isWin: isWin1h,
-              isWin1h: isWin1h,
-              currentMcap: mcap1h,
-              mcap1h: mcap1h,
-              percentChange1h: percentChange1h,
-              recoveryEligible: recoveryEligible,
-              levelChange1h: levelChange,
-              trackingMode: TRACKING_MODE_SETTLED,
-              lastMcapUpdate: settledAt,
-            },
-          }),
-          prisma.user.update({
-            where: { id: post.authorId },
-            data: {
-              level: newLevel,
-              xp: newXp,
-            },
-          }),
-        ]);
+        try {
+          await prisma.$transaction([
+            prisma.post.update({
+              where: { id: post.id },
+              data: {
+                settled: true,
+                settledAt,
+                isWin: isWin1h,
+                isWin1h: isWin1h,
+                currentMcap: mcap1h,
+                mcap1h: mcap1h,
+                percentChange1h: percentChange1h,
+                recoveryEligible: recoveryEligible,
+                levelChange1h: levelChange,
+                trackingMode: TRACKING_MODE_SETTLED,
+                lastMcapUpdate: settledAt,
+              },
+            }),
+            prisma.user.update({
+              where: { id: post.authorId },
+              data: {
+                level: newLevel,
+                xp: newXp,
+              },
+            }),
+          ]);
+        } catch (error) {
+          if (!isPrismaSchemaDriftError(error)) {
+            throw error;
+          }
+
+          await prisma.$transaction([
+            prisma.post.update({
+              where: { id: post.id },
+              data: {
+                settled: true,
+                settledAt,
+                isWin: isWin1h,
+                currentMcap: mcap1h,
+              },
+            }),
+            prisma.user.update({
+              where: { id: post.authorId },
+              data: {
+                level: newLevel,
+                xp: newXp,
+              },
+            }),
+          ]);
+        }
 
         // Create notification for the author about 1H settlement
         const levelDiff = newLevel - currentUser.level;
@@ -974,10 +999,15 @@ postsRouter.get("/", async (c) => {
 
   // Safety fallback when scheduled maintenance is not running or is unhealthy.
   // This is throttled + non-blocking, and only runs on the first page to avoid feed jitter.
-  if (!cursor && !search) {
+  if (!cursor) {
     // Only piggyback when cron is unavailable/unhealthy to avoid adding load to healthy setups.
-    if (!isCronMaintenanceHealthy() && sort === "latest" && !following) {
-      triggerMaintenanceCycleNonBlocking(`feed:${sort}`);
+    if (!isCronMaintenanceHealthy()) {
+      const reason = search
+        ? `feed:${sort}:search`
+        : following
+          ? `feed:${sort}:following`
+          : `feed:${sort}`;
+      triggerMaintenanceCycleNonBlocking(reason);
     }
   }
 
@@ -1490,42 +1520,135 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
   ]);
   const entryMcap = marketCapResult.mcap;
 
-  const post = await prisma.post.create({
-    data: {
-      content,
-      authorId: user.id,
-      contractAddress: detected.address,
-      chainType: detected.chainType,
-      entryMcap,
-      currentMcap: entryMcap,
-      // Store token metadata (Helius-first for names/symbol, Dex-first for image)
-      tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult.tokenName ?? null,
-      tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol ?? null,
+  const createPostData = {
+    content,
+    authorId: user.id,
+    contractAddress: detected.address,
+    chainType: detected.chainType,
+    entryMcap,
+    currentMcap: entryMcap,
+    // Store token metadata (Helius-first for names/symbol, Dex-first for image)
+    tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult.tokenName ?? null,
+    tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol ?? null,
+    tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
+    trackingMode: TRACKING_MODE_ACTIVE, // New posts start in active tracking mode
+    lastMcapUpdate: new Date(),
+  };
+
+  let post: {
+    id: string;
+    content: string;
+    authorId: string;
+    contractAddress: string | null;
+    chainType: string | null;
+    entryMcap: number | null;
+    currentMcap: number | null;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    trackingMode: string | null;
+    lastMcapUpdate: Date | null;
+    settled: boolean;
+    settledAt: Date | null;
+    isWin: boolean | null;
+    createdAt: Date;
+    author: {
+      id: string;
+      name: string;
+      username: string | null;
+      image: string | null;
+      level: number;
+      xp: number;
+      isVerified: boolean;
+    };
+    _count: {
+      likes: number;
+      comments: number;
+      reposts: number;
+    };
+  };
+
+  try {
+    post = await prisma.post.create({
+      data: createPostData,
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            comments: true,
+            reposts: true,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    // Some deployments may lag on optional post columns. Retry with a legacy-safe payload/select.
+    const fallbackPost = await prisma.post.create({
+      data: {
+        content: createPostData.content,
+        authorId: createPostData.authorId,
+        contractAddress: createPostData.contractAddress,
+        chainType: createPostData.chainType,
+        entryMcap: createPostData.entryMcap,
+        currentMcap: createPostData.currentMcap,
+      },
+      select: {
+        id: true,
+        content: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        currentMcap: true,
+        settled: true,
+        settledAt: true,
+        isWin: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            comments: true,
+            reposts: true,
+          },
+        },
+      },
+    });
+
+    post = {
+      ...fallbackPost,
+      tokenName: marketCapResult.tokenName ?? heliusTokenMetadata?.tokenName ?? null,
+      tokenSymbol: marketCapResult.tokenSymbol ?? heliusTokenMetadata?.tokenSymbol ?? null,
       tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
-      trackingMode: TRACKING_MODE_ACTIVE, // New posts start in active tracking mode
+      trackingMode: TRACKING_MODE_ACTIVE,
       lastMcapUpdate: new Date(),
-    },
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          xp: true,
-          isVerified: true,
-        },
-      },
-      _count: {
-        select: {
-          likes: true,
-          comments: true,
-          reposts: true,
-        },
-      },
-    },
-  });
+    };
+  }
 
   // Create notifications for all followers
   const followers = await prisma.follow.findMany({
@@ -1645,31 +1768,56 @@ postsRouter.post("/settle", async (c) => {
     const newXp = Math.max(0, currentUser.xp + xpChange);
     const settledAt = new Date();
 
-    await prisma.$transaction([
-      prisma.post.update({
-        where: { id: post.id },
-        data: {
-          settled: true,
-          settledAt,
-          isWin: isWin1h,
-          isWin1h: isWin1h,
-          currentMcap: mcap1h,
-          mcap1h: mcap1h,
-          percentChange1h: percentChange1h,
-          recoveryEligible: recoveryEligible,
-          levelChange1h: levelChange,
-          trackingMode: TRACKING_MODE_SETTLED,
-          lastMcapUpdate: settledAt,
-        },
-      }),
-      prisma.user.update({
-        where: { id: post.authorId },
-        data: {
-          level: newLevel,
-          xp: newXp,
-        },
-      }),
-    ]);
+    try {
+      await prisma.$transaction([
+        prisma.post.update({
+          where: { id: post.id },
+          data: {
+            settled: true,
+            settledAt,
+            isWin: isWin1h,
+            isWin1h: isWin1h,
+            currentMcap: mcap1h,
+            mcap1h: mcap1h,
+            percentChange1h: percentChange1h,
+            recoveryEligible: recoveryEligible,
+            levelChange1h: levelChange,
+            trackingMode: TRACKING_MODE_SETTLED,
+            lastMcapUpdate: settledAt,
+          },
+        }),
+        prisma.user.update({
+          where: { id: post.authorId },
+          data: {
+            level: newLevel,
+            xp: newXp,
+          },
+        }),
+      ]);
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+
+      await prisma.$transaction([
+        prisma.post.update({
+          where: { id: post.id },
+          data: {
+            settled: true,
+            settledAt,
+            isWin: isWin1h,
+            currentMcap: mcap1h,
+          },
+        }),
+        prisma.user.update({
+          where: { id: post.authorId },
+          data: {
+            level: newLevel,
+            xp: newXp,
+          },
+        }),
+      ]);
+    }
 
     await notifyFollowersOfBigGain({
       postId: post.id,

@@ -26,6 +26,27 @@ const hasUserSettingsPlatformFeeAccount = !!(
 );
 const activeUserSettingsPlatformFeeBps = hasUserSettingsPlatformFeeAccount ? userSettingsPlatformFeeBps : 0;
 const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100;
+const DEFAULT_FEE_SETTINGS = {
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: 100,
+  tradeFeePayoutAddress: null as string | null,
+};
+
+function buildFeeSettingsResponse(user: {
+  walletAddress: string | null;
+  tradeFeeRewardsEnabled: boolean;
+  tradeFeeShareBps: number;
+  tradeFeePayoutAddress: string | null;
+}) {
+  return {
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: user.tradeFeeShareBps,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress,
+    effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
+    platformFeeBps: activeUserSettingsPlatformFeeBps,
+    platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
+  };
+}
 
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
@@ -1056,30 +1077,49 @@ usersRouter.get("/me/fee-settings", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
-    select: {
-      tradeFeeRewardsEnabled: true,
-      tradeFeeShareBps: true,
-      tradeFeePayoutAddress: true,
-      walletAddress: true,
-    },
-  });
+  let user:
+    | {
+        walletAddress: string | null;
+        tradeFeeRewardsEnabled: boolean;
+        tradeFeeShareBps: number;
+        tradeFeePayoutAddress: string | null;
+      }
+    | null = null;
+
+  try {
+    user = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        tradeFeeRewardsEnabled: true,
+        tradeFeeShareBps: true,
+        tradeFeePayoutAddress: true,
+        walletAddress: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+      },
+    });
+    user = fallbackUser
+      ? {
+          ...fallbackUser,
+          ...DEFAULT_FEE_SETTINGS,
+        }
+      : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({
-    data: {
-      tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
-      tradeFeeShareBps: user.tradeFeeShareBps,
-      tradeFeePayoutAddress: user.tradeFeePayoutAddress,
-      effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
-      platformFeeBps: activeUserSettingsPlatformFeeBps,
-      platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
-    },
-  });
+  return c.json({ data: buildFeeSettingsResponse(user) });
 });
 
 usersRouter.patch(
@@ -1113,8 +1153,57 @@ usersRouter.patch(
     }
 
     if (Object.keys(updateData).length === 0) {
-      const user = await prisma.user.findUnique({
+      let user:
+        | {
+            walletAddress: string | null;
+            tradeFeeRewardsEnabled: boolean;
+            tradeFeeShareBps: number;
+            tradeFeePayoutAddress: string | null;
+          }
+        | null = null;
+      try {
+        user = await prisma.user.findUnique({
+          where: { id: sessionUser.id },
+          select: {
+            tradeFeeRewardsEnabled: true,
+            tradeFeeShareBps: true,
+            tradeFeePayoutAddress: true,
+            walletAddress: true,
+          },
+        });
+      } catch (error) {
+        if (!isPrismaSchemaDriftError(error)) {
+          throw error;
+        }
+        const fallbackUser = await prisma.user.findUnique({
+          where: { id: sessionUser.id },
+          select: { walletAddress: true },
+        });
+        user = fallbackUser
+          ? {
+              ...fallbackUser,
+              ...DEFAULT_FEE_SETTINGS,
+            }
+          : null;
+      }
+      if (!user) {
+        return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+      }
+      return c.json({ data: buildFeeSettingsResponse(user) });
+    }
+
+    let user:
+      | {
+          walletAddress: string | null;
+          tradeFeeRewardsEnabled: boolean;
+          tradeFeeShareBps: number;
+          tradeFeePayoutAddress: string | null;
+        }
+      | null = null;
+    try {
+      user = await prisma.user.update({
         where: { id: sessionUser.id },
+        data: updateData,
         select: {
           tradeFeeRewardsEnabled: true,
           tradeFeeShareBps: true,
@@ -1122,42 +1211,29 @@ usersRouter.patch(
           walletAddress: true,
         },
       });
-      if (!user) {
-        return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
       }
-      return c.json({
-        data: {
-          tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
-          tradeFeeShareBps: user.tradeFeeShareBps,
-          tradeFeePayoutAddress: user.tradeFeePayoutAddress,
-          effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
-          platformFeeBps: activeUserSettingsPlatformFeeBps,
-          platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
-        },
+
+      // Older schemas may not have fee columns yet. Keep endpoint functional.
+      const fallbackUser = await prisma.user.findUnique({
+        where: { id: sessionUser.id },
+        select: { walletAddress: true },
       });
+      user = fallbackUser
+        ? {
+            ...fallbackUser,
+            ...DEFAULT_FEE_SETTINGS,
+          }
+        : null;
     }
 
-    const user = await prisma.user.update({
-      where: { id: sessionUser.id },
-      data: updateData,
-      select: {
-        tradeFeeRewardsEnabled: true,
-        tradeFeeShareBps: true,
-        tradeFeePayoutAddress: true,
-        walletAddress: true,
-      },
-    });
+    if (!user) {
+      return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+    }
 
-    return c.json({
-      data: {
-        tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
-        tradeFeeShareBps: user.tradeFeeShareBps,
-        tradeFeePayoutAddress: user.tradeFeePayoutAddress,
-        effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
-        platformFeeBps: activeUserSettingsPlatformFeeBps,
-        platformFeeAccountConfigured: hasUserSettingsPlatformFeeAccount,
-      },
-    });
+    return c.json({ data: buildFeeSettingsResponse(user) });
   }
 );
 
@@ -1167,24 +1243,51 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const events = await prisma.tradeFeeEvent.findMany({
-    where: {
-      posterUserId: sessionUser.id,
-      txSignature: { not: null },
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      postId: true,
-      feeMint: true,
-      tradeSide: true,
-      platformFeeAmountAtomic: true,
-      posterShareAmountAtomic: true,
-      txSignature: true,
-      createdAt: true,
-      traderWalletAddress: true,
-    },
-  });
+  let events: Array<{
+    id: string;
+    postId: string;
+    feeMint: string;
+    tradeSide: string;
+    platformFeeAmountAtomic: string;
+    posterShareAmountAtomic: string;
+    txSignature: string | null;
+    createdAt: Date;
+    traderWalletAddress: string;
+  }> = [];
+
+  try {
+    events = await prisma.tradeFeeEvent.findMany({
+      where: {
+        posterUserId: sessionUser.id,
+        txSignature: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        postId: true,
+        feeMint: true,
+        tradeSide: true,
+        platformFeeAmountAtomic: true,
+        posterShareAmountAtomic: true,
+        txSignature: true,
+        createdAt: true,
+        traderWalletAddress: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    return c.json({
+      data: {
+        totalTrades: 0,
+        totalPosterShareAtomic: "0",
+        byMint: [],
+        recentEvents: [],
+      },
+    });
+  }
 
   let totalPosterShareAtomic = 0n;
   const totalsByMint = new Map<string, { totalAtomic: bigint; count: number }>();
@@ -1432,52 +1535,140 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
     updateData.tradeFeePayoutAddress = tradeFeePayoutAddress || null;
   }
 
+  const fullProfileSelect = {
+    id: true,
+    name: true,
+    email: true,
+    image: true,
+    walletAddress: true,
+    username: true,
+    level: true,
+    xp: true,
+    bio: true,
+    tradeFeeRewardsEnabled: true,
+    tradeFeeShareBps: true,
+    tradeFeePayoutAddress: true,
+    createdAt: true,
+    lastUsernameUpdate: true,
+    lastPhotoUpdate: true,
+  } as const;
+
+  const fallbackProfileSelect = {
+    id: true,
+    name: true,
+    email: true,
+    image: true,
+    walletAddress: true,
+    username: true,
+    level: true,
+    xp: true,
+    bio: true,
+    createdAt: true,
+    lastUsernameUpdate: true,
+    lastPhotoUpdate: true,
+  } as const;
+
   // If no updates, return current user
   if (Object.keys(updateData).length === 0) {
-    const user = await prisma.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        walletAddress: true,
-        username: true,
-        level: true,
-        xp: true,
-        bio: true,
-        tradeFeeRewardsEnabled: true,
-        tradeFeeShareBps: true,
-        tradeFeePayoutAddress: true,
-        createdAt: true,
-        lastUsernameUpdate: true,
-        lastPhotoUpdate: true,
-      },
-    });
+    let user:
+      | {
+          id: string;
+          name: string;
+          email: string;
+          image: string | null;
+          walletAddress: string | null;
+          username: string | null;
+          level: number;
+          xp: number;
+          bio: string | null;
+          createdAt: Date;
+          lastUsernameUpdate: Date | null;
+          lastPhotoUpdate: Date | null;
+          tradeFeeRewardsEnabled: boolean;
+          tradeFeeShareBps: number;
+          tradeFeePayoutAddress: string | null;
+        }
+      | null = null;
+
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: sessionUser.id },
+        select: fullProfileSelect,
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      const fallbackUser = await prisma.user.findUnique({
+        where: { id: sessionUser.id },
+        select: fallbackProfileSelect,
+      });
+      user = fallbackUser
+        ? {
+            ...fallbackUser,
+            ...DEFAULT_FEE_SETTINGS,
+          }
+        : null;
+    }
+
     return c.json({ data: user });
   }
 
-  const user = await prisma.user.update({
-    where: { id: sessionUser.id },
-    data: updateData,
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      walletAddress: true,
-      username: true,
-      level: true,
-      xp: true,
-      bio: true,
-      tradeFeeRewardsEnabled: true,
-      tradeFeeShareBps: true,
-      tradeFeePayoutAddress: true,
-      createdAt: true,
-      lastUsernameUpdate: true,
-      lastPhotoUpdate: true,
-    },
-  });
+  let user:
+    | {
+        id: string;
+        name: string;
+        email: string;
+        image: string | null;
+        walletAddress: string | null;
+        username: string | null;
+        level: number;
+        xp: number;
+        bio: string | null;
+        createdAt: Date;
+        lastUsernameUpdate: Date | null;
+        lastPhotoUpdate: Date | null;
+        tradeFeeRewardsEnabled: boolean;
+        tradeFeeShareBps: number;
+        tradeFeePayoutAddress: string | null;
+      }
+    | null = null;
+
+  try {
+    user = await prisma.user.update({
+      where: { id: sessionUser.id },
+      data: updateData,
+      select: fullProfileSelect,
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const fallbackUpdateData = { ...updateData };
+    delete fallbackUpdateData.tradeFeeRewardsEnabled;
+    delete fallbackUpdateData.tradeFeeShareBps;
+    delete fallbackUpdateData.tradeFeePayoutAddress;
+
+    const fallbackUser =
+      Object.keys(fallbackUpdateData).length > 0
+        ? await prisma.user.update({
+            where: { id: sessionUser.id },
+            data: fallbackUpdateData,
+            select: fallbackProfileSelect,
+          })
+        : await prisma.user.findUnique({
+            where: { id: sessionUser.id },
+            select: fallbackProfileSelect,
+          });
+
+    user = fallbackUser
+      ? {
+          ...fallbackUser,
+          ...DEFAULT_FEE_SETTINGS,
+        }
+      : null;
+  }
 
   // Username/image updates affect leaderboard profile chips and cached stats.
   invalidateLeaderboardCaches();

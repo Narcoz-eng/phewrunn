@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
@@ -93,6 +93,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [autoLinkAttemptedFor, setAutoLinkAttemptedFor] = useState<string | null>(null);
 
   const {
     connected: adapterConnected,
@@ -117,6 +118,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+  const isLinked = Boolean(walletStatus?.connected && walletStatus?.address);
 
   const connectMutation = useMutation({
     mutationFn: (data: {
@@ -160,13 +162,17 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     }
   };
 
-  const handleVerifyAndLink = async () => {
+  const handleVerifyAndLink = useCallback(async (options?: { silent?: boolean }) => {
     if (!adapterConnected || !adapterWalletAddress) {
-      toast.error("Connect a Solana wallet first");
+      if (!options?.silent) {
+        toast.error("Connect a Solana wallet first");
+      }
       return;
     }
     if (!signMessage) {
-      toast.error("This wallet does not support message signing");
+      if (!options?.silent) {
+        toast.error("This wallet does not support message signing");
+      }
       return;
     }
 
@@ -185,11 +191,35 @@ export function WalletConnection({ className }: WalletConnectionProps) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Wallet verification failed";
-      toast.error(message);
+      if (!options?.silent) {
+        toast.error(message);
+      }
     } finally {
       setIsVerifying(false);
     }
-  };
+  }, [adapterConnected, adapterProviderId, adapterWalletAddress, connectMutation, signMessage]);
+
+  useEffect(() => {
+    if (!adapterConnected || !adapterWalletAddress || isLinked) return;
+    if (adapterConnecting || isVerifying || connectMutation.isPending) return;
+    if (!signMessage) return;
+
+    const normalizedWallet = adapterWalletAddress.toLowerCase();
+    if (autoLinkAttemptedFor === normalizedWallet) return;
+
+    setAutoLinkAttemptedFor(normalizedWallet);
+    void handleVerifyAndLink({ silent: true });
+  }, [
+    adapterConnected,
+    adapterWalletAddress,
+    adapterConnecting,
+    autoLinkAttemptedFor,
+    connectMutation.isPending,
+    isLinked,
+    isVerifying,
+    signMessage,
+    handleVerifyAndLink,
+  ]);
 
   if (isLoading) {
     return (
@@ -226,7 +256,6 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     );
   }
 
-  const isLinked = Boolean(walletStatus?.connected && walletStatus?.address);
   const providerInfo = getProviderInfo(walletStatus?.provider);
   const ProviderIcon = providerInfo.icon;
   const adapterMatchesLinkedWallet =

@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
 import { User, Post, getAvatarUrl, calculatePercentChange, LIQUIDATION_LEVEL } from "@/types";
@@ -119,6 +120,7 @@ export default function Profile() {
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { signOut } = useAuth();
+  const { publicKey: connectedWalletPublicKey } = useWallet();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cropDragRef = useRef<{
     pointerId: number;
@@ -314,6 +316,9 @@ export default function Profile() {
     refetchOnReconnect: false,
     retry: 1,
   });
+
+  const connectedWalletAddress = connectedWalletPublicKey?.toBase58() ?? null;
+  const displayWalletAddress = user?.walletAddress ?? connectedWalletAddress;
 
   useEffect(() => {
     if (!meProfileCacheKey || !user || !isUserFetched) return;
@@ -1042,11 +1047,11 @@ export default function Profile() {
 
               {/* Info badges */}
               <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                {user.walletAddress && (
+                {displayWalletAddress && (
                   <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary rounded-full text-xs text-muted-foreground">
                     <Wallet className="h-3.5 w-3.5" />
                     <span className="font-mono">
-                      {truncateAddress(user.walletAddress)}
+                      {truncateAddress(displayWalletAddress)}
                     </span>
                   </div>
                 )}
@@ -1073,9 +1078,9 @@ export default function Profile() {
               recentTrades={recentTrades}
               walletData={
                 walletOverview
-                  ? { ...walletOverview, address: user.walletAddress ?? walletOverview.address }
-                  : user.walletAddress
-                    ? { connected: true, address: user.walletAddress }
+                  ? { ...walletOverview, address: displayWalletAddress ?? walletOverview.address }
+                  : displayWalletAddress
+                    ? { connected: true, address: displayWalletAddress }
                     : undefined
               }
               isLoading={isLoadingUser}
