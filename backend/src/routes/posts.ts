@@ -1204,11 +1204,11 @@ postsRouter.get("/", async (c) => {
   // For trending, each page is then ranked by the existing app-layer trending sort.
   const cursorPaginationEnabled = true;
 
-  const fetchedPosts = await prisma.post.findMany({
+  const feedFindManyBase = {
     where: whereClause,
     orderBy: [
-      { createdAt: "desc" },
-      { id: "desc" },
+      { createdAt: "desc" as const },
+      { id: "desc" as const },
     ],
     take: cursorPaginationEnabled ? limit + 1 : limit,
     ...(cursorPaginationEnabled && cursor
@@ -1217,28 +1217,146 @@ postsRouter.get("/", async (c) => {
           skip: 1,
         }
       : {}),
-    include: {
-      author: {
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchedPosts: any[] = [];
+  try {
+    fetchedPosts = await prisma.post.findMany({
+      ...(feedFindManyBase as Record<string, unknown>),
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            walletAddress: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            comments: true,
+            reposts: true,
+          },
+        },
+      },
+    } as any);
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    console.warn("[posts/feed] schema drift detected; using compatibility select");
+    try {
+      fetchedPosts = await prisma.post.findMany({
+        ...(feedFindManyBase as Record<string, unknown>),
         select: {
           id: true,
-          name: true,
-          username: true,
-          image: true,
-          walletAddress: true,
-          level: true,
-          xp: true,
-          isVerified: true,
+          content: true,
+          authorId: true,
+          contractAddress: true,
+          chainType: true,
+          tokenName: true,
+          tokenSymbol: true,
+          tokenImage: true,
+          entryMcap: true,
+          currentMcap: true,
+          mcap1h: true,
+          mcap6h: true,
+          settled: true,
+          settledAt: true,
+          isWin: true,
+          isWin1h: true,
+          isWin6h: true,
+          percentChange1h: true,
+          percentChange6h: true,
+          createdAt: true,
+          viewCount: true,
+          dexscreenerUrl: true,
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              walletAddress: true,
+              level: true,
+              xp: true,
+              isVerified: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              reposts: true,
+            },
+          },
         },
-      },
-      _count: {
+      } as any);
+    } catch (fallbackError) {
+      if (!isPrismaSchemaDriftError(fallbackError)) {
+        throw fallbackError;
+      }
+      console.warn("[posts/feed] legacy compatibility select engaged");
+      const legacyPosts = (await prisma.post.findMany({
+        ...(feedFindManyBase as Record<string, unknown>),
         select: {
-          likes: true,
-          comments: true,
-          reposts: true,
+          id: true,
+          content: true,
+          authorId: true,
+          contractAddress: true,
+          chainType: true,
+          entryMcap: true,
+          currentMcap: true,
+          settled: true,
+          settledAt: true,
+          isWin: true,
+          createdAt: true,
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+              xp: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              reposts: true,
+            },
+          },
         },
-      },
-    },
-  });
+      } as any)) as any[];
+      fetchedPosts = legacyPosts.map((post) => ({
+        ...post,
+        tokenName: null,
+        tokenSymbol: null,
+        tokenImage: null,
+        mcap1h: null,
+        mcap6h: null,
+        isWin1h: null,
+        isWin6h: null,
+        percentChange1h: null,
+        percentChange6h: null,
+        viewCount: 0,
+        dexscreenerUrl: null,
+        author: {
+          ...post.author,
+          walletAddress: null,
+          isVerified: false,
+        },
+      }));
+    }
+  }
 
   let hasMore = false;
   let nextCursor: string | null = null;

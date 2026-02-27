@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+function normalizeBooleanEnv(value: unknown): unknown {
+  if (value === undefined || value === null) return "false";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return value === 1 ? "true" : "false";
+  if (typeof value !== "string") return value;
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "false";
+  if (["true", "1", "yes", "y", "on"].includes(normalized)) return "true";
+  if (["false", "0", "no", "n", "off"].includes(normalized)) return "false";
+  return "false";
+}
+
 /**
  * Environment variable schema using Zod
  * This ensures all required environment variables are present and valid
@@ -18,7 +31,7 @@ const envSchema = z.object({
   PRIVY_APP_SECRET: z.string().min(1, "PRIVY_APP_SECRET is required"),
 
   // Optional: Debug mode
-  DEBUG: z.enum(["true", "false"]).optional().default("false"),
+  DEBUG: z.preprocess(normalizeBooleanEnv, z.enum(["true", "false"])).optional().default("false"),
 
   // Optional: Log level
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),

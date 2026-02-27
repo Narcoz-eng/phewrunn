@@ -205,6 +205,7 @@ export default function Profile() {
     enabled: !!session?.user,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
+    refetchInterval: session?.user ? 15_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -241,6 +242,7 @@ export default function Profile() {
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
+    refetchInterval: user?.id ? 15_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -280,6 +282,7 @@ export default function Profile() {
     enabled: !!user?.id && (mainTab === "reposts" || !!cachedReposts),
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
+    refetchInterval: user?.id && (mainTab === "reposts" || !!cachedReposts) ? 20_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,

@@ -605,8 +605,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
     };
 
-    // Use 30s for unsettled posts, 5 minutes for settled posts
-    const baseInterval = localSettled ? 5 * 60 * 1000 : 30000;
+    // Faster cadence for visible cards to reflect settlement/snapshot changes in near real time.
+    const baseInterval = localSettled ? 2 * 60 * 1000 : 15_000;
     const initialDelay =
       post.currentMcap == null
         ? 0

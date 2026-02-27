@@ -33,6 +33,7 @@ const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
 const FEED_NEW_POSTS_POLL_MS = 15_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
+const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
 const FEED_CURRENT_USER_CACHE_TTL_MS = 45_000;
 
@@ -79,6 +80,22 @@ function writeCachedFirstFeedPage(tab: FeedTab, search: string, page: FeedPage):
   } catch {
     // Ignore storage quota / privacy mode issues.
   }
+}
+
+function buildRealtimePageFingerprint(page: FeedPage): string {
+  return page.items
+    .slice(0, FEED_REALTIME_STATE_FIELDS_COUNT)
+    .map((item) => [
+      item.id,
+      item.settled ? "1" : "0",
+      item.currentMcap ?? "null",
+      item.mcap1h ?? "null",
+      item.mcap6h ?? "null",
+      item.isWin ?? "null",
+      item.author?.level ?? "null",
+      item.author?.xp ?? "null",
+    ].join(":"))
+    .join("|");
 }
 
 // Error Boundary Component for Feed
@@ -197,6 +214,7 @@ export default function Feed() {
     enabled: !!session?.user,
     retry: 2,
     staleTime: 30000, // 30 seconds
+    refetchInterval: session?.user ? 15_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -391,11 +409,25 @@ export default function Feed() {
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
 
-        if (!currentTopId || !freshTopId || currentTopId === freshTopId) {
-          setPendingLatestFirstPage((prev) => (prev && currentTopId === freshTopId ? null : prev));
-          if (currentTopId === freshTopId) {
+        if (!currentTopId || !freshTopId) {
+          return;
+        }
+
+        if (currentTopId === freshTopId) {
+          const currentFingerprint = buildRealtimePageFingerprint(currentFirstPage);
+          const freshFingerprint = buildRealtimePageFingerprint(freshFirstPage);
+
+          if (currentFingerprint !== freshFingerprint) {
+            applyFirstPageToCache("latest", "", freshFirstPage);
+            writeCachedFirstFeedPage("latest", "", freshFirstPage);
+            setPendingLatestFirstPage(null);
             setPendingLatestCount(0);
+            void refetchUser();
+            return;
           }
+
+          setPendingLatestFirstPage(null);
+          setPendingLatestCount(0);
           return;
         }
 
@@ -448,6 +480,7 @@ export default function Feed() {
     fetchFeedPage,
     getFeedQueryKey,
     queryClient,
+    refetchUser,
     session?.user,
   ]);
 

@@ -1337,36 +1337,101 @@ usersRouter.get("/:identifier", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
 
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: identifier },
-        { username: identifier },
-      ],
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      walletAddress: true,
-      username: true,
-      level: true,
-      xp: true,
-      bio: true,
-      isVerified: true,
-      createdAt: true,
-      lastUsernameUpdate: true,
-      lastPhotoUpdate: true,
-      _count: {
-        select: {
-          posts: true,
-          followers: true,
-          following: true,
+  let user:
+    | {
+        id: string;
+        name: string;
+        email: string;
+        image: string | null;
+        walletAddress: string | null;
+        username: string | null;
+        level: number;
+        xp: number;
+        bio: string | null;
+        isVerified: boolean;
+        createdAt: Date;
+        lastUsernameUpdate: Date | null;
+        lastPhotoUpdate: Date | null;
+        _count: {
+          posts: number;
+          followers: number;
+          following: number;
+        };
+      }
+    | null = null;
+
+  try {
+    user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { username: identifier },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        walletAddress: true,
+        username: true,
+        level: true,
+        xp: true,
+        bio: true,
+        isVerified: true,
+        createdAt: true,
+        lastUsernameUpdate: true,
+        lastPhotoUpdate: true,
+        _count: {
+          select: {
+            posts: true,
+            followers: true,
+            following: true,
+          },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { username: identifier },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        walletAddress: true,
+        username: true,
+        level: true,
+        xp: true,
+        bio: true,
+        createdAt: true,
+        _count: {
+          select: {
+            posts: true,
+            followers: true,
+            following: true,
+          },
+        },
+      },
+    });
+
+    user = fallbackUser
+      ? {
+          ...fallbackUser,
+          isVerified: false,
+          lastUsernameUpdate: null,
+          lastPhotoUpdate: null,
+        }
+      : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -1688,35 +1753,115 @@ usersRouter.get("/:identifier/posts", async (c) => {
         { username: identifier },
       ],
     },
+    select: {
+      id: true,
+      walletAddress: true,
+    },
   });
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  const posts = await prisma.post.findMany({
-    where: { authorId: user.id },
-    orderBy: { createdAt: "desc" },
-    include: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let posts: any[] = [];
+  try {
+    posts = await prisma.post.findMany({
+      where: { authorId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        content: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        tokenName: true,
+        tokenSymbol: true,
+        tokenImage: true,
+        entryMcap: true,
+        currentMcap: true,
+        mcap1h: true,
+        mcap6h: true,
+        settled: true,
+        settledAt: true,
+        isWin: true,
+        createdAt: true,
+        viewCount: true,
+        dexscreenerUrl: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            comments: true,
+            reposts: true,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackPosts = await prisma.post.findMany({
+      where: { authorId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        content: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        currentMcap: true,
+        settled: true,
+        settledAt: true,
+        isWin: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            xp: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            comments: true,
+            reposts: true,
+          },
+        },
+      },
+    });
+
+    posts = fallbackPosts.map((post) => ({
+      ...post,
+      tokenName: null,
+      tokenSymbol: null,
+      tokenImage: null,
+      mcap1h: null,
+      mcap6h: null,
+      viewCount: 0,
+      dexscreenerUrl: null,
       author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          xp: true,
-        },
+        ...post.author,
+        isVerified: false,
       },
-      _count: {
-        select: {
-          likes: true,
-          comments: true,
-          reposts: true,
-        },
-      },
-    },
-  });
+    }));
+  }
 
   const postsWithWalletTrade = await attachWalletTradeSnapshotsForUserPosts(posts, user.walletAddress);
 
@@ -1782,6 +1927,9 @@ usersRouter.get("/:identifier/reposts", async (c) => {
         { username: identifier },
       ],
     },
+    select: {
+      id: true,
+    },
   });
 
   if (!user) {
@@ -1789,33 +1937,114 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   }
 
   // Get the user's reposts with the original post data
-  const reposts = await prisma.repost.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    include: {
-      post: {
-        include: {
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              xp: true,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let reposts: any[] = [];
+  try {
+    reposts = await prisma.repost.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        post: {
+          select: {
+            id: true,
+            content: true,
+            authorId: true,
+            contractAddress: true,
+            chainType: true,
+            tokenName: true,
+            tokenSymbol: true,
+            tokenImage: true,
+            entryMcap: true,
+            currentMcap: true,
+            mcap1h: true,
+            mcap6h: true,
+            settled: true,
+            settledAt: true,
+            isWin: true,
+            createdAt: true,
+            viewCount: true,
+            dexscreenerUrl: true,
+            author: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                xp: true,
+                isVerified: true,
+              },
             },
-          },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              reposts: true,
+            _count: {
+              select: {
+                likes: true,
+                comments: true,
+                reposts: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackReposts = await prisma.repost.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        post: {
+          select: {
+            id: true,
+            content: true,
+            authorId: true,
+            contractAddress: true,
+            chainType: true,
+            entryMcap: true,
+            currentMcap: true,
+            settled: true,
+            settledAt: true,
+            isWin: true,
+            createdAt: true,
+            author: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                xp: true,
+              },
+            },
+            _count: {
+              select: {
+                likes: true,
+                comments: true,
+                reposts: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    reposts = fallbackReposts.map((repost) => ({
+      post: {
+        ...repost.post,
+        tokenName: null,
+        tokenSymbol: null,
+        tokenImage: null,
+        mcap1h: null,
+        mcap6h: null,
+        viewCount: 0,
+        dexscreenerUrl: null,
+        author: {
+          ...repost.post.author,
+          isVerified: false,
+        },
+      },
+    }));
+  }
 
   // Get current user's interactions with these posts
   let userLikes: Set<string> = new Set();
@@ -1958,6 +2187,9 @@ usersRouter.get("/:id/followers", async (c) => {
         { username: userId },
       ],
     },
+    select: {
+      id: true,
+    },
   });
 
   if (!user) {
@@ -2015,6 +2247,9 @@ usersRouter.get("/:id/following", async (c) => {
         { id: userId },
         { username: userId },
       ],
+    },
+    select: {
+      id: true,
     },
   });
 
