@@ -5,7 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Area,
   AreaChart,
+  Brush,
   CartesianGrid,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
@@ -80,6 +82,14 @@ const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
 let lastRealtimeSettlementRefreshAt = 0;
+const DEX_CHART_INTERVAL_OPTIONS = [
+  { value: "5", label: "5m" },
+  { value: "15", label: "15m" },
+  { value: "60", label: "1h" },
+  { value: "240", label: "4h" },
+  { value: "1D", label: "1D" },
+] as const;
+type DexChartIntervalValue = (typeof DEX_CHART_INTERVAL_OPTIONS)[number]["value"];
 
 type TradeSide = "buy" | "sell";
 
@@ -117,12 +127,38 @@ type JupiterSwapResponse = {
   posterShareBpsApplied?: number;
 };
 
-type DexscreenerImagePair = {
-  baseToken?: {
-    address?: string;
+type DexscreenerTokenRef = {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  icon?: string;
+  logoURI?: string;
+};
+
+type DexscreenerPair = {
+  chainId?: string;
+  dexId?: string;
+  url?: string;
+  pairAddress?: string;
+  baseToken?: DexscreenerTokenRef;
+  quoteToken?: DexscreenerTokenRef;
+  priceUsd?: string | number;
+  fdv?: string | number;
+  marketCap?: string | number;
+  liquidity?: {
+    usd?: string | number;
   };
-  quoteToken?: {
-    address?: string;
+  volume?: {
+    h24?: string | number;
+  };
+  priceChange?: {
+    h24?: string | number;
+  };
+  txns?: {
+    h24?: {
+      buys?: string | number;
+      sells?: string | number;
+    };
   };
   info?: {
     imageUrl?: string;
@@ -132,11 +168,27 @@ type DexscreenerImagePair = {
 };
 
 type DexscreenerImagePayload =
-  | DexscreenerImagePair[]
+  | DexscreenerPair[]
   | {
-      pairs?: DexscreenerImagePair[] | null;
+      pairs?: DexscreenerPair[] | null;
     }
   | null;
+
+type DexscreenerTokenData = {
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  tokenImage: string | null;
+  dexscreenerUrl: string | null;
+  pairAddress: string | null;
+  dexId: string | null;
+  priceUsd: number | null;
+  marketCap: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  priceChange24hPct: number | null;
+  buys24h: number | null;
+  sells24h: number | null;
+};
 
 function normalizeDexAddress(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -144,8 +196,39 @@ function normalizeDexAddress(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
-function pickDexImageUrlFromPair(pair: DexscreenerImagePair | undefined): string | null {
-  const candidates = [pair?.info?.imageUrl, pair?.info?.header, pair?.info?.openGraph];
+function normalizeDexChain(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "eth") return "ethereum";
+  if (normalized === "sol") return "solana";
+  return normalized;
+}
+
+function pickDexTokenFromPair(
+  pair: DexscreenerPair | undefined,
+  contractAddress: string
+): DexscreenerTokenRef | null {
+  if (!pair) return null;
+  const target = normalizeDexAddress(contractAddress);
+  const base = pair.baseToken;
+  const quote = pair.quoteToken;
+  if (target && normalizeDexAddress(base?.address) === target) return base ?? null;
+  if (target && normalizeDexAddress(quote?.address) === target) return quote ?? null;
+  return base ?? quote ?? null;
+}
+
+function pickDexImageUrlFromPair(
+  pair: DexscreenerPair | undefined,
+  token: DexscreenerTokenRef | null
+): string | null {
+  const candidates = [
+    token?.icon,
+    token?.logoURI,
+    pair?.info?.imageUrl,
+    pair?.info?.header,
+    pair?.info?.openGraph,
+  ];
   for (const candidate of candidates) {
     const value = candidate?.trim();
     if (value) return value;
@@ -153,26 +236,57 @@ function pickDexImageUrlFromPair(pair: DexscreenerImagePair | undefined): string
   return null;
 }
 
-function pickDexImageUrlFromPayload(
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function pickDexPairFromPayload(
   payload: DexscreenerImagePayload,
-  contractAddress: string
-): string | null {
+  contractAddress: string,
+  chainType: string | null
+): DexscreenerPair | null {
   const pairs = Array.isArray(payload) ? payload : (payload?.pairs ?? []);
   if (!pairs.length) return null;
 
   const target = normalizeDexAddress(contractAddress);
-  const matchedPair =
-    pairs.find((pair) => normalizeDexAddress(pair.baseToken?.address) === target) ??
-    pairs.find((pair) => normalizeDexAddress(pair.quoteToken?.address) === target) ??
-    pairs[0];
+  const expectedChain = normalizeDexChain(chainType === "solana" ? "solana" : "ethereum");
+  const rankedPairs = [...pairs].sort((a, b) => {
+    const scorePair = (pair: DexscreenerPair): number => {
+      const baseMatch = normalizeDexAddress(pair.baseToken?.address) === target;
+      const quoteMatch = normalizeDexAddress(pair.quoteToken?.address) === target;
+      const chainMatch = normalizeDexChain(pair.chainId) === expectedChain;
+      let score = 0;
+      if (baseMatch && chainMatch) score += 120;
+      else if (quoteMatch && chainMatch) score += 100;
+      else if (baseMatch) score += 70;
+      else if (quoteMatch) score += 55;
+      if (chainMatch) score += 20;
+      if (pair.url?.trim()) score += 5;
+      return score;
+    };
 
-  return pickDexImageUrlFromPair(matchedPair);
+    const scoreDelta = scorePair(b) - scorePair(a);
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const liquidityDelta = (toFiniteNumber(b.liquidity?.usd) ?? 0) - (toFiniteNumber(a.liquidity?.usd) ?? 0);
+    if (liquidityDelta !== 0) return liquidityDelta;
+
+    return (toFiniteNumber(b.volume?.h24) ?? 0) - (toFiniteNumber(a.volume?.h24) ?? 0);
+  });
+  const matchedPair = rankedPairs[0];
+
+  return matchedPair ?? null;
 }
 
-async function fetchDexscreenerTokenImage(args: {
+async function fetchDexscreenerTokenData(args: {
   contractAddress: string;
   chainType: string | null;
-}): Promise<string | null> {
+}): Promise<DexscreenerTokenData | null> {
   const { contractAddress, chainType } = args;
   const chain = chainType === "solana" ? "solana" : "ethereum";
   const endpoints = [
@@ -187,8 +301,25 @@ async function fetchDexscreenerTokenImage(args: {
       });
       if (!response.ok) continue;
       const payload = (await response.json()) as DexscreenerImagePayload;
-      const image = pickDexImageUrlFromPayload(payload, contractAddress);
-      if (image) return image;
+      const pair = pickDexPairFromPayload(payload, contractAddress, chainType);
+      if (!pair) continue;
+      const token = pickDexTokenFromPair(pair, contractAddress);
+
+      return {
+        tokenName: token?.name?.trim() || pair.baseToken?.name?.trim() || null,
+        tokenSymbol: token?.symbol?.trim() || pair.baseToken?.symbol?.trim() || null,
+        tokenImage: pickDexImageUrlFromPair(pair, token),
+        dexscreenerUrl: pair.url?.trim() || null,
+        pairAddress: pair.pairAddress?.trim() || null,
+        dexId: pair.dexId?.trim() || null,
+        priceUsd: toFiniteNumber(pair.priceUsd),
+        marketCap: toFiniteNumber(pair.marketCap) ?? toFiniteNumber(pair.fdv),
+        liquidityUsd: toFiniteNumber(pair.liquidity?.usd),
+        volume24hUsd: toFiniteNumber(pair.volume?.h24),
+        priceChange24hPct: toFiniteNumber(pair.priceChange?.h24),
+        buys24h: toFiniteNumber(pair.txns?.h24?.buys),
+        sells24h: toFiniteNumber(pair.txns?.h24?.sells),
+      };
     } catch {
       // Quiet fallback to next endpoint.
     }
@@ -242,6 +373,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [pendingQuickBuyAutoExecute, setPendingQuickBuyAutoExecute] = useState(false);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
+  const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
+  const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
+  const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
+  const [isDexChartLoaded, setIsDexChartLoaded] = useState(false);
+  const [isDexChartLoadFailed, setIsDexChartLoadFailed] = useState(false);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
@@ -1430,21 +1566,45 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     Number.isFinite(parsedBuyAmountSol) && parsedBuyAmountSol > 0
       ? Math.max(1, Math.floor(parsedBuyAmountSol * LAMPORTS_PER_SOL))
       : null;
-  const dexTokenImageQuery = useQuery({
-    queryKey: ["dexTokenImage", post.chainType, post.contractAddress],
-    enabled: hasContractAddress && !post.tokenImage,
-    staleTime: 30 * 60 * 1000,
+  const dexTokenDataQuery = useQuery({
+    queryKey: ["dexTokenData", post.chainType, post.contractAddress],
+    enabled:
+      hasContractAddress &&
+      (isBuyDialogOpen ||
+        isInViewport ||
+        !post.tokenImage ||
+        !post.tokenName ||
+        !post.tokenSymbol ||
+        !post.dexscreenerUrl),
+    staleTime: 3 * 60 * 1000,
     retry: 1,
     refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!post.contractAddress) return null;
-      return fetchDexscreenerTokenImage({
+      return fetchDexscreenerTokenData({
         contractAddress: post.contractAddress,
         chainType: post.chainType ?? null,
       });
     },
   });
-  const resolvedTokenImage = post.tokenImage ?? dexTokenImageQuery.data ?? null;
+  const resolvedTokenImage = post.tokenImage ?? dexTokenDataQuery.data?.tokenImage ?? null;
+  const resolvedTokenName = post.tokenName ?? dexTokenDataQuery.data?.tokenName ?? null;
+  const resolvedTokenSymbol = post.tokenSymbol ?? dexTokenDataQuery.data?.tokenSymbol ?? null;
+  const resolvedDexscreenerUrl = post.dexscreenerUrl ?? dexTokenDataQuery.data?.dexscreenerUrl ?? dexscreenerUrl;
+  const resolvedPriceUsd = dexTokenDataQuery.data?.priceUsd ?? null;
+  const resolvedMarketCap = dexTokenDataQuery.data?.marketCap ?? currentMcap ?? null;
+  const resolvedLiquidityUsd = dexTokenDataQuery.data?.liquidityUsd ?? null;
+  const resolvedVolume24hUsd = dexTokenDataQuery.data?.volume24hUsd ?? null;
+  const resolvedPriceChange24hPct = dexTokenDataQuery.data?.priceChange24hPct ?? null;
+  const resolvedBuys24h = dexTokenDataQuery.data?.buys24h ?? null;
+  const resolvedSells24h = dexTokenDataQuery.data?.sells24h ?? null;
+  const resolvedDexId = dexTokenDataQuery.data?.dexId ?? null;
+  const displayTokenSymbol = resolvedTokenSymbol || resolvedTokenName || "TOKEN";
+  const displayTokenLabel = resolvedTokenSymbol || resolvedTokenName || "Token";
+  const displayTokenSubtitle =
+    resolvedTokenName && resolvedTokenSymbol
+      ? resolvedTokenName
+      : (post.contractAddress || "No contract address");
 
   const outputTokenDecimalsQuery = useQuery({
     queryKey: ["jupiterTokenDecimals", post.contractAddress],
@@ -1472,8 +1632,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : null;
   const tradeAmountAtomic = tradeSide === "buy" ? buyAmountLamports : sellAmountAtomic;
   const quoteOutputDecimals = tradeSide === "buy" ? outputTokenDecimals : 9;
-  const tradeInputTokenLabel = tradeSide === "buy" ? "SOL" : (post.tokenSymbol || "TOKEN");
-  const tradeOutputTokenLabel = tradeSide === "buy" ? (post.tokenSymbol || "TOKEN") : "SOL";
+  const tradeInputTokenLabel = tradeSide === "buy" ? "SOL" : displayTokenSymbol;
+  const tradeOutputTokenLabel = tradeSide === "buy" ? displayTokenSymbol : "SOL";
 
   const walletTokenBalanceQuery = useQuery({
     queryKey: ["walletTokenBalance", wallet.publicKey?.toBase58(), post.contractAddress],
@@ -1973,6 +2133,47 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ? "-"
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
   const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
+  const dexscreenerEmbedUrl = useMemo(() => {
+    const baseUrl =
+      resolvedDexscreenerUrl ||
+      (post.contractAddress
+        ? `https://dexscreener.com/${post.chainType === "solana" ? "solana" : "ethereum"}/${post.contractAddress}`
+        : null);
+    if (!baseUrl) return null;
+
+    try {
+      const url = new URL(baseUrl);
+      url.searchParams.set("embed", "1");
+      url.searchParams.set("theme", "dark");
+      url.searchParams.set("interval", chartInterval);
+      url.searchParams.set("info", isChartInfoVisible ? "1" : "0");
+      url.searchParams.set("trades", isChartTradesVisible ? "1" : "0");
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }, [
+    resolvedDexscreenerUrl,
+    post.contractAddress,
+    post.chainType,
+    chartInterval,
+    isChartInfoVisible,
+    isChartTradesVisible,
+  ]);
+
+  useEffect(() => {
+    setIsDexChartLoaded(false);
+    setIsDexChartLoadFailed(false);
+  }, [dexscreenerEmbedUrl, isBuyDialogOpen, post.id]);
+
+  useEffect(() => {
+    if (!isBuyDialogOpen || !dexscreenerEmbedUrl) return;
+    if (isDexChartLoaded || isDexChartLoadFailed) return;
+    const timeout = window.setTimeout(() => {
+      setIsDexChartLoadFailed(true);
+    }, 12000);
+    return () => window.clearTimeout(timeout);
+  }, [isBuyDialogOpen, dexscreenerEmbedUrl, isDexChartLoaded, isDexChartLoadFailed]);
 
   useEffect(() => {
     if (!pendingQuickBuyAutoExecute) return;
@@ -2083,10 +2284,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 <TokenInfoCard
                   contractAddress={post.contractAddress}
                   chainType={post.chainType}
-                  tokenName={post.tokenName}
-                  tokenSymbol={post.tokenSymbol}
+                  tokenName={resolvedTokenName}
+                  tokenSymbol={resolvedTokenSymbol}
                   tokenImage={resolvedTokenImage}
-                  dexscreenerUrl={post.dexscreenerUrl}
+                  dexscreenerUrl={resolvedDexscreenerUrl}
                 />
               </div>
             )}
@@ -2791,14 +2992,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 <div className="mt-3 flex items-center gap-3">
                   <div className="h-12 w-12 rounded-xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0">
                     {resolvedTokenImage ? (
-                      <img src={resolvedTokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
+                      <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" />
                     ) : (
                       <Coins className="h-4 w-4 text-muted-foreground" />
                     )}
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-foreground truncate">
-                      {post.tokenSymbol || post.tokenName || "Token"}
+                      {displayTokenLabel}
                     </div>
                     <div className="text-xs text-muted-foreground truncate">
                       {post.contractAddress || "No contract"}
@@ -2869,7 +3070,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Zap className="h-4 w-4 text-primary" />
-              {isWalletConnectedForTrade ? "Trade" : "Connect Wallet"} - {post.tokenSymbol || "Token"}
+              {isWalletConnectedForTrade ? "Trade" : "Connect Wallet"} - {displayTokenLabel}
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm">
               {isSolanaTradeSupported
@@ -2883,7 +3084,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               <div className="flex items-start gap-3">
                 <div className="h-14 w-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0 shadow-inner shadow-black/40">
                   {resolvedTokenImage ? (
-                    <img src={resolvedTokenImage} alt={post.tokenSymbol || post.tokenName || "Token"} className="h-full w-full object-cover" />
+                    <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" />
                   ) : (
                     <Coins className="h-5 w-5 text-muted-foreground" />
                   )}
@@ -2891,7 +3092,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <div className="truncate text-base font-semibold text-foreground">
-                      {post.tokenSymbol || post.tokenName || "Token"}
+                      {displayTokenLabel}
                     </div>
                     {post.chainType && (
                       <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
@@ -2903,7 +3104,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </span>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground truncate">
-                    {post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress || "No contract address")}
+                    {displayTokenSubtitle}
                   </div>
                   {post.contractAddress && (
                     <div className="mt-2 inline-flex max-w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] font-mono text-muted-foreground break-all">
@@ -2930,10 +3131,49 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
                           <div className="text-sm font-medium text-foreground">Live snapshots + Dex source</div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
                             {jupiterStatusLabel}
                           </span>
+                          {DEX_CHART_INTERVAL_OPTIONS.map((preset) => (
+                            <button
+                              key={preset.value}
+                              type="button"
+                              onClick={() => setChartInterval(preset.value)}
+                              className={cn(
+                                "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
+                                chartInterval === preset.value
+                                  ? "border-primary/40 bg-primary/15 text-foreground"
+                                  : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                              )}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setIsChartInfoVisible((prev) => !prev)}
+                            className={cn(
+                              "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
+                              isChartInfoVisible
+                                ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                                : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                            )}
+                          >
+                            Info
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsChartTradesVisible((prev) => !prev)}
+                            className={cn(
+                              "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
+                              isChartTradesVisible
+                                ? "border-lime-300/30 bg-lime-300/10 text-lime-100"
+                                : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                            )}
+                          >
+                            Trades
+                          </button>
                         </div>
                       </div>
                       <div className="relative px-4 pt-4">
@@ -2945,7 +3185,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                             <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Current</div>
                             <div className="mt-1 text-sm font-semibold text-foreground">
-                              {currentMcap != null ? formatMarketCap(currentMcap) : "Waiting..."}
+                              {resolvedMarketCap != null ? formatMarketCap(resolvedMarketCap) : "Waiting..."}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Price</div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {resolvedPriceUsd != null ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}` : "-"}
                             </div>
                           </div>
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
@@ -2964,7 +3210,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
 
                       <div className="relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3">
-                        {tradeChartData.length >= 2 ? (
+                        {dexscreenerEmbedUrl && !isDexChartLoadFailed ? (
+                          <div className="relative h-full w-full overflow-hidden rounded-xl border border-white/10 bg-black/40">
+                            {!isDexChartLoaded && (
+                              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Loading full chart...
+                                </div>
+                              </div>
+                            )}
+                            <iframe
+                              src={dexscreenerEmbedUrl}
+                              title={`${displayTokenLabel} chart`}
+                              className="h-full w-full"
+                              loading="lazy"
+                              onLoad={() => setIsDexChartLoaded(true)}
+                              onError={() => setIsDexChartLoadFailed(true)}
+                              allow="fullscreen; clipboard-write"
+                            />
+                          </div>
+                        ) : tradeChartData.length >= 2 ? (
                           <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={tradeChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
                               <defs>
@@ -2987,6 +3253,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 10 }}
                                 tickFormatter={(v: number) => formatMarketCap(Number(v)).replace("$", "")}
                               />
+                              {Number.isFinite(post.entryMcap ?? null) ? (
+                                <ReferenceLine
+                                  y={Number(post.entryMcap)}
+                                  stroke="rgba(255,255,255,0.22)"
+                                  strokeDasharray="3 3"
+                                />
+                              ) : null}
                               <RechartsTooltip
                                 cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
                                 contentStyle={{
@@ -3008,6 +3281,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 dot={{ r: 4, stroke: "rgba(9,12,16,0.95)", strokeWidth: 2, fill: tradeChartLineStroke }}
                                 activeDot={{ r: 5, stroke: "#090c10", strokeWidth: 2, fill: tradeChartLineStroke }}
                               />
+                              <Brush
+                                dataKey="label"
+                                height={20}
+                                stroke={tradeChartLineStroke}
+                                fill="rgba(255,255,255,0.04)"
+                                travellerWidth={8}
+                              />
                             </AreaChart>
                           </ResponsiveContainer>
                         ) : (
@@ -3015,7 +3295,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             <div className="space-y-3">
                               <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
                               <p className="text-sm text-muted-foreground">
-                                Waiting for more market snapshots to draw the chart.
+                                Waiting for market snapshots to draw fallback chart.
                               </p>
                             </div>
                           </div>
@@ -3023,7 +3303,26 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
 
                       <div className="relative border-t border-white/10 px-4 py-3 text-[11px] text-muted-foreground">
-                        Dexscreener iframe embeds can be blocked by some browsers. This panel stays responsive using your live post market snapshots.
+                        {resolvedLiquidityUsd != null ||
+                        resolvedVolume24hUsd != null ||
+                        resolvedPriceChange24hPct != null ||
+                        resolvedBuys24h != null ||
+                        resolvedSells24h != null ||
+                        resolvedDexId ? (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            <span>Liquidity: {resolvedLiquidityUsd != null ? `$${resolvedLiquidityUsd.toLocaleString()}` : "-"}</span>
+                            <span>24h Vol: {resolvedVolume24hUsd != null ? `$${resolvedVolume24hUsd.toLocaleString()}` : "-"}</span>
+                            <span>
+                              24h Change: {resolvedPriceChange24hPct != null ? `${resolvedPriceChange24hPct >= 0 ? "+" : ""}${resolvedPriceChange24hPct.toFixed(2)}%` : "-"}
+                            </span>
+                            <span>
+                              24h Txns: {resolvedBuys24h != null ? resolvedBuys24h.toLocaleString() : "-"} / {resolvedSells24h != null ? resolvedSells24h.toLocaleString() : "-"}
+                            </span>
+                            <span>DEX: {resolvedDexId ?? "-"}</span>
+                          </div>
+                        ) : (
+                          "Chart and token data are sourced live from Dexscreener."
+                        )}
                       </div>
                     </div>
 
@@ -3165,11 +3464,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               value={sellAmountToken}
                               onChange={(e) => setSellAmountToken(e.target.value)}
                               inputMode="decimal"
-                              placeholder={`0.00 ${post.tokenSymbol || "TOKEN"}`}
+                              placeholder={`0.00 ${displayTokenSymbol}`}
                               className="h-12 pr-20 text-lg font-semibold bg-black/20 border-white/10"
                             />
                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">
-                              {post.tokenSymbol || "TOKEN"}
+                              {displayTokenSymbol}
                             </span>
                           </div>
                           <div className="mt-3 flex items-center justify-between gap-3 text-xs">
@@ -3177,7 +3476,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               {walletShortAddress
                                 ? walletTokenBalanceQuery.isLoading
                                   ? "Loading token balance..."
-                                  : `Available: ${walletTokenBalanceFormatted} ${post.tokenSymbol || "TOKEN"}`
+                                  : `Available: ${walletTokenBalanceFormatted} ${displayTokenSymbol}`
                                 : "Connect wallet to load your token balance"}
                             </div>
                             {walletShortAddress && walletTokenBalance !== null ? (
@@ -3217,7 +3516,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           ) : null}
                           {sellHasNoTokens ? (
                             <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
-                              No {post.tokenSymbol || "token"} balance detected in this wallet.
+                              No {displayTokenSymbol.toLowerCase()} balance detected in this wallet.
                             </div>
                           ) : null}
                         </>
@@ -3243,7 +3542,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             <div className="mt-1 text-sm font-semibold text-foreground">
                               {tradeSide === "buy"
                                 ? `${buyAmountLamports ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "-"} SOL`
-                                : `${sellAmountToken || "-"} ${post.tokenSymbol || "TOKEN"}`}
+                                : `${sellAmountToken || "-"} ${displayTokenSymbol}`}
                             </div>
                           </div>
                           <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
