@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -7,9 +7,9 @@ import {
   AreaChart,
   Bar,
   Brush,
+  Cell,
   CartesianGrid,
   ComposedChart,
-  Line,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
@@ -394,6 +394,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [pendingQuickBuyAutoExecute, setPendingQuickBuyAutoExecute] = useState(false);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
+  const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
+  const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
   const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
@@ -1852,6 +1854,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       throw new Error(lastError);
     },
   });
+  const jupiterQuoteData = jupiterQuoteQuery.data;
+  const refetchJupiterQuote = jupiterQuoteQuery.refetch;
+  const walletPublicKey = wallet.publicKey;
+  const walletSignTransaction = wallet.signTransaction;
 
   const formatTokenAmountFromAtomic = (amount: string | null | undefined, decimals: number) => {
     if (!amount) return "N/A";
@@ -1914,7 +1920,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setPendingQuickBuyAutoExecute(true);
     if (isSolanaTradeSupported && !wallet.publicKey) {
       setPendingBuyAfterWalletConnect(true);
-      setIsWalletConnectDialogOpen(true);
+      openWalletSelector();
       return;
     }
     setIsBuyDialogOpen(true);
@@ -1965,26 +1971,105 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleTradeCtaClick = () => {
     if (isSolanaTradeSupported && !wallet.publicKey) {
       setPendingBuyAfterWalletConnect(true);
-      setIsWalletConnectDialogOpen(true);
+      openWalletSelector();
       return;
     }
     handleOpenBuyDialog();
   };
 
-  const handleExecuteJupiterBuy = async () => {
+  const buildSwapTransaction = useCallback(
+    async (quoteOverride?: JupiterQuoteResponse): Promise<JupiterSwapResponse> => {
+      if (!walletPublicKey) {
+        throw new Error("Connect a Solana wallet first");
+      }
+
+      const quote = quoteOverride ?? jupiterQuoteData;
+      if (!quote) {
+        throw new Error("Wait for quote to load");
+      }
+
+      const cacheKey = [
+        post.id,
+        walletPublicKey.toBase58(),
+        tradeSide,
+        String(tradeAmountAtomic ?? ""),
+        String(slippageBps),
+        quote.inAmount,
+        quote.outAmount,
+        quote.otherAmountThreshold,
+        String(quote.contextSlot ?? ""),
+      ].join(":");
+
+      const cached = preparedSwapRef.current;
+      if (cached && cached.key === cacheKey && Date.now() - cached.cachedAt < 15_000) {
+        return cached.payload;
+      }
+
+      const inFlight = swapBuildInFlightRef.current;
+      if (inFlight && inFlight.key === cacheKey) {
+        return inFlight.promise;
+      }
+
+      const requestPromise = (async () => {
+        const swapPayloadBody = JSON.stringify({
+          quoteResponse: quote,
+          userPublicKey: walletPublicKey.toBase58(),
+          postId: post.id,
+          tradeSide,
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+          dynamicSlippage: true,
+        });
+
+        const swapRes = await fetch("/api/posts/jupiter/swap", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: swapPayloadBody,
+          credentials: "same-origin",
+        });
+
+        if (!swapRes.ok) {
+          const body = await swapRes.text().catch(() => "");
+          throw new Error(body || `Swap build failed (${swapRes.status})`);
+        }
+
+        const swapPayload = (await swapRes.json()) as JupiterSwapResponse;
+        if (!swapPayload.swapTransaction) {
+          throw new Error("No swap transaction returned");
+        }
+
+        preparedSwapRef.current = {
+          key: cacheKey,
+          payload: swapPayload,
+          cachedAt: Date.now(),
+        };
+        return swapPayload;
+      })().finally(() => {
+        if (swapBuildInFlightRef.current?.key === cacheKey) {
+          swapBuildInFlightRef.current = null;
+        }
+      });
+
+      swapBuildInFlightRef.current = { key: cacheKey, promise: requestPromise };
+      return requestPromise;
+    },
+    [jupiterQuoteData, post.id, slippageBps, tradeAmountAtomic, tradeSide, walletPublicKey]
+  );
+
+  const handleExecuteJupiterBuy = useCallback(async () => {
     if (!isSolanaTradeSupported || !post.contractAddress) {
       toast.error("Trading is available for Solana posts only");
       return;
     }
-    if (!wallet.publicKey) {
+    if (!walletPublicKey) {
       toast.error("Connect a Solana wallet first");
       return;
     }
-    if (!wallet.signTransaction) {
+    if (!walletSignTransaction) {
       toast.error("This wallet does not support transaction signing");
       return;
     }
-    const quote = jupiterQuoteQuery.data;
+    const quote = jupiterQuoteData;
     if (!quote) {
       toast.error("Wait for quote to load");
       return;
@@ -1997,53 +2082,35 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setIsExecutingBuy(true);
     setBuyTxSignature(null);
     try {
-      const swapPayloadBody = JSON.stringify({
-        quoteResponse: quote,
-        userPublicKey: wallet.publicKey.toBase58(),
-        postId: post.id,
-        tradeSide,
-        wrapAndUnwrapSol: true,
-        dynamicComputeUnitLimit: true,
-        dynamicSlippage: true,
-      });
-
-      const swapRes = await fetch("/api/posts/jupiter/swap", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: swapPayloadBody,
-        credentials: "same-origin",
-      });
-
-      if (!swapRes.ok) {
-        const body = await swapRes.text().catch(() => "");
-        throw new Error(body || `Swap build failed (${swapRes.status})`);
-      }
-
-      const swapPayload = (await swapRes.json()) as JupiterSwapResponse;
-      if (!swapPayload.swapTransaction) {
-        throw new Error("No swap transaction returned");
-      }
+      const swapPayload = await buildSwapTransaction(quote);
 
       const txBytes = Uint8Array.from(atob(swapPayload.swapTransaction), (c) => c.charCodeAt(0));
       const tx = VersionedTransaction.deserialize(txBytes);
-      const signedTx = await wallet.signTransaction(tx);
+      const signedTx = await walletSignTransaction(tx);
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
         maxRetries: 1,
         skipPreflight: true,
         preflightCommitment: "processed",
       });
 
+      preparedSwapRef.current = null;
       if (typeof swapPayload.lastValidBlockHeight === "number") {
-        await tradeReadConnection.confirmTransaction(
-          {
-            signature,
-            blockhash: tx.message.recentBlockhash,
-            lastValidBlockHeight: swapPayload.lastValidBlockHeight,
-          },
-          "processed"
-        );
+        void tradeReadConnection
+          .confirmTransaction(
+            {
+              signature,
+              blockhash: tx.message.recentBlockhash,
+              lastValidBlockHeight: swapPayload.lastValidBlockHeight,
+            },
+            "processed"
+          )
+          .catch((error) => {
+            console.warn("[jupiter-trade] Confirmation warning", error);
+          });
       } else {
-        await tradeReadConnection.confirmTransaction(signature, "processed");
+        void tradeReadConnection.confirmTransaction(signature, "processed").catch((error) => {
+          console.warn("[jupiter-trade] Confirmation warning", error);
+        });
       }
 
       setBuyTxSignature(signature);
@@ -2055,15 +2122,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           body: JSON.stringify({
             tradeFeeEventId: swapPayload.tradeFeeEventId,
             txSignature: signature,
-            walletAddress: wallet.publicKey.toBase58(),
+            walletAddress: walletPublicKey.toBase58(),
           }),
         }).catch((error) => {
           console.warn("[trade-fee] Failed to confirm fee event", error);
         });
       }
       toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} order sent successfully`);
-      void jupiterQuoteQuery.refetch();
+      void refetchJupiterQuote();
     } catch (error) {
+      preparedSwapRef.current = null;
       const message =
         error instanceof Error
           ? error.message
@@ -2073,7 +2141,18 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     } finally {
       setIsExecutingBuy(false);
     }
-  };
+  }, [
+    buildSwapTransaction,
+    isSolanaTradeSupported,
+    jupiterQuoteData,
+    post.contractAddress,
+    refetchJupiterQuote,
+    sellAmountExceedsBalance,
+    tradeReadConnection,
+    tradeSide,
+    walletPublicKey,
+    walletSignTransaction,
+  ]);
 
   // Navigate to user profile (prefer username over ID for cleaner URLs)
   const handleProfileClick = (e: React.MouseEvent) => {
@@ -2174,8 +2253,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleBuyFooterAction = () => {
     if (canTriggerWalletConnectFromFooter) {
       setPendingBuyAfterWalletConnect(true);
-      setIsBuyDialogOpen(false);
-      setIsWalletConnectDialogOpen(true);
+      openWalletSelector();
       return;
     }
     void handleExecuteJupiterBuy();
@@ -2240,6 +2318,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const raw = chartCandlesQuery.data ?? [];
     return raw
       .map((candle) => {
+        const open = Number(candle.open);
+        const high = Number(candle.high);
+        const low = Number(candle.low);
+        const close = Number(candle.close);
+        const volume = Number(candle.volume);
         const normalizedTs =
           candle.timestamp > 10_000_000_000
             ? candle.timestamp
@@ -2260,6 +2343,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         });
         return {
           ...candle,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          wickRange: [low, high] as [number, number],
+          bodyRange: [Math.min(open, close), Math.max(open, close)] as [number, number],
+          isBullish: close >= open,
           label,
           fullLabel,
           ts: normalizedTs,
@@ -2287,6 +2378,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const professionalChartFill = professionalChartTrendPositive
     ? "rgba(116,243,122,0.18)"
     : "rgba(255,107,107,0.18)";
+
+  useEffect(() => {
+    if (!isBuyDialogOpen) return;
+    if (!canExecuteJupiterBuy) return;
+    if (isExecutingBuy) return;
+    void buildSwapTransaction().catch(() => {
+      // Ignore prebuild errors; execution path will show actionable errors.
+    });
+  }, [buildSwapTransaction, canExecuteJupiterBuy, isBuyDialogOpen, isExecutingBuy]);
 
   useEffect(() => {
     if (!pendingQuickBuyAutoExecute) return;
@@ -3149,7 +3249,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     )}
                   >
                     {wallet.connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                    {walletShortAddress ? "Change Wallet" : "Choose Wallet"}
+                    {walletShortAddress ? "Switch Wallet" : "Choose Wallet"}
                   </Button>
                   <Button
                     type="button"
@@ -3176,6 +3276,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         setIsBuyDialogOpen(open);
         if (!open) {
           setPendingQuickBuyAutoExecute(false);
+          preparedSwapRef.current = null;
+          swapBuildInFlightRef.current = null;
         }
       }}>
         <DialogContent className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
@@ -3239,15 +3341,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               </div>
             ) : (
               <>
-                <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
-                  <div className="space-y-4 lg:sticky lg:top-4 lg:relative lg:z-0">
+                <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
+                  <div className="space-y-4 lg:min-h-0 lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
                     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
                       <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
                       <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
                         <div>
                           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
-                          <div className="text-sm font-medium text-foreground">Professional price chart + live route</div>
+                          <div className="text-sm font-medium text-foreground">Professional Price Chart</div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
@@ -3290,7 +3392,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
                             )}
                           >
-                            Fill
+                            Candles
                           </button>
                         </div>
                       </div>
@@ -3332,13 +3434,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <ResponsiveContainer width="100%" height="100%">
                             <ComposedChart data={professionalChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
                               <defs>
-                                <linearGradient id={`buyChartPriceFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
-                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.3} />
-                                  <stop offset="100%" stopColor={professionalChartFill} stopOpacity={0.01} />
-                                </linearGradient>
                                 <linearGradient id={`buyChartVolumeFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
                                   <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.22} />
                                   <stop offset="100%" stopColor={professionalChartStroke} stopOpacity={0.03} />
+                                </linearGradient>
+                                <linearGradient id={`buyChartWick-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.72} />
+                                  <stop offset="100%" stopColor={professionalChartFill} stopOpacity={0.3} />
                                 </linearGradient>
                               </defs>
                               <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
@@ -3376,25 +3478,42 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               ) : null}
                               <RechartsTooltip
                                 cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
-                                contentStyle={{
-                                  background: "rgba(10,12,16,0.94)",
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  borderRadius: 12,
-                                  color: "#fff",
-                                  boxShadow: "0 16px 40px -24px rgba(0,0,0,0.9)",
-                                }}
-                                labelStyle={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}
-                                labelFormatter={(_, payload) =>
-                                  payload?.[0]?.payload?.fullLabel ?? ""
-                                }
-                                formatter={(value: number, name: string) => {
-                                  if (name === "close") {
-                                    return [formatUsdCompact(Number(value)), "Close"];
-                                  }
-                                  if (name === "volume") {
-                                    return [Number(value).toLocaleString(), "Volume"];
-                                  }
-                                  return [String(value), name];
+                                content={({ active, payload }) => {
+                                  if (!active || !payload?.length) return null;
+                                  const point = payload[0]?.payload as
+                                    | {
+                                        fullLabel?: string;
+                                        open?: number;
+                                        high?: number;
+                                        low?: number;
+                                        close?: number;
+                                        volume?: number;
+                                      }
+                                    | undefined;
+                                  if (!point) return null;
+                                  return (
+                                    <div className="rounded-xl border border-white/15 bg-[rgba(10,12,16,0.94)] p-3 text-xs text-white shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
+                                      <div className="mb-2 text-[11px] text-white/70">{point.fullLabel ?? ""}</div>
+                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                                        <span className="text-white/65">Open</span>
+                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.open ?? 0))}</span>
+                                        <span className="text-white/65">High</span>
+                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.high ?? 0))}</span>
+                                        <span className="text-white/65">Low</span>
+                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.low ?? 0))}</span>
+                                        <span className="text-white/65">Close</span>
+                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.close ?? 0))}</span>
+                                        {isChartInfoVisible ? (
+                                          <>
+                                            <span className="text-white/65">Volume</span>
+                                            <span className="text-right font-semibold">
+                                              {Number(point.volume ?? 0).toLocaleString()}
+                                            </span>
+                                          </>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  );
                                 }}
                               />
                               {isChartInfoVisible ? (
@@ -3406,25 +3525,30 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   opacity={0.9}
                                 />
                               ) : null}
-                              <Area
+                              <Bar
                                 yAxisId="price"
-                                type="monotone"
-                                dataKey="close"
-                                stroke={professionalChartStroke}
-                                fill={isChartTradesVisible ? `url(#buyChartPriceFill-${post.id})` : "transparent"}
-                                strokeWidth={2.2}
-                                dot={false}
-                                activeDot={{ r: 4, stroke: "#090c10", strokeWidth: 2, fill: professionalChartStroke }}
+                                dataKey="wickRange"
+                                barSize={2}
+                                fill={`url(#buyChartWick-${post.id})`}
+                                opacity={isChartTradesVisible ? 0.95 : 0.65}
+                                tooltipType="none"
                               />
-                              <Line
+                              <Bar
                                 yAxisId="price"
-                                type="monotone"
-                                dataKey="close"
-                                stroke={professionalChartStroke}
-                                strokeWidth={1.7}
-                                dot={false}
+                                dataKey="bodyRange"
+                                barSize={6}
+                                radius={[1, 1, 1, 1]}
+                                tooltipType="none"
                                 isAnimationActive={false}
-                              />
+                              >
+                                {professionalChartData.map((point) => (
+                                  <Cell
+                                    key={`candle-${post.id}-${point.ts}`}
+                                    fill={point.isBullish ? "#74f37a" : "#ff6b6b"}
+                                    fillOpacity={isChartTradesVisible ? 0.95 : 0.6}
+                                  />
+                                ))}
+                              </Bar>
                               <Brush
                                 dataKey="label"
                                 height={20}
@@ -3550,7 +3674,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
                   </div>
 
-                  <div className="relative z-10 flex flex-col gap-4 self-start">
+                  <div className="relative z-10 flex min-h-0 flex-col gap-4 self-start lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
                     <div className="order-1 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
@@ -3606,9 +3730,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         <Button
                           type="button"
                           onClick={() => {
-                            setPendingBuyAfterWalletConnect(true);
-                            setIsWalletConnectDialogOpen(true);
-                            setIsBuyDialogOpen(false);
+                            if (!walletShortAddress) {
+                              setPendingBuyAfterWalletConnect(true);
+                            }
+                            openWalletSelector();
                           }}
                           className={cn(
                             "h-11 w-full gap-2 text-sm font-semibold",
@@ -3619,7 +3744,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           variant={walletShortAddress ? "outline" : "default"}
                         >
                           {walletShortAddress ? <UserCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-                          {walletShortAddress ? "Change Wallet" : connectWalletCtaLabel}
+                          {walletShortAddress ? "Switch Wallet" : "Connect Wallet"}
                         </Button>
                         <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground flex items-center">
                           {walletShortAddress ? `${walletDisplayName} connected` : "Connect a Solana wallet to enable swap execution"}
@@ -3886,9 +4011,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         ) : null}
                       </div>
                     </div>
-                  </div>
 
-                  <div className="relative z-10 space-y-4 order-4 lg:col-start-2">
+                    <div className="order-4 space-y-4">
                     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
@@ -4004,6 +4128,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </a>
                       ) : null}
                     </div>
+                  </div>
                   </div>
                 </div>
 
