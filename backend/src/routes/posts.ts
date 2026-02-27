@@ -201,6 +201,31 @@ function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell
   return inputMint === SOL_MINT ? "buy" : "sell";
 }
 
+function withTimeoutFallback<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(value);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(fallback);
+      });
+  });
+}
+
 type JupiterSwapPostContext = {
   id: string;
   chainType: string | null;
@@ -3118,63 +3143,83 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
   const platformFeeBps = getActivePlatformFeeBps();
   const quote = safeRecord(payload.quoteResponse) ?? {};
 
-  let postContext: JupiterSwapPostContext | null = null;
-  if (payload.postId) {
-    try {
-      postContext = await prisma.post.findUnique({
-        where: { id: payload.postId },
-        select: {
-          id: true,
-          chainType: true,
-          authorId: true,
-          author: {
+  const postContextPromise: Promise<JupiterSwapPostContext | null> = payload.postId
+    ? (async () => {
+        try {
+          return await prisma.post.findUnique({
+            where: { id: payload.postId },
             select: {
               id: true,
-              walletAddress: true,
-              tradeFeeRewardsEnabled: true,
-              tradeFeeShareBps: true,
-              tradeFeePayoutAddress: true,
+              chainType: true,
+              authorId: true,
+              author: {
+                select: {
+                  id: true,
+                  walletAddress: true,
+                  tradeFeeRewardsEnabled: true,
+                  tradeFeeShareBps: true,
+                  tradeFeePayoutAddress: true,
+                },
+              },
             },
-          },
-        },
-      });
-    } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
-        throw error;
-      }
-
-      // Fallback for environments where fee columns are not yet migrated.
-      const fallbackPost = await prisma.post.findUnique({
-        where: { id: payload.postId },
-        select: {
-          id: true,
-          chainType: true,
-          authorId: true,
-          author: {
-            select: {
-              id: true,
-              walletAddress: true,
-            },
-          },
-        },
-      });
-
-      postContext = fallbackPost
-        ? {
-            id: fallbackPost.id,
-            chainType: fallbackPost.chainType,
-            authorId: fallbackPost.authorId,
-            author: {
-              id: fallbackPost.author.id,
-              walletAddress: fallbackPost.author.walletAddress,
-              tradeFeeRewardsEnabled: true,
-              tradeFeeShareBps: DEFAULT_POSTER_TRADE_FEE_SHARE_BPS,
-              tradeFeePayoutAddress: null,
-            },
+          });
+        } catch (error) {
+          if (!isPrismaSchemaDriftError(error)) {
+            console.warn("[posts/jupiter/swap] post context lookup skipped", {
+              postId: payload.postId,
+              code:
+                typeof error === "object" &&
+                error !== null &&
+                "code" in error &&
+                typeof (error as { code?: unknown }).code === "string"
+                  ? (error as { code: string }).code
+                  : null,
+              message: error instanceof Error ? error.message : String(error),
+            });
+            return null;
           }
-        : null;
-    }
-  }
+
+          // Fallback for environments where fee columns are not yet migrated.
+          try {
+            const fallbackPost = await prisma.post.findUnique({
+              where: { id: payload.postId },
+              select: {
+                id: true,
+                chainType: true,
+                authorId: true,
+                author: {
+                  select: {
+                    id: true,
+                    walletAddress: true,
+                  },
+                },
+              },
+            });
+
+            return fallbackPost
+              ? {
+                  id: fallbackPost.id,
+                  chainType: fallbackPost.chainType,
+                  authorId: fallbackPost.authorId,
+                  author: {
+                    id: fallbackPost.author.id,
+                    walletAddress: fallbackPost.author.walletAddress,
+                    tradeFeeRewardsEnabled: true,
+                    tradeFeeShareBps: DEFAULT_POSTER_TRADE_FEE_SHARE_BPS,
+                    tradeFeePayoutAddress: null,
+                  },
+                }
+              : null;
+          } catch (fallbackError) {
+            console.warn("[posts/jupiter/swap] fallback post context lookup skipped", {
+              postId: payload.postId,
+              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            });
+            return null;
+          }
+        }
+      })()
+    : Promise.resolve(null);
 
   const outboundPayload: Record<string, unknown> = {
     quoteResponse: payload.quoteResponse,
@@ -3251,6 +3296,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     Number.isFinite(quotePlatformFeeBpsRaw) && quotePlatformFeeBpsRaw > 0
       ? Math.min(FIXED_PLATFORM_FEE_BPS, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
       : platformFeeBps;
+  const postContext = await withTimeoutFallback(postContextPromise, 450, null);
 
   if (
     postContext &&
@@ -3288,10 +3334,23 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
       });
       tradeFeeEventId = createdEvent.id;
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
-        throw error;
+      if (isPrismaSchemaDriftError(error)) {
+        console.warn("[posts/jupiter/swap] trade fee event logging skipped (schema not ready)");
+      } else {
+        console.warn("[posts/jupiter/swap] trade fee event logging skipped", {
+          postId: postContext.id,
+          traderUserId: currentUser?.id ?? null,
+          traderWalletAddress: payload.userPublicKey,
+          code:
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            typeof (error as { code?: unknown }).code === "string"
+              ? (error as { code: string }).code
+              : null,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
-      console.warn("[posts/jupiter/swap] trade fee event logging skipped (schema not ready)");
     }
   }
 
@@ -3342,8 +3401,13 @@ postsRouter.post(
         },
       });
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
-        throw error;
+      if (isPrismaSchemaDriftError(error)) {
+        console.warn("[posts/jupiter/fee-confirm] skipped (schema not ready)");
+      } else {
+        console.warn("[posts/jupiter/fee-confirm] lookup skipped", {
+          id: payload.tradeFeeEventId,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
       return c.json({
         data: {
@@ -3355,7 +3419,13 @@ postsRouter.post(
     }
 
     if (!existing) {
-      return c.json({ error: { message: "Trade fee event not found", code: "NOT_FOUND" } }, 404);
+      return c.json({
+        data: {
+          id: payload.tradeFeeEventId,
+          txSignature: payload.txSignature,
+          skipped: true,
+        },
+      });
     }
 
     if (existing.traderUserId && existing.traderUserId !== user.id) {
@@ -3381,8 +3451,13 @@ postsRouter.post(
         },
       });
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
-        throw error;
+      if (isPrismaSchemaDriftError(error)) {
+        console.warn("[posts/jupiter/fee-confirm] update skipped (schema not ready)");
+      } else {
+        console.warn("[posts/jupiter/fee-confirm] update skipped", {
+          id: payload.tradeFeeEventId,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
       return c.json({
         data: {

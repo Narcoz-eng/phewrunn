@@ -37,6 +37,7 @@ console.log("[Auth] Using backend URL:", baseURL);
 
 const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const SESSION_FETCH_TIMEOUT_MS = 3500;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 
@@ -91,6 +92,7 @@ interface SessionState {
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
+let unauthorizedSessionFailures = 0;
 let inMemoryAuthToken: string | null = null;
 
 function getStoredAuthToken(): string | null {
@@ -217,17 +219,29 @@ async function fetchSession(): Promise<AuthUser | null> {
       }
       // Clear invalid token
       if (response.status === 401) {
+        unauthorizedSessionFailures += 1;
+        const recentlySynced =
+          lastPrivySyncAt > 0 && Date.now() - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS;
+
+        if (cachedUser && (recentlySynced || unauthorizedSessionFailures < 2)) {
+          sessionRateLimitedUntil = Date.now() + 2000;
+          console.warn("[Auth] Temporary 401 from /api/me; keeping cached session");
+          return cachedUser;
+        }
+
         if (lastPrivySyncAt <= requestStartedAt) {
           clearStoredAuthToken();
           clearCachedAuthUser();
         } else {
           console.warn("[Auth] Ignoring stale 401 from /api/me after newer Privy sync");
         }
+        return null;
       }
-      return response.status === 401 ? null : cachedUser;
+      return cachedUser;
     }
 
     sessionRateLimitedUntil = 0;
+    unauthorizedSessionFailures = 0;
     const text = await response.text();
 
     // Handle null or empty responses
@@ -306,6 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
     lastPrivySyncAt = 0;
+    unauthorizedSessionFailures = 0;
     setState({
       user: null,
       isLoading: false,
@@ -596,6 +611,7 @@ export async function syncPrivySession(
     lastPrivySyncAt = Date.now();
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
+    unauthorizedSessionFailures = 0;
 
     // Store the session token for Bearer auth fallback
     setStoredAuthToken(data.token);
