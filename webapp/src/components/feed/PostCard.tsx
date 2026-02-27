@@ -5,8 +5,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Area,
   AreaChart,
+  Bar,
   Brush,
   CartesianGrid,
+  ComposedChart,
+  Line,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
@@ -190,6 +193,15 @@ type DexscreenerTokenData = {
   sells24h: number | null;
 };
 
+type ChartCandle = {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
 function normalizeDexAddress(value: string | null | undefined): string | null {
   if (!value) return null;
   const normalized = value.trim().toLowerCase();
@@ -243,6 +255,15 @@ function toFiniteNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function formatUsdCompact(value: number): string {
+  if (!Number.isFinite(value)) return "-";
+  if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
+  if (Math.abs(value) >= 1) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(8)}`;
 }
 
 function pickDexPairFromPayload(
@@ -376,8 +397,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
-  const [isDexChartLoaded, setIsDexChartLoaded] = useState(false);
-  const [isDexChartLoadFailed, setIsDexChartLoadFailed] = useState(false);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
@@ -387,6 +406,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const clearPotentialScrollLock = () => {
     if (typeof document === "undefined") return;
+    document.body.classList.remove("overflow-hidden", "wallet-adapter-modal-open");
+    document.documentElement.classList.remove("overflow-hidden");
+    document.body.style.overflow = "";
+    document.documentElement.style.overflow = "";
+    document.body.style.paddingRight = "";
+    document.documentElement.style.paddingRight = "";
+    document.body.style.touchAction = "";
+    document.documentElement.style.touchAction = "";
     if (document.body.style.pointerEvents === "none") {
       document.body.style.pointerEvents = "";
     }
@@ -403,6 +430,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   // Complete the intended "connect then buy" flow without opening both popups at once.
   useEffect(() => {
     if (!wallet.publicKey) return;
+    if (isWalletModalVisible) {
+      setWalletModalVisible(false);
+    }
     if (isWalletConnectDialogOpen) {
       setIsWalletConnectDialogOpen(false);
     }
@@ -414,7 +444,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (typeof window !== "undefined") {
       window.setTimeout(clearPotentialScrollLock, 120);
     }
-  }, [wallet.publicKey, isWalletConnectDialogOpen, pendingBuyAfterWalletConnect]);
+  }, [wallet.publicKey, isWalletConnectDialogOpen, pendingBuyAfterWalletConnect, isWalletModalVisible, setWalletModalVisible]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
@@ -1600,12 +1630,71 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const resolvedBuys24h = dexTokenDataQuery.data?.buys24h ?? null;
   const resolvedSells24h = dexTokenDataQuery.data?.sells24h ?? null;
   const resolvedDexId = dexTokenDataQuery.data?.dexId ?? null;
+  const resolvedPairAddress = dexTokenDataQuery.data?.pairAddress ?? null;
   const displayTokenSymbol = resolvedTokenSymbol || resolvedTokenName || "TOKEN";
   const displayTokenLabel = resolvedTokenSymbol || resolvedTokenName || "Token";
   const displayTokenSubtitle =
     resolvedTokenName && resolvedTokenSymbol
       ? resolvedTokenName
       : (post.contractAddress || "No contract address");
+
+  const chartRequestConfig = useMemo(() => {
+    switch (chartInterval) {
+      case "5":
+        return { timeframe: "minute" as const, aggregate: 1, limit: 220 };
+      case "15":
+        return { timeframe: "minute" as const, aggregate: 5, limit: 220 };
+      case "60":
+        return { timeframe: "hour" as const, aggregate: 1, limit: 180 };
+      case "240":
+        return { timeframe: "hour" as const, aggregate: 4, limit: 160 };
+      case "1D":
+      default:
+        return { timeframe: "day" as const, aggregate: 1, limit: 120 };
+    }
+  }, [chartInterval]);
+
+  const chartCandlesQuery = useQuery({
+    queryKey: [
+      "chartCandles",
+      post.id,
+      resolvedPairAddress,
+      chartRequestConfig.timeframe,
+      chartRequestConfig.aggregate,
+      chartRequestConfig.limit,
+    ],
+    enabled: isBuyDialogOpen && !!resolvedPairAddress,
+    staleTime: 5_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+    refetchInterval:
+      isBuyDialogOpen && chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000,
+    queryFn: async () => {
+      if (!resolvedPairAddress) return [] as ChartCandle[];
+      const response = await fetch("/api/posts/chart/candles", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          poolAddress: resolvedPairAddress,
+          chainType: post.chainType === "solana" ? "solana" : "ethereum",
+          timeframe: chartRequestConfig.timeframe,
+          aggregate: chartRequestConfig.aggregate,
+          limit: chartRequestConfig.limit,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(body || `Chart request failed (${response.status})`);
+      }
+      const payload = (await response.json()) as {
+        data?: {
+          candles?: ChartCandle[];
+        };
+      };
+      return Array.isArray(payload?.data?.candles) ? payload.data!.candles! : [];
+    },
+  });
 
   const outputTokenDecimalsQuery = useQuery({
     queryKey: ["jupiterTokenDecimals", post.contractAddress],
@@ -1904,6 +1993,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         tradeSide,
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
+        dynamicSlippage: true,
       });
 
       const swapRes = await fetch("/api/posts/jupiter/swap", {
@@ -1926,22 +2016,23 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       const txBytes = Uint8Array.from(atob(swapPayload.swapTransaction), (c) => c.charCodeAt(0));
       const tx = VersionedTransaction.deserialize(txBytes);
       const signedTx = await wallet.signTransaction(tx);
-      const signature = await connection.sendRawTransaction(signedTx.serialize(), {
-        maxRetries: 3,
-        skipPreflight: false,
+      const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
+        maxRetries: 1,
+        skipPreflight: true,
+        preflightCommitment: "processed",
       });
 
       if (typeof swapPayload.lastValidBlockHeight === "number") {
-        await connection.confirmTransaction(
+        await tradeReadConnection.confirmTransaction(
           {
             signature,
             blockhash: tx.message.recentBlockhash,
             lastValidBlockHeight: swapPayload.lastValidBlockHeight,
           },
-          "confirmed"
+          "processed"
         );
       } else {
-        await connection.confirmTransaction(signature, "confirmed");
+        await tradeReadConnection.confirmTransaction(signature, "processed");
       }
 
       setBuyTxSignature(signature);
@@ -2134,47 +2225,58 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ? "-"
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
   const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
-  const dexscreenerEmbedUrl = useMemo(() => {
-    const baseUrl =
-      resolvedDexscreenerUrl ||
-      (post.contractAddress
-        ? `https://dexscreener.com/${post.chainType === "solana" ? "solana" : "ethereum"}/${post.contractAddress}`
-        : null);
-    if (!baseUrl) return null;
-
-    try {
-      const url = new URL(baseUrl);
-      url.searchParams.set("embed", "1");
-      url.searchParams.set("theme", "dark");
-      url.searchParams.set("interval", chartInterval);
-      url.searchParams.set("info", isChartInfoVisible ? "1" : "0");
-      url.searchParams.set("trades", isChartTradesVisible ? "1" : "0");
-      return url.toString();
-    } catch {
-      return null;
-    }
-  }, [
-    resolvedDexscreenerUrl,
-    post.contractAddress,
-    post.chainType,
-    chartInterval,
-    isChartInfoVisible,
-    isChartTradesVisible,
-  ]);
-
-  useEffect(() => {
-    setIsDexChartLoaded(false);
-    setIsDexChartLoadFailed(false);
-  }, [dexscreenerEmbedUrl, isBuyDialogOpen, post.id]);
-
-  useEffect(() => {
-    if (!isBuyDialogOpen || !dexscreenerEmbedUrl) return;
-    if (isDexChartLoaded || isDexChartLoadFailed) return;
-    const timeout = window.setTimeout(() => {
-      setIsDexChartLoadFailed(true);
-    }, 12000);
-    return () => window.clearTimeout(timeout);
-  }, [isBuyDialogOpen, dexscreenerEmbedUrl, isDexChartLoaded, isDexChartLoadFailed]);
+  const professionalChartData = useMemo(() => {
+    const raw = chartCandlesQuery.data ?? [];
+    return raw
+      .map((candle) => {
+        const normalizedTs =
+          candle.timestamp > 10_000_000_000
+            ? candle.timestamp
+            : candle.timestamp * 1000;
+        const date = new Date(normalizedTs);
+        const label =
+          chartRequestConfig.timeframe === "day"
+            ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+            : date.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+        const fullLabel = date.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        return {
+          ...candle,
+          label,
+          fullLabel,
+          ts: normalizedTs,
+        };
+      })
+      .filter((point) =>
+        Number.isFinite(point.open) &&
+        Number.isFinite(point.high) &&
+        Number.isFinite(point.low) &&
+        Number.isFinite(point.close)
+      );
+  }, [chartCandlesQuery.data, chartRequestConfig.timeframe]);
+  const hasProfessionalChartData = professionalChartData.length >= 2;
+  const professionalChartFirst = hasProfessionalChartData ? professionalChartData[0] : null;
+  const professionalChartLast = hasProfessionalChartData
+    ? professionalChartData[professionalChartData.length - 1]
+    : null;
+  const professionalChartDeltaPct =
+    professionalChartFirst && professionalChartLast && professionalChartFirst.close > 0
+      ? ((professionalChartLast.close - professionalChartFirst.close) / professionalChartFirst.close) * 100
+      : null;
+  const displayChartDeltaPct = professionalChartDeltaPct ?? currentTradeDeltaPct;
+  const professionalChartTrendPositive =
+    professionalChartDeltaPct == null ? true : professionalChartDeltaPct >= 0;
+  const professionalChartStroke = professionalChartTrendPositive ? "#74f37a" : "#ff6b6b";
+  const professionalChartFill = professionalChartTrendPositive
+    ? "rgba(116,243,122,0.18)"
+    : "rgba(255,107,107,0.18)";
 
   useEffect(() => {
     if (!pendingQuickBuyAutoExecute) return;
@@ -3135,7 +3237,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
                         <div>
                           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
-                          <div className="text-sm font-medium text-foreground">Live snapshots + Dex source</div>
+                          <div className="text-sm font-medium text-foreground">Professional price chart + live route</div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
@@ -3166,7 +3268,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
                             )}
                           >
-                            Info
+                            Volume
                           </button>
                           <button
                             type="button"
@@ -3178,7 +3280,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
                             )}
                           >
-                            Trades
+                            Fill
                           </button>
                         </div>
                       </div>
@@ -3202,8 +3304,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </div>
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                             <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Change</div>
-                            <div className={cn("mt-1 text-sm font-semibold", currentTradeDeltaPct == null ? "text-foreground" : currentTradeDeltaPct >= 0 ? "text-gain" : "text-loss")}>
-                              {currentTradeDeltaPct == null ? "-" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
+                            <div className={cn("mt-1 text-sm font-semibold", displayChartDeltaPct == null ? "text-foreground" : displayChartDeltaPct >= 0 ? "text-gain" : "text-loss")}>
+                              {displayChartDeltaPct == null ? "-" : `${displayChartDeltaPct >= 0 ? "+" : ""}${displayChartDeltaPct.toFixed(1)}%`}
                             </div>
                           </div>
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
@@ -3216,25 +3318,118 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
 
                       <div className="relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3">
-                        {dexscreenerEmbedUrl && !isDexChartLoadFailed ? (
-                          <div className="relative h-full w-full overflow-hidden rounded-xl border border-white/10 bg-black/40">
-                            {!isDexChartLoaded && (
-                              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35">
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  Loading full chart...
-                                </div>
-                              </div>
-                            )}
-                            <iframe
-                              src={dexscreenerEmbedUrl}
-                              title={`${displayTokenLabel} chart`}
-                              className="h-full w-full"
-                              loading="lazy"
-                              onLoad={() => setIsDexChartLoaded(true)}
-                              onError={() => setIsDexChartLoadFailed(true)}
-                              allow="fullscreen; clipboard-write"
-                            />
+                        {hasProfessionalChartData ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <ComposedChart data={professionalChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
+                              <defs>
+                                <linearGradient id={`buyChartPriceFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.3} />
+                                  <stop offset="100%" stopColor={professionalChartFill} stopOpacity={0.01} />
+                                </linearGradient>
+                                <linearGradient id={`buyChartVolumeFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.22} />
+                                  <stop offset="100%" stopColor={professionalChartStroke} stopOpacity={0.03} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                              <XAxis
+                                dataKey="label"
+                                axisLine={false}
+                                tickLine={false}
+                                minTickGap={28}
+                                tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
+                              />
+                              <YAxis
+                                yAxisId="price"
+                                axisLine={false}
+                                tickLine={false}
+                                width={78}
+                                tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 10 }}
+                                tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
+                              />
+                              {isChartInfoVisible ? (
+                                <YAxis
+                                  yAxisId="volume"
+                                  orientation="right"
+                                  axisLine={false}
+                                  tickLine={false}
+                                  width={56}
+                                  tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }}
+                                  tickFormatter={(v: number) =>
+                                    Number(v) >= 1_000_000
+                                      ? `${(Number(v) / 1_000_000).toFixed(1)}M`
+                                      : Number(v) >= 1_000
+                                        ? `${(Number(v) / 1_000).toFixed(1)}K`
+                                        : `${Math.round(Number(v))}`
+                                  }
+                                />
+                              ) : null}
+                              <RechartsTooltip
+                                cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
+                                contentStyle={{
+                                  background: "rgba(10,12,16,0.94)",
+                                  border: "1px solid rgba(255,255,255,0.12)",
+                                  borderRadius: 12,
+                                  color: "#fff",
+                                  boxShadow: "0 16px 40px -24px rgba(0,0,0,0.9)",
+                                }}
+                                labelStyle={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}
+                                labelFormatter={(_, payload) =>
+                                  payload?.[0]?.payload?.fullLabel ?? ""
+                                }
+                                formatter={(value: number, name: string) => {
+                                  if (name === "close") {
+                                    return [formatUsdCompact(Number(value)), "Close"];
+                                  }
+                                  if (name === "volume") {
+                                    return [Number(value).toLocaleString(), "Volume"];
+                                  }
+                                  return [String(value), name];
+                                }}
+                              />
+                              {isChartInfoVisible ? (
+                                <Bar
+                                  yAxisId="volume"
+                                  dataKey="volume"
+                                  barSize={3}
+                                  fill={`url(#buyChartVolumeFill-${post.id})`}
+                                  opacity={0.9}
+                                />
+                              ) : null}
+                              <Area
+                                yAxisId="price"
+                                type="monotone"
+                                dataKey="close"
+                                stroke={professionalChartStroke}
+                                fill={isChartTradesVisible ? `url(#buyChartPriceFill-${post.id})` : "transparent"}
+                                strokeWidth={2.2}
+                                dot={false}
+                                activeDot={{ r: 4, stroke: "#090c10", strokeWidth: 2, fill: professionalChartStroke }}
+                              />
+                              <Line
+                                yAxisId="price"
+                                type="monotone"
+                                dataKey="close"
+                                stroke={professionalChartStroke}
+                                strokeWidth={1.7}
+                                dot={false}
+                                isAnimationActive={false}
+                              />
+                              <Brush
+                                dataKey="label"
+                                height={20}
+                                stroke={professionalChartStroke}
+                                fill="rgba(255,255,255,0.04)"
+                                travellerWidth={8}
+                              />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
+                          <div className="flex h-full items-center justify-center">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading professional chart...
+                            </div>
                           </div>
                         ) : tradeChartData.length >= 2 ? (
                           <ResponsiveContainer width="100%" height="100%">
@@ -3309,12 +3504,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
 
                       <div className="relative border-t border-white/10 px-4 py-3 text-[11px] text-muted-foreground">
-                        {resolvedLiquidityUsd != null ||
-                        resolvedVolume24hUsd != null ||
-                        resolvedPriceChange24hPct != null ||
-                        resolvedBuys24h != null ||
-                        resolvedSells24h != null ||
-                        resolvedDexId ? (
+                        {hasProfessionalChartData ? (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            <span>
+                              Chart feed: GeckoTerminal ({chartRequestConfig.timeframe}/{chartRequestConfig.aggregate})
+                            </span>
+                            <span>
+                              Updated: {professionalChartLast ? new Date(professionalChartLast.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "-"}
+                            </span>
+                          </div>
+                        ) : resolvedLiquidityUsd != null ||
+                          resolvedVolume24hUsd != null ||
+                          resolvedPriceChange24hPct != null ||
+                          resolvedBuys24h != null ||
+                          resolvedSells24h != null ||
+                          resolvedDexId ? (
                           <div className="flex flex-wrap gap-x-4 gap-y-1">
                             <span>Liquidity: {resolvedLiquidityUsd != null ? `$${resolvedLiquidityUsd.toLocaleString()}` : "-"}</span>
                             <span>24h Vol: {resolvedVolume24hUsd != null ? `$${resolvedVolume24hUsd.toLocaleString()}` : "-"}</span>
@@ -3326,6 +3530,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             </span>
                             <span>DEX: {resolvedDexId ?? "-"}</span>
                           </div>
+                        ) : chartCandlesQuery.error ? (
+                          "Professional chart feed unavailable right now. Showing fallback market-cap view."
                         ) : (
                           "Chart and token data are sourced live from Dexscreener."
                         )}

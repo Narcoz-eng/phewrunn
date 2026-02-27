@@ -119,6 +119,18 @@ const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100; // max 1.00%
 const JUPITER_PLATFORM_FEE_BPS = FIXED_PLATFORM_FEE_BPS;
 const JUPITER_PLATFORM_FEE_ACCOUNT =
   process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || PLATFORM_FEE_ACCOUNT_FALLBACK;
+const JUPITER_PRIORITY_LEVEL = (() => {
+  const raw = process.env.JUPITER_PRIORITY_LEVEL?.trim().toLowerCase();
+  if (raw === "medium" || raw === "high" || raw === "veryhigh") {
+    return raw === "veryhigh" ? "veryHigh" : raw;
+  }
+  return "veryHigh";
+})();
+const JUPITER_MAX_PRIORITY_FEE_LAMPORTS = (() => {
+  const raw = Number(process.env.JUPITER_MAX_PRIORITY_FEE_LAMPORTS ?? "1000000");
+  if (!Number.isFinite(raw) || raw <= 0) return 1_000_000;
+  return Math.max(10_000, Math.min(5_000_000, Math.round(raw)));
+})();
 
 function getActivePlatformFeeBps(): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
@@ -173,6 +185,15 @@ function safeString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function safeFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell" {
@@ -2886,6 +2907,14 @@ const JupiterFeeConfirmSchema = z.object({
   walletAddress: z.string().min(32).max(64),
 });
 
+const ChartCandlesProxySchema = z.object({
+  poolAddress: z.string().min(10).max(128),
+  chainType: z.enum(["solana", "evm", "ethereum"]).optional(),
+  timeframe: z.enum(["minute", "hour", "day"]).optional().default("minute"),
+  aggregate: z.number().int().min(1).max(60).optional().default(5),
+  limit: z.number().int().min(20).max(300).optional().default(160),
+});
+
 type PriceRoutePostRecord = {
   id: string;
   contractAddress: string | null;
@@ -3122,13 +3151,22 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     }
   }
 
-  const outboundPayload = {
+  const outboundPayload: Record<string, unknown> = {
     quoteResponse: payload.quoteResponse,
     userPublicKey: payload.userPublicKey,
-    wrapAndUnwrapSol: payload.wrapAndUnwrapSol,
-    dynamicComputeUnitLimit: payload.dynamicComputeUnitLimit,
-    ...(platformFeeBps > 0 ? { feeAccount: JUPITER_PLATFORM_FEE_ACCOUNT } : {}),
+    wrapAndUnwrapSol: payload.wrapAndUnwrapSol ?? true,
+    dynamicComputeUnitLimit: payload.dynamicComputeUnitLimit ?? true,
+    prioritizationFeeLamports: {
+      priorityLevelWithMaxLamports: {
+        priorityLevel: JUPITER_PRIORITY_LEVEL,
+        maxLamports: JUPITER_MAX_PRIORITY_FEE_LAMPORTS,
+        global: false,
+      },
+    },
   };
+  if (platformFeeBps > 0) {
+    outboundPayload.feeAccount = JUPITER_PLATFORM_FEE_ACCOUNT;
+  }
 
   const result = await forwardJupiterRequest(JUPITER_SWAP_URLS, {
     method: "POST",
@@ -3333,6 +3371,100 @@ postsRouter.post(
     return c.json({ data: updated });
   }
 );
+
+postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), async (c) => {
+  const payload = c.req.valid("json");
+  const network = payload.chainType === "solana" ? "solana" : "eth";
+  const params = new URLSearchParams({
+    aggregate: String(payload.aggregate ?? 5),
+    limit: String(payload.limit ?? 160),
+    currency: "usd",
+    token: "base",
+  });
+
+  const geckoUrl = `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${payload.poolAddress}/ohlcv/${payload.timeframe ?? "minute"}?${params.toString()}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+
+  try {
+    const response = await fetch(geckoUrl, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    const bodyText = await response.text();
+    if (!response.ok) {
+      return new Response(bodyText || "Chart feed unavailable", {
+        status: response.status,
+        headers: {
+          "content-type": response.headers.get("content-type") || "application/json",
+          "cache-control": "no-store",
+        },
+      });
+    }
+
+    const parsed = JSON.parse(bodyText) as unknown;
+    const top = safeRecord(parsed);
+    const data = safeRecord(top?.data);
+    const attributes = safeRecord(data?.attributes);
+    const rawList = Array.isArray(attributes?.ohlcv_list) ? attributes.ohlcv_list : [];
+
+    const candles = rawList
+      .map((row) => {
+        if (!Array.isArray(row) || row.length < 6) return null;
+        const timestamp = safeFiniteNumber(row[0]);
+        const open = safeFiniteNumber(row[1]);
+        const high = safeFiniteNumber(row[2]);
+        const low = safeFiniteNumber(row[3]);
+        const close = safeFiniteNumber(row[4]);
+        const volume = safeFiniteNumber(row[5]) ?? 0;
+        if (
+          timestamp === null ||
+          open === null ||
+          high === null ||
+          low === null ||
+          close === null
+        ) {
+          return null;
+        }
+        return {
+          timestamp,
+          open,
+          high,
+          low,
+          close,
+          volume,
+        };
+      })
+      .filter((entry): entry is { timestamp: number; open: number; high: number; low: number; close: number; volume: number } => entry !== null)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    return c.json({
+      data: {
+        network,
+        poolAddress: payload.poolAddress,
+        timeframe: payload.timeframe ?? "minute",
+        aggregate: payload.aggregate ?? 5,
+        candles,
+      },
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    const message =
+      error instanceof Error ? error.message : "Failed to load chart candles";
+    return c.json(
+      {
+        error: {
+          message,
+          code: "CHART_CANDLES_FAILED",
+        },
+      },
+      502
+    );
+  }
+});
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
   if (!isCronMaintenanceHealthy()) {
