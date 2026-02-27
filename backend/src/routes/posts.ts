@@ -130,6 +130,29 @@ function clampPosterFeeShareBps(value: number | null | undefined): number {
   return Math.min(MAX_POSTER_TRADE_FEE_SHARE_BPS, Math.max(0, Math.round(Number(value))));
 }
 
+function isPrismaSchemaDriftError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P2021" || code === "P2022") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+}
+
 function safeRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -156,6 +179,19 @@ function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell
   const inputMint = safeString(quote.inputMint);
   return inputMint === SOL_MINT ? "buy" : "sell";
 }
+
+type JupiterSwapPostContext = {
+  id: string;
+  chainType: string | null;
+  authorId: string;
+  author: {
+    id: string;
+    walletAddress: string | null;
+    tradeFeeRewardsEnabled: boolean;
+    tradeFeeShareBps: number;
+    tradeFeePayoutAddress: string | null;
+  };
+};
 
 async function attachWalletTradeSnapshots<T extends {
   [key: string]: unknown;
@@ -2752,8 +2788,10 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
   const platformFeeBps = getActivePlatformFeeBps();
   const quote = safeRecord(payload.quoteResponse) ?? {};
 
-  const postContext = payload.postId
-    ? await prisma.post.findUnique({
+  let postContext: JupiterSwapPostContext | null = null;
+  if (payload.postId) {
+    try {
+      postContext = await prisma.post.findUnique({
         where: { id: payload.postId },
         select: {
           id: true,
@@ -2769,8 +2807,44 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
             },
           },
         },
-      })
-    : null;
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+
+      // Fallback for environments where fee columns are not yet migrated.
+      const fallbackPost = await prisma.post.findUnique({
+        where: { id: payload.postId },
+        select: {
+          id: true,
+          chainType: true,
+          authorId: true,
+          author: {
+            select: {
+              id: true,
+              walletAddress: true,
+            },
+          },
+        },
+      });
+
+      postContext = fallbackPost
+        ? {
+            id: fallbackPost.id,
+            chainType: fallbackPost.chainType,
+            authorId: fallbackPost.authorId,
+            author: {
+              id: fallbackPost.author.id,
+              walletAddress: fallbackPost.author.walletAddress,
+              tradeFeeRewardsEnabled: true,
+              tradeFeeShareBps: DEFAULT_POSTER_TRADE_FEE_SHARE_BPS,
+              tradeFeePayoutAddress: null,
+            },
+          }
+        : null;
+    }
+  }
 
   const outboundPayload = {
     quoteResponse: payload.quoteResponse,
@@ -2852,27 +2926,34 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     const posterShareAmountAtomic =
       ((platformFeeAmountBigInt * BigInt(posterShareBps)) / 10_000n).toString();
 
-    const createdEvent = await prisma.tradeFeeEvent.create({
-      data: {
-        postId: postContext.id,
-        posterUserId: postContext.authorId,
-        traderUserId: currentUser?.id ?? null,
-        traderWalletAddress: payload.userPublicKey,
-        tradeSide: payload.tradeSide ?? deriveTradeSideFromQuote(quote),
-        inputMint: safeString(quote.inputMint) ?? SOL_MINT,
-        outputMint: safeString(quote.outputMint) ?? SOL_MINT,
-        inAmountAtomic: safeNumericString(quote.inAmount) ?? "0",
-        outAmountAtomic: safeNumericString(quote.outAmount) ?? "0",
-        platformFeeBps: platformFeeBpsApplied,
-        platformFeeAmountAtomic: platformFeeAmountBigInt.toString(),
-        feeMint: platformFeeMint,
-        posterShareBps,
-        posterShareAmountAtomic,
-        posterPayoutAddress: postContext.author.tradeFeePayoutAddress ?? postContext.author.walletAddress,
-      },
-      select: { id: true },
-    });
-    tradeFeeEventId = createdEvent.id;
+    try {
+      const createdEvent = await prisma.tradeFeeEvent.create({
+        data: {
+          postId: postContext.id,
+          posterUserId: postContext.authorId,
+          traderUserId: currentUser?.id ?? null,
+          traderWalletAddress: payload.userPublicKey,
+          tradeSide: payload.tradeSide ?? deriveTradeSideFromQuote(quote),
+          inputMint: safeString(quote.inputMint) ?? SOL_MINT,
+          outputMint: safeString(quote.outputMint) ?? SOL_MINT,
+          inAmountAtomic: safeNumericString(quote.inAmount) ?? "0",
+          outAmountAtomic: safeNumericString(quote.outAmount) ?? "0",
+          platformFeeBps: platformFeeBpsApplied,
+          platformFeeAmountAtomic: platformFeeAmountBigInt.toString(),
+          feeMint: platformFeeMint,
+          posterShareBps,
+          posterShareAmountAtomic,
+          posterPayoutAddress: postContext.author.tradeFeePayoutAddress ?? postContext.author.walletAddress,
+        },
+        select: { id: true },
+      });
+      tradeFeeEventId = createdEvent.id;
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      console.warn("[posts/jupiter/swap] trade fee event logging skipped (schema not ready)");
+    }
   }
 
   return new Response(
@@ -2903,15 +2984,36 @@ postsRouter.post(
     }
 
     const payload = c.req.valid("json");
-    const existing = await prisma.tradeFeeEvent.findUnique({
-      where: { id: payload.tradeFeeEventId },
-      select: {
-        id: true,
-        traderUserId: true,
-        traderWalletAddress: true,
-        txSignature: true,
-      },
-    });
+    let existing:
+      | {
+          id: string;
+          traderUserId: string | null;
+          traderWalletAddress: string;
+          txSignature: string | null;
+        }
+      | null = null;
+    try {
+      existing = await prisma.tradeFeeEvent.findUnique({
+        where: { id: payload.tradeFeeEventId },
+        select: {
+          id: true,
+          traderUserId: true,
+          traderWalletAddress: true,
+          txSignature: true,
+        },
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      return c.json({
+        data: {
+          id: payload.tradeFeeEventId,
+          txSignature: payload.txSignature,
+          skipped: true,
+        },
+      });
+    }
 
     if (!existing) {
       return c.json({ error: { message: "Trade fee event not found", code: "NOT_FOUND" } }, 404);
@@ -2929,14 +3031,28 @@ postsRouter.post(
       return c.json({ error: { message: "Fee event already confirmed", code: "ALREADY_CONFIRMED" } }, 409);
     }
 
-    const updated = await prisma.tradeFeeEvent.update({
-      where: { id: existing.id },
-      data: { txSignature: payload.txSignature },
-      select: {
-        id: true,
-        txSignature: true,
-      },
-    });
+    let updated: { id: string; txSignature: string | null };
+    try {
+      updated = await prisma.tradeFeeEvent.update({
+        where: { id: existing.id },
+        data: { txSignature: payload.txSignature },
+        select: {
+          id: true,
+          txSignature: true,
+        },
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      return c.json({
+        data: {
+          id: payload.tradeFeeEventId,
+          txSignature: payload.txSignature,
+          skipped: true,
+        },
+      });
+    }
 
     return c.json({ data: updated });
   }

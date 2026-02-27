@@ -27,6 +27,29 @@ const hasUserSettingsPlatformFeeAccount = !!(
 const activeUserSettingsPlatformFeeBps = hasUserSettingsPlatformFeeAccount ? userSettingsPlatformFeeBps : 0;
 const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100;
 
+function isPrismaSchemaDriftError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P2021" || code === "P2022") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+}
+
 const UpdateFeeSettingsSchema = z.object({
   tradeFeeRewardsEnabled: z.boolean().optional(),
   tradeFeeShareBps: z.number().int().min(0).max(MAX_POSTER_TRADE_FEE_SHARE_BPS).optional(),
@@ -174,14 +197,48 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
-    select: {
-      walletAddress: true,
-      walletProvider: true,
-      walletConnectedAt: true,
-    },
-  });
+  let user:
+    | {
+        walletAddress: string | null;
+        walletProvider: string | null;
+        walletConnectedAt: Date | null;
+      }
+    | {
+        walletAddress: string | null;
+        walletProvider: null;
+        walletConnectedAt: null;
+      }
+    | null = null;
+
+  try {
+    user = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+        walletProvider: true,
+        walletConnectedAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+      },
+    });
+
+    user = fallbackUser
+      ? {
+          walletAddress: fallbackUser.walletAddress,
+          walletProvider: null,
+          walletConnectedAt: null,
+        }
+      : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -250,13 +307,32 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
   // Rate limiting: Check how many wallet connections this user has made in the last hour
   // TODO: Implement proper rate limiting with a dedicated rate limit table for audit trail
   // For now, we'll just check if they recently connected a wallet
-  const user = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
-    select: {
-      walletAddress: true,
-      walletConnectedAt: true,
-    },
-  });
+  let user: { walletAddress: string | null; walletConnectedAt: Date | null } | null = null;
+  try {
+    user = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+        walletConnectedAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+      },
+    });
+    user = fallbackUser
+      ? {
+          walletAddress: fallbackUser.walletAddress,
+          walletConnectedAt: null,
+        }
+      : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -278,12 +354,29 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
   }
 
   // Check if this wallet is already connected to another user
-  const existingWalletUser = await prisma.user.findFirst({
-    where: {
-      walletAddress,
-      NOT: { id: sessionUser.id },
-    },
-  });
+  let existingWalletUser: { id: string } | null = null;
+  try {
+    existingWalletUser = await prisma.user.findFirst({
+      where: {
+        walletAddress,
+        NOT: { id: sessionUser.id },
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    return c.json(
+      {
+        error: {
+          message: "Wallet linking is temporarily unavailable while database sync finishes.",
+          code: "DATABASE_NOT_READY",
+        },
+      },
+      503
+    );
+  }
 
   if (existingWalletUser) {
     return c.json({
@@ -296,28 +389,88 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
 
   // Update user with wallet info
   // TODO: Log wallet changes for audit trail
-  const updatedUser = await prisma.user.update({
-    where: { id: sessionUser.id },
-    data: {
-      walletAddress,
-      walletProvider: walletProvider || "phantom",
-      walletConnectedAt: new Date(),
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      walletAddress: true,
-      walletProvider: true,
-      walletConnectedAt: true,
-      username: true,
-      level: true,
-      xp: true,
-      bio: true,
-      createdAt: true,
-    },
-  });
+  let updatedUser: {
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+    walletAddress: string | null;
+    walletProvider: string | null;
+    walletConnectedAt: Date | null;
+    username: string | null;
+    level: number;
+    xp: number;
+    bio: string | null;
+    createdAt: Date;
+  };
+
+  try {
+    updatedUser = await prisma.user.update({
+      where: { id: sessionUser.id },
+      data: {
+        walletAddress,
+        walletProvider: walletProvider || "phantom",
+        walletConnectedAt: new Date(),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        walletAddress: true,
+        walletProvider: true,
+        walletConnectedAt: true,
+        username: true,
+        level: true,
+        xp: true,
+        bio: true,
+        createdAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const fallbackUpdatedUser = await prisma.user
+      .update({
+        where: { id: sessionUser.id },
+        data: {
+          walletAddress,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          walletAddress: true,
+          username: true,
+          level: true,
+          xp: true,
+          bio: true,
+          createdAt: true,
+        },
+      })
+      .catch(() => null);
+
+    if (!fallbackUpdatedUser) {
+      return c.json(
+        {
+          error: {
+            message: "Wallet linking is temporarily unavailable while database sync finishes.",
+            code: "DATABASE_NOT_READY",
+          },
+        },
+        503
+      );
+    }
+
+    updatedUser = {
+      ...fallbackUpdatedUser,
+      walletProvider: null,
+      walletConnectedAt: null,
+    };
+  }
 
   return c.json({ data: updatedUser });
 });
@@ -330,13 +483,32 @@ usersRouter.delete("/me/wallet", requireAuth, async (c) => {
   }
 
   // Get current user to check rate limit
-  const user = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
-    select: {
-      walletAddress: true,
-      walletConnectedAt: true,
-    },
-  });
+  let user: { walletAddress: string | null; walletConnectedAt: Date | null } | null = null;
+  try {
+    user = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+        walletConnectedAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        walletAddress: true,
+      },
+    });
+    user = fallbackUser
+      ? {
+          walletAddress: fallbackUser.walletAddress,
+          walletConnectedAt: null,
+        }
+      : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -367,28 +539,87 @@ usersRouter.delete("/me/wallet", requireAuth, async (c) => {
 
   // Clear wallet info
   // TODO: Log wallet disconnection for audit trail
-  const updatedUser = await prisma.user.update({
-    where: { id: sessionUser.id },
-    data: {
-      walletAddress: null,
+  let updatedUser: {
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+    walletAddress: string | null;
+    walletProvider: string | null;
+    walletConnectedAt: Date | null;
+    username: string | null;
+    level: number;
+    xp: number;
+    bio: string | null;
+    createdAt: Date;
+  };
+  try {
+    updatedUser = await prisma.user.update({
+      where: { id: sessionUser.id },
+      data: {
+        walletAddress: null,
+        walletProvider: null,
+        walletConnectedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        walletAddress: true,
+        walletProvider: true,
+        walletConnectedAt: true,
+        username: true,
+        level: true,
+        xp: true,
+        bio: true,
+        createdAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const fallbackUpdatedUser = await prisma.user
+      .update({
+        where: { id: sessionUser.id },
+        data: {
+          walletAddress: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          walletAddress: true,
+          username: true,
+          level: true,
+          xp: true,
+          bio: true,
+          createdAt: true,
+        },
+      })
+      .catch(() => null);
+
+    if (!fallbackUpdatedUser) {
+      return c.json(
+        {
+          error: {
+            message: "Wallet unlink is temporarily unavailable while database sync finishes.",
+            code: "DATABASE_NOT_READY",
+          },
+        },
+        503
+      );
+    }
+
+    updatedUser = {
+      ...fallbackUpdatedUser,
       walletProvider: null,
       walletConnectedAt: null,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      walletAddress: true,
-      walletProvider: true,
-      walletConnectedAt: true,
-      username: true,
-      level: true,
-      xp: true,
-      bio: true,
-      createdAt: true,
-    },
-  });
+    };
+  }
 
   return c.json({ data: updatedUser });
 });
