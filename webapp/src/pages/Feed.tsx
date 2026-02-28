@@ -79,6 +79,7 @@ function readCachedFirstFeedPage(tab: FeedTab, search: string): FeedPage | null 
       typeof parsed?.cachedAt !== "number" ||
       !parsed.page ||
       !Array.isArray(parsed.page.items) ||
+      parsed.page.items.length === 0 ||
       Date.now() - parsed.cachedAt > FEED_FIRST_PAGE_CACHE_TTL_MS
     ) {
       return null;
@@ -93,8 +94,13 @@ function readCachedFirstFeedPage(tab: FeedTab, search: string): FeedPage | null 
 function writeCachedFirstFeedPage(tab: FeedTab, search: string, page: FeedPage): void {
   if (typeof window === "undefined") return;
   try {
+    const cacheKey = getFeedFirstPageCacheKey(tab, search);
+    if (!Array.isArray(page.items) || page.items.length === 0) {
+      window.sessionStorage.removeItem(cacheKey);
+      return;
+    }
     window.sessionStorage.setItem(
-      getFeedFirstPageCacheKey(tab, search),
+      cacheKey,
       JSON.stringify({
         cachedAt: Date.now(),
         page,
@@ -249,8 +255,15 @@ export default function Feed() {
       );
     }
 
-    const json = await response.json().catch(() => ({}));
-    const items = Array.isArray(json?.data) ? (json.data as Post[]) : [];
+    const json = await response.json().catch(() => null);
+    if (!json || !Array.isArray((json as { data?: unknown }).data)) {
+      throw new ApiError(
+        "Feed payload was invalid. Please retry.",
+        response.status,
+        json
+      );
+    }
+    const items = json.data as Post[];
     const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
 
     return {
@@ -319,7 +332,7 @@ export default function Feed() {
           pageParams: [undefined],
         }
       : undefined,
-    enabled: !!session?.user,
+    enabled: activeTab !== "following" || !!session?.user,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 429) {
         return false;
@@ -350,8 +363,9 @@ export default function Feed() {
     setFrozenPostsWhileOverlayOpen(null);
   }, [posts, shouldFreezeFeedItems]);
   const displayedPosts = frozenPostsWhileOverlayOpen ?? posts;
+  const shouldShowFollowingAuthState = activeTab === "following" && !session?.user;
   const hasPosts = displayedPosts.length > 0;
-  const shouldShowFeedFatalError = Boolean(postsError && !hasPosts);
+  const shouldShowFeedFatalError = Boolean(postsError && !hasPosts && !shouldShowFollowingAuthState);
   const shouldShowFeedSoftError = Boolean(postsError && hasPosts);
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
 
@@ -387,13 +401,38 @@ export default function Feed() {
           };
         }
 
+        const preserveDisplacedItems = hasLiveOverlay();
+        if (preserveDisplacedItems) {
+          return oldData;
+        }
         const nextIds = new Set(nextFirstPage.items.map((item) => item.id));
-        const nextPages: FeedPage[] = [nextFirstPage];
+        const [previousFirstPage, ...restPages] = oldData.pages;
+        const carryOverItems = (previousFirstPage?.items ?? []).filter((item) => !nextIds.has(item.id));
 
-        for (const page of oldData.pages.slice(1)) {
+        const nextPages: FeedPage[] = [nextFirstPage];
+        const globalSeenIds = new Set(nextFirstPage.items.map((item) => item.id));
+
+        const restWithCarry: FeedPage[] = [];
+        if (carryOverItems.length > 0) {
+          restWithCarry.push({
+            hasMore: true,
+            nextCursor: nextFirstPage.nextCursor ?? null,
+            items: carryOverItems,
+          });
+        }
+        restWithCarry.push(...restPages);
+
+        for (const page of restWithCarry) {
+          const dedupedItems = page.items.filter((item) => {
+            if (nextIds.has(item.id)) return false;
+            if (globalSeenIds.has(item.id)) return false;
+            globalSeenIds.add(item.id);
+            return true;
+          });
+          if (dedupedItems.length === 0) continue;
           nextPages.push({
             ...page,
-            items: page.items.filter((item) => !nextIds.has(item.id)),
+            items: dedupedItems,
           });
         }
 
@@ -403,7 +442,7 @@ export default function Feed() {
         };
       });
     },
-    [getFeedQueryKey, queryClient]
+    [getFeedQueryKey, hasLiveOverlay, queryClient]
   );
 
   const applyPendingLatestPosts = useCallback(() => {
@@ -989,6 +1028,18 @@ export default function Feed() {
                 />
               ))}
             </>
+          ) : shouldShowFollowingAuthState ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+                <Sparkles className="h-10 w-10 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground text-lg">Sign in to see Following</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Follow traders and their new calls will appear here.
+                </p>
+              </div>
+            </div>
           ) : shouldShowFeedFatalError ? (
             <FeedError
               error={postsError as Error}

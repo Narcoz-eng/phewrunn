@@ -63,6 +63,7 @@ type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
 type ProfileViewTab = "profile" | "settings";
 const PROFILE_ME_CACHE_TTL_MS = 60_000;
+const PROFILE_ME_LAST_CACHE_KEY = "phew.profile.me:last";
 const PROFILE_POSTS_CACHE_TTL_MS = 45_000;
 const PROFILE_WALLET_CACHE_TTL_MS = 60_000;
 
@@ -162,10 +163,15 @@ export default function Profile() {
   const cropRenderScale = cropBaseScale * cropZoom;
 
   const meProfileCacheKey = session?.user?.id ? `phew.profile.me:${session.user.id}` : null;
-  const cachedProfile = useMemo(
+  const cachedProfileBySession = useMemo(
     () => (meProfileCacheKey ? readSessionCache<ExtendedUser>(meProfileCacheKey, PROFILE_ME_CACHE_TTL_MS) : null),
     [meProfileCacheKey]
   );
+  const cachedProfileLast = useMemo(
+    () => readSessionCache<ExtendedUser>(PROFILE_ME_LAST_CACHE_KEY, PROFILE_ME_CACHE_TTL_MS),
+    []
+  );
+  const cachedProfile = cachedProfileBySession ?? cachedProfileLast;
   const cachedPosts = useMemo(
     () =>
       session?.user?.id
@@ -198,11 +204,14 @@ export default function Profile() {
   } = useQuery({
     queryKey: ["profile", "me"],
     queryFn: async () => {
+      if (!session?.user && cachedProfile) {
+        return cachedProfile;
+      }
       const userData = await api.get<ExtendedUser>("/api/me");
       return userData;
     },
     initialData: cachedProfile ?? undefined,
-    enabled: !!session?.user,
+    enabled: !!session?.user || !!cachedProfile,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
     refetchInterval: session?.user ? 15_000 : false,
@@ -324,8 +333,11 @@ export default function Profile() {
   const displayWalletAddress = user?.walletAddress ?? connectedWalletAddress;
 
   useEffect(() => {
-    if (!meProfileCacheKey || !user || !isUserFetched) return;
-    writeSessionCache(meProfileCacheKey, user);
+    if (!user || !isUserFetched) return;
+    writeSessionCache(PROFILE_ME_LAST_CACHE_KEY, user);
+    if (meProfileCacheKey) {
+      writeSessionCache(meProfileCacheKey, user);
+    }
   }, [isUserFetched, meProfileCacheKey, user]);
 
   useEffect(() => {
@@ -738,6 +750,7 @@ export default function Profile() {
       return value;
     }
   };
+  const shouldShowProfileSignInState = !session?.user && !cachedProfile;
 
   return (
     <div className="min-h-screen bg-background">
@@ -1388,6 +1401,11 @@ export default function Profile() {
                 </div>
               </div>
             )}
+          </div>
+        ) : shouldShowProfileSignInState ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-4">
+            <p className="text-muted-foreground">Sign in to view your profile.</p>
+            <Button onClick={() => navigate("/login")}>Go to Sign In</Button>
           </div>
         ) : (
           // Error state

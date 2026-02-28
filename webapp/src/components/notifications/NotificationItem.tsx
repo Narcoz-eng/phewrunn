@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Notification, getAvatarUrl, formatTimeAgo, stripContractAddress } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -49,8 +49,8 @@ function getNotificationIcon(notification: Notification) {
 
 interface NotificationItemProps {
   notification: Notification;
-  onMarkClicked: (id: string) => void;
-  onDismiss: (id: string) => void;
+  onMarkClicked: (notification: Notification) => void;
+  onDismiss: (notification: Notification) => void;
   onProfileClick: (userId: string, username?: string | null) => void;
 }
 
@@ -61,8 +61,12 @@ export function NotificationItem({
   onProfileClick,
 }: NotificationItemProps) {
   const navigate = useNavigate();
+  const [isExpanded, setIsExpanded] = useState(false);
   const fromUser = notification.fromUser;
   const { icon: IconComponent, colorClass } = getNotificationIcon(notification);
+  const mergedItems = Array.isArray(notification.mergedItems) ? notification.mergedItems : [];
+  const hasMergedItems = mergedItems.length > 1;
+  const mergedCount = notification.mergedCount ?? mergedItems.length;
 
   const detailPreview = useMemo(
     () => stripContractAddress(notification.post?.content ?? "").trim(),
@@ -78,7 +82,11 @@ export function NotificationItem({
 
   const handleRowActivate = () => {
     if (!notification.read) {
-      onMarkClicked(notification.id);
+      onMarkClicked(notification);
+    }
+    if (hasMergedItems) {
+      setIsExpanded((prev) => !prev);
+      return;
     }
     if (destinationHref) {
       navigate(destinationHref);
@@ -101,13 +109,13 @@ export function NotificationItem({
 
   const handleDismissClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onDismiss(notification.id);
+    onDismiss(notification);
   };
 
   const handleMarkReadClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!notification.read) {
-      onMarkClicked(notification.id);
+      onMarkClicked(notification);
     }
   };
 
@@ -172,6 +180,18 @@ export function NotificationItem({
           <p className={cn("mt-0.5 text-sm leading-relaxed text-foreground/95", !notification.read && "font-medium")}>
             {notification.message}
           </p>
+          {hasMergedItems ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsExpanded((prev) => !prev);
+              }}
+              className="mt-1 text-xs text-primary hover:underline"
+            >
+              {isExpanded ? "Hide grouped activity" : `Show grouped activity (${mergedCount})`}
+            </button>
+          ) : null}
           {detailPreview ? (
             <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{detailPreview}</p>
           ) : null}
@@ -205,6 +225,50 @@ export function NotificationItem({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
+
+      {hasMergedItems && isExpanded ? (
+        <div className="border-t border-border/60 bg-muted/20 px-4 pb-3 pt-2">
+          <div className="space-y-2">
+            {mergedItems.map((item) => {
+              const itemPreview = stripContractAddress(item.post?.content ?? "").trim();
+              const itemHref = item.postId
+                ? `/post/${item.postId}`
+                : item.fromUser
+                  ? `/profile/${item.fromUser.username || item.fromUser.id}`
+                  : null;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!item.read) {
+                      onMarkClicked(item);
+                    }
+                    if (itemHref) {
+                      navigate(itemHref);
+                    }
+                  }}
+                  className="w-full rounded-md border border-border/60 bg-background/60 px-3 py-2 text-left hover:bg-background/80"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-muted-foreground">{formatTimeAgo(item.createdAt)}</span>
+                    {item.post?.contractAddress ? (
+                      <span className="truncate text-[10px] font-mono text-muted-foreground">
+                        {item.post.contractAddress}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 line-clamp-1 text-xs text-foreground/90">{item.message}</p>
+                  {itemPreview ? (
+                    <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{itemPreview}</p>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -222,4 +286,3 @@ export function NotificationItemSkeleton() {
     </div>
   );
 }
-

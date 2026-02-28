@@ -156,6 +156,14 @@ const feedResponseCache = new Map<
     staleUntilMs: number;
   }
 >();
+const feedSharedResponseCache = new Map<
+  string,
+  {
+    payload: FeedResponsePayload;
+    expiresAtMs: number;
+    staleUntilMs: number;
+  }
+>();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
 
 function isCronMaintenanceHealthy(): boolean {
@@ -210,22 +218,57 @@ function buildFeedResponseCacheKey(params: {
   ].join(":");
 }
 
+function buildFeedSharedResponseCacheKey(params: {
+  sort: "latest" | "trending";
+  following: boolean;
+  limit: number;
+  cursor?: string;
+  search?: string;
+}): string {
+  return [
+    params.sort,
+    params.following ? "following" : "all",
+    String(params.limit),
+    params.cursor ?? "",
+    (params.search ?? "").trim().toLowerCase(),
+  ].join(":");
+}
+
 function readFeedResponseFromCache(
+  cacheMap: Map<
+    string,
+    {
+      payload: FeedResponsePayload;
+      expiresAtMs: number;
+      staleUntilMs: number;
+    }
+  >,
   key: string,
   nowMs: number,
   opts?: { allowStale?: boolean }
 ): FeedResponsePayload | null {
-  const cached = feedResponseCache.get(key);
+  const cached = cacheMap.get(key);
   if (!cached) return null;
   if (cached.expiresAtMs > nowMs) return cached.payload;
   if (opts?.allowStale && cached.staleUntilMs > nowMs) return cached.payload;
-  feedResponseCache.delete(key);
+  cacheMap.delete(key);
   return null;
 }
 
-function writeFeedResponseToCache(key: string, payload: FeedResponsePayload): void {
+function writeFeedResponseToCache(
+  cacheMap: Map<
+    string,
+    {
+      payload: FeedResponsePayload;
+      expiresAtMs: number;
+      staleUntilMs: number;
+    }
+  >,
+  key: string,
+  payload: FeedResponsePayload
+): void {
   const nowMs = Date.now();
-  feedResponseCache.set(key, {
+  cacheMap.set(key, {
     payload,
     expiresAtMs: nowMs + FEED_RESPONSE_CACHE_TTL_MS,
     staleUntilMs: nowMs + FEED_RESPONSE_STALE_FALLBACK_MS,
@@ -1552,8 +1595,18 @@ postsRouter.get("/", async (c) => {
     cursor,
     search,
   });
+  const sharedFeedCacheKey = buildFeedSharedResponseCacheKey({
+    sort,
+    following,
+    limit,
+    cursor,
+    search,
+  });
   const respondWithFeedCacheFallback = (error: unknown) => {
-    const stalePayload = readFeedResponseFromCache(feedCacheKey, Date.now(), { allowStale: true });
+    const nowMs = Date.now();
+    const stalePayload =
+      readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs, { allowStale: true }) ??
+      readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs, { allowStale: true });
     console.warn("[posts/feed] falling back to cached payload after database error", {
       sort,
       following,
@@ -1567,14 +1620,18 @@ postsRouter.get("/", async (c) => {
       return c.json(stalePayload);
     }
     return c.json({
-      data: [],
-      hasMore: false,
-      nextCursor: null,
-    });
+      error: {
+        message: "Feed is temporarily unavailable",
+        code: "FEED_UNAVAILABLE",
+      },
+    }, 503);
   };
 
   if (!cursor) {
-    const freshPayload = readFeedResponseFromCache(feedCacheKey, Date.now());
+    const nowMs = Date.now();
+    const freshPayload =
+      readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs) ??
+      readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs);
     if (freshPayload) {
       return c.json(freshPayload);
     }
@@ -1621,10 +1678,10 @@ postsRouter.get("/", async (c) => {
       if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
         throw error;
       }
-      console.warn("[posts/feed] follow query unavailable; following feed fallback to empty state", {
+      console.warn("[posts/feed] follow query unavailable; using feed cache fallback", {
         message: error instanceof Error ? error.message : String(error),
       });
-      followedIds = [];
+      return respondWithFeedCacheFallback(error);
     }
 
     if (followedIds.length === 0) {
@@ -2155,7 +2212,8 @@ postsRouter.get("/", async (c) => {
     hasMore,
     nextCursor,
   };
-  writeFeedResponseToCache(feedCacheKey, responsePayload);
+  writeFeedResponseToCache(feedResponseCache, feedCacheKey, responsePayload);
+  writeFeedResponseToCache(feedSharedResponseCache, sharedFeedCacheKey, responsePayload);
   return c.json(responsePayload);
 });
 

@@ -281,4 +281,7 @@ export interface Notification {
     contractAddress: string | null;
   } | null;
   createdAt: string;
+  mergedCount?: number;
+  mergedIds?: string[];
+  mergedItems?: Notification[];
 }

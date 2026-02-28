@@ -6,6 +6,41 @@ import { NotificationsQuerySchema } from "../types.js";
 
 export const notificationsRouter = new Hono<{ Variables: AuthVariables }>();
 
+function normalizeNotificationMessage(message: string): string {
+  return message.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildNotificationGroupKey(notification: {
+  id: string;
+  type: string;
+  fromUserId: string | null;
+  postId: string | null;
+  message: string;
+}): string {
+  const actorKey = notification.fromUserId ?? "system";
+  const postKey = notification.postId ?? "none";
+  const messageKey = normalizeNotificationMessage(notification.message).slice(0, 96);
+
+  switch (notification.type) {
+    case "like":
+    case "comment":
+    case "repost":
+    case "new_post":
+    case "follow":
+      return `${notification.type}:${actorKey}`;
+    case "win_1h":
+    case "loss_1h":
+    case "win_6h":
+    case "loss_6h":
+    case "settlement":
+    case "level_up":
+    case "achievement":
+      return `${notification.type}:${actorKey}:${messageKey}`;
+    default:
+      return `${notification.type}:${actorKey}:${postKey}:${messageKey}:${notification.id}`;
+  }
+}
+
 // Get all notifications for current user
 // Query param: includeDismissed (default false)
 notificationsRouter.get("/", requireAuth, async (c) => {
@@ -60,15 +95,28 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const count = await prisma.notification.count({
+  const unreadNotifications = await prisma.notification.findMany({
     where: {
       userId: user.id,
       read: false,
       dismissed: false, // Don't count dismissed notifications
     },
+    select: {
+      id: true,
+      type: true,
+      fromUserId: true,
+      postId: true,
+      message: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
   });
 
-  return c.json({ data: { count } });
+  const groupKeys = new Set(
+    unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
+  );
+
+  return c.json({ data: { count: groupKeys.size } });
 });
 
 // Mark notification as read
