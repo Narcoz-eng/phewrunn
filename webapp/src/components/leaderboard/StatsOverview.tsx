@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LevelBadge } from "@/components/feed/LevelBar";
@@ -116,7 +117,7 @@ function StatCardSkeleton() {
 
 export function StatsOverview() {
   const navigate = useNavigate();
-  const { data: stats, isLoading, error } = useQuery({
+  const { data: stats, isLoading, error, refetch } = useQuery({
     queryKey: ["leaderboard", "stats"],
     queryFn: async () => {
       const data = await api.get<PlatformStats>("/api/leaderboard/stats");
@@ -167,12 +168,47 @@ export function StatsOverview() {
           <BarChart3 className="h-8 w-8 text-destructive" />
         </div>
         <p className="text-muted-foreground">Failed to load platform statistics</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+          Retry Stats
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {/* Volume Stats */}
+      <div>
+        <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+          <TrendingUp className="h-4 w-4" />
+          Platform Volume
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard
+            title="24H Volume"
+            value={formatVolume(stats.volume.day)}
+            icon={TrendingUp}
+            valueClassName="text-gain"
+          />
+          <StatCard
+            title="7D Volume"
+            value={formatVolume(stats.volume.week)}
+            icon={Calendar}
+          />
+          <StatCard
+            title="30D Volume"
+            value={formatVolume(stats.volume.month)}
+            icon={BarChart3}
+          />
+          <StatCard
+            title="All-Time Volume"
+            value={formatVolume(stats.volume.allTime)}
+            icon={Activity}
+            className="border-primary/20"
+          />
+        </div>
+      </div>
+
       {/* Alpha Stats */}
       <div>
         <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">

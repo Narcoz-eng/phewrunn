@@ -23,6 +23,18 @@ function getWindowScrollTop(): number {
   return window.scrollY || window.pageYOffset || 0;
 }
 
+function isDocumentScrollLocked(): boolean {
+  if (typeof document === "undefined") return false;
+  if (
+    document.body.classList.contains("overflow-hidden") ||
+    document.documentElement.classList.contains("overflow-hidden") ||
+    document.body.classList.contains("wallet-adapter-modal-open")
+  ) {
+    return true;
+  }
+  return document.body.style.overflow === "hidden" || document.documentElement.style.overflow === "hidden";
+}
+
 export function WindowVirtualList<T>({
   items,
   getItemKey,
@@ -42,6 +54,7 @@ export function WindowVirtualList<T>({
     height: typeof window !== "undefined" ? window.innerHeight : 0,
     containerTop: 0,
   });
+  const lastUnlockedViewportRef = useRef<ViewportState>(viewport);
 
   useEffect(() => {
     const validKeys = new Set(items.map((item, index) => getItemKey(item, index)));
@@ -65,13 +78,29 @@ export function WindowVirtualList<T>({
       if (rafId) return;
       rafId = window.requestAnimationFrame(() => {
         rafId = 0;
+        if (isDocumentScrollLocked()) {
+          const frozen = lastUnlockedViewportRef.current;
+          setViewport((prev) => {
+            if (
+              prev.scrollTop === frozen.scrollTop &&
+              prev.height === frozen.height &&
+              prev.containerTop === frozen.containerTop
+            ) {
+              return prev;
+            }
+            return frozen;
+          });
+          return;
+        }
         const node = containerRef.current;
         const rect = node?.getBoundingClientRect();
-        setViewport({
+        const nextViewport = {
           scrollTop: getWindowScrollTop(),
           height: window.innerHeight,
           containerTop: rect ? rect.top + getWindowScrollTop() : 0,
-        });
+        };
+        lastUnlockedViewportRef.current = nextViewport;
+        setViewport(nextViewport);
       });
     };
 

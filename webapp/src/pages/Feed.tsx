@@ -38,6 +38,21 @@ const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
 const FEED_CURRENT_USER_CACHE_TTL_MS = 45_000;
 
+function isGlobalOverlayOpen(): boolean {
+  if (typeof document === "undefined") return false;
+  if (
+    document.body.classList.contains("overflow-hidden") ||
+    document.documentElement.classList.contains("overflow-hidden") ||
+    document.body.classList.contains("wallet-adapter-modal-open")
+  ) {
+    return true;
+  }
+  if (document.body.style.overflow === "hidden" || document.documentElement.style.overflow === "hidden") {
+    return true;
+  }
+  return document.querySelector("[role='dialog'][data-state='open']") !== null;
+}
+
 function getFeedFirstPageCacheKey(tab: FeedTab, search: string): string {
   return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${tab}:${search}`;
 }
@@ -406,6 +421,7 @@ export default function Feed() {
     const checkForNewPosts = async () => {
       if (cancelled) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (isGlobalOverlayOpen()) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey("latest", ""));
       const currentFirstPage = currentData?.pages?.[0];
@@ -507,6 +523,7 @@ export default function Feed() {
       if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      if (isGlobalOverlayOpen()) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
         getFeedQueryKey(activeTab, effectiveSearchQuery)

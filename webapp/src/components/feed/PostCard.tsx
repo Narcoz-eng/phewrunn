@@ -827,6 +827,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   // Use settled 1H mcap when present, but fallback to live mcap for legacy rows missing mcap1h.
   const officialMcap = localSettled ? (localMcap1h ?? currentMcap) : currentMcap;
   const percentChange = calculatePercentChange(post.entryMcap, officialMcap);
+  const winCardCurrentMcap = currentMcap;
+  const winCardSettledMcapLabel = localSettled ? "1H Settled MCAP" : "Reference MCAP";
+  const winCardCurrentMcapLabel = localSettled ? "Current MCAP (Live)" : "Current MCAP";
   const isGain = percentChange !== null && percentChange > 0;
   const isLoss = percentChange !== null && percentChange < 0;
   const hasContractAddress = post.contractAddress !== null;
@@ -3947,7 +3950,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           swapBuildInFlightRef.current = null;
         }
       }}>
-        <DialogContent className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]">
+        <DialogContent
+          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]"
+          onInteractOutside={(event) => event.preventDefault()}
+        >
           <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
@@ -5139,18 +5145,26 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                       <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Entry MCAP</div>
                       <div className="mt-1 text-base font-semibold text-white">{formatMarketCap(post.entryMcap)}</div>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                       <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
-                        {localSettled ? "Official MCAP" : "Current MCAP"}
+                        {winCardSettledMcapLabel}
                       </div>
                       <div className="mt-1 text-base font-semibold text-white">{formatMarketCap(officialMcap)}</div>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="rounded-xl border border-lime-300/25 bg-gradient-to-br from-lime-300/10 via-white/5 to-cyan-300/10 p-3 shadow-[0_14px_40px_-30px_rgba(163,230,53,0.85)]">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-lime-100/85">
+                        {winCardCurrentMcapLabel}
+                      </div>
+                      <div className="mt-1 text-lg font-bold text-white">
+                        {formatMarketCap(winCardCurrentMcap)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 sm:col-span-2 lg:col-span-1">
                       <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Engagement</div>
                       <div className="mt-1 text-xs sm:text-sm font-medium text-white">
                         {likeCount} likes | {commentCount} comments | {repostCount} reposts

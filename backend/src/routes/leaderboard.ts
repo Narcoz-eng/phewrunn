@@ -663,14 +663,16 @@ leaderboardRouter.get("/stats", async (c) => {
       where: { settled: true, isWin: false },
     }),
     // Active users (users who posted)
-    prisma.post.groupBy({
-      by: ["authorId"],
-      where: { createdAt: { gte: oneDayAgo } },
-    }),
-    prisma.post.groupBy({
-      by: ["authorId"],
-      where: { createdAt: { gte: oneWeekAgo } },
-    }),
+    prisma.$queryRaw<Array<{ count: bigint | number }>>`
+      SELECT COUNT(DISTINCT "authorId")::bigint AS count
+      FROM "Post"
+      WHERE "createdAt" >= ${oneDayAgo}
+    `,
+    prisma.$queryRaw<Array<{ count: bigint | number }>>`
+      SELECT COUNT(DISTINCT "authorId")::bigint AS count
+      FROM "Post"
+      WHERE "createdAt" >= ${oneWeekAgo}
+    `,
     // Total users
     prisma.user.count(),
     // Level distribution (from -5 to 10)
@@ -732,6 +734,8 @@ leaderboardRouter.get("/stats", async (c) => {
       count: levelDistMap.get(level) ?? 0,
     });
   }
+  const activeUsersTodayCount = Number(activeUsersToday[0]?.count ?? 0);
+  const activeUsersWeekCount = Number(activeUsersWeek[0]?.count ?? 0);
 
     const data = {
       volume: {
@@ -748,8 +752,8 @@ leaderboardRouter.get("/stats", async (c) => {
       },
       avgWinRate: Math.round(avgWinRate * 100) / 100,
       activeUsers: {
-        today: activeUsersToday.length,
-        week: activeUsersWeek.length,
+        today: Number.isFinite(activeUsersTodayCount) ? activeUsersTodayCount : 0,
+        week: Number.isFinite(activeUsersWeekCount) ? activeUsersWeekCount : 0,
       },
       totalUsers,
       levelDistribution: formattedLevelDist,
