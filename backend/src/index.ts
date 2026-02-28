@@ -1578,5 +1578,8 @@ console.log(`
 
 export default {
   port,
+  // Bun defaults to a 10s idle timeout, which can abort long DB/network operations
+  // mid-flight and leave transaction state unhealthy under load.
+  idleTimeout: 60,
   fetch: app.fetch,
 };

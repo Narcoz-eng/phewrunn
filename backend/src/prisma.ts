@@ -40,6 +40,17 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
 
+    const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
+      if (target.searchParams.has("options")) return;
+      const idleTimeoutMs = isProduction ? 45_000 : 30_000;
+      const lockTimeoutMs = isProduction ? 9_000 : 7_000;
+      target.searchParams.set(
+        "options",
+        `-c idle_in_transaction_session_timeout=${idleTimeoutMs} -c lock_timeout=${lockTimeoutMs}`
+      );
+      targetNotes.push("added postgres options (idle_in_transaction_session_timeout, lock_timeout)");
+    };
+
     if (isSupabaseHost && !parsed.searchParams.has("sslmode")) {
       parsed.searchParams.set("sslmode", "require");
       notes.push("added sslmode=require");
@@ -51,6 +62,12 @@ function normalizeDatabaseUrl(
       if (!isServerlessRuntime && directUrl && !directUrl.startsWith("file:")) {
         const directParsed = new URL(directUrl);
         if (directParsed.searchParams.has("sslmode") || directParsed.protocol.startsWith("postgres")) {
+          if (
+            directParsed.hostname.toLowerCase().endsWith(".supabase.co") ||
+            directParsed.hostname.toLowerCase().endsWith(".supabase.com")
+          ) {
+            ensureSessionSafetyOptions(directParsed, notes);
+          }
           notes.push("using DIRECT_URL in non-serverless runtime");
           return { url: directParsed.toString(), notes };
         }
@@ -73,6 +90,10 @@ function normalizeDatabaseUrl(
         parsed.searchParams.set("pool_timeout", "5");
         notes.push("added pool_timeout=5");
       }
+
+      ensureSessionSafetyOptions(parsed, notes);
+    } else if (isSupabaseHost) {
+      ensureSessionSafetyOptions(parsed, notes);
     }
 
     return { url: parsed.toString(), notes };

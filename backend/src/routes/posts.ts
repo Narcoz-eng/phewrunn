@@ -77,11 +77,14 @@ type JupiterProxyResult = {
 };
 
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
+let settlementRunInFlight: Promise<SettlementRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
+let lastSettlementRunStartedAt = 0;
 let lastCronMaintenanceCompletedAt = 0;
 let lastLeaderboardSnapshotWarmAt = 0;
 let leaderboardSnapshotWarmCursor = 0;
 const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
+const SETTLEMENT_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 20_000 : 4_000;
 const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const CRON_MAINTENANCE_HEALTH_WINDOW_MS =
@@ -141,6 +144,7 @@ function triggerMaintenanceForStaleCandidates(
   if (now - lastMaintenanceRunStartedAt < MAINTENANCE_STALE_PROBE_COOLDOWN_MS) return;
 
   triggerMaintenanceCycleNonBlocking(reason);
+  triggerSettlementCycleNonBlocking(reason);
 }
 const JUPITER_QUOTE_URLS = [
   "https://lite-api.jup.ag/swap/v1/quote",
@@ -469,6 +473,7 @@ type OneHourSettlementCandidate = {
   contractAddress: string | null;
   chainType: string | null;
   entryMcap: number | null;
+  currentMcap: number | null;
   isWin: boolean | null;
   isWin1h: boolean | null;
   recoveryEligible: boolean | null;
@@ -484,6 +489,8 @@ type SixHourSnapshotCandidate = {
   contractAddress: string | null;
   chainType: string | null;
   entryMcap: number | null;
+  currentMcap: number | null;
+  mcap1h: number | null;
   isWin: boolean | null;
   isWin1h: boolean | null;
   recoveryEligible: boolean | null;
@@ -509,6 +516,7 @@ async function findPostsToSettle1h(
         contractAddress: true,
         chainType: true,
         entryMcap: true,
+        currentMcap: true,
         isWin: true,
         isWin1h: true,
         recoveryEligible: true,
@@ -536,6 +544,7 @@ async function findPostsToSettle1h(
         contractAddress: true,
         chainType: true,
         entryMcap: true,
+        currentMcap: true,
         isWin: true,
         author: {
           select: {
@@ -577,6 +586,8 @@ async function findPostsToSnapshot6h(
         contractAddress: true,
         chainType: true,
         entryMcap: true,
+        currentMcap: true,
+        mcap1h: true,
         isWin: true,
         isWin1h: true,
         recoveryEligible: true,
@@ -606,6 +617,8 @@ async function findPostsToSnapshot6h(
       contractAddress: true,
       chainType: true,
       entryMcap: true,
+      currentMcap: true,
+      mcap1h: true,
       isWin: true,
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -614,6 +627,7 @@ async function findPostsToSnapshot6h(
 
   return legacyRows.map((row) => ({
     ...row,
+    mcap1h: null,
     isWin1h: row.isWin,
     recoveryEligible: null,
   }));
@@ -650,8 +664,9 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
       if (!post.contractAddress || post.entryMcap === null) continue;
 
       try {
-        const mcap1h = await fetchMarketCap(post.contractAddress, post.chainType);
-        if (mcap1h === null) {
+        const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
+        const mcap1h = fetchedMcap ?? post.currentMcap;
+        if (mcap1h === null || mcap1h <= 0) {
           errorCount++;
           continue;
         }
@@ -700,6 +715,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 level: newLevel,
                 xp: newXp,
               },
+              select: { id: true },
             }),
           ]);
         } catch (error) {
@@ -723,6 +739,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 level: newLevel,
                 xp: newXp,
               },
+              select: { id: true },
             }),
           ]);
         }
@@ -783,8 +800,9 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
 
       try {
         // Fetch current market cap from DexScreener
-        const mcap6h = await fetchMarketCap(post.contractAddress, post.chainType);
-        if (mcap6h === null) {
+        const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
+        const mcap6h = fetchedMcap ?? post.currentMcap ?? post.mcap1h;
+        if (mcap6h === null || mcap6h <= 0) {
           console.warn(`[Snapshot 6H] Could not fetch mcap for post ${post.id} (CA: ${post.contractAddress})`);
           errorCount++;
           continue;
@@ -833,6 +851,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                   level: newLevel,
                   xp: newXp,
                 },
+                select: { id: true },
               }),
             ]);
           } catch (error) {
@@ -853,6 +872,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                   level: newLevel,
                   xp: newXp,
                 },
+                select: { id: true },
               }),
             ]);
           }
@@ -1311,10 +1331,47 @@ function triggerMaintenanceCycleNonBlocking(reason: string): void {
     })
     .catch((error) => {
       console.error("[Maintenance] Opportunistic trigger failed", { reason, error });
-      throw error;
+      // Do not rethrow from non-awaited background maintenance.
+      // Rethrow here can surface as an unhandled rejection and destabilize the API process.
+      return {
+        startedAt: new Date(now).toISOString(),
+        durationMs: Date.now() - now,
+        settlement: { settled1h: 0, snapshot6h: 0, levelChanges6h: 0, errors: 1 },
+        marketRefresh: { scannedPosts: 0, eligiblePosts: 0, refreshedContracts: 0, updatedPosts: 0, errors: 1 },
+        snapshotWarmup: {
+          attempted: 0,
+          succeeded: 0,
+          failed: 1,
+          durationMs: 0,
+          skipped: true,
+          reason: "opportunistic_run_failed",
+        },
+      } satisfies MaintenanceRunResult;
     })
     .finally(() => {
       maintenanceRunInFlight = null;
+    });
+}
+
+function triggerSettlementCycleNonBlocking(reason: string): void {
+  const now = Date.now();
+  if (settlementRunInFlight) return;
+  if (now - lastSettlementRunStartedAt < SETTLEMENT_RUN_MIN_INTERVAL_MS) return;
+
+  lastSettlementRunStartedAt = now;
+  settlementRunInFlight = checkAndSettlePosts()
+    .then((result) => {
+      if (result.settled1h || result.snapshot6h || result.levelChanges6h || result.errors) {
+        console.log("[Settlement] Opportunistic trigger completed", { reason, result });
+      }
+      return result;
+    })
+    .catch((error) => {
+      console.error("[Settlement] Opportunistic trigger failed", { reason, error });
+      return { settled1h: 0, snapshot6h: 0, levelChanges6h: 0, errors: 1 } satisfies SettlementRunResult;
+    })
+    .finally(() => {
+      settlementRunInFlight = null;
     });
 }
 
@@ -1329,18 +1386,16 @@ postsRouter.get("/", async (c) => {
     ? parsed.data
     : { sort: "latest" as const, following: false, limit: 50, cursor: undefined, search: undefined };
 
-  // Safety fallback when scheduled maintenance is not running or is unhealthy.
-  // This is throttled + non-blocking, and only runs on the first page to avoid feed jitter.
+  // Keep settlement/snapshot maintenance progressing from organic traffic.
+  // Trigger is throttled + non-blocking, and only on first page to avoid feed jitter.
   if (!cursor) {
-    // Only piggyback when cron is unavailable/unhealthy to avoid adding load to healthy setups.
-    if (!isCronMaintenanceHealthy()) {
-      const reason = search
-        ? `feed:${sort}:search`
-        : following
-          ? `feed:${sort}:following`
-          : `feed:${sort}`;
-      triggerMaintenanceCycleNonBlocking(reason);
-    }
+    const reason = search
+      ? `feed:${sort}:search`
+      : following
+        ? `feed:${sort}:following`
+        : `feed:${sort}`;
+    triggerMaintenanceCycleNonBlocking(reason);
+    triggerSettlementCycleNonBlocking(reason);
   }
 
   // Build the where clause - use Prisma's AND/OR operators
@@ -1472,10 +1527,10 @@ postsRouter.get("/", async (c) => {
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
       if (isPrismaClientError(error)) {
-        console.error("[posts/feed] primary query failed; returning empty feed page", {
+        console.error("[posts/feed] primary query failed", {
           message: error instanceof Error ? error.message : String(error),
         });
-        fetchedPosts = [];
+        throw error;
       } else {
         throw error;
       }
@@ -1531,10 +1586,10 @@ postsRouter.get("/", async (c) => {
       } catch (fallbackError) {
         if (!isPrismaSchemaDriftError(fallbackError)) {
           if (isPrismaClientError(fallbackError)) {
-            console.error("[posts/feed] compatibility query failed; returning empty feed page", {
+            console.error("[posts/feed] compatibility query failed", {
               message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
             });
-            fetchedPosts = [];
+            throw fallbackError;
           } else {
             throw fallbackError;
           }
@@ -1594,10 +1649,10 @@ postsRouter.get("/", async (c) => {
           } catch (legacyError) {
             if (!isPrismaSchemaDriftError(legacyError)) {
               if (isPrismaClientError(legacyError)) {
-                console.error("[posts/feed] legacy query failed; returning empty feed page", {
+                console.error("[posts/feed] legacy query failed", {
                   message: legacyError instanceof Error ? legacyError.message : String(legacyError),
                 });
-                fetchedPosts = [];
+                throw legacyError;
               } else {
                 throw legacyError;
               }
@@ -2367,8 +2422,9 @@ postsRouter.post("/settle", async (c) => {
   for (const post of postsToSettle1h) {
     if (!post.contractAddress || post.entryMcap === null) continue;
 
-    const mcap1h = await fetchMarketCap(post.contractAddress, post.chainType);
-    if (mcap1h === null) continue;
+    const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
+    const mcap1h = fetchedMcap ?? post.currentMcap;
+    if (mcap1h === null || mcap1h <= 0) continue;
 
     const percentChange1h = ((mcap1h - post.entryMcap) / post.entryMcap) * 100;
     const isWin1h = mcap1h > post.entryMcap;
@@ -2409,6 +2465,7 @@ postsRouter.post("/settle", async (c) => {
             level: newLevel,
             xp: newXp,
           },
+          select: { id: true },
         }),
       ]);
     } catch (error) {
@@ -2432,6 +2489,7 @@ postsRouter.post("/settle", async (c) => {
             level: newLevel,
             xp: newXp,
           },
+          select: { id: true },
         }),
       ]);
     }
@@ -2471,8 +2529,9 @@ postsRouter.post("/settle", async (c) => {
   for (const post of postsToSnapshot6h) {
     if (!post.contractAddress || post.entryMcap === null) continue;
 
-    const mcap6h = await fetchMarketCap(post.contractAddress, post.chainType);
-    if (mcap6h === null) continue;
+    const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
+    const mcap6h = fetchedMcap ?? post.currentMcap ?? post.mcap1h;
+    if (mcap6h === null || mcap6h <= 0) continue;
 
     const percentChange6h = ((mcap6h - post.entryMcap) / post.entryMcap) * 100;
     const isWin6h = percentChange6h > 0;
@@ -2517,6 +2576,7 @@ postsRouter.post("/settle", async (c) => {
               level: newLevel,
               xp: newXp,
             },
+            select: { id: true },
           }),
         ]);
       } catch (error) {
@@ -2537,6 +2597,7 @@ postsRouter.post("/settle", async (c) => {
               level: newLevel,
               xp: newXp,
             },
+            select: { id: true },
           }),
         ]);
       }
@@ -3439,6 +3500,7 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   // Keeps feed request path clean while still allowing 1H/6H status to catch up.
   if (shouldTriggerMaintenanceForPost(post)) {
     triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
+    triggerSettlementCycleNonBlocking(`price:${post.id}`);
   }
 
   const trackingMode = determineTrackingMode(post.createdAt);
@@ -3452,19 +3514,10 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     let refreshPromise = priceRefreshInFlight.get(post.id);
     if (!refreshPromise) {
       refreshPromise = (async () => {
-        const latestMcap = await fetchMarketCap(post.contractAddress!, post.chainType);
-        if (latestMcap !== null) {
-          const now = new Date();
-          await prisma.post.update({
-            where: { id: post.id },
-            data: {
-              currentMcap: latestMcap,
-              lastMcapUpdate: now,
-              trackingMode,
-            },
-          });
-        }
-        return latestMcap;
+        // Price route must stay fast and non-blocking.
+        // Persisted writes are handled by maintenance to avoid lock contention from polling.
+        const latest = await getFeedMarketCapSnapshot(post.contractAddress!, post.chainType);
+        return latest.mcap;
       })()
         .catch((error) => {
           console.error("[posts/price] Failed to refresh market cap", { postId: post.id, error });

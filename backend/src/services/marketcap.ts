@@ -24,9 +24,10 @@ export const ONE_HOUR_MS = 60 * 60 * 1000;
 export const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
 // Rate limiting and backoff settings
-const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 1000;
-const MAX_DELAY_MS = 30000;
+const MAX_RETRIES = 1;
+const BASE_DELAY_MS = 350;
+const MAX_DELAY_MS = 3000;
+const REQUEST_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1400 : 1800;
 
 // Simple in-memory rate limiter
 let lastRequestTime = 0;
@@ -208,6 +209,23 @@ function pickDexImageUrl(pair: DexscreenerPair | undefined): string | undefined 
   return undefined;
 }
 
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Fetch market cap from DexScreener API with rate limiting and exponential backoff
  * @param address - Token contract address
@@ -233,7 +251,7 @@ export async function fetchMarketCap(
       const preferredChain =
         normalizeDexChain(chainType) ?? inferDexChainFromAddress(address);
       const endpointChains = preferredChain
-        ? [preferredChain, preferredChain === "solana" ? "ethereum" : "solana"]
+        ? [preferredChain]
         : ["solana", "ethereum"];
       const uniqueEndpointChains = [...new Set(endpointChains)];
       const endpoints = [
@@ -245,11 +263,22 @@ export async function fetchMarketCap(
       let selectedPair: DexscreenerSelectedPair | undefined;
 
       for (const endpoint of endpoints) {
-        const response = await fetch(endpoint, {
-          headers: {
-            'Accept': 'application/json',
-          },
-        });
+        let response: Response;
+        try {
+          response = await fetchWithTimeout(
+            endpoint,
+            {
+              headers: {
+                Accept: "application/json",
+              },
+            },
+            REQUEST_TIMEOUT_MS
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[MarketCap] Endpoint timeout/error for ${endpoint}: ${message}`);
+          continue;
+        }
 
         // Handle rate limiting
         if (response.status === 429) {
@@ -285,7 +314,7 @@ export async function fetchMarketCap(
         };
       }
 
-      return { mcap: null, error: 'No pairs found' };
+      return { mcap: null, error: "No pairs found" };
 
     } catch (error) {
       lastError = error as Error;
@@ -301,7 +330,7 @@ export async function fetchMarketCap(
 
   return {
     mcap: null,
-    error: lastError?.message || 'Failed to fetch market cap after retries'
+    error: lastError?.message || "Failed to fetch market cap after retries"
   };
 }
 
