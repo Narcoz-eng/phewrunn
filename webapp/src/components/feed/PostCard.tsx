@@ -10,6 +10,7 @@ import {
   Cell,
   CartesianGrid,
   ComposedChart,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
@@ -525,7 +526,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
   const [chartWindow, setChartWindow] = useState<{ startIndex: number; endIndex: number } | null>(null);
   const [chartActiveIndex, setChartActiveIndex] = useState<number | null>(null);
+  const [isChartMousePanning, setIsChartMousePanning] = useState(false);
   const chartTouchGestureRef = useRef<{
+    x: number;
+    y: number;
+    mode: "pan" | "scroll" | null;
+  } | null>(null);
+  const chartMouseGestureRef = useRef<{
     x: number;
     y: number;
     mode: "pan" | "scroll" | null;
@@ -2711,6 +2718,37 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     },
     [chartRequestConfig.timeframe]
   );
+  const chartEntryMcap =
+    typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)
+      ? post.entryMcap
+      : null;
+  const chartEntryTargetTs = useMemo(() => {
+    const parsed = new Date(post.createdAt).getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [post.createdAt]);
+  const chartEntryCandle = useMemo(() => {
+    if (!hasProfessionalChartData || chartEntryTargetTs === null) return null;
+    let nearest = professionalChartData[0] ?? null;
+    if (!nearest) return null;
+    let bestDelta = Math.abs(nearest.ts - chartEntryTargetTs);
+    for (let index = 1; index < professionalChartData.length; index += 1) {
+      const point = professionalChartData[index];
+      if (!point) continue;
+      const delta = Math.abs(point.ts - chartEntryTargetTs);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        nearest = point;
+      }
+    }
+    return nearest;
+  }, [chartEntryTargetTs, hasProfessionalChartData, professionalChartData]);
+  const chartEntryIndex = useMemo(() => {
+    if (!chartEntryCandle) return -1;
+    return professionalChartData.findIndex((point) => point.ts === chartEntryCandle.ts);
+  }, [chartEntryCandle, professionalChartData]);
+  const isEntryInCurrentView =
+    chartEntryIndex >= chartWindowBounds.startIndex &&
+    chartEntryIndex <= chartWindowBounds.endIndex;
   const canPanChartLeft = chartWindowBounds.startIndex > 0;
   const canPanChartRight = chartWindowBounds.endIndex < chartTotalPoints - 1;
   const minVisiblePoints = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints || CHART_MIN_VISIBLE_POINTS);
@@ -2805,6 +2843,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     });
     setChartActiveIndex(null);
   }, [chartTotalPoints]);
+  const centerChartOnEntry = useCallback(() => {
+    if (chartEntryIndex < 0 || chartTotalPoints <= 0 || chartWindowBounds.visibleCount <= 0) return;
+    const width = chartWindowBounds.visibleCount;
+    let startIndex = chartEntryIndex - Math.floor(width / 2);
+    startIndex = Math.max(0, Math.min(startIndex, chartTotalPoints - width));
+    setChartWindow({
+      startIndex,
+      endIndex: startIndex + width - 1,
+    });
+    setChartActiveIndex(chartEntryIndex);
+  }, [chartEntryIndex, chartTotalPoints, chartWindowBounds.visibleCount]);
   const handleChartBrushChange = useCallback(
     (range: { startIndex?: number; endIndex?: number } | null | undefined) => {
       if (!range || chartTotalPoints <= 0) return;
@@ -2884,6 +2933,54 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleChartTouchEnd = useCallback(() => {
     chartTouchGestureRef.current = null;
   }, []);
+  const handleChartMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    chartMouseGestureRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      mode: null,
+    };
+    setIsChartMousePanning(false);
+  }, []);
+  const handleChartMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!hasProfessionalChartData || chartWindowBounds.visibleCount <= 0) return;
+      const gesture = chartMouseGestureRef.current;
+      if (!gesture) return;
+      if (event.buttons === 0) {
+        chartMouseGestureRef.current = null;
+        setIsChartMousePanning(false);
+        return;
+      }
+
+      const deltaX = event.clientX - gesture.x;
+      const deltaY = event.clientY - gesture.y;
+      if (!gesture.mode) {
+        if (
+          Math.abs(deltaX) >= CHART_TOUCH_PAN_THRESHOLD_PX &&
+          Math.abs(deltaX) > Math.abs(deltaY)
+        ) {
+          gesture.mode = "pan";
+          setIsChartMousePanning(true);
+        } else if (Math.abs(deltaY) >= CHART_TOUCH_PAN_THRESHOLD_PX) {
+          gesture.mode = "scroll";
+        }
+      }
+
+      if (gesture.mode !== "pan") return;
+      event.preventDefault();
+      const steps = Math.trunc(deltaX / CHART_TOUCH_PAN_STEP_PX);
+      if (steps === 0) return;
+      panChartWindowBy(-steps * CHART_PAN_STEP_POINTS);
+      gesture.x = event.clientX;
+      gesture.y = event.clientY;
+    },
+    [chartWindowBounds.visibleCount, hasProfessionalChartData, panChartWindowBy]
+  );
+  const handleChartMouseUp = useCallback(() => {
+    chartMouseGestureRef.current = null;
+    setIsChartMousePanning(false);
+  }, []);
   const professionalChartFirst = hasProfessionalChartData ? professionalChartData[0] : null;
   const professionalChartLast = hasProfessionalChartData
     ? professionalChartData[professionalChartData.length - 1]
@@ -2928,6 +3025,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       return { startIndex, endIndex: startIndex + width - 1 };
     });
   }, [chartTotalPoints, chartInterval]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMouseUp = () => handleChartMouseUp();
+    window.addEventListener("mouseup", onMouseUp);
+    return () => window.removeEventListener("mouseup", onMouseUp);
+  }, [handleChartMouseUp]);
 
   useEffect(() => {
     if (!isBuyDialogOpen && !pendingQuickBuyAutoExecute) return;
@@ -4056,22 +4160,45 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               >
                                 Reset
                               </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={centerChartOnEntry}
+                                disabled={!hasProfessionalChartData || chartEntryIndex < 0}
+                                className={cn(
+                                  "h-7 border-white/10 bg-black/25 px-2 text-[11px] hover:bg-white/10 disabled:opacity-40",
+                                  isEntryInCurrentView ? "text-cyan-100 border-cyan-300/30 bg-cyan-300/10" : "text-muted-foreground"
+                                )}
+                              >
+                                {isEntryInCurrentView ? "Entry in view" : "Go to Entry"}
+                              </Button>
                             </div>
                           </div>
                           <div className="mt-1 text-[10px] text-muted-foreground">
-                            Scroll to zoom, drag horizontally to pan, Shift+scroll to move left or right.
+                            Scroll to zoom, drag left/right to pan, Shift+scroll to move left or right.
                           </div>
                         </div>
                       </div>
 
                       <div
-                        className="relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3"
+                        className={cn(
+                          "relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3 overscroll-contain",
+                          hasProfessionalChartData
+                            ? isChartMousePanning
+                              ? "cursor-grabbing"
+                              : "cursor-grab"
+                            : "cursor-default"
+                        )}
                         onWheel={handleChartWheel}
                         onTouchStart={handleChartTouchStart}
                         onTouchMove={handleChartTouchMove}
                         onTouchEnd={handleChartTouchEnd}
                         onTouchCancel={handleChartTouchEnd}
-                        style={{ touchAction: "pan-y" }}
+                        onMouseDown={handleChartMouseDown}
+                        onMouseMove={handleChartMouseMove}
+                        onMouseUp={handleChartMouseUp}
+                        onMouseLeave={handleChartMouseUp}
+                        style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
                       >
                         {hasProfessionalChartData ? (
                           <ResponsiveContainer width="100%" height="100%">
@@ -4130,6 +4257,41 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                         ? `${(Number(v) / 1_000).toFixed(1)}K`
                                         : `${Math.round(Number(v))}`
                                   }
+                                />
+                              ) : null}
+                              {chartEntryMcap !== null ? (
+                                <ReferenceLine
+                                  yAxisId="price"
+                                  y={chartEntryMcap}
+                                  stroke="rgba(96,165,250,0.65)"
+                                  strokeDasharray="4 4"
+                                  ifOverflow="extendDomain"
+                                  label={{
+                                    value: "Entry",
+                                    position: "insideTopLeft",
+                                    fill: "rgba(147,197,253,0.9)",
+                                    fontSize: 10,
+                                  }}
+                                />
+                              ) : null}
+                              {chartEntryCandle ? (
+                                <ReferenceLine
+                                  x={chartEntryCandle.ts}
+                                  stroke="rgba(96,165,250,0.45)"
+                                  strokeDasharray="3 3"
+                                  ifOverflow="discard"
+                                />
+                              ) : null}
+                              {chartEntryCandle ? (
+                                <ReferenceDot
+                                  x={chartEntryCandle.ts}
+                                  y={chartEntryCandle.close}
+                                  yAxisId="price"
+                                  r={4.5}
+                                  fill="#60a5fa"
+                                  stroke="rgba(8,10,15,0.92)"
+                                  strokeWidth={1.8}
+                                  ifOverflow="visible"
                                 />
                               ) : null}
                               <RechartsTooltip

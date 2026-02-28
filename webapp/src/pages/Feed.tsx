@@ -32,6 +32,7 @@ const FEED_PAGE_SIZE = 20;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
 const FEED_NEW_POSTS_POLL_MS = 15_000;
+const FEED_ACTIVE_TAB_POLL_MS = 20_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -489,6 +490,81 @@ export default function Feed() {
     getFeedQueryKey,
     queryClient,
     refetchUser,
+    session?.user,
+  ]);
+
+  // Keep non-latest tabs (and searched latest) fresh with lightweight first-page sync.
+  // This stays visibility-aware and online-aware to reduce unnecessary traffic.
+  useEffect(() => {
+    if (!session?.user) return;
+    if (activeTab === "latest" && !effectiveSearchQuery) return;
+    if (typeof window === "undefined") return;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const refreshActiveTabFirstPage = async () => {
+      if (cancelled || inFlight) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+
+      const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
+        getFeedQueryKey(activeTab, effectiveSearchQuery)
+      );
+      const currentFirstPage = currentData?.pages?.[0];
+      if (!currentFirstPage || currentFirstPage.items.length === 0) return;
+
+      inFlight = true;
+      try {
+        const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
+        if (cancelled || freshFirstPage.items.length === 0) return;
+
+        const currentTopId = currentFirstPage.items[0]?.id;
+        const freshTopId = freshFirstPage.items[0]?.id;
+        if (!currentTopId || !freshTopId) return;
+
+        if (currentTopId === freshTopId) {
+          const currentFingerprint = buildRealtimePageFingerprint(currentFirstPage);
+          const freshFingerprint = buildRealtimePageFingerprint(freshFirstPage);
+          if (currentFingerprint === freshFingerprint) {
+            return;
+          }
+        }
+
+        applyFirstPageToCache(activeTab, effectiveSearchQuery, freshFirstPage);
+        writeCachedFirstFeedPage(activeTab, effectiveSearchQuery, freshFirstPage);
+      } catch {
+        // Keep current feed visible; next interval will retry.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshActiveTabFirstPage();
+
+    const intervalId = window.setInterval(() => {
+      void refreshActiveTabFirstPage();
+    }, FEED_ACTIVE_TAB_POLL_MS);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshActiveTabFirstPage();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [
+    activeTab,
+    applyFirstPageToCache,
+    effectiveSearchQuery,
+    fetchFeedPage,
+    getFeedQueryKey,
+    queryClient,
     session?.user,
   ]);
 
