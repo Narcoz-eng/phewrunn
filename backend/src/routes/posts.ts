@@ -1649,15 +1649,43 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
   }
 
   // Check if user is liquidated (level is -5)
-  const dbUser = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: {
-      id: true,
-      level: true,
-      name: true,
-      username: true,
-    },
-  });
+  let dbUser: {
+    id: string;
+    level: number;
+    name: string;
+    username: string | null;
+  } | null = null;
+  try {
+    dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        id: true,
+        level: true,
+        name: true,
+        username: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    dbUser = fallbackUser
+      ? {
+          ...fallbackUser,
+          level: 0,
+          username: null,
+        }
+      : null;
+  }
   if (!dbUser || dbUser.level <= LIQUIDATION_LEVEL) {
     return c.json({
       error: {
@@ -1869,11 +1897,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
           select: {
             id: true,
             name: true,
-            username: true,
             image: true,
-            level: true,
-            xp: true,
-            isVerified: true,
           },
         },
         _count: {
@@ -1888,6 +1912,15 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
 
     post = {
       ...fallbackPost,
+      author: {
+        id: fallbackPost.author.id,
+        name: fallbackPost.author.name,
+        username: null,
+        image: fallbackPost.author.image,
+        level: 0,
+        xp: 0,
+        isVerified: false,
+      },
       tokenName: marketCapResult.tokenName ?? heliusTokenMetadata?.tokenName ?? null,
       tokenSymbol: marketCapResult.tokenSymbol ?? heliusTokenMetadata?.tokenSymbol ?? null,
       tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,

@@ -187,6 +187,25 @@ const AUTH_RESPONSE_USER_SELECT = {
   isVerified: true,
 } as const;
 
+const AUTH_RESPONSE_USER_FALLBACK_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+} as const;
+
+type AuthResponseUser = {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  walletAddress: string | null;
+  walletProvider: string | null;
+  level: number;
+  xp: number;
+  isVerified: boolean;
+};
+
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
     typeof error === "object" &&
@@ -208,6 +227,301 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
         : "";
 
   return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+}
+
+function normalizeAuthResponseUser(
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+    walletAddress?: string | null;
+    walletProvider?: string | null;
+    level?: number | null;
+    xp?: number | null;
+    isVerified?: boolean | null;
+  }
+): AuthResponseUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    image: user.image,
+    walletAddress: user.walletAddress ?? null,
+    walletProvider: user.walletProvider ?? null,
+    level: user.level ?? 0,
+    xp: user.xp ?? 0,
+    isVerified: user.isVerified ?? false,
+  };
+}
+
+function isUniqueConstraintError(error: unknown): error is { code: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
+async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponseUser | null> {
+  try {
+    const user = await prisma.user.findFirst({
+      where: { walletAddress },
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    return user ? normalizeAuthResponseUser(user) : null;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    try {
+      const fallbackUser = await prisma.user.findFirst({
+        where: { walletAddress },
+        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+      });
+      return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+    } catch (fallbackError) {
+      if (isPrismaSchemaDriftError(fallbackError)) {
+        return null;
+      }
+      throw fallbackError;
+    }
+  }
+}
+
+async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | null> {
+  try {
+    const user = await prisma.user.findFirst({
+      where: { email },
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    return user ? normalizeAuthResponseUser(user) : null;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackUser = await prisma.user.findFirst({
+      where: { email },
+      select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+    });
+    return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+  }
+}
+
+async function findAuthUserById(id: string): Promise<AuthResponseUser | null> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    return user ? normalizeAuthResponseUser(user) : null;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id },
+      select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+    });
+    return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+  }
+}
+
+async function createWalletAuthUser(params: {
+  walletAddress: string;
+  walletProvider: string | null | undefined;
+  now: Date;
+}): Promise<AuthResponseUser> {
+  const userId = crypto.randomUUID().replace(/-/g, "").slice(0, 32);
+  const normalizedWalletAddress = params.walletAddress;
+  const now = params.now;
+  try {
+    const created = await prisma.user.create({
+      data: {
+        id: userId,
+        email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
+        name: `${normalizedWalletAddress.slice(0, 6)}...${normalizedWalletAddress.slice(-4)}`,
+        walletAddress: normalizedWalletAddress,
+        walletProvider: params.walletProvider || "unknown",
+        walletConnectedAt: now,
+        emailVerified: false,
+        level: 0,
+        xp: 0,
+        isAdmin: false,
+        isBanned: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    return normalizeAuthResponseUser(created);
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    let fallbackCreated:
+      | {
+          id: string;
+          name: string;
+          email: string;
+          image: string | null;
+        }
+      | null = null;
+
+    try {
+      fallbackCreated = await prisma.user.create({
+        data: {
+          id: userId,
+          email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
+          name: `${normalizedWalletAddress.slice(0, 6)}...${normalizedWalletAddress.slice(-4)}`,
+          walletAddress: normalizedWalletAddress,
+          emailVerified: false,
+        },
+        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+      });
+    } catch (fallbackCreateError) {
+      if (isPrismaSchemaDriftError(fallbackCreateError)) {
+        try {
+          fallbackCreated = await prisma.user.create({
+            data: {
+              id: userId,
+              email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
+              name: `${normalizedWalletAddress.slice(0, 6)}...${normalizedWalletAddress.slice(-4)}`,
+              emailVerified: false,
+            },
+            select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+          });
+
+          return normalizeAuthResponseUser({
+            ...fallbackCreated,
+            walletAddress: normalizedWalletAddress,
+          });
+        } catch (minimalCreateError) {
+          if (isUniqueConstraintError(minimalCreateError)) {
+            const existingByEmail = await findAuthUserByEmail(
+              `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`
+            );
+            if (existingByEmail) {
+              return {
+                ...existingByEmail,
+                walletAddress: normalizedWalletAddress,
+              };
+            }
+          }
+          throw minimalCreateError;
+        }
+      }
+      if (!isUniqueConstraintError(fallbackCreateError)) {
+        throw fallbackCreateError;
+      }
+      const existing = await findAuthUserByWallet(normalizedWalletAddress);
+      if (existing) {
+        return existing;
+      }
+      throw fallbackCreateError;
+    }
+
+    return normalizeAuthResponseUser(fallbackCreated);
+  }
+}
+
+async function upsertAuthUserByEmail(params: {
+  email: string;
+  displayName: string;
+  now: Date;
+}): Promise<AuthResponseUser> {
+  try {
+    const user = await prisma.user.upsert({
+      where: { email: params.email },
+      update: {
+        emailVerified: true,
+      },
+      create: {
+        id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+        email: params.email,
+        name: params.displayName,
+        emailVerified: true,
+        level: 0,
+        xp: 0,
+        isAdmin: false,
+        isBanned: false,
+        createdAt: params.now,
+        updatedAt: params.now,
+      },
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    return normalizeAuthResponseUser(user);
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const existing = await findAuthUserByEmail(params.email);
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const fallbackCreated = await prisma.user.create({
+        data: {
+          id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+          email: params.email,
+          name: params.displayName,
+          emailVerified: true,
+        },
+        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+      });
+      return normalizeAuthResponseUser(fallbackCreated);
+    } catch (fallbackCreateError) {
+      if (isUniqueConstraintError(fallbackCreateError)) {
+        const concurrentUser = await findAuthUserByEmail(params.email);
+        if (concurrentUser) {
+          return concurrentUser;
+        }
+      }
+      throw fallbackCreateError;
+    }
+  }
+}
+
+async function createSessionRecord(params: {
+  sessionToken: string;
+  userId: string;
+  expiresAt: Date;
+  now: Date;
+  ipAddress: string;
+  userAgent: string;
+}): Promise<void> {
+  try {
+    await prisma.session.create({
+      data: {
+        id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+        token: params.sessionToken,
+        userId: params.userId,
+        expiresAt: params.expiresAt,
+        createdAt: params.now,
+        updatedAt: params.now,
+        ipAddress: params.ipAddress,
+        userAgent: params.userAgent,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    await prisma.session.create({
+      data: {
+        id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+        token: params.sessionToken,
+        userId: params.userId,
+        expiresAt: params.expiresAt,
+        createdAt: params.now,
+        updatedAt: params.now,
+      },
+    });
+  }
 }
 
 // Vibecode proxy patches global fetch for the Vibecode runtime, but it can break or add
@@ -373,62 +687,49 @@ app.post("/api/auth/wallet", async (c) => {
     }
 
     // Check if user exists with this wallet
-    let user = await prisma.user.findFirst({
-      where: { walletAddress: normalizedWalletAddress },
-      select: AUTH_RESPONSE_USER_SELECT,
-    });
+    let user = await findAuthUserByWallet(normalizedWalletAddress);
 
     const now = new Date();
 
     if (!user) {
       // Create new user with wallet
-      user = await prisma.user.create({
-        data: {
-          id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
-          name: `${normalizedWalletAddress.slice(0, 6)}...${normalizedWalletAddress.slice(-4)}`,
-          walletAddress: normalizedWalletAddress,
-          walletProvider: walletProvider || "unknown",
-          walletConnectedAt: now,
-          emailVerified: false,
-          level: 0,
-          xp: 0,
-          isAdmin: false,
-          isBanned: false,
-          createdAt: now,
-          updatedAt: now,
-        },
-        select: AUTH_RESPONSE_USER_SELECT,
+      user = await createWalletAuthUser({
+        walletAddress: normalizedWalletAddress,
+        walletProvider,
+        now,
       });
 
       // Create account record for Better Auth
-      await prisma.account.create({
-        data: {
-          id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          accountId: normalizedWalletAddress,
-          providerId: "wallet",
-          userId: user.id,
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
+      await prisma.account
+        .create({
+          data: {
+            id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+            accountId: normalizedWalletAddress,
+            providerId: "wallet",
+            userId: user.id,
+            createdAt: now,
+            updatedAt: now,
+          },
+        })
+        .catch((error) => {
+          if (isPrismaSchemaDriftError(error) || isUniqueConstraintError(error)) {
+            return;
+          }
+          throw error;
+        });
     }
 
     // Create session
     const sessionToken = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-    await prisma.session.create({
-      data: {
-        id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-        token: sessionToken,
-        userId: user.id,
-        expiresAt,
-        createdAt: now,
-        updatedAt: now,
-        ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown",
-        userAgent: c.req.header("user-agent") || "unknown",
-      },
+    await createSessionRecord({
+      sessionToken,
+      userId: user.id,
+      expiresAt,
+      now,
+      ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown",
+      userAgent: c.req.header("user-agent") || "unknown",
     });
 
     // Set session cookie
@@ -474,12 +775,6 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   try {
-    const isUniqueConstraintError = (error: unknown): error is { code: string } =>
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "P2002";
-
     const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
     const { privyUserId, privyIdToken, email, name } = body;
 
@@ -560,21 +855,25 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // Prefer the Privy account link first to support email changes in Privy.
     // We resolve the user in a second query so orphaned rows don't crash the route.
-    const existingPrivyAccount = await prisma.account.findUnique({
-      where: {
-        providerId_accountId: {
-          providerId: "privy",
-          accountId: verifiedPrivyUserId,
+    let existingPrivyAccount: { id: string; userId: string } | null = null;
+    try {
+      existingPrivyAccount = await prisma.account.findUnique({
+        where: {
+          providerId_accountId: {
+            providerId: "privy",
+            accountId: verifiedPrivyUserId,
+          },
         },
-      },
-      select: { id: true, userId: true },
-    });
+        select: { id: true, userId: true },
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+    }
 
     let user = existingPrivyAccount?.userId
-      ? await prisma.user.findUnique({
-        where: { id: existingPrivyAccount.userId },
-        select: AUTH_RESPONSE_USER_SELECT,
-      })
+      ? await findAuthUserById(existingPrivyAccount.userId)
       : null;
 
     if (existingPrivyAccount && !user) {
@@ -590,32 +889,15 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // If no linked Privy account exists yet, find/create the local user by verified email.
     if (!user) {
-      user = await prisma.user.findFirst({
-        where: { email: verifiedEmail },
-        select: AUTH_RESPONSE_USER_SELECT,
-      });
+      user = await findAuthUserByEmail(verifiedEmail);
     }
 
     if (!user) {
       const displayName = typeof name === "string" && name.trim() ? name.trim() : verifiedEmail.split("@")[0] ?? "User";
-      user = await prisma.user.upsert({
-        where: { email: verifiedEmail },
-        update: {
-          emailVerified: true,
-        },
-        create: {
-          id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-          email: verifiedEmail,
-          name: displayName,
-          emailVerified: true,
-          level: 0,
-          xp: 0,
-          isAdmin: false,
-          isBanned: false,
-          createdAt: now,
-          updatedAt: now,
-        },
-        select: AUTH_RESPONSE_USER_SELECT,
+      user = await upsertAuthUserByEmail({
+        email: verifiedEmail,
+        displayName,
+        now,
       });
     }
 
@@ -639,46 +921,52 @@ app.post("/api/auth/privy-sync", async (c) => {
           },
           select: { userId: true },
         });
-        const linkedUser = await prisma.user.findUnique({
-          where: { id: linkedAccount.userId },
-          select: AUTH_RESPONSE_USER_SELECT,
-        });
+        const linkedUser = await findAuthUserById(linkedAccount.userId);
         if (linkedUser) {
           user = linkedUser;
         }
       } catch (error) {
-        if (!isUniqueConstraintError(error)) {
+        if (isPrismaSchemaDriftError(error)) {
+          console.warn("[privy-sync] Privy account link sync skipped (schema not ready)");
+          // If account table isn't ready yet, keep auth functional via email mapping.
+        } else if (!isUniqueConstraintError(error)) {
           throw error;
         }
 
-        // Another concurrent sync may have created the account between our check and create.
-        const linkedAccount = await prisma.account.findUnique({
-          where: {
-            providerId_accountId: {
-              providerId: "privy",
-              accountId: verifiedPrivyUserId,
-            },
-          },
-          select: { id: true, userId: true },
-        });
-        if (!linkedAccount?.userId) {
-          throw error;
+        if (isUniqueConstraintError(error)) {
+          // Another concurrent sync may have created the account between our check and create.
+          let linkedAccount: { id: string; userId: string } | null = null;
+          try {
+            linkedAccount = await prisma.account.findUnique({
+              where: {
+                providerId_accountId: {
+                  providerId: "privy",
+                  accountId: verifiedPrivyUserId,
+                },
+              },
+              select: { id: true, userId: true },
+            });
+          } catch (lookupError) {
+            if (!isPrismaSchemaDriftError(lookupError)) {
+              throw lookupError;
+            }
+          }
+          if (!linkedAccount?.userId) {
+            throw error;
+          }
+          const linkedUser = await findAuthUserById(linkedAccount.userId);
+          if (!linkedUser) {
+            console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
+              accountId: linkedAccount.id,
+              userId: linkedAccount.userId,
+            });
+            await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
+              console.warn("[privy-sync] Failed to delete stale concurrent Privy link:", deleteError);
+            });
+            throw error;
+          }
+          user = linkedUser;
         }
-        const linkedUser = await prisma.user.findUnique({
-          where: { id: linkedAccount.userId },
-          select: AUTH_RESPONSE_USER_SELECT,
-        });
-        if (!linkedUser) {
-          console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
-            accountId: linkedAccount.id,
-            userId: linkedAccount.userId,
-          });
-          await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
-            console.warn("[privy-sync] Failed to delete stale concurrent Privy link:", deleteError);
-          });
-          throw error;
-        }
-        user = linkedUser;
       }
     }
 
@@ -691,17 +979,13 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await prisma.session.create({
-          data: {
-            id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-            token: sessionToken,
-            userId: user.id,
-            expiresAt,
-            createdAt: now,
-            updatedAt: now,
-            ipAddress,
-            userAgent,
-          },
+        await createSessionRecord({
+          sessionToken,
+          userId: user.id,
+          expiresAt,
+          now,
+          ipAddress,
+          userAgent,
         });
         break;
       } catch (error) {
