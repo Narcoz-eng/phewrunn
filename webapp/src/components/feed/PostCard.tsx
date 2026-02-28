@@ -503,10 +503,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
-  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(() => {
-    if (typeof document === "undefined") return false;
-    return document.body.dataset.phewOpenTradePostId === post.id;
-  });
+  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
   const [tradeSide, setTradeSide] = useState<TradeSide>("buy");
@@ -624,15 +621,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (typeof document === "undefined") return;
     if (isBuyDialogOpen) {
       document.body.dataset.phewPinnedItemKey = post.id;
-      document.body.dataset.phewOpenTradePostId = post.id;
       return;
     }
     if (document.body.dataset.phewPinnedItemKey === post.id) {
       delete document.body.dataset.phewPinnedItemKey;
     }
-    if (document.body.dataset.phewOpenTradePostId === post.id) {
-      delete document.body.dataset.phewOpenTradePostId;
-    }
+
+    return () => {
+      if (document.body.dataset.phewPinnedItemKey === post.id) {
+        delete document.body.dataset.phewPinnedItemKey;
+      }
+    };
   }, [isBuyDialogOpen, post.id]);
 
   useEffect(() => {
@@ -2232,7 +2231,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (typeof document !== "undefined") {
       document.body.classList.add("phew-overlay-open");
       document.body.dataset.phewPinnedItemKey = post.id;
-      document.body.dataset.phewOpenTradePostId = post.id;
     }
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
@@ -3983,9 +3981,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         setIsBuyDialogOpen(open);
         if (!open) {
           if (typeof document !== "undefined") {
-            if (document.body.dataset.phewOpenTradePostId === post.id) {
-              delete document.body.dataset.phewOpenTradePostId;
-            }
             if (document.body.dataset.phewPinnedItemKey === post.id) {
               delete document.body.dataset.phewPinnedItemKey;
             }
