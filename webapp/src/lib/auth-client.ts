@@ -39,7 +39,6 @@ const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
-const AUTH_UNAUTHORIZED_FAILURE_LIMIT = 6;
 const SESSION_FETCH_TIMEOUT_MS = 7000;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 const AUTH_SESSION_RETRY_DELAY_MS = 350;
@@ -238,13 +237,11 @@ async function fetchSession(): Promise<AuthUser | null> {
 
         if (
           cachedUser &&
-          (recentlySynced ||
-            recentlyHealthySession ||
-            unauthorizedSessionFailures < AUTH_UNAUTHORIZED_FAILURE_LIMIT)
+          (recentlySynced || recentlyHealthySession)
         ) {
           sessionRateLimitedUntil = Date.now() + 2000;
           console.warn(
-            `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures}/${AUTH_UNAUTHORIZED_FAILURE_LIMIT})`
+            `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures})`
           );
           return cachedUser;
         }
