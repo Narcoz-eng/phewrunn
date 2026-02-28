@@ -18,6 +18,12 @@ type ViewportState = {
   containerTop: number;
 };
 
+function getPinnedItemKeyFromDocument(): string | null {
+  if (typeof document === "undefined") return null;
+  const value = document.body?.dataset?.phewPinnedItemKey?.trim();
+  return value ? value : null;
+}
+
 function getWindowScrollTop(): number {
   if (typeof window === "undefined") return 0;
   return window.scrollY || window.pageYOffset || 0;
@@ -55,6 +61,7 @@ export function WindowVirtualList<T>({
     height: typeof window !== "undefined" ? window.innerHeight : 0,
     containerTop: 0,
   });
+  const [pinnedItemKey, setPinnedItemKey] = useState<string | null>(() => getPinnedItemKeyFromDocument());
   const lastUnlockedViewportRef = useRef<ViewportState>(viewport);
 
   useEffect(() => {
@@ -128,6 +135,35 @@ export function WindowVirtualList<T>({
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const syncPinnedItem = () => {
+      const next = getPinnedItemKeyFromDocument();
+      setPinnedItemKey((prev) => (prev === next ? prev : next));
+    };
+
+    syncPinnedItem();
+
+    const observer = new MutationObserver(() => {
+      syncPinnedItem();
+    });
+    if (document.body) {
+      observer.observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-phew-pinned-item-key"],
+      });
+    }
+
+    const onVisibilityChange = () => syncPinnedItem();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
   const layout = useMemo(() => {
     // Version tick is intentionally used to recompute layout after row height measurements.
     void measureVersion;
@@ -179,6 +215,16 @@ export function WindowVirtualList<T>({
     }
     endIndex = Math.min(items.length - 1, Math.max(startIndex, endIndex));
 
+    if (pinnedItemKey) {
+      for (let i = 0; i < items.length; i += 1) {
+        if (getItemKey(items[i], i) === pinnedItemKey) {
+          startIndex = Math.min(startIndex, i);
+          endIndex = Math.max(endIndex, i);
+          break;
+        }
+      }
+    }
+
     return {
       totalHeight: running,
       startIndex,
@@ -192,6 +238,7 @@ export function WindowVirtualList<T>({
     items,
     measureVersion,
     overscanPx,
+    pinnedItemKey,
     viewport.containerTop,
     viewport.height,
     viewport.scrollTop,

@@ -431,6 +431,7 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage("latest", "");
         if (cancelled || freshFirstPage.items.length === 0) return;
+        if (isGlobalOverlayOpen()) return;
 
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
@@ -536,6 +537,7 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
         if (cancelled || freshFirstPage.items.length === 0) return;
+        if (isGlobalOverlayOpen()) return;
 
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;

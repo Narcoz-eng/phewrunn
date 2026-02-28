@@ -613,10 +613,20 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     } else {
       document.body.classList.remove("phew-overlay-open");
     }
+
+    if (isBuyDialogOpen) {
+      document.body.dataset.phewPinnedItemKey = post.id;
+    } else if (document.body.dataset.phewPinnedItemKey === post.id) {
+      delete document.body.dataset.phewPinnedItemKey;
+    }
+
     return () => {
       document.body.classList.remove("phew-overlay-open");
+      if (document.body.dataset.phewPinnedItemKey === post.id) {
+        delete document.body.dataset.phewPinnedItemKey;
+      }
     };
-  }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen]);
+  }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen, post.id]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2559,11 +2569,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
     void handleExecuteJupiterBuy();
   };
+  const fallbackCurrentMcap =
+    currentMcap ??
+    resolvedMarketCap ??
+    (Number.isFinite(post.entryMcap) ? post.entryMcap : null);
   const tradeChartData = [
     { label: "Entry", short: "E", mcap: post.entryMcap, kind: "entry" as const },
     ...(localMcap1h != null ? [{ label: "1H", short: "1H", mcap: localMcap1h, kind: "snap" as const }] : []),
     ...(localMcap6h != null ? [{ label: "6H", short: "6H", mcap: localMcap6h, kind: "snap" as const }] : []),
-    ...(currentMcap != null ? [{ label: "Now", short: "Now", mcap: currentMcap, kind: "current" as const }] : []),
+    ...(fallbackCurrentMcap != null
+      ? [{ label: "Now", short: "Now", mcap: fallbackCurrentMcap, kind: "current" as const }]
+      : []),
   ]
     .filter((point) => Number.isFinite(point.mcap))
     .map((point) => ({
@@ -4404,13 +4420,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               />
                             </ComposedChart>
                           </ResponsiveContainer>
-                        ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
-                          <div className="flex h-full items-center justify-center">
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading chart...
-                            </div>
-                          </div>
                         ) : tradeChartData.length >= 2 ? (
                           <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={tradeChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
@@ -4471,6 +4480,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               />
                             </AreaChart>
                           </ResponsiveContainer>
+                        ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
+                          <div className="flex h-full items-center justify-center">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading chart...
+                            </div>
+                          </div>
                         ) : (
                           <div className="flex h-full items-center justify-center p-6 text-center">
                             <div className="space-y-3">
