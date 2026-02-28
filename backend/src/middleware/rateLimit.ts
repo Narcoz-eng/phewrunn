@@ -136,6 +136,11 @@ function getSessionFingerprint(c: Context): string | null {
 }
 
 function getClientKey(c: Context): string {
+  // Prefer authenticated session fingerprint to avoid cross-user collisions
+  // when clients share IP ranges (mobile carriers, office networks, proxies).
+  const sessionFingerprint = getSessionFingerprint(c);
+  if (sessionFingerprint) return sessionFingerprint;
+
   // Prefer proxy/client IP headers set by Vercel/CDNs
   const ip =
     parseFirstForwardedIp(c.req.header("x-forwarded-for")) ??
@@ -145,10 +150,6 @@ function getClientKey(c: Context): string {
     parseRfcForwardedFor(c.req.header("forwarded"));
 
   if (ip) return `ip:${ip}`;
-
-  // Fall back to a session/token-based fingerprint so all clients do not share "unknown"
-  const sessionFingerprint = getSessionFingerprint(c);
-  if (sessionFingerprint) return sessionFingerprint;
 
   // Last resort: low-cardinality but better than a single global bucket
   const host = c.req.header("host") ?? "unknown-host";

@@ -151,9 +151,17 @@ export default function Notifications() {
   const { data: session } = useSession();
   const isAuthenticated = !!session?.user;
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
+  const notificationsQueryKey = useMemo(
+    () => ["notifications", session?.user?.id ?? "anonymous"] as const,
+    [session?.user?.id]
+  );
+  const notificationsCacheKey = useMemo(
+    () => (session?.user?.id ? `${NOTIFICATIONS_CACHE_KEY}:${session.user.id}` : NOTIFICATIONS_CACHE_KEY),
+    [session?.user?.id]
+  );
   const cachedNotifications = useMemo(
-    () => readSessionCache<Notification[]>(NOTIFICATIONS_CACHE_KEY, NOTIFICATIONS_CACHE_TTL_MS),
-    []
+    () => readSessionCache<Notification[]>(notificationsCacheKey, NOTIFICATIONS_CACHE_TTL_MS),
+    [notificationsCacheKey]
   );
 
   // Fetch notifications
@@ -164,16 +172,31 @@ export default function Notifications() {
     refetch,
     isFetched,
   } = useQuery({
-    queryKey: ["notifications"],
+    queryKey: notificationsQueryKey,
     queryFn: async () => {
       const data = await api.get<Notification[]>("/api/notifications");
       return data;
     },
-    initialData: cachedNotifications ?? undefined,
+    initialData: cachedNotifications && cachedNotifications.length > 0 ? cachedNotifications : undefined,
     enabled: isAuthenticated,
     staleTime: 30000,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    retry: (failureCount, error) => {
+      const status =
+        typeof error === "object" && error !== null && "status" in error
+          ? Number((error as { status?: unknown }).status)
+          : null;
+      if (status === 401 || status === 403) {
+        return false;
+      }
+      if (status === 429) {
+        return failureCount < 1;
+      }
+      return failureCount < 2;
+    },
+    retryDelay: (attempt) => Math.min(1200 * 2 ** attempt, 5000),
     refetchInterval: () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
@@ -184,8 +207,10 @@ export default function Notifications() {
 
   useEffect(() => {
     if (!isFetched) return;
-    writeSessionCache(NOTIFICATIONS_CACHE_KEY, notifications);
-  }, [isFetched, notifications]);
+    if (notifications.length > 0) {
+      writeSessionCache(notificationsCacheKey, notifications);
+    }
+  }, [isFetched, notifications, notificationsCacheKey]);
 
   // Mark notification as clicked (read)
   const markClickedMutation = useMutation({
@@ -199,7 +224,7 @@ export default function Notifications() {
     },
     onSuccess: (notificationIds) => {
       const idSet = new Set(notificationIds);
-      queryClient.setQueryData<Notification[]>(["notifications"], (old) =>
+      queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
         old?.map((n) =>
           idSet.has(n.id) ? { ...n, read: true } : n
         )
@@ -238,13 +263,13 @@ export default function Notifications() {
       };
     },
     onMutate: async (notificationIds) => {
-      await queryClient.cancelQueries({ queryKey: ["notifications"] });
-      const previousNotifications = queryClient.getQueryData<Notification[]>(["notifications"]);
+      await queryClient.cancelQueries({ queryKey: notificationsQueryKey });
+      const previousNotifications = queryClient.getQueryData<Notification[]>(notificationsQueryKey);
       return { previousNotifications, attemptedIds: notificationIds };
     },
     onSuccess: ({ dismissedIds, failedIds }) => {
       const dismissedSet = new Set(dismissedIds);
-      queryClient.setQueryData<Notification[]>(["notifications"], (old) =>
+      queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
         old?.filter((n) => !dismissedSet.has(n.id))
       );
       if (failedIds.length > 0) {
@@ -255,7 +280,7 @@ export default function Notifications() {
     },
     onError: (_err, _id, context) => {
       if (context?.previousNotifications) {
-        queryClient.setQueryData(["notifications"], context.previousNotifications);
+        queryClient.setQueryData(notificationsQueryKey, context.previousNotifications);
       }
       toast.error("Failed to dismiss notification");
     },
@@ -267,7 +292,7 @@ export default function Notifications() {
       await api.patch("/api/notifications/read-all");
     },
     onSuccess: () => {
-      queryClient.setQueryData<Notification[]>(["notifications"], (old) =>
+      queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
         old?.map((n) => ({ ...n, read: true }))
       );
       toast.success("All notifications marked as read");
@@ -387,7 +412,7 @@ export default function Notifications() {
                 </p>
               </div>
             </div>
-          ) : isLoading ? (
+          ) : isLoading || (!isFetched && filteredNotifications.length === 0) ? (
             // Loading skeletons
             <div>
               {[0, 1, 2, 3, 4].map((i) => (

@@ -6,10 +6,12 @@ import { toast } from "sonner";
 const LOGIN_SYNC_TIMEOUT_MS = 45_000;
 const AUTO_RESYNC_COOLDOWN_MS = 12_000;
 const AUTO_RESYNC_MAX_ATTEMPTS = 3;
+const TOO_MANY_REQUESTS_BACKOFF_MS = 60_000;
 const IDENTITY_TOKEN_ATTEMPTS = 5;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [120, 180, 260, 360] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
   /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
+const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
 type PrivyUserLike = {
   id: string;
   email?: { address?: string } | null;
@@ -46,6 +48,7 @@ export function usePrivyLogin() {
   const lastAutoResyncAtRef = useRef(0);
   const autoResyncAttemptsRef = useRef(0);
   const lastPrivyUserIdRef = useRef<string | null>(null);
+  const rateLimitedUntilRef = useRef(0);
 
   const clearSyncTimeout = useCallback(() => {
     if (syncTimeoutRef.current !== null) {
@@ -118,6 +121,10 @@ export function usePrivyLogin() {
       if (shouldToast) {
         toast.error(message);
       }
+
+      if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(message)) {
+        rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
+      }
     } finally {
       clearSyncTimeout();
       loginRequestedRef.current = false;
@@ -143,6 +150,7 @@ export function usePrivyLogin() {
     if (!ready || !authenticated || !user) return;
     if (appSessionAuthenticated) return;
     if (syncGuardRef.current || isSyncing) return;
+    if (rateLimitedUntilRef.current > Date.now()) return;
 
     if (lastPrivyUserIdRef.current !== user.id) {
       autoResyncAttemptsRef.current = 0;
@@ -187,6 +195,13 @@ export function usePrivyLogin() {
 
   const startLogin = () => {
     if (syncGuardRef.current || isSyncing) {
+      return;
+    }
+    if (rateLimitedUntilRef.current > Date.now()) {
+      const remaining = Math.max(1, Math.ceil((rateLimitedUntilRef.current - Date.now()) / 1000));
+      const waitMessage = `Too many requests. Please wait ${remaining}s and try again.`;
+      setSyncError(waitMessage);
+      toast.warning(waitMessage);
       return;
     }
     setSyncError(null);

@@ -84,7 +84,6 @@ import { toast } from "sonner";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
 const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
-const ACTIVE_TRADE_DIALOG_POST_DATASET_KEY = "phewActiveTradeDialogPostId";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
@@ -532,7 +531,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const wallet = useWallet();
   const { visible: isWalletModalVisible, setVisible: setWalletModalVisible } = useWalletModal();
   const cardRef = useRef<HTMLDivElement>(null);
-  const postDatasetId = String(post.id);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [isLiked, setIsLiked] = useState(post.isLiked);
@@ -549,10 +547,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
-  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(() => {
-    if (typeof document === "undefined") return false;
-    return document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId;
-  });
+  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
   const [tradeSide, setTradeSide] = useState<TradeSide>("buy");
@@ -597,11 +592,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, []);
 
   const hasActiveTradePanelMarker = useCallback(() => {
-    if (typeof document === "undefined") return false;
-    return Boolean(
-      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] ||
-      document.body.dataset.phewPinnedItemKey
-    );
+    return false;
   }, []);
 
   const clearPotentialScrollLock = useCallback(() => {
@@ -642,11 +633,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       setBuyTxSignature(null);
       // For quick-buy flows, execute without forcing an overlay dialog.
       if (!pendingQuickBuyAutoExecute) {
-        if (typeof document !== "undefined") {
-          document.body.classList.add("phew-overlay-open");
-          document.body.dataset.phewPinnedItemKey = postDatasetId;
-          document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
-        }
         setIsBuyDialogOpen(true);
       }
     }
@@ -663,7 +649,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
   }, [
     wallet.publicKey,
-    postDatasetId,
     isWalletConnectDialogOpen,
     pendingBuyAfterWalletConnect,
     pendingQuickBuyAutoExecute,
@@ -728,29 +713,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     hasActiveTradePanelMarker,
     hasGlobalDialogOpen,
   ]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const activeDialogPostId = document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
-    if (isBuyDialogOpen) {
-      document.body.dataset.phewPinnedItemKey = postDatasetId;
-      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
-      return;
-    }
-    if (activeDialogPostId === postDatasetId) {
-      setIsBuyDialogOpen(true);
-      return;
-    }
-    if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
-      delete document.body.dataset.phewPinnedItemKey;
-    }
-    if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
-      delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
-    }
-    if (!document.querySelector("[role='dialog'][data-state='open']")) {
-      clearPotentialScrollLock();
-    }
-  }, [clearPotentialScrollLock, isBuyDialogOpen, postDatasetId]);
 
   useEffect(() => {
     if (isBuyDialogOpen) return;
@@ -2327,14 +2289,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleCloseBuyDialog = () => {
-    if (typeof document !== "undefined") {
-      if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
-        delete document.body.dataset.phewPinnedItemKey;
-      }
-      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
-        delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
-      }
-    }
     setIsBuyDialogOpen(false);
   };
 
@@ -2384,11 +2338,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleOpenBuyDialog = () => {
-    if (typeof document !== "undefined") {
-      document.body.classList.add("phew-overlay-open");
-      document.body.dataset.phewPinnedItemKey = postDatasetId;
-      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
-    }
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
   };

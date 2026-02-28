@@ -708,10 +708,19 @@ export async function syncPrivySession(
       }
 
       if (!response.ok || !data?.token || !data?.user) {
+        const retryAfterHeader = response.headers.get("retry-after");
+        const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
+        if (response.status === 429) {
+          const waitSuffix =
+            Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+              ? ` Please wait ${retryAfterSeconds}s and try again.`
+              : "";
+          throw new Error(`Too many requests.${waitSuffix}`.trim());
+        }
         const message =
           data?.error?.message ??
           (response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
-        const retryable = response.status === 429 || response.status >= 500;
+        const retryable = response.status >= 500;
         if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
           await new Promise<void>((resolve) => {
             setTimeout(resolve, PRIVY_SYNC_RETRY_DELAYS_MS[attempt]);

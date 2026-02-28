@@ -211,6 +211,8 @@ const PRIVY_CLIENT =
   PRIVY_APP_ID && PRIVY_APP_SECRET
     ? new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET)
     : null;
+const PRIVY_IDENTITY_CACHE_TTL_MS = 45_000;
+const privyIdentityCache = new Map<string, { userId: string; email: string | null; cachedAt: number }>();
 
 const AUTH_RESPONSE_USER_SELECT = {
   id: true,
@@ -881,12 +883,35 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   try {
+    const existingSession = c.get("session");
+    if (existingSession?.session?.token && existingSession?.user?.id) {
+      return c.json({
+        token: existingSession.session.token,
+        user: {
+          id: existingSession.user.id,
+          name: existingSession.user.name,
+          email: existingSession.user.email,
+          image: existingSession.user.image ?? null,
+          level: typeof existingSession.user.level === "number" ? existingSession.user.level : 0,
+          xp: typeof existingSession.user.xp === "number" ? existingSession.user.xp : 0,
+          isVerified: Boolean(existingSession.user.isVerified),
+        },
+      });
+    }
+
     const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
     const { privyUserId, privyIdToken, email, name } = body;
     const providedEmail =
       typeof email === "string" && email.trim().includes("@")
         ? email.trim().toLowerCase()
         : null;
+
+    const privyCacheKey =
+      typeof privyIdToken === "string" && privyIdToken.length > 32
+        ? `token:${privyIdToken.slice(-32)}`
+        : typeof privyUserId === "string" && privyUserId.length > 0
+          ? `user:${privyUserId}`
+          : null;
 
     if ((!privyUserId || typeof privyUserId !== "string") && (!privyIdToken || typeof privyIdToken !== "string")) {
       return c.json({ error: { message: "privyUserId or privyIdToken is required", code: "INVALID_INPUT" } }, 400);
@@ -916,7 +941,23 @@ app.post("/api/auth/privy-sync", async (c) => {
     let verifiedPrivyUserId: string | null = null;
     let verifiedEmail: string | null = null;
 
-    if (typeof privyIdToken === "string" && privyIdToken.length > 0) {
+    if (privyCacheKey) {
+      const cachedIdentity = privyIdentityCache.get(privyCacheKey);
+      if (cachedIdentity && Date.now() - cachedIdentity.cachedAt <= PRIVY_IDENTITY_CACHE_TTL_MS) {
+        if (
+          typeof privyUserId !== "string" ||
+          privyUserId.length === 0 ||
+          cachedIdentity.userId === privyUserId
+        ) {
+          verifiedPrivyUserId = cachedIdentity.userId;
+          verifiedEmail = cachedIdentity.email;
+        }
+      } else if (cachedIdentity) {
+        privyIdentityCache.delete(privyCacheKey);
+      }
+    }
+
+    if (!verifiedPrivyUserId && typeof privyIdToken === "string" && privyIdToken.length > 0) {
       try {
         const tokenUser = await PRIVY_CLIENT.getUser({ idToken: privyIdToken }) as PrivyUserLike;
         verifiedPrivyUserId = typeof tokenUser.id === "string" ? tokenUser.id : null;
@@ -963,6 +1004,14 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!verifiedEmail) {
       verifiedEmail = `${verifiedPrivyUserId.slice(0, 24).toLowerCase()}@privy.local`;
+    }
+
+    if (privyCacheKey) {
+      privyIdentityCache.set(privyCacheKey, {
+        userId: verifiedPrivyUserId,
+        email: verifiedEmail,
+        cachedAt: Date.now(),
+      });
     }
 
     const now = new Date();
