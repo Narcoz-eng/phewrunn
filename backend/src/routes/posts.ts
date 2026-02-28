@@ -93,6 +93,18 @@ type ChartCandlesFetchResult = {
   candles: NormalizedChartCandle[];
 };
 
+type ChartCandlesSourceHealth = {
+  source: ChartCandlesSource;
+  avgLatencyMs: number;
+  lastSuccessAtMs: number;
+  lastFailureAtMs: number;
+  lastCandleTimestampSec: number;
+  consecutiveFailures: number;
+  successCount: number;
+  failureCount: number;
+  cooldownUntilMs: number;
+};
+
 type FeedResponsePayload = {
   data: unknown[];
   hasMore: boolean;
@@ -231,6 +243,23 @@ const JUPITER_QUOTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500
 const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 450 : 200;
 const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_000;
 const CHART_POOL_ADDRESS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
+const CHART_PROVIDER_DEFAULT_LATENCY_MS: Record<ChartCandlesSource, number> = {
+  birdeye: 380,
+  geckoterminal: 760,
+};
+const CHART_PROVIDER_BASELINE_SCORE: Record<ChartCandlesSource, number> = {
+  birdeye: 74,
+  geckoterminal: 62,
+};
+const CHART_PROVIDER_RECENT_SUCCESS_WINDOW_MS =
+  process.env.NODE_ENV === "production" ? 3 * 60_000 : 60_000;
+const CHART_PROVIDER_RECENT_FAILURE_WINDOW_MS =
+  process.env.NODE_ENV === "production" ? 90_000 : 25_000;
+const CHART_PROVIDER_FAILURE_COOLDOWN_BASE_MS =
+  process.env.NODE_ENV === "production" ? 2_500 : 700;
+const CHART_PROVIDER_FAILURE_COOLDOWN_MAX_MS =
+  process.env.NODE_ENV === "production" ? 45_000 : 10_000;
+const CHART_PROVIDER_FRESHNESS_GRACE_CANDLES = 6;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
 const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
@@ -270,6 +299,7 @@ const chartCandlesCache = new Map<
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
 const chartPoolAddressCache = new Map<string, { poolAddress: string | null; expiresAtMs: number }>();
 const chartPoolAddressInFlight = new Map<string, Promise<string | null>>();
+const chartCandlesSourceHealth = new Map<ChartCandlesSource, ChartCandlesSourceHealth>();
 
 function getActivePlatformFeeBps(): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
@@ -4264,6 +4294,118 @@ function toBirdeyeInterval(timeframe: "minute" | "hour" | "day", aggregate: numb
   return "1D";
 }
 
+function getChartCandlesSourceHealth(source: ChartCandlesSource): ChartCandlesSourceHealth {
+  const existing = chartCandlesSourceHealth.get(source);
+  if (existing) {
+    return existing;
+  }
+  const initial: ChartCandlesSourceHealth = {
+    source,
+    avgLatencyMs: CHART_PROVIDER_DEFAULT_LATENCY_MS[source],
+    lastSuccessAtMs: 0,
+    lastFailureAtMs: 0,
+    lastCandleTimestampSec: 0,
+    consecutiveFailures: 0,
+    successCount: 0,
+    failureCount: 0,
+    cooldownUntilMs: 0,
+  };
+  chartCandlesSourceHealth.set(source, initial);
+  return initial;
+}
+
+function recordChartCandlesProviderSuccess(
+  source: ChartCandlesSource,
+  latencyMs: number,
+  result: ChartCandlesFetchResult
+): void {
+  const state = getChartCandlesSourceHealth(source);
+  const normalizedLatency = Number.isFinite(latencyMs)
+    ? Math.max(10, Math.min(20_000, Math.round(latencyMs)))
+    : state.avgLatencyMs;
+  state.avgLatencyMs =
+    state.successCount <= 0
+      ? normalizedLatency
+      : Math.round(state.avgLatencyMs * 0.72 + normalizedLatency * 0.28);
+  state.lastSuccessAtMs = Date.now();
+  state.consecutiveFailures = 0;
+  state.cooldownUntilMs = 0;
+  state.successCount += 1;
+
+  const newestCandle = result.candles[result.candles.length - 1];
+  if (newestCandle && Number.isFinite(newestCandle.timestamp)) {
+    state.lastCandleTimestampSec = Math.max(0, Math.floor(newestCandle.timestamp));
+  }
+}
+
+function recordChartCandlesProviderFailure(source: ChartCandlesSource, latencyMs: number): void {
+  const state = getChartCandlesSourceHealth(source);
+  const normalizedLatency = Number.isFinite(latencyMs)
+    ? Math.max(10, Math.min(20_000, Math.round(latencyMs)))
+    : state.avgLatencyMs;
+  state.avgLatencyMs = Math.round(state.avgLatencyMs * 0.9 + normalizedLatency * 0.1);
+  state.lastFailureAtMs = Date.now();
+  state.failureCount += 1;
+  state.consecutiveFailures = Math.min(8, state.consecutiveFailures + 1);
+
+  const cooldownMs = Math.min(
+    CHART_PROVIDER_FAILURE_COOLDOWN_MAX_MS,
+    CHART_PROVIDER_FAILURE_COOLDOWN_BASE_MS * Math.pow(2, state.consecutiveFailures - 1)
+  );
+  state.cooldownUntilMs = Date.now() + cooldownMs;
+}
+
+function scoreChartCandlesProvider(
+  source: ChartCandlesSource,
+  payload: ChartCandlesPayload,
+  nowMs: number
+): number {
+  const state = getChartCandlesSourceHealth(source);
+  const timeframe = payload.timeframe ?? "minute";
+  const aggregate = payload.aggregate ?? 5;
+  const expectedCadenceSec = Math.max(1, secondsPerCandle(timeframe, aggregate));
+  const nowSec = Math.floor(nowMs / 1000);
+
+  let score = CHART_PROVIDER_BASELINE_SCORE[source];
+
+  if (state.cooldownUntilMs > nowMs) {
+    score -= 10_000;
+  }
+
+  if (state.lastSuccessAtMs > 0) {
+    const successAgeMs = nowMs - state.lastSuccessAtMs;
+    if (successAgeMs <= CHART_PROVIDER_RECENT_SUCCESS_WINDOW_MS) {
+      score += 14;
+    } else if (successAgeMs <= 10 * 60_000) {
+      score += 4;
+    } else {
+      score -= 4;
+    }
+  }
+
+  if (state.lastCandleTimestampSec > 0) {
+    const allowedLagSec = Math.max(expectedCadenceSec * CHART_PROVIDER_FRESHNESS_GRACE_CANDLES, 90);
+    const lagSec = Math.max(0, nowSec - state.lastCandleTimestampSec);
+    if (lagSec <= allowedLagSec) {
+      score += 10;
+    } else if (lagSec <= allowedLagSec * 2) {
+      score += 2;
+    } else {
+      score -= Math.min(28, Math.floor(lagSec / expectedCadenceSec) * 2);
+    }
+  }
+
+  score -= Math.min(24, state.avgLatencyMs / 120);
+  score -= state.consecutiveFailures * 18;
+
+  if (state.lastFailureAtMs > 0 && nowMs - state.lastFailureAtMs <= CHART_PROVIDER_RECENT_FAILURE_WINDOW_MS) {
+    score -= 8;
+  }
+
+  score += Math.min(8, state.successCount / 8);
+  return score;
+}
+
 function buildChartPoolLookupKey(payload: ChartCandlesPayload): string | null {
   const tokenAddress = safeString(payload.tokenAddress)?.toLowerCase();
   if (!tokenAddress) return null;
@@ -4594,18 +4736,70 @@ async function fetchBirdeyeCandles(payload: ChartCandlesPayload): Promise<ChartC
 
 async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
   const isSolana = payload.chainType === "solana";
+  const candidates: Array<{
+    source: ChartCandlesSource;
+    fetcher: () => Promise<ChartCandlesFetchResult>;
+  }> = [];
 
   if (isSolana && payload.tokenAddress && BIRDEYE_API_KEY) {
+    candidates.push({
+      source: "birdeye",
+      fetcher: () => fetchBirdeyeCandles(payload),
+    });
+  }
+
+  candidates.push({
+    source: "geckoterminal",
+    fetcher: () => fetchGeckoTerminalCandles(payload),
+  });
+
+  const nowMs = Date.now();
+  const scored = candidates
+    .map((candidate) => {
+      const health = getChartCandlesSourceHealth(candidate.source);
+      const score = scoreChartCandlesProvider(candidate.source, payload, nowMs);
+      const inCooldown = health.cooldownUntilMs > nowMs;
+      return {
+        ...candidate,
+        score,
+        inCooldown,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const preferred =
+    scored.length > 1 && scored.some((candidate) => !candidate.inCooldown)
+      ? scored.filter((candidate) => !candidate.inCooldown)
+      : scored;
+
+  const failures: string[] = [];
+
+  for (const candidate of preferred) {
+    const startedAtMs = Date.now();
     try {
-      return await fetchBirdeyeCandles(payload);
+      const result = await candidate.fetcher();
+      const latencyMs = Date.now() - startedAtMs;
+      recordChartCandlesProviderSuccess(candidate.source, latencyMs, result);
+      return result;
     } catch (error) {
-      console.warn("[posts/chart/candles] Birdeye fetch failed, falling back to GeckoTerminal", {
-        message: error instanceof Error ? error.message : String(error),
+      const latencyMs = Date.now() - startedAtMs;
+      recordChartCandlesProviderFailure(candidate.source, latencyMs);
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${candidate.source}: ${message}`);
+      console.warn("[posts/chart/candles] provider failed", {
+        source: candidate.source,
+        latencyMs,
+        score: candidate.score,
+        message,
       });
     }
   }
 
-  return await fetchGeckoTerminalCandles(payload);
+  if (failures.length > 0) {
+    throw new Error(failures.join(" | "));
+  }
+
+  throw new Error("No chart provider available");
 }
 
 postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), async (c) => {
