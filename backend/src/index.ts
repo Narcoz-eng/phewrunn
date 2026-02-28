@@ -112,6 +112,8 @@ app.use("/api/*", async (c, next) => {
     c.req.path === "/api/auth/privy-sync" ||
     c.req.path === "/api/me" ||
     c.req.path === "/api/me/stats" ||
+    c.req.path === "/api/notifications" ||
+    c.req.path === "/api/notifications/unread-count" ||
     c.req.path === "/api/posts/prices" ||
     c.req.path === "/api/posts/jupiter/quote" ||
     c.req.path === "/api/posts/chart/candles"

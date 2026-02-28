@@ -592,7 +592,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, []);
 
   const hasActiveTradePanelMarker = useCallback(() => {
-    return false;
+    if (typeof document === "undefined") return false;
+    const activePostId = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
+    return Boolean(activePostId);
   }, []);
 
   const clearPotentialScrollLock = useCallback(() => {
@@ -660,6 +662,24 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     hasActiveTradePanelMarker,
     hasGlobalDialogOpen,
   ]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const activeId = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
+    if (isBuyDialogOpen) {
+      document.body.dataset.phewActiveTradeDialogPostId = post.id;
+      return;
+    }
+    if (activeId === post.id) {
+      delete document.body.dataset.phewActiveTradeDialogPostId;
+    }
+    return () => {
+      const currentId = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
+      if (currentId === post.id) {
+        delete document.body.dataset.phewActiveTradeDialogPostId;
+      }
+    };
+  }, [isBuyDialogOpen, post.id]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
@@ -1935,14 +1955,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const dexscreenerUrl = getDexscreenerUrl();
-  const pumpfunUrl =
-    post.chainType === "solana" && post.contractAddress
-      ? `https://pump.fun/coin/${post.contractAddress}`
-      : null;
-  const isLikelyPumpToken =
-    post.chainType === "solana" &&
-    !!post.contractAddress &&
-    /pump$/i.test(post.contractAddress.trim());
   const isSolanaTradeSupported = post.chainType === "solana" && !!post.contractAddress;
   const parsedBuyAmountSol = Number(buyAmountSol);
   const buyAmountLamports =
@@ -2586,9 +2598,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterQuote = jupiterQuoteQuery.data ?? staleQuoteForSide;
   const isUsingStaleQuote = !jupiterQuoteQuery.data && !!staleQuoteForSide;
   const showQuoteLoading = jupiterQuoteQuery.isLoading && !jupiterQuote;
-  const jupiterRouteLabels = Array.from(
-    new Set((jupiterQuote?.routePlan ?? []).map((r) => r.swapInfo?.label).filter(Boolean))
-  ) as string[];
   const jupiterOutputAmountFormatted = jupiterQuote
     ? tradeSide === "buy"
       ? formatTokenAmountFromAtomic(jupiterQuote.outAmount, outputTokenDecimals)
@@ -2741,7 +2750,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
       ? "-"
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
-  const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
   const professionalChartData = useMemo(() => {
     const providerCandles = chartCandlesQuery.data?.candles ?? [];
     const fallbackIntervalMs =
@@ -4151,7 +4159,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm">
               {isSolanaTradeSupported
-                ? "Review the chart and place trades from the same panel."
+                ? "Live chart and execution in one workspace."
                 : "Trading is available here for Solana posts. This post is on another chain."}
             </DialogDescription>
           </DialogHeader>
@@ -4203,7 +4211,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               </div>
             ) : (
               <>
-                <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
+                <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] lg:items-start">
                   <div className="space-y-4 lg:min-h-0 lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
                     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
                       <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
@@ -4631,15 +4639,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
                   </div>
 
-                  <div className="relative z-10 flex min-h-0 flex-col gap-4 self-start lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
+                  <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
                     <div className="order-1 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
                           <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Order Ticket</div>
-                          <div className="text-sm font-medium text-foreground">Buy or sell without leaving the chart</div>
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-muted-foreground">
-                          Auto quote refresh
+                          <div className="text-sm font-medium text-foreground">Buy and sell instantly</div>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
@@ -4670,7 +4675,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="order-3 rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="order-4 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
                         {walletShortAddress ? (
@@ -4969,28 +4974,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       </div>
                     </div>
 
-                    <div className="order-4 space-y-4">
-                    <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
+                    <div className="order-3 rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Quote Summary</div>
-                        {jupiterQuote?.timeTaken ? (
-                          <span className="text-[11px] text-muted-foreground">{(jupiterQuote.timeTaken * 1000).toFixed(0)} ms</span>
-                        ) : null}
+                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Execution</div>
+                        <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
+                          {jupiterStatusLabel}
+                        </span>
                       </div>
-                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Route Status</div>
-                          <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
-                            {jupiterStatusLabel}
-                          </span>
-                        </div>
-                        {jupiterNoRouteDetected && (
-                          <p className="mt-2 text-xs text-amber-100/85">
-                            No route is available right now. Chart and token data still load, but swap execution is unavailable until routing returns.
-                          </p>
-                        )}
-                      </div>
-                      <div className="mt-3 grid gap-2">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                           <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
                           <div className="mt-1 text-sm font-semibold text-foreground">
@@ -4998,80 +4989,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </div>
                         </div>
                         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Receive (Est.)</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterReceiveDisplay}</div>
+                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Price Impact</div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterPriceImpactDisplay}</div>
                         </div>
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Minimum Receive</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterMinReceiveDisplay}</div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Price Impact</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterPriceImpactDisplay}</div>
-                          </div>
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Route Hops</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {jupiterQuote?.routePlan?.length ?? 0}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-transparent p-4">
-                      <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground mb-2">Route</div>
-                      {jupiterRouteLabels.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {jupiterRouteLabels.map((label) => (
-                            <span key={label} className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-xs text-foreground">
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          {jupiterQuoteQuery.isLoading
-                            ? "Loading route..."
-                            : jupiterNoRouteDetected
-                              ? "No route available right now"
-                              : "No route yet"}
-                        </div>
-                      )}
-                      {showPumpFallbackCta ? (
-                        <div className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/5 p-3">
-                          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-lime-100">
-                            Pump Token Fallback
-                          </div>
-                          <p className="mt-1 text-xs text-lime-100/80">
-                            No route is available for this token right now. Open the Pump market page to trade there instead.
-                          </p>
-                          <a
-                            href={pumpfunUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-lime-300/20 bg-lime-300/10 px-3 py-2 text-xs font-semibold text-lime-50 hover:bg-lime-300/15 transition-colors"
-                          >
-                            <Zap className="h-3.5 w-3.5" />
-                            Open on Pump.fun
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        </div>
-                      ) : null}
-                      {jupiterQuoteUnavailable && !jupiterQuoteQuery.isFetching ? (
-                        <div className="mt-3 rounded-xl border border-loss/20 bg-loss/5 p-3">
-                          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-loss">Provider Error</div>
-                          <p className="mt-1 text-xs text-loss/90">
-                            Quote temporarily unavailable. Retry in a moment or adjust amount/slippage.
-                          </p>
-                        </div>
-                      ) : null}
-                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-                        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-foreground/90">Wallet Safety Prompt</div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          If Phantom shows “Request blocked”, that is a wallet security warning for the site origin (domain reputation), not a quote-routing failure. Users can continue manually, but the long-term fix is to get the domain trusted/whitelisted by Phantom.
-                        </p>
                       </div>
                       {buyTxSignature ? (
                         <a
@@ -5085,7 +5005,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </a>
                       ) : null}
                     </div>
-                  </div>
                   </div>
                 </div>
 

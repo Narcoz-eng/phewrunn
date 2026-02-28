@@ -174,8 +174,36 @@ export default function Notifications() {
   } = useQuery({
     queryKey: notificationsQueryKey,
     queryFn: async () => {
-      const data = await api.get<Notification[]>("/api/notifications");
-      return data;
+      const response = await api.raw("/api/notifications");
+      if (response.status === 401 || response.status === 403) {
+        return cachedNotifications ?? [];
+      }
+      if (response.status === 429) {
+        const retryAfterHeader = response.headers.get("retry-after");
+        const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
+        const waitMessage =
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+            ? `Please wait ${retryAfterSeconds}s and try again.`
+            : "Please wait a few seconds and try again.";
+        const rateError = new Error(waitMessage) as Error & { status?: number };
+        rateError.status = 429;
+        throw rateError;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message =
+          payload?.error?.message ||
+          payload?.message ||
+          `Request failed with status ${response.status}`;
+        if (cachedNotifications && cachedNotifications.length > 0) {
+          return cachedNotifications;
+        }
+        const requestError = new Error(message) as Error & { status?: number };
+        requestError.status = response.status;
+        throw requestError;
+      }
+      const payload = (await response.json().catch(() => null)) as { data?: Notification[] } | null;
+      return Array.isArray(payload?.data) ? payload.data : [];
     },
     initialData: cachedNotifications && cachedNotifications.length > 0 ? cachedNotifications : undefined,
     enabled: isAuthenticated,
@@ -204,6 +232,17 @@ export default function Notifications() {
       return isAuthenticated ? 60000 : false;
     },
   });
+  const notificationsErrorMessage = useMemo(() => {
+    if (!error || typeof error !== "object") return "Please try again later.";
+    const status = "status" in error ? Number((error as { status?: unknown }).status) : null;
+    if (status === 429) {
+      return error instanceof Error && error.message ? error.message : "Too many requests. Please wait and try again.";
+    }
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    return "Please try again later.";
+  }, [error]);
 
   useEffect(() => {
     if (!isFetched) return;
@@ -430,7 +469,7 @@ export default function Notifications() {
                   Failed to load notifications
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Please try again later.
+                  {notificationsErrorMessage}
                 </p>
               </div>
               <Button variant="outline" onClick={() => refetch()}>

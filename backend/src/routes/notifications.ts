@@ -41,6 +41,14 @@ function buildNotificationGroupKey(notification: {
   }
 }
 
+function isPrismaMissingColumnError(error: unknown, columnName: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  if (code === "P2022") return true;
+  return message.toLowerCase().includes(columnName.toLowerCase());
+}
+
 // Get all notifications for current user
 // Query param: includeDismissed (default false)
 notificationsRouter.get("/", requireAuth, async (c) => {
@@ -56,34 +64,61 @@ notificationsRouter.get("/", requireAuth, async (c) => {
 
   const whereClause: { userId: string; dismissed?: boolean } = { userId: user.id };
 
-  // By default, filter out dismissed notifications
   if (!includeDismissed) {
     whereClause.dismissed = false;
   }
 
-  const notifications = await prisma.notification.findMany({
-    where: whereClause,
-    orderBy: { createdAt: "desc" },
-    take: 50,
-    include: {
-      fromUser: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
+  let notifications;
+  try {
+    notifications = await prisma.notification.findMany({
+      where: whereClause,
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        fromUser: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+          },
+        },
+        post: {
+          select: {
+            id: true,
+            content: true,
+            contractAddress: true,
+          },
         },
       },
-      post: {
-        select: {
-          id: true,
-          content: true,
-          contractAddress: true,
+    });
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "dismissed")) {
+      throw error;
+    }
+    notifications = await prisma.notification.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        fromUser: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+          },
+        },
+        post: {
+          select: {
+            id: true,
+            content: true,
+            contractAddress: true,
+          },
         },
       },
-    },
-  });
+    });
+  }
 
   return c.json({ data: notifications });
 });
@@ -95,22 +130,44 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const unreadNotifications = await prisma.notification.findMany({
-    where: {
-      userId: user.id,
-      read: false,
-      dismissed: false, // Don't count dismissed notifications
-    },
-    select: {
-      id: true,
-      type: true,
-      fromUserId: true,
-      postId: true,
-      message: true,
-    },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
+  let unreadNotifications;
+  try {
+    unreadNotifications = await prisma.notification.findMany({
+      where: {
+        userId: user.id,
+        read: false,
+        dismissed: false,
+      },
+      select: {
+        id: true,
+        type: true,
+        fromUserId: true,
+        postId: true,
+        message: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "dismissed")) {
+      throw error;
+    }
+    unreadNotifications = await prisma.notification.findMany({
+      where: {
+        userId: user.id,
+        read: false,
+      },
+      select: {
+        id: true,
+        type: true,
+        fromUserId: true,
+        postId: true,
+        message: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+  }
 
   const groupKeys = new Set(
     unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
@@ -155,14 +212,27 @@ notificationsRouter.patch("/read-all", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  await prisma.notification.updateMany({
-    where: {
-      userId: user.id,
-      read: false,
-      dismissed: false, // Only mark non-dismissed as read
-    },
-    data: { read: true },
-  });
+  try {
+    await prisma.notification.updateMany({
+      where: {
+        userId: user.id,
+        read: false,
+        dismissed: false,
+      },
+      data: { read: true },
+    });
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "dismissed")) {
+      throw error;
+    }
+    await prisma.notification.updateMany({
+      where: {
+        userId: user.id,
+        read: false,
+      },
+      data: { read: true },
+    });
+  }
 
   return c.json({ data: { success: true } });
 });
@@ -186,7 +256,6 @@ notificationsRouter.patch("/:id/click", requireAuth, async (c) => {
           name: true,
           username: true,
           image: true,
-          level: true,
         },
       },
       post: {
@@ -207,31 +276,60 @@ notificationsRouter.patch("/:id/click", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 403);
   }
 
-  const updated = await prisma.notification.update({
-    where: { id: notificationId },
-    data: {
-      clickedAt: new Date(),
-      read: true,
-    },
-    include: {
-      fromUser: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
+  let updated;
+  try {
+    updated = await prisma.notification.update({
+      where: { id: notificationId },
+      data: {
+        clickedAt: new Date(),
+        read: true,
+      },
+      include: {
+        fromUser: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+          },
+        },
+        post: {
+          select: {
+            id: true,
+            content: true,
+            contractAddress: true,
+          },
         },
       },
-      post: {
-        select: {
-          id: true,
-          content: true,
-          contractAddress: true,
+    });
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "clickedAt")) {
+      throw error;
+    }
+    updated = await prisma.notification.update({
+      where: { id: notificationId },
+      data: {
+        read: true,
+      },
+      include: {
+        fromUser: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+          },
+        },
+        post: {
+          select: {
+            id: true,
+            content: true,
+            contractAddress: true,
+          },
         },
       },
-    },
-  });
+    });
+  }
 
   // Return the notification data for frontend navigation (no redirect URL)
   return c.json({ data: updated });
@@ -259,12 +357,21 @@ notificationsRouter.patch("/:id/dismiss", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 403);
   }
 
-  const updated = await prisma.notification.update({
-    where: { id: notificationId },
-    data: { dismissed: true },
-  });
-
-  return c.json({ data: updated });
+  try {
+    const updated = await prisma.notification.update({
+      where: { id: notificationId },
+      data: { dismissed: true },
+    });
+    return c.json({ data: updated });
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "dismissed")) {
+      throw error;
+    }
+    await prisma.notification.delete({
+      where: { id: notificationId },
+    });
+    return c.json({ data: { deleted: true } });
+  }
 });
 
 // Delete a notification (hard delete - kept for backwards compatibility)
