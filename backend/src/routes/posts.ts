@@ -76,6 +76,23 @@ type JupiterProxyResult = {
   contentType: string | null;
 };
 
+type NormalizedChartCandle = {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+type ChartCandlesSource = "birdeye" | "geckoterminal";
+
+type ChartCandlesFetchResult = {
+  source: ChartCandlesSource;
+  network: "solana" | "eth";
+  candles: NormalizedChartCandle[];
+};
+
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let settlementRunInFlight: Promise<SettlementRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
@@ -156,11 +173,13 @@ const JUPITER_SWAP_URLS = [
 ];
 const JUPITER_QUOTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500 : 600;
 const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 450 : 200;
+const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_000;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
 const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
 const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 100;
 const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100; // max 1.00%
+const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const JUPITER_PLATFORM_FEE_BPS = FIXED_PLATFORM_FEE_BPS;
 const JUPITER_PLATFORM_FEE_ACCOUNT =
   process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || PLATFORM_FEE_ACCOUNT_FALLBACK;
@@ -184,6 +203,14 @@ const jupiterQuoteCache = new Map<
   }
 >();
 const jupiterQuoteInFlight = new Map<string, Promise<JupiterProxyResult>>();
+const chartCandlesCache = new Map<
+  string,
+  {
+    result: ChartCandlesFetchResult;
+    expiresAtMs: number;
+  }
+>();
+const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
 
 function getActivePlatformFeeBps(): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
@@ -275,6 +302,49 @@ function safeFiniteNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function safeTimestampSeconds(value: unknown): number | null {
+  const parsed = safeFiniteNumber(value);
+  if (parsed === null || !Number.isFinite(parsed) || parsed <= 0) return null;
+  // Supports upstream timestamps in either seconds or milliseconds.
+  return parsed > 10_000_000_000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+}
+
+function normalizeChartCandle(input: {
+  timestamp: unknown;
+  open: unknown;
+  high: unknown;
+  low: unknown;
+  close: unknown;
+  volume?: unknown;
+}): NormalizedChartCandle | null {
+  const timestamp = safeTimestampSeconds(input.timestamp);
+  const open = safeFiniteNumber(input.open);
+  const high = safeFiniteNumber(input.high);
+  const low = safeFiniteNumber(input.low);
+  const close = safeFiniteNumber(input.close);
+  const volume = safeFiniteNumber(input.volume ?? 0) ?? 0;
+  if (
+    timestamp === null ||
+    open === null ||
+    high === null ||
+    low === null ||
+    close === null
+  ) {
+    return null;
+  }
+
+  const normalizedHigh = Math.max(high, low, open, close);
+  const normalizedLow = Math.min(high, low, open, close);
+  return {
+    timestamp,
+    open,
+    high: normalizedHigh,
+    low: normalizedLow,
+    close,
+    volume: Number.isFinite(volume) ? volume : 0,
+  };
 }
 
 function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell" {
@@ -3457,12 +3527,18 @@ const JupiterFeeConfirmSchema = z.object({
 });
 
 const ChartCandlesProxySchema = z.object({
-  poolAddress: z.string().min(10).max(128),
+  poolAddress: z.string().min(10).max(128).optional(),
+  tokenAddress: z.string().min(10).max(128).optional(),
   chainType: z.enum(["solana", "evm", "ethereum"]).optional(),
   timeframe: z.enum(["minute", "hour", "day"]).optional().default("minute"),
-  aggregate: z.number().int().min(1).max(60).optional().default(5),
-  limit: z.number().int().min(20).max(300).optional().default(160),
+  aggregate: z.number().int().min(1).max(240).optional().default(5),
+  limit: z.number().int().min(20).max(720).optional().default(260),
+}).refine((value) => Boolean(value.poolAddress || value.tokenAddress), {
+  message: "poolAddress or tokenAddress is required",
+  path: ["poolAddress"],
 });
+
+type ChartCandlesPayload = z.infer<typeof ChartCandlesProxySchema>;
 
 type PriceRoutePostRecord = {
   id: string;
@@ -4048,37 +4124,66 @@ postsRouter.post(
   }
 );
 
-postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), async (c) => {
-  const payload = c.req.valid("json");
+function buildChartCandlesCacheKey(payload: ChartCandlesPayload): string {
+  return [
+    payload.chainType ?? "ethereum",
+    payload.poolAddress?.toLowerCase() ?? "",
+    payload.tokenAddress?.toLowerCase() ?? "",
+    payload.timeframe ?? "minute",
+    String(payload.aggregate ?? 5),
+    String(payload.limit ?? 260),
+  ].join(":");
+}
+
+function secondsPerCandle(timeframe: "minute" | "hour" | "day", aggregate: number): number {
+  if (timeframe === "minute") return Math.max(1, aggregate) * 60;
+  if (timeframe === "hour") return Math.max(1, aggregate) * 60 * 60;
+  return Math.max(1, aggregate) * 24 * 60 * 60;
+}
+
+function toBirdeyeInterval(timeframe: "minute" | "hour" | "day", aggregate: number): string {
+  if (timeframe === "minute") {
+    if (aggregate <= 1) return "1m";
+    if (aggregate <= 3) return "3m";
+    if (aggregate <= 5) return "5m";
+    if (aggregate <= 15) return "15m";
+    return "30m";
+  }
+  if (timeframe === "hour") {
+    if (aggregate <= 1) return "1H";
+    if (aggregate <= 2) return "2H";
+    if (aggregate <= 4) return "4H";
+    if (aggregate <= 8) return "8H";
+    return "12H";
+  }
+  return "1D";
+}
+
+async function fetchGeckoTerminalCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
+  if (!payload.poolAddress) {
+    throw new Error("Pool address is required for GeckoTerminal candles");
+  }
+
   const network = payload.chainType === "solana" ? "solana" : "eth";
   const params = new URLSearchParams({
     aggregate: String(payload.aggregate ?? 5),
-    limit: String(payload.limit ?? 160),
+    limit: String(payload.limit ?? 260),
     currency: "usd",
     token: "base",
   });
-
   const geckoUrl = `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${payload.poolAddress}/ohlcv/${payload.timeframe ?? "minute"}?${params.toString()}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 7000);
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4_500);
   try {
     const response = await fetch(geckoUrl, {
       method: "GET",
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
-    clearTimeout(timeout);
-
     const bodyText = await response.text();
     if (!response.ok) {
-      return new Response(bodyText || "Chart feed unavailable", {
-        status: response.status,
-        headers: {
-          "content-type": response.headers.get("content-type") || "application/json",
-          "cache-control": "no-store",
-        },
-      });
+      throw new Error(bodyText || `GeckoTerminal request failed (${response.status})`);
     }
 
     const parsed = JSON.parse(bodyText) as unknown;
@@ -4090,44 +4195,179 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
     const candles = rawList
       .map((row) => {
         if (!Array.isArray(row) || row.length < 6) return null;
-        const timestamp = safeFiniteNumber(row[0]);
-        const open = safeFiniteNumber(row[1]);
-        const high = safeFiniteNumber(row[2]);
-        const low = safeFiniteNumber(row[3]);
-        const close = safeFiniteNumber(row[4]);
-        const volume = safeFiniteNumber(row[5]) ?? 0;
-        if (
-          timestamp === null ||
-          open === null ||
-          high === null ||
-          low === null ||
-          close === null
-        ) {
-          return null;
-        }
-        return {
-          timestamp,
-          open,
-          high,
-          low,
-          close,
-          volume,
-        };
+        return normalizeChartCandle({
+          timestamp: row[0],
+          open: row[1],
+          high: row[2],
+          low: row[3],
+          close: row[4],
+          volume: row[5],
+        });
       })
-      .filter((entry): entry is { timestamp: number; open: number; high: number; low: number; close: number; volume: number } => entry !== null)
+      .filter((entry): entry is NormalizedChartCandle => entry !== null)
       .sort((a, b) => a.timestamp - b.timestamp);
+
+    return {
+      source: "geckoterminal",
+      network,
+      candles,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchBirdeyeCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
+  if (!BIRDEYE_API_KEY) {
+    throw new Error("Birdeye API key is not configured");
+  }
+  if (payload.chainType !== "solana") {
+    throw new Error("Birdeye candles are only used for Solana pairs");
+  }
+  if (!payload.tokenAddress) {
+    throw new Error("Token address is required for Birdeye candles");
+  }
+
+  const timeframe = payload.timeframe ?? "minute";
+  const aggregate = payload.aggregate ?? 5;
+  const limit = payload.limit ?? 260;
+  const intervalSeconds = secondsPerCandle(timeframe, aggregate);
+  const timeTo = Math.floor(Date.now() / 1000);
+  const timeFrom = Math.max(0, timeTo - intervalSeconds * (limit + 6));
+  const type = toBirdeyeInterval(timeframe, aggregate);
+  const params = new URLSearchParams({
+    address: payload.tokenAddress,
+    address_type: "token",
+    type,
+    time_from: String(timeFrom),
+    time_to: String(timeTo),
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_500);
+  try {
+    const response = await fetch(`https://public-api.birdeye.so/defi/ohlcv?${params.toString()}`, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        "x-chain": "solana",
+        "X-API-KEY": BIRDEYE_API_KEY,
+      },
+      signal: controller.signal,
+    });
+    const bodyText = await response.text();
+    if (!response.ok) {
+      throw new Error(bodyText || `Birdeye request failed (${response.status})`);
+    }
+
+    const parsed = JSON.parse(bodyText) as unknown;
+    const top = safeRecord(parsed);
+    const successFlag = top?.success;
+    if (successFlag === false) {
+      throw new Error("Birdeye returned an unsuccessful response");
+    }
+    const data = safeRecord(top?.data);
+    const rawItems = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.history)
+        ? data.history
+        : [];
+
+    const candles = rawItems
+      .map((row) => {
+        const item = safeRecord(row);
+        if (!item) return null;
+        const value = safeFiniteNumber(item.value);
+        return normalizeChartCandle({
+          timestamp: item.unixTime ?? item.time ?? item.timestamp,
+          open: item.o ?? item.open ?? value,
+          high: item.h ?? item.high ?? value,
+          low: item.l ?? item.low ?? value,
+          close: item.c ?? item.close ?? value,
+          volume: item.v ?? item.volume ?? item.baseVolume ?? item.quoteVolume ?? 0,
+        });
+      })
+      .filter((entry): entry is NormalizedChartCandle => entry !== null)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(-limit);
+
+    if (candles.length < 2) {
+      throw new Error("Birdeye returned insufficient candle data");
+    }
+
+    return {
+      source: "birdeye",
+      network: "solana",
+      candles,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
+  const isSolana = payload.chainType === "solana";
+
+  if (isSolana && payload.tokenAddress && BIRDEYE_API_KEY) {
+    try {
+      return await fetchBirdeyeCandles(payload);
+    } catch (error) {
+      console.warn("[posts/chart/candles] Birdeye fetch failed, falling back to GeckoTerminal", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return await fetchGeckoTerminalCandles(payload);
+}
+
+postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), async (c) => {
+  const payload = c.req.valid("json");
+  const cacheKey = buildChartCandlesCacheKey(payload);
+  const now = Date.now();
+  const cached = chartCandlesCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    return c.json({
+      data: {
+        source: cached.result.source,
+        network: cached.result.network,
+        poolAddress: payload.poolAddress ?? null,
+        tokenAddress: payload.tokenAddress ?? null,
+        timeframe: payload.timeframe ?? "minute",
+        aggregate: payload.aggregate ?? 5,
+        candles: cached.result.candles,
+      },
+    });
+  }
+  if (cached) {
+    chartCandlesCache.delete(cacheKey);
+  }
+
+  let request = chartCandlesInFlight.get(cacheKey);
+  if (!request) {
+    request = fetchBestChartCandles(payload);
+    chartCandlesInFlight.set(cacheKey, request);
+  }
+
+  try {
+    const result = await request;
+    chartCandlesCache.set(cacheKey, {
+      result,
+      expiresAtMs: Date.now() + CHART_CANDLES_CACHE_TTL_MS,
+    });
 
     return c.json({
       data: {
-        network,
-        poolAddress: payload.poolAddress,
+        source: result.source,
+        network: result.network,
+        poolAddress: payload.poolAddress ?? null,
+        tokenAddress: payload.tokenAddress ?? null,
         timeframe: payload.timeframe ?? "minute",
         aggregate: payload.aggregate ?? 5,
-        candles,
+        candles: result.candles,
       },
     });
   } catch (error) {
-    clearTimeout(timeout);
     const message =
       error instanceof Error ? error.message : "Failed to load chart candles";
     return c.json(
@@ -4139,6 +4379,11 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
       },
       502
     );
+  } finally {
+    const current = chartCandlesInFlight.get(cacheKey);
+    if (current === request) {
+      chartCandlesInFlight.delete(cacheKey);
+    }
   }
 });
 

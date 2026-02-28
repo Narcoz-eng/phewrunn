@@ -100,10 +100,10 @@ const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "1D", label: "1D" },
 ] as const;
 type DexChartIntervalValue = (typeof DEX_CHART_INTERVAL_OPTIONS)[number]["value"];
-const CHART_DEFAULT_VISIBLE_POINTS = 72;
+const CHART_DEFAULT_VISIBLE_POINTS = 96;
 const CHART_MIN_VISIBLE_POINTS = 18;
-const CHART_MAX_VISIBLE_POINTS = 180;
-const CHART_ZOOM_STEP_POINTS = 12;
+const CHART_MAX_VISIBLE_POINTS = 320;
+const CHART_ZOOM_STEP_POINTS = 16;
 const CHART_PAN_STEP_POINTS = 6;
 const CHART_TOUCH_PAN_THRESHOLD_PX = 12;
 const CHART_TOUCH_PAN_STEP_PX = 14;
@@ -322,6 +322,14 @@ type ChartCandle = {
   low: number;
   close: number;
   volume: number;
+};
+
+type ChartCandlesSource = "birdeye" | "geckoterminal" | "unknown";
+
+type ChartCandlesResponse = {
+  candles: ChartCandle[];
+  source: ChartCandlesSource;
+  network: string | null;
 };
 
 function normalizeDexAddress(value: string | null | undefined): string | null {
@@ -1907,42 +1915,52 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const chartRequestConfig = useMemo(() => {
     switch (chartInterval) {
       case "5":
-        return { timeframe: "minute" as const, aggregate: 1, limit: 220 };
+        return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
       case "15":
-        return { timeframe: "minute" as const, aggregate: 5, limit: 220 };
+        return { timeframe: "minute" as const, aggregate: 5, limit: 360 };
       case "60":
-        return { timeframe: "hour" as const, aggregate: 1, limit: 180 };
+        return { timeframe: "hour" as const, aggregate: 1, limit: 320 };
       case "240":
-        return { timeframe: "hour" as const, aggregate: 4, limit: 160 };
+        return { timeframe: "hour" as const, aggregate: 4, limit: 320 };
       case "1D":
       default:
-        return { timeframe: "day" as const, aggregate: 1, limit: 120 };
+        return { timeframe: "day" as const, aggregate: 1, limit: 260 };
     }
   }, [chartInterval]);
+  const canRequestChartCandles =
+    !!resolvedPairAddress || (post.chainType === "solana" && !!post.contractAddress);
 
-  const chartCandlesQuery = useQuery({
+  const chartCandlesQuery = useQuery<ChartCandlesResponse>({
     queryKey: [
       "chartCandles",
       post.id,
       resolvedPairAddress,
+      post.contractAddress,
       chartRequestConfig.timeframe,
       chartRequestConfig.aggregate,
       chartRequestConfig.limit,
     ],
-    enabled: isBuyDialogOpen && !!resolvedPairAddress,
+    enabled: isBuyDialogOpen && canRequestChartCandles,
     staleTime: 5_000,
     retry: 1,
     refetchOnWindowFocus: false,
     refetchInterval:
       isBuyDialogOpen && chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000,
     queryFn: async () => {
-      if (!resolvedPairAddress) return [] as ChartCandle[];
+      if (!canRequestChartCandles) {
+        return {
+          candles: [],
+          source: "unknown" as const,
+          network: null,
+        };
+      }
       const response = await fetch("/api/posts/chart/candles", {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
-          poolAddress: resolvedPairAddress,
+          poolAddress: resolvedPairAddress ?? undefined,
+          tokenAddress: post.contractAddress ?? undefined,
           chainType: post.chainType === "solana" ? "solana" : "ethereum",
           timeframe: chartRequestConfig.timeframe,
           aggregate: chartRequestConfig.aggregate,
@@ -1955,10 +1973,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
       const payload = (await response.json()) as {
         data?: {
+          source?: string;
+          network?: string | null;
           candles?: ChartCandle[];
         };
       };
-      return Array.isArray(payload?.data?.candles) ? payload.data!.candles! : [];
+      const sourceRaw = payload?.data?.source;
+      const source: ChartCandlesSource =
+        sourceRaw === "birdeye" || sourceRaw === "geckoterminal" ? sourceRaw : "unknown";
+      return {
+        candles: Array.isArray(payload?.data?.candles) ? payload.data!.candles! : [],
+        source,
+        network: typeof payload?.data?.network === "string" ? payload.data.network : null,
+      };
     },
   });
 
@@ -2637,7 +2664,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
   const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
   const professionalChartData = useMemo(() => {
-    const raw = chartCandlesQuery.data ?? [];
+    const raw = chartCandlesQuery.data?.candles ?? [];
     return raw
       .map((candle) => {
         const open = Number(candle.open);
@@ -2684,7 +2711,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         Number.isFinite(point.low) &&
         Number.isFinite(point.close)
       );
-  }, [chartCandlesQuery.data, chartRequestConfig.timeframe]);
+  }, [chartCandlesQuery.data?.candles, chartRequestConfig.timeframe]);
   const hasProfessionalChartData = professionalChartData.length >= 2;
   const chartTotalPoints = professionalChartData.length;
   const chartWindowBounds = useMemo(() => {
@@ -3033,6 +3060,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const professionalChartFill = professionalChartTrendPositive
     ? "rgba(116,243,122,0.18)"
     : "rgba(255,107,107,0.18)";
+  const chartFeedLabel = useMemo(() => {
+    switch (chartCandlesQuery.data?.source) {
+      case "birdeye":
+        return "Birdeye";
+      case "geckoterminal":
+        return "GeckoTerminal";
+      default:
+        return "Live";
+    }
+  }, [chartCandlesQuery.data?.source]);
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {
@@ -4451,7 +4488,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         {hasProfessionalChartData ? (
                           <div className="flex flex-wrap gap-x-4 gap-y-1">
                             <span>
-                              Chart feed: GeckoTerminal ({chartRequestConfig.timeframe}/{chartRequestConfig.aggregate})
+                              Chart feed: {chartFeedLabel} ({chartRequestConfig.timeframe}/{chartRequestConfig.aggregate})
                             </span>
                             <span>
                               Updated: {professionalChartLast ? new Date(professionalChartLast.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "-"}
