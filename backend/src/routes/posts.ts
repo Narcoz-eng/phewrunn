@@ -70,6 +70,12 @@ type MaintenanceRunResult = {
   };
 };
 
+type JupiterProxyResult = {
+  status: number;
+  bodyText: string;
+  contentType: string | null;
+};
+
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
 let lastCronMaintenanceCompletedAt = 0;
@@ -3309,9 +3315,9 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
 
 async function forwardJupiterRequest(
   targets: string[],
-  init: RequestInit & { timeoutMs?: number }
-): Promise<{ status: number; bodyText: string; contentType: string | null }> {
-  const { timeoutMs = 7000, ...requestInit } = init;
+  init: RequestInit & { timeoutMs?: number; hedgeDelayMs?: number }
+): Promise<JupiterProxyResult> {
+  const { timeoutMs = 7000, hedgeDelayMs = 140, ...requestInit } = init;
   let lastStatus = 502;
   let lastBody = "Failed to reach Jupiter";
   let lastContentType: string | null = null;
@@ -3327,7 +3333,7 @@ async function forwardJupiterRequest(
     let pending = targets.length;
     let settled = false;
 
-    const resolveOnce = (result: { status: number; bodyText: string; contentType: string | null }) => {
+    const resolveOnce = (result: JupiterProxyResult) => {
       if (settled) return;
       settled = true;
       for (const controller of controllers) {
@@ -3336,7 +3342,7 @@ async function forwardJupiterRequest(
       resolve(result);
     };
 
-    const onFailure = (result: { status: number; bodyText: string; contentType: string | null }) => {
+    const onFailure = (result: JupiterProxyResult) => {
       lastStatus = result.status;
       lastBody = result.bodyText;
       lastContentType = result.contentType;
@@ -3347,7 +3353,7 @@ async function forwardJupiterRequest(
     };
 
     targets.forEach((url, index) => {
-      const delayMs = index === 0 ? 0 : 180 * index;
+      const delayMs = index === 0 ? 0 : hedgeDelayMs * index;
       setTimeout(async () => {
         if (settled) {
           pending -= 1;
@@ -3407,7 +3413,8 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
     {
       method: "GET",
       headers: { accept: "application/json" },
-      timeoutMs: 7000,
+      timeoutMs: 2800,
+      hedgeDelayMs: 70,
     }
   );
 

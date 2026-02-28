@@ -84,6 +84,8 @@ const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
+const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
+const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -1820,10 +1822,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterQuoteQuery = useQuery({
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
     enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
-    staleTime: 2_000,
-    retry: 2,
-    retryDelay: (attempt) => Math.min(900, 250 * attempt),
-    refetchInterval: (q) => (q.state.data ? 5_000 : 3_000),
+    staleTime: 3_000,
+    retry: 1,
+    retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
+    refetchInterval: (q) => (q.state.data ? 4_000 : 2_000),
     refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!post.contractAddress || !tradeAmountAtomic) throw new Error("Missing token or amount");
@@ -1846,7 +1848,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       let lastError = "Failed to load quote";
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3500);
+        const timeout = setTimeout(() => controller.abort(), JUPITER_QUOTE_TIMEOUT_MS);
         const res = await fetch("/api/posts/jupiter/quote", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1869,7 +1871,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     },
   });
   const jupiterQuoteData = jupiterQuoteQuery.data;
-  const [lastGoodQuoteBySide, setLastGoodQuoteBySide] = useState<Record<TradeSide, JupiterQuoteResponse | null>>({
+  const [lastGoodQuoteBySide, setLastGoodQuoteBySide] = useState<Record<TradeSide, { quote: JupiterQuoteResponse; updatedAtMs: number } | null>>({
     buy: null,
     sell: null,
   });
@@ -1881,7 +1883,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (!jupiterQuoteData) return;
     setLastGoodQuoteBySide((prev) => ({
       ...prev,
-      [tradeSide]: jupiterQuoteData,
+      [tradeSide]: {
+        quote: jupiterQuoteData,
+        updatedAtMs: Date.now(),
+      },
     }));
   }, [jupiterQuoteData, tradeSide]);
 
@@ -2103,7 +2108,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       toast.error("This wallet does not support transaction signing");
       return;
     }
-    const quote = jupiterQuoteData;
+    const fallbackQuoteCandidate = lastGoodQuoteBySide[tradeSide];
+    const fallbackQuote =
+      fallbackQuoteCandidate &&
+      Date.now() - fallbackQuoteCandidate.updatedAtMs <= JUPITER_QUOTE_STALE_MAX_AGE_MS
+        ? fallbackQuoteCandidate.quote
+        : null;
+    const quote = jupiterQuoteData ?? fallbackQuote;
     if (!quote) {
       toast.error("Wait for quote to load");
       return;
@@ -2179,6 +2190,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     buildSwapTransaction,
     isSolanaTradeSupported,
     jupiterQuoteData,
+    lastGoodQuoteBySide,
     post.contractAddress,
     refetchJupiterQuote,
     sellAmountExceedsBalance,
@@ -2195,7 +2207,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     navigate(`/profile/${profilePath}`);
   };
 
-  const staleQuoteForSide = lastGoodQuoteBySide[tradeSide];
+  const staleQuoteForSideCandidate = lastGoodQuoteBySide[tradeSide];
+  const staleQuoteForSide =
+    staleQuoteForSideCandidate &&
+    Date.now() - staleQuoteForSideCandidate.updatedAtMs <= JUPITER_QUOTE_STALE_MAX_AGE_MS
+      ? staleQuoteForSideCandidate.quote
+      : null;
   const jupiterQuote = jupiterQuoteQuery.data ?? staleQuoteForSide;
   const isUsingStaleQuote = !jupiterQuoteQuery.data && !!staleQuoteForSide;
   const showQuoteLoading = jupiterQuoteQuery.isLoading && !jupiterQuote;
@@ -2256,7 +2273,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     isSolanaTradeSupported &&
     !!wallet.publicKey &&
     !!wallet.signTransaction &&
-    !!jupiterQuoteQuery.data &&
+    !!jupiterQuote &&
     !!tradeAmountAtomic &&
     !sellBlockedByRpcTokenInfo &&
     !sellAmountExceedsBalance &&
