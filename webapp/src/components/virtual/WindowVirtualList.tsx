@@ -18,22 +18,6 @@ type ViewportState = {
   containerTop: number;
 };
 
-function hasAnyOverlayOpenInDocument(): boolean {
-  if (typeof document === "undefined") return false;
-  if (
-    document.body.classList.contains("overflow-hidden") ||
-    document.documentElement.classList.contains("overflow-hidden") ||
-    document.body.classList.contains("wallet-adapter-modal-open") ||
-    document.body.classList.contains("phew-overlay-open")
-  ) {
-    return true;
-  }
-  if (document.body.style.overflow === "hidden" || document.documentElement.style.overflow === "hidden") {
-    return true;
-  }
-  return document.querySelector("[role='dialog'][data-state='open'], [data-radix-dialog-content][data-state='open']") !== null;
-}
-
 function getWindowScrollTop(): number {
   if (typeof window === "undefined") return 0;
   return window.scrollY || window.pageYOffset || 0;
@@ -71,7 +55,6 @@ export function WindowVirtualList<T>({
     height: typeof window !== "undefined" ? window.innerHeight : 0,
     containerTop: 0,
   });
-  const [hasOpenOverlay, setHasOpenOverlay] = useState<boolean>(() => hasAnyOverlayOpenInDocument());
   const lastUnlockedViewportRef = useRef<ViewportState>(viewport);
 
   useEffect(() => {
@@ -142,44 +125,6 @@ export function WindowVirtualList<T>({
       resizeObserver?.disconnect();
       window.removeEventListener("scroll", measureViewport);
       window.removeEventListener("resize", measureViewport);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-
-    const updateOverlayState = () => {
-      setHasOpenOverlay(hasAnyOverlayOpenInDocument());
-    };
-
-    updateOverlayState();
-
-    const observer = new MutationObserver(() => {
-      updateOverlayState();
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class", "style"],
-      childList: true,
-      subtree: true,
-    });
-
-    if (document.body) {
-      observer.observe(document.body, {
-        attributes: true,
-        attributeFilter: ["class", "style"],
-        childList: true,
-        subtree: true,
-      });
-    }
-
-    const onVisibilityChange = () => updateOverlayState();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
@@ -267,7 +212,7 @@ export function WindowVirtualList<T>({
     return <>{emptyState}</>;
   }
 
-  if (items.length < minItemsToVirtualize || hasOpenOverlay) {
+  if (items.length < minItemsToVirtualize) {
     return (
       <div ref={containerRef} className={className} style={{ position: "relative" }}>
         {items.map((item, index) => {
