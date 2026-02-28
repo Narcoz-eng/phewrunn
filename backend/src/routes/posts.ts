@@ -80,6 +80,8 @@ const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const CRON_MAINTENANCE_HEALTH_WINDOW_MS =
   process.env.NODE_ENV === "production" ? 3 * 60_000 : 20_000;
+const MAINTENANCE_STALE_PROBE_COOLDOWN_MS =
+  process.env.NODE_ENV === "production" ? 25_000 : 5_000;
 const priceRefreshInFlight = new Map<string, Promise<number | null>>();
 const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
 const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 25 : 15;
@@ -90,7 +92,7 @@ const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
 const MARKET_REFRESH_MAX_CONTRACTS_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 8;
-const HOURLY_POST_LIMIT = 3;
+const HOURLY_POST_LIMIT = 10;
 const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
 const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 6 : 3;
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
@@ -102,6 +104,33 @@ function isCronMaintenanceHealthy(): boolean {
   if (!hasCronMaintenanceConfigured) return false;
   if (!lastCronMaintenanceCompletedAt) return false;
   return Date.now() - lastCronMaintenanceCompletedAt < CRON_MAINTENANCE_HEALTH_WINDOW_MS;
+}
+
+type MaintenanceCandidatePost = {
+  createdAt: Date;
+  settled: boolean;
+  mcap6h: number | null;
+  entryMcap: number | null;
+};
+
+function shouldTriggerMaintenanceForPost(post: MaintenanceCandidatePost): boolean {
+  if (post.entryMcap === null) return false;
+  return (
+    isReadyFor1HSettlement(post.createdAt, post.settled) ||
+    isReadyFor6HSnapshot(post.createdAt, post.mcap6h)
+  );
+}
+
+function triggerMaintenanceForStaleCandidates(
+  reason: string,
+  posts: MaintenanceCandidatePost[]
+): void {
+  if (!posts.some(shouldTriggerMaintenanceForPost)) return;
+
+  const now = Date.now();
+  if (now - lastMaintenanceRunStartedAt < MAINTENANCE_STALE_PROBE_COOLDOWN_MS) return;
+
+  triggerMaintenanceCycleNonBlocking(reason);
 }
 const JUPITER_QUOTE_URLS = [
   "https://lite-api.jup.ag/swap/v1/quote",
@@ -379,6 +408,155 @@ async function notifyFollowersOfBigGain(params: {
   });
 }
 
+type OneHourSettlementCandidate = {
+  id: string;
+  authorId: string;
+  contractAddress: string | null;
+  chainType: string | null;
+  entryMcap: number | null;
+  isWin: boolean | null;
+  isWin1h: boolean | null;
+  recoveryEligible: boolean | null;
+  author: {
+    name: string;
+    username: string | null;
+  };
+};
+
+type SixHourSnapshotCandidate = {
+  id: string;
+  authorId: string;
+  contractAddress: string | null;
+  chainType: string | null;
+  entryMcap: number | null;
+  isWin: boolean | null;
+  isWin1h: boolean | null;
+  recoveryEligible: boolean | null;
+};
+
+async function findPostsToSettle1h(
+  oneHourAgo: Date,
+  take?: number
+): Promise<OneHourSettlementCandidate[]> {
+  const baseWhere = {
+    settled: false,
+    contractAddress: { not: null },
+    createdAt: { lt: oneHourAgo },
+  };
+
+  try {
+    const rows = await prisma.post.findMany({
+      where: baseWhere,
+      select: {
+        id: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        isWin: true,
+        isWin1h: true,
+        recoveryEligible: true,
+        author: {
+          select: {
+            name: true,
+            username: true,
+          },
+        },
+      },
+      ...(typeof take === "number" ? { take } : {}),
+    });
+    return rows;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    const rows = await prisma.post.findMany({
+      where: baseWhere,
+      select: {
+        id: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        isWin: true,
+        author: {
+          select: {
+            name: true,
+            username: true,
+          },
+        },
+      },
+      ...(typeof take === "number" ? { take } : {}),
+    });
+
+    return rows.map((row) => ({
+      ...row,
+      isWin1h: row.isWin,
+      recoveryEligible: null,
+    }));
+  }
+}
+
+async function findPostsToSnapshot6h(
+  sixHoursAgo: Date,
+  take?: number
+): Promise<SixHourSnapshotCandidate[]> {
+  const withSettled6hWhere = {
+    settled: true,
+    settled6h: false,
+    contractAddress: { not: null },
+    createdAt: { lt: sixHoursAgo },
+  };
+
+  try {
+    const rows = await prisma.post.findMany({
+      where: withSettled6hWhere,
+      select: {
+        id: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        isWin: true,
+        isWin1h: true,
+        recoveryEligible: true,
+      },
+      ...(typeof take === "number" ? { take } : {}),
+    });
+    return rows;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+  }
+
+  // Compatibility fallback for partially migrated schemas: use mcap6h null check instead.
+  const legacyRows = await prisma.post.findMany({
+    where: {
+      settled: true,
+      contractAddress: { not: null },
+      createdAt: { lt: sixHoursAgo },
+      mcap6h: null,
+    },
+    select: {
+      id: true,
+      authorId: true,
+      contractAddress: true,
+      chainType: true,
+      entryMcap: true,
+      isWin: true,
+    },
+    ...(typeof take === "number" ? { take } : {}),
+  });
+
+  return legacyRows.map((row) => ({
+    ...row,
+    isWin1h: row.isWin,
+    recoveryEligible: null,
+  }));
+}
+
 // Background settlement check - runs automatically on feed fetch
 // This ensures trades settle for ALL users, not just when they open the app
 /**
@@ -402,30 +580,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
     // ============================================
     // 1H SETTLEMENT - Official settlement for XP/Level
     // ============================================
-    const postsToSettle1h = await prisma.post.findMany({
-      where: {
-        settled: false,
-        contractAddress: { not: null },
-        createdAt: { lt: oneHourAgo },
-      },
-      select: {
-        id: true,
-        authorId: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        isWin: true,
-        isWin1h: true,
-        recoveryEligible: true,
-        author: {
-          select: {
-            name: true,
-            username: true,
-          },
-        },
-      },
-      take: 20, // Process max 20 posts per check to avoid timeout
-    });
+    const postsToSettle1h = await findPostsToSettle1h(oneHourAgo, 20); // Process max 20 posts per check to avoid timeout
 
     for (const post of postsToSettle1h) {
       if (!post.contractAddress || post.entryMcap === null) continue;
@@ -553,29 +708,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
     // 6H MARKET CAP SNAPSHOT - For ALL posts >= 6 hours old
     // This captures the 6H mcap regardless of whether level changes apply
     // ============================================
-    const postsNeedingSnapshot6h = await prisma.post.findMany({
-      where: {
-        // Must have completed 1H settlement first
-        settled: true,
-        // 6H snapshot not yet taken
-        settled6h: false,
-        // Must have a contract address to fetch mcap
-        contractAddress: { not: null },
-        // Must be at least 6 hours old
-        createdAt: { lt: sixHoursAgo },
-      },
-      select: {
-        id: true,
-        authorId: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        isWin: true,
-        isWin1h: true,
-        recoveryEligible: true,
-      },
-      take: 15, // Process max 15 posts per check
-    });
+    const postsNeedingSnapshot6h = await findPostsToSnapshot6h(sixHoursAgo, 15); // Process max 15 posts per check
 
     console.log(`[Snapshot 6H] Found ${postsNeedingSnapshot6h.length} posts needing 6H mcap snapshot`);
 
@@ -1371,6 +1504,11 @@ postsRouter.get("/", async (c) => {
     return pagePosts;
   })();
 
+  triggerMaintenanceForStaleCandidates(
+    `feed:${sort}:${following ? "following" : "all"}`,
+    posts
+  );
+
   // Get user's likes and reposts for these posts
   let userLikes: Set<string> = new Set();
   let userReposts: Set<string> = new Set();
@@ -1695,7 +1833,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     }, 403);
   }
 
-  // Rate limit check: max 3 posts per rolling hour
+  // Rate limit check: max 10 posts per rolling hour
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
   const postCountLastHour = await prisma.post.count({
     where: {
@@ -1733,7 +1871,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     }, 429);
   }
 
-  // Rate limit check: max 10 posts per 24 hours
+  // Rate limit check: max DAILY_POST_LIMIT posts per 24 hours
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const postCountLast24h = await prisma.post.count({
     where: {
@@ -2031,29 +2169,7 @@ postsRouter.post("/settle", async (c) => {
   // ============================================
   // 1H SETTLEMENT
   // ============================================
-  const postsToSettle1h = await prisma.post.findMany({
-    where: {
-      settled: false,
-      contractAddress: { not: null },
-      createdAt: { lt: oneHourAgo },
-    },
-    select: {
-      id: true,
-      authorId: true,
-      contractAddress: true,
-      chainType: true,
-      entryMcap: true,
-      isWin: true,
-      isWin1h: true,
-      recoveryEligible: true,
-      author: {
-        select: {
-          name: true,
-          username: true,
-        },
-      },
-    },
-  });
+  const postsToSettle1h = await findPostsToSettle1h(oneHourAgo);
 
   for (const post of postsToSettle1h) {
     if (!post.contractAddress || post.entryMcap === null) continue;
@@ -2155,28 +2271,7 @@ postsRouter.post("/settle", async (c) => {
   // 6H MARKET CAP SNAPSHOT - For ALL posts >= 6 hours old
   // This captures the 6H mcap for every post, regardless of level changes
   // ============================================
-  const postsToSnapshot6h = await prisma.post.findMany({
-    where: {
-      // Must have completed 1H settlement first
-      settled: true,
-      // 6H snapshot not yet taken
-      settled6h: false,
-      // Must have a contract address to fetch mcap
-      contractAddress: { not: null },
-      // Must be at least 6 hours old
-      createdAt: { lt: sixHoursAgo },
-    },
-    select: {
-      id: true,
-      authorId: true,
-      contractAddress: true,
-      chainType: true,
-      entryMcap: true,
-      isWin: true,
-      isWin1h: true,
-      recoveryEligible: true,
-    },
-  });
+  const postsToSnapshot6h = await findPostsToSnapshot6h(sixHoursAgo);
 
   console.log(`[Settle API] Processing 6H snapshot for ${postsToSnapshot6h.length} posts`);
 
@@ -3149,12 +3244,7 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable
   // or configured but unhealthy (e.g. cron stopped running).
   // Keeps feed request path clean while still allowing 1H/6H status to catch up.
-  if (
-    (isReadyFor1HSettlement(post.createdAt, post.settled) ||
-      isReadyFor6HSnapshot(post.createdAt, post.mcap6h)) &&
-    post.entryMcap !== null &&
-    !isCronMaintenanceHealthy()
-  ) {
+  if (shouldTriggerMaintenanceForPost(post)) {
     triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
   }
 
@@ -3761,10 +3851,6 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
 });
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
-  if (!isCronMaintenanceHealthy()) {
-    triggerMaintenanceCycleNonBlocking("prices:batch");
-  }
-
   const { ids } = c.req.valid("json");
   const uniqueIds = [...new Set(ids)].slice(0, 50);
 
@@ -3786,6 +3872,8 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
     },
   });
 
+  triggerMaintenanceForStaleCandidates("prices:batch", posts);
+
   const results = await Promise.all(
     posts.map(async (post) => [post.id, await resolvePostPricePayload(post)] as const)
   );
@@ -3797,10 +3885,6 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
 
 postsRouter.get("/:id/price", async (c) => {
   const postId = c.req.param("id");
-
-  if (!isCronMaintenanceHealthy()) {
-    triggerMaintenanceCycleNonBlocking(`price:${postId}`);
-  }
 
   const post = await prisma.post.findUnique({
     where: { id: postId },

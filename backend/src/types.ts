@@ -201,7 +201,7 @@ export const SMALL_PROFIT_XP_ONLY_MAX_PCT = 3; // 1-3% wins = XP only, no level
 export const DOUBLE_LEVEL_PROFIT_MIN_PCT = 900; // +900% profit = 10x
 
 // Rate limiting constants
-export const DAILY_POST_LIMIT = 10;        // Max 10 posts per 24 hours
+export const DAILY_POST_LIMIT = 100;       // Max 100 posts per 24 hours
 export const DAILY_COMMENT_LIMIT = 15;     // Max 15 comments per 24 hours
 export const DAILY_REPOST_LIMIT = 10;      // Max 10 reposts per 24 hours
 

@@ -24,7 +24,6 @@ import {
   authRateLimit,
   adminRateLimit,
   leaderboardRateLimit,
-  postCreationRateLimit,
   commentRateLimit,
   startRateLimitCleanup,
   sanitizeBody,
@@ -1445,8 +1444,6 @@ app.get("/api/me/stats", async (c) => {
 // =====================================================
 
 // Apply method-specific rate limits for posts and comments
-// POST /api/posts - 10 posts/hour
-app.post("/api/posts", postCreationRateLimit);
 // POST /api/posts/:id/comments - 30 comments/hour
 app.post("/api/posts/:id/comments", commentRateLimit);
 

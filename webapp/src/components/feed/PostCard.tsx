@@ -616,7 +616,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     };
 
     // Faster cadence for visible cards to reflect settlement/snapshot changes in near real time.
-    const baseInterval = localSettled ? 2 * 60 * 1000 : 15_000;
+    const postAgeMs = Date.now() - new Date(post.createdAt).getTime();
+    const waitingForSixHourSnapshot =
+      localSettled && localMcap6h === null && postAgeMs >= 6 * 60 * 60 * 1000;
+    const baseInterval = waitingForSixHourSnapshot ? 20_000 : localSettled ? 2 * 60 * 1000 : 15_000;
     const initialDelay =
       post.currentMcap == null
         ? 0
@@ -629,7 +632,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       clearTimeout(initialTimer);
       clearInterval(intervalTimer);
     };
-  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, localSettled, localMcap1h, localMcap6h, isInViewport, queryClient]);
+  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, post.createdAt, localSettled, localMcap1h, localMcap6h, isInViewport, queryClient]);
 
   // Fetch comments when expanded
   const { data: comments, isLoading: isCommentsLoading, refetch: refetchComments } = useQuery({
