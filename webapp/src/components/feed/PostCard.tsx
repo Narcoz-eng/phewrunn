@@ -74,6 +74,10 @@ import {
   Download,
   Coins,
   Zap,
+  ChevronLeft,
+  ChevronRight,
+  Minus,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -97,6 +101,13 @@ const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "1D", label: "1D" },
 ] as const;
 type DexChartIntervalValue = (typeof DEX_CHART_INTERVAL_OPTIONS)[number]["value"];
+const CHART_DEFAULT_VISIBLE_POINTS = 72;
+const CHART_MIN_VISIBLE_POINTS = 18;
+const CHART_MAX_VISIBLE_POINTS = 180;
+const CHART_ZOOM_STEP_POINTS = 12;
+const CHART_PAN_STEP_POINTS = 6;
+const CHART_TOUCH_PAN_THRESHOLD_PX = 12;
+const CHART_TOUCH_PAN_STEP_PX = 14;
 
 type TradeSide = "buy" | "sell";
 
@@ -512,6 +523,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
+  const [chartWindow, setChartWindow] = useState<{ startIndex: number; endIndex: number } | null>(null);
+  const [chartActiveIndex, setChartActiveIndex] = useState<number | null>(null);
+  const chartTouchGestureRef = useRef<{
+    x: number;
+    y: number;
+    mode: "pan" | "scroll" | null;
+  } | null>(null);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
@@ -2553,6 +2571,249 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       );
   }, [chartCandlesQuery.data, chartRequestConfig.timeframe]);
   const hasProfessionalChartData = professionalChartData.length >= 2;
+  const chartTotalPoints = professionalChartData.length;
+  const chartWindowBounds = useMemo(() => {
+    if (chartTotalPoints <= 0) {
+      return {
+        startIndex: 0,
+        endIndex: 0,
+        visibleCount: 0,
+      };
+    }
+
+    const minVisible = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints);
+    const maxVisible = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints);
+    const fallbackVisible = Math.min(
+      chartTotalPoints,
+      Math.max(minVisible, Math.min(maxVisible, CHART_DEFAULT_VISIBLE_POINTS))
+    );
+    const fallbackStart = Math.max(0, chartTotalPoints - fallbackVisible);
+
+    const unsafeStart = chartWindow?.startIndex ?? fallbackStart;
+    const unsafeEnd = chartWindow?.endIndex ?? chartTotalPoints - 1;
+    const center = Math.round((unsafeStart + unsafeEnd) / 2);
+    const width = Math.max(
+      minVisible,
+      Math.min(maxVisible, Math.max(1, unsafeEnd - unsafeStart + 1))
+    );
+    let startIndex = center - Math.floor(width / 2);
+    startIndex = Math.max(0, Math.min(startIndex, chartTotalPoints - width));
+    const endIndex = startIndex + width - 1;
+
+    return {
+      startIndex,
+      endIndex,
+      visibleCount: width,
+    };
+  }, [chartTotalPoints, chartWindow]);
+  const chartVisibleStartPoint =
+    hasProfessionalChartData && chartWindowBounds.visibleCount > 0
+      ? professionalChartData[chartWindowBounds.startIndex] ?? null
+      : null;
+  const chartVisibleEndPoint =
+    hasProfessionalChartData && chartWindowBounds.visibleCount > 0
+      ? professionalChartData[chartWindowBounds.endIndex] ?? null
+      : null;
+  const chartVisibleRangeLabel = useMemo(() => {
+    if (!chartVisibleStartPoint || !chartVisibleEndPoint) return "No chart range";
+    const formatTimestamp = (ts: number) => {
+      const date = new Date(ts);
+      if (chartRequestConfig.timeframe === "day") {
+        return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      }
+      return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    };
+    return `${formatTimestamp(chartVisibleStartPoint.ts)} - ${formatTimestamp(chartVisibleEndPoint.ts)}`;
+  }, [chartRequestConfig.timeframe, chartVisibleEndPoint, chartVisibleStartPoint]);
+  const chartRangeDetailLabel = useMemo(() => {
+    if (!chartVisibleStartPoint || !chartVisibleEndPoint) return "";
+    return `${chartVisibleStartPoint.fullLabel} -> ${chartVisibleEndPoint.fullLabel}`;
+  }, [chartVisibleEndPoint, chartVisibleStartPoint]);
+  const formatChartXAxisTick = useCallback(
+    (value: number | string) => {
+      const ts = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(ts)) return "";
+      const date = new Date(ts);
+      if (chartRequestConfig.timeframe === "day") {
+        return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      }
+      return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    },
+    [chartRequestConfig.timeframe]
+  );
+  const canPanChartLeft = chartWindowBounds.startIndex > 0;
+  const canPanChartRight = chartWindowBounds.endIndex < chartTotalPoints - 1;
+  const minVisiblePoints = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints || CHART_MIN_VISIBLE_POINTS);
+  const maxVisiblePoints = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints || CHART_MAX_VISIBLE_POINTS);
+  const canZoomInChart = chartWindowBounds.visibleCount > minVisiblePoints;
+  const canZoomOutChart = chartWindowBounds.visibleCount < maxVisiblePoints;
+  const setChartWindowWithinBounds = useCallback(
+    (start: number, end: number) => {
+      if (chartTotalPoints <= 0) return;
+      const minVisible = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints);
+      const maxVisible = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints);
+      const unsafeStart = Number.isFinite(start) ? Math.floor(start) : 0;
+      const unsafeEnd = Number.isFinite(end) ? Math.floor(end) : chartTotalPoints - 1;
+      const center = Math.round((unsafeStart + unsafeEnd) / 2);
+      const width = Math.max(
+        minVisible,
+        Math.min(maxVisible, Math.max(1, unsafeEnd - unsafeStart + 1))
+      );
+      let nextStart = center - Math.floor(width / 2);
+      nextStart = Math.max(0, Math.min(nextStart, chartTotalPoints - width));
+      const nextEnd = nextStart + width - 1;
+      setChartWindow({ startIndex: nextStart, endIndex: nextEnd });
+    },
+    [chartTotalPoints]
+  );
+  const panChartWindowBy = useCallback(
+    (deltaPoints: number) => {
+      if (chartTotalPoints <= 1 || chartWindowBounds.visibleCount <= 0) return;
+      const maxStart = chartTotalPoints - chartWindowBounds.visibleCount;
+      if (maxStart <= 0) return;
+      const nextStart = Math.max(
+        0,
+        Math.min(maxStart, chartWindowBounds.startIndex + Math.trunc(deltaPoints))
+      );
+      if (nextStart === chartWindowBounds.startIndex) return;
+      setChartWindow({
+        startIndex: nextStart,
+        endIndex: nextStart + chartWindowBounds.visibleCount - 1,
+      });
+    },
+    [chartTotalPoints, chartWindowBounds.startIndex, chartWindowBounds.visibleCount]
+  );
+  const zoomChartWindow = useCallback(
+    (direction: "in" | "out", anchorIndex?: number | null) => {
+      if (chartTotalPoints <= 1 || chartWindowBounds.visibleCount <= 0) return;
+      const minVisible = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints);
+      const maxVisible = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints);
+      const delta = direction === "in" ? -CHART_ZOOM_STEP_POINTS : CHART_ZOOM_STEP_POINTS;
+      const nextVisible = Math.max(
+        minVisible,
+        Math.min(maxVisible, chartWindowBounds.visibleCount + delta)
+      );
+      if (nextVisible === chartWindowBounds.visibleCount) return;
+
+      const rawAnchor = anchorIndex ?? chartActiveIndex ?? chartWindowBounds.endIndex;
+      const clampedAnchor = Math.max(0, Math.min(chartTotalPoints - 1, rawAnchor));
+      const ratio =
+        chartWindowBounds.visibleCount <= 1
+          ? 1
+          : (clampedAnchor - chartWindowBounds.startIndex) / (chartWindowBounds.visibleCount - 1);
+      let nextStart = Math.round(clampedAnchor - ratio * (nextVisible - 1));
+      nextStart = Math.max(0, Math.min(nextStart, chartTotalPoints - nextVisible));
+      setChartWindow({
+        startIndex: nextStart,
+        endIndex: nextStart + nextVisible - 1,
+      });
+    },
+    [
+      chartActiveIndex,
+      chartTotalPoints,
+      chartWindowBounds.endIndex,
+      chartWindowBounds.startIndex,
+      chartWindowBounds.visibleCount,
+    ]
+  );
+  const resetChartWindow = useCallback(() => {
+    if (chartTotalPoints <= 0) {
+      setChartWindow(null);
+      setChartActiveIndex(null);
+      return;
+    }
+    const minVisible = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints);
+    const maxVisible = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints);
+    const width = Math.min(
+      chartTotalPoints,
+      Math.max(minVisible, Math.min(maxVisible, CHART_DEFAULT_VISIBLE_POINTS))
+    );
+    const startIndex = Math.max(0, chartTotalPoints - width);
+    setChartWindow({
+      startIndex,
+      endIndex: startIndex + width - 1,
+    });
+    setChartActiveIndex(null);
+  }, [chartTotalPoints]);
+  const handleChartBrushChange = useCallback(
+    (range: { startIndex?: number; endIndex?: number } | null | undefined) => {
+      if (!range || chartTotalPoints <= 0) return;
+      const nextStart =
+        typeof range.startIndex === "number" ? range.startIndex : chartWindowBounds.startIndex;
+      const nextEnd =
+        typeof range.endIndex === "number" ? range.endIndex : chartWindowBounds.endIndex;
+      setChartWindowWithinBounds(nextStart, nextEnd);
+    },
+    [
+      chartTotalPoints,
+      chartWindowBounds.endIndex,
+      chartWindowBounds.startIndex,
+      setChartWindowWithinBounds,
+    ]
+  );
+  const handleChartWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (!hasProfessionalChartData || chartWindowBounds.visibleCount <= 0) return;
+      const absX = Math.abs(event.deltaX);
+      const absY = Math.abs(event.deltaY);
+      if (absX < 0.4 && absY < 0.4) return;
+      event.preventDefault();
+      if (event.shiftKey || absX > absY) {
+        const direction = event.deltaX > 0 ? CHART_PAN_STEP_POINTS : -CHART_PAN_STEP_POINTS;
+        panChartWindowBy(direction);
+        return;
+      }
+      zoomChartWindow(event.deltaY < 0 ? "in" : "out");
+    },
+    [
+      chartWindowBounds.visibleCount,
+      hasProfessionalChartData,
+      panChartWindowBy,
+      zoomChartWindow,
+    ]
+  );
+  const handleChartTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    chartTouchGestureRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      mode: null,
+    };
+  }, []);
+  const handleChartTouchMove = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      if (!hasProfessionalChartData || chartWindowBounds.visibleCount <= 0) return;
+      const touch = event.touches[0];
+      const gesture = chartTouchGestureRef.current;
+      if (!touch || !gesture) return;
+
+      const deltaX = touch.clientX - gesture.x;
+      const deltaY = touch.clientY - gesture.y;
+      if (!gesture.mode) {
+        if (
+          Math.abs(deltaX) >= CHART_TOUCH_PAN_THRESHOLD_PX &&
+          Math.abs(deltaX) > Math.abs(deltaY)
+        ) {
+          gesture.mode = "pan";
+        } else if (Math.abs(deltaY) >= CHART_TOUCH_PAN_THRESHOLD_PX) {
+          gesture.mode = "scroll";
+        }
+      }
+
+      if (gesture.mode !== "pan") return;
+      event.preventDefault();
+      const steps = Math.trunc(deltaX / CHART_TOUCH_PAN_STEP_PX);
+      if (steps === 0) return;
+      panChartWindowBy(-steps * CHART_PAN_STEP_POINTS);
+      gesture.x = touch.clientX;
+      gesture.y = touch.clientY;
+    },
+    [chartWindowBounds.visibleCount, hasProfessionalChartData, panChartWindowBy]
+  );
+  const handleChartTouchEnd = useCallback(() => {
+    chartTouchGestureRef.current = null;
+  }, []);
   const professionalChartFirst = hasProfessionalChartData ? professionalChartData[0] : null;
   const professionalChartLast = hasProfessionalChartData
     ? professionalChartData[professionalChartData.length - 1]
@@ -2567,6 +2828,36 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const professionalChartFill = professionalChartTrendPositive
     ? "rgba(116,243,122,0.18)"
     : "rgba(255,107,107,0.18)";
+
+  useEffect(() => {
+    if (chartTotalPoints <= 0) {
+      setChartWindow(null);
+      setChartActiveIndex(null);
+      return;
+    }
+
+    setChartWindow((prev) => {
+      const minVisible = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints);
+      const maxVisible = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints);
+      if (!prev) {
+        const width = Math.min(
+          chartTotalPoints,
+          Math.max(minVisible, Math.min(maxVisible, CHART_DEFAULT_VISIBLE_POINTS))
+        );
+        const startIndex = Math.max(0, chartTotalPoints - width);
+        return { startIndex, endIndex: startIndex + width - 1 };
+      }
+
+      const width = Math.max(
+        minVisible,
+        Math.min(maxVisible, Math.max(1, prev.endIndex - prev.startIndex + 1))
+      );
+      const wasNearEnd = prev.endIndex >= chartTotalPoints - 3;
+      let startIndex = wasNearEnd ? chartTotalPoints - width : prev.startIndex;
+      startIndex = Math.max(0, Math.min(startIndex, chartTotalPoints - width));
+      return { startIndex, endIndex: startIndex + width - 1 };
+    });
+  }, [chartTotalPoints, chartInterval]);
 
   useEffect(() => {
     if (!isBuyDialogOpen && !pendingQuickBuyAutoExecute) return;
@@ -3551,7 +3842,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
                         <div>
                           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
-                          <div className="text-sm font-medium text-foreground">Professional Price Chart</div>
+                          <div className="text-sm font-medium text-foreground">Price Chart</div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
@@ -3631,10 +3922,101 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </div>
                       </div>
 
-                      <div className="relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3">
+                      <div className="relative px-4 pt-3">
+                        <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                                Visible Range
+                              </div>
+                              <div className="text-xs font-medium text-foreground">{chartVisibleRangeLabel}</div>
+                              {chartRangeDetailLabel ? (
+                                <div className="truncate text-[11px] text-muted-foreground">
+                                  {chartRangeDetailLabel}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2)}
+                                disabled={!hasProfessionalChartData || !canPanChartLeft}
+                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => panChartWindowBy(CHART_PAN_STEP_POINTS * 2)}
+                                disabled={!hasProfessionalChartData || !canPanChartRight}
+                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                              >
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => zoomChartWindow("in")}
+                                disabled={!hasProfessionalChartData || !canZoomInChart}
+                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => zoomChartWindow("out")}
+                                disabled={!hasProfessionalChartData || !canZoomOutChart}
+                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                              >
+                                <Minus className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={resetChartWindow}
+                                disabled={!hasProfessionalChartData}
+                                className="h-7 border-white/10 bg-black/25 px-2 text-[11px] text-muted-foreground hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                              >
+                                Reset
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="mt-1 text-[10px] text-muted-foreground">
+                            Scroll to zoom, drag horizontally to pan, Shift+scroll to move left or right.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        className="relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3"
+                        onWheel={handleChartWheel}
+                        onTouchStart={handleChartTouchStart}
+                        onTouchMove={handleChartTouchMove}
+                        onTouchEnd={handleChartTouchEnd}
+                        onTouchCancel={handleChartTouchEnd}
+                        style={{ touchAction: "pan-y" }}
+                      >
                         {hasProfessionalChartData ? (
                           <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={professionalChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
+                            <ComposedChart
+                              data={professionalChartData}
+                              margin={{ top: 8, right: 10, left: 4, bottom: 8 }}
+                              onMouseMove={(state: { activeTooltipIndex?: number }) => {
+                                if (typeof state?.activeTooltipIndex === "number") {
+                                  setChartActiveIndex(state.activeTooltipIndex);
+                                } else {
+                                  setChartActiveIndex(null);
+                                }
+                              }}
+                              onMouseLeave={() => setChartActiveIndex(null)}
+                            >
                               <defs>
                                 <linearGradient id={`buyChartVolumeFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
                                   <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.22} />
@@ -3647,10 +4029,12 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               </defs>
                               <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
                               <XAxis
-                                dataKey="label"
+                                dataKey="ts"
                                 axisLine={false}
                                 tickLine={false}
                                 minTickGap={28}
+                                tickMargin={8}
+                                tickFormatter={formatChartXAxisTick}
                                 tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
                               />
                               <YAxis
@@ -3752,11 +4136,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 ))}
                               </Bar>
                               <Brush
-                                dataKey="label"
+                                dataKey="ts"
                                 height={20}
                                 stroke={professionalChartStroke}
                                 fill="rgba(255,255,255,0.04)"
                                 travellerWidth={8}
+                                startIndex={chartWindowBounds.startIndex}
+                                endIndex={chartWindowBounds.endIndex}
+                                onChange={handleChartBrushChange}
+                                tickFormatter={formatChartXAxisTick}
                               />
                             </ComposedChart>
                           </ResponsiveContainer>
@@ -3764,7 +4152,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           <div className="flex h-full items-center justify-center">
                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
                               <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading professional chart...
+                              Loading chart...
                             </div>
                           </div>
                         ) : tradeChartData.length >= 2 ? (
@@ -3867,7 +4255,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             <span>DEX: {resolvedDexId ?? "-"}</span>
                           </div>
                         ) : chartCandlesQuery.error ? (
-                          "Professional chart feed unavailable right now. Showing fallback market-cap view."
+                          "Chart feed unavailable right now. Showing fallback market-cap view."
                         ) : (
                           "Chart and token data are sourced live from Dexscreener."
                         )}
