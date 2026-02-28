@@ -20,7 +20,16 @@ const logConfig: Prisma.LogLevel[] = isProduction
   ? ["warn", "error"]
   : ["query", "warn", "error"];
 
-function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undefined; notes: string[] } {
+const isServerlessRuntime =
+  !!process.env.VERCEL ||
+  !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  !!process.env.K_SERVICE ||
+  !!process.env.FUNCTIONS_WORKER_RUNTIME;
+
+function normalizeDatabaseUrl(
+  rawUrl: string | undefined,
+  directUrl: string | undefined
+): { url: string | undefined; notes: string[] } {
   if (!rawUrl) return { url: rawUrl, notes: [] };
   if (rawUrl.startsWith("file:")) return { url: rawUrl, notes: [] };
 
@@ -36,15 +45,33 @@ function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undef
       notes.push("added sslmode=require");
     }
 
-    // Supabase transaction pooler is very sensitive in serverless environments.
+    // Supabase transaction pooler is ideal in serverless.
+    // In long-lived runtimes (Bun/Node servers), DIRECT_URL is usually more stable.
     if (hostname.endsWith(".pooler.supabase.com")) {
+      if (!isServerlessRuntime && directUrl && !directUrl.startsWith("file:")) {
+        const directParsed = new URL(directUrl);
+        if (directParsed.searchParams.has("sslmode") || directParsed.protocol.startsWith("postgres")) {
+          notes.push("using DIRECT_URL in non-serverless runtime");
+          return { url: directParsed.toString(), notes };
+        }
+      }
+
       if (!parsed.searchParams.has("pgbouncer")) {
         parsed.searchParams.set("pgbouncer", "true");
         notes.push("added pgbouncer=true");
       }
-      if (!parsed.searchParams.has("connection_limit")) {
-        parsed.searchParams.set("connection_limit", "1");
-        notes.push("added connection_limit=1");
+
+      const desiredConnectionLimit = isServerlessRuntime ? 1 : (isProduction ? 5 : 8);
+      const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
+      if (!Number.isFinite(existingConnectionLimit) || existingConnectionLimit < desiredConnectionLimit) {
+        parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
+        notes.push(`set connection_limit=${desiredConnectionLimit}`);
+      }
+
+      // Fail fast instead of hanging feed/auth when the pool is saturated.
+      if (!parsed.searchParams.has("pool_timeout")) {
+        parsed.searchParams.set("pool_timeout", "5");
+        notes.push("added pool_timeout=5");
       }
     }
 
@@ -54,7 +81,7 @@ function normalizeDatabaseUrl(rawUrl: string | undefined): { url: string | undef
   }
 }
 
-const normalizedDb = normalizeDatabaseUrl(process.env.DATABASE_URL);
+const normalizedDb = normalizeDatabaseUrl(process.env.DATABASE_URL, process.env.DIRECT_URL);
 if (normalizedDb.notes.length > 0) {
   console.warn(`[Prisma] Normalized DATABASE_URL for Supabase connection (${normalizedDb.notes.join(", ")})`);
 }
@@ -101,7 +128,7 @@ prisma.$on("warn", (e: Prisma.LogEvent) => {
 prisma.$on("error", (e: Prisma.LogEvent) => {
   console.error(`[Prisma Error] ${e.message}`);
   if (e.message.toLowerCase().includes("prepared statement")) {
-    console.error("[Prisma] Hint: Supabase pooler URL should include pgbouncer=true and connection_limit=1");
+    console.error("[Prisma] Hint: Supabase pooler URL should include pgbouncer=true and a suitable connection_limit/pool_timeout");
   }
 });
 

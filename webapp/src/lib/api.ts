@@ -34,8 +34,8 @@ const API_BASE_URL = (() => {
   return "http://localhost:3000";
 })();
 
-// Default timeout for requests (30 seconds)
-const DEFAULT_TIMEOUT = 30000;
+// Default timeout for requests (12 seconds)
+const DEFAULT_TIMEOUT = 12000;
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public data?: unknown) {
