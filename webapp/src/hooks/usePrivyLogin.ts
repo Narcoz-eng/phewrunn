@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 30_000;
+type PrivyUserLike = {
+  id: string;
+  email?: { address?: string } | null;
+  google?: { name?: string } | null;
+  linkedAccounts?: Array<{ type: string; address?: string }> | null;
+};
 
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin() {
@@ -13,6 +19,7 @@ export function usePrivyLogin() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncGuardRef = useRef(false);
   const syncTimeoutRef = useRef<number | null>(null);
+  const loginRequestedRef = useRef(false);
 
   const clearSyncTimeout = () => {
     if (syncTimeoutRef.current !== null) {
@@ -24,6 +31,7 @@ export function usePrivyLogin() {
   const startSyncTimeout = () => {
     clearSyncTimeout();
     syncTimeoutRef.current = window.setTimeout(() => {
+      loginRequestedRef.current = false;
       syncGuardRef.current = false;
       setIsSyncing(false);
       setSyncError("Sign-in timed out. Please try again.");
@@ -31,61 +39,73 @@ export function usePrivyLogin() {
     }, LOGIN_SYNC_TIMEOUT_MS);
   };
 
+  const runPrivySync = useCallback(async (privyUser: PrivyUserLike) => {
+    if (syncGuardRef.current) {
+      return;
+    }
+
+    syncGuardRef.current = true;
+    setSyncError(null);
+
+    try {
+      const privyIdToken = await getIdentityToken();
+      const email =
+        privyUser.email?.address ??
+        (privyUser.linkedAccounts?.find(
+          (a: { type: string; address?: string }) => a.type === "email"
+        ) as { type: string; address?: string } | undefined)?.address ??
+        "";
+
+      if (!email && !privyIdToken) {
+        console.warn("[usePrivyLogin] Privy returned no email/idToken; falling back to privyUserId sync");
+      }
+
+      const name = (privyUser.google as { name?: string } | undefined)?.name ?? email.split("@")[0] ?? "";
+
+      await syncPrivySession(
+        privyUser.id,
+        email || undefined,
+        name || undefined,
+        privyIdToken ?? undefined
+      );
+      void refetch();
+    } catch (err) {
+      console.error("[usePrivyLogin] sync error:", err);
+      const message = err instanceof Error ? err.message : "Failed to sign in";
+      setSyncError(message);
+      toast.error(message);
+      void privyLogout().catch(() => {
+        // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
+      });
+    } finally {
+      clearSyncTimeout();
+      loginRequestedRef.current = false;
+      syncGuardRef.current = false;
+      setIsSyncing(false);
+    }
+  }, [privyLogout, refetch]);
+
   useEffect(() => {
     return () => {
       clearSyncTimeout();
     };
   }, []);
 
+  useEffect(() => {
+    if (!ready || !authenticated || !user) return;
+    if (!isSyncing && !loginRequestedRef.current) return;
+    if (syncGuardRef.current) return;
+
+    void runPrivySync(user as PrivyUserLike);
+  }, [ready, authenticated, user, isSyncing, runPrivySync]);
+
   const { login } = useLogin({
     onComplete: async (params) => {
-      if (syncGuardRef.current) {
-        console.warn("[usePrivyLogin] Duplicate onComplete callback ignored");
-        return;
-      }
-      syncGuardRef.current = true;
-      setSyncError(null);
-      try {
-        const privyUser = params.user;
-        const privyIdToken = await getIdentityToken();
-        const email =
-          privyUser.email?.address ??
-          (privyUser.linkedAccounts?.find(
-            (a: { type: string; address?: string }) => a.type === "email"
-          ) as { type: string; address?: string } | undefined)?.address ??
-          "";
-
-        if (!email && !privyIdToken) {
-          // Privy can occasionally omit email / identity token on repeat sign-ins.
-          // Backend can still resolve the user via privyUserId using Privy server API.
-          console.warn("[usePrivyLogin] Privy returned no email/idToken; falling back to privyUserId sync");
-        }
-
-        const name = (privyUser.google as { name?: string } | undefined)?.name ?? email.split("@")[0] ?? "";
-
-        await syncPrivySession(
-          privyUser.id,
-          email || undefined,
-          name || undefined,
-          privyIdToken ?? undefined
-        );
-        void refetch();
-      } catch (err) {
-        console.error("[usePrivyLogin] onComplete error:", err);
-        const message = err instanceof Error ? err.message : "Failed to sign in";
-        setSyncError(message);
-        toast.error(message);
-        void privyLogout().catch(() => {
-          // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
-        });
-      } finally {
-        clearSyncTimeout();
-        syncGuardRef.current = false;
-        setIsSyncing(false);
-      }
+      void runPrivySync(params.user as PrivyUserLike);
     },
     onError: (error) => {
       clearSyncTimeout();
+      loginRequestedRef.current = false;
       syncGuardRef.current = false;
       console.error("[usePrivyLogin] Privy login error:", error);
       setIsSyncing(false);
@@ -99,8 +119,15 @@ export function usePrivyLogin() {
       return;
     }
     setSyncError(null);
+    loginRequestedRef.current = true;
     setIsSyncing(true);
     startSyncTimeout();
+
+    if (authenticated && user) {
+      void runPrivySync(user as PrivyUserLike);
+      return;
+    }
+
     login();
   };
 
