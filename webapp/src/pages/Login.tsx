@@ -82,30 +82,37 @@ const levelRules = [
 
 // Inner component that uses Privy hooks — only rendered when Privy is available
 function PrivyLoginButton() {
-  const { login, ready: privyReady, isSyncing } = usePrivyLogin();
+  const { login, ready: privyReady, isSyncing, syncError } = usePrivyLogin();
 
   const isLoading = !privyReady || isSyncing;
 
   return (
-    <Button
-      type="button"
-      className="w-full h-12 font-semibold gap-3 shadow-glow hover:shadow-glow-lg transition-all duration-300"
-      onClick={login}
-      disabled={isLoading}
-    >
-      {isLoading ? (
-        <>
-          <Loader2 className="w-4 h-4 animate-spin" />
-          {isSyncing ? "Signing in..." : "Loading..."}
-        </>
-      ) : (
-        <>
-          <Mail className="w-4 h-4" />
-          Sign in with Email
-          <ArrowRight className="w-4 h-4" />
-        </>
-      )}
-    </Button>
+    <div className="space-y-2">
+      <Button
+        type="button"
+        className="w-full h-12 font-semibold gap-3 shadow-glow hover:shadow-glow-lg transition-all duration-300"
+        onClick={login}
+        disabled={isLoading}
+      >
+        {isLoading ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {isSyncing ? "Signing in..." : "Loading..."}
+          </>
+        ) : (
+          <>
+            <Mail className="w-4 h-4" />
+            Sign in with Email
+            <ArrowRight className="w-4 h-4" />
+          </>
+        )}
+      </Button>
+      {syncError ? (
+        <p className="text-[11px] sm:text-xs text-red-300 leading-relaxed">
+          {syncError}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

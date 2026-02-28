@@ -100,19 +100,23 @@ function parseRfcForwardedFor(value: string | undefined): string | null {
 function getCookieValue(cookieHeader: string | undefined, name: string): string | null {
   if (!cookieHeader) return null;
 
+  let resolvedValue: string | null = null;
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rest] = part.trim().split("=");
     if (rawKey !== name) continue;
     const rawValue = rest.join("=");
-    if (!rawValue) return null;
+    if (!rawValue) {
+      resolvedValue = null;
+      continue;
+    }
     try {
-      return decodeURIComponent(rawValue);
+      resolvedValue = decodeURIComponent(rawValue);
     } catch {
-      return rawValue;
+      resolvedValue = rawValue;
     }
   }
 
-  return null;
+  return resolvedValue;
 }
 
 function getSessionFingerprint(c: Context): string | null {

@@ -39,14 +39,14 @@ const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
-const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 8_000;
+const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 3;
-const SESSION_FETCH_TIMEOUT_MS = 4500;
+const SESSION_FETCH_TIMEOUT_MS = 6500;
 const SIGN_OUT_TIMEOUT_MS = 2500;
-const AUTH_SESSION_RETRY_DELAY_MS = 350;
-const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 10;
-const PRIVY_SYNC_TIMEOUT_MS = 9_000;
-const PRIVY_SYNC_RETRY_DELAYS_MS = [350, 800] as const;
+const AUTH_SESSION_RETRY_DELAY_MS = 300;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 6;
+const PRIVY_SYNC_TIMEOUT_MS = 12_000;
+const PRIVY_SYNC_RETRY_DELAYS_MS = [450, 1200] as const;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -102,6 +102,16 @@ let lastPrivySyncAt = 0;
 let lastSuccessfulSessionAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryAuthToken: string | null = null;
+let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
+
+function getInMemoryCachedAuthUser(): AuthUser | null {
+  if (!inMemoryCachedAuthUser) return null;
+  if (Date.now() - inMemoryCachedAuthUser.cachedAt > AUTH_SESSION_CACHE_TTL_MS) {
+    inMemoryCachedAuthUser = null;
+    return null;
+  }
+  return inMemoryCachedAuthUser.user;
+}
 
 function getStoredAuthToken(): string | null {
   if (inMemoryAuthToken) return inMemoryAuthToken;
@@ -135,20 +145,39 @@ function clearStoredAuthToken(): void {
 setAuthTokenGetter(async () => getStoredAuthToken());
 
 function readCachedAuthUser(): AuthUser | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined") return getInMemoryCachedAuthUser();
   try {
     const raw = window.sessionStorage.getItem(AUTH_SESSION_CACHE_KEY);
-    if (!raw) return null;
+    if (!raw) {
+      return getInMemoryCachedAuthUser();
+    }
     const parsed = JSON.parse(raw) as { user?: AuthUser; cachedAt?: number };
-    if (!parsed?.user || typeof parsed.cachedAt !== "number") return null;
-    if (Date.now() - parsed.cachedAt > AUTH_SESSION_CACHE_TTL_MS) return null;
+    if (!parsed?.user || typeof parsed.cachedAt !== "number") {
+      return getInMemoryCachedAuthUser();
+    }
+    if (Date.now() - parsed.cachedAt > AUTH_SESSION_CACHE_TTL_MS) {
+      return getInMemoryCachedAuthUser();
+    }
+    inMemoryCachedAuthUser = {
+      user: parsed.user,
+      cachedAt: parsed.cachedAt,
+    };
     return parsed.user;
   } catch {
-    return null;
+    return getInMemoryCachedAuthUser();
   }
 }
 
 function writeCachedAuthUser(user: AuthUser | null): void {
+  if (!user) {
+    inMemoryCachedAuthUser = null;
+  } else {
+    inMemoryCachedAuthUser = {
+      user,
+      cachedAt: Date.now(),
+    };
+  }
+
   if (typeof window === "undefined") return;
   try {
     if (!user) {
@@ -159,7 +188,7 @@ function writeCachedAuthUser(user: AuthUser | null): void {
       AUTH_SESSION_CACHE_KEY,
       JSON.stringify({
         user,
-        cachedAt: Date.now(),
+        cachedAt: inMemoryCachedAuthUser?.cachedAt ?? Date.now(),
       })
     );
   } catch {
@@ -647,6 +676,7 @@ export async function syncPrivySession(
   privyIdToken?: string
 ): Promise<{ token: string; user: AuthUser }> {
   const maxAttempts = PRIVY_SYNC_RETRY_DELAYS_MS.length + 1;
+  const existingToken = getStoredAuthToken();
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
@@ -655,7 +685,10 @@ export async function syncPrivySession(
     try {
       const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(existingToken ? { Authorization: `Bearer ${existingToken}` } : {}),
+        },
         credentials: "include",
         signal: controller.signal,
         body: JSON.stringify({ privyUserId, email, name, privyIdToken }),

@@ -614,6 +614,20 @@ async function createSessionRecord(params: {
   }
 }
 
+function resolveSessionCookieDomain(hostHeader: string | undefined): string | null {
+  if (!hostHeader) return null;
+  const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
+  if (!normalizedHost) return null;
+  if (
+    normalizedHost === "phew.run" ||
+    normalizedHost === "www.phew.run" ||
+    normalizedHost.endsWith(".phew.run")
+  ) {
+    return ".phew.run";
+  }
+  return null;
+}
+
 // Vibecode proxy patches global fetch for the Vibecode runtime, but it can break or add
 // noise in generic Node serverless environments (e.g. Vercel).
 if (!process.env.VERCEL) {
@@ -824,12 +838,14 @@ app.post("/api/auth/wallet", async (c) => {
 
     // Set session cookie
     const isProduction = process.env.NODE_ENV === "production";
+    const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
     const cookieOptions = [
       `phew.session_token=${sessionToken}`,
       `Path=/`,
       `HttpOnly`,
       `SameSite=Lax`,
       `Max-Age=${7 * 24 * 60 * 60}`,
+      cookieDomain ? `Domain=${cookieDomain}` : "",
       isProduction ? "Secure" : "",
     ].filter(Boolean).join("; ");
 
@@ -1098,12 +1114,14 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // Also set a session cookie for cookie-based auth
     const isProd = process.env.NODE_ENV === "production";
+    const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
     const cookieOptions = [
       `phew.session_token=${sessionToken}`,
       "Path=/",
       "HttpOnly",
       "SameSite=Lax",
       `Max-Age=${7 * 24 * 60 * 60}`,
+      cookieDomain ? `Domain=${cookieDomain}` : "",
       isProd ? "Secure" : "",
     ].filter(Boolean).join("; ");
 

@@ -100,19 +100,23 @@ const SESSION_CACHE_MISS_TTL_MS = 1_500;
 function getCookieValue(cookieHeader: string | null | undefined, name: string): string | null {
   if (!cookieHeader) return null;
 
+  let resolvedValue: string | null = null;
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rest] = part.trim().split("=");
     if (rawKey !== name) continue;
     const value = rest.join("=");
-    if (!value) return null;
+    if (!value) {
+      resolvedValue = null;
+      continue;
+    }
     try {
-      return decodeURIComponent(value);
+      resolvedValue = decodeURIComponent(value);
     } catch {
-      return value;
+      resolvedValue = value;
     }
   }
 
-  return null;
+  return resolvedValue;
 }
 
 function getSessionTokenFromHeaders(headers: Headers): string | null {
@@ -257,7 +261,22 @@ function clearSessionCache(tokens: string[]) {
   }
 }
 
-function buildExpiredCookie(name: string): string {
+function resolveSessionCookieDomainFromHeaders(headers: Headers): string | null {
+  const hostHeader = headers.get("host");
+  if (!hostHeader) return null;
+  const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
+  if (!normalizedHost) return null;
+  if (
+    normalizedHost === "phew.run" ||
+    normalizedHost === "www.phew.run" ||
+    normalizedHost.endsWith(".phew.run")
+  ) {
+    return ".phew.run";
+  }
+  return null;
+}
+
+function buildExpiredCookie(name: string, domain?: string): string {
   const isProd = process.env.NODE_ENV === "production";
   return [
     `${name}=`,
@@ -265,6 +284,7 @@ function buildExpiredCookie(name: string): string {
     "HttpOnly",
     "SameSite=Lax",
     "Max-Age=0",
+    domain ? `Domain=${domain}` : "",
     isProd ? "Secure" : "",
   ]
     .filter(Boolean)
@@ -297,12 +317,22 @@ export const auth = {
         clearSessionCache(tokens);
       }
 
+      const cookieDomain = resolveSessionCookieDomainFromHeaders(headers);
+      const cookieNames = [
+        "phew.session_token",
+        "better-auth.session_token",
+        "auth.session_token",
+      ] as const;
+
+      const clearedCookies = cookieNames.map((cookieName) => buildExpiredCookie(cookieName));
+      if (cookieDomain) {
+        for (const cookieName of cookieNames) {
+          clearedCookies.push(buildExpiredCookie(cookieName, cookieDomain));
+        }
+      }
+
       return {
-        clearedCookies: [
-          buildExpiredCookie("phew.session_token"),
-          buildExpiredCookie("better-auth.session_token"),
-          buildExpiredCookie("auth.session_token"),
-        ],
+        clearedCookies,
       };
     },
   },

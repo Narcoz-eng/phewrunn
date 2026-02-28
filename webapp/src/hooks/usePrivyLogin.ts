@@ -5,11 +5,11 @@ import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 45_000;
 const AUTO_RESYNC_COOLDOWN_MS = 12_000;
+const AUTO_RESYNC_MAX_ATTEMPTS = 3;
 const IDENTITY_TOKEN_ATTEMPTS = 5;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [120, 180, 260, 360] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
   /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
-const FORCED_PRIVY_LOGOUT_ERROR_PATTERN = /invalid privy session|invalid privy user|unauthorized|forbidden/i;
 type PrivyUserLike = {
   id: string;
   email?: { address?: string } | null;
@@ -44,6 +44,8 @@ export function usePrivyLogin() {
   const syncTimeoutRef = useRef<number | null>(null);
   const loginRequestedRef = useRef(false);
   const lastAutoResyncAtRef = useRef(0);
+  const autoResyncAttemptsRef = useRef(0);
+  const lastPrivyUserIdRef = useRef<string | null>(null);
 
   const clearSyncTimeout = useCallback(() => {
     if (syncTimeoutRef.current !== null) {
@@ -61,7 +63,10 @@ export function usePrivyLogin() {
     }, LOGIN_SYNC_TIMEOUT_MS);
   }, [clearSyncTimeout]);
 
-  const runPrivySync = useCallback(async (privyUser: PrivyUserLike) => {
+  const runPrivySync = useCallback(async (
+    privyUser: PrivyUserLike,
+    source: "manual" | "auto" = "manual"
+  ) => {
     if (syncGuardRef.current) {
       return;
     }
@@ -94,17 +99,24 @@ export function usePrivyLogin() {
       // Session cookies can propagate a moment after sync on some deployments.
       await new Promise<void>((resolve) => window.setTimeout(resolve, 260));
       await refetch();
+      autoResyncAttemptsRef.current = 0;
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const message = err instanceof Error ? err.message : "Failed to sign in";
       setSyncError(message);
-      toast.error(message);
-      const shouldKeepPrivySession = RETRYABLE_SYNC_ERROR_PATTERN.test(message);
-      const shouldForcePrivyLogout = FORCED_PRIVY_LOGOUT_ERROR_PATTERN.test(message);
-      if (!shouldKeepPrivySession && shouldForcePrivyLogout) {
-        void privyLogout().catch(() => {
-          // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
-        });
+
+      if (source === "auto") {
+        autoResyncAttemptsRef.current += 1;
+      }
+
+      const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(message);
+      const shouldToast =
+        source === "manual" ||
+        !isRetryable ||
+        autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+
+      if (shouldToast) {
+        toast.error(message);
       }
     } finally {
       clearSyncTimeout();
@@ -112,7 +124,7 @@ export function usePrivyLogin() {
       syncGuardRef.current = false;
       setIsSyncing(false);
     }
-  }, [clearSyncTimeout, privyLogout, refetch]);
+  }, [clearSyncTimeout, refetch]);
 
   useEffect(() => {
     return () => {
@@ -121,24 +133,46 @@ export function usePrivyLogin() {
   }, [clearSyncTimeout]);
 
   useEffect(() => {
+    if (!appSessionAuthenticated) return;
+    autoResyncAttemptsRef.current = 0;
+    lastAutoResyncAtRef.current = 0;
+    setSyncError(null);
+  }, [appSessionAuthenticated]);
+
+  useEffect(() => {
     if (!ready || !authenticated || !user) return;
     if (appSessionAuthenticated) return;
     if (syncGuardRef.current || isSyncing) return;
 
+    if (lastPrivyUserIdRef.current !== user.id) {
+      autoResyncAttemptsRef.current = 0;
+      lastAutoResyncAtRef.current = 0;
+      lastPrivyUserIdRef.current = user.id;
+    }
+
+    if (autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS) {
+      setSyncError("Sign-in is delayed. Please tap sign in again.");
+      return;
+    }
+
     const now = Date.now();
-    if (now - lastAutoResyncAtRef.current < AUTO_RESYNC_COOLDOWN_MS) return;
+    const dynamicCooldown =
+      AUTO_RESYNC_COOLDOWN_MS * Math.max(1, autoResyncAttemptsRef.current + 1);
+    if (now - lastAutoResyncAtRef.current < dynamicCooldown) return;
     lastAutoResyncAtRef.current = now;
 
     setSyncError(null);
     loginRequestedRef.current = true;
     setIsSyncing(true);
     startSyncTimeout();
-    void runPrivySync(user as PrivyUserLike);
+    void runPrivySync(user as PrivyUserLike, "auto");
   }, [appSessionAuthenticated, authenticated, isSyncing, ready, runPrivySync, startSyncTimeout, user]);
 
   const { login } = useLogin({
     onComplete: async (params) => {
-      void runPrivySync(params.user as PrivyUserLike);
+      autoResyncAttemptsRef.current = 0;
+      lastAutoResyncAtRef.current = 0;
+      void runPrivySync(params.user as PrivyUserLike, "manual");
     },
     onError: (error) => {
       clearSyncTimeout();
@@ -156,12 +190,14 @@ export function usePrivyLogin() {
       return;
     }
     setSyncError(null);
+    autoResyncAttemptsRef.current = 0;
+    lastAutoResyncAtRef.current = 0;
     loginRequestedRef.current = true;
     setIsSyncing(true);
     startSyncTimeout();
 
     if (authenticated && user) {
-      void runPrivySync(user as PrivyUserLike);
+      void runPrivySync(user as PrivyUserLike, "manual");
       return;
     }
 
