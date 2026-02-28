@@ -247,7 +247,12 @@ export default function Feed() {
         }
       : undefined,
     enabled: !!session?.user,
-    retry: 2,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status === 429) {
+        return false;
+      }
+      return failureCount < 2;
+    },
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -256,6 +261,9 @@ export default function Feed() {
   });
 
   const posts = postsPages?.pages.flatMap((page) => page.items) ?? [];
+  const hasPosts = posts.length > 0;
+  const shouldShowFeedFatalError = Boolean(postsError && !hasPosts);
+  const shouldShowFeedSoftError = Boolean(postsError && hasPosts);
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
 
   useEffect(() => {
@@ -783,7 +791,21 @@ export default function Feed() {
             </div>
           ) : null}
 
-          {isLoadingPosts ? (
+          {shouldShowFeedSoftError ? (
+            <div className="mb-3 p-3 rounded-lg border border-amber-400/25 bg-amber-400/10 text-amber-100">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-xs sm:text-sm">
+                  Live refresh is temporarily delayed. Existing posts stay visible.
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => void refetchPosts()} className="ml-auto h-7 px-2 text-xs">
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {isLoadingPosts && !hasPosts ? (
             // Loading Skeletons
             <>
               {[0, 1, 2].map((i) => (
@@ -795,7 +817,7 @@ export default function Feed() {
                 />
               ))}
             </>
-          ) : postsError ? (
+          ) : shouldShowFeedFatalError ? (
             <FeedError
               error={postsError as Error}
               onRetry={() => refetchPosts()}

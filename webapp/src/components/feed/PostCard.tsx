@@ -1818,8 +1818,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
     enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
     staleTime: 2_000,
-    retry: 1,
-    refetchInterval: (q) => (q.state.data ? 4_000 : 1_500),
+    retry: 2,
+    retryDelay: (attempt) => Math.min(900, 250 * attempt),
+    refetchInterval: (q) => (q.state.data ? 5_000 : 3_000),
     refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!post.contractAddress || !tradeAmountAtomic) throw new Error("Missing token or amount");
@@ -1842,7 +1843,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       let lastError = "Failed to load quote";
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4500);
+        const timeout = setTimeout(() => controller.abort(), 3500);
         const res = await fetch("/api/posts/jupiter/quote", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1865,9 +1866,28 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     },
   });
   const jupiterQuoteData = jupiterQuoteQuery.data;
+  const [lastGoodQuoteBySide, setLastGoodQuoteBySide] = useState<Record<TradeSide, JupiterQuoteResponse | null>>({
+    buy: null,
+    sell: null,
+  });
   const refetchJupiterQuote = jupiterQuoteQuery.refetch;
   const walletPublicKey = wallet.publicKey;
   const walletSignTransaction = wallet.signTransaction;
+
+  useEffect(() => {
+    if (!jupiterQuoteData) return;
+    setLastGoodQuoteBySide((prev) => ({
+      ...prev,
+      [tradeSide]: jupiterQuoteData,
+    }));
+  }, [jupiterQuoteData, tradeSide]);
+
+  useEffect(() => {
+    setLastGoodQuoteBySide({
+      buy: null,
+      sell: null,
+    });
+  }, [post.id]);
 
   const formatTokenAmountFromAtomic = (amount: string | null | undefined, decimals: number) => {
     if (!amount) return "N/A";
@@ -2172,7 +2192,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     navigate(`/profile/${profilePath}`);
   };
 
-  const jupiterQuote = jupiterQuoteQuery.data;
+  const staleQuoteForSide = lastGoodQuoteBySide[tradeSide];
+  const jupiterQuote = jupiterQuoteQuery.data ?? staleQuoteForSide;
+  const isUsingStaleQuote = !jupiterQuoteQuery.data && !!staleQuoteForSide;
+  const showQuoteLoading = jupiterQuoteQuery.isLoading && !jupiterQuote;
   const jupiterRouteLabels = Array.from(
     new Set((jupiterQuote?.routePlan ?? []).map((r) => r.swapInfo?.label).filter(Boolean))
   ) as string[];
@@ -2205,7 +2228,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         ? `${formatSolAtomic(jupiterPlatformFeeAtomic)} SOL`
         : `${jupiterPlatformFeeAtomic} atomic`;
   const jupiterQuoteErrorMessage =
-    jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
+    !jupiterQuote && jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
   const jupiterNoRouteDetected =
     !!jupiterQuoteErrorMessage &&
     /route|not tradable|no route|could not find|TOKEN_NOT_TRADABLE/i.test(jupiterQuoteErrorMessage);
@@ -2213,7 +2236,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     !!jupiterQuoteErrorMessage &&
     !jupiterNoRouteDetected;
   const jupiterPlatformFeeDisplay =
-    jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterQuoteUnavailable
+    showQuoteLoading || jupiterNoRouteDetected || jupiterQuoteUnavailable
       ? "-"
       : jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
         ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
@@ -2230,7 +2253,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     isSolanaTradeSupported &&
     !!wallet.publicKey &&
     !!wallet.signTransaction &&
-    !!jupiterQuote &&
+    !!jupiterQuoteQuery.data &&
     !!tradeAmountAtomic &&
     !sellBlockedByRpcTokenInfo &&
     !sellAmountExceedsBalance &&
@@ -2289,7 +2312,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const jupiterStatusLabel = !isSolanaTradeSupported
     ? "Unsupported chain"
     : jupiterQuoteQuery.isLoading || jupiterQuoteQuery.isFetching
-      ? "Fetching route..."
+      ? isUsingStaleQuote
+        ? "Refreshing route..."
+        : "Fetching route..."
       : jupiterNoRouteDetected
         ? "No route available"
         : jupiterQuoteUnavailable
@@ -2306,14 +2331,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : jupiterQuote
         ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
         : "border-white/10 bg-white/5 text-white/70";
-  const jupiterReceiveDisplay = jupiterQuoteQuery.isLoading
+  const jupiterReceiveDisplay = showQuoteLoading
     ? "Loading quote..."
     : jupiterNoRouteDetected
       ? "No route available"
       : jupiterQuoteUnavailable
         ? "Quote unavailable"
       : `${jupiterOutputAmountFormatted} ${tradeOutputTokenLabel}`;
-  const jupiterMinReceiveDisplay = jupiterQuoteQuery.isLoading
+  const jupiterMinReceiveDisplay = showQuoteLoading
     ? "Loading quote..."
     : jupiterNoRouteDetected
       ? "No route available"

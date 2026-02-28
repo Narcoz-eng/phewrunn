@@ -104,7 +104,17 @@ app.use("/api/*", async (c, next) => {
 
 // 6. Global API Rate Limit - 100 requests per minute per client
 // Protects against abuse and DoS
-app.use("/api/*", apiRateLimit);
+app.use("/api/*", async (c, next) => {
+  // High-frequency market polling + quote refresh endpoints should not starve the rest
+  // of the app via shared global buckets.
+  if (
+    c.req.path === "/api/posts/prices" ||
+    c.req.path === "/api/posts/jupiter/quote"
+  ) {
+    return next();
+  }
+  return apiRateLimit(c, next);
+});
 
 // 7. Endpoint-specific rate limits (more restrictive, applied before general limit)
 // Auth endpoints - 10 req/5min (brute force protection)
