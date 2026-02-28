@@ -694,15 +694,28 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   useEffect(() => {
     if (typeof document === "undefined") return;
     const hasOverlayOpen = isBuyDialogOpen || isWalletConnectDialogOpen || isWinCardPreviewOpen;
-    if (hasOverlayOpen) {
+    const shouldLockDocument = hasOverlayOpen || hasGlobalDialogOpen() || hasActiveTradePanelMarker();
+    if (shouldLockDocument) {
       document.body.classList.add("phew-overlay-open");
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.touchAction = "none";
+      document.documentElement.style.touchAction = "none";
     } else if (!hasGlobalDialogOpen() && !hasActiveTradePanelMarker()) {
       document.body.classList.remove("phew-overlay-open");
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+      document.body.style.touchAction = "";
+      document.documentElement.style.touchAction = "";
     }
 
     return () => {
       if (!hasGlobalDialogOpen() && !hasActiveTradePanelMarker()) {
         document.body.classList.remove("phew-overlay-open");
+        document.body.style.overflow = "";
+        document.documentElement.style.overflow = "";
+        document.body.style.touchAction = "";
+        document.documentElement.style.touchAction = "";
       }
     };
   }, [
@@ -715,16 +728,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const activeTradeDialogPostId = document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
     if (isBuyDialogOpen) {
       document.body.dataset.phewPinnedItemKey = postDatasetId;
       document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
-      return;
-    }
-    if (activeTradeDialogPostId === postDatasetId && !hasGlobalDialogOpen()) {
-      document.body.dataset.phewPinnedItemKey = postDatasetId;
-      document.body.classList.add("phew-overlay-open");
-      setIsBuyDialogOpen(true);
       return;
     }
     if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
@@ -739,7 +745,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         delete document.body.dataset.phewPinnedItemKey;
       }
     };
-  }, [isBuyDialogOpen, postDatasetId, hasGlobalDialogOpen]);
+  }, [isBuyDialogOpen, postDatasetId]);
 
   useEffect(() => {
     if (isBuyDialogOpen) return;
@@ -4212,7 +4218,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
                         <div>
                           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
-                          <div className="text-sm font-medium text-foreground">Price Chart</div>
+                          <div className="text-sm font-semibold text-foreground">Candlestick Chart</div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
@@ -4370,15 +4376,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               </Button>
                             </div>
                           </div>
-                          <div className="mt-1 text-[10px] text-muted-foreground">
-                            Scroll to zoom, drag left/right to pan, Shift+scroll to move left or right.
+                          <div className="mt-1 text-[11px] text-foreground/80">
+                            Wheel to zoom, drag left/right to pan, Shift+wheel to move the window.
                           </div>
                         </div>
                       </div>
 
                       <div
                         className={cn(
-                          "relative h-[260px] sm:h-[320px] lg:h-[420px] xl:h-[470px] px-2 sm:px-3 pb-3 pt-3 overscroll-contain",
+                          "relative h-[300px] sm:h-[380px] lg:h-[500px] xl:h-[560px] rounded-xl border border-white/10 bg-[#070c14]/85 px-2 sm:px-3 pb-3 pt-3 overscroll-contain",
                           hasProfessionalChartData
                             ? isChartMousePanning
                               ? "cursor-grabbing"
@@ -4428,14 +4434,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 minTickGap={28}
                                 tickMargin={8}
                                 tickFormatter={formatChartXAxisTick}
-                                tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
+                                tick={{ fill: "rgba(255,255,255,0.80)", fontSize: 11 }}
                               />
                               <YAxis
                                 yAxisId="price"
                                 axisLine={false}
                                 tickLine={false}
                                 width={78}
-                                tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 10 }}
+                                tick={{ fill: "rgba(255,255,255,0.78)", fontSize: 10 }}
                                 tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
                               />
                               {isChartInfoVisible ? (
