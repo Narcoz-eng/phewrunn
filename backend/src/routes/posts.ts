@@ -146,6 +146,8 @@ const JUPITER_SWAP_URLS = [
   "https://lite-api.jup.ag/swap/v1/swap",
   "https://quote-api.jup.ag/v6/swap",
 ];
+const JUPITER_QUOTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500 : 600;
+const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 450 : 200;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
 const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
@@ -166,6 +168,14 @@ const JUPITER_MAX_PRIORITY_FEE_LAMPORTS = (() => {
   if (!Number.isFinite(raw) || raw <= 0) return 1_000_000;
   return Math.max(10_000, Math.min(5_000_000, Math.round(raw)));
 })();
+const jupiterQuoteCache = new Map<
+  string,
+  {
+    result: JupiterProxyResult;
+    expiresAtMs: number;
+  }
+>();
+const jupiterQuoteInFlight = new Map<string, Promise<JupiterProxyResult>>();
 
 function getActivePlatformFeeBps(): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
@@ -175,6 +185,23 @@ function getActivePlatformFeeBps(): number {
 function clampPosterFeeShareBps(value: number | null | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_POSTER_TRADE_FEE_SHARE_BPS;
   return Math.min(MAX_POSTER_TRADE_FEE_SHARE_BPS, Math.max(0, Math.round(Number(value))));
+}
+
+function buildJupiterQuoteCacheKey(payload: {
+  inputMint: string;
+  outputMint: string;
+  amount: number;
+  slippageBps: number;
+  swapMode?: string | null;
+}, platformFeeBps: number): string {
+  return [
+    payload.inputMint,
+    payload.outputMint,
+    String(payload.amount),
+    String(payload.slippageBps),
+    payload.swapMode ?? "ExactIn",
+    String(platformFeeBps),
+  ].join(":");
 }
 
 function isPrismaSchemaDriftError(error: unknown): boolean {
@@ -3528,6 +3555,22 @@ async function forwardJupiterRequest(
 postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), async (c) => {
   const payload = c.req.valid("json");
   const platformFeeBps = getActivePlatformFeeBps();
+  const cacheKey = buildJupiterQuoteCacheKey(payload, platformFeeBps);
+  const now = Date.now();
+  const cached = jupiterQuoteCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    const contentType = cached.result.contentType ?? "application/json";
+    return new Response(cached.result.bodyText, {
+      status: cached.result.status,
+      headers: {
+        "content-type": contentType,
+        "cache-control": "no-store",
+      },
+    });
+  }
+  if (cached) {
+    jupiterQuoteCache.delete(cacheKey);
+  }
 
   const params = new URLSearchParams({
     inputMint: payload.inputMint,
@@ -3540,15 +3583,35 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
     params.set("platformFeeBps", String(platformFeeBps));
   }
 
-  const result = await forwardJupiterRequest(
-    JUPITER_QUOTE_URLS.map((base) => `${base}?${params.toString()}`),
-    {
-      method: "GET",
-      headers: { accept: "application/json" },
-      timeoutMs: 2800,
-      hedgeDelayMs: 70,
+  let request = jupiterQuoteInFlight.get(cacheKey);
+  if (!request) {
+    request = forwardJupiterRequest(
+      JUPITER_QUOTE_URLS.map((base) => `${base}?${params.toString()}`),
+      {
+        method: "GET",
+        headers: { accept: "application/json" },
+        timeoutMs: 2300,
+        hedgeDelayMs: 45,
+      }
+    );
+    jupiterQuoteInFlight.set(cacheKey, request);
+  }
+
+  const result = await request.finally(() => {
+    const current = jupiterQuoteInFlight.get(cacheKey);
+    if (current === request) {
+      jupiterQuoteInFlight.delete(cacheKey);
     }
-  );
+  });
+
+  const ttlMs =
+    result.status >= 400 ? JUPITER_QUOTE_ERROR_CACHE_TTL_MS : JUPITER_QUOTE_CACHE_TTL_MS;
+  if (ttlMs > 0) {
+    jupiterQuoteCache.set(cacheKey, {
+      result,
+      expiresAtMs: Date.now() + ttlMs,
+    });
+  }
 
   const contentType = result.contentType ?? "application/json";
   return new Response(result.bodyText, {
@@ -3668,7 +3731,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
       accept: "application/json",
     },
     body: JSON.stringify(outboundPayload),
-    timeoutMs: 10000,
+    timeoutMs: 7000,
   });
 
   if (result.status >= 400) {
@@ -3719,7 +3782,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     Number.isFinite(quotePlatformFeeBpsRaw) && quotePlatformFeeBpsRaw > 0
       ? Math.min(FIXED_PLATFORM_FEE_BPS, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
       : platformFeeBps;
-  const postContext = await withTimeoutFallback(postContextPromise, 450, null);
+  const postContext = await withTimeoutFallback(postContextPromise, 180, null);
 
   if (
     postContext &&
@@ -3734,46 +3797,55 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     const posterShareAmountAtomic =
       ((platformFeeAmountBigInt * BigInt(posterShareBps)) / 10_000n).toString();
 
-    try {
-      const createdEvent = await prisma.tradeFeeEvent.create({
-        data: {
-          postId: postContext.id,
-          posterUserId: postContext.authorId,
-          traderUserId: currentUser?.id ?? null,
-          traderWalletAddress: payload.userPublicKey,
-          tradeSide: payload.tradeSide ?? deriveTradeSideFromQuote(quote),
-          inputMint: safeString(quote.inputMint) ?? SOL_MINT,
-          outputMint: safeString(quote.outputMint) ?? SOL_MINT,
-          inAmountAtomic: safeNumericString(quote.inAmount) ?? "0",
-          outAmountAtomic: safeNumericString(quote.outAmount) ?? "0",
-          platformFeeBps: platformFeeBpsApplied,
-          platformFeeAmountAtomic: platformFeeAmountBigInt.toString(),
-          feeMint: platformFeeMint,
-          posterShareBps,
-          posterShareAmountAtomic,
-          posterPayoutAddress: postContext.author.tradeFeePayoutAddress ?? postContext.author.walletAddress,
-        },
-        select: { id: true },
+    const tradeFeeEventPromise = prisma.tradeFeeEvent.create({
+      data: {
+        postId: postContext.id,
+        posterUserId: postContext.authorId,
+        traderUserId: currentUser?.id ?? null,
+        traderWalletAddress: payload.userPublicKey,
+        tradeSide: payload.tradeSide ?? deriveTradeSideFromQuote(quote),
+        inputMint: safeString(quote.inputMint) ?? SOL_MINT,
+        outputMint: safeString(quote.outputMint) ?? SOL_MINT,
+        inAmountAtomic: safeNumericString(quote.inAmount) ?? "0",
+        outAmountAtomic: safeNumericString(quote.outAmount) ?? "0",
+        platformFeeBps: platformFeeBpsApplied,
+        platformFeeAmountAtomic: platformFeeAmountBigInt.toString(),
+        feeMint: platformFeeMint,
+        posterShareBps,
+        posterShareAmountAtomic,
+        posterPayoutAddress: postContext.author.tradeFeePayoutAddress ?? postContext.author.walletAddress,
+      },
+      select: { id: true },
+    })
+      .then((row) => row)
+      .catch((error) => {
+        if (isPrismaSchemaDriftError(error)) {
+          console.warn("[posts/jupiter/swap] trade fee event logging skipped (schema not ready)");
+        } else {
+          console.warn("[posts/jupiter/swap] trade fee event logging skipped", {
+            postId: postContext.id,
+            traderUserId: currentUser?.id ?? null,
+            traderWalletAddress: payload.userPublicKey,
+            code:
+              typeof error === "object" &&
+              error !== null &&
+              "code" in error &&
+              typeof (error as { code?: unknown }).code === "string"
+                ? (error as { code: string }).code
+                : null,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return null;
       });
+
+    const createdEvent = await withTimeoutFallback<{ id: string } | null>(
+      tradeFeeEventPromise,
+      240,
+      null
+    );
+    if (createdEvent?.id) {
       tradeFeeEventId = createdEvent.id;
-    } catch (error) {
-      if (isPrismaSchemaDriftError(error)) {
-        console.warn("[posts/jupiter/swap] trade fee event logging skipped (schema not ready)");
-      } else {
-        console.warn("[posts/jupiter/swap] trade fee event logging skipped", {
-          postId: postContext.id,
-          traderUserId: currentUser?.id ?? null,
-          traderWalletAddress: payload.userPublicKey,
-          code:
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            typeof (error as { code?: unknown }).code === "string"
-              ? (error as { code: string }).code
-              : null,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
     }
   }
 

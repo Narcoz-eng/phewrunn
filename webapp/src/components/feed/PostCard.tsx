@@ -86,6 +86,8 @@ const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
 const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
+const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 1_800;
+const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -97,6 +99,15 @@ const DEX_CHART_INTERVAL_OPTIONS = [
 type DexChartIntervalValue = (typeof DEX_CHART_INTERVAL_OPTIONS)[number]["value"];
 
 type TradeSide = "buy" | "sell";
+
+type JupiterQuoteRequestPayload = {
+  inputMint: string;
+  outputMint: string;
+  amount: number;
+  slippageBps: number;
+  swapMode: "ExactIn";
+  postId: string;
+};
 
 type JupiterQuoteResponse = {
   inputMint: string;
@@ -131,6 +142,105 @@ type JupiterSwapResponse = {
   platformFeeBpsApplied?: number;
   posterShareBpsApplied?: number;
 };
+
+const jupiterQuoteCache = new Map<
+  string,
+  { quote: JupiterQuoteResponse; expiresAtMs: number }
+>();
+const jupiterQuoteInFlight = new Map<string, Promise<JupiterQuoteResponse>>();
+
+function buildJupiterQuoteCacheKey(payload: JupiterQuoteRequestPayload): string {
+  return [
+    payload.inputMint,
+    payload.outputMint,
+    String(payload.amount),
+    String(payload.slippageBps),
+    payload.swapMode,
+    payload.postId,
+  ].join(":");
+}
+
+function createAbortSignalWithTimeout(timeoutMs: number, externalSignal?: AbortSignal): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const handleExternalAbort = () => controller.abort();
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", handleExternalAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", handleExternalAbort);
+      }
+    },
+  };
+}
+
+async function fetchJupiterQuoteFast(
+  payload: JupiterQuoteRequestPayload,
+  options?: { timeoutMs?: number; signal?: AbortSignal }
+): Promise<JupiterQuoteResponse> {
+  const key = buildJupiterQuoteCacheKey(payload);
+  const now = Date.now();
+  const cached = jupiterQuoteCache.get(key);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.quote;
+  }
+  if (cached) {
+    jupiterQuoteCache.delete(key);
+  }
+
+  const inFlight = jupiterQuoteInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = (async () => {
+    const { signal, cleanup } = createAbortSignalWithTimeout(
+      options?.timeoutMs ?? JUPITER_QUOTE_TIMEOUT_MS,
+      options?.signal
+    );
+
+    try {
+      const res = await fetch("/api/posts/jupiter/quote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal,
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || `Quote failed (${res.status})`);
+      }
+
+      const quote = (await res.json()) as JupiterQuoteResponse;
+      jupiterQuoteCache.set(key, {
+        quote,
+        expiresAtMs: Date.now() + JUPITER_QUOTE_MEMORY_CACHE_TTL_MS,
+      });
+      return quote;
+    } finally {
+      cleanup();
+      jupiterQuoteInFlight.delete(key);
+    }
+  })();
+
+  jupiterQuoteInFlight.set(key, requestPromise);
+  return requestPromise;
+}
 
 type DexscreenerTokenRef = {
   address?: string;
@@ -398,6 +508,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
+  const quickBuyRetryCountRef = useRef(0);
   const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
@@ -1819,55 +1930,48 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const sellBlockedByRpcTokenInfo =
     tradeSide === "sell" && !hasRpcTokenDecimals && !sellHasNoTokens;
 
-  const jupiterQuoteQuery = useQuery({
-    queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
-    enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
-    staleTime: 3_000,
-    retry: 1,
-    retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
-    refetchInterval: (q) => (q.state.data ? 4_000 : 2_000),
-    refetchOnWindowFocus: false,
-    queryFn: async () => {
-      if (!post.contractAddress || !tradeAmountAtomic) throw new Error("Missing token or amount");
+  const createJupiterQuotePayload = useCallback(
+    (side: TradeSide, amountAtomic: number): JupiterQuoteRequestPayload | null => {
+      if (!post.contractAddress) return null;
+
       let tokenMint = post.contractAddress.trim();
       try {
         tokenMint = new PublicKey(tokenMint).toBase58();
       } catch {
-        throw new Error("Invalid Solana token address");
+        return null;
       }
 
-      const quotePayload = {
-        inputMint: tradeSide === "buy" ? SOL_MINT : tokenMint,
-        outputMint: tradeSide === "buy" ? tokenMint : SOL_MINT,
-        amount: tradeAmountAtomic,
+      return {
+        inputMint: side === "buy" ? SOL_MINT : tokenMint,
+        outputMint: side === "buy" ? tokenMint : SOL_MINT,
+        amount: amountAtomic,
         slippageBps,
         swapMode: "ExactIn",
         postId: post.id,
       };
+    },
+    [post.contractAddress, post.id, slippageBps]
+  );
 
-      let lastError = "Failed to load quote";
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), JUPITER_QUOTE_TIMEOUT_MS);
-        const res = await fetch("/api/posts/jupiter/quote", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(quotePayload),
-          signal: controller.signal,
-          cache: "no-store",
-          credentials: "same-origin",
-        });
-        clearTimeout(timeout);
-        if (!res.ok) {
-          const body = await res.text().catch(() => "");
-          lastError = body || `Quote failed (${res.status})`;
-          throw new Error(lastError);
-        }
-        return (await res.json()) as JupiterQuoteResponse;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : "Quote request failed";
+  const jupiterQuoteQuery = useQuery({
+    queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
+    enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
+    staleTime: 2_500,
+    gcTime: 45_000,
+    retry: 1,
+    retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: isBuyDialogOpen ? (q) => (q.state.data ? 5_000 : 2_200) : false,
+    refetchOnWindowFocus: false,
+    queryFn: async ({ signal }) => {
+      if (!tradeAmountAtomic) {
+        throw new Error("Missing token or amount");
       }
-      throw new Error(lastError);
+      const quotePayload = createJupiterQuotePayload(tradeSide, tradeAmountAtomic);
+      if (!quotePayload) {
+        throw new Error("Invalid Solana token address");
+      }
+      return fetchJupiterQuoteFast(quotePayload, { signal });
     },
   });
   const jupiterQuoteData = jupiterQuoteQuery.data;
@@ -1952,10 +2056,25 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleQuickBuyPresetClick = (amount: string) => {
+    quickBuyRetryCountRef.current = 0;
     setTradeSide("buy");
     setBuyAmountSol(amount);
     setBuyTxSignature(null);
     setPendingQuickBuyAutoExecute(true);
+
+    const parsedAmount = Number(amount);
+    if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
+      const prefetchAmountLamports = Math.max(1, Math.floor(parsedAmount * LAMPORTS_PER_SOL));
+      const prefetchPayload = createJupiterQuotePayload("buy", prefetchAmountLamports);
+      if (prefetchPayload) {
+        void fetchJupiterQuoteFast(prefetchPayload, {
+          timeoutMs: QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS,
+        }).catch(() => {
+          // Quick-buy fallback path will retry during execution.
+        });
+      }
+    }
+
     if (isSolanaTradeSupported && !wallet.publicKey) {
       setPendingBuyAfterWalletConnect(true);
       openWalletSelector();
@@ -2001,7 +2120,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
     const openModal = () => setWalletModalVisible(true);
     if (typeof window !== "undefined") {
-      window.setTimeout(openModal, 80);
+      window.setTimeout(openModal, 16);
     } else {
       openModal();
     }
@@ -2114,7 +2233,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       Date.now() - fallbackQuoteCandidate.updatedAtMs <= JUPITER_QUOTE_STALE_MAX_AGE_MS
         ? fallbackQuoteCandidate.quote
         : null;
-    const quote = jupiterQuoteData ?? fallbackQuote;
+    let quote = jupiterQuoteData ?? fallbackQuote;
+    if (!quote && tradeAmountAtomic) {
+      const payload = createJupiterQuotePayload(tradeSide, tradeAmountAtomic);
+      if (payload) {
+        try {
+          quote = await fetchJupiterQuoteFast(payload, {
+            timeoutMs: QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS,
+          });
+        } catch {
+          // Keep default error path below.
+        }
+      }
+    }
     if (!quote) {
       toast.error("Wait for quote to load");
       return;
@@ -2194,6 +2325,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     post.contractAddress,
     refetchJupiterQuote,
     sellAmountExceedsBalance,
+    createJupiterQuotePayload,
+    tradeAmountAtomic,
     tradeReadConnection,
     tradeSide,
     walletPublicKey,
@@ -2447,13 +2580,26 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   useEffect(() => {
     if (!pendingQuickBuyAutoExecute) return;
 
-    if (jupiterNoRouteDetected || jupiterQuoteUnavailable) {
+    if (jupiterNoRouteDetected) {
+      quickBuyRetryCountRef.current = 0;
+      setPendingQuickBuyAutoExecute(false);
+      return;
+    }
+
+    if (jupiterQuoteUnavailable) {
+      if (quickBuyRetryCountRef.current < 2) {
+        quickBuyRetryCountRef.current += 1;
+        void refetchJupiterQuote();
+        return;
+      }
+      quickBuyRetryCountRef.current = 0;
       setPendingQuickBuyAutoExecute(false);
       return;
     }
 
     if (!canExecuteJupiterBuy) return;
 
+    quickBuyRetryCountRef.current = 0;
     setPendingQuickBuyAutoExecute(false);
     void handleExecuteJupiterBuy();
   }, [
@@ -2461,6 +2607,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     jupiterNoRouteDetected,
     jupiterQuoteUnavailable,
     canExecuteJupiterBuy,
+    refetchJupiterQuote,
     handleExecuteJupiterBuy,
   ]);
 
