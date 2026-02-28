@@ -39,6 +39,9 @@ function isDocumentScrollLocked(): boolean {
   ) {
     return true;
   }
+  if (document.querySelector("[role='dialog'][data-state='open']")) {
+    return true;
+  }
   return document.body.style.overflow === "hidden" || document.documentElement.style.overflow === "hidden";
 }
 

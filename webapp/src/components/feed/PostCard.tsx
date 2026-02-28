@@ -587,6 +587,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       setBuyTxSignature(null);
       // For quick-buy flows, execute without forcing an overlay dialog.
       if (!pendingQuickBuyAutoExecute) {
+        if (typeof document !== "undefined") {
+          document.body.classList.add("phew-overlay-open");
+          document.body.dataset.phewPinnedItemKey = post.id;
+        }
         setIsBuyDialogOpen(true);
       }
     }
@@ -595,6 +599,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
   }, [
     wallet.publicKey,
+    post.id,
     isWalletConnectDialogOpen,
     pendingBuyAfterWalletConnect,
     pendingQuickBuyAutoExecute,
@@ -616,12 +621,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const hasOverlayOpen = isBuyDialogOpen || isWalletConnectDialogOpen || isWinCardPreviewOpen;
     if (hasOverlayOpen) {
       document.body.classList.add("phew-overlay-open");
-    } else {
+    } else if (!document.querySelector("[role='dialog'][data-state='open']")) {
       document.body.classList.remove("phew-overlay-open");
     }
 
     return () => {
-      document.body.classList.remove("phew-overlay-open");
+      if (!document.querySelector("[role='dialog'][data-state='open']")) {
+        document.body.classList.remove("phew-overlay-open");
+      }
     };
   }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen]);
 
@@ -3360,8 +3367,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       onClick={() => {
                         setTradeSide("buy");
                         setShowSlippageSettings(true);
-                        setBuyTxSignature(null);
-                        setIsBuyDialogOpen(true);
+                        handleOpenBuyDialog();
                       }}
                       className="h-8 rounded-full border border-white/10 bg-black/20 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
                     >
