@@ -596,7 +596,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         setIsBuyDialogOpen(true);
       }
     }
-    if (typeof window !== "undefined") {
+    if (
+      typeof window !== "undefined" &&
+      !isWalletModalVisible &&
+      !isWalletConnectDialogOpen &&
+      !isBuyDialogOpen &&
+      !isWinCardPreviewOpen
+    ) {
       window.setTimeout(clearPotentialScrollLock, 120);
     }
   }, [
@@ -605,7 +611,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     isWalletConnectDialogOpen,
     pendingBuyAfterWalletConnect,
     pendingQuickBuyAutoExecute,
+    isBuyDialogOpen,
     isWalletModalVisible,
+    isWinCardPreviewOpen,
     setWalletModalVisible,
   ]);
 

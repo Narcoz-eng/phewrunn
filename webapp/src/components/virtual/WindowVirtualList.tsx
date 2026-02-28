@@ -24,6 +24,12 @@ function getPinnedItemKeyFromDocument(): string | null {
   return value ? value : null;
 }
 
+function getActiveTradeDialogPostKeyFromDocument(): string | null {
+  if (typeof document === "undefined") return null;
+  const value = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
+  return value ? value : null;
+}
+
 function getWindowScrollTop(): number {
   if (typeof window === "undefined") return 0;
   return window.scrollY || window.pageYOffset || 0;
@@ -65,6 +71,9 @@ export function WindowVirtualList<T>({
     containerTop: 0,
   });
   const [pinnedItemKey, setPinnedItemKey] = useState<string | null>(() => getPinnedItemKeyFromDocument());
+  const [activeTradeDialogPostKey, setActiveTradeDialogPostKey] = useState<string | null>(() =>
+    getActiveTradeDialogPostKeyFromDocument()
+  );
   const lastUnlockedViewportRef = useRef<ViewportState>(viewport);
 
   useEffect(() => {
@@ -144,6 +153,8 @@ export function WindowVirtualList<T>({
     const syncPinnedItem = () => {
       const next = getPinnedItemKeyFromDocument();
       setPinnedItemKey((prev) => (prev === next ? prev : next));
+      const nextActive = getActiveTradeDialogPostKeyFromDocument();
+      setActiveTradeDialogPostKey((prev) => (prev === nextActive ? prev : nextActive));
     };
 
     syncPinnedItem();
@@ -154,7 +165,7 @@ export function WindowVirtualList<T>({
     if (document.body) {
       observer.observe(document.body, {
         attributes: true,
-        attributeFilter: ["data-phew-pinned-item-key"],
+        attributeFilter: ["data-phew-pinned-item-key", "data-phew-active-trade-dialog-post-id"],
       });
     }
 
@@ -262,7 +273,8 @@ export function WindowVirtualList<T>({
     return <>{emptyState}</>;
   }
 
-  const forceRenderAllItems = pinnedItemKey !== null || isDocumentScrollLocked();
+  const forceRenderAllItems =
+    pinnedItemKey !== null || activeTradeDialogPostKey !== null || isDocumentScrollLocked();
 
   if (items.length < minItemsToVirtualize || forceRenderAllItems) {
     return (
