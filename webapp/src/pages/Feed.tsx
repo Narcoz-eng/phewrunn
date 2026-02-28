@@ -149,11 +149,53 @@ export default function Feed() {
   const [pendingLatestFirstPage, setPendingLatestFirstPage] = useState<FeedPage | null>(null);
   const [pendingLatestCount, setPendingLatestCount] = useState(0);
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
   const cachedFeedUser = readSessionCache<User>(FEED_CURRENT_USER_CACHE_KEY, FEED_CURRENT_USER_CACHE_TTL_MS);
 
   const getFeedQueryKey = useCallback((tab: FeedTab, search: string) => ["posts", tab, search] as const, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+
+    let rafId = 0;
+    const syncOverlayState = () => {
+      if (rafId) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        const next = isGlobalOverlayOpen();
+        setIsOverlayOpen((prev) => (prev === next ? prev : next));
+      });
+    };
+
+    syncOverlayState();
+
+    const observer = new MutationObserver(() => syncOverlayState());
+    if (document.body) {
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["class", "style", "data-state", "role", "data-phew-pinned-item-key"],
+      });
+    }
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+
+    window.addEventListener("focus", syncOverlayState);
+    document.addEventListener("visibilitychange", syncOverlayState);
+    return () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      observer.disconnect();
+      window.removeEventListener("focus", syncOverlayState);
+      document.removeEventListener("visibilitychange", syncOverlayState);
+    };
+  }, []);
 
   const fetchFeedPage = useCallback(async (
     tab: FeedTab,
@@ -231,7 +273,7 @@ export default function Feed() {
     enabled: !!session?.user,
     retry: 2,
     staleTime: 30000, // 30 seconds
-    refetchInterval: session?.user ? 15_000 : false,
+    refetchInterval: session?.user && !isOverlayOpen ? 15_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -415,6 +457,7 @@ export default function Feed() {
     if (!session?.user) return;
     if (activeTab !== "latest") return;
     if (effectiveSearchQuery) return;
+    if (isOverlayOpen) return;
     if (typeof window === "undefined") return;
 
     let cancelled = false;
@@ -422,7 +465,7 @@ export default function Feed() {
     const checkForNewPosts = async () => {
       if (cancelled) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (isGlobalOverlayOpen()) return;
+      if (isOverlayOpen) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey("latest", ""));
       const currentFirstPage = currentData?.pages?.[0];
@@ -431,7 +474,7 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage("latest", "");
         if (cancelled || freshFirstPage.items.length === 0) return;
-        if (isGlobalOverlayOpen()) return;
+        if (isOverlayOpen) return;
 
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
@@ -506,6 +549,7 @@ export default function Feed() {
     effectiveSearchQuery,
     fetchFeedPage,
     getFeedQueryKey,
+    isOverlayOpen,
     queryClient,
     refetchUser,
     session?.user,
@@ -516,6 +560,7 @@ export default function Feed() {
   useEffect(() => {
     if (!session?.user) return;
     if (activeTab === "latest" && !effectiveSearchQuery) return;
+    if (isOverlayOpen) return;
     if (typeof window === "undefined") return;
 
     let cancelled = false;
@@ -525,7 +570,7 @@ export default function Feed() {
       if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-      if (isGlobalOverlayOpen()) return;
+      if (isOverlayOpen) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
         getFeedQueryKey(activeTab, effectiveSearchQuery)
@@ -537,7 +582,7 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
         if (cancelled || freshFirstPage.items.length === 0) return;
-        if (isGlobalOverlayOpen()) return;
+        if (isOverlayOpen) return;
 
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
@@ -584,6 +629,7 @@ export default function Feed() {
     effectiveSearchQuery,
     fetchFeedPage,
     getFeedQueryKey,
+    isOverlayOpen,
     queryClient,
     session?.user,
   ]);

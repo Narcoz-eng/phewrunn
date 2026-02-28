@@ -84,6 +84,7 @@ import { toast } from "sonner";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
 const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
+const ACTIVE_TRADE_DIALOG_POST_DATASET_KEY = "phewActiveTradeDialogPostId";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
@@ -590,6 +591,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         if (typeof document !== "undefined") {
           document.body.classList.add("phew-overlay-open");
           document.body.dataset.phewPinnedItemKey = post.id;
+          document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = post.id;
         }
         setIsBuyDialogOpen(true);
       }
@@ -634,8 +636,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   useEffect(() => {
     if (typeof document === "undefined") return;
+    const activeTradeDialogPostId = document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
     if (isBuyDialogOpen) {
       document.body.dataset.phewPinnedItemKey = post.id;
+      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = post.id;
+      return;
+    }
+    if (activeTradeDialogPostId === post.id) {
+      document.body.dataset.phewPinnedItemKey = post.id;
+      document.body.classList.add("phew-overlay-open");
+      setIsBuyDialogOpen(true);
       return;
     }
     if (document.body.dataset.phewPinnedItemKey === post.id) {
@@ -643,6 +653,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
 
     return () => {
+      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === post.id) {
+        return;
+      }
       if (document.body.dataset.phewPinnedItemKey === post.id) {
         delete document.body.dataset.phewPinnedItemKey;
       }
@@ -2223,6 +2236,18 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setQuickBuyPresetsSol(DEFAULT_QUICK_BUY_PRESETS_SOL);
   };
 
+  const handleCloseBuyDialog = () => {
+    if (typeof document !== "undefined") {
+      if (document.body.dataset.phewPinnedItemKey === post.id) {
+        delete document.body.dataset.phewPinnedItemKey;
+      }
+      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === post.id) {
+        delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
+      }
+    }
+    setIsBuyDialogOpen(false);
+  };
+
   const handleQuickBuyPresetClick = (amount: string) => {
     quickBuyRetryCountRef.current = 0;
     setTradeSide("buy");
@@ -2249,7 +2274,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       return;
     }
     // Quick-buy should execute immediately without forcing modal navigation.
-    setIsBuyDialogOpen(false);
+    handleCloseBuyDialog();
   };
 
   const applySlippagePercentInput = () => {
@@ -2272,6 +2297,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (typeof document !== "undefined") {
       document.body.classList.add("phew-overlay-open");
       document.body.dataset.phewPinnedItemKey = post.id;
+      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = post.id;
     }
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
@@ -2285,7 +2311,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     closeWalletConnectDialog?: boolean;
   } = {}) => {
     if (closeBuyDialog) {
-      setIsBuyDialogOpen(false);
+      handleCloseBuyDialog();
     }
     if (closeWalletConnectDialog) {
       setIsWalletConnectDialogOpen(false);
@@ -4990,7 +5016,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           </div>
 
           <DialogFooter className="relative z-20 px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
-            <Button type="button" variant="outline" onClick={() => setIsBuyDialogOpen(false)} className="w-full sm:w-auto">
+            <Button type="button" variant="outline" onClick={handleCloseBuyDialog} className="w-full sm:w-auto">
               Close
             </Button>
             <Button
