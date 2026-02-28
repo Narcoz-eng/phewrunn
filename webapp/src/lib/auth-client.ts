@@ -41,10 +41,11 @@ const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 8_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 3;
-const SESSION_FETCH_TIMEOUT_MS = 7000;
+const SESSION_FETCH_TIMEOUT_MS = 4500;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 const AUTH_SESSION_RETRY_DELAY_MS = 220;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
+const PRIVY_SYNC_TIMEOUT_MS = 35_000;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -645,7 +646,7 @@ export async function syncPrivySession(
   privyIdToken?: string
 ): Promise<{ token: string; user: AuthUser }> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const timeoutId = setTimeout(() => controller.abort(), PRIVY_SYNC_TIMEOUT_MS);
 
   try {
     const response = await fetch(`${baseURL}/api/auth/privy-sync`, {

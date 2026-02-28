@@ -907,6 +907,11 @@ app.post("/api/auth/privy-sync", async (c) => {
       return c.json({ error: { message: "Invalid Privy user", code: "UNAUTHORIZED" } }, 401);
     }
 
+    if (!verifiedPrivyUserId && typeof privyUserId === "string" && providedEmail) {
+      verifiedPrivyUserId = privyUserId;
+      verifiedEmail = providedEmail;
+    }
+
     if (!verifiedPrivyUserId && typeof privyUserId === "string") {
       try {
         const fullUser = await PRIVY_CLIENT.getUserById(privyUserId) as PrivyUserLike;

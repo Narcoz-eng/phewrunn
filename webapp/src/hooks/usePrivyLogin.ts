@@ -4,12 +4,33 @@ import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 30_000;
+const IDENTITY_TOKEN_ATTEMPTS = 5;
+const IDENTITY_TOKEN_RETRY_DELAYS_MS = [120, 180, 260, 360] as const;
+const RETRYABLE_SYNC_ERROR_PATTERN =
+  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|server/i;
 type PrivyUserLike = {
   id: string;
   email?: { address?: string } | null;
   google?: { name?: string } | null;
   linkedAccounts?: Array<{ type: string; address?: string }> | null;
 };
+
+async function getIdentityTokenFast(): Promise<string | undefined> {
+  for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
+    const token = await getIdentityToken();
+    if (token) {
+      return token;
+    }
+    const delayMs = IDENTITY_TOKEN_RETRY_DELAYS_MS[attempt];
+    if (!delayMs) {
+      continue;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
+  }
+  return undefined;
+}
 
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin() {
@@ -48,7 +69,7 @@ export function usePrivyLogin() {
     setSyncError(null);
 
     try {
-      const privyIdToken = await getIdentityToken();
+      const privyIdToken = await getIdentityTokenFast();
       const email =
         privyUser.email?.address ??
         (privyUser.linkedAccounts?.find(
@@ -68,15 +89,18 @@ export function usePrivyLogin() {
         name || undefined,
         privyIdToken ?? undefined
       );
-      void refetch();
+      await refetch();
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const message = err instanceof Error ? err.message : "Failed to sign in";
       setSyncError(message);
       toast.error(message);
-      void privyLogout().catch(() => {
-        // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
-      });
+      const shouldKeepPrivySession = RETRYABLE_SYNC_ERROR_PATTERN.test(message);
+      if (!shouldKeepPrivySession) {
+        void privyLogout().catch(() => {
+          // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
+        });
+      }
     } finally {
       clearSyncTimeout();
       loginRequestedRef.current = false;
@@ -90,14 +114,6 @@ export function usePrivyLogin() {
       clearSyncTimeout();
     };
   }, []);
-
-  useEffect(() => {
-    if (!ready || !authenticated || !user) return;
-    if (!isSyncing && !loginRequestedRef.current) return;
-    if (syncGuardRef.current) return;
-
-    void runPrivySync(user as PrivyUserLike);
-  }, [ready, authenticated, user, isSyncing, runPrivySync]);
 
   const { login } = useLogin({
     onComplete: async (params) => {
