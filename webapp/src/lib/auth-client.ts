@@ -45,8 +45,15 @@ const SESSION_FETCH_TIMEOUT_MS = 6500;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 const AUTH_SESSION_RETRY_DELAY_MS = 300;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 6;
+const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 4;
 const PRIVY_SYNC_TIMEOUT_MS = 12_000;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [450, 1200] as const;
+const SESSION_COOKIE_CANDIDATE_NAMES = [
+  "phew.session_token",
+  "better-auth.session_token",
+  "auth.session_token",
+] as const;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -144,6 +151,15 @@ function clearStoredAuthToken(): void {
 
 setAuthTokenGetter(async () => getStoredAuthToken());
 
+function hasSessionCookieHint(): boolean {
+  if (typeof document === "undefined") return false;
+  const cookieHeader = document.cookie || "";
+  if (!cookieHeader) return false;
+  return SESSION_COOKIE_CANDIDATE_NAMES.some((cookieName) =>
+    cookieHeader.includes(`${cookieName}=`)
+  );
+}
+
 function readCachedAuthUser(): AuthUser | null {
   if (typeof window === "undefined") return getInMemoryCachedAuthUser();
   try {
@@ -220,7 +236,7 @@ async function fetchSession(): Promise<AuthUser | null> {
   ) {
     return cachedUser;
   }
-  if (sessionRateLimitedUntil > now) {
+  if (sessionRateLimitedUntil > now && cachedUser) {
     return cachedUser;
   }
 
@@ -378,15 +394,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return user;
     }
 
-    // Fresh tabs can momentarily race session propagation right after sign-in.
-    // Retry once when we do have a token, instead of instantly flipping to logged out.
-    if (!getStoredAuthToken()) {
+    // Fresh tabs can momentarily race cookie/session propagation right after sign-in.
+    // Retry when we have either bearer token or session cookie hints.
+    const hasStoredToken = Boolean(getStoredAuthToken());
+    const hasCookieSessionHint = hasSessionCookieHint();
+    if (!hasStoredToken && !hasCookieSessionHint) {
       return null;
     }
 
-    for (let attempt = 1; attempt < AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN; attempt += 1) {
+    const retryAttempts = hasStoredToken
+      ? AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN
+      : AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE;
+    const retryDelayMs = hasStoredToken
+      ? AUTH_SESSION_RETRY_DELAY_MS
+      : AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS;
+
+    for (let attempt = 1; attempt < retryAttempts; attempt += 1) {
       await new Promise<void>((resolve) => {
-        setTimeout(resolve, AUTH_SESSION_RETRY_DELAY_MS);
+        setTimeout(resolve, retryDelayMs);
       });
       user = await fetchSession();
       if (user) {
