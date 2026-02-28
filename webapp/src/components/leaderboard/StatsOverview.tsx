@@ -9,7 +9,6 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl } from "@/types";
 import { cn } from "@/lib/utils";
 import {
-  TrendingUp,
   Users,
   Activity,
   Target,
@@ -48,19 +47,6 @@ interface PlatformStats {
     level: number;
     postsThisWeek: number;
   }>;
-}
-
-function formatVolume(value: number): string {
-  if (value >= 1_000_000_000) {
-    return `$${(value / 1_000_000_000).toFixed(2)}B`;
-  }
-  if (value >= 1_000_000) {
-    return `$${(value / 1_000_000).toFixed(2)}M`;
-  }
-  if (value >= 1_000) {
-    return `$${(value / 1_000).toFixed(1)}K`;
-  }
-  return `$${value.toFixed(0)}`;
 }
 
 function StatCard({
@@ -177,38 +163,6 @@ export function StatsOverview() {
 
   return (
     <div className="space-y-6">
-      {/* Volume Stats */}
-      <div>
-        <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
-          <TrendingUp className="h-4 w-4" />
-          Platform Volume
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            title="24H Volume"
-            value={formatVolume(stats.volume.day)}
-            icon={TrendingUp}
-            valueClassName="text-gain"
-          />
-          <StatCard
-            title="7D Volume"
-            value={formatVolume(stats.volume.week)}
-            icon={Calendar}
-          />
-          <StatCard
-            title="30D Volume"
-            value={formatVolume(stats.volume.month)}
-            icon={BarChart3}
-          />
-          <StatCard
-            title="All-Time Volume"
-            value={formatVolume(stats.volume.allTime)}
-            icon={Activity}
-            className="border-primary/20"
-          />
-        </div>
-      </div>
-
       {/* Alpha Stats */}
       <div>
         <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">

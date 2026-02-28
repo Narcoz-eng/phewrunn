@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -9,20 +9,26 @@ import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
+import { cn } from "@/lib/utils";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
 const NOTIFICATIONS_CACHE_TTL_MS = 45_000;
 
-function EmptyState() {
+function EmptyState({ mode }: { mode: "all" | "unread" }) {
+  const isUnreadMode = mode === "unread";
   return (
     <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
       <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
         <BellOff className="h-10 w-10 text-muted-foreground" />
       </div>
       <div>
-        <p className="font-semibold text-foreground text-lg">No notifications yet</p>
+        <p className="font-semibold text-foreground text-lg">
+          {isUnreadMode ? "You're all caught up" : "No notifications yet"}
+        </p>
         <p className="text-sm text-muted-foreground mt-1 max-w-xs">
-          When someone interacts with your posts or follows you, you'll see it here.
+          {isUnreadMode
+            ? "Unread alerts will appear here as soon as there is new activity."
+            : "When someone interacts with your posts or follows you, you'll see it here."}
         </p>
       </div>
     </div>
@@ -32,6 +38,7 @@ function EmptyState() {
 export default function Notifications() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
   const cachedNotifications = useMemo(
     () => readSessionCache<Notification[]>(NOTIFICATIONS_CACHE_KEY, NOTIFICATIONS_CACHE_TTL_MS),
     []
@@ -145,6 +152,9 @@ export default function Notifications() {
   };
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const filteredNotifications = activeFilter === "unread"
+    ? notifications.filter((notification) => !notification.read)
+    : notifications;
 
   return (
     <div className="min-h-screen bg-background">
@@ -152,24 +162,24 @@ export default function Notifications() {
       <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9"
-              onClick={() => navigate(-1)}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                onClick={() => navigate(-1)}
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div className="flex items-center gap-2">
-              <Bell className="h-5 w-5 text-primary" />
-              <h1 className="font-semibold text-lg">Notifications</h1>
-              {unreadCount > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-primary text-primary-foreground rounded-full">
-                  {unreadCount}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                <Bell className="h-5 w-5 text-primary" />
+                <h1 className="font-semibold text-lg">Notifications</h1>
+                {unreadCount > 0 && (
+                  <span className="px-2 py-0.5 text-xs font-medium bg-primary text-primary-foreground rounded-full">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
 
           {unreadCount > 0 && (
             <Button
@@ -188,6 +198,33 @@ export default function Notifications() {
 
       <main className="max-w-2xl mx-auto">
         <div className="bg-card border-x border-border min-h-[calc(100vh-3.5rem)]">
+          <div className="sticky top-14 z-40 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+            <div className="flex items-center px-2">
+              <button
+                type="button"
+                onClick={() => setActiveFilter("all")}
+                className={cn(
+                  "relative h-11 px-4 text-sm font-medium transition-colors",
+                  activeFilter === "all" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                All
+                {activeFilter === "all" ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("unread")}
+                className={cn(
+                  "relative h-11 px-4 text-sm font-medium transition-colors",
+                  activeFilter === "unread" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Unread
+                {activeFilter === "unread" ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
+              </button>
+            </div>
+          </div>
+
           {isLoading ? (
             // Loading skeletons
             <div>
@@ -213,16 +250,16 @@ export default function Notifications() {
                 Try Again
               </Button>
             </div>
-          ) : notifications.length === 0 ? (
-            <EmptyState />
+          ) : filteredNotifications.length === 0 ? (
+            <EmptyState mode={activeFilter} />
           ) : (
             <WindowVirtualList
-              items={notifications}
+              items={filteredNotifications}
               getItemKey={(notification) => notification.id}
-              estimateItemHeight={96}
+              estimateItemHeight={104}
               overscanPx={900}
               renderItem={(notification, index) => (
-                <div className={index < notifications.length - 1 ? "pb-0.5" : undefined}>
+                <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
                   <NotificationItem
                     notification={notification}
                     onMarkClicked={handleMarkClicked}

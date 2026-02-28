@@ -606,6 +606,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, [isWalletModalVisible, isWalletConnectDialogOpen, isBuyDialogOpen, isWinCardPreviewOpen]);
 
   useEffect(() => {
+    if (typeof document === "undefined") return;
+    const hasOverlayOpen = isBuyDialogOpen || isWalletConnectDialogOpen || isWinCardPreviewOpen;
+    if (hasOverlayOpen) {
+      document.body.classList.add("phew-overlay-open");
+    } else {
+      document.body.classList.remove("phew-overlay-open");
+    }
+    return () => {
+      document.body.classList.remove("phew-overlay-open");
+    };
+  }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const raw = window.localStorage.getItem(TRADE_SLIPPAGE_STORAGE_KEY);
     if (!raw) return;
@@ -2199,6 +2212,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleOpenBuyDialog = () => {
+    if (typeof document !== "undefined") {
+      document.body.classList.add("phew-overlay-open");
+    }
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
   };
@@ -3953,6 +3969,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         <DialogContent
           className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]"
           onInteractOutside={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => event.preventDefault()}
         >
           <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />

@@ -43,7 +43,8 @@ function isGlobalOverlayOpen(): boolean {
   if (
     document.body.classList.contains("overflow-hidden") ||
     document.documentElement.classList.contains("overflow-hidden") ||
-    document.body.classList.contains("wallet-adapter-modal-open")
+    document.body.classList.contains("wallet-adapter-modal-open") ||
+    document.body.classList.contains("phew-overlay-open")
   ) {
     return true;
   }
