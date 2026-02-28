@@ -1,7 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
+
+const LOGIN_SYNC_TIMEOUT_MS = 30_000;
 
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin() {
@@ -10,6 +12,30 @@ export function usePrivyLogin() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncGuardRef = useRef(false);
+  const syncTimeoutRef = useRef<number | null>(null);
+
+  const clearSyncTimeout = () => {
+    if (syncTimeoutRef.current !== null) {
+      window.clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+  };
+
+  const startSyncTimeout = () => {
+    clearSyncTimeout();
+    syncTimeoutRef.current = window.setTimeout(() => {
+      syncGuardRef.current = false;
+      setIsSyncing(false);
+      setSyncError("Sign-in timed out. Please try again.");
+      toast.error("Sign-in timed out. Please try again.");
+    }, LOGIN_SYNC_TIMEOUT_MS);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearSyncTimeout();
+    };
+  }, []);
 
   const { login } = useLogin({
     onComplete: async (params) => {
@@ -49,17 +75,17 @@ export function usePrivyLogin() {
         const message = err instanceof Error ? err.message : "Failed to sign in";
         setSyncError(message);
         toast.error(message);
-        try {
-          await privyLogout();
-        } catch {
-          // Ignore cleanup errors; the backend sync failure is the primary issue.
-        }
+        void privyLogout().catch(() => {
+          // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
+        });
       } finally {
+        clearSyncTimeout();
         syncGuardRef.current = false;
         setIsSyncing(false);
       }
     },
     onError: (error) => {
+      clearSyncTimeout();
       syncGuardRef.current = false;
       console.error("[usePrivyLogin] Privy login error:", error);
       setIsSyncing(false);
@@ -74,6 +100,7 @@ export function usePrivyLogin() {
     }
     setSyncError(null);
     setIsSyncing(true);
+    startSyncTimeout();
     login();
   };
 
