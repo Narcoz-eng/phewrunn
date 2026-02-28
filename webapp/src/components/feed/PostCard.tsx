@@ -1015,12 +1015,83 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const refreshWinCardLiveData = useCallback(async () => {
+    try {
+      const latest = await api.get<BatchedPostPriceSnapshot>(`/api/posts/${post.id}/price`, {
+        cache: "no-store",
+      });
+      if (!latest) return null;
+
+      if (typeof latest.currentMcap === "number" && Number.isFinite(latest.currentMcap)) {
+        setCurrentMcap(latest.currentMcap);
+      }
+      if (typeof latest.mcap1h === "number" && Number.isFinite(latest.mcap1h)) {
+        setLocalMcap1h(latest.mcap1h);
+      }
+      if (typeof latest.mcap6h === "number" && Number.isFinite(latest.mcap6h)) {
+        setLocalMcap6h(latest.mcap6h);
+      }
+      setLocalSettled(Boolean(latest.settled));
+      if (post.entryMcap !== null) {
+        const settledBase = latest.mcap1h ?? latest.currentMcap;
+        if (typeof settledBase === "number" && Number.isFinite(settledBase)) {
+          setLocalIsWin(settledBase > post.entryMcap);
+        }
+      }
+
+      return latest;
+    } catch {
+      return null;
+    }
+  }, [post.entryMcap, post.id]);
+
   const handleOpenWinCardPreview = () => {
     setIsWinCardPreviewOpen(true);
+    void refreshWinCardLiveData();
   };
+
+  useEffect(() => {
+    if (!isWinCardPreviewOpen) return;
+    if (typeof window === "undefined") return;
+
+    void refreshWinCardLiveData();
+    const timerId = window.setInterval(() => {
+      void refreshWinCardLiveData();
+    }, 12_000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [isWinCardPreviewOpen, refreshWinCardLiveData]);
 
   const handleDownloadWinCard = async () => {
     if (isWinCardDownloading) return;
+
+    const latestSnapshot = await refreshWinCardLiveData();
+    const liveCurrentMcap =
+      latestSnapshot && typeof latestSnapshot.currentMcap === "number"
+        ? latestSnapshot.currentMcap
+        : currentMcap;
+    const liveMcap1h =
+      latestSnapshot && typeof latestSnapshot.mcap1h === "number"
+        ? latestSnapshot.mcap1h
+        : localMcap1h;
+    const liveMcap6h =
+      latestSnapshot && typeof latestSnapshot.mcap6h === "number"
+        ? latestSnapshot.mcap6h
+        : localMcap6h;
+    const liveSettled = latestSnapshot ? Boolean(latestSnapshot.settled) : localSettled;
+    const liveOfficialMcap = liveSettled ? (liveMcap1h ?? liveCurrentMcap) : liveCurrentMcap;
+    const livePercentChange = calculatePercentChange(post.entryMcap, liveOfficialMcap);
+    const liveProfitLossValue =
+      post.entryMcap !== null && liveOfficialMcap !== null ? liveOfficialMcap - post.entryMcap : null;
+    const liveIsWin =
+      post.entryMcap !== null && liveOfficialMcap !== null ? liveOfficialMcap > post.entryMcap : localIsWin;
+    const liveSnapshotMetrics = [
+      buildWinCardSnapshotMetric("1H Snapshot", liveMcap1h),
+      buildWinCardSnapshotMetric("6H Snapshot", liveMcap6h),
+      buildWinCardSnapshotMetric("Current", liveCurrentMcap),
+    ];
 
     const canvas = document.createElement("canvas");
     const width = 1200;
@@ -1039,14 +1110,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
     ctx.scale(dpr, dpr);
 
-    const officialValue = officialMcap;
-    const profitLossValue =
-      post.entryMcap !== null && officialValue !== null ? officialValue - post.entryMcap : null;
-    const isSettledWin = localSettled && localIsWin === true;
-    const isSettledLoss = localSettled && localIsWin === false;
+    const officialValue = liveOfficialMcap;
+    const profitLossValue = liveProfitLossValue;
+    const isSettledWin = liveSettled && liveIsWin === true;
+    const isSettledLoss = liveSettled && liveIsWin === false;
     const isPositive = profitLossValue !== null ? profitLossValue >= 0 : false;
-    const accent = isSettledWin || (!localSettled && isPositive) ? "#22c55e" : isSettledLoss ? "#ef4444" : "#94a3b8";
-    const accentSoft = isSettledWin || (!localSettled && isPositive) ? "rgba(34,197,94,0.18)" : isSettledLoss ? "rgba(239,68,68,0.16)" : "rgba(148,163,184,0.16)";
+    const accent = isSettledWin || (!liveSettled && isPositive) ? "#22c55e" : isSettledLoss ? "#ef4444" : "#94a3b8";
+    const accentSoft = isSettledWin || (!liveSettled && isPositive) ? "rgba(34,197,94,0.18)" : isSettledLoss ? "rgba(239,68,68,0.16)" : "rgba(148,163,184,0.16)";
     const bgTop = "#0a0f16";
     const bgBottom = "#080b10";
 
@@ -1131,10 +1201,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const titleName = post.author.username ? `@${post.author.username}` : post.author.name;
     const tokenPrimary = post.tokenSymbol || post.tokenName || "TOKEN";
     const tokenSecondary = post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}` : "No contract");
-    const resultLabel = localSettled ? (isSettledWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD";
+    const resultLabel = liveSettled ? (isSettledWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD";
     const resultText =
-      percentChange !== null
-        ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%`
+      livePercentChange !== null
+        ? `${livePercentChange >= 0 ? "+" : ""}${livePercentChange.toFixed(2)}%`
         : "N/A";
     const verifiedPnlText =
       verifiedTotalPnlUsd === null
@@ -1540,9 +1610,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         ctx.fillText("Snapshots", x + 18, metricY + 28);
 
         const rows = [
-          { short: "1H", ...winCardSnapshotMetrics[0] },
-          { short: "6H", ...winCardSnapshotMetrics[1] },
-          { short: "NOW", ...winCardSnapshotMetrics[2] },
+          { short: "1H", ...liveSnapshotMetrics[0] },
+          { short: "6H", ...liveSnapshotMetrics[1] },
+          { short: "NOW", ...liveSnapshotMetrics[2] },
         ];
 
         rows.forEach((row, index) => {
@@ -1577,7 +1647,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       };
 
       drawMetricCard(metricX1, "Entry MCAP", formatMarketCap(post.entryMcap), "Position open");
-      drawMetricCard(metricX2, localSettled ? "Official MCAP" : "Current MCAP", formatMarketCap(officialValue), localSettled ? "1H settlement benchmark" : "Live market snapshot");
+      drawMetricCard(metricX2, liveSettled ? "Official MCAP" : "Current MCAP", formatMarketCap(officialValue), liveSettled ? "1H settlement benchmark" : "Live market snapshot");
       drawSnapshotsCard(metricX3);
 
       // Post text panel
@@ -1638,7 +1708,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       ctx.textAlign = "right";
       ctx.fillText(interactions, width - 88, 642);
       ctx.fillText(
-        localSettled ? "Settlement-based result snapshot" : "Live result snapshot (updates over time)",
+        liveSettled ? "Settlement-based result snapshot" : "Live result snapshot (updates over time)",
         width - 88,
         662
       );
@@ -1649,7 +1719,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "")
         .slice(0, 32) || "phew-post";
-      const filename = `phew-${localSettled && isSettledWin ? "wincard" : "result-card"}-${filenameBase}.png`;
+      const filename = `phew-${liveSettled && isSettledWin ? "wincard" : "result-card"}-${filenameBase}.png`;
 
       const triggerDownload = (url: string) => {
         const link = document.createElement("a");
@@ -1677,7 +1747,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         triggerDownload(canvas.toDataURL("image/png"));
       }
 
-      toast.success(localSettled && isSettledWin ? "Wincard downloaded" : "Result card downloaded");
+      toast.success(liveSettled && isSettledWin ? "Wincard downloaded" : "Result card downloaded");
     } catch (error) {
       console.error("[wincard] Failed to generate card", error);
       toast.error("Failed to generate win card");
