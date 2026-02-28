@@ -3226,32 +3226,75 @@ async function forwardJupiterRequest(
   let lastBody = "Failed to reach Jupiter";
   let lastContentType: string | null = null;
 
-  for (const url of targets) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, {
-        ...requestInit,
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const bodyText = await res.text();
-      const contentType = res.headers.get("content-type");
-      if (res.ok) {
-        return { status: res.status, bodyText, contentType };
-      }
-      lastStatus = res.status;
-      lastBody = bodyText || `Jupiter request failed (${res.status})`;
-      lastContentType = contentType;
-    } catch (error) {
-      clearTimeout(timeout);
-      lastStatus = 502;
-      lastBody = error instanceof Error ? error.message : "Jupiter request failed";
-      lastContentType = "text/plain";
-    }
+  if (targets.length === 0) {
+    return { status: lastStatus, bodyText: lastBody, contentType: lastContentType };
   }
 
-  return { status: lastStatus, bodyText: lastBody, contentType: lastContentType };
+  // Hedge requests across Jupiter mirrors so quote/swap fetches return faster.
+  // First target starts immediately, mirror(s) are slightly delayed.
+  return await new Promise((resolve) => {
+    const controllers: AbortController[] = [];
+    let pending = targets.length;
+    let settled = false;
+
+    const resolveOnce = (result: { status: number; bodyText: string; contentType: string | null }) => {
+      if (settled) return;
+      settled = true;
+      for (const controller of controllers) {
+        controller.abort();
+      }
+      resolve(result);
+    };
+
+    const onFailure = (result: { status: number; bodyText: string; contentType: string | null }) => {
+      lastStatus = result.status;
+      lastBody = result.bodyText;
+      lastContentType = result.contentType;
+      pending -= 1;
+      if (pending <= 0 && !settled) {
+        resolve({ status: lastStatus, bodyText: lastBody, contentType: lastContentType });
+      }
+    };
+
+    targets.forEach((url, index) => {
+      const delayMs = index === 0 ? 0 : 180 * index;
+      setTimeout(async () => {
+        if (settled) {
+          pending -= 1;
+          return;
+        }
+
+        const controller = new AbortController();
+        controllers.push(controller);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await fetch(url, {
+            ...requestInit,
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          const bodyText = await res.text();
+          const contentType = res.headers.get("content-type");
+          if (res.ok) {
+            resolveOnce({ status: res.status, bodyText, contentType });
+            return;
+          }
+          onFailure({
+            status: res.status,
+            bodyText: bodyText || `Jupiter request failed (${res.status})`,
+            contentType,
+          });
+        } catch (error) {
+          clearTimeout(timeout);
+          onFailure({
+            status: 502,
+            bodyText: error instanceof Error ? error.message : "Jupiter request failed",
+            contentType: "text/plain",
+          });
+        }
+      }, delayMs);
+    });
+  });
 }
 
 postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), async (c) => {

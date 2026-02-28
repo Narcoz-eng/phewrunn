@@ -108,7 +108,14 @@ app.use("/api/*", apiRateLimit);
 
 // 7. Endpoint-specific rate limits (more restrictive, applied before general limit)
 // Auth endpoints - 10 req/5min (brute force protection)
-app.use("/api/auth/*", authRateLimit);
+app.use("/api/auth/*", async (c, next) => {
+  // Privy identity tokens are already validated server-side.
+  // Keep this endpoint responsive during reconnect/retry loops.
+  if (c.req.path === "/api/auth/privy-sync") {
+    return next();
+  }
+  return authRateLimit(c, next);
+});
 // Admin endpoints - 50 req/min
 app.use("/api/admin/*", adminRateLimit);
 // Leaderboard endpoints - 60 req/min (expensive queries)
@@ -194,6 +201,12 @@ const AUTH_RESPONSE_USER_FALLBACK_SELECT = {
   image: true,
 } as const;
 
+const AUTH_RESPONSE_USER_MINIMAL_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+} as const;
+
 type AuthResponseUser = {
   id: string;
   name: string;
@@ -234,7 +247,7 @@ function normalizeAuthResponseUser(
     id: string;
     name: string;
     email: string;
-    image: string | null;
+    image?: string | null;
     walletAddress?: string | null;
     walletProvider?: string | null;
     level?: number | null;
@@ -246,7 +259,7 @@ function normalizeAuthResponseUser(
     id: user.id,
     name: user.name,
     email: user.email,
-    image: user.image,
+    image: user.image ?? null,
     walletAddress: user.walletAddress ?? null,
     walletProvider: user.walletProvider ?? null,
     level: user.level ?? 0,
@@ -301,11 +314,29 @@ async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | nu
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
-    const fallbackUser = await prisma.user.findFirst({
-      where: { email },
-      select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-    });
-    return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+    try {
+      const fallbackUser = await prisma.user.findFirst({
+        where: { email },
+        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+      });
+      return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+    } catch (fallbackError) {
+      if (!isPrismaSchemaDriftError(fallbackError)) {
+        throw fallbackError;
+      }
+      try {
+        const minimalUser = await prisma.user.findFirst({
+          where: { email },
+          select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
+        });
+        return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
+      } catch (minimalError) {
+        if (isPrismaSchemaDriftError(minimalError)) {
+          return null;
+        }
+        throw minimalError;
+      }
+    }
   }
 }
 
@@ -320,11 +351,29 @@ async function findAuthUserById(id: string): Promise<AuthResponseUser | null> {
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
-    const fallbackUser = await prisma.user.findUnique({
-      where: { id },
-      select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-    });
-    return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+    try {
+      const fallbackUser = await prisma.user.findUnique({
+        where: { id },
+        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+      });
+      return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
+    } catch (fallbackError) {
+      if (!isPrismaSchemaDriftError(fallbackError)) {
+        throw fallbackError;
+      }
+      try {
+        const minimalUser = await prisma.user.findUnique({
+          where: { id },
+          select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
+        });
+        return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
+      } catch (minimalError) {
+        if (isPrismaSchemaDriftError(minimalError)) {
+          return null;
+        }
+        throw minimalError;
+      }
+    }
   }
 }
 
@@ -480,6 +529,17 @@ async function upsertAuthUserByEmail(params: {
         if (concurrentUser) {
           return concurrentUser;
         }
+      }
+      if (isPrismaSchemaDriftError(fallbackCreateError)) {
+        const minimalCreated = await prisma.user.create({
+          data: {
+            id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+            email: params.email,
+            name: params.displayName,
+          },
+          select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
+        });
+        return normalizeAuthResponseUser(minimalCreated);
       }
       throw fallbackCreateError;
     }

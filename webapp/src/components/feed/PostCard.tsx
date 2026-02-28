@@ -441,12 +441,22 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (pendingBuyAfterWalletConnect) {
       setPendingBuyAfterWalletConnect(false);
       setBuyTxSignature(null);
-      setIsBuyDialogOpen(true);
+      // For quick-buy flows, execute without forcing an overlay dialog.
+      if (!pendingQuickBuyAutoExecute) {
+        setIsBuyDialogOpen(true);
+      }
     }
     if (typeof window !== "undefined") {
       window.setTimeout(clearPotentialScrollLock, 120);
     }
-  }, [wallet.publicKey, isWalletConnectDialogOpen, pendingBuyAfterWalletConnect, isWalletModalVisible, setWalletModalVisible]);
+  }, [
+    wallet.publicKey,
+    isWalletConnectDialogOpen,
+    pendingBuyAfterWalletConnect,
+    pendingQuickBuyAutoExecute,
+    isWalletModalVisible,
+    setWalletModalVisible,
+  ]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
@@ -1806,10 +1816,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const jupiterQuoteQuery = useQuery({
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeAmountAtomic,
+    enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
     staleTime: 2_000,
     retry: 1,
-    refetchInterval: (q) => (q.state.data ? 6_000 : 2_500),
+    refetchInterval: (q) => (q.state.data ? 4_000 : 1_500),
     refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!post.contractAddress || !tradeAmountAtomic) throw new Error("Missing token or amount");
@@ -1832,7 +1842,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       let lastError = "Failed to load quote";
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 6000);
+        const timeout = setTimeout(() => controller.abort(), 4500);
         const res = await fetch("/api/posts/jupiter/quote", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1923,7 +1933,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       openWalletSelector();
       return;
     }
-    setIsBuyDialogOpen(true);
+    // Quick-buy should execute immediately without forcing modal navigation.
+    setIsBuyDialogOpen(false);
   };
 
   const applySlippagePercentInput = () => {
@@ -2380,17 +2391,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     : "rgba(255,107,107,0.18)";
 
   useEffect(() => {
-    if (!isBuyDialogOpen) return;
+    if (!isBuyDialogOpen && !pendingQuickBuyAutoExecute) return;
     if (!canExecuteJupiterBuy) return;
     if (isExecutingBuy) return;
     void buildSwapTransaction().catch(() => {
       // Ignore prebuild errors; execution path will show actionable errors.
     });
-  }, [buildSwapTransaction, canExecuteJupiterBuy, isBuyDialogOpen, isExecutingBuy]);
+  }, [buildSwapTransaction, canExecuteJupiterBuy, isBuyDialogOpen, isExecutingBuy, pendingQuickBuyAutoExecute]);
 
   useEffect(() => {
     if (!pendingQuickBuyAutoExecute) return;
-    if (!isBuyDialogOpen) return;
 
     if (jupiterNoRouteDetected || jupiterQuoteUnavailable) {
       setPendingQuickBuyAutoExecute(false);
@@ -2403,7 +2413,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     void handleExecuteJupiterBuy();
   }, [
     pendingQuickBuyAutoExecute,
-    isBuyDialogOpen,
     jupiterNoRouteDetected,
     jupiterQuoteUnavailable,
     canExecuteJupiterBuy,
@@ -2607,7 +2616,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         key={`feed-quick-buy-${amount}`}
                         type="button"
                         onClick={() => handleQuickBuyPresetClick(amount)}
-                        className="h-8 rounded-full border border-lime-300/15 bg-lime-300/5 px-2.5 text-[11px] font-semibold text-lime-50/90 transition-colors hover:bg-lime-300/10 hover:border-lime-300/25"
+                        disabled={isExecutingBuy}
+                        className="h-8 rounded-full border border-lime-300/15 bg-lime-300/5 px-2.5 text-[11px] font-semibold text-lime-50/90 transition-colors hover:bg-lime-300/10 hover:border-lime-300/25 disabled:opacity-60 disabled:cursor-not-allowed"
                         title={`Quick buy ${amount} SOL`}
                       >
                         {amount} SOL

@@ -38,7 +38,7 @@ console.log("[Auth] Using backend URL:", baseURL);
 const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
-const SESSION_FETCH_TIMEOUT_MS = 3500;
+const SESSION_FETCH_TIMEOUT_MS = 7000;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
