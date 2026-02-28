@@ -98,6 +98,10 @@ const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
 const MARKET_REFRESH_MAX_CONTRACTS_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 8;
+const SETTLEMENT_1H_TARGET_PER_RUN = process.env.NODE_ENV === "production" ? 28 : 14;
+const SETTLEMENT_1H_SCAN_MULTIPLIER = process.env.NODE_ENV === "production" ? 6 : 4;
+const SETTLEMENT_6H_TARGET_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 10;
+const SETTLEMENT_6H_SCAN_MULTIPLIER = process.env.NODE_ENV === "production" ? 5 : 3;
 const HOURLY_POST_LIMIT = 10;
 const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
 const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 6 : 3;
@@ -120,7 +124,7 @@ type MaintenanceCandidatePost = {
 };
 
 function shouldTriggerMaintenanceForPost(post: MaintenanceCandidatePost): boolean {
-  if (post.entryMcap === null) return false;
+  if (post.entryMcap === null || post.entryMcap <= 0) return false;
   return (
     isReadyFor1HSettlement(post.createdAt, post.settled) ||
     isReadyFor6HSnapshot(post.createdAt, post.mcap6h)
@@ -492,6 +496,7 @@ async function findPostsToSettle1h(
   const baseWhere = {
     settled: false,
     contractAddress: { not: null },
+    entryMcap: { gt: 0 },
     createdAt: { lt: oneHourAgo },
   };
 
@@ -514,6 +519,7 @@ async function findPostsToSettle1h(
           },
         },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       ...(typeof take === "number" ? { take } : {}),
     });
     return rows;
@@ -538,6 +544,7 @@ async function findPostsToSettle1h(
           },
         },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       ...(typeof take === "number" ? { take } : {}),
     });
 
@@ -557,6 +564,7 @@ async function findPostsToSnapshot6h(
     settled: true,
     settled6h: false,
     contractAddress: { not: null },
+    entryMcap: { gt: 0 },
     createdAt: { lt: sixHoursAgo },
   };
 
@@ -573,6 +581,7 @@ async function findPostsToSnapshot6h(
         isWin1h: true,
         recoveryEligible: true,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       ...(typeof take === "number" ? { take } : {}),
     });
     return rows;
@@ -587,6 +596,7 @@ async function findPostsToSnapshot6h(
     where: {
       settled: true,
       contractAddress: { not: null },
+      entryMcap: { gt: 0 },
       createdAt: { lt: sixHoursAgo },
       mcap6h: null,
     },
@@ -598,6 +608,7 @@ async function findPostsToSnapshot6h(
       entryMcap: true,
       isWin: true,
     },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     ...(typeof take === "number" ? { take } : {}),
   });
 
@@ -631,9 +642,11 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
     // ============================================
     // 1H SETTLEMENT - Official settlement for XP/Level
     // ============================================
-    const postsToSettle1h = await findPostsToSettle1h(oneHourAgo, 20); // Process max 20 posts per check to avoid timeout
+    const oneHourScanLimit = SETTLEMENT_1H_TARGET_PER_RUN * SETTLEMENT_1H_SCAN_MULTIPLIER;
+    const postsToSettle1h = await findPostsToSettle1h(oneHourAgo, oneHourScanLimit);
 
     for (const post of postsToSettle1h) {
+      if (settled1hCount >= SETTLEMENT_1H_TARGET_PER_RUN) break;
       if (!post.contractAddress || post.entryMcap === null) continue;
 
       try {
@@ -759,11 +772,13 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
     // 6H MARKET CAP SNAPSHOT - For ALL posts >= 6 hours old
     // This captures the 6H mcap regardless of whether level changes apply
     // ============================================
-    const postsNeedingSnapshot6h = await findPostsToSnapshot6h(sixHoursAgo, 15); // Process max 15 posts per check
+    const sixHourScanLimit = SETTLEMENT_6H_TARGET_PER_RUN * SETTLEMENT_6H_SCAN_MULTIPLIER;
+    const postsNeedingSnapshot6h = await findPostsToSnapshot6h(sixHoursAgo, sixHourScanLimit);
 
     console.log(`[Snapshot 6H] Found ${postsNeedingSnapshot6h.length} posts needing 6H mcap snapshot`);
 
     for (const post of postsNeedingSnapshot6h) {
+      if (snapshot6hCount >= SETTLEMENT_6H_TARGET_PER_RUN) break;
       if (!post.contractAddress || post.entryMcap === null) continue;
 
       try {
