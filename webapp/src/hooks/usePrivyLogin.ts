@@ -7,7 +7,8 @@ const LOGIN_SYNC_TIMEOUT_MS = 30_000;
 const IDENTITY_TOKEN_ATTEMPTS = 5;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [120, 180, 260, 360] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
-  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|server/i;
+  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
+const FORCED_PRIVY_LOGOUT_ERROR_PATTERN = /invalid privy session|invalid privy user|unauthorized|forbidden/i;
 type PrivyUserLike = {
   id: string;
   email?: { address?: string } | null;
@@ -96,7 +97,8 @@ export function usePrivyLogin() {
       setSyncError(message);
       toast.error(message);
       const shouldKeepPrivySession = RETRYABLE_SYNC_ERROR_PATTERN.test(message);
-      if (!shouldKeepPrivySession) {
+      const shouldForcePrivyLogout = FORCED_PRIVY_LOGOUT_ERROR_PATTERN.test(message);
+      if (!shouldKeepPrivySession && shouldForcePrivyLogout) {
         void privyLogout().catch(() => {
           // Ignore cleanup errors; primary flow should never stay blocked on logout cleanup.
         });

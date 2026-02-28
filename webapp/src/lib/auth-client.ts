@@ -46,6 +46,7 @@ const SIGN_OUT_TIMEOUT_MS = 2500;
 const AUTH_SESSION_RETRY_DELAY_MS = 220;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const PRIVY_SYNC_TIMEOUT_MS = 35_000;
+const PRIVY_SYNC_RETRY_DELAYS_MS = [280, 650] as const;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -645,62 +646,88 @@ export async function syncPrivySession(
   name?: string,
   privyIdToken?: string
 ): Promise<{ token: string; user: AuthUser }> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), PRIVY_SYNC_TIMEOUT_MS);
+  const maxAttempts = PRIVY_SYNC_RETRY_DELAYS_MS.length + 1;
 
-  try {
-    const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      signal: controller.signal,
-      body: JSON.stringify({ privyUserId, email, name, privyIdToken }),
-    });
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), PRIVY_SYNC_TIMEOUT_MS);
 
-    const text = await response.text();
-    if (!text) {
-      throw new Error("Empty response from auth server");
-    }
-
-    let data: { token?: string; user?: AuthUser; error?: { message?: string } } | null = null;
     try {
-      data = JSON.parse(text);
-    } catch {
-      console.error("[Auth] Failed to parse privy-sync response:", text);
-      throw new Error("Invalid response from auth server");
-    }
+      const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        signal: controller.signal,
+        body: JSON.stringify({ privyUserId, email, name, privyIdToken }),
+      });
 
-    if (!response.ok || !data?.token || !data?.user) {
-      const message =
-        data?.error?.message ??
-        (response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
-      console.error("[Auth] privy-sync failed:", message);
-      throw new Error(message);
-    }
+      const text = await response.text();
+      if (!text) {
+        throw new Error("Empty response from auth server");
+      }
 
-    // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
-    lastPrivySyncAt = Date.now();
-    lastSuccessfulSessionAt = Date.now();
-    sessionRateLimitedUntil = 0;
-    sessionFetchInFlight = null;
-    unauthorizedSessionFailures = 0;
+      let data: { token?: string; user?: AuthUser; error?: { message?: string } } | null = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        console.error("[Auth] Failed to parse privy-sync response:", text);
+        throw new Error("Invalid response from auth server");
+      }
 
-    // Store the session token for Bearer auth fallback
-    setStoredAuthToken(data.token);
-    writeCachedAuthUser(data.user);
-    return { token: data.token, user: data.user };
-  } catch (error) {
-    console.error("[Auth] syncPrivySession error:", error);
-    if (error instanceof Error) {
-      if (error.name === "AbortError") {
+      if (!response.ok || !data?.token || !data?.user) {
+        const message =
+          data?.error?.message ??
+          (response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
+        const retryable = response.status === 429 || response.status >= 500;
+        if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, PRIVY_SYNC_RETRY_DELAYS_MS[attempt]);
+          });
+          continue;
+        }
+        console.error("[Auth] privy-sync failed:", message);
+        throw new Error(message);
+      }
+
+      // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
+      lastPrivySyncAt = Date.now();
+      lastSuccessfulSessionAt = Date.now();
+      sessionRateLimitedUntil = 0;
+      sessionFetchInFlight = null;
+      unauthorizedSessionFailures = 0;
+
+      // Store the session token for Bearer auth fallback
+      setStoredAuthToken(data.token);
+      writeCachedAuthUser(data.user);
+      return { token: data.token, user: data.user };
+    } catch (error) {
+      const isAbort = error instanceof Error && error.name === "AbortError";
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable =
+        isAbort ||
+        /network|failed to fetch|timeout|temporarily|server|rate limit|too many requests/i.test(message);
+
+      if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, PRIVY_SYNC_RETRY_DELAYS_MS[attempt]);
+        });
+        continue;
+      }
+
+      console.error("[Auth] syncPrivySession error:", error);
+      if (isAbort) {
         throw new Error("Sign-in timed out while connecting to the server");
       }
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error("Failed to sync Privy session");
+    } finally {
+      clearTimeout(timeoutId);
     }
-    throw new Error("Failed to sync Privy session");
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  throw new Error("Failed to sync Privy session");
 }
 
 // Check if running in an iframe

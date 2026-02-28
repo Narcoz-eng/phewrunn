@@ -337,6 +337,10 @@ export default function Feed() {
     () => postsPages?.pages.flatMap((page) => page.items) ?? [],
     [postsPages?.pages]
   );
+  const hasLiveOverlay = useCallback(
+    () => isOverlayOpen || hasActiveTradeDialogMarker(),
+    [isOverlayOpen]
+  );
   const shouldFreezeFeedItems = isOverlayOpen || hasActiveTradeDialogMarker();
   useEffect(() => {
     if (shouldFreezeFeedItems) {
@@ -483,7 +487,7 @@ export default function Feed() {
     if (!session?.user) return;
     if (activeTab !== "latest") return;
     if (effectiveSearchQuery) return;
-    if (isOverlayOpen) return;
+    if (hasLiveOverlay()) return;
     if (typeof window === "undefined") return;
 
     let cancelled = false;
@@ -491,7 +495,7 @@ export default function Feed() {
     const checkForNewPosts = async () => {
       if (cancelled) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (isOverlayOpen) return;
+      if (hasLiveOverlay()) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey("latest", ""));
       const currentFirstPage = currentData?.pages?.[0];
@@ -500,7 +504,7 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage("latest", "");
         if (cancelled || freshFirstPage.items.length === 0) return;
-        if (isOverlayOpen) return;
+        if (hasLiveOverlay()) return;
 
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
@@ -575,7 +579,7 @@ export default function Feed() {
     effectiveSearchQuery,
     fetchFeedPage,
     getFeedQueryKey,
-    isOverlayOpen,
+    hasLiveOverlay,
     queryClient,
     refetchUser,
     session?.user,
@@ -586,7 +590,7 @@ export default function Feed() {
   useEffect(() => {
     if (!session?.user) return;
     if (activeTab === "latest" && !effectiveSearchQuery) return;
-    if (isOverlayOpen) return;
+    if (hasLiveOverlay()) return;
     if (typeof window === "undefined") return;
 
     let cancelled = false;
@@ -596,7 +600,7 @@ export default function Feed() {
       if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-      if (isOverlayOpen) return;
+      if (hasLiveOverlay()) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
         getFeedQueryKey(activeTab, effectiveSearchQuery)
@@ -608,7 +612,7 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
         if (cancelled || freshFirstPage.items.length === 0) return;
-        if (isOverlayOpen) return;
+        if (hasLiveOverlay()) return;
 
         const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
@@ -655,7 +659,7 @@ export default function Feed() {
     effectiveSearchQuery,
     fetchFeedPage,
     getFeedQueryKey,
-    isOverlayOpen,
+    hasLiveOverlay,
     queryClient,
     session?.user,
   ]);

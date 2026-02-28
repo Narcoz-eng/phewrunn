@@ -20,6 +20,8 @@ export {
   userAwareRateLimit,
   apiRateLimit,
   authRateLimit,
+  sessionRateLimit,
+  feedRateLimit,
   postRateLimit,
   strictRateLimit,
   settlementRateLimit,

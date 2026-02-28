@@ -22,6 +22,8 @@ import {
   createErrorHandler,
   apiRateLimit,
   authRateLimit,
+  sessionRateLimit,
+  feedRateLimit,
   adminRateLimit,
   leaderboardRateLimit,
   commentRateLimit,
@@ -107,8 +109,12 @@ app.use("/api/*", async (c, next) => {
   // High-frequency market polling + quote refresh endpoints should not starve the rest
   // of the app via shared global buckets.
   if (
+    c.req.path === "/api/auth/privy-sync" ||
+    c.req.path === "/api/me" ||
+    c.req.path === "/api/me/stats" ||
     c.req.path === "/api/posts/prices" ||
-    c.req.path === "/api/posts/jupiter/quote"
+    c.req.path === "/api/posts/jupiter/quote" ||
+    c.req.path === "/api/posts/chart/candles"
   ) {
     return next();
   }
@@ -124,6 +130,14 @@ app.use("/api/auth/*", async (c, next) => {
     return next();
   }
   return authRateLimit(c, next);
+});
+app.use("/api/me", sessionRateLimit);
+app.use("/api/me/stats", sessionRateLimit);
+app.use("/api/posts", async (c, next) => {
+  if (c.req.method === "GET") {
+    return feedRateLimit(c, next);
+  }
+  return next();
 });
 // Admin endpoints - 50 req/min
 app.use("/api/admin/*", adminRateLimit);

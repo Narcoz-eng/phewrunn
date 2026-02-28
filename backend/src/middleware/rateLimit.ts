@@ -290,23 +290,45 @@ export function userAwareRateLimit(config: RateLimitConfig) {
 
 /**
  * General API rate limit
- * 100 requests per minute per client
+ * 220 requests per minute per client
  */
 export const apiRateLimit = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 100,
+  max: 220,
   message: "Too many requests, please slow down",
 });
 
 /**
  * Auth endpoints rate limit
- * 10 requests per 5 minutes per client
+ * 30 requests per 5 minutes per client
  * Protects against brute force attacks
  */
 export const authRateLimit = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 10,
+  max: 30,
   message: "Too many authentication attempts, please wait before trying again",
+});
+
+/**
+ * Session/profile endpoints rate limit
+ * 180 requests per minute per authenticated user
+ * Keeps /api/me responsive during reconnect + polling without weakening global abuse controls.
+ */
+export const sessionRateLimit = userAwareRateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 180,
+  message: "Session check rate limit reached, please retry shortly",
+});
+
+/**
+ * Feed endpoints rate limit
+ * 120 requests per minute per authenticated user
+ * Allows fast UI refresh while still preventing hot-loop abuse.
+ */
+export const feedRateLimit = userAwareRateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120,
+  message: "Feed rate limit reached, please retry shortly",
 });
 
 /**

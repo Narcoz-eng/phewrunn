@@ -736,28 +736,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
       delete document.body.dataset.phewPinnedItemKey;
     }
-
-    return () => {
-      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
-        // Clear stale active marker when no dialog is actually open anymore.
-        if (!document.querySelector("[role='dialog'][data-state='open']")) {
-          delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
-        }
-        return;
-      }
-      if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
-        delete document.body.dataset.phewPinnedItemKey;
-      }
-    };
-  }, [isBuyDialogOpen, postDatasetId]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    if (isBuyDialogOpen) return;
-    if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] !== postDatasetId) return;
-    // If this card remounts while still marked as active, keep the trade panel open.
-    setIsBuyDialogOpen(true);
-  }, [isBuyDialogOpen, postDatasetId]);
+    if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
+      delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
+    }
+    if (!document.querySelector("[role='dialog'][data-state='open']")) {
+      clearPotentialScrollLock();
+    }
+  }, [clearPotentialScrollLock, isBuyDialogOpen, postDatasetId]);
 
   useEffect(() => {
     if (isBuyDialogOpen) return;
@@ -2052,7 +2037,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
   }, [chartInterval]);
   const canRequestChartCandles =
-    !!resolvedPairAddress || (post.chainType === "solana" && !!post.contractAddress);
+    !!resolvedPairAddress || !!post.contractAddress;
 
   const chartCandlesQuery = useQuery<ChartCandlesResponse>({
     queryKey: [
@@ -2833,7 +2818,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           high,
           low,
           close,
-          volume,
+          volume: Number.isFinite(volume) ? volume : 0,
           wickRange: [low, high] as [number, number],
           bodyRange: [Math.min(open, close), Math.max(open, close)] as [number, number],
           isBullish: close >= open,
@@ -2843,11 +2828,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         };
       })
       .filter((point) =>
+        Number.isFinite(point.ts) &&
         Number.isFinite(point.open) &&
         Number.isFinite(point.high) &&
         Number.isFinite(point.low) &&
         Number.isFinite(point.close)
-      );
+      )
+      .sort((a, b) => a.ts - b.ts);
   }, [chartCandlesQuery.data?.candles, chartRequestConfig.timeframe]);
   const hasProfessionalChartData = professionalChartData.length >= 2;
   const chartTotalPoints = professionalChartData.length;
@@ -2920,10 +2907,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     },
     [chartRequestConfig.timeframe]
   );
-  const chartEntryMcap =
-    typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)
-      ? post.entryMcap
-      : null;
   const chartEntryTargetTs = useMemo(() => {
     const parsed = new Date(post.createdAt).getTime();
     return Number.isFinite(parsed) ? parsed : null;
@@ -2948,6 +2931,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (!chartEntryCandle) return -1;
     return professionalChartData.findIndex((point) => point.ts === chartEntryCandle.ts);
   }, [chartEntryCandle, professionalChartData]);
+  const chartEntryPrice =
+    chartEntryCandle && Number.isFinite(chartEntryCandle.close) ? chartEntryCandle.close : null;
   const isEntryInCurrentView =
     chartEntryIndex >= chartWindowBounds.startIndex &&
     chartEntryIndex <= chartWindowBounds.endIndex;
@@ -4473,10 +4458,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   }
                                 />
                               ) : null}
-                              {chartEntryMcap !== null ? (
+                              {chartEntryPrice !== null ? (
                                 <ReferenceLine
                                   yAxisId="price"
-                                  y={chartEntryMcap}
+                                  y={chartEntryPrice}
                                   stroke="rgba(96,165,250,0.65)"
                                   strokeDasharray="4 4"
                                   ifOverflow="extendDomain"

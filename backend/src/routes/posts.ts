@@ -93,6 +93,12 @@ type ChartCandlesFetchResult = {
   candles: NormalizedChartCandle[];
 };
 
+type FeedResponsePayload = {
+  data: unknown[];
+  hasMore: boolean;
+  nextCursor: string | null;
+};
+
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let settlementRunInFlight: Promise<SettlementRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
@@ -114,6 +120,8 @@ const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
+const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 4_500 : 2_000;
+const FEED_RESPONSE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
@@ -128,6 +136,14 @@ const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "produ
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
+const feedResponseCache = new Map<
+  string,
+  {
+    payload: FeedResponsePayload;
+    expiresAtMs: number;
+    staleUntilMs: number;
+  }
+>();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
 
 function isCronMaintenanceHealthy(): boolean {
@@ -162,6 +178,46 @@ function triggerMaintenanceForStaleCandidates(
 
   triggerMaintenanceCycleNonBlocking(reason);
   triggerSettlementCycleNonBlocking(reason);
+}
+
+function buildFeedResponseCacheKey(params: {
+  userId: string | null;
+  sort: "latest" | "trending";
+  following: boolean;
+  limit: number;
+  cursor?: string;
+  search?: string;
+}): string {
+  return [
+    params.userId ?? "anon",
+    params.sort,
+    params.following ? "following" : "all",
+    String(params.limit),
+    params.cursor ?? "",
+    (params.search ?? "").trim().toLowerCase(),
+  ].join(":");
+}
+
+function readFeedResponseFromCache(
+  key: string,
+  nowMs: number,
+  opts?: { allowStale?: boolean }
+): FeedResponsePayload | null {
+  const cached = feedResponseCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAtMs > nowMs) return cached.payload;
+  if (opts?.allowStale && cached.staleUntilMs > nowMs) return cached.payload;
+  feedResponseCache.delete(key);
+  return null;
+}
+
+function writeFeedResponseToCache(key: string, payload: FeedResponsePayload): void {
+  const nowMs = Date.now();
+  feedResponseCache.set(key, {
+    payload,
+    expiresAtMs: nowMs + FEED_RESPONSE_CACHE_TTL_MS,
+    staleUntilMs: nowMs + FEED_RESPONSE_STALE_FALLBACK_MS,
+  });
 }
 const JUPITER_QUOTE_URLS = [
   "https://lite-api.jup.ag/swap/v1/quote",
@@ -1458,6 +1514,41 @@ postsRouter.get("/", async (c) => {
   const { sort, following, limit, cursor, search } = parsed.success
     ? parsed.data
     : { sort: "latest" as const, following: false, limit: 50, cursor: undefined, search: undefined };
+  const feedCacheKey = buildFeedResponseCacheKey({
+    userId: user?.id ?? null,
+    sort,
+    following,
+    limit,
+    cursor,
+    search,
+  });
+  const respondWithFeedCacheFallback = (error: unknown) => {
+    const stalePayload = readFeedResponseFromCache(feedCacheKey, Date.now(), { allowStale: true });
+    console.warn("[posts/feed] falling back to cached payload after database error", {
+      sort,
+      following,
+      cursor: cursor ?? null,
+      search: search ?? null,
+      userId: user?.id ?? null,
+      hasStalePayload: Boolean(stalePayload),
+      message: error instanceof Error ? error.message : String(error),
+    });
+    if (stalePayload) {
+      return c.json(stalePayload);
+    }
+    return c.json({
+      data: [],
+      hasMore: false,
+      nextCursor: null,
+    });
+  };
+
+  if (!cursor) {
+    const freshPayload = readFeedResponseFromCache(feedCacheKey, Date.now());
+    if (freshPayload) {
+      return c.json(freshPayload);
+    }
+  }
 
   // Keep settlement/snapshot maintenance progressing from organic traffic.
   // Trigger is throttled + non-blocking, and only on first page to avoid feed jitter.
@@ -1603,7 +1694,7 @@ postsRouter.get("/", async (c) => {
         console.error("[posts/feed] primary query failed", {
           message: error instanceof Error ? error.message : String(error),
         });
-        throw error;
+        return respondWithFeedCacheFallback(error);
       } else {
         throw error;
       }
@@ -1662,7 +1753,7 @@ postsRouter.get("/", async (c) => {
             console.error("[posts/feed] compatibility query failed", {
               message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
             });
-            throw fallbackError;
+            return respondWithFeedCacheFallback(fallbackError);
           } else {
             throw fallbackError;
           }
@@ -1725,62 +1816,72 @@ postsRouter.get("/", async (c) => {
                 console.error("[posts/feed] legacy query failed", {
                   message: legacyError instanceof Error ? legacyError.message : String(legacyError),
                 });
-                throw legacyError;
+                return respondWithFeedCacheFallback(legacyError);
               } else {
                 throw legacyError;
               }
             } else {
               console.warn("[posts/feed] ultra-legacy compatibility select engaged");
-              const minimalPosts = (await prisma.post.findMany({
-                ...(feedFindManyBase as Record<string, unknown>),
-                select: {
-                  id: true,
-                  content: true,
-                  authorId: true,
-                  settled: true,
-                  settledAt: true,
-                  isWin: true,
-                  createdAt: true,
-                  author: {
-                    select: {
-                      id: true,
-                      name: true,
-                      image: true,
+              try {
+                const minimalPosts = (await prisma.post.findMany({
+                  ...(feedFindManyBase as Record<string, unknown>),
+                  select: {
+                    id: true,
+                    content: true,
+                    authorId: true,
+                    settled: true,
+                    settledAt: true,
+                    isWin: true,
+                    createdAt: true,
+                    author: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
                     },
                   },
-                },
-              } as any)) as any[];
-              fetchedPosts = minimalPosts.map((post) => ({
-                ...post,
-                contractAddress: null,
-                chainType: null,
-                entryMcap: null,
-                currentMcap: null,
-                tokenName: null,
-                tokenSymbol: null,
-                tokenImage: null,
-                mcap1h: null,
-                mcap6h: null,
-                isWin1h: null,
-                isWin6h: null,
-                percentChange1h: null,
-                percentChange6h: null,
-                viewCount: 0,
-                dexscreenerUrl: null,
-                author: {
-                  ...post.author,
-                  username: null,
-                  walletAddress: null,
-                  level: 0,
-                  xp: 0,
-                  isVerified: false,
-                },
-                _count: {
-                  likes: 0,
-                  comments: 0,
-                  reposts: 0,
-                },
-              }));
+                } as any)) as any[];
+                fetchedPosts = minimalPosts.map((post) => ({
+                  ...post,
+                  contractAddress: null,
+                  chainType: null,
+                  entryMcap: null,
+                  currentMcap: null,
+                  tokenName: null,
+                  tokenSymbol: null,
+                  tokenImage: null,
+                  mcap1h: null,
+                  mcap6h: null,
+                  isWin1h: null,
+                  isWin6h: null,
+                  percentChange1h: null,
+                  percentChange6h: null,
+                  viewCount: 0,
+                  dexscreenerUrl: null,
+                  author: {
+                    ...post.author,
+                    username: null,
+                    walletAddress: null,
+                    level: 0,
+                    xp: 0,
+                    isVerified: false,
+                  },
+                  _count: {
+                    likes: 0,
+                    comments: 0,
+                    reposts: 0,
+                  },
+                }));
+              } catch (minimalError) {
+                if (isPrismaClientError(minimalError)) {
+                  console.error("[posts/feed] ultra-legacy query failed", {
+                    message: minimalError instanceof Error ? minimalError.message : String(minimalError),
+                  });
+                  return respondWithFeedCacheFallback(minimalError);
+                }
+                throw minimalError;
+              }
             }
           }
         }
@@ -2019,12 +2120,13 @@ postsRouter.get("/", async (c) => {
       author: publicAuthor,
     };
   });
-
-  return c.json({
+  const responsePayload: FeedResponsePayload = {
     data: responsePosts,
     hasMore,
     nextCursor,
-  });
+  };
+  writeFeedResponseToCache(feedCacheKey, responsePayload);
+  return c.json(responsePayload);
 });
 
 // Protected cron/maintenance runner for settlement + market refresh.
@@ -4182,6 +4284,41 @@ function parseDexPairsForPoolLookup(payload: unknown): Record<string, unknown>[]
     .filter((entry): entry is Record<string, unknown> => entry !== null);
 }
 
+function parseGeckoPoolsForLookup(payload: unknown): string[] {
+  const top = safeRecord(payload);
+  const rows = Array.isArray(top?.data) ? top.data : [];
+  const ranked = rows
+    .map((entry) => {
+      const item = safeRecord(entry);
+      if (!item) return null;
+      const attributes = safeRecord(item.attributes);
+      const id = safeString(item.id);
+      const idAddress = id && id.includes("_") ? id.slice(id.lastIndexOf("_") + 1) : null;
+      const poolAddress = safeString(attributes?.address) ?? idAddress;
+      if (!poolAddress) return null;
+
+      const liquidityUsd = safeFiniteNumber(attributes?.reserve_in_usd) ?? 0;
+      const volumeBlock = safeRecord(attributes?.volume_usd);
+      const volume24h =
+        safeFiniteNumber(volumeBlock?.h24) ??
+        safeFiniteNumber(attributes?.volume_usd) ??
+        0;
+
+      return {
+        poolAddress,
+        score: liquidityUsd * 2 + volume24h,
+      };
+    })
+    .filter((entry): entry is { poolAddress: string; score: number } => entry !== null)
+    .sort((a, b) => b.score - a.score);
+
+  if (ranked.length === 0) {
+    return [];
+  }
+
+  return ranked.map((entry) => entry.poolAddress);
+}
+
 function pickBestPoolAddressFromDexPairs(
   pairs: Record<string, unknown>[],
   network: "solana" | "ethereum"
@@ -4268,6 +4405,29 @@ async function resolveChartPoolAddress(payload: ChartCandlesPayload): Promise<st
         } finally {
           clearTimeout(timeout);
         }
+      }
+
+      const geckoNetwork = network === "solana" ? "solana" : "eth";
+      const geckoEndpoint = `https://api.geckoterminal.com/api/v2/networks/${geckoNetwork}/tokens/${tokenAddress}/pools?page=1`;
+      const geckoController = new AbortController();
+      const geckoTimeout = setTimeout(() => geckoController.abort(), 3_200);
+      try {
+        const response = await fetch(geckoEndpoint, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          signal: geckoController.signal,
+        });
+        if (response.ok) {
+          const parsed = (await response.json()) as unknown;
+          const pools = parseGeckoPoolsForLookup(parsed);
+          if (pools.length > 0) {
+            return pools[0] ?? null;
+          }
+        }
+      } catch {
+        // Continue with null fallback.
+      } finally {
+        clearTimeout(geckoTimeout);
       }
 
       return null;
