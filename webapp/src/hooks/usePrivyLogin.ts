@@ -43,7 +43,7 @@ export function usePrivyLogin() {
           name || undefined,
           privyIdToken ?? undefined
         );
-        await refetch();
+        void refetch();
       } catch (err) {
         console.error("[usePrivyLogin] onComplete error:", err);
         const message = err instanceof Error ? err.message : "Failed to sign in";

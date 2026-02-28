@@ -39,10 +39,12 @@ const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
+const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 8_000;
+const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 3;
 const SESSION_FETCH_TIMEOUT_MS = 7000;
 const SIGN_OUT_TIMEOUT_MS = 2500;
-const AUTH_SESSION_RETRY_DELAY_MS = 350;
-const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 2;
+const AUTH_SESSION_RETRY_DELAY_MS = 220;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -180,6 +182,13 @@ const AuthContext = createContext<AuthContextType | null>(null);
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
+  if (
+    cachedUser &&
+    lastPrivySyncAt > 0 &&
+    now - lastPrivySyncAt < AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS
+  ) {
+    return cachedUser;
+  }
   if (sessionRateLimitedUntil > now) {
     return cachedUser;
   }
@@ -234,14 +243,26 @@ async function fetchSession(): Promise<AuthUser | null> {
         const recentlyHealthySession =
           lastSuccessfulSessionAt > 0 &&
           Date.now() - lastSuccessfulSessionAt < AUTH_TRANSIENT_401_RECOVERY_MS;
+        const hasToken = Boolean(getStoredAuthToken());
+        const shouldTreatAsTransient =
+          recentlySynced ||
+          recentlyHealthySession ||
+          unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT;
 
         if (
           cachedUser &&
-          (recentlySynced || recentlyHealthySession)
+          shouldTreatAsTransient
         ) {
           sessionRateLimitedUntil = Date.now() + 2000;
           console.warn(
             `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures})`
+          );
+          return cachedUser;
+        }
+
+        if (hasToken && shouldTreatAsTransient) {
+          console.warn(
+            `[Auth] Temporary 401 from /api/me; preserving auth token (${unauthorizedSessionFailures})`
           );
           return cachedUser;
         }
@@ -312,6 +333,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const resolveSessionWithRetry = useCallback(async () => {
+    const optimisticCachedUser = readCachedAuthUser();
+    if (
+      optimisticCachedUser &&
+      lastPrivySyncAt > 0 &&
+      Date.now() - lastPrivySyncAt < AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS
+    ) {
+      return optimisticCachedUser;
+    }
+
     let user = await fetchSession();
     if (user) {
       return user;

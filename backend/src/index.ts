@@ -191,6 +191,13 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PrivyClient } from "@privy-io/server-auth";
 
+const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
+const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET;
+const PRIVY_CLIENT =
+  PRIVY_APP_ID && PRIVY_APP_SECRET
+    ? new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET)
+    : null;
+
 const AUTH_RESPONSE_USER_SELECT = {
   id: true,
   name: true,
@@ -846,20 +853,19 @@ app.post("/api/auth/privy-sync", async (c) => {
   try {
     const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
     const { privyUserId, privyIdToken, email, name } = body;
+    const providedEmail =
+      typeof email === "string" && email.trim().includes("@")
+        ? email.trim().toLowerCase()
+        : null;
 
     if ((!privyUserId || typeof privyUserId !== "string") && (!privyIdToken || typeof privyIdToken !== "string")) {
       return c.json({ error: { message: "privyUserId or privyIdToken is required", code: "INVALID_INPUT" } }, 400);
     }
 
-    const privyAppId = process.env.PRIVY_APP_ID;
-    const privyAppSecret = process.env.PRIVY_APP_SECRET;
-
-    if (!privyAppId || !privyAppSecret) {
+    if (!PRIVY_CLIENT) {
       console.error("[privy-sync] Missing PRIVY_APP_ID or PRIVY_APP_SECRET env vars");
       return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
     }
-
-    const privyClient = new PrivyClient(privyAppId, privyAppSecret);
 
     type PrivyUserLike = {
       id?: unknown;
@@ -869,12 +875,12 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     const getPrivyEmail = (user: PrivyUserLike): string | null => {
       const directEmail = user.email?.address;
-      if (typeof directEmail === "string" && directEmail.includes("@")) return directEmail;
+      if (typeof directEmail === "string" && directEmail.includes("@")) return directEmail.trim().toLowerCase();
 
       const linkedEmail = user.linkedAccounts?.find(
         (account) => account?.type === "email" && typeof account.address === "string" && account.address.includes("@")
       );
-      return typeof linkedEmail?.address === "string" ? linkedEmail.address : null;
+      return typeof linkedEmail?.address === "string" ? linkedEmail.address.trim().toLowerCase() : null;
     };
 
     let verifiedPrivyUserId: string | null = null;
@@ -882,12 +888,12 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (typeof privyIdToken === "string" && privyIdToken.length > 0) {
       try {
-        const tokenUser = await privyClient.getUser({ idToken: privyIdToken }) as PrivyUserLike;
+        const tokenUser = await PRIVY_CLIENT.getUser({ idToken: privyIdToken }) as PrivyUserLike;
         verifiedPrivyUserId = typeof tokenUser.id === "string" ? tokenUser.id : null;
         verifiedEmail = getPrivyEmail(tokenUser);
 
-        if (!verifiedEmail && verifiedPrivyUserId) {
-          const fullUser = await privyClient.getUserById(verifiedPrivyUserId) as PrivyUserLike;
+        if (!verifiedEmail && !providedEmail && verifiedPrivyUserId) {
+          const fullUser = await PRIVY_CLIENT.getUserById(verifiedPrivyUserId) as PrivyUserLike;
           verifiedEmail = getPrivyEmail(fullUser);
         }
       } catch (error) {
@@ -903,7 +909,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!verifiedPrivyUserId && typeof privyUserId === "string") {
       try {
-        const fullUser = await privyClient.getUserById(privyUserId) as PrivyUserLike;
+        const fullUser = await PRIVY_CLIENT.getUserById(privyUserId) as PrivyUserLike;
         verifiedPrivyUserId = typeof fullUser.id === "string" ? fullUser.id : privyUserId;
         verifiedEmail = getPrivyEmail(fullUser);
       } catch (error) {
@@ -916,8 +922,12 @@ app.post("/api/auth/privy-sync", async (c) => {
       return c.json({ error: { message: "Invalid Privy user", code: "UNAUTHORIZED" } }, 401);
     }
 
+    if (!verifiedEmail && providedEmail) {
+      verifiedEmail = providedEmail;
+    }
+
     if (!verifiedEmail) {
-      return c.json({ error: { message: "Privy user email is unavailable", code: "INVALID_PRIVY_USER" } }, 400);
+      verifiedEmail = `${verifiedPrivyUserId.slice(0, 24).toLowerCase()}@privy.local`;
     }
 
     const now = new Date();
