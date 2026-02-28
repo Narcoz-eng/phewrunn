@@ -325,12 +325,19 @@ async function attachWalletTradeSnapshots<T extends {
   const snapshotsByWallet = new Map<string, Record<string, unknown>>();
   await Promise.all(
     [...walletToMints.entries()].map(async ([walletAddress, mintSet]) => {
-      const snapshots = await getWalletTradeSnapshotsForSolanaTokens({
-        walletAddress,
-        tokenMints: [...mintSet],
-      });
-      if (snapshots) {
-        snapshotsByWallet.set(walletAddress, snapshots as Record<string, unknown>);
+      try {
+        const snapshots = await getWalletTradeSnapshotsForSolanaTokens({
+          walletAddress,
+          tokenMints: [...mintSet],
+        });
+        if (snapshots) {
+          snapshotsByWallet.set(walletAddress, snapshots as Record<string, unknown>);
+        }
+      } catch (error) {
+        console.warn("[posts/feed] wallet snapshot enrichment skipped for wallet", {
+          walletAddress,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     })
   );
@@ -1754,16 +1761,26 @@ postsRouter.get("/", async (c) => {
     }
 
     if (missingContracts.length > 0) {
-      const sharedAlphaCandidates = await prisma.post.findMany({
-        where: {
-          contractAddress: { in: missingContracts },
-          createdAt: { gte: fortyEightHoursAgo },
-        },
-        select: {
-          contractAddress: true,
-          authorId: true,
-        },
-      });
+      let sharedAlphaCandidates: Array<{ contractAddress: string | null; authorId: string }> = [];
+      try {
+        sharedAlphaCandidates = await prisma.post.findMany({
+          where: {
+            contractAddress: { in: missingContracts },
+            createdAt: { gte: fortyEightHoursAgo },
+          },
+          select: {
+            contractAddress: true,
+            authorId: true,
+          },
+        });
+      } catch (error) {
+        if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+          throw error;
+        }
+        console.warn("[posts/feed] shared alpha enrichment unavailable; continuing without sharedAlphaCount", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       const fetchedAuthorsByContract = new Map<string, Set<string>>();
       for (const contractAddress of missingContracts) {
@@ -1806,7 +1823,12 @@ postsRouter.get("/", async (c) => {
     return postWithSharedAlpha;
   });
 
-  const postsWithWalletTrade = await attachWalletTradeSnapshots(postsWithUpdatedMcap);
+  const postsWithWalletTrade = await attachWalletTradeSnapshots(postsWithUpdatedMcap).catch((error) => {
+    console.warn("[posts/feed] wallet trade enrichment unavailable; continuing with base feed payload", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return postsWithUpdatedMcap;
+  });
   const responsePosts = postsWithWalletTrade.map((post) => {
     const { walletAddress: _walletAddress, ...publicAuthor } = post.author;
     return {

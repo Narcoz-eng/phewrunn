@@ -38,8 +38,12 @@ console.log("[Auth] Using backend URL:", baseURL);
 const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
+const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
+const AUTH_UNAUTHORIZED_FAILURE_LIMIT = 6;
 const SESSION_FETCH_TIMEOUT_MS = 7000;
 const SIGN_OUT_TIMEOUT_MS = 2500;
+const AUTH_SESSION_RETRY_DELAY_MS = 350;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 2;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -92,6 +96,7 @@ interface SessionState {
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
+let lastSuccessfulSessionAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryAuthToken: string | null = null;
 
@@ -219,22 +224,33 @@ async function fetchSession(): Promise<AuthUser | null> {
       }
       // Clear invalid token
       if (response.status === 401) {
-        unauthorizedSessionFailures += 1;
-        const recentlySynced =
-          lastPrivySyncAt > 0 && Date.now() - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS;
-
-        if (cachedUser && (recentlySynced || unauthorizedSessionFailures < 2)) {
-          sessionRateLimitedUntil = Date.now() + 2000;
-          console.warn("[Auth] Temporary 401 from /api/me; keeping cached session");
+        if (lastPrivySyncAt > requestStartedAt) {
+          console.warn("[Auth] Ignoring stale 401 from /api/me after newer Privy sync");
           return cachedUser;
         }
 
-        if (lastPrivySyncAt <= requestStartedAt) {
-          clearStoredAuthToken();
-          clearCachedAuthUser();
-        } else {
-          console.warn("[Auth] Ignoring stale 401 from /api/me after newer Privy sync");
+        unauthorizedSessionFailures += 1;
+        const recentlySynced =
+          lastPrivySyncAt > 0 && Date.now() - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS;
+        const recentlyHealthySession =
+          lastSuccessfulSessionAt > 0 &&
+          Date.now() - lastSuccessfulSessionAt < AUTH_TRANSIENT_401_RECOVERY_MS;
+
+        if (
+          cachedUser &&
+          (recentlySynced ||
+            recentlyHealthySession ||
+            unauthorizedSessionFailures < AUTH_UNAUTHORIZED_FAILURE_LIMIT)
+        ) {
+          sessionRateLimitedUntil = Date.now() + 2000;
+          console.warn(
+            `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures}/${AUTH_UNAUTHORIZED_FAILURE_LIMIT})`
+          );
+          return cachedUser;
         }
+
+        clearStoredAuthToken();
+        clearCachedAuthUser();
         return null;
       }
       return cachedUser;
@@ -242,6 +258,7 @@ async function fetchSession(): Promise<AuthUser | null> {
 
     sessionRateLimitedUntil = 0;
     unauthorizedSessionFailures = 0;
+    lastSuccessfulSessionAt = Date.now();
     const text = await response.text();
 
     // Handle null or empty responses
@@ -297,9 +314,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   });
 
+  const resolveSessionWithRetry = useCallback(async () => {
+    let user = await fetchSession();
+    if (user) {
+      return user;
+    }
+
+    // Fresh tabs can momentarily race session propagation right after sign-in.
+    // Retry once when we do have a token, instead of instantly flipping to logged out.
+    if (!getStoredAuthToken()) {
+      return null;
+    }
+
+    for (let attempt = 1; attempt < AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN; attempt += 1) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, AUTH_SESSION_RETRY_DELAY_MS);
+      });
+      user = await fetchSession();
+      if (user) {
+        return user;
+      }
+    }
+
+    return null;
+  }, []);
+
   const refetch = useCallback(async () => {
     try {
-      const user = await fetchSession();
+      const user = await resolveSessionWithRetry();
       setState({
         user,
         isLoading: false,
@@ -312,7 +354,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: false,
       });
     }
-  }, []);
+  }, [resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
     clearStoredAuthToken();
@@ -320,6 +362,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
     lastPrivySyncAt = 0;
+    lastSuccessfulSessionAt = 0;
     unauthorizedSessionFailures = 0;
     setState({
       user: null,
@@ -339,7 +382,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     const checkSession = async () => {
-      const user = await fetchSession();
+      const user = await resolveSessionWithRetry();
       if (mounted) {
         setState({
           user,
@@ -354,7 +397,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [resolveSessionWithRetry]);
 
   return createElement(
     AuthContext.Provider,
@@ -609,6 +652,7 @@ export async function syncPrivySession(
 
     // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
     lastPrivySyncAt = Date.now();
+    lastSuccessfulSessionAt = Date.now();
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
     unauthorizedSessionFailures = 0;
