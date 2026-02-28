@@ -951,6 +951,8 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
         id: true,
         contractAddress: true,
         chainType: true,
+        entryMcap: true,
+        currentMcap: true,
         createdAt: true,
         settled: true,
         lastMcapUpdate: true,
@@ -1076,6 +1078,7 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
           const shouldUpdateMcap = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
           const trackingMode = determineTrackingMode(post.createdAt);
           const updateData: {
+            entryMcap?: number;
             currentMcap?: number;
             lastMcapUpdate?: Date;
             trackingMode?: string;
@@ -1083,6 +1086,16 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
             tokenSymbol?: string | null;
             tokenImage?: string | null;
           } = {};
+
+          if (post.entryMcap === null && marketCapResult.mcap !== null) {
+            // Backfill missing entry market cap so this trade can be settled at 1H/6H.
+            // Without this, null-entry rows can remain unresolved forever.
+            updateData.entryMcap = marketCapResult.mcap;
+            if (post.currentMcap === null) {
+              updateData.currentMcap = marketCapResult.mcap;
+              updateData.lastMcapUpdate = new Date();
+            }
+          }
 
           if (shouldUpdateMcap && marketCapResult.mcap !== null) {
             updateData.currentMcap = marketCapResult.mcap;
