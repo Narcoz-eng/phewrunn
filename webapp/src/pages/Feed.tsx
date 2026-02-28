@@ -293,8 +293,19 @@ export default function Feed() {
   } = useQuery({
     queryKey: ["currentUser"],
     queryFn: async () => {
-      const data = await api.get<User>("/api/me");
-      return data;
+      try {
+        return await api.get<User>("/api/me");
+      } catch (error) {
+        if (cachedFeedUser) {
+          if (!(error instanceof ApiError)) {
+            return cachedFeedUser;
+          }
+          if (error.status !== 401 && error.status !== 403) {
+            return cachedFeedUser;
+          }
+        }
+        throw error;
+      }
     },
     initialData: cachedFeedUser ?? undefined,
     enabled: !!session?.user,

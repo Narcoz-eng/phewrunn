@@ -43,10 +43,10 @@ const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 8_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 3;
 const SESSION_FETCH_TIMEOUT_MS = 4500;
 const SIGN_OUT_TIMEOUT_MS = 2500;
-const AUTH_SESSION_RETRY_DELAY_MS = 220;
-const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
-const PRIVY_SYNC_TIMEOUT_MS = 35_000;
-const PRIVY_SYNC_RETRY_DELAYS_MS = [280, 650] as const;
+const AUTH_SESSION_RETRY_DELAY_MS = 350;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 10;
+const PRIVY_SYNC_TIMEOUT_MS = 9_000;
+const PRIVY_SYNC_RETRY_DELAYS_MS = [350, 800] as const;
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {

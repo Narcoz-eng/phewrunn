@@ -3,7 +3,8 @@ import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
 
-const LOGIN_SYNC_TIMEOUT_MS = 30_000;
+const LOGIN_SYNC_TIMEOUT_MS = 45_000;
+const AUTO_RESYNC_COOLDOWN_MS = 12_000;
 const IDENTITY_TOKEN_ATTEMPTS = 5;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [120, 180, 260, 360] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
@@ -36,30 +37,29 @@ async function getIdentityTokenFast(): Promise<string | undefined> {
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin() {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
-  const { refetch } = useAuth();
+  const { refetch, isAuthenticated: appSessionAuthenticated } = useAuth();
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncGuardRef = useRef(false);
   const syncTimeoutRef = useRef<number | null>(null);
   const loginRequestedRef = useRef(false);
+  const lastAutoResyncAtRef = useRef(0);
 
-  const clearSyncTimeout = () => {
+  const clearSyncTimeout = useCallback(() => {
     if (syncTimeoutRef.current !== null) {
       window.clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = null;
     }
-  };
+  }, []);
 
-  const startSyncTimeout = () => {
+  const startSyncTimeout = useCallback(() => {
     clearSyncTimeout();
     syncTimeoutRef.current = window.setTimeout(() => {
-      loginRequestedRef.current = false;
-      syncGuardRef.current = false;
-      setIsSyncing(false);
-      setSyncError("Sign-in timed out. Please try again.");
-      toast.error("Sign-in timed out. Please try again.");
+      if (!syncGuardRef.current) return;
+      setSyncError("Sign-in is taking longer than expected. Please wait...");
+      toast.warning("Still signing in...");
     }, LOGIN_SYNC_TIMEOUT_MS);
-  };
+  }, [clearSyncTimeout]);
 
   const runPrivySync = useCallback(async (privyUser: PrivyUserLike) => {
     if (syncGuardRef.current) {
@@ -91,6 +91,9 @@ export function usePrivyLogin() {
         privyIdToken ?? undefined
       );
       await refetch();
+      // Session cookies can propagate a moment after sync on some deployments.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 260));
+      await refetch();
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const message = err instanceof Error ? err.message : "Failed to sign in";
@@ -109,13 +112,29 @@ export function usePrivyLogin() {
       syncGuardRef.current = false;
       setIsSyncing(false);
     }
-  }, [privyLogout, refetch]);
+  }, [clearSyncTimeout, privyLogout, refetch]);
 
   useEffect(() => {
     return () => {
       clearSyncTimeout();
     };
-  }, []);
+  }, [clearSyncTimeout]);
+
+  useEffect(() => {
+    if (!ready || !authenticated || !user) return;
+    if (appSessionAuthenticated) return;
+    if (syncGuardRef.current || isSyncing) return;
+
+    const now = Date.now();
+    if (now - lastAutoResyncAtRef.current < AUTO_RESYNC_COOLDOWN_MS) return;
+    lastAutoResyncAtRef.current = now;
+
+    setSyncError(null);
+    loginRequestedRef.current = true;
+    setIsSyncing(true);
+    startSyncTimeout();
+    void runPrivySync(user as PrivyUserLike);
+  }, [appSessionAuthenticated, authenticated, isSyncing, ready, runPrivySync, startSyncTimeout, user]);
 
   const { login } = useLogin({
     onComplete: async (params) => {

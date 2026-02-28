@@ -207,8 +207,23 @@ export default function Profile() {
       if (!session?.user && cachedProfile) {
         return cachedProfile;
       }
-      const userData = await api.get<ExtendedUser>("/api/me");
-      return userData;
+      try {
+        const userData = await api.get<ExtendedUser>("/api/me");
+        return userData;
+      } catch (error) {
+        if (cachedProfile) {
+          return cachedProfile;
+        }
+        if (session?.user?.id) {
+          try {
+            const fallbackUser = await api.get<ExtendedUser>(`/api/users/${session.user.id}`);
+            return fallbackUser;
+          } catch {
+            // fall through to original error
+          }
+        }
+        throw error;
+      }
     },
     initialData: cachedProfile ?? undefined,
     enabled: !!session?.user || !!cachedProfile,

@@ -213,28 +213,47 @@ export default function Notifications() {
   // Dismiss notification
   const dismissMutation = useMutation({
     mutationFn: async (notificationIds: string[]) => {
-      await Promise.all(
+      const settled = await Promise.allSettled(
         notificationIds.map((notificationId) =>
           api.patch(`/api/notifications/${notificationId}/dismiss`)
         )
       );
-      return notificationIds;
+      const dismissedIds: string[] = [];
+      const failedIds: string[] = [];
+      settled.forEach((result, index) => {
+        const id = notificationIds[index];
+        if (!id) return;
+        if (result.status === "fulfilled") {
+          dismissedIds.push(id);
+        } else {
+          failedIds.push(id);
+        }
+      });
+      if (dismissedIds.length === 0) {
+        throw new Error("Failed to dismiss notification");
+      }
+      return {
+        dismissedIds,
+        failedIds,
+      };
     },
     onMutate: async (notificationIds) => {
-      // Optimistic update
       await queryClient.cancelQueries({ queryKey: ["notifications"] });
       const previousNotifications = queryClient.getQueryData<Notification[]>(["notifications"]);
-      const idSet = new Set(notificationIds);
-      queryClient.setQueryData<Notification[]>(["notifications"], (old) =>
-        old?.filter((n) => !idSet.has(n.id))
-      );
-      return { previousNotifications };
+      return { previousNotifications, attemptedIds: notificationIds };
     },
-    onSuccess: () => {
+    onSuccess: ({ dismissedIds, failedIds }) => {
+      const dismissedSet = new Set(dismissedIds);
+      queryClient.setQueryData<Notification[]>(["notifications"], (old) =>
+        old?.filter((n) => !dismissedSet.has(n.id))
+      );
+      if (failedIds.length > 0) {
+        toast.warning("Some notifications could not be dismissed");
+        return;
+      }
       toast.success("Notification dismissed");
     },
     onError: (_err, _id, context) => {
-      // Rollback on error
       if (context?.previousNotifications) {
         queryClient.setQueryData(["notifications"], context.previousNotifications);
       }

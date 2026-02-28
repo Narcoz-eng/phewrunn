@@ -532,6 +532,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const wallet = useWallet();
   const { visible: isWalletModalVisible, setVisible: setWalletModalVisible } = useWalletModal();
   const cardRef = useRef<HTMLDivElement>(null);
+  const postDatasetId = String(post.id);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [isLiked, setIsLiked] = useState(post.isLiked);
@@ -548,7 +549,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
-  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
+  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(() => {
+    if (typeof document === "undefined") return false;
+    return document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId;
+  });
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
   const [tradeSide, setTradeSide] = useState<TradeSide>("buy");
@@ -586,7 +590,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
     [heliusReadRpcUrl, connection]
   );
-  const postDatasetId = String(post.id);
 
   const hasGlobalDialogOpen = useCallback(() => {
     if (typeof document === "undefined") return false;
@@ -728,9 +731,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   useEffect(() => {
     if (typeof document === "undefined") return;
+    const activeDialogPostId = document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
     if (isBuyDialogOpen) {
       document.body.dataset.phewPinnedItemKey = postDatasetId;
       document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
+      return;
+    }
+    if (activeDialogPostId === postDatasetId) {
+      setIsBuyDialogOpen(true);
       return;
     }
     if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
@@ -2786,8 +2794,42 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
   const showPumpFallbackCta = isLikelyPumpToken && !!pumpfunUrl && jupiterNoRouteDetected;
   const professionalChartData = useMemo(() => {
-    const raw = chartCandlesQuery.data?.candles ?? [];
-    return raw
+    const providerCandles = chartCandlesQuery.data?.candles ?? [];
+    const fallbackIntervalMs =
+      chartRequestConfig.timeframe === "day"
+        ? chartRequestConfig.aggregate * 86_400_000
+        : chartRequestConfig.timeframe === "hour"
+          ? chartRequestConfig.aggregate * 3_600_000
+          : chartRequestConfig.aggregate * 60_000;
+    const fallbackPoints = tradeChartData
+      .map((point) => point.mcap)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (fallbackPoints.length === 1) {
+      fallbackPoints.push(fallbackPoints[0]);
+    }
+    const fallbackAnchorTs = Number.isFinite(new Date(post.createdAt).getTime())
+      ? new Date(post.createdAt).getTime()
+      : Date.now();
+    const fallbackCandles: ChartCandle[] =
+      fallbackPoints.length >= 2
+        ? fallbackPoints.map((closeValue, index) => {
+            const previous = index === 0 ? closeValue : fallbackPoints[index - 1] ?? closeValue;
+            const openValue = Number.isFinite(previous) ? previous : closeValue;
+            const highValue = Math.max(openValue, closeValue);
+            const lowValue = Math.min(openValue, closeValue);
+            return {
+              timestamp: fallbackAnchorTs + (index - (fallbackPoints.length - 1)) * fallbackIntervalMs,
+              open: openValue,
+              high: highValue,
+              low: lowValue,
+              close: closeValue,
+              volume: 0,
+            };
+          })
+        : [];
+
+    const candles = providerCandles.length >= 2 ? providerCandles : fallbackCandles;
+    return candles
       .map((candle) => {
         const open = Number(candle.open);
         const high = Number(candle.high);
@@ -2835,8 +2877,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         Number.isFinite(point.close)
       )
       .sort((a, b) => a.ts - b.ts);
-  }, [chartCandlesQuery.data?.candles, chartRequestConfig.timeframe]);
+  }, [chartCandlesQuery.data?.candles, chartRequestConfig.aggregate, chartRequestConfig.timeframe, post.createdAt, tradeChartData]);
+  const hasProviderChartCandles = (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
   const hasProfessionalChartData = professionalChartData.length >= 2;
+  const isFallbackChartData = hasProfessionalChartData && !hasProviderChartCandles;
   const chartTotalPoints = professionalChartData.length;
   const chartWindowBounds = useMemo(() => {
     if (chartTotalPoints <= 0) {
@@ -3183,6 +3227,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ? "rgba(116,243,122,0.18)"
     : "rgba(255,107,107,0.18)";
   const chartFeedLabel = useMemo(() => {
+    if (isFallbackChartData) {
+      return "Phew";
+    }
     switch (chartCandlesQuery.data?.source) {
       case "birdeye":
         return "Birdeye";
@@ -3191,7 +3238,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       default:
         return "Live";
     }
-  }, [chartCandlesQuery.data?.source]);
+  }, [chartCandlesQuery.data?.source, isFallbackChartData]);
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {
