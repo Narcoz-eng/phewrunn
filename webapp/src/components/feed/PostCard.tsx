@@ -90,7 +90,7 @@ const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
 const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
-const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 1_800;
+const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
@@ -198,6 +198,18 @@ function createAbortSignalWithTimeout(timeoutMs: number, externalSignal?: AbortS
   };
 }
 
+function isRetryableJupiterQuoteError(error: unknown): boolean {
+  const message = (
+    error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  ).toLowerCase();
+  return (
+    message.includes("aborted") ||
+    message.includes("timeout") ||
+    message.includes("failed to fetch") ||
+    message.includes("networkerror")
+  );
+}
+
 async function fetchJupiterQuoteFast(
   payload: JupiterQuoteRequestPayload,
   options?: { timeoutMs?: number; signal?: AbortSignal }
@@ -217,12 +229,8 @@ async function fetchJupiterQuoteFast(
     return inFlight;
   }
 
-  const requestPromise = (async () => {
-    const { signal, cleanup } = createAbortSignalWithTimeout(
-      options?.timeoutMs ?? JUPITER_QUOTE_TIMEOUT_MS,
-      options?.signal
-    );
-
+  const requestOnce = async (timeoutMs: number): Promise<JupiterQuoteResponse> => {
+    const { signal, cleanup } = createAbortSignalWithTimeout(timeoutMs, options?.signal);
     try {
       const res = await fetch("/api/posts/jupiter/quote", {
         method: "POST",
@@ -233,8 +241,20 @@ async function fetchJupiterQuoteFast(
         credentials: "same-origin",
       });
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(body || `Quote failed (${res.status})`);
+        const bodyText = await res.text().catch(() => "");
+        let message = bodyText || `Quote failed (${res.status})`;
+        if (bodyText) {
+          try {
+            const parsed = JSON.parse(bodyText) as { error?: { message?: string } };
+            const upstreamMessage = parsed?.error?.message;
+            if (typeof upstreamMessage === "string" && upstreamMessage.trim().length > 0) {
+              message = upstreamMessage.trim();
+            }
+          } catch {
+            // Keep raw text for non-JSON upstream responses.
+          }
+        }
+        throw new Error(message);
       }
 
       const quote = (await res.json()) as JupiterQuoteResponse;
@@ -245,6 +265,22 @@ async function fetchJupiterQuoteFast(
       return quote;
     } finally {
       cleanup();
+    }
+  };
+
+  const requestPromise = (async () => {
+    try {
+      const baseTimeoutMs = options?.timeoutMs ?? JUPITER_QUOTE_TIMEOUT_MS;
+      try {
+        return await requestOnce(baseTimeoutMs);
+      } catch (error) {
+        if (options?.signal?.aborted || !isRetryableJupiterQuoteError(error)) {
+          throw error;
+        }
+        const retryTimeoutMs = Math.max(baseTimeoutMs + 1_400, JUPITER_QUOTE_TIMEOUT_MS + 1_200);
+        return await requestOnce(retryTimeoutMs);
+      }
+    } finally {
       jupiterQuoteInFlight.delete(key);
     }
   })();
@@ -550,9 +586,24 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
     [heliusReadRpcUrl, connection]
   );
+  const postDatasetId = String(post.id);
 
-  const clearPotentialScrollLock = () => {
+  const hasGlobalDialogOpen = useCallback(() => {
+    if (typeof document === "undefined") return false;
+    return document.querySelector("[role='dialog'][data-state='open']") !== null;
+  }, []);
+
+  const hasActiveTradePanelMarker = useCallback(() => {
+    if (typeof document === "undefined") return false;
+    return Boolean(
+      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] ||
+      document.body.dataset.phewPinnedItemKey
+    );
+  }, []);
+
+  const clearPotentialScrollLock = useCallback(() => {
     if (typeof document === "undefined") return;
+    if (hasGlobalDialogOpen() || hasActiveTradePanelMarker()) return;
     document.body.classList.remove("overflow-hidden", "wallet-adapter-modal-open");
     document.documentElement.classList.remove("overflow-hidden");
     document.body.style.overflow = "";
@@ -567,7 +618,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (document.documentElement.style.pointerEvents === "none") {
       document.documentElement.style.pointerEvents = "";
     }
-  };
+  }, [hasActiveTradePanelMarker, hasGlobalDialogOpen]);
 
   // Sync follow state when post data changes
   useEffect(() => {
@@ -590,8 +641,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       if (!pendingQuickBuyAutoExecute) {
         if (typeof document !== "undefined") {
           document.body.classList.add("phew-overlay-open");
-          document.body.dataset.phewPinnedItemKey = post.id;
-          document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = post.id;
+          document.body.dataset.phewPinnedItemKey = postDatasetId;
+          document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
         }
         setIsBuyDialogOpen(true);
       }
@@ -601,13 +652,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       !isWalletModalVisible &&
       !isWalletConnectDialogOpen &&
       !isBuyDialogOpen &&
-      !isWinCardPreviewOpen
+      !isWinCardPreviewOpen &&
+      !hasGlobalDialogOpen() &&
+      !hasActiveTradePanelMarker()
     ) {
       window.setTimeout(clearPotentialScrollLock, 120);
     }
   }, [
     wallet.publicKey,
-    post.id,
+    postDatasetId,
     isWalletConnectDialogOpen,
     pendingBuyAfterWalletConnect,
     pendingQuickBuyAutoExecute,
@@ -615,60 +668,78 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     isWalletModalVisible,
     isWinCardPreviewOpen,
     setWalletModalVisible,
+    clearPotentialScrollLock,
+    hasActiveTradePanelMarker,
+    hasGlobalDialogOpen,
   ]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
       return;
     }
+    if (hasGlobalDialogOpen() || hasActiveTradePanelMarker()) return;
     if (typeof window === "undefined") return;
     const timer = window.setTimeout(clearPotentialScrollLock, 80);
     return () => window.clearTimeout(timer);
-  }, [isWalletModalVisible, isWalletConnectDialogOpen, isBuyDialogOpen, isWinCardPreviewOpen]);
+  }, [
+    isWalletModalVisible,
+    isWalletConnectDialogOpen,
+    isBuyDialogOpen,
+    isWinCardPreviewOpen,
+    clearPotentialScrollLock,
+    hasActiveTradePanelMarker,
+    hasGlobalDialogOpen,
+  ]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
     const hasOverlayOpen = isBuyDialogOpen || isWalletConnectDialogOpen || isWinCardPreviewOpen;
     if (hasOverlayOpen) {
       document.body.classList.add("phew-overlay-open");
-    } else if (!document.querySelector("[role='dialog'][data-state='open']")) {
+    } else if (!hasGlobalDialogOpen() && !hasActiveTradePanelMarker()) {
       document.body.classList.remove("phew-overlay-open");
     }
 
     return () => {
-      if (!document.querySelector("[role='dialog'][data-state='open']")) {
+      if (!hasGlobalDialogOpen() && !hasActiveTradePanelMarker()) {
         document.body.classList.remove("phew-overlay-open");
       }
     };
-  }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen]);
+  }, [
+    isBuyDialogOpen,
+    isWalletConnectDialogOpen,
+    isWinCardPreviewOpen,
+    hasActiveTradePanelMarker,
+    hasGlobalDialogOpen,
+  ]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
     const activeTradeDialogPostId = document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
     if (isBuyDialogOpen) {
-      document.body.dataset.phewPinnedItemKey = post.id;
-      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = post.id;
+      document.body.dataset.phewPinnedItemKey = postDatasetId;
+      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
       return;
     }
-    if (activeTradeDialogPostId === post.id) {
-      document.body.dataset.phewPinnedItemKey = post.id;
+    if (activeTradeDialogPostId === postDatasetId && !hasGlobalDialogOpen()) {
+      document.body.dataset.phewPinnedItemKey = postDatasetId;
       document.body.classList.add("phew-overlay-open");
       setIsBuyDialogOpen(true);
       return;
     }
-    if (document.body.dataset.phewPinnedItemKey === post.id) {
+    if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
       delete document.body.dataset.phewPinnedItemKey;
     }
 
     return () => {
-      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === post.id) {
+      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
         return;
       }
-      if (document.body.dataset.phewPinnedItemKey === post.id) {
+      if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
         delete document.body.dataset.phewPinnedItemKey;
       }
     };
-  }, [isBuyDialogOpen, post.id]);
+  }, [isBuyDialogOpen, postDatasetId, hasGlobalDialogOpen]);
 
   useEffect(() => {
     if (isBuyDialogOpen) return;
@@ -2246,10 +2317,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   const handleCloseBuyDialog = () => {
     if (typeof document !== "undefined") {
-      if (document.body.dataset.phewPinnedItemKey === post.id) {
+      if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
         delete document.body.dataset.phewPinnedItemKey;
       }
-      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === post.id) {
+      if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
         delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
       }
     }
@@ -2304,8 +2375,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleOpenBuyDialog = () => {
     if (typeof document !== "undefined") {
       document.body.classList.add("phew-overlay-open");
-      document.body.dataset.phewPinnedItemKey = post.id;
-      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = post.id;
+      document.body.dataset.phewPinnedItemKey = postDatasetId;
+      document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] = postDatasetId;
     }
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);

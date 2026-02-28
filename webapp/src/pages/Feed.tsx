@@ -177,7 +177,14 @@ export default function Feed() {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ["class", "style", "data-state", "role", "data-phew-pinned-item-key"],
+        attributeFilter: [
+          "class",
+          "style",
+          "data-state",
+          "role",
+          "data-phew-pinned-item-key",
+          "data-phew-active-trade-dialog-post-id",
+        ],
       });
     }
     observer.observe(document.documentElement, {

@@ -178,6 +178,10 @@ export function WindowVirtualList<T>({
     };
   }, []);
 
+  const livePinnedItemKey = getPinnedItemKeyFromDocument();
+  const liveActiveTradeDialogPostKey = getActiveTradeDialogPostKeyFromDocument();
+  const effectivePinnedItemKey = pinnedItemKey ?? livePinnedItemKey;
+
   const layout = useMemo(() => {
     // Version tick is intentionally used to recompute layout after row height measurements.
     void measureVersion;
@@ -229,9 +233,9 @@ export function WindowVirtualList<T>({
     }
     endIndex = Math.min(items.length - 1, Math.max(startIndex, endIndex));
 
-    if (pinnedItemKey) {
+    if (effectivePinnedItemKey) {
       for (let i = 0; i < items.length; i += 1) {
-        if (getItemKey(items[i], i) === pinnedItemKey) {
+        if (getItemKey(items[i], i) === effectivePinnedItemKey) {
           startIndex = Math.min(startIndex, i);
           endIndex = Math.max(endIndex, i);
           break;
@@ -252,7 +256,7 @@ export function WindowVirtualList<T>({
     items,
     measureVersion,
     overscanPx,
-    pinnedItemKey,
+    effectivePinnedItemKey,
     viewport.containerTop,
     viewport.height,
     viewport.scrollTop,
@@ -274,7 +278,10 @@ export function WindowVirtualList<T>({
   }
 
   const forceRenderAllItems =
-    pinnedItemKey !== null || activeTradeDialogPostKey !== null || isDocumentScrollLocked();
+    effectivePinnedItemKey !== null ||
+    activeTradeDialogPostKey !== null ||
+    liveActiveTradeDialogPostKey !== null ||
+    isDocumentScrollLocked();
 
   if (items.length < minItemsToVirtualize || forceRenderAllItems) {
     return (

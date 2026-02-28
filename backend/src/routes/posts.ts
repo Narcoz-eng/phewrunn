@@ -174,6 +174,7 @@ const JUPITER_SWAP_URLS = [
 const JUPITER_QUOTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500 : 600;
 const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 450 : 200;
 const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_000;
+const CHART_POOL_ADDRESS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
 const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
@@ -211,6 +212,8 @@ const chartCandlesCache = new Map<
   }
 >();
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
+const chartPoolAddressCache = new Map<string, { poolAddress: string | null; expiresAtMs: number }>();
+const chartPoolAddressInFlight = new Map<string, Promise<string | null>>();
 
 function getActivePlatformFeeBps(): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
@@ -3747,8 +3750,8 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
       {
         method: "GET",
         headers: { accept: "application/json" },
-        timeoutMs: 2300,
-        hedgeDelayMs: 45,
+        timeoutMs: 3_200,
+        hedgeDelayMs: 40,
       }
     );
     jupiterQuoteInFlight.set(cacheKey, request);
@@ -4159,8 +4162,132 @@ function toBirdeyeInterval(timeframe: "minute" | "hour" | "day", aggregate: numb
   return "1D";
 }
 
+function buildChartPoolLookupKey(payload: ChartCandlesPayload): string | null {
+  const tokenAddress = safeString(payload.tokenAddress)?.toLowerCase();
+  if (!tokenAddress) return null;
+  const network = payload.chainType === "solana" ? "solana" : "ethereum";
+  return `${network}:${tokenAddress}`;
+}
+
+function parseDexPairsForPoolLookup(payload: unknown): Record<string, unknown>[] {
+  if (Array.isArray(payload)) {
+    return payload
+      .map((entry) => safeRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+  const top = safeRecord(payload);
+  const pairs = Array.isArray(top?.pairs) ? top.pairs : [];
+  return pairs
+    .map((entry) => safeRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null);
+}
+
+function pickBestPoolAddressFromDexPairs(
+  pairs: Record<string, unknown>[],
+  network: "solana" | "ethereum"
+): string | null {
+  let bestAddress: string | null = null;
+  let bestScore = -Infinity;
+
+  for (const pair of pairs) {
+    const chainId = safeString(pair.chainId)?.toLowerCase() ?? "";
+    if (chainId && chainId !== network) continue;
+
+    const pairAddress = safeString(pair.pairAddress);
+    if (!pairAddress) continue;
+
+    const liquidity = safeRecord(pair.liquidity);
+    const volume = safeRecord(pair.volume);
+    const txns = safeRecord(pair.txns);
+    const tx24h = safeRecord(txns?.h24);
+
+    const liquidityUsd = safeFiniteNumber(liquidity?.usd) ?? 0;
+    const volume24h = safeFiniteNumber(volume?.h24) ?? 0;
+    const buyCount24h = safeFiniteNumber(tx24h?.buys) ?? 0;
+    const sellCount24h = safeFiniteNumber(tx24h?.sells) ?? 0;
+    const score = liquidityUsd * 2 + volume24h + (buyCount24h + sellCount24h) * 12;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestAddress = pairAddress;
+    } else if (!bestAddress) {
+      bestAddress = pairAddress;
+    }
+  }
+
+  return bestAddress;
+}
+
+async function resolveChartPoolAddress(payload: ChartCandlesPayload): Promise<string | null> {
+  const directPoolAddress = safeString(payload.poolAddress);
+  if (directPoolAddress) return directPoolAddress;
+
+  const tokenAddress = safeString(payload.tokenAddress);
+  if (!tokenAddress) return null;
+  const network: "solana" | "ethereum" = payload.chainType === "solana" ? "solana" : "ethereum";
+  const lookupKey = buildChartPoolLookupKey(payload);
+  if (!lookupKey) return null;
+
+  const now = Date.now();
+  const cached = chartPoolAddressCache.get(lookupKey);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.poolAddress;
+  }
+  if (cached) {
+    chartPoolAddressCache.delete(lookupKey);
+  }
+
+  let request = chartPoolAddressInFlight.get(lookupKey);
+  if (!request) {
+    request = (async () => {
+      const endpoints = [
+        `https://api.dexscreener.com/tokens/v1/${network}/${tokenAddress}`,
+        `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`,
+      ];
+
+      for (const endpoint of endpoints) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3_200);
+        try {
+          const response = await fetch(endpoint, {
+            method: "GET",
+            headers: { accept: "application/json" },
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            continue;
+          }
+          const parsed = (await response.json()) as unknown;
+          const pairs = parseDexPairsForPoolLookup(parsed);
+          const bestPool = pickBestPoolAddressFromDexPairs(pairs, network);
+          if (bestPool) {
+            return bestPool;
+          }
+        } catch {
+          // Continue trying other endpoints.
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      return null;
+    })().finally(() => {
+      chartPoolAddressInFlight.delete(lookupKey);
+    });
+    chartPoolAddressInFlight.set(lookupKey, request);
+  }
+
+  const poolAddress = await request;
+  chartPoolAddressCache.set(lookupKey, {
+    poolAddress,
+    expiresAtMs: Date.now() + CHART_POOL_ADDRESS_CACHE_TTL_MS,
+  });
+  return poolAddress;
+}
+
 async function fetchGeckoTerminalCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
-  if (!payload.poolAddress) {
+  const poolAddress = await resolveChartPoolAddress(payload);
+  if (!poolAddress) {
     throw new Error("Pool address is required for GeckoTerminal candles");
   }
 
@@ -4171,7 +4298,7 @@ async function fetchGeckoTerminalCandles(payload: ChartCandlesPayload): Promise<
     currency: "usd",
     token: "base",
   });
-  const geckoUrl = `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${payload.poolAddress}/ohlcv/${payload.timeframe ?? "minute"}?${params.toString()}`;
+  const geckoUrl = `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${payload.timeframe ?? "minute"}?${params.toString()}`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4_500);
