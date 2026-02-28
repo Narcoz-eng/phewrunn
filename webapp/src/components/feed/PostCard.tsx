@@ -739,12 +739,24 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
     return () => {
       if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] === postDatasetId) {
+        // Clear stale active marker when no dialog is actually open anymore.
+        if (!document.querySelector("[role='dialog'][data-state='open']")) {
+          delete document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY];
+        }
         return;
       }
       if (document.body.dataset.phewPinnedItemKey === postDatasetId) {
         delete document.body.dataset.phewPinnedItemKey;
       }
     };
+  }, [isBuyDialogOpen, postDatasetId]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (isBuyDialogOpen) return;
+    if (document.body.dataset[ACTIVE_TRADE_DIALOG_POST_DATASET_KEY] !== postDatasetId) return;
+    // If this card remounts while still marked as active, keep the trade panel open.
+    setIsBuyDialogOpen(true);
   }, [isBuyDialogOpen, postDatasetId]);
 
   useEffect(() => {

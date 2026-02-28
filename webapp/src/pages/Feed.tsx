@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
@@ -52,6 +52,12 @@ function isGlobalOverlayOpen(): boolean {
     return true;
   }
   return document.querySelector("[role='dialog'][data-state='open']") !== null;
+}
+
+function hasActiveTradeDialogMarker(): boolean {
+  if (typeof document === "undefined") return false;
+  const active = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
+  return Boolean(active);
 }
 
 function getFeedFirstPageCacheKey(tab: FeedTab, search: string): string {
@@ -150,6 +156,7 @@ export default function Feed() {
   const [pendingLatestCount, setPendingLatestCount] = useState(0);
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
+  const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
   const cachedFeedUser = readSessionCache<User>(FEED_CURRENT_USER_CACHE_KEY, FEED_CURRENT_USER_CACHE_TTL_MS);
@@ -326,8 +333,20 @@ export default function Feed() {
     refetchInterval: false,
   });
 
-  const posts = postsPages?.pages.flatMap((page) => page.items) ?? [];
-  const hasPosts = posts.length > 0;
+  const posts = useMemo(
+    () => postsPages?.pages.flatMap((page) => page.items) ?? [],
+    [postsPages?.pages]
+  );
+  const shouldFreezeFeedItems = isOverlayOpen || hasActiveTradeDialogMarker();
+  useEffect(() => {
+    if (shouldFreezeFeedItems) {
+      setFrozenPostsWhileOverlayOpen((prev) => prev ?? posts);
+      return;
+    }
+    setFrozenPostsWhileOverlayOpen(null);
+  }, [posts, shouldFreezeFeedItems]);
+  const displayedPosts = frozenPostsWhileOverlayOpen ?? posts;
+  const hasPosts = displayedPosts.length > 0;
   const shouldShowFeedFatalError = Boolean(postsError && !hasPosts);
   const shouldShowFeedSoftError = Boolean(postsError && hasPosts);
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
@@ -770,14 +789,14 @@ export default function Feed() {
   };
 
   const handleLike = async (postId: string) => {
-    const post = posts.find((p) => p.id === postId);
+    const post = displayedPosts.find((p) => p.id === postId);
     if (post) {
       likeMutation.mutate({ postId, isLiked: post.isLiked });
     }
   };
 
   const handleRepost = async (postId: string) => {
-    const post = posts.find((p) => p.id === postId);
+    const post = displayedPosts.find((p) => p.id === postId);
     if (post) {
       repostMutation.mutate({ postId, isReposted: post.isReposted });
     }
@@ -971,7 +990,7 @@ export default function Feed() {
               error={postsError as Error}
               onRetry={() => refetchPosts()}
             />
-          ) : posts.length === 0 ? (
+          ) : displayedPosts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
               <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
                 {activeTab === "trending" ? (
@@ -1000,12 +1019,12 @@ export default function Feed() {
           ) : (
             <>
               <WindowVirtualList
-                items={posts}
+                items={displayedPosts}
                 getItemKey={(post) => post.id}
                 estimateItemHeight={560}
                 overscanPx={1400}
                 renderItem={(post, index) => (
-                  <div className={index < posts.length - 1 ? "pb-4" : undefined}>
+                  <div className={index < displayedPosts.length - 1 ? "pb-4" : undefined}>
                     <div
                       className="animate-fade-in-up"
                       style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
