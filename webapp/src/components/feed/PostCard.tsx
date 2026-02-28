@@ -3,8 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Area,
-  AreaChart,
   Bar,
   Brush,
   Cell,
@@ -505,7 +503,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const [isInViewport, setIsInViewport] = useState(true);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
-  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
+  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(() => {
+    if (typeof document === "undefined") return false;
+    return document.body.dataset.phewOpenTradePostId === post.id;
+  });
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
   const [tradeSide, setTradeSide] = useState<TradeSide>("buy");
@@ -614,19 +615,25 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       document.body.classList.remove("phew-overlay-open");
     }
 
-    if (isBuyDialogOpen) {
-      document.body.dataset.phewPinnedItemKey = post.id;
-    } else if (document.body.dataset.phewPinnedItemKey === post.id) {
-      delete document.body.dataset.phewPinnedItemKey;
-    }
-
     return () => {
       document.body.classList.remove("phew-overlay-open");
-      if (document.body.dataset.phewPinnedItemKey === post.id) {
-        delete document.body.dataset.phewPinnedItemKey;
-      }
     };
-  }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen, post.id]);
+  }, [isBuyDialogOpen, isWalletConnectDialogOpen, isWinCardPreviewOpen]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (isBuyDialogOpen) {
+      document.body.dataset.phewPinnedItemKey = post.id;
+      document.body.dataset.phewOpenTradePostId = post.id;
+      return;
+    }
+    if (document.body.dataset.phewPinnedItemKey === post.id) {
+      delete document.body.dataset.phewPinnedItemKey;
+    }
+    if (document.body.dataset.phewOpenTradePostId === post.id) {
+      delete document.body.dataset.phewOpenTradePostId;
+    }
+  }, [isBuyDialogOpen, post.id]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2224,6 +2231,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const handleOpenBuyDialog = () => {
     if (typeof document !== "undefined") {
       document.body.classList.add("phew-overlay-open");
+      document.body.dataset.phewPinnedItemKey = post.id;
+      document.body.dataset.phewOpenTradePostId = post.id;
     }
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
@@ -2587,11 +2596,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       mcap: Number(point.mcap),
       deltaPct: calculatePercentChange(post.entryMcap, Number(point.mcap)),
     }));
-  const currentTradePoint = tradeChartData[tradeChartData.length - 1] ?? null;
-  const currentTradeDeltaPct = currentTradePoint?.deltaPct ?? null;
-  const tradeChartTrendPositive = currentTradeDeltaPct == null ? true : currentTradeDeltaPct >= 0;
-  const tradeChartLineStroke = tradeChartTrendPositive ? "#74f37a" : "#ff6b6b";
-  const tradeChartFillStroke = tradeChartTrendPositive ? "rgba(116,243,122,0.22)" : "rgba(255,107,107,0.22)";
+  const currentTradeDeltaPct = tradeChartData[tradeChartData.length - 1]?.deltaPct ?? null;
   const jupiterStatusLabel = !isSolanaTradeSupported
     ? "Unsupported chain"
     : jupiterQuoteQuery.isLoading || jupiterQuoteQuery.isFetching
@@ -3977,6 +3982,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       <Dialog open={isBuyDialogOpen} onOpenChange={(open) => {
         setIsBuyDialogOpen(open);
         if (!open) {
+          if (typeof document !== "undefined") {
+            if (document.body.dataset.phewOpenTradePostId === post.id) {
+              delete document.body.dataset.phewOpenTradePostId;
+            }
+            if (document.body.dataset.phewPinnedItemKey === post.id) {
+              delete document.body.dataset.phewPinnedItemKey;
+            }
+          }
           setPendingQuickBuyAutoExecute(false);
           preparedSwapRef.current = null;
           swapBuildInFlightRef.current = null;
@@ -4420,66 +4433,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               />
                             </ComposedChart>
                           </ResponsiveContainer>
-                        ) : tradeChartData.length >= 2 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={tradeChartData} margin={{ top: 8, right: 10, left: 4, bottom: 8 }}>
-                              <defs>
-                                <linearGradient id={`buyChartFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
-                                  <stop offset="0%" stopColor={tradeChartLineStroke} stopOpacity={0.3} />
-                                  <stop offset="100%" stopColor={tradeChartFillStroke} stopOpacity={0.02} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                              <XAxis
-                                dataKey="label"
-                                axisLine={false}
-                                tickLine={false}
-                                tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
-                              />
-                              <YAxis
-                                axisLine={false}
-                                tickLine={false}
-                                width={68}
-                                tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 10 }}
-                                tickFormatter={(v: number) => formatMarketCap(Number(v)).replace("$", "")}
-                              />
-                              {Number.isFinite(post.entryMcap ?? null) ? (
-                                <ReferenceLine
-                                  y={Number(post.entryMcap)}
-                                  stroke="rgba(255,255,255,0.22)"
-                                  strokeDasharray="3 3"
-                                />
-                              ) : null}
-                              <RechartsTooltip
-                                cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
-                                contentStyle={{
-                                  background: "rgba(10,12,16,0.94)",
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  borderRadius: 12,
-                                  color: "#fff",
-                                  boxShadow: "0 16px 40px -24px rgba(0,0,0,0.9)",
-                                }}
-                                labelStyle={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}
-                                formatter={(value: number) => [formatMarketCap(Number(value)), "Market Cap"]}
-                              />
-                              <Area
-                                type="monotone"
-                                dataKey="mcap"
-                                stroke={tradeChartLineStroke}
-                                fill={`url(#buyChartFill-${post.id})`}
-                                strokeWidth={2.5}
-                                dot={{ r: 4, stroke: "rgba(9,12,16,0.95)", strokeWidth: 2, fill: tradeChartLineStroke }}
-                                activeDot={{ r: 5, stroke: "#090c10", strokeWidth: 2, fill: tradeChartLineStroke }}
-                              />
-                              <Brush
-                                dataKey="label"
-                                height={20}
-                                stroke={tradeChartLineStroke}
-                                fill="rgba(255,255,255,0.04)"
-                                travellerWidth={8}
-                              />
-                            </AreaChart>
-                          </ResponsiveContainer>
                         ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
                           <div className="flex h-full items-center justify-center">
                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -4492,7 +4445,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                             <div className="space-y-3">
                               <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
                               <p className="text-sm text-muted-foreground">
-                                Waiting for market snapshots to draw fallback chart.
+                                Candle data is not available yet for this token.
                               </p>
                             </div>
                           </div>
