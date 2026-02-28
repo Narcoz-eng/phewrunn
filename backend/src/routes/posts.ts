@@ -200,6 +200,17 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
   return /does not exist|unknown arg|unknown field|column|table/i.test(message);
 }
 
+function isPrismaClientError(error: unknown): boolean {
+  const name =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : "";
+  return name.startsWith("PrismaClient");
+}
+
 function safeRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -1288,11 +1299,22 @@ postsRouter.get("/", async (c) => {
   }
 
   if (following && user) {
-    const followedUsers = await prisma.follow.findMany({
-      where: { followerId: user.id },
-      select: { followingId: true },
-    });
-    const followedIds = followedUsers.map((f) => f.followingId);
+    let followedIds: string[] = [];
+    try {
+      const followedUsers = await prisma.follow.findMany({
+        where: { followerId: user.id },
+        select: { followingId: true },
+      });
+      followedIds = followedUsers.map((f) => f.followingId);
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+        throw error;
+      }
+      console.warn("[posts/feed] follow query unavailable; following feed fallback to empty state", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      followedIds = [];
+    }
 
     if (followedIds.length === 0) {
       return c.json({
@@ -1387,113 +1409,192 @@ postsRouter.get("/", async (c) => {
     } as any);
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
-      throw error;
-    }
-    console.warn("[posts/feed] schema drift detected; using compatibility select");
-    try {
-      fetchedPosts = await prisma.post.findMany({
-        ...(feedFindManyBase as Record<string, unknown>),
-        select: {
-          id: true,
-          content: true,
-          authorId: true,
-          contractAddress: true,
-          chainType: true,
-          tokenName: true,
-          tokenSymbol: true,
-          tokenImage: true,
-          entryMcap: true,
-          currentMcap: true,
-          mcap1h: true,
-          mcap6h: true,
-          settled: true,
-          settledAt: true,
-          isWin: true,
-          isWin1h: true,
-          isWin6h: true,
-          percentChange1h: true,
-          percentChange6h: true,
-          createdAt: true,
-          viewCount: true,
-          dexscreenerUrl: true,
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              walletAddress: true,
-              level: true,
-              xp: true,
-              isVerified: true,
-            },
-          },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              reposts: true,
-            },
-          },
-        },
-      } as any);
-    } catch (fallbackError) {
-      if (!isPrismaSchemaDriftError(fallbackError)) {
-        throw fallbackError;
+      if (isPrismaClientError(error)) {
+        console.error("[posts/feed] primary query failed; returning empty feed page", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        fetchedPosts = [];
+      } else {
+        throw error;
       }
-      console.warn("[posts/feed] legacy compatibility select engaged");
-      const legacyPosts = (await prisma.post.findMany({
-        ...(feedFindManyBase as Record<string, unknown>),
-        select: {
-          id: true,
-          content: true,
-          authorId: true,
-          contractAddress: true,
-          chainType: true,
-          entryMcap: true,
-          currentMcap: true,
-          settled: true,
-          settledAt: true,
-          isWin: true,
-          createdAt: true,
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              xp: true,
+    } else {
+      console.warn("[posts/feed] schema drift detected; using compatibility select");
+      try {
+        fetchedPosts = await prisma.post.findMany({
+          ...(feedFindManyBase as Record<string, unknown>),
+          select: {
+            id: true,
+            content: true,
+            authorId: true,
+            contractAddress: true,
+            chainType: true,
+            tokenName: true,
+            tokenSymbol: true,
+            tokenImage: true,
+            entryMcap: true,
+            currentMcap: true,
+            mcap1h: true,
+            mcap6h: true,
+            settled: true,
+            settledAt: true,
+            isWin: true,
+            isWin1h: true,
+            isWin6h: true,
+            percentChange1h: true,
+            percentChange6h: true,
+            createdAt: true,
+            viewCount: true,
+            dexscreenerUrl: true,
+            author: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                walletAddress: true,
+                level: true,
+                xp: true,
+                isVerified: true,
+              },
+            },
+            _count: {
+              select: {
+                likes: true,
+                comments: true,
+                reposts: true,
+              },
             },
           },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              reposts: true,
-            },
-          },
-        },
-      } as any)) as any[];
-      fetchedPosts = legacyPosts.map((post) => ({
-        ...post,
-        tokenName: null,
-        tokenSymbol: null,
-        tokenImage: null,
-        mcap1h: null,
-        mcap6h: null,
-        isWin1h: null,
-        isWin6h: null,
-        percentChange1h: null,
-        percentChange6h: null,
-        viewCount: 0,
-        dexscreenerUrl: null,
-        author: {
-          ...post.author,
-          walletAddress: null,
-          isVerified: false,
-        },
-      }));
+        } as any);
+      } catch (fallbackError) {
+        if (!isPrismaSchemaDriftError(fallbackError)) {
+          if (isPrismaClientError(fallbackError)) {
+            console.error("[posts/feed] compatibility query failed; returning empty feed page", {
+              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            });
+            fetchedPosts = [];
+          } else {
+            throw fallbackError;
+          }
+        } else {
+          console.warn("[posts/feed] legacy compatibility select engaged");
+          try {
+            const legacyPosts = (await prisma.post.findMany({
+              ...(feedFindManyBase as Record<string, unknown>),
+              select: {
+                id: true,
+                content: true,
+                authorId: true,
+                contractAddress: true,
+                chainType: true,
+                entryMcap: true,
+                currentMcap: true,
+                settled: true,
+                settledAt: true,
+                isWin: true,
+                createdAt: true,
+                author: {
+                  select: {
+                    id: true,
+                    name: true,
+                    username: true,
+                    image: true,
+                    level: true,
+                    xp: true,
+                  },
+                },
+              },
+            } as any)) as any[];
+            fetchedPosts = legacyPosts.map((post) => ({
+              ...post,
+              tokenName: null,
+              tokenSymbol: null,
+              tokenImage: null,
+              mcap1h: null,
+              mcap6h: null,
+              isWin1h: null,
+              isWin6h: null,
+              percentChange1h: null,
+              percentChange6h: null,
+              viewCount: 0,
+              dexscreenerUrl: null,
+              author: {
+                ...post.author,
+                walletAddress: null,
+                isVerified: false,
+              },
+              _count: {
+                likes: 0,
+                comments: 0,
+                reposts: 0,
+              },
+            }));
+          } catch (legacyError) {
+            if (!isPrismaSchemaDriftError(legacyError)) {
+              if (isPrismaClientError(legacyError)) {
+                console.error("[posts/feed] legacy query failed; returning empty feed page", {
+                  message: legacyError instanceof Error ? legacyError.message : String(legacyError),
+                });
+                fetchedPosts = [];
+              } else {
+                throw legacyError;
+              }
+            } else {
+              console.warn("[posts/feed] ultra-legacy compatibility select engaged");
+              const minimalPosts = (await prisma.post.findMany({
+                ...(feedFindManyBase as Record<string, unknown>),
+                select: {
+                  id: true,
+                  content: true,
+                  authorId: true,
+                  settled: true,
+                  settledAt: true,
+                  isWin: true,
+                  createdAt: true,
+                  author: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              } as any)) as any[];
+              fetchedPosts = minimalPosts.map((post) => ({
+                ...post,
+                contractAddress: null,
+                chainType: null,
+                entryMcap: null,
+                currentMcap: null,
+                tokenName: null,
+                tokenSymbol: null,
+                tokenImage: null,
+                mcap1h: null,
+                mcap6h: null,
+                isWin1h: null,
+                isWin6h: null,
+                percentChange1h: null,
+                percentChange6h: null,
+                viewCount: 0,
+                dexscreenerUrl: null,
+                author: {
+                  ...post.author,
+                  username: null,
+                  walletAddress: null,
+                  level: 0,
+                  xp: 0,
+                  isVerified: false,
+                },
+                _count: {
+                  likes: 0,
+                  comments: 0,
+                  reposts: 0,
+                },
+              }));
+            }
+          }
+        }
+      }
     }
   }
 
@@ -1524,33 +1625,42 @@ postsRouter.get("/", async (c) => {
     const postIds = posts.map((p) => p.id);
     const authorIds = [...new Set(posts.map((p) => p.authorId))];
 
-    const [likes, reposts, follows] = await Promise.all([
-      prisma.like.findMany({
-        where: {
-          userId: user.id,
-          postId: { in: postIds },
-        },
-        select: { postId: true },
-      }),
-      prisma.repost.findMany({
-        where: {
-          userId: user.id,
-          postId: { in: postIds },
-        },
-        select: { postId: true },
-      }),
-      prisma.follow.findMany({
-        where: {
-          followerId: user.id,
-          followingId: { in: authorIds },
-        },
-        select: { followingId: true },
-      }),
-    ]);
+    try {
+      const [likes, reposts, follows] = await Promise.all([
+        prisma.like.findMany({
+          where: {
+            userId: user.id,
+            postId: { in: postIds },
+          },
+          select: { postId: true },
+        }),
+        prisma.repost.findMany({
+          where: {
+            userId: user.id,
+            postId: { in: postIds },
+          },
+          select: { postId: true },
+        }),
+        prisma.follow.findMany({
+          where: {
+            followerId: user.id,
+            followingId: { in: authorIds },
+          },
+          select: { followingId: true },
+        }),
+      ]);
 
-    userLikes = new Set(likes.map((l) => l.postId));
-    userReposts = new Set(reposts.map((r) => r.postId));
-    userFollowing = new Set(follows.map((f) => f.followingId));
+      userLikes = new Set(likes.map((l) => l.postId));
+      userReposts = new Set(reposts.map((r) => r.postId));
+      userFollowing = new Set(follows.map((f) => f.followingId));
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+        throw error;
+      }
+      console.warn("[posts/feed] social relation lookup unavailable; continuing without personalized flags", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   // Map posts with social data

@@ -1246,31 +1246,81 @@ app.get("/api/me/stats", async (c) => {
   const user = c.get("user");
   if (!user) return c.body(null, 401);
 
-  // Get all posts for total count
-  const totalPosts = await prisma.post.count({
-    where: { authorId: user.id },
-  });
+  let totalPosts = 0;
+  try {
+    // Get all posts for total count
+    totalPosts = await prisma.post.count({
+      where: { authorId: user.id },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    totalPosts = 0;
+  }
 
-  // Get all settled posts with their settlement data
-  const settledPosts = await prisma.post.findMany({
-    where: {
-      authorId: user.id,
-      settled: true,
-    },
-    select: {
-      id: true,
-      isWin: true,
-      isWin1h: true,
-      isWin6h: true,
-      percentChange1h: true,
-      percentChange6h: true,
-      settled: true,
-      settled6h: true,
-      settledAt: true,
-      createdAt: true,
-    },
-    orderBy: { settledAt: "asc" },
-  });
+  type SettledStatsPost = {
+    id: string;
+    isWin: boolean | null;
+    isWin1h: boolean | null;
+    isWin6h: boolean | null;
+    percentChange1h: number | null;
+    percentChange6h: number | null;
+    settled: boolean;
+    settled6h: boolean;
+    settledAt: Date | null;
+    createdAt: Date;
+  };
+
+  let settledPosts: SettledStatsPost[] = [];
+  try {
+    // Get all settled posts with their settlement data
+    settledPosts = await prisma.post.findMany({
+      where: {
+        authorId: user.id,
+        settled: true,
+      },
+      select: {
+        id: true,
+        isWin: true,
+        isWin1h: true,
+        isWin6h: true,
+        percentChange1h: true,
+        percentChange6h: true,
+        settled: true,
+        settled6h: true,
+        settledAt: true,
+        createdAt: true,
+      },
+      orderBy: { settledAt: "asc" },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+    const fallbackSettledPosts = await prisma.post.findMany({
+      where: {
+        authorId: user.id,
+        settled: true,
+      },
+      select: {
+        id: true,
+        isWin: true,
+        settled: true,
+        settledAt: true,
+        createdAt: true,
+      },
+      orderBy: { settledAt: "asc" },
+    });
+    settledPosts = fallbackSettledPosts.map((post) => ({
+      ...post,
+      isWin1h: post.isWin,
+      isWin6h: null,
+      percentChange1h: null,
+      percentChange6h: null,
+      settled6h: false,
+    }));
+  }
 
   // Calculate wins: A "win" is when isWin1h = true OR isWin6h = true
   const wins = settledPosts.filter(
