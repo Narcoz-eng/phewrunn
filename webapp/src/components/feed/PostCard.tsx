@@ -650,6 +650,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, [isBuyDialogOpen, post.id]);
 
   useEffect(() => {
+    if (isBuyDialogOpen) return;
+    setPendingQuickBuyAutoExecute(false);
+    preparedSwapRef.current = null;
+    swapBuildInFlightRef.current = null;
+  }, [isBuyDialogOpen]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const raw = window.localStorage.getItem(TRADE_SLIPPAGE_STORAGE_KEY);
     if (!raw) return;
@@ -4021,20 +4028,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       </Dialog>
 
       <Dialog open={isBuyDialogOpen} onOpenChange={(open) => {
-        setIsBuyDialogOpen(open);
-        if (!open) {
-          if (typeof document !== "undefined") {
-            if (document.body.dataset.phewPinnedItemKey === post.id) {
-              delete document.body.dataset.phewPinnedItemKey;
-            }
-          }
-          setPendingQuickBuyAutoExecute(false);
-          preparedSwapRef.current = null;
-          swapBuildInFlightRef.current = null;
+        // Ignore close events fired by dialog internals; close is handled explicitly.
+        if (open) {
+          setIsBuyDialogOpen(true);
         }
       }}>
         <DialogContent
-          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)]"
+          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)] [&>button]:hidden"
           onInteractOutside={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}

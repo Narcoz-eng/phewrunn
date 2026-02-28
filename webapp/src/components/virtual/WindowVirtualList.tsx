@@ -262,7 +262,9 @@ export function WindowVirtualList<T>({
     return <>{emptyState}</>;
   }
 
-  if (items.length < minItemsToVirtualize) {
+  const forceRenderAllItems = pinnedItemKey !== null || isDocumentScrollLocked();
+
+  if (items.length < minItemsToVirtualize || forceRenderAllItems) {
     return (
       <div ref={containerRef} className={className} style={{ position: "relative" }}>
         {items.map((item, index) => {
