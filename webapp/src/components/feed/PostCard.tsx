@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
+import type { ReactNode, ErrorInfo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -513,6 +514,46 @@ async function fetchDexscreenerTokenData(args: {
   }
 
   return null;
+}
+
+class ChartErrorBoundary extends Component<
+  { children: ReactNode; fallback?: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[ChartErrorBoundary] Chart render error:", error.message, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        this.props.fallback ?? (
+          <div className="flex h-full items-center justify-center p-6 text-center">
+            <div className="space-y-3">
+              <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                Chart encountered an error. Change the interval or reopen.
+              </p>
+              <button
+                type="button"
+                onClick={() => this.setState({ hasError: false })}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-foreground hover:bg-white/10 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )
+      );
+    }
+    return this.props.children;
+  }
 }
 
 interface PostCardProps {
@@ -4404,6 +4445,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
                       >
                         {hasProfessionalChartData ? (
+                          <ChartErrorBoundary key={`chart-eb-${chartInterval}`}>
                           <ResponsiveContainer width="100%" height="100%">
                             <ComposedChart
                               data={professionalChartData}
@@ -4576,13 +4618,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 stroke={professionalChartStroke}
                                 fill="rgba(255,255,255,0.04)"
                                 travellerWidth={8}
-                                startIndex={chartWindowBounds.startIndex}
-                                endIndex={chartWindowBounds.endIndex}
+                                startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
+                                endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
                                 onChange={handleChartBrushChange}
                                 tickFormatter={formatChartXAxisTick}
                               />
                             </ComposedChart>
                           </ResponsiveContainer>
+                          </ChartErrorBoundary>
                         ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
                           <div className="flex h-full items-center justify-center">
                             <div className="flex items-center gap-2 text-xs text-muted-foreground">

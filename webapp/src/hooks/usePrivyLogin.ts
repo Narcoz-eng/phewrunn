@@ -4,11 +4,11 @@ import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 45_000;
-const AUTO_RESYNC_COOLDOWN_MS = 12_000;
+const AUTO_RESYNC_COOLDOWN_MS = 4_000;
 const AUTO_RESYNC_MAX_ATTEMPTS = 3;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 60_000;
-const IDENTITY_TOKEN_ATTEMPTS = 5;
-const IDENTITY_TOKEN_RETRY_DELAYS_MS = [120, 180, 260, 360] as const;
+const IDENTITY_TOKEN_ATTEMPTS = 4;
+const IDENTITY_TOKEN_RETRY_DELAYS_MS = [60, 100, 160] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
   /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
 const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
@@ -98,9 +98,8 @@ export function usePrivyLogin() {
         name || undefined,
         privyIdToken ?? undefined
       );
-      await refetch();
-      // Session cookies can propagate a moment after sync on some deployments.
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 260));
+      // syncPrivySession already caches the user and stores the token,
+      // so the first refetch resolves from cache instantly.
       await refetch();
       autoResyncAttemptsRef.current = 0;
     } catch (err) {
