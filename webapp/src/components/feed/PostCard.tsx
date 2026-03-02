@@ -22,6 +22,7 @@ import { Connection, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import {
   Dialog,
   DialogContent,
@@ -78,6 +79,12 @@ import {
   ChevronRight,
   Minus,
   Plus,
+  X,
+  Wallet,
+  ArrowUpDown,
+  Copy,
+  Activity,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -4181,903 +4188,760 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       </Dialog>
 
       <Dialog open={isBuyDialogOpen} onOpenChange={(open) => {
-        // Ignore close events fired by dialog internals; close is handled explicitly.
         if (open) {
           setIsBuyDialogOpen(true);
         }
       }}>
         <DialogContent
-          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)] [&>button]:hidden"
+          className="flex w-[calc(100vw-1rem)] max-w-[1280px] max-h-[96vh] flex-col overflow-hidden border-[#1e2030] bg-[#0b0e14] p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.98)] [&>button]:hidden rounded-xl"
           onInteractOutside={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
         >
-          <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
-            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-              <Zap className="h-4 w-4 text-primary" />
-              {isWalletConnectedForTrade ? "Trade" : "Connect Wallet"} - {displayTokenLabel}
-            </DialogTitle>
-            <DialogDescription className="text-xs sm:text-sm">
-              {isSolanaTradeSupported
-                ? "Live chart and execution in one workspace."
-                : "Trading is available here for Solana posts. This post is on another chain."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-[radial-gradient(circle_at_15%_0%,rgba(163,230,53,0.06),transparent_35%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.06),transparent_35%)]">
-            <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/[0.05] via-white/[0.03] to-transparent p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
-              <div className="flex items-start gap-3">
-                <div className="h-14 w-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0 shadow-inner shadow-black/40">
+          {/* ───────── TOP BAR: Token Info + Stats ───────── */}
+          <div className="relative z-20 shrink-0 border-b border-[#1e2030] bg-[#0d1017]">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/5">
                   {resolvedTokenImage ? (
                     <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" />
                   ) : (
-                    <Coins className="h-5 w-5 text-muted-foreground" />
+                    <div className="flex h-full w-full items-center justify-center text-xs font-bold text-white/60">
+                      {displayTokenLabel.slice(0, 2).toUpperCase()}
+                    </div>
                   )}
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className="truncate text-base font-semibold text-foreground">
-                      {displayTokenLabel}
-                    </div>
-                    {post.chainType && (
-                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                        {post.chainType}
-                      </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-white truncate">{displayTokenLabel}</span>
+                    {resolvedTokenSymbol && resolvedTokenName && resolvedTokenSymbol !== resolvedTokenName && (
+                      <span className="text-[11px] text-white/40 truncate">{resolvedTokenName}</span>
                     )}
-                    <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", jupiterStatusTone)}>
-                      {jupiterStatusLabel}
+                    <span className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                      jupiterQuote ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border border-white/10 bg-white/5 text-white/50"
+                    )}>
+                      {jupiterQuote ? "Route Ready" : jupiterNoRouteDetected ? "No Route" : "SOL"}
                     </span>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground truncate">
-                    {displayTokenSubtitle}
+                  <div className="flex items-center gap-3 mt-0.5">
+                    {resolvedPriceUsd !== null && (
+                      <span className="text-lg font-bold text-white tabular-nums">{formatUsdCompact(resolvedPriceUsd)}</span>
+                    )}
+                    {currentTradeDeltaPct !== null && (
+                      <span className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        currentTradeDeltaPct >= 0 ? "text-emerald-400" : "text-red-400"
+                      )}>
+                        {currentTradeDeltaPct >= 0 ? "+" : ""}{currentTradeDeltaPct.toFixed(2)}%
+                      </span>
+                    )}
                   </div>
-                  {post.contractAddress && (
-                    <div className="mt-2 inline-flex max-w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] font-mono text-muted-foreground break-all">
-                      {post.contractAddress}
-                    </div>
-                  )}
-                  {isBuyDialogOpen && dexTokenDataQuery.isFetching ? (
-                    <div className="mt-2 text-[11px] text-muted-foreground">
-                      Refreshing token data...
-                    </div>
-                  ) : null}
                 </div>
               </div>
-            </div>
 
+              {/* Stats row */}
+              <div className="hidden sm:flex items-center gap-4 text-[11px]">
+                <div className="text-center">
+                  <div className="text-white/40 uppercase tracking-wider">Entry MCap</div>
+                  <div className="text-white/90 font-semibold tabular-nums">{formatMarketCap(post.entryMcap)}</div>
+                </div>
+                {resolvedMarketCap !== null && (
+                  <div className="text-center">
+                    <div className="text-white/40 uppercase tracking-wider">Cur MCap</div>
+                    <div className="text-white/90 font-semibold tabular-nums">{formatMarketCap(resolvedMarketCap)}</div>
+                  </div>
+                )}
+                {dexTokenDataQuery.data?.liquidityUsd != null && (
+                  <div className="text-center">
+                    <div className="text-white/40 uppercase tracking-wider">Liq</div>
+                    <div className="text-white/90 font-semibold tabular-nums">{formatUsdCompact(dexTokenDataQuery.data.liquidityUsd)}</div>
+                  </div>
+                )}
+                {dexTokenDataQuery.data?.volume24hUsd != null && (
+                  <div className="text-center">
+                    <div className="text-white/40 uppercase tracking-wider">24h Vol</div>
+                    <div className="text-white/90 font-semibold tabular-nums">{formatUsdCompact(dexTokenDataQuery.data.volume24hUsd)}</div>
+                  </div>
+                )}
+                <div className="text-center">
+                  <div className="text-white/40 uppercase tracking-wider">Status</div>
+                  <div className={cn(
+                    "font-semibold",
+                    localSettled ? (localIsWin ? "text-emerald-400" : "text-red-400") : "text-amber-400"
+                  )}>
+                    {localSettled ? (localIsWin ? "Won" : "Lost") : "Live"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Close button */}
+              <button
+                type="button"
+                onClick={handleCloseBuyDialog}
+                className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <DialogHeader className="sr-only">
+            <DialogTitle>Trade {displayTokenLabel}</DialogTitle>
+            <DialogDescription>Trade panel for {displayTokenLabel}</DialogDescription>
+          </DialogHeader>
+
+          {/* ───────── MAIN CONTENT: Chart + Order Panel ───────── */}
+          <div className="min-h-0 flex-1 overflow-y-auto bg-[#0b0e14]">
             {!isSolanaTradeSupported ? (
-              <div className="rounded-xl border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
-                This buy flow is available for Solana posts only. You can still use the chart for this token.
+              <div className="flex items-center justify-center h-64 p-8 text-center">
+                <div className="space-y-3">
+                  <BarChart3 className="mx-auto h-10 w-10 text-white/20" />
+                  <p className="text-sm text-white/50">Trading is available for Solana tokens only.</p>
+                  <p className="text-xs text-white/30">This token is on a different chain.</p>
+                </div>
               </div>
             ) : (
-              <>
-                <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] lg:items-start">
-                  <div className="space-y-4 lg:min-h-0 lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
-                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
-                      <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
-                      <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
-                      <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
-                          <div className="text-sm font-semibold text-foreground">Candlestick Chart</div>
-                        </div>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
-                            {jupiterStatusLabel}
-                          </span>
-                          {DEX_CHART_INTERVAL_OPTIONS.map((preset) => (
-                            <button
-                              key={preset.value}
-                              type="button"
-                              onClick={() => setChartInterval(preset.value)}
-                              className={cn(
-                                "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
-                                chartInterval === preset.value
-                                  ? "border-primary/40 bg-primary/15 text-foreground"
-                                  : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                              )}
-                            >
-                              {preset.label}
-                            </button>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => setIsChartInfoVisible((prev) => !prev)}
-                            className={cn(
-                              "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
-                              isChartInfoVisible
-                                ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
-                                : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                            )}
-                          >
-                            Volume
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsChartTradesVisible((prev) => !prev)}
-                            className={cn(
-                              "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
-                              isChartTradesVisible
-                                ? "border-lime-300/30 bg-lime-300/10 text-lime-100"
-                                : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                            )}
-                          >
-                            Candles
-                          </button>
-                        </div>
-                      </div>
-                      <div className="relative px-4 pt-4">
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Entry MCap</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">{formatMarketCap(post.entryMcap)}</div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Current</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {resolvedMarketCap != null ? formatMarketCap(resolvedMarketCap) : "Waiting..."}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Price</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {resolvedPriceUsd != null ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}` : "-"}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Change</div>
-                            <div className={cn("mt-1 text-sm font-semibold", currentTradeDeltaPct == null ? "text-foreground" : currentTradeDeltaPct >= 0 ? "text-gain" : "text-loss")}>
-                              {currentTradeDeltaPct == null ? "-" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Status</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {!localSettled ? "Live" : localIsWin ? "Won" : "Lost"}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+              <div className="grid lg:grid-cols-[1fr_360px] min-h-0">
 
-                      <div className="relative px-4 pt-3">
-                        <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                                Visible Range
-                              </div>
-                              <div className="text-xs font-medium text-foreground">{chartVisibleRangeLabel}</div>
-                              {chartRangeDetailLabel ? (
-                                <div className="truncate text-[11px] text-muted-foreground">
-                                  {chartRangeDetailLabel}
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2)}
-                                disabled={!hasProfessionalChartData || !canPanChartLeft}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
-                              >
-                                <ChevronLeft className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => panChartWindowBy(CHART_PAN_STEP_POINTS * 2)}
-                                disabled={!hasProfessionalChartData || !canPanChartRight}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
-                              >
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => zoomChartWindow("in")}
-                                disabled={!hasProfessionalChartData || !canZoomInChart}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => zoomChartWindow("out")}
-                                disabled={!hasProfessionalChartData || !canZoomOutChart}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
-                              >
-                                <Minus className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={resetChartWindow}
-                                disabled={!hasProfessionalChartData}
-                                className="h-7 border-white/10 bg-black/25 px-2 text-[11px] text-muted-foreground hover:bg-white/10 hover:text-foreground disabled:opacity-40"
-                              >
-                                Reset
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={centerChartOnEntry}
-                                disabled={!hasProfessionalChartData || chartEntryIndex < 0}
-                                className={cn(
-                                  "h-7 border-white/10 bg-black/25 px-2 text-[11px] hover:bg-white/10 disabled:opacity-40",
-                                  isEntryInCurrentView ? "text-cyan-100 border-cyan-300/30 bg-cyan-300/10" : "text-muted-foreground"
-                                )}
-                              >
-                                {isEntryInCurrentView ? "Entry in view" : "Go to Entry"}
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="mt-1 text-[11px] text-foreground/80">
-                            Wheel to zoom, drag left/right to pan, Shift+wheel to move the window.
-                          </div>
-                        </div>
-                      </div>
-
-                      <div
-                        className={cn(
-                          "relative h-[300px] sm:h-[380px] lg:h-[500px] xl:h-[560px] rounded-xl border border-white/10 bg-[#070c14]/85 px-2 sm:px-3 pb-3 pt-3 overscroll-contain",
-                          hasProfessionalChartData
-                            ? isChartMousePanning
-                              ? "cursor-grabbing"
-                              : "cursor-grab"
-                            : "cursor-default"
-                        )}
-                        onWheel={handleChartWheel}
-                        onTouchStart={handleChartTouchStart}
-                        onTouchMove={handleChartTouchMove}
-                        onTouchEnd={handleChartTouchEnd}
-                        onTouchCancel={handleChartTouchEnd}
-                        onMouseDown={handleChartMouseDown}
-                        onMouseMove={handleChartMouseMove}
-                        onMouseUp={handleChartMouseUp}
-                        onMouseLeave={handleChartMouseUp}
-                        style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
-                      >
-                        {hasProfessionalChartData ? (
-                          <ChartErrorBoundary key={`chart-eb-${chartInterval}`}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart
-                              data={professionalChartData}
-                              margin={{ top: 8, right: 10, left: 4, bottom: 8 }}
-                              onMouseMove={(state: { activeTooltipIndex?: number }) => {
-                                if (typeof state?.activeTooltipIndex === "number") {
-                                  setChartActiveIndex(state.activeTooltipIndex);
-                                } else {
-                                  setChartActiveIndex(null);
-                                }
-                              }}
-                              onMouseLeave={() => setChartActiveIndex(null)}
-                            >
-                              <defs>
-                                <linearGradient id={`buyChartVolumeFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
-                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.22} />
-                                  <stop offset="100%" stopColor={professionalChartStroke} stopOpacity={0.03} />
-                                </linearGradient>
-                                <linearGradient id={`buyChartWick-${post.id}`} x1="0" x2="0" y1="0" y2="1">
-                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.72} />
-                                  <stop offset="100%" stopColor={professionalChartFill} stopOpacity={0.3} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                              <XAxis
-                                dataKey="ts"
-                                axisLine={false}
-                                tickLine={false}
-                                minTickGap={28}
-                                tickMargin={8}
-                                tickFormatter={formatChartXAxisTick}
-                                tick={{ fill: "rgba(255,255,255,0.80)", fontSize: 11 }}
-                              />
-                              <YAxis
-                                yAxisId="price"
-                                axisLine={false}
-                                tickLine={false}
-                                width={78}
-                                tick={{ fill: "rgba(255,255,255,0.78)", fontSize: 10 }}
-                                tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
-                              />
-                              {isChartInfoVisible ? (
-                                <YAxis
-                                  yAxisId="volume"
-                                  orientation="right"
-                                  axisLine={false}
-                                  tickLine={false}
-                                  width={56}
-                                  tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }}
-                                  tickFormatter={(v: number) =>
-                                    Number(v) >= 1_000_000
-                                      ? `${(Number(v) / 1_000_000).toFixed(1)}M`
-                                      : Number(v) >= 1_000
-                                        ? `${(Number(v) / 1_000).toFixed(1)}K`
-                                        : `${Math.round(Number(v))}`
-                                  }
-                                />
-                              ) : null}
-                              {chartEntryPrice !== null ? (
-                                <ReferenceLine
-                                  yAxisId="price"
-                                  y={chartEntryPrice}
-                                  stroke="rgba(96,165,250,0.65)"
-                                  strokeDasharray="4 4"
-                                  ifOverflow="extendDomain"
-                                  label={{
-                                    value: "Entry",
-                                    position: "insideTopLeft",
-                                    fill: "rgba(147,197,253,0.9)",
-                                    fontSize: 10,
-                                  }}
-                                />
-                              ) : null}
-                              {chartEntryCandle ? (
-                                <ReferenceLine
-                                  x={chartEntryCandle.ts}
-                                  stroke="rgba(96,165,250,0.45)"
-                                  strokeDasharray="3 3"
-                                  ifOverflow="discard"
-                                />
-                              ) : null}
-                              {chartEntryCandle ? (
-                                <ReferenceDot
-                                  x={chartEntryCandle.ts}
-                                  y={chartEntryCandle.close}
-                                  yAxisId="price"
-                                  r={4.5}
-                                  fill="#60a5fa"
-                                  stroke="rgba(8,10,15,0.92)"
-                                  strokeWidth={1.8}
-                                  ifOverflow="visible"
-                                />
-                              ) : null}
-                              <RechartsTooltip
-                                cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
-                                content={({ active, payload }) => {
-                                  if (!active || !payload?.length) return null;
-                                  const point = payload[0]?.payload as
-                                    | {
-                                        fullLabel?: string;
-                                        open?: number;
-                                        high?: number;
-                                        low?: number;
-                                        close?: number;
-                                        volume?: number;
-                                      }
-                                    | undefined;
-                                  if (!point) return null;
-                                  return (
-                                    <div className="rounded-xl border border-white/15 bg-[rgba(10,12,16,0.94)] p-3 text-xs text-white shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
-                                      <div className="mb-2 text-[11px] text-white/70">{point.fullLabel ?? ""}</div>
-                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                                        <span className="text-white/65">Open</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.open ?? 0))}</span>
-                                        <span className="text-white/65">High</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.high ?? 0))}</span>
-                                        <span className="text-white/65">Low</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.low ?? 0))}</span>
-                                        <span className="text-white/65">Close</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.close ?? 0))}</span>
-                                        {isChartInfoVisible ? (
-                                          <>
-                                            <span className="text-white/65">Volume</span>
-                                            <span className="text-right font-semibold">
-                                              {Number(point.volume ?? 0).toLocaleString()}
-                                            </span>
-                                          </>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  );
-                                }}
-                              />
-                              {isChartInfoVisible ? (
-                                <Bar
-                                  yAxisId="volume"
-                                  dataKey="volume"
-                                  barSize={3}
-                                  fill={`url(#buyChartVolumeFill-${post.id})`}
-                                  opacity={0.9}
-                                />
-                              ) : null}
-                              <Bar
-                                yAxisId="price"
-                                dataKey="wickRange"
-                                barSize={2}
-                                fill={`url(#buyChartWick-${post.id})`}
-                                opacity={isChartTradesVisible ? 0.95 : 0.65}
-                                tooltipType="none"
-                              />
-                              <Bar
-                                yAxisId="price"
-                                dataKey="bodyRange"
-                                barSize={6}
-                                radius={[1, 1, 1, 1]}
-                                tooltipType="none"
-                                isAnimationActive={false}
-                              >
-                                {professionalChartData.map((point) => (
-                                  <Cell
-                                    key={`candle-${post.id}-${point.ts}`}
-                                    fill={point.isBullish ? "#74f37a" : "#ff6b6b"}
-                                    fillOpacity={isChartTradesVisible ? 0.95 : 0.6}
-                                  />
-                                ))}
-                              </Bar>
-                              <Brush
-                                dataKey="ts"
-                                height={20}
-                                stroke={professionalChartStroke}
-                                fill="rgba(255,255,255,0.04)"
-                                travellerWidth={8}
-                                startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
-                                endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
-                                onChange={handleChartBrushChange}
-                                tickFormatter={formatChartXAxisTick}
-                              />
-                            </ComposedChart>
-                          </ResponsiveContainer>
-                          </ChartErrorBoundary>
-                        ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
-                          <div className="flex h-full items-center justify-center">
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading chart...
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex h-full items-center justify-center p-6 text-center">
-                            <div className="space-y-3">
-                              <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-                              <p className="text-sm text-muted-foreground">
-                                Candle data is not available yet for this token.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="relative border-t border-white/10 px-4 py-3 text-[11px] text-muted-foreground">
-                        {hasProfessionalChartData ? (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            <span>
-                              Chart feed: {chartFeedLabel} ({chartRequestConfig.timeframe}/{chartRequestConfig.aggregate})
-                            </span>
-                            <span>
-                              Updated: {professionalChartLast ? new Date(professionalChartLast.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "-"}
-                            </span>
-                          </div>
-                        ) : resolvedLiquidityUsd != null ||
-                          resolvedVolume24hUsd != null ||
-                          resolvedPriceChange24hPct != null ||
-                          resolvedBuys24h != null ||
-                          resolvedSells24h != null ||
-                          resolvedDexId ? (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            <span>Liquidity: {resolvedLiquidityUsd != null ? `$${resolvedLiquidityUsd.toLocaleString()}` : "-"}</span>
-                            <span>24h Vol: {resolvedVolume24hUsd != null ? `$${resolvedVolume24hUsd.toLocaleString()}` : "-"}</span>
-                            <span>
-                              24h Change: {resolvedPriceChange24hPct != null ? `${resolvedPriceChange24hPct >= 0 ? "+" : ""}${resolvedPriceChange24hPct.toFixed(2)}%` : "-"}
-                            </span>
-                            <span>
-                              24h Txns: {resolvedBuys24h != null ? resolvedBuys24h.toLocaleString() : "-"} / {resolvedSells24h != null ? resolvedSells24h.toLocaleString() : "-"}
-                            </span>
-                            <span>DEX: {resolvedDexId ?? "-"}</span>
-                          </div>
-                        ) : chartCandlesQuery.error ? (
-                          "Chart feed unavailable right now. Showing fallback market-cap view."
-                        ) : (
-                          "Chart and token data are sourced live from Dexscreener."
-                        )}
-                      </div>
+                {/* ═══════ LEFT: Chart Area ═══════ */}
+                <div className="border-b lg:border-b-0 lg:border-r border-[#1e2030] flex flex-col min-h-0">
+                  {/* Chart header */}
+                  <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-[#1e2030]">
+                    <div className="flex items-center gap-1">
+                      {DEX_CHART_INTERVAL_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => { setChartInterval(option.value); setChartWindow(null); }}
+                          className={cn(
+                            "h-7 px-2.5 rounded text-[11px] font-medium transition-colors",
+                            chartInterval === option.value
+                              ? "bg-primary/20 text-primary border border-primary/30"
+                              : "text-white/50 hover:text-white/80 hover:bg-white/5"
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
-
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsChartInfoVisible((prev) => !prev)}
+                        className={cn(
+                          "h-7 px-2 rounded text-[10px] font-medium transition-colors",
+                          isChartInfoVisible ? "bg-white/10 text-white/80" : "text-white/30 hover:text-white/50"
+                        )}
+                      >
+                        VOL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsChartTradesVisible((prev) => !prev)}
+                        className={cn(
+                          "h-7 px-2 rounded text-[10px] font-medium transition-colors",
+                          isChartTradesVisible ? "bg-white/10 text-white/80" : "text-white/30 hover:text-white/50"
+                        )}
+                      >
+                        OHLC
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
-                    <div className="order-1 rounded-xl border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-center justify-between gap-3 mb-3">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Order Ticket</div>
-                          <div className="text-sm font-medium text-foreground">Buy and sell instantly</div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setTradeSide("buy")}
-                          className={cn(
-                            "h-10 rounded-xl border text-sm font-semibold transition-colors",
-                            tradeSide === "buy"
-                              ? "border-lime-300/35 bg-lime-300/10 text-lime-100"
-                              : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/5"
-                          )}
-                        >
-                          Buy
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTradeSide("sell")}
-                          className={cn(
-                            "h-10 rounded-xl border text-sm font-semibold transition-colors",
-                            tradeSide === "sell"
-                              ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100"
-                              : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/5"
-                          )}
-                        >
-                          Sell
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="order-4 rounded-xl border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
-                        {walletShortAddress ? (
-                          <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[11px] font-medium text-foreground">
-                            {walletShortAddress}
-                          </span>
-                        ) : (
-                          <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2 py-1 text-[11px] font-medium text-cyan-100">
-                            Not connected
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            if (!walletShortAddress) {
-                              setPendingBuyAfterWalletConnect(true);
+                  {/* Chart area */}
+                  <div
+                    className="relative flex-1 min-h-[280px] sm:min-h-[360px] lg:min-h-[420px]"
+                    onWheel={(e) => {
+                      if (!hasProfessionalChartData) return;
+                      e.stopPropagation();
+                      const delta = Math.sign(e.deltaY);
+                      if (delta > 0) {
+                        setChartWindow((prev) => {
+                          const { startIndex, endIndex } = prev ?? chartWindowBounds;
+                          const newEnd = Math.min(chartTotalPoints - 1, endIndex + CHART_ZOOM_STEP_POINTS);
+                          const newStart = Math.max(0, startIndex - CHART_ZOOM_STEP_POINTS);
+                          if (newEnd - newStart + 1 > CHART_MAX_VISIBLE_POINTS) return prev;
+                          return { startIndex: newStart, endIndex: newEnd };
+                        });
+                      } else {
+                        setChartWindow((prev) => {
+                          const { startIndex, endIndex } = prev ?? chartWindowBounds;
+                          const visible = endIndex - startIndex + 1;
+                          if (visible <= CHART_MIN_VISIBLE_POINTS) return prev;
+                          const shrink = Math.min(CHART_ZOOM_STEP_POINTS, Math.floor((visible - CHART_MIN_VISIBLE_POINTS) / 2));
+                          return { startIndex: startIndex + shrink, endIndex: endIndex - shrink };
+                        });
+                      }
+                    }}
+                    onTouchStart={(e) => {
+                      if (e.touches.length === 1) {
+                        chartTouchGestureRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, mode: null };
+                      }
+                    }}
+                    onTouchMove={(e) => {
+                      const ref = chartTouchGestureRef.current;
+                      if (!ref || e.touches.length !== 1 || !hasProfessionalChartData) return;
+                      const dx = e.touches[0].clientX - ref.x;
+                      const dy = e.touches[0].clientY - ref.y;
+                      if (!ref.mode) {
+                        if (Math.abs(dy) > Math.abs(dx) + 4) { ref.mode = "scroll"; return; }
+                        if (Math.abs(dx) > 6) { ref.mode = "pan"; }
+                        else return;
+                      }
+                      if (ref.mode === "scroll") return;
+                      e.preventDefault();
+                      const step = Math.round(dx / 10) * CHART_PAN_STEP_POINTS;
+                      if (step === 0) return;
+                      ref.x = e.touches[0].clientX;
+                      setChartWindow((prev) => {
+                        const { startIndex, endIndex } = prev ?? chartWindowBounds;
+                        const visible = endIndex - startIndex;
+                        let ns = startIndex - step;
+                        let ne = endIndex - step;
+                        if (ns < 0) { ns = 0; ne = visible; }
+                        if (ne >= chartTotalPoints) { ne = chartTotalPoints - 1; ns = ne - visible; }
+                        return { startIndex: Math.max(0, ns), endIndex: Math.min(chartTotalPoints - 1, ne) };
+                      });
+                    }}
+                    onTouchEnd={() => { chartTouchGestureRef.current = null; }}
+                    onMouseDown={(e) => {
+                      if (e.button !== 0 || !hasProfessionalChartData) return;
+                      chartMouseGestureRef.current = { x: e.clientX, y: e.clientY, mode: null };
+                      setIsChartMousePanning(true);
+                    }}
+                    onMouseMove={(e) => {
+                      const ref = chartMouseGestureRef.current;
+                      if (!ref || !isChartMousePanning) return;
+                      const dx = e.clientX - ref.x;
+                      if (!ref.mode && Math.abs(dx) > 4) ref.mode = "pan";
+                      if (ref.mode !== "pan") return;
+                      const step = Math.round(dx / 8) * CHART_PAN_STEP_POINTS;
+                      if (step === 0) return;
+                      ref.x = e.clientX;
+                      setChartWindow((prev) => {
+                        const { startIndex, endIndex } = prev ?? chartWindowBounds;
+                        const visible = endIndex - startIndex;
+                        let ns = startIndex - step;
+                        let ne = endIndex - step;
+                        if (ns < 0) { ns = 0; ne = visible; }
+                        if (ne >= chartTotalPoints) { ne = chartTotalPoints - 1; ns = ne - visible; }
+                        return { startIndex: Math.max(0, ns), endIndex: Math.min(chartTotalPoints - 1, ne) };
+                      });
+                    }}
+                    onMouseUp={() => { chartMouseGestureRef.current = null; setIsChartMousePanning(false); }}
+                    onMouseLeave={() => { chartMouseGestureRef.current = null; setIsChartMousePanning(false); }}
+                    style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
+                  >
+                    {hasProfessionalChartData ? (
+                      <ChartErrorBoundary key={`chart-eb-${chartInterval}`}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart
+                          data={professionalChartData}
+                          margin={{ top: 8, right: 10, left: 4, bottom: 8 }}
+                          onMouseMove={(state: { activeTooltipIndex?: number }) => {
+                            if (typeof state?.activeTooltipIndex === "number") {
+                              setChartActiveIndex(state.activeTooltipIndex);
+                            } else {
+                              setChartActiveIndex(null);
                             }
-                            openWalletSelector();
                           }}
-                          className={cn(
-                            "h-11 w-full gap-2 text-sm font-semibold",
-                            walletShortAddress
-                              ? "border-white/10 bg-white/5 text-foreground hover:bg-white/10"
-                              : connectWalletTone
-                          )}
-                          variant={walletShortAddress ? "outline" : "default"}
+                          onMouseLeave={() => setChartActiveIndex(null)}
                         >
-                          {walletShortAddress ? <UserCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-                          {walletShortAddress ? "Switch Wallet" : "Connect Wallet"}
-                        </Button>
-                        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground flex items-center">
-                          {walletShortAddress ? `${walletDisplayName} connected` : "Connect a Solana wallet to enable swap execution"}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="order-2 rounded-xl border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-                          {tradeSide === "buy" ? "Buy Amount" : "Sell Amount"}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em]",
-                              tradeSide === "buy"
-                                ? "border-lime-300/25 bg-lime-300/10 text-lime-100"
-                                : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
-                            )}
-                          >
-                            {tradeSide}
-                          </span>
-                          <div className="text-[11px] text-muted-foreground">
-                            {jupiterQuoteQuery.isFetching ? "Refreshing quote..." : "Live quote"}
-                          </div>
-                        </div>
-                      </div>
-
-                      {tradeSide === "buy" ? (
-                        <>
-                          <div className="relative">
-                            <Input
-                              value={buyAmountSol}
-                              onChange={(e) => setBuyAmountSol(e.target.value)}
-                              inputMode="decimal"
-                              placeholder="0.10"
-                              className="h-12 pr-12 text-lg font-semibold bg-black/20 border-white/10"
+                          <defs>
+                            <linearGradient id={`buyChartVolumeFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+                              <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.22} />
+                              <stop offset="100%" stopColor={professionalChartStroke} stopOpacity={0.03} />
+                            </linearGradient>
+                            <linearGradient id={`buyChartWick-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+                              <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.72} />
+                              <stop offset="100%" stopColor={professionalChartFill} stopOpacity={0.3} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid stroke="rgba(255,255,255,0.04)" vertical={false} />
+                          <XAxis
+                            dataKey="ts"
+                            axisLine={false}
+                            tickLine={false}
+                            minTickGap={32}
+                            tickMargin={8}
+                            tickFormatter={formatChartXAxisTick}
+                            tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }}
+                          />
+                          <YAxis
+                            yAxisId="price"
+                            axisLine={false}
+                            tickLine={false}
+                            width={72}
+                            tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }}
+                            tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
+                          />
+                          {isChartInfoVisible ? (
+                            <YAxis
+                              yAxisId="volume"
+                              orientation="right"
+                              axisLine={false}
+                              tickLine={false}
+                              width={50}
+                              tick={{ fill: "rgba(255,255,255,0.25)", fontSize: 10 }}
+                              tickFormatter={(v: number) =>
+                                Number(v) >= 1_000_000
+                                  ? `${(Number(v) / 1_000_000).toFixed(1)}M`
+                                  : Number(v) >= 1_000
+                                    ? `${(Number(v) / 1_000).toFixed(1)}K`
+                                    : `${Math.round(Number(v))}`
+                              }
                             />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">SOL</span>
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {buyQuickAmounts.map((amount) => (
-                              <button
-                                key={amount}
-                                type="button"
-                                onClick={() => setBuyAmountSol(amount)}
-                                className={cn(
-                                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                                  buyAmountSol === amount
-                                    ? "border-primary/40 bg-primary/10 text-foreground"
-                                    : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                                )}
-                              >
-                                {amount} SOL
-                              </button>
+                          ) : null}
+                          {chartEntryPrice !== null ? (
+                            <ReferenceLine
+                              yAxisId="price"
+                              y={chartEntryPrice}
+                              stroke="rgba(96,165,250,0.55)"
+                              strokeDasharray="4 4"
+                              ifOverflow="extendDomain"
+                              label={{
+                                value: "Entry",
+                                position: "insideTopLeft",
+                                fill: "rgba(147,197,253,0.8)",
+                                fontSize: 10,
+                              }}
+                            />
+                          ) : null}
+                          {chartEntryCandle ? (
+                            <ReferenceLine
+                              x={chartEntryCandle.ts}
+                              stroke="rgba(96,165,250,0.35)"
+                              strokeDasharray="3 3"
+                              ifOverflow="discard"
+                            />
+                          ) : null}
+                          {chartEntryCandle ? (
+                            <ReferenceDot
+                              x={chartEntryCandle.ts}
+                              y={chartEntryCandle.close}
+                              yAxisId="price"
+                              r={4}
+                              fill="#60a5fa"
+                              stroke="rgba(8,10,15,0.9)"
+                              strokeWidth={1.5}
+                              ifOverflow="visible"
+                            />
+                          ) : null}
+                          <RechartsTooltip
+                            cursor={{ stroke: "rgba(255,255,255,0.06)", strokeDasharray: "4 4" }}
+                            content={({ active, payload }) => {
+                              if (!active || !payload?.length) return null;
+                              const point = payload[0]?.payload as
+                                | { fullLabel?: string; open?: number; high?: number; low?: number; close?: number; volume?: number }
+                                | undefined;
+                              if (!point) return null;
+                              return (
+                                <div className="rounded-lg border border-[#1e2030] bg-[#0d1017]/95 p-2.5 text-[11px] text-white shadow-xl backdrop-blur-sm">
+                                  <div className="mb-1.5 text-[10px] text-white/50">{point.fullLabel ?? ""}</div>
+                                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                    <span className="text-white/40">O</span>
+                                    <span className="text-right font-medium tabular-nums">{formatUsdCompact(Number(point.open ?? 0))}</span>
+                                    <span className="text-white/40">H</span>
+                                    <span className="text-right font-medium tabular-nums">{formatUsdCompact(Number(point.high ?? 0))}</span>
+                                    <span className="text-white/40">L</span>
+                                    <span className="text-right font-medium tabular-nums">{formatUsdCompact(Number(point.low ?? 0))}</span>
+                                    <span className="text-white/40">C</span>
+                                    <span className="text-right font-medium tabular-nums">{formatUsdCompact(Number(point.close ?? 0))}</span>
+                                    {isChartInfoVisible && point.volume ? (
+                                      <>
+                                        <span className="text-white/40">Vol</span>
+                                        <span className="text-right font-medium tabular-nums">{Number(point.volume).toLocaleString()}</span>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                          {isChartInfoVisible ? (
+                            <Bar yAxisId="volume" dataKey="volume" barSize={3} fill={`url(#buyChartVolumeFill-${post.id})`} opacity={0.8} />
+                          ) : null}
+                          <Bar yAxisId="price" dataKey="wickRange" barSize={1.5} fill={`url(#buyChartWick-${post.id})`} opacity={isChartTradesVisible ? 0.9 : 0.6} tooltipType="none" />
+                          <Bar yAxisId="price" dataKey="bodyRange" barSize={5} radius={[1, 1, 1, 1]} tooltipType="none" isAnimationActive={false}>
+                            {professionalChartData.map((point) => (
+                              <Cell
+                                key={`candle-${post.id}-${point.ts}`}
+                                fill={point.isBullish ? "#22c55e" : "#ef4444"}
+                                fillOpacity={isChartTradesVisible ? 0.95 : 0.6}
+                              />
                             ))}
+                          </Bar>
+                          <Brush
+                            dataKey="ts"
+                            height={18}
+                            stroke="rgba(255,255,255,0.08)"
+                            fill="rgba(255,255,255,0.02)"
+                            travellerWidth={8}
+                            startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
+                            endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
+                            onChange={handleChartBrushChange}
+                            tickFormatter={formatChartXAxisTick}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                      </ChartErrorBoundary>
+                    ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
+                      <div className="flex h-full items-center justify-center">
+                        <div className="flex items-center gap-2 text-xs text-white/40">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading chart...
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center p-6 text-center">
+                        <div className="space-y-2">
+                          <BarChart3 className="mx-auto h-8 w-8 text-white/15" />
+                          <p className="text-xs text-white/40">Chart data not available yet.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Chart footer with range controls */}
+                  {hasProfessionalChartData && (
+                    <div className="flex items-center justify-between gap-2 px-4 py-1.5 border-t border-[#1e2030] text-[10px] text-white/30">
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => {
+                          setChartWindow((prev) => {
+                            const { startIndex, endIndex } = prev ?? chartWindowBounds;
+                            const visible = endIndex - startIndex;
+                            const ns = Math.max(0, startIndex - CHART_PAN_STEP_POINTS);
+                            return { startIndex: ns, endIndex: ns + visible };
+                          });
+                        }} className="h-5 w-5 flex items-center justify-center rounded hover:bg-white/5"><ChevronLeft className="h-3 w-3" /></button>
+                        <button type="button" onClick={() => {
+                          setChartWindow((prev) => {
+                            const { startIndex, endIndex } = prev ?? chartWindowBounds;
+                            const visible = endIndex - startIndex;
+                            const ne = Math.min(chartTotalPoints - 1, endIndex + CHART_PAN_STEP_POINTS);
+                            return { startIndex: ne - visible, endIndex: ne };
+                          });
+                        }} className="h-5 w-5 flex items-center justify-center rounded hover:bg-white/5"><ChevronRight className="h-3 w-3" /></button>
+                        <button type="button" onClick={() => setChartWindow(null)} className="h-5 px-1.5 flex items-center justify-center rounded hover:bg-white/5 text-[10px]">Reset</button>
+                      </div>
+                      <span>{chartFeedLabel} ({chartRequestConfig.timeframe}/{chartRequestConfig.aggregate})</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* ═══════ RIGHT: Order Panel ═══════ */}
+                <div className="flex flex-col min-h-0 overflow-y-auto">
+
+                  {/* Wallet section */}
+                  {isWalletConnectedForTrade ? (
+                    <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[#1e2030]">
+                      <div className="flex items-center gap-2 text-xs">
+                        <Wallet className="h-3.5 w-3.5 text-white/40" />
+                        <span className="text-white/60">{walletDisplayName}</span>
+                        <button
+                          type="button"
+                          className="text-white/40 hover:text-white/70 transition-colors"
+                          onClick={() => {
+                            if (wallet.publicKey) {
+                              void navigator.clipboard.writeText(wallet.publicKey.toBase58());
+                              toast.success("Copied wallet address");
+                            }
+                          }}
+                        >
+                          <span className="font-mono text-[11px]">{walletShortAddress}</span>
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { wallet.disconnect(); }}
+                        className="text-[10px] text-white/30 hover:text-red-400 transition-colors"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3 border-b border-[#1e2030]">
+                      <button
+                        type="button"
+                        onClick={() => { setPendingBuyAfterWalletConnect(true); openWalletSelector(); }}
+                        className="w-full h-10 flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 text-sm font-semibold text-emerald-300 hover:from-emerald-500/30 hover:to-cyan-500/30 transition-all"
+                      >
+                        <Wallet className="h-4 w-4" />
+                        Connect Wallet to Trade
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Buy / Sell tabs */}
+                  <div className="flex border-b border-[#1e2030]">
+                    <button
+                      type="button"
+                      onClick={() => setTradeSide("buy")}
+                      className={cn(
+                        "flex-1 py-2.5 text-sm font-semibold transition-colors relative",
+                        tradeSide === "buy"
+                          ? "text-emerald-400"
+                          : "text-white/40 hover:text-white/60"
+                      )}
+                    >
+                      Buy
+                      {tradeSide === "buy" && <div className="absolute bottom-0 inset-x-0 h-0.5 bg-emerald-400" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTradeSide("sell")}
+                      className={cn(
+                        "flex-1 py-2.5 text-sm font-semibold transition-colors relative",
+                        tradeSide === "sell"
+                          ? "text-red-400"
+                          : "text-white/40 hover:text-white/60"
+                      )}
+                    >
+                      Sell
+                      {tradeSide === "sell" && <div className="absolute bottom-0 inset-x-0 h-0.5 bg-red-400" />}
+                    </button>
+                  </div>
+
+                  {/* Amount input section */}
+                  <div className="p-4 space-y-3 border-b border-[#1e2030]">
+                    {tradeSide === "buy" ? (
+                      <>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-white/40">Amount (SOL)</span>
                           </div>
-                        </>
-                      ) : (
-                        <>
                           <div className="relative">
                             <Input
-                              value={sellAmountToken}
-                              onChange={(e) => setSellAmountToken(e.target.value)}
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0.00"
+                              value={buyAmountSol}
+                              onChange={(e) => setBuyAmountSol(e.target.value.replace(/[^0-9.]/g, ""))}
+                              className="h-11 bg-[#0f1219] border-[#1e2030] text-white text-base font-semibold tabular-nums pr-14 focus:border-primary/50 focus:ring-primary/20"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/30 font-medium">SOL</span>
+                          </div>
+                        </div>
+
+                        {/* Quick amount buttons */}
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {buyQuickAmounts.map((amount, i) => (
+                            <button
+                              key={`buy-quick-${i}`}
+                              type="button"
+                              onClick={() => setBuyAmountSol(amount)}
+                              className={cn(
+                                "h-8 rounded-md text-xs font-medium transition-colors",
+                                buyAmountSol === amount
+                                  ? "bg-primary/20 text-primary border border-primary/30"
+                                  : "bg-white/5 text-white/50 border border-transparent hover:bg-white/10 hover:text-white/70"
+                              )}
+                            >
+                              {amount} SOL
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-white/40">Amount ({displayTokenSymbol})</span>
+                            {walletTokenBalance !== null && (
+                              <span className="text-white/30">
+                                Balance: {walletTokenBalanceFormatted} {displayTokenSymbol}
+                              </span>
+                            )}
+                          </div>
+                          <div className="relative">
+                            <Input
+                              type="text"
                               inputMode="decimal"
                               placeholder={`0.00 ${displayTokenSymbol}`}
-                              className="h-12 pr-20 text-lg font-semibold bg-black/20 border-white/10"
+                              value={sellAmountToken}
+                              onChange={(e) => setSellAmountToken(e.target.value.replace(/[^0-9.]/g, ""))}
+                              className="h-11 bg-[#0f1219] border-[#1e2030] text-white text-base font-semibold tabular-nums pr-14 focus:border-red-500/50 focus:ring-red-500/20"
                             />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">
-                              {displayTokenSymbol}
-                            </span>
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/30 font-medium">{displayTokenSymbol}</span>
                           </div>
-                          <div className="mt-3 flex items-center justify-between gap-3 text-xs">
-                            <div className="text-muted-foreground">
-                              {walletShortAddress
-                                ? walletTokenBalanceQuery.isLoading
-                                  ? "Loading token balance..."
-                                  : `Available: ${walletTokenBalanceFormatted} ${displayTokenSymbol}`
-                                : "Connect wallet to load your token balance"}
-                            </div>
-                            {walletShortAddress && walletTokenBalance !== null ? (
+                        </div>
+
+                        {/* Percentage slider */}
+                        <div className="space-y-2">
+                          <Slider
+                            value={[
+                              walletTokenBalance && walletTokenBalance > 0 && parsedSellAmountToken > 0
+                                ? Math.min(100, Math.round((parsedSellAmountToken / walletTokenBalance) * 100))
+                                : 0
+                            ]}
+                            max={100}
+                            step={1}
+                            onValueChange={(val) => {
+                              if (walletTokenBalance && walletTokenBalance > 0) {
+                                setSellAmountFromPercent(val[0]);
+                              }
+                            }}
+                            className="w-full [&_[role=slider]]:h-4 [&_[role=slider]]:w-4 [&_[role=slider]]:border-red-400 [&_span:first-child>span]:bg-red-400"
+                          />
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {sellQuickPercents.map((pct) => (
                               <button
+                                key={`sell-pct-${pct}`}
                                 type="button"
-                                onClick={() =>
-                                  setSellAmountToken(
-                                    formatDecimalInputValue(walletTokenBalance, Math.max(2, outputTokenDecimals))
-                                  )
-                                }
-                                className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-medium text-foreground hover:bg-white/5 transition-colors"
+                                onClick={() => setSellAmountFromPercent(pct)}
+                                className="h-7 rounded-md text-[11px] font-medium bg-white/5 text-white/50 border border-transparent hover:bg-white/10 hover:text-white/70 transition-colors"
                               >
-                                Max
-                              </button>
-                            ) : null}
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {sellQuickPercents.map((percent) => (
-                              <button
-                                key={percent}
-                                type="button"
-                                onClick={() => setSellAmountFromPercent(percent)}
-                                disabled={!walletShortAddress || walletTokenBalance === null || walletTokenBalance <= 0}
-                                className={cn(
-                                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-                                  "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                                )}
-                              >
-                                Sell {percent}%
+                                {pct === 100 ? "MAX" : `${pct}%`}
                               </button>
                             ))}
                           </div>
-                          {sellAmountExceedsBalance ? (
-                            <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100">
-                              Sell amount exceeds your loaded wallet balance.
-                            </div>
-                          ) : null}
-                          {sellHasNoTokens ? (
-                            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-muted-foreground">
-                              No {displayTokenSymbol.toLowerCase()} balance detected in this wallet.
-                            </div>
-                          ) : null}
-                        </>
-                      )}
+                        </div>
 
-                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Trade Preview</div>
-                          <span
-                            className={cn(
-                              "rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]",
-                              tradeSide === "buy"
-                                ? "border-lime-300/25 bg-lime-300/10 text-lime-100"
-                                : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
-                            )}
-                          >
-                            {tradeSide === "buy" ? "Buying" : "Selling"}
-                          </span>
-                        </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
-                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {tradeSide === "buy"
-                                ? `${buyAmountLamports ? (buyAmountLamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "-"} SOL`
-                                : `${sellAmountToken || "-"} ${displayTokenSymbol}`}
-                            </div>
+                        {sellHasNoTokens && (
+                          <div className="rounded-md bg-red-500/10 border border-red-500/20 p-2 text-[11px] text-red-300">
+                            No {displayTokenSymbol.toLowerCase()} balance detected in this wallet.
                           </div>
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
-                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">You Get (Est.)</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterReceiveDisplay}</div>
+                        )}
+                        {sellAmountExceedsBalance && !sellHasNoTokens && (
+                          <div className="rounded-md bg-red-500/10 border border-red-500/20 p-2 text-[11px] text-red-300">
+                            Amount exceeds your balance.
                           </div>
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
-                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Min Receive</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterMinReceiveDisplay}</div>
-                          </div>
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
-                            <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Platform Fee</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">{jupiterPlatformFeeDisplay}</div>
-                          </div>
-                        </div>
-                      </div>
+                        )}
+                      </>
+                    )}
+                  </div>
 
-                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Slippage Settings</div>
-                          <button
-                            type="button"
-                            onClick={() => setShowSlippageSettings((prev) => !prev)}
-                            className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-white/10 transition-colors"
-                          >
-                            {showSlippageSettings ? "Hide" : "Edit"}
-                          </button>
-                        </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Current: {(slippageBps / 100).toFixed(2)}% ({slippageBps} bps). Saved on this device.
-                        </div>
-                        {showSlippageSettings ? (
-                          <div className="mt-3 space-y-3">
-                            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                                  Quick Buy Presets (SOL)
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={resetQuickBuyPresets}
-                                  className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
-                                >
-                                  Reset
-                                </button>
-                              </div>
-                              <div className="mt-2 grid grid-cols-2 gap-2">
-                                {quickBuyPresetsSol.map((preset, index) => (
-                                  <div key={`quick-preset-input-${index}`} className="relative">
-                                    <Input
-                                      value={preset}
-                                      onChange={(e) => updateQuickBuyPreset(index, e.target.value)}
-                                      onBlur={() => commitQuickBuyPreset(index)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") {
-                                          e.preventDefault();
-                                          commitQuickBuyPreset(index);
-                                        }
-                                      }}
-                                      inputMode="decimal"
-                                      className="h-9 border-white/10 bg-black/20 pr-10 text-sm"
-                                    />
-                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
-                                      SOL
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              {SLIPPAGE_PRESETS_BPS.map((bps) => (
-                                <button
-                                  key={bps}
-                                  type="button"
-                                  onClick={() => setSlippageBps(bps)}
-                                  className={cn(
-                                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                                    slippageBps === bps
-                                      ? "border-primary/40 bg-primary/10 text-foreground"
-                                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground hover:bg-white/10"
-                                  )}
-                                >
-                                  {(bps / 100).toFixed(2)}%
-                                </button>
-                              ))}
-                            </div>
-                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                              <div className="relative">
-                                <Input
-                                  value={slippageInputPercent}
-                                  onChange={(e) => setSlippageInputPercent(e.target.value)}
-                                  onBlur={applySlippagePercentInput}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      applySlippagePercentInput();
-                                    }
-                                  }}
-                                  inputMode="decimal"
-                                  placeholder="1.00"
-                                  className="h-10 pr-9 bg-black/20 border-white/10"
-                                />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">%</span>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="h-10 border-white/10 bg-white/5 hover:bg-white/10"
-                                onClick={applySlippagePercentInput}
-                              >
-                                Apply
-                              </Button>
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              Range: 0.01% to 50.00%. Higher slippage improves fill odds but increases execution risk.
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
+                  {/* Trade details */}
+                  <div className="px-4 py-3 space-y-2 border-b border-[#1e2030] text-[11px]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/35">You Pay</span>
+                      <span className="text-white/70 font-medium tabular-nums">
+                        {jupiterInputAmountFormatted} {tradeSide === "buy" ? "SOL" : displayTokenSymbol}
+                      </span>
                     </div>
-
-                    <div className="order-3 rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.95)]">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Execution</div>
-                        <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
-                          {jupiterStatusLabel}
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/35">You Get (Est.)</span>
+                      <span className={cn("font-medium tabular-nums", tradeSide === "buy" ? "text-emerald-400" : "text-white/70")}>
+                        {showQuoteLoading ? (
+                          <Loader2 className="h-3 w-3 animate-spin text-white/30" />
+                        ) : (
+                          <>{jupiterOutputAmountFormatted} {tradeSide === "buy" ? displayTokenSymbol : "SOL"}</>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/35">Min Receive</span>
+                      <span className="text-white/50 tabular-nums">
+                        {jupiterMinReceiveFormatted} {tradeSide === "buy" ? displayTokenSymbol : "SOL"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/35">Slippage</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = slippageBps === 100 ? 200 : slippageBps === 200 ? 500 : 100;
+                          setSlippageBps(next);
+                        }}
+                        className="text-white/50 hover:text-white/80 transition-colors tabular-nums"
+                      >
+                        {(slippageBps / 100).toFixed(2)}%
+                      </button>
+                    </div>
+                    {jupiterQuote?.routePlan?.length ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/35">Route</span>
+                        <span className="text-white/40 truncate max-w-[200px]">
+                          {jupiterQuote.routePlan.map((r: { swapInfo?: { label?: string } }) => r.swapInfo?.label || "?").join(" → ")}
                         </span>
                       </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">You Pay</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">
-                            {jupiterInputAmountFormatted} {tradeInputTokenLabel}
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Price Impact</div>
-                          <div className="mt-1 text-sm font-semibold text-foreground">{jupiterPriceImpactDisplay}</div>
-                        </div>
+                    ) : null}
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/35">Platform Fee</span>
+                      <span className="text-white/40 tabular-nums">{jupiterPlatformFeeDisplay}</span>
+                    </div>
+                    {jupiterPriceImpactPct !== null && Math.abs(jupiterPriceImpactPct) > 0.01 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/35">Price Impact</span>
+                        <span className={cn("font-medium tabular-nums", Math.abs(jupiterPriceImpactPct) > 3 ? "text-red-400" : "text-white/50")}>
+                          {jupiterPriceImpactPct.toFixed(2)}%
+                        </span>
                       </div>
-                      {buyTxSignature ? (
+                    )}
+                  </div>
+
+                  {/* Execute button */}
+                  <div className="p-4 mt-auto">
+                    {buyTxSignature && (
+                      <div className="mb-3 flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-2.5 text-[11px] text-emerald-300">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">Tx: {buyTxSignature.slice(0, 16)}...</span>
                         <a
                           href={`https://solscan.io/tx/${buyTxSignature}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                          className="ml-auto shrink-0 text-emerald-400 hover:text-emerald-300"
                         >
-                          View transaction
                           <ExternalLink className="h-3 w-3" />
                         </a>
-                      ) : null}
-                    </div>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleBuyFooterAction}
+                      disabled={isBuyFooterDisabled}
+                      className={cn(
+                        "w-full h-12 rounded-lg font-semibold text-sm transition-all flex items-center justify-center gap-2",
+                        !isWalletConnectedForTrade
+                          ? "bg-gradient-to-r from-emerald-500 to-cyan-500 text-white hover:from-emerald-400 hover:to-cyan-400 shadow-lg shadow-emerald-500/25"
+                          : tradeSide === "buy"
+                            ? "bg-emerald-500 hover:bg-emerald-400 text-white shadow-lg shadow-emerald-500/25 disabled:opacity-40 disabled:shadow-none"
+                            : "bg-red-500 hover:bg-red-400 text-white shadow-lg shadow-red-500/25 disabled:opacity-40 disabled:shadow-none"
+                      )}
+                    >
+                      {isExecutingBuy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : !isWalletConnectedForTrade ? (
+                        <>
+                          <Wallet className="h-4 w-4" />
+                          Connect Wallet
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4" />
+                          {tradeSide === "buy" ? `Buy ${displayTokenLabel}` : `Sell ${displayTokenLabel}`}
+                        </>
+                      )}
+                    </button>
+
+                    {/* Contract address */}
+                    {post.contractAddress && (
+                      <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] text-white/25">
+                        <span className="font-mono">{post.contractAddress.slice(0, 6)}...{post.contractAddress.slice(-4)}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(post.contractAddress ?? "");
+                            toast.success("Contract address copied");
+                          }}
+                          className="text-white/25 hover:text-white/50 transition-colors"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                        {resolvedDexscreenerUrl && (
+                          <a href={resolvedDexscreenerUrl} target="_blank" rel="noopener noreferrer" className="text-white/25 hover:text-white/50 transition-colors">
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-              </>
+              </div>
             )}
           </div>
-
-          <DialogFooter className="relative z-20 px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
-            <Button type="button" variant="outline" onClick={handleCloseBuyDialog} className="w-full sm:w-auto">
-              Close
-            </Button>
-            <Button
-              type="button"
-              onClick={handleBuyFooterAction}
-              disabled={isBuyFooterDisabled}
-              className={cn(
-                "h-11 w-full sm:w-auto gap-2 text-sm font-semibold",
-                !isWalletConnectedForTrade && connectWalletTone
-              )}
-            >
-              {isExecutingBuy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : isWalletConnectedForTrade ? (
-                <Zap className="h-4 w-4" />
-              ) : (
-                <UserPlus className="h-4 w-4" />
-              )}
-              {isWalletConnectedForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : connectWalletCtaLabel}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
