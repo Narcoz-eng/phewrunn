@@ -97,35 +97,32 @@ const sessionFetchInFlight = new Map<string, Promise<SessionRecord | null>>();
 const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MISS_TTL_MS = 1_500;
 
-function getCookieValue(cookieHeader: string | null | undefined, name: string): string | null {
-  if (!cookieHeader) return null;
+function getCookieValues(cookieHeader: string | null | undefined, name: string): string[] {
+  if (!cookieHeader) return [];
 
-  let resolvedValue: string | null = null;
+  const values: string[] = [];
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rest] = part.trim().split("=");
     if (rawKey !== name) continue;
     const value = rest.join("=");
-    if (!value) {
-      resolvedValue = null;
-      continue;
-    }
+    if (!value) continue;
     try {
-      resolvedValue = decodeURIComponent(value);
+      values.push(decodeURIComponent(value));
     } catch {
-      resolvedValue = value;
+      values.push(value);
     }
   }
-
-  return resolvedValue;
+  return values;
 }
 
-function getSessionTokenFromHeaders(headers: Headers): string | null {
+function getSessionTokensFromHeaders(headers: Headers): string[] {
   const cookieHeader = headers.get("cookie");
-  return (
-    getCookieValue(cookieHeader, "phew.session_token") ??
-    getCookieValue(cookieHeader, "better-auth.session_token") ??
-    getCookieValue(cookieHeader, "auth.session_token")
-  );
+  const tokens = [
+    ...getCookieValues(cookieHeader, "phew.session_token"),
+    ...getCookieValues(cookieHeader, "better-auth.session_token"),
+    ...getCookieValues(cookieHeader, "auth.session_token"),
+  ].filter((token) => token.length > 0);
+  return [...new Set(tokens)];
 }
 
 async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
@@ -266,11 +263,9 @@ function resolveSessionCookieDomainFromHeaders(headers: Headers): string | null 
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
   if (!normalizedHost) return null;
-  if (
-    normalizedHost === "phew.run" ||
-    normalizedHost === "www.phew.run" ||
-    normalizedHost.endsWith(".phew.run")
-  ) {
+  // Share cookies only on canonical production hosts.
+  // Preview/staging subdomains must stay isolated to avoid cross-environment token collisions.
+  if (normalizedHost === "phew.run" || normalizedHost === "www.phew.run") {
     return ".phew.run";
   }
   return null;
@@ -294,8 +289,14 @@ function buildExpiredCookie(name: string, domain?: string): string {
 export const auth = {
   api: {
     getSession: async ({ headers }: { headers: Headers }): Promise<SessionRecord | null> => {
-      const token = getSessionTokenFromHeaders(headers);
-      return getSessionFromToken(token);
+      const tokens = getSessionTokensFromHeaders(headers);
+      for (const token of tokens) {
+        const session = await getSessionFromToken(token);
+        if (session) {
+          return session;
+        }
+      }
+      return null;
     },
 
     getSessionByToken: async (token: string | null): Promise<SessionRecord | null> => {
@@ -303,12 +304,12 @@ export const auth = {
     },
 
     signOut: async ({ headers }: { headers: Headers }) => {
-      const cookieToken = getSessionTokenFromHeaders(headers);
+      const cookieTokens = getSessionTokensFromHeaders(headers);
       const authHeader = headers.get("authorization");
       const bearerToken =
         authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-      const tokens = [...new Set([cookieToken, bearerToken].filter(Boolean) as string[])];
+      const tokens = [...new Set([...cookieTokens, bearerToken].filter(Boolean) as string[])];
 
       if (tokens.length > 0) {
         await prisma.session.deleteMany({

@@ -622,11 +622,9 @@ function resolveSessionCookieDomain(hostHeader: string | undefined): string | nu
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
   if (!normalizedHost) return null;
-  if (
-    normalizedHost === "phew.run" ||
-    normalizedHost === "www.phew.run" ||
-    normalizedHost.endsWith(".phew.run")
-  ) {
+  // Share cookies only on canonical production hosts.
+  // Preview/staging subdomains must stay isolated to avoid cross-environment token collisions.
+  if (normalizedHost === "phew.run" || normalizedHost === "www.phew.run") {
     return ".phew.run";
   }
   return null;
