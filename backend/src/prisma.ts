@@ -116,6 +116,7 @@ const prisma = new PrismaClient({
 });
 
 const isSqlite = (normalizedDb.url || process.env.DATABASE_URL || "").startsWith("file:");
+const isPostgres = !isSqlite;
 
 // Log slow queries in production (queries taking > 1 second)
 const SLOW_QUERY_THRESHOLD_MS = 1000;
@@ -161,10 +162,34 @@ async function initSqlitePragmas(prisma: PrismaClient) {
   await prisma.$queryRawUnsafe("PRAGMA synchronous = NORMAL;");
 }
 
+// Compatibility guard for deployed environments where DB schema may lag behind code.
+// Keeps critical read/write paths alive until migrations are applied.
+async function initPostgresCompatColumns(prisma: PrismaClient) {
+  const statements = [
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeRewardsEnabled" BOOLEAN NOT NULL DEFAULT true;`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeShareBps" INTEGER NOT NULL DEFAULT 100;`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeePayoutAddress" TEXT;`,
+    `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "dismissed" BOOLEAN NOT NULL DEFAULT false;`,
+    `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "clickedAt" TIMESTAMP(3);`,
+  ] as const;
+
+  for (const statement of statements) {
+    await prisma.$executeRawUnsafe(statement);
+  }
+}
+
 if (isSqlite) {
   initSqlitePragmas(prisma).catch((error) => {
     console.warn("[Prisma] Failed to apply SQLite PRAGMAs:", error);
   });
+} else if (isPostgres) {
+  initPostgresCompatColumns(prisma)
+    .then(() => {
+      console.log("[Prisma] Postgres compatibility columns check complete");
+    })
+    .catch((error) => {
+      console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
+    });
 }
 
 export { prisma };

@@ -50,7 +50,7 @@ export default function Leaderboard() {
     enabled: !!session?.user,
     staleTime: 30000,
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: false,
   });
 
   // Fetch unread notification count

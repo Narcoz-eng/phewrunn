@@ -153,6 +153,12 @@ export interface StructuredLoggerConfig {
    * Custom log function (defaults to console.log)
    */
   logFn?: (entry: LogEntry) => void;
+
+  /**
+   * Suppress expected 401s from lightweight auth/session probes.
+   * These are common for logged-out users and can overwhelm production logs.
+   */
+  suppressExpectedAuthProbe401?: boolean;
 }
 
 /**
@@ -164,6 +170,7 @@ export function structuredLogger(config: StructuredLoggerConfig = {}) {
     slowThreshold = 1000,
     skipPaths = ["/health"],
     logFn,
+    suppressExpectedAuthProbe401 = true,
   } = config;
 
   const isProduction = process.env.NODE_ENV === "production";
@@ -185,6 +192,11 @@ export function structuredLogger(config: StructuredLoggerConfig = {}) {
     // Determine if we should log this request
     const isError = status >= 400;
     const isSlow = duration > slowThreshold;
+    const isExpectedAuthProbe401 =
+      suppressExpectedAuthProbe401 &&
+      status === 401 &&
+      c.req.method === "GET" &&
+      (c.req.path === "/api/me" || c.req.path === "/api/notifications/unread-count");
 
     let shouldLog = false;
     if (level === "all") {
@@ -193,6 +205,10 @@ export function structuredLogger(config: StructuredLoggerConfig = {}) {
       shouldLog = isError;
     } else if (level === "slow") {
       shouldLog = isError || isSlow;
+    }
+
+    if (isExpectedAuthProbe401) {
+      shouldLog = false;
     }
 
     if (!shouldLog) return;

@@ -229,6 +229,14 @@ const AuthContext = createContext<AuthContextType | null>(null);
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
+  const token = getStoredAuthToken();
+
+  // Skip anonymous /api/me probes when we have no cache, no token and no recent Privy sync.
+  // This prevents repeated expected 401s from flooding server logs for logged-out sessions.
+  if (!token && !cachedUser && lastPrivySyncAt === 0) {
+    return null;
+  }
+
   if (
     cachedUser &&
     lastPrivySyncAt > 0 &&
@@ -250,7 +258,6 @@ async function fetchSession(): Promise<AuthUser | null> {
   const timeoutId = setTimeout(() => controller.abort(), SESSION_FETCH_TIMEOUT_MS);
   try {
     // Get token from localStorage as fallback for cross-origin issues
-    const token = getStoredAuthToken();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -290,11 +297,11 @@ async function fetchSession(): Promise<AuthUser | null> {
         const recentlyHealthySession =
           lastSuccessfulSessionAt > 0 &&
           Date.now() - lastSuccessfulSessionAt < AUTH_TRANSIENT_401_RECOVERY_MS;
-        const hasToken = Boolean(getStoredAuthToken());
+        const hasToken = Boolean(token || getStoredAuthToken());
         const shouldTreatAsTransient =
           recentlySynced ||
-          recentlyHealthySession ||
-          unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT;
+          (hasToken && recentlyHealthySession) ||
+          (hasToken && unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT);
 
         if (
           cachedUser &&
@@ -307,7 +314,7 @@ async function fetchSession(): Promise<AuthUser | null> {
           return cachedUser;
         }
 
-        if (hasToken && shouldTreatAsTransient) {
+        if (shouldTreatAsTransient) {
           console.warn(
             `[Auth] Temporary 401 from /api/me; preserving auth token (${unauthorizedSessionFailures})`
           );
@@ -316,6 +323,7 @@ async function fetchSession(): Promise<AuthUser | null> {
 
         clearStoredAuthToken();
         clearCachedAuthUser();
+        sessionRateLimitedUntil = Date.now() + 5000;
         return null;
       }
       return cachedUser;
