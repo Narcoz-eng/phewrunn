@@ -309,7 +309,12 @@ export default function Feed() {
     },
     initialData: cachedFeedUser ?? undefined,
     enabled: !!session?.user,
-    retry: 2,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 429)) {
+        return false;
+      }
+      return failureCount < 2;
+    },
     staleTime: 30000, // 30 seconds
     refetchInterval: session?.user && !isOverlayOpen ? 15_000 : false,
     refetchOnWindowFocus: false,

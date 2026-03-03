@@ -32,6 +32,27 @@ const SESSION_USER_FALLBACK_SELECT = {
   updatedAt: true,
 } as const;
 
+const SESSION_USER_MINIMAL_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+} as const;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return "";
+}
+
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
     typeof error === "object" &&
@@ -45,14 +66,9 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
     return true;
   }
 
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
+  const message = getErrorMessage(error);
 
-  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
 }
 
 type SessionRecord = {
@@ -97,35 +113,80 @@ const sessionFetchInFlight = new Map<string, Promise<SessionRecord | null>>();
 const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MISS_TTL_MS = 1_500;
 
-function getCookieValue(cookieHeader: string | null | undefined, name: string): string | null {
-  if (!cookieHeader) return null;
+function toSessionUser(
+  user: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    image?: string | null;
+    createdAt?: Date | null;
+    updatedAt?: Date | null;
+    walletAddress?: string | null;
+    walletProvider?: string | null;
+    walletConnectedAt?: Date | null;
+    username?: string | null;
+    level?: number | null;
+    xp?: number | null;
+    bio?: string | null;
+    isAdmin?: boolean | null;
+    isBanned?: boolean | null;
+    isVerified?: boolean | null;
+    lastUsernameUpdate?: Date | null;
+    lastPhotoUpdate?: Date | null;
+  }
+): SessionRecord["user"] {
+  const createdAt = user.createdAt ?? new Date();
+  const updatedAt = user.updatedAt ?? createdAt;
+  return {
+    id: user.id,
+    name: user.name ?? "",
+    email: user.email ?? "",
+    emailVerified: user.emailVerified ?? false,
+    image: user.image ?? null,
+    createdAt,
+    updatedAt,
+    walletAddress: user.walletAddress ?? null,
+    walletProvider: user.walletProvider ?? null,
+    walletConnectedAt: user.walletConnectedAt ?? null,
+    username: user.username ?? null,
+    level: user.level ?? 0,
+    xp: user.xp ?? 0,
+    bio: user.bio ?? null,
+    isAdmin: user.isAdmin ?? false,
+    isBanned: user.isBanned ?? false,
+    isVerified: user.isVerified ?? false,
+    lastUsernameUpdate: user.lastUsernameUpdate ?? null,
+    lastPhotoUpdate: user.lastPhotoUpdate ?? null,
+  };
+}
 
-  let resolvedValue: string | null = null;
+function getCookieValues(cookieHeader: string | null | undefined, name: string): string[] {
+  if (!cookieHeader) return [];
+
+  const values: string[] = [];
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rest] = part.trim().split("=");
     if (rawKey !== name) continue;
     const value = rest.join("=");
-    if (!value) {
-      resolvedValue = null;
-      continue;
-    }
+    if (!value) continue;
     try {
-      resolvedValue = decodeURIComponent(value);
+      values.push(decodeURIComponent(value));
     } catch {
-      resolvedValue = value;
+      values.push(value);
     }
   }
-
-  return resolvedValue;
+  return values;
 }
 
-function getSessionTokenFromHeaders(headers: Headers): string | null {
+function getSessionTokensFromHeaders(headers: Headers): string[] {
   const cookieHeader = headers.get("cookie");
-  return (
-    getCookieValue(cookieHeader, "phew.session_token") ??
-    getCookieValue(cookieHeader, "better-auth.session_token") ??
-    getCookieValue(cookieHeader, "auth.session_token")
-  );
+  const tokens = [
+    ...getCookieValues(cookieHeader, "phew.session_token"),
+    ...getCookieValues(cookieHeader, "better-auth.session_token"),
+    ...getCookieValues(cookieHeader, "auth.session_token"),
+  ].filter((token) => token.length > 0);
+  return [...new Set(tokens)];
 }
 
 async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
@@ -152,14 +213,14 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
           userId: string;
           token: string;
           expiresAt: Date;
-          createdAt: Date;
-          updatedAt: Date;
+          createdAt?: Date;
+          updatedAt?: Date;
           user: SessionRecord["user"] | null;
         }
       | null = null;
 
     try {
-      dbSession = await prisma.session.findUnique({
+      const fullSession = await prisma.session.findUnique({
         where: { token },
         select: {
           id: true,
@@ -172,7 +233,13 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
             select: SESSION_USER_SELECT,
           },
         },
-      }) as typeof dbSession;
+      });
+      dbSession = fullSession
+        ? {
+            ...fullSession,
+            user: fullSession.user ? toSessionUser(fullSession.user) : null,
+          }
+        : null;
     } catch (error) {
       if (!isPrismaSchemaDriftError(error)) {
         throw error;
@@ -180,43 +247,67 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
 
       console.warn("[auth] Session user schema drift detected; using fallback select");
 
-      const fallbackSession = await prisma.session.findUnique({
-        where: { token },
-        select: {
-          id: true,
-          userId: true,
-          token: true,
-          expiresAt: true,
-          createdAt: true,
-          updatedAt: true,
-          user: {
-            select: SESSION_USER_FALLBACK_SELECT,
+      try {
+        const fallbackSession = await prisma.session.findUnique({
+          where: { token },
+          select: {
+            id: true,
+            userId: true,
+            token: true,
+            expiresAt: true,
+            createdAt: true,
+            updatedAt: true,
+            user: {
+              select: SESSION_USER_FALLBACK_SELECT,
+            },
           },
-        },
-      });
+        });
 
-      dbSession = fallbackSession
-        ? {
-            ...fallbackSession,
-            user: fallbackSession.user
-              ? {
-                  ...fallbackSession.user,
-                  walletAddress: null,
-                  walletProvider: null,
-                  walletConnectedAt: null,
-                  username: null,
-                  level: 0,
-                  xp: 0,
-                  bio: null,
-                  isAdmin: false,
-                  isBanned: false,
-                  isVerified: false,
-                  lastUsernameUpdate: null,
-                  lastPhotoUpdate: null,
-                }
-              : null,
+        dbSession = fallbackSession
+          ? {
+              ...fallbackSession,
+              user: fallbackSession.user ? toSessionUser(fallbackSession.user) : null,
+            }
+          : null;
+      } catch (fallbackError) {
+        if (!isPrismaSchemaDriftError(fallbackError)) {
+          throw fallbackError;
+        }
+
+        console.warn("[auth] Session fallback select unavailable; trying minimal compatibility select");
+
+        try {
+          const minimalSession = await prisma.session.findUnique({
+            where: { token },
+            select: {
+              id: true,
+              userId: true,
+              token: true,
+              expiresAt: true,
+              user: {
+                select: SESSION_USER_MINIMAL_SELECT,
+              },
+            },
+          });
+
+          dbSession = minimalSession
+            ? {
+                ...minimalSession,
+                createdAt: minimalSession.expiresAt,
+                updatedAt: minimalSession.expiresAt,
+                user: minimalSession.user ? toSessionUser(minimalSession.user) : null,
+              }
+            : null;
+        } catch (minimalError) {
+          if (!isPrismaSchemaDriftError(minimalError)) {
+            throw minimalError;
           }
-        : null;
+          console.warn("[auth] Session lookup unavailable due schema drift; proceeding without session", {
+            message: getErrorMessage(minimalError),
+          });
+          dbSession = null;
+        }
+      }
     }
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
@@ -233,8 +324,8 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
         userId: dbSession.userId,
         token: dbSession.token,
         expiresAt: dbSession.expiresAt,
-        createdAt: dbSession.createdAt,
-        updatedAt: dbSession.updatedAt,
+        createdAt: dbSession.createdAt ?? dbSession.expiresAt,
+        updatedAt: dbSession.updatedAt ?? dbSession.createdAt ?? dbSession.expiresAt,
       },
       user: dbSession.user as SessionRecord["user"],
     };
@@ -266,11 +357,9 @@ function resolveSessionCookieDomainFromHeaders(headers: Headers): string | null 
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
   if (!normalizedHost) return null;
-  if (
-    normalizedHost === "phew.run" ||
-    normalizedHost === "www.phew.run" ||
-    normalizedHost.endsWith(".phew.run")
-  ) {
+  // Share cookies only on canonical production hosts.
+  // Preview/staging subdomains must stay isolated to avoid cross-environment token collisions.
+  if (normalizedHost === "phew.run" || normalizedHost === "www.phew.run") {
     return ".phew.run";
   }
   return null;
@@ -294,8 +383,14 @@ function buildExpiredCookie(name: string, domain?: string): string {
 export const auth = {
   api: {
     getSession: async ({ headers }: { headers: Headers }): Promise<SessionRecord | null> => {
-      const token = getSessionTokenFromHeaders(headers);
-      return getSessionFromToken(token);
+      const tokens = getSessionTokensFromHeaders(headers);
+      for (const token of tokens) {
+        const session = await getSessionFromToken(token);
+        if (session) {
+          return session;
+        }
+      }
+      return null;
     },
 
     getSessionByToken: async (token: string | null): Promise<SessionRecord | null> => {
@@ -303,12 +398,12 @@ export const auth = {
     },
 
     signOut: async ({ headers }: { headers: Headers }) => {
-      const cookieToken = getSessionTokenFromHeaders(headers);
+      const cookieTokens = getSessionTokensFromHeaders(headers);
       const authHeader = headers.get("authorization");
       const bearerToken =
         authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-      const tokens = [...new Set([cookieToken, bearerToken].filter(Boolean) as string[])];
+      const tokens = [...new Set([...cookieTokens, bearerToken].filter(Boolean) as string[])];
 
       if (tokens.length > 0) {
         await prisma.session.deleteMany({

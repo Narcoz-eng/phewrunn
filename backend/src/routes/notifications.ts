@@ -41,11 +41,31 @@ function buildNotificationGroupKey(notification: {
   }
 }
 
-function isPrismaMissingColumnError(error: unknown, columnName: string): boolean {
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return "";
+}
+
+function isPrismaSchemaDriftError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
-  if (code === "P2022") return true;
+  if (code === "P2021" || code === "P2022") return true;
+  const message = getErrorMessage(error);
+  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
+}
+
+function isPrismaMissingColumnError(error: unknown, columnName: string): boolean {
+  if (!isPrismaSchemaDriftError(error)) return false;
+  const message = getErrorMessage(error);
   return message.toLowerCase().includes(columnName.toLowerCase());
 }
 
@@ -68,7 +88,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
     whereClause.dismissed = false;
   }
 
-  let notifications;
+  let notifications: unknown[] = [];
   try {
     notifications = await prisma.notification.findMany({
       where: whereClause,
@@ -93,31 +113,68 @@ notificationsRouter.get("/", requireAuth, async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaMissingColumnError(error, "dismissed")) {
+    if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
-    notifications = await prisma.notification.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: {
-        fromUser: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
+    try {
+      notifications = await prisma.notification.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          fromUser: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+            },
+          },
+          post: {
+            select: {
+              id: true,
+              content: true,
+              contractAddress: true,
+            },
           },
         },
-        post: {
+      });
+    } catch (fallbackError) {
+      if (!isPrismaSchemaDriftError(fallbackError)) {
+        throw fallbackError;
+      }
+      try {
+        const minimalNotifications = await prisma.notification.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 50,
           select: {
             id: true,
-            content: true,
-            contractAddress: true,
+            type: true,
+            message: true,
+            read: true,
+            postId: true,
+            fromUserId: true,
+            createdAt: true,
           },
-        },
-      },
-    });
+        });
+        notifications = minimalNotifications.map((notification) => ({
+          ...notification,
+          dismissed: false,
+          clickedAt: null,
+          fromUser: null,
+          post: null,
+        }));
+      } catch (minimalError) {
+        if (!isPrismaSchemaDriftError(minimalError)) {
+          throw minimalError;
+        }
+        console.warn("[notifications/list] schema drift fallback exhausted; returning empty notifications list", {
+          message: getErrorMessage(minimalError),
+        });
+        notifications = [];
+      }
+    }
   }
 
   return c.json({ data: notifications });
@@ -130,7 +187,13 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  let unreadNotifications;
+  let unreadNotifications: Array<{
+    id: string;
+    type: string;
+    fromUserId: string | null;
+    postId: string | null;
+    message: string;
+  }> = [];
   try {
     unreadNotifications = await prisma.notification.findMany({
       where: {
@@ -149,24 +212,57 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
       take: 200,
     });
   } catch (error) {
-    if (!isPrismaMissingColumnError(error, "dismissed")) {
+    if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
-    unreadNotifications = await prisma.notification.findMany({
-      where: {
-        userId: user.id,
-        read: false,
-      },
-      select: {
-        id: true,
-        type: true,
-        fromUserId: true,
-        postId: true,
-        message: true,
-      },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    });
+    try {
+      unreadNotifications = await prisma.notification.findMany({
+        where: {
+          userId: user.id,
+          read: false,
+        },
+        select: {
+          id: true,
+          type: true,
+          fromUserId: true,
+          postId: true,
+          message: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      });
+    } catch (fallbackError) {
+      if (!isPrismaSchemaDriftError(fallbackError)) {
+        throw fallbackError;
+      }
+      try {
+        const minimalRows = await prisma.notification.findMany({
+          where: {
+            userId: user.id,
+          },
+          select: {
+            id: true,
+            type: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 200,
+        });
+        unreadNotifications = minimalRows.map((row) => ({
+          ...row,
+          fromUserId: null,
+          postId: null,
+          message: "",
+        }));
+      } catch (minimalError) {
+        if (!isPrismaSchemaDriftError(minimalError)) {
+          throw minimalError;
+        }
+        console.warn("[notifications/unread-count] schema drift fallback exhausted; returning zero unread count", {
+          message: getErrorMessage(minimalError),
+        });
+        unreadNotifications = [];
+      }
+    }
   }
 
   const groupKeys = new Set(

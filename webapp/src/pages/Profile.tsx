@@ -232,7 +232,12 @@ export default function Profile() {
     refetchInterval: session?.user ? 15_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 429)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
   });
 
   // Update edit form state when user data loads

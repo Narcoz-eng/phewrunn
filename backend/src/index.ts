@@ -271,9 +271,14 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
       ? error.message
       : typeof error === "string"
         ? error
-        : "";
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "";
 
-  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
 }
 
 function normalizeAuthResponseUser(
@@ -622,11 +627,9 @@ function resolveSessionCookieDomain(hostHeader: string | undefined): string | nu
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
   if (!normalizedHost) return null;
-  if (
-    normalizedHost === "phew.run" ||
-    normalizedHost === "www.phew.run" ||
-    normalizedHost.endsWith(".phew.run")
-  ) {
+  // Share cookies only on canonical production hosts.
+  // Preview/staging subdomains must stay isolated to avoid cross-environment token collisions.
+  if (normalizedHost === "phew.run" || normalizedHost === "www.phew.run") {
     return ".phew.run";
   }
   return null;
