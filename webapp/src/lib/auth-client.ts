@@ -355,6 +355,21 @@ async function fetchSession(): Promise<AuthUser | null> {
         writeCachedAuthUser(authUser);
         return authUser;
       }
+
+      const explicitNoSessionResponse =
+        data === null ||
+        (typeof data === "object" &&
+          data !== null &&
+          "data" in data &&
+          (data as { data?: unknown }).data === null);
+
+      if (explicitNoSessionResponse) {
+        if (token) {
+          clearStoredAuthToken();
+        }
+        clearCachedAuthUser();
+        return null;
+      }
     } catch (parseError) {
       console.log("[Auth] Failed to parse session response:", parseError);
     }
