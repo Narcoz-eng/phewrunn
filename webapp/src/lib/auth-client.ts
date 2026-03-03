@@ -160,6 +160,10 @@ function hasSessionCookieHint(): boolean {
   );
 }
 
+function hasBackendSessionArtifact(): boolean {
+  return Boolean(getStoredAuthToken() || hasSessionCookieHint());
+}
+
 function readCachedAuthUser(): AuthUser | null {
   if (typeof window === "undefined") return getInMemoryCachedAuthUser();
   try {
@@ -389,6 +393,15 @@ async function fetchSession(): Promise<AuthUser | null> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>(() => {
     const cachedUser = readCachedAuthUser();
+    const hasBackendArtifact = hasBackendSessionArtifact();
+    if (cachedUser && !hasBackendArtifact) {
+      clearCachedAuthUser();
+      return {
+        user: null,
+        isLoading: true,
+        isAuthenticated: false,
+      };
+    }
     return {
       user: cachedUser,
       isLoading: !cachedUser,
