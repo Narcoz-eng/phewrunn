@@ -48,7 +48,7 @@ const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 6;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 4;
 const PRIVY_SYNC_TIMEOUT_MS = 10_000;
-const PRIVY_SYNC_RETRY_DELAYS_MS = [300, 800] as const;
+const PRIVY_SYNC_RETRY_DELAYS_MS = [300, 800, 1500] as const;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -735,20 +735,18 @@ export async function syncPrivySession(
       if (!response.ok || !data?.token || !data?.user) {
         const retryAfterHeader = response.headers.get("retry-after");
         const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
-        if (response.status === 429) {
-          const waitSuffix =
-            Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-              ? ` Please wait ${retryAfterSeconds}s and try again.`
-              : "";
-          throw new Error(`Too many requests.${waitSuffix}`.trim());
-        }
         const message =
           data?.error?.message ??
-          (response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
-        const retryable = response.status >= 500;
+          (response.status === 429
+            ? "Too many requests"
+            : response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
+        const retryable = response.status === 429 || response.status >= 500;
         if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
+          const delay = response.status === 429
+            ? Math.min((Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 1500), 3000)
+            : PRIVY_SYNC_RETRY_DELAYS_MS[attempt];
           await new Promise<void>((resolve) => {
-            setTimeout(resolve, PRIVY_SYNC_RETRY_DELAYS_MS[attempt]);
+            setTimeout(resolve, delay);
           });
           continue;
         }

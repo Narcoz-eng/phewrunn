@@ -4,9 +4,9 @@ import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 45_000;
-const AUTO_RESYNC_COOLDOWN_MS = 4_000;
-const AUTO_RESYNC_MAX_ATTEMPTS = 3;
-const TOO_MANY_REQUESTS_BACKOFF_MS = 60_000;
+const AUTO_RESYNC_COOLDOWN_MS = 2_000;
+const AUTO_RESYNC_MAX_ATTEMPTS = 5;
+const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
 const IDENTITY_TOKEN_ATTEMPTS = 4;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [60, 100, 160] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
@@ -196,13 +196,8 @@ export function usePrivyLogin() {
     if (syncGuardRef.current || isSyncing) {
       return;
     }
-    if (rateLimitedUntilRef.current > Date.now()) {
-      const remaining = Math.max(1, Math.ceil((rateLimitedUntilRef.current - Date.now()) / 1000));
-      const waitMessage = `Too many requests. Please wait ${remaining}s and try again.`;
-      setSyncError(waitMessage);
-      toast.warning(waitMessage);
-      return;
-    }
+    // Always allow manual sign-in — clear any previous rate-limit lockout
+    rateLimitedUntilRef.current = 0;
     setSyncError(null);
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;
