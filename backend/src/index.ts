@@ -206,6 +206,7 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PrivyClient } from "@privy-io/server-auth";
+import { createSignedSessionToken, type SessionTokenUserClaims } from "./lib/session-token.js";
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET;
@@ -253,6 +254,19 @@ type AuthResponseUser = {
   isVerified: boolean;
 };
 
+function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserClaims {
+  return {
+    name: user.name,
+    email: user.email,
+    image: user.image,
+    walletAddress: user.walletAddress,
+    walletProvider: user.walletProvider,
+    level: user.level,
+    xp: user.xp,
+    isVerified: user.isVerified,
+  };
+}
+
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
     typeof error === "object" &&
@@ -278,7 +292,18 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
           ? (error as { message: string }).message
           : "";
 
-  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column|invalid\s+`prisma\.[^`]+`\s+invocation/i.test(message);
+}
+
+function isPrismaClientError(error: unknown): boolean {
+  const name =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : "";
+  return name.startsWith("PrismaClient");
 }
 
 function normalizeAuthResponseUser(
@@ -606,23 +631,35 @@ async function createSessionRecord(params: {
         userAgent: params.userAgent,
       },
     });
+    return;
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
+  }
+
+  try {
     await prisma.session.create({
       data: {
         id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
         token: params.sessionToken,
         userId: params.userId,
         expiresAt: params.expiresAt,
-        createdAt: params.now,
-        updatedAt: params.now,
       },
     });
+    return;
+  } catch (fallbackError) {
+    if (
+      !isPrismaSchemaDriftError(fallbackError) &&
+      !isPrismaClientError(fallbackError) &&
+      !isUniqueConstraintError(fallbackError)
+    ) {
+      throw fallbackError;
+    }
   }
-}
 
+  console.warn("[auth/session] Session store unavailable; continuing with signed stateless token fallback");
+}
 function resolveSessionCookieDomain(hostHeader: string | undefined): string | null {
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
@@ -830,8 +867,12 @@ app.post("/api/auth/wallet", async (c) => {
         });
     }
 
-    // Create session
-    const sessionToken = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    // Create signed session token (stateless fallback works even if session table drifts).
+    const sessionToken = createSignedSessionToken({
+      userId: user.id,
+      now,
+      user: buildSessionTokenUserClaims(user),
+    });
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
     await createSessionRecord({
@@ -953,33 +994,25 @@ app.post("/api/auth/privy-sync", async (c) => {
             });
           }
 
-          // Issue session token directly
-          let sessionToken =
-            crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+          // Issue signed session token directly
+          const issuedAt = new Date();
+          const sessionToken = createSignedSessionToken({
+            userId: fastPathUser.id,
+            now: issuedAt,
+            user: buildSessionTokenUserClaims(fastPathUser),
+          });
           const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
           const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
           const userAgent = c.req.header("user-agent") ?? "unknown";
 
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              await createSessionRecord({
-                sessionToken,
-                userId: fastPathUser.id,
-                expiresAt,
-                now: new Date(),
-                ipAddress,
-                userAgent,
-              });
-              break;
-            } catch (error) {
-              if (attempt === 0 && isUniqueConstraintError(error)) {
-                sessionToken =
-                  crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-                continue;
-              }
-              throw error;
-            }
-          }
+          await createSessionRecord({
+            sessionToken,
+            userId: fastPathUser.id,
+            expiresAt,
+            now: issuedAt,
+            ipAddress,
+            userAgent,
+          });
 
           const isProd = process.env.NODE_ENV === "production";
           const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
@@ -1236,33 +1269,24 @@ app.post("/api/auth/privy-sync", async (c) => {
       }
     }
 
-    // Issue a session token (retry once if an unlikely token collision occurs)
-    let sessionToken =
-      crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    // Issue signed session token (stateless fallback works even if session table drifts).
+    const sessionToken = createSignedSessionToken({
+      userId: user.id,
+      now,
+      user: buildSessionTokenUserClaims(user),
+    });
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "unknown";
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await createSessionRecord({
-          sessionToken,
-          userId: user.id,
-          expiresAt,
-          now,
-          ipAddress,
-          userAgent,
-        });
-        break;
-      } catch (error) {
-        if (attempt === 0 && isUniqueConstraintError(error)) {
-          sessionToken =
-            crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-          continue;
-        }
-        throw error;
-      }
-    }
+    await createSessionRecord({
+      sessionToken,
+      userId: user.id,
+      expiresAt,
+      now,
+      ipAddress,
+      userAgent,
+    });
 
     // Also set a session cookie for cookie-based auth
     const isProd = process.env.NODE_ENV === "production";

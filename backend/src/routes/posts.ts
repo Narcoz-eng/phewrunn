@@ -396,7 +396,7 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
           ? (error as { message: string }).message
           : "";
 
-  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column|invalid\s+`prisma\.[^`]+`\s+invocation/i.test(message);
 }
 
 function isPrismaClientError(error: unknown): boolean {
@@ -1625,11 +1625,10 @@ postsRouter.get("/", async (c) => {
       return c.json(stalePayload);
     }
     return c.json({
-      error: {
-        message: "Feed is temporarily unavailable",
-        code: "FEED_UNAVAILABLE",
-      },
-    }, 503);
+      data: [],
+      hasMore: false,
+      nextCursor: null,
+    } satisfies FeedResponsePayload);
   };
 
   if (!cursor) {

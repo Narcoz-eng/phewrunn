@@ -73,7 +73,7 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
           ? (error as { message: string }).message
           : "";
 
-  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column|invalid\s+`prisma\.[^`]+`\s+invocation/i.test(message);
 }
 
 const UpdateFeeSettingsSchema = z.object({

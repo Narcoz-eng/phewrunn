@@ -1,4 +1,5 @@
 import { prisma } from "../prisma.js";
+import { verifySignedSessionToken, type SessionTokenUserClaims } from "./session-token.js";
 
 const SESSION_USER_SELECT = {
   id: true,
@@ -68,7 +69,22 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
 
   const message = getErrorMessage(error);
 
-  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column|invalid\s+`prisma\.[^`]+`\s+invocation/i.test(message);
+}
+
+function isPrismaClientError(error: unknown): boolean {
+  const name =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : "";
+  return name.startsWith("PrismaClient");
+}
+
+function isSessionLookupUnavailableError(error: unknown): boolean {
+  return isPrismaSchemaDriftError(error) || isPrismaClientError(error);
 }
 
 type SessionRecord = {
@@ -189,6 +205,119 @@ function getSessionTokensFromHeaders(headers: Headers): string[] {
   return [...new Set(tokens)];
 }
 
+type SessionUserLookupResult =
+  | { status: "found"; user: SessionRecord["user"] }
+  | { status: "not_found" }
+  | { status: "unavailable" };
+
+async function findSessionUserByIdWithFallback(
+  userId: string
+): Promise<SessionUserLookupResult> {
+  try {
+    const fullUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: SESSION_USER_SELECT,
+    });
+    if (!fullUser) return { status: "not_found" };
+    return { status: "found", user: toSessionUser(fullUser) };
+  } catch (error) {
+    if (!isSessionLookupUnavailableError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: SESSION_USER_FALLBACK_SELECT,
+    });
+    if (!fallbackUser) return { status: "not_found" };
+    return { status: "found", user: toSessionUser(fallbackUser) };
+  } catch (error) {
+    if (!isSessionLookupUnavailableError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    const minimalUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: SESSION_USER_MINIMAL_SELECT,
+    });
+    if (!minimalUser) return { status: "not_found" };
+    return { status: "found", user: toSessionUser(minimalUser) };
+  } catch (error) {
+    if (!isSessionLookupUnavailableError(error)) {
+      throw error;
+    }
+    console.warn("[auth] User lookup unavailable for signed token fallback", {
+      message: getErrorMessage(error),
+    });
+    return { status: "unavailable" };
+  }
+}
+
+function parseDateClaim(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function buildSessionUserFromTokenClaims(
+  userId: string,
+  claims: SessionTokenUserClaims | null
+): SessionRecord["user"] {
+  const createdAt = parseDateClaim(claims?.createdAt) ?? new Date();
+  const updatedAt = parseDateClaim(claims?.updatedAt) ?? createdAt;
+  return toSessionUser({
+    id: userId,
+    name: claims?.name ?? "",
+    email: claims?.email ?? "",
+    emailVerified: claims?.emailVerified ?? false,
+    image: claims?.image ?? null,
+    walletAddress: claims?.walletAddress ?? null,
+    walletProvider: claims?.walletProvider ?? null,
+    username: claims?.username ?? null,
+    level: claims?.level ?? 0,
+    xp: claims?.xp ?? 0,
+    bio: claims?.bio ?? null,
+    isAdmin: claims?.isAdmin ?? false,
+    isBanned: claims?.isBanned ?? false,
+    isVerified: claims?.isVerified ?? false,
+    createdAt,
+    updatedAt,
+  });
+}
+
+async function getSessionFromSignedToken(token: string): Promise<SessionRecord | null> {
+  const verified = verifySignedSessionToken(token);
+  if (!verified) return null;
+
+  const userLookup = await findSessionUserByIdWithFallback(verified.userId);
+  let resolvedUser: SessionRecord["user"] | null = null;
+
+  if (userLookup.status === "found") {
+    resolvedUser = userLookup.user;
+  } else if (userLookup.status === "unavailable" && verified.userClaims) {
+    resolvedUser = buildSessionUserFromTokenClaims(verified.userId, verified.userClaims);
+  }
+
+  if (!resolvedUser) return null;
+
+  const syntheticNow = new Date();
+  return {
+    session: {
+      id: `stateless:${verified.userId}`,
+      userId: verified.userId,
+      token,
+      expiresAt: verified.expiresAt,
+      createdAt: syntheticNow,
+      updatedAt: syntheticNow,
+    },
+    user: resolvedUser,
+  };
+}
+
 async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
   if (!token) return null;
 
@@ -241,11 +370,12 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
           }
         : null;
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
+      if (!isSessionLookupUnavailableError(error)) {
         throw error;
       }
-
-      console.warn("[auth] Session user schema drift detected; using fallback select");
+      console.warn("[auth] Session lookup failed; using fallback select", {
+        message: getErrorMessage(error),
+      });
 
       try {
         const fallbackSession = await prisma.session.findUnique({
@@ -270,11 +400,12 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
             }
           : null;
       } catch (fallbackError) {
-        if (!isPrismaSchemaDriftError(fallbackError)) {
+        if (!isSessionLookupUnavailableError(fallbackError)) {
           throw fallbackError;
         }
-
-        console.warn("[auth] Session fallback select unavailable; trying minimal compatibility select");
+        console.warn("[auth] Session fallback select unavailable; trying minimal compatibility select", {
+          message: getErrorMessage(fallbackError),
+        });
 
         try {
           const minimalSession = await prisma.session.findUnique({
@@ -299,10 +430,10 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
               }
             : null;
         } catch (minimalError) {
-          if (!isPrismaSchemaDriftError(minimalError)) {
+          if (!isSessionLookupUnavailableError(minimalError)) {
             throw minimalError;
           }
-          console.warn("[auth] Session lookup unavailable due schema drift; proceeding without session", {
+          console.warn("[auth] Session lookup unavailable after fallback attempts", {
             message: getErrorMessage(minimalError),
           });
           dbSession = null;
@@ -311,6 +442,14 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
     }
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
+      const signedTokenSession = await getSessionFromSignedToken(token);
+      if (signedTokenSession) {
+        sessionCache.set(token, {
+          value: signedTokenSession,
+          expiresAtMs: Math.min(Date.now() + SESSION_CACHE_TTL_MS, signedTokenSession.session.expiresAt.getTime()),
+        });
+        return signedTokenSession;
+      }
       sessionCache.set(token, {
         value: null,
         expiresAtMs: now + SESSION_CACHE_MISS_TTL_MS,
@@ -406,9 +545,16 @@ export const auth = {
       const tokens = [...new Set([...cookieTokens, bearerToken].filter(Boolean) as string[])];
 
       if (tokens.length > 0) {
-        await prisma.session.deleteMany({
-          where: { token: { in: tokens } },
-        });
+        try {
+          await prisma.session.deleteMany({
+            where: { token: { in: tokens } },
+          });
+        } catch (error) {
+          if (!isSessionLookupUnavailableError(error)) {
+            throw error;
+          }
+          console.warn("[auth/signOut] Session table delete skipped due unavailable session store");
+        }
         clearSessionCache(tokens);
       }
 

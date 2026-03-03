@@ -60,7 +60,7 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
   const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
   if (code === "P2021" || code === "P2022") return true;
   const message = getErrorMessage(error);
-  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column|invalid\s+`prisma\.[^`]+`\s+invocation/i.test(message);
 }
 
 function isPrismaMissingColumnError(error: unknown, columnName: string): boolean {
