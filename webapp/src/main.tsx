@@ -12,7 +12,7 @@ if (typeof window !== "undefined") {
 
   if (isVercelPreviewHost) {
     const redirectUrl =
-      `https://www.phew.run${window.location.pathname}${window.location.search}${window.location.hash}`;
+      `https://phew.run${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.location.replace(redirectUrl);
   }
 }
