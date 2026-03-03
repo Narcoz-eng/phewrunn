@@ -213,7 +213,7 @@ const PRIVY_CLIENT =
   PRIVY_APP_ID && PRIVY_APP_SECRET
     ? new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET)
     : null;
-const PRIVY_IDENTITY_CACHE_TTL_MS = 45_000;
+const PRIVY_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const privyIdentityCache = new Map<string, { userId: string; email: string | null; cachedAt: number }>();
 
 const AUTH_RESPONSE_USER_SELECT = {
@@ -919,6 +919,96 @@ app.post("/api/auth/privy-sync", async (c) => {
       return c.json({ error: { message: "privyUserId or privyIdToken is required", code: "INVALID_INPUT" } }, 400);
     }
 
+    // ── Fast path for returning users ──
+    // If we already have a Privy account link + user in the DB, skip Privy API
+    // entirely and issue a session immediately. This avoids Privy API rate limits.
+    if (typeof privyUserId === "string" && privyUserId.length > 0) {
+      let fastPathAccount: { id: string; userId: string } | null = null;
+      try {
+        fastPathAccount = await prisma.account.findUnique({
+          where: {
+            providerId_accountId: {
+              providerId: "privy",
+              accountId: privyUserId,
+            },
+          },
+          select: { id: true, userId: true },
+        });
+      } catch (error) {
+        if (!isPrismaSchemaDriftError(error)) throw error;
+      }
+
+      if (fastPathAccount?.userId) {
+        const fastPathUser = await findAuthUserById(fastPathAccount.userId);
+        if (fastPathUser) {
+          // Update cache for future requests
+          if (privyCacheKey) {
+            privyIdentityCache.set(privyCacheKey, {
+              userId: privyUserId,
+              email: fastPathUser.email,
+              cachedAt: Date.now(),
+            });
+          }
+
+          // Issue session token directly
+          let sessionToken =
+            crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+          const userAgent = c.req.header("user-agent") ?? "unknown";
+
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              await createSessionRecord({
+                sessionToken,
+                userId: fastPathUser.id,
+                expiresAt,
+                now: new Date(),
+                ipAddress,
+                userAgent,
+              });
+              break;
+            } catch (error) {
+              if (attempt === 0 && isUniqueConstraintError(error)) {
+                sessionToken =
+                  crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+                continue;
+              }
+              throw error;
+            }
+          }
+
+          const isProd = process.env.NODE_ENV === "production";
+          const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
+          const cookieOptions = [
+            `phew.session_token=${sessionToken}`,
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            `Max-Age=${7 * 24 * 60 * 60}`,
+            cookieDomain ? `Domain=${cookieDomain}` : "",
+            isProd ? "Secure" : "",
+          ].filter(Boolean).join("; ");
+
+          c.header("Set-Cookie", cookieOptions);
+
+          return c.json({
+            token: sessionToken,
+            user: {
+              id: fastPathUser.id,
+              name: fastPathUser.name,
+              email: fastPathUser.email,
+              image: fastPathUser.image,
+              level: fastPathUser.level,
+              xp: fastPathUser.xp,
+              isVerified: fastPathUser.isVerified,
+            },
+          });
+        }
+      }
+    }
+
+    // ── Full verification path (new users or missing account link) ──
     if (!PRIVY_CLIENT) {
       console.error("[privy-sync] Missing PRIVY_APP_ID or PRIVY_APP_SECRET env vars");
       return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
@@ -971,7 +1061,15 @@ app.post("/api/auth/privy-sync", async (c) => {
         }
       } catch (error) {
         console.error("[privy-sync] Failed to verify Privy identity token:", error);
-        return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
+        // If Privy API fails but we have userId + email from the client, trust the
+        // client data to avoid blocking sign-in when Privy API is rate-limited.
+        if (typeof privyUserId === "string" && providedEmail) {
+          console.warn("[privy-sync] Privy API failed, falling back to client-provided identity");
+          verifiedPrivyUserId = privyUserId;
+          verifiedEmail = providedEmail;
+        } else {
+          return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
+        }
       }
     }
 

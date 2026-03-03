@@ -104,24 +104,29 @@ export function usePrivyLogin() {
       autoResyncAttemptsRef.current = 0;
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
-      const message = err instanceof Error ? err.message : "Failed to sign in";
-      setSyncError(message);
+      const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
+      // Show a friendlier message to the user instead of raw server errors
+      const userMessage = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage)
+        ? "Sign-in is busy. Retrying..."
+        : rawMessage;
+      setSyncError(userMessage);
 
       if (source === "auto") {
         autoResyncAttemptsRef.current += 1;
       }
 
-      const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(message);
+      const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(rawMessage);
       const shouldToast =
         source === "manual" ||
         !isRetryable ||
         autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
 
       if (shouldToast) {
-        toast.error(message);
+        toast.error(userMessage);
       }
 
-      if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(message)) {
+      // Only apply short backoff for auto-retries, never block manual sign-in
+      if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage) && source === "auto") {
         rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
       }
     } finally {
