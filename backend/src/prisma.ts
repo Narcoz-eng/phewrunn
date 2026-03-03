@@ -26,6 +26,14 @@ const isServerlessRuntime =
   !!process.env.K_SERVICE ||
   !!process.env.FUNCTIONS_WORKER_RUNTIME;
 
+function getPositiveIntEnv(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function normalizeDatabaseUrl(
   rawUrl: string | undefined,
   directUrl: string | undefined
@@ -78,17 +86,28 @@ function normalizeDatabaseUrl(
         notes.push("added pgbouncer=true");
       }
 
-      const desiredConnectionLimit = isServerlessRuntime ? 1 : (isProduction ? 5 : 8);
+      // In serverless, keep this low but not 1 so auth/feed bursts do not immediately
+      // deadlock on a single client connection.
+      const desiredConnectionLimit =
+        getPositiveIntEnv("PRISMA_CONNECTION_LIMIT") ??
+        (isServerlessRuntime
+          ? (isProduction ? 3 : 2)
+          : (isProduction ? 8 : 10));
       const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
       if (!Number.isFinite(existingConnectionLimit) || existingConnectionLimit < desiredConnectionLimit) {
         parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
         notes.push(`set connection_limit=${desiredConnectionLimit}`);
       }
 
-      // Fail fast instead of hanging feed/auth when the pool is saturated.
-      if (!parsed.searchParams.has("pool_timeout")) {
-        parsed.searchParams.set("pool_timeout", "5");
-        notes.push("added pool_timeout=5");
+      // Allow moderate queueing instead of immediate auth/feed failures when warm instances
+      // briefly saturate the pool.
+      const desiredPoolTimeout =
+        getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS") ??
+        (isProduction ? 20 : 10);
+      const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
+      if (!Number.isFinite(existingPoolTimeout) || existingPoolTimeout < desiredPoolTimeout) {
+        parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
+        notes.push(`set pool_timeout=${desiredPoolTimeout}`);
       }
 
       ensureSessionSafetyOptions(parsed, notes);
@@ -178,18 +197,26 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
   }
 }
 
+const shouldRunCompatGuardrails =
+  process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS === "true" ||
+  (!isProduction && !isServerlessRuntime);
+
 if (isSqlite) {
   initSqlitePragmas(prisma).catch((error) => {
     console.warn("[Prisma] Failed to apply SQLite PRAGMAs:", error);
   });
 } else if (isPostgres) {
-  initPostgresCompatColumns(prisma)
-    .then(() => {
-      console.log("[Prisma] Postgres compatibility columns check complete");
-    })
-    .catch((error) => {
-      console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
-    });
+  if (shouldRunCompatGuardrails) {
+    initPostgresCompatColumns(prisma)
+      .then(() => {
+        console.log("[Prisma] Postgres compatibility columns check complete");
+      })
+      .catch((error) => {
+        console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
+      });
+  } else {
+    console.log("[Prisma] Postgres compatibility guardrails disabled for this runtime");
+  }
 }
 
 export { prisma };
