@@ -389,9 +389,14 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
       ? error.message
       : typeof error === "string"
         ? error
-        : "";
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "";
 
-  return /does not exist|unknown arg|unknown field|column|table/i.test(message);
+  return /does not exist|unknown arg|unknown field|column|table|no such column/i.test(message);
 }
 
 function isPrismaClientError(error: unknown): boolean {
@@ -1916,9 +1921,6 @@ postsRouter.get("/", async (c) => {
                     id: true,
                     content: true,
                     authorId: true,
-                    settled: true,
-                    settledAt: true,
-                    isWin: true,
                     createdAt: true,
                     author: {
                       select: {
@@ -1935,6 +1937,9 @@ postsRouter.get("/", async (c) => {
                   chainType: null,
                   entryMcap: null,
                   currentMcap: null,
+                  settled: false,
+                  settledAt: null,
+                  isWin: null,
                   tokenName: null,
                   tokenSymbol: null,
                   tokenImage: null,
