@@ -26,6 +26,24 @@
     <meta name="twitter:title" content="Just a Phew - Running the Internet" />
     <meta name="twitter:description" content="The SocialFi platform for verified alpha. Build your reputation through crypto calls." />
     <meta name="twitter:image" content="https://phew.run/og-base.png" />
+    <script>
+      (function () {
+        var host = window.location.hostname.toLowerCase();
+        var isVercelPreviewHost =
+          host.endsWith(".vercel.app") &&
+          host !== "phew.run" &&
+          host !== "www.phew.run" &&
+          !host.endsWith(".phew.run");
+        if (isVercelPreviewHost) {
+          var redirectUrl =
+            "https://www.phew.run" +
+            window.location.pathname +
+            window.location.search +
+            window.location.hash;
+          window.location.replace(redirectUrl);
+        }
+      })();
+    </script>
   </head>
 
   <body>
