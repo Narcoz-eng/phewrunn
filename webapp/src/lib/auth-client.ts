@@ -231,12 +231,6 @@ async function fetchSession(): Promise<AuthUser | null> {
   const cachedUser = readCachedAuthUser();
   const token = getStoredAuthToken();
 
-  // Skip anonymous /api/me probes when we have no cache, no token and no recent Privy sync.
-  // This prevents repeated expected 401s from flooding server logs for logged-out sessions.
-  if (!token && !cachedUser && lastPrivySyncAt === 0) {
-    return null;
-  }
-
   if (
     cachedUser &&
     lastPrivySyncAt > 0 &&
