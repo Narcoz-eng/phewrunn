@@ -1350,9 +1350,58 @@ app.post("/api/auth/logout", async (c) => {
 
 // Get current user - returns full user data from database
 app.get("/api/me", async (c) => {
-  const user = c.get("user");
-  const session = c.get("session");
-  if (!user) return c.body(null, 401);
+  let user = c.get("user");
+  let session = c.get("session");
+
+  if (!user || !session?.user) {
+    try {
+      const recoveredSession = await auth.api.getSession({ headers: c.req.raw.headers });
+      if (recoveredSession?.user) {
+        session = recoveredSession;
+        user = {
+          id: recoveredSession.user.id,
+          email: recoveredSession.user.email || null,
+          walletAddress: recoveredSession.user.walletAddress || null,
+        };
+        c.set("session", recoveredSession);
+        c.set("user", user);
+      } else {
+        const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
+        if (authHeader && /^bearer\s+/i.test(authHeader)) {
+          const token = authHeader.replace(/^bearer\s+/i, "").trim();
+          const bearerSession = await auth.api.getSessionByToken(token);
+          if (bearerSession?.user) {
+            session = bearerSession;
+            user = {
+              id: bearerSession.user.id,
+              email: bearerSession.user.email || null,
+              walletAddress: bearerSession.user.walletAddress || null,
+            };
+            c.set("session", bearerSession);
+            c.set("user", user);
+          }
+        }
+      }
+    } catch (recoverError) {
+      console.warn("[/api/me] Session recovery fallback failed", recoverError);
+    }
+  }
+
+  if (!user) {
+    const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
+    const cookieHeader = c.req.header("cookie") ?? "";
+    const hasSessionCookie =
+      cookieHeader.includes("phew.session_token=") ||
+      cookieHeader.includes("better-auth.session_token=") ||
+      cookieHeader.includes("auth.session_token=");
+    console.warn("[/api/me] Unauthorized request", {
+      host: c.req.header("host") ?? null,
+      origin: c.req.header("origin") ?? null,
+      hasAuthorizationHeader: Boolean(authHeader && authHeader.trim().length > 0),
+      hasSessionCookie,
+    });
+    return c.body(null, 401);
+  }
 
   let dbUser: {
     id: string;

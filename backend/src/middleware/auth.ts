@@ -62,9 +62,9 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
     // failures do not automatically skip bearer auth.
     if (!session?.user) {
       try {
-        const authHeader = c.req.header("Authorization");
-        if (authHeader?.startsWith("Bearer ")) {
-          const token = authHeader.slice(7);
+        const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
+        if (authHeader && /^bearer\s+/i.test(authHeader)) {
+          const token = authHeader.replace(/^bearer\s+/i, "").trim();
           const bearerSession = await auth.api.getSessionByToken(token);
           if (bearerSession?.user) {
             session = bearerSession as Awaited<ReturnType<typeof auth.api.getSession>>;
