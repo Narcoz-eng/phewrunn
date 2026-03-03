@@ -11,6 +11,7 @@ import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
+import { AuthInitializer } from "@/components/AuthInitializer";
 
 // Lazy load page components
 const Feed = lazy(() => import("./pages/Feed"));
@@ -72,12 +73,13 @@ const App = () => (
       <SolanaWalletProvider>
         <PrivyWalletProvider>
           <AuthProvider>
-            <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <BrowserRouter>
-                <Suspense fallback={<PageSkeleton />}>
-                  <Routes>
+            <AuthInitializer>
+              <TooltipProvider>
+                <Toaster />
+                <Sonner />
+                <BrowserRouter>
+                  <Suspense fallback={<PageSkeleton />}>
+                    <Routes>
                   <Route
                     path="/"
                     element={
@@ -142,10 +144,11 @@ const App = () => (
                   <Route path="/privacy" element={<Privacy />} />
                   <Route path="/docs" element={<Docs />} />
                   <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </Suspense>
-              </BrowserRouter>
-            </TooltipProvider>
+                    </Routes>
+                  </Suspense>
+                </BrowserRouter>
+              </TooltipProvider>
+            </AuthInitializer>
           </AuthProvider>
         </PrivyWalletProvider>
       </SolanaWalletProvider>
