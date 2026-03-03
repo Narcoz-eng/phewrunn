@@ -4,14 +4,14 @@ import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 45_000;
-const AUTO_RESYNC_COOLDOWN_MS = 2_000;
-const AUTO_RESYNC_MAX_ATTEMPTS = 5;
-const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
+const AUTO_RESYNC_COOLDOWN_MS = 4_000;
+const AUTO_RESYNC_MAX_ATTEMPTS = 3;
+const TOO_MANY_REQUESTS_BACKOFF_MS = 6_000;
 const IDENTITY_TOKEN_ATTEMPTS = 4;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [60, 100, 160] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
-  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
-const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
+  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(4\d\d\)|server|rate limit|too many/i;
+const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many|rate limit|429/i;
 type PrivyUserLike = {
   id: string;
   email?: { address?: string } | null;
@@ -105,28 +105,26 @@ export function usePrivyLogin() {
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
-      // Show a friendlier message to the user instead of raw server errors
-      const userMessage = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage)
-        ? "Sign-in is busy. Retrying..."
-        : rawMessage;
-      setSyncError(userMessage);
 
       if (source === "auto") {
         autoResyncAttemptsRef.current += 1;
       }
 
       const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(rawMessage);
-      const shouldToast =
-        source === "manual" ||
-        !isRetryable ||
-        autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+      const isRateLimited = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
+      const attemptsExhausted = autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
 
-      if (shouldToast) {
-        toast.error(userMessage);
+      // Show a subtle status message, not scary errors
+      if (isRetryable && !attemptsExhausted) {
+        setSyncError("Connecting...");
+      } else {
+        setSyncError("Could not connect. Please tap Sign In to try again.");
+        // Only toast on final failure, not intermediate retries
+        toast.error("Sign-in failed. Please try again.");
       }
 
-      // Only apply short backoff for auto-retries, never block manual sign-in
-      if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage) && source === "auto") {
+      // Apply backoff for auto-retries, never block manual sign-in
+      if (isRateLimited && source === "auto") {
         rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
       }
     } finally {
@@ -150,35 +148,21 @@ export function usePrivyLogin() {
     setSyncError(null);
   }, [appSessionAuthenticated]);
 
+  // Auto-resync: only attempt ONCE on mount when Privy is already authenticated
+  // (e.g. page refresh with persisted Privy session). Don't retry automatically
+  // to avoid burning through rate limits before the user even taps anything.
+  const mountResyncDoneRef = useRef(false);
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
     if (appSessionAuthenticated) return;
     if (syncGuardRef.current || isSyncing) return;
-    if (rateLimitedUntilRef.current > Date.now()) return;
+    if (mountResyncDoneRef.current) return;
 
-    if (lastPrivyUserIdRef.current !== user.id) {
-      autoResyncAttemptsRef.current = 0;
-      lastAutoResyncAtRef.current = 0;
-      lastPrivyUserIdRef.current = user.id;
-    }
-
-    if (autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS) {
-      setSyncError("Sign-in is delayed. Please tap sign in again.");
-      return;
-    }
-
-    const now = Date.now();
-    const dynamicCooldown =
-      AUTO_RESYNC_COOLDOWN_MS * Math.max(1, autoResyncAttemptsRef.current + 1);
-    if (now - lastAutoResyncAtRef.current < dynamicCooldown) return;
-    lastAutoResyncAtRef.current = now;
-
-    setSyncError(null);
-    loginRequestedRef.current = true;
+    mountResyncDoneRef.current = true;
+    lastPrivyUserIdRef.current = user.id;
     setIsSyncing(true);
-    startSyncTimeout();
     void runPrivySync(user as PrivyUserLike, "auto");
-  }, [appSessionAuthenticated, authenticated, isSyncing, ready, runPrivySync, startSyncTimeout, user]);
+  }, [appSessionAuthenticated, authenticated, isSyncing, ready, runPrivySync, user]);
 
   const { login } = useLogin({
     onComplete: async (params) => {

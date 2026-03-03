@@ -47,8 +47,8 @@ const AUTH_SESSION_RETRY_DELAY_MS = 300;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 6;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 4;
-const PRIVY_SYNC_TIMEOUT_MS = 10_000;
-const PRIVY_SYNC_RETRY_DELAYS_MS = [300, 800, 1500] as const;
+const PRIVY_SYNC_TIMEOUT_MS = 12_000;
+const PRIVY_SYNC_RETRY_DELAYS_MS = [1200, 2500, 5000] as const;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -737,20 +737,20 @@ export async function syncPrivySession(
         const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
         const message =
           data?.error?.message ??
-          (response.status === 429
-            ? "Too many requests"
-            : response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
-        const retryable = response.status === 429 || response.status >= 500;
+          (response.status ? `Failed to sign in (${response.status})` : "Failed to sign in");
+        // Retry on 429, 5xx, and also 401 (Privy token may take a moment to propagate)
+        const retryable = response.status === 429 || response.status === 401 || response.status >= 500;
         if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
           const delay = response.status === 429
-            ? Math.min((Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 1500), 3000)
+            ? Math.min((Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 2500), 5000)
             : PRIVY_SYNC_RETRY_DELAYS_MS[attempt];
+          console.warn(`[Auth] privy-sync attempt ${attempt + 1} failed (${response.status}), retrying in ${delay}ms`);
           await new Promise<void>((resolve) => {
             setTimeout(resolve, delay);
           });
           continue;
         }
-        console.error("[Auth] privy-sync failed:", message);
+        console.error("[Auth] privy-sync failed after all retries:", message);
         throw new Error(message);
       }
 
