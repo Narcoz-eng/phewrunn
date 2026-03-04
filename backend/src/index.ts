@@ -309,7 +309,7 @@ const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
   const raw = process.env.ME_DB_LOOKUP_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 1200 : 2500;
+  return process.env.NODE_ENV === "production" ? 2500 : 3000;
 })();
 
 async function withTimeoutResult<T>(
@@ -1195,6 +1195,19 @@ app.post("/api/auth/privy-sync", async (c) => {
       if (fastPathAccount?.userId) {
         const fastPathUser = await findAuthUserById(fastPathAccount.userId);
         if (fastPathUser) {
+          const fastPathEmail = fastPathUser.email.trim().toLowerCase();
+          const shouldBypassFastPath = !!(
+            providedEmail &&
+            fastPathEmail &&
+            providedEmail !== fastPathEmail
+          );
+          if (shouldBypassFastPath) {
+            console.warn("[privy-sync] Fast path email mismatch, falling back to verified Privy sync", {
+              privyUserId,
+              providedEmail,
+              linkedEmail: fastPathEmail,
+            });
+          } else {
           // Update cache for future requests
           if (privyCacheKey) {
             privyIdentityCache.set(privyCacheKey, {
@@ -1238,6 +1251,7 @@ app.post("/api/auth/privy-sync", async (c) => {
               isVerified: fastPathUser.isVerified,
             },
           });
+          }
         }
       }
     }
@@ -1621,29 +1635,9 @@ app.get("/api/me", async (c) => {
     typeof session?.session?.id === "string" &&
     session.session.id.startsWith("stateless:");
 
-  if (sessionIsStatelessFallback && session?.user) {
-    return c.json({
-      data: {
-        id: session.user.id,
-        name: session.user.name,
-        email: session.user.email,
-        image: session.user.image,
-        walletAddress: session.user.walletAddress,
-        username: session.user.username,
-        level: session.user.level,
-        xp: session.user.xp,
-        bio: session.user.bio,
-        isAdmin: session.user.isAdmin,
-        isVerified: session.user.isVerified,
-        ...defaultFeeSettings,
-        createdAt: session.user.createdAt,
-      },
-    });
-  }
-
   try {
     // Fetch full user data from database
-    const fullLookup = await withTimeoutResult(
+    let fullLookup = await withTimeoutResult(
       prisma.user.findUnique({
         where: { id: user.id },
         select: {
@@ -1667,12 +1661,40 @@ app.get("/api/me", async (c) => {
       ME_DB_LOOKUP_TIMEOUT_MS
     );
 
+    if (fullLookup.timedOut) {
+      const retryTimeoutMs = Math.min(ME_DB_LOOKUP_TIMEOUT_MS + 1200, 5000);
+      fullLookup = await withTimeoutResult(
+        prisma.user.findUnique({
+          where: { id: user.id },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            walletAddress: true,
+            username: true,
+            level: true,
+            xp: true,
+            bio: true,
+            isAdmin: true,
+            isVerified: true,
+            tradeFeeRewardsEnabled: true,
+            tradeFeeShareBps: true,
+            tradeFeePayoutAddress: true,
+            createdAt: true,
+          },
+        }),
+        retryTimeoutMs
+      );
+      if (fullLookup.timedOut) {
+        console.warn(
+          `[/api/me] User lookup exceeded ${ME_DB_LOOKUP_TIMEOUT_MS}ms (+retry ${retryTimeoutMs}ms); serving fallback`
+        );
+      }
+    }
+
     if (!fullLookup.timedOut) {
       dbUser = fullLookup.value;
-    } else {
-      console.warn(
-        `[/api/me] User lookup exceeded ${ME_DB_LOOKUP_TIMEOUT_MS}ms; serving session fallback`
-      );
     }
   } catch (error) {
     if (isPrismaSchemaDriftError(error)) {
@@ -1710,6 +1732,17 @@ app.get("/api/me", async (c) => {
   }
 
   if (!dbUser) {
+    if (sessionIsStatelessFallback) {
+      return c.json(
+        {
+          error: {
+            message: "Profile is temporarily unavailable. Please retry.",
+            code: "PROFILE_TEMPORARILY_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     if (session?.user) {
       return c.json({
         data: {

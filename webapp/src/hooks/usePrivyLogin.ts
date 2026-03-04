@@ -104,12 +104,15 @@ export function usePrivyLogin() {
       // syncPrivySession already caches the user and stores the token,
       // so the first refetch resolves from cache instantly.
       await refetch();
+      if (source === "manual" && typeof window !== "undefined" && window.location.pathname === "/login") {
+        window.location.replace("/");
+      }
       autoResyncAttemptsRef.current = 0;
       return true;
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
-      if (appSessionAuthenticatedRef.current) {
+      if (source === "auto" && appSessionAuthenticatedRef.current) {
         setSyncError(null);
         return true;
       }
