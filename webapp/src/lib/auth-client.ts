@@ -55,6 +55,7 @@ const SESSION_COOKIE_CANDIDATE_NAMES = [
   "better-auth.session_token",
   "auth.session_token",
 ] as const;
+const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
@@ -96,6 +97,10 @@ export interface AuthUser {
   image?: string | null;
   isVerified?: boolean;
 }
+
+type AuthSessionSyncEventDetail = {
+  user: AuthUser;
+};
 
 // Session state
 interface SessionState {
@@ -253,6 +258,15 @@ function writeCachedAuthUser(user: AuthUser | null): void {
 
 function clearCachedAuthUser(): void {
   writeCachedAuthUser(null);
+}
+
+function emitAuthSessionSynced(user: AuthUser): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<AuthSessionSyncEventDetail>(AUTH_SESSION_SYNC_EVENT, {
+      detail: { user },
+    })
+  );
 }
 
 // Auth context
@@ -549,6 +563,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [resolveSessionWithRetry]);
 
+  // Fast-path auth hydration after Privy sync without waiting for /api/me roundtrips.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleSessionSynced = (event: Event) => {
+      const customEvent = event as CustomEvent<AuthSessionSyncEventDetail>;
+      const syncedUser = customEvent.detail?.user;
+      if (!syncedUser?.id) return;
+      setState({
+        user: syncedUser,
+        isLoading: false,
+        isAuthenticated: true,
+      });
+    };
+    window.addEventListener(AUTH_SESSION_SYNC_EVENT, handleSessionSynced as EventListener);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_SYNC_EVENT, handleSessionSynced as EventListener);
+    };
+  }, []);
+
   return createElement(
     AuthContext.Provider,
     { value: { ...state, refetch, logout } },
@@ -834,6 +867,7 @@ export async function syncPrivySession(
         // Store the session token for Bearer auth fallback
         setStoredAuthToken(data.token);
         writeCachedAuthUser(data.user);
+        emitAuthSessionSynced(data.user);
         return { token: data.token, user: data.user };
       } catch (error) {
         const isAbort = error instanceof Error && error.name === "AbortError";

@@ -101,12 +101,11 @@ export function usePrivyLogin() {
         name || undefined,
         privyIdToken ?? undefined
       );
-      // syncPrivySession already caches the user and stores the token,
-      // so the first refetch resolves from cache instantly.
-      await refetch();
-      if (source === "manual" && typeof window !== "undefined" && window.location.pathname === "/login") {
-        window.location.replace("/");
-      }
+      // Keep UI responsive: syncPrivySession already updates cached auth state.
+      // Refetch in the background to reconcile server state without blocking login flow.
+      void refetch().catch((error) => {
+        console.warn("[usePrivyLogin] background refetch after sync failed", error);
+      });
       autoResyncAttemptsRef.current = 0;
       return true;
     } catch (err) {

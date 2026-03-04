@@ -311,6 +311,60 @@ const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return process.env.NODE_ENV === "production" ? 2500 : 3000;
 })();
+const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
+const ME_RESPONSE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+type MeResponseUser = {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  walletAddress: string | null;
+  username: string | null;
+  level: number;
+  xp: number;
+  bio: string | null;
+  isAdmin: boolean;
+  isVerified: boolean;
+  tradeFeeRewardsEnabled: boolean;
+  tradeFeeShareBps: number;
+  tradeFeePayoutAddress: string | null;
+  createdAt: Date;
+};
+const meResponseCache = new Map<
+  string,
+  {
+    data: MeResponseUser;
+    expiresAtMs: number;
+  }
+>();
+
+function readCachedMeResponse(userId: string): MeResponseUser | null {
+  const cached = meResponseCache.get(userId);
+  if (!cached) return null;
+  if (cached.expiresAtMs <= Date.now()) {
+    meResponseCache.delete(userId);
+    return null;
+  }
+  return cached.data;
+}
+
+function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
+  if (meResponseCache.has(userId)) {
+    meResponseCache.delete(userId);
+  }
+
+  if (meResponseCache.size >= ME_RESPONSE_CACHE_MAX_ENTRIES) {
+    const oldestKey = meResponseCache.keys().next().value;
+    if (typeof oldestKey === "string") {
+      meResponseCache.delete(oldestKey);
+    }
+  }
+
+  meResponseCache.set(userId, {
+    data,
+    expiresAtMs: Date.now() + ME_RESPONSE_CACHE_TTL_MS,
+  });
+}
 
 async function withTimeoutResult<T>(
   promise: Promise<T>,
@@ -1607,23 +1661,12 @@ app.get("/api/me", async (c) => {
     return c.body(null, 401);
   }
 
-  let dbUser: {
-    id: string;
-    name: string;
-    email: string;
-    image: string | null;
-    walletAddress: string | null;
-    username: string | null;
-    level: number;
-    xp: number;
-    bio: string | null;
-    isAdmin: boolean;
-    isVerified: boolean;
-    tradeFeeRewardsEnabled: boolean;
-    tradeFeeShareBps: number;
-    tradeFeePayoutAddress: string | null;
-    createdAt: Date;
-  } | null = null;
+  const cachedUser = readCachedMeResponse(user.id);
+  if (cachedUser) {
+    return c.json({ data: cachedUser });
+  }
+
+  let dbUser: MeResponseUser | null = null;
 
   const defaultFeeSettings = {
     tradeFeeRewardsEnabled: true,
@@ -1768,6 +1811,7 @@ app.get("/api/me", async (c) => {
     );
   }
 
+  writeCachedMeResponse(user.id, dbUser);
   return c.json({ data: dbUser });
 });
 

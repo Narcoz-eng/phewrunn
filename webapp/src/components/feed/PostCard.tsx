@@ -98,7 +98,8 @@ const JUPITER_QUOTE_TIMEOUT_MS = 6_500;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 90_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 5_000;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
-const ENABLE_ADVANCED_OHLC_CHART = true;
+const ENABLE_ADVANCED_OHLC_CHART =
+  String(import.meta.env.VITE_ENABLE_ADVANCED_OHLC_CHART ?? "").toLowerCase() === "true";
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -2155,7 +2156,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ],
     enabled: isBuyDialogOpen && canRequestChartCandles,
     staleTime: 5_000,
-    retry: 2,
+    retry: 1,
     refetchOnWindowFocus: false,
     refetchInterval: isBuyDialogOpen
       ? (q) => {
