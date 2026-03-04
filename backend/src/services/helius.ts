@@ -720,21 +720,29 @@ export async function getWalletTradeSnapshotForSolanaToken(params: {
 
 export async function getWalletTradeSnapshotsForSolanaTokens(params: {
   walletAddress: string | null | undefined;
-  tokenMints: Array<string | null | undefined>;
+  tokenMints?: Array<string | null | undefined>;
 }): Promise<Record<string, WalletTradeSnapshot> | null> {
   if (!HELIUS_RPC_URL) return null;
   if (!isLikelySolanaAddress(params.walletAddress)) return null;
 
-  const uniqueMints = [...new Set(
-    params.tokenMints.filter((mint): mint is string => isLikelySolanaAddress(mint))
-  )];
-  if (uniqueMints.length === 0) return null;
-
   // Lightweight feed path: holdings + token prices only (no enhanced tx history scan).
   const holdingsByMint = await fetchWalletTokenHoldings(params.walletAddress);
   if (!holdingsByMint) return null;
+  const requestedMints = [...new Set(
+    (params.tokenMints ?? []).filter((mint): mint is string => isLikelySolanaAddress(mint))
+  )];
+  const uniqueMints =
+    requestedMints.length > 0
+      ? requestedMints
+      : [...holdingsByMint.entries()]
+          .filter(([, holding]) => Number(holding.amount) > 0)
+          .map(([mint]) => mint);
 
   const snapshots: Record<string, WalletTradeSnapshot> = {};
+  if (uniqueMints.length === 0) {
+    return snapshots;
+  }
+
   const now = Date.now();
 
   const missingPriceMints: string[] = [];

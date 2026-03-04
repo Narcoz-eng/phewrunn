@@ -23,6 +23,7 @@ interface PortfolioPanelProps {
   totalUnrealizedPnl: number | null;
   onQuickSell: (mint: string, amount: number) => void;
   walletConnected: boolean;
+  activeMint?: string | null;
 }
 
 function formatUsd(value: number | null): string {
@@ -60,6 +61,7 @@ export default function PortfolioPanel({
   totalUnrealizedPnl,
   onQuickSell,
   walletConnected,
+  activeMint = null,
 }: PortfolioPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const totalIsProfit = totalUnrealizedPnl !== null && totalUnrealizedPnl >= 0;
@@ -141,6 +143,12 @@ export default function PortfolioPanel({
             <div className="max-h-[280px] overflow-y-auto">
               {positions.map((pos) => {
                 const isProfit = pos.unrealizedPnl !== null && pos.unrealizedPnl >= 0;
+                const canCloseFromHere =
+                  !!activeMint && pos.mint.toLowerCase() === activeMint.toLowerCase();
+                const displaySymbol =
+                  typeof pos.symbol === "string" && pos.symbol.trim().length > 0
+                    ? pos.symbol.trim().toUpperCase()
+                    : `${pos.mint.slice(0, 4)}...`;
                 return (
                   <div
                     key={pos.mint}
@@ -150,19 +158,19 @@ export default function PortfolioPanel({
                     {pos.image ? (
                       <img
                         src={pos.image}
-                        alt={pos.symbol}
+                        alt={displaySymbol}
                         className="h-8 w-8 flex-shrink-0 rounded-full object-cover ring-1 ring-white/[0.08]"
                       />
                     ) : (
                       <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-[10px] font-bold text-white/40 ring-1 ring-white/[0.08]">
-                        {pos.symbol.charAt(0)}
+                        {displaySymbol.charAt(0)}
                       </div>
                     )}
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold text-white truncate">{pos.symbol}</span>
+                        <span className="text-xs font-semibold text-white truncate">{displaySymbol}</span>
                         <span className="text-[10px] text-white/25">{formatBalance(pos.balance)}</span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-white/30">
@@ -187,11 +195,22 @@ export default function PortfolioPanel({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 rounded-md bg-rose-500/[0.08] px-2 text-[10px] font-semibold text-rose-400/80 hover:bg-rose-500/20 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className={cn(
+                          "h-6 rounded-md px-2 text-[10px] font-semibold opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity",
+                          canCloseFromHere
+                            ? "bg-rose-500/[0.08] text-rose-400/80 hover:bg-rose-500/20 hover:text-rose-400"
+                            : "bg-white/[0.06] text-white/50 hover:bg-white/[0.1] hover:text-white/75"
+                        )}
                         onClick={() => onQuickSell(pos.mint, pos.balance)}
                       >
-                        <X className="mr-0.5 h-2.5 w-2.5" />
-                        Sell
+                        {canCloseFromHere ? (
+                          <>
+                            <X className="mr-0.5 h-2.5 w-2.5" />
+                            Close
+                          </>
+                        ) : (
+                          "Open"
+                        )}
                       </Button>
                     </div>
                   </div>

@@ -856,28 +856,48 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   // Fetch portfolio when buy dialog opens and wallet is connected
   useEffect(() => {
-    if (!isBuyDialogOpen || !tradeWalletPublicKey || !post.contractAddress) return;
+    if (!isBuyDialogOpen || !tradeWalletPublicKey) {
+      return;
+    }
+    let cancelled = false;
     const walletAddr = tradeWalletPublicKey.toBase58();
     setIsPortfolioLoading(true);
     fetch("/api/posts/portfolio", {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ walletAddress: walletAddr, tokenMints: [post.contractAddress] }),
+      body: JSON.stringify({ walletAddress: walletAddr }),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
+        if (cancelled) return;
         const data = json?.data;
-        if (data?.positions) {
-          setPortfolioPositions(data.positions);
-          setPortfolioTotalPnl(data.totalUnrealizedPnl ?? null);
-        }
+        setPortfolioPositions(Array.isArray(data?.positions) ? data.positions : []);
+        setPortfolioTotalPnl(typeof data?.totalUnrealizedPnl === "number" ? data.totalUnrealizedPnl : null);
       })
       .catch(() => {
         // Silently fail - portfolio is supplementary
+        if (!cancelled) {
+          setPortfolioPositions([]);
+          setPortfolioTotalPnl(null);
+        }
       })
-      .finally(() => setIsPortfolioLoading(false));
-  }, [isBuyDialogOpen, tradeWalletPublicKey, post.contractAddress]);
+      .finally(() => {
+        if (!cancelled) {
+          setIsPortfolioLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isBuyDialogOpen, tradeWalletPublicKey]);
+
+  useEffect(() => {
+    if (isBuyDialogOpen) return;
+    setPortfolioPositions([]);
+    setPortfolioTotalPnl(null);
+    setIsPortfolioLoading(false);
+  }, [isBuyDialogOpen]);
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
@@ -2428,9 +2448,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handlePortfolioQuickSell = useCallback((mint: string, amount: number) => {
+    const activeMint = post.contractAddress?.toLowerCase() ?? null;
+    if (!activeMint || mint.toLowerCase() !== activeMint) {
+      toast.info("Open that token's panel to close this position.");
+      return;
+    }
     setTradeSide("sell");
-    setSellAmountToken(String(amount));
-  }, []);
+    setSellAmountToken(
+      formatDecimalInputValue(amount, Math.max(2, outputTokenDecimals))
+    );
+  }, [post.contractAddress, outputTokenDecimals]);
 
   const applySlippagePercentInput = () => {
     const parsed = Number(slippageInputPercent);
@@ -2919,7 +2946,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const fallbackPoints = tradeChartData
       .map((point) => point.mcap)
       .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    if (fallbackPoints.length === 1) {
+    if (fallbackPoints.length === 0) {
+      fallbackPoints.push(1, 1);
+    } else if (fallbackPoints.length === 1) {
       fallbackPoints.push(fallbackPoints[0]);
     }
     const fallbackAnchorTs = Number.isFinite(new Date(post.createdAt).getTime())
@@ -4824,6 +4853,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       totalUnrealizedPnl={portfolioTotalPnl}
                       onQuickSell={handlePortfolioQuickSell}
                       walletConnected={isWalletConnectedForTrade}
+                      activeMint={post.contractAddress}
                     />
                   </div>
                 </div>

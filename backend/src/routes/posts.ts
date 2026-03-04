@@ -4870,7 +4870,7 @@ postsRouter.post(
     "json",
     z.object({
       walletAddress: z.string(),
-      tokenMints: z.array(z.string()).min(1).max(50),
+      tokenMints: z.array(z.string()).max(120).optional(),
     })
   ),
   async (c) => {
@@ -4889,9 +4889,14 @@ postsRouter.post(
       );
     }
 
+    const portfolioMints =
+      Array.isArray(tokenMints) && tokenMints.length > 0
+        ? tokenMints
+        : Object.keys(snapshots);
+
     // Get metadata for each token in parallel
     const metadataEntries = await Promise.all(
-      tokenMints.map(async (mint) => {
+      portfolioMints.map(async (mint) => {
         const meta = await getHeliusTokenMetadataForMint({ mint, chainType: "solana" });
         return [mint, meta] as const;
       })
@@ -4901,12 +4906,13 @@ postsRouter.post(
     let totalUnrealizedPnl = 0;
     let hasPnl = false;
 
-    const positions = tokenMints.flatMap((mint) => {
+    const positionsWithSort = portfolioMints.flatMap((mint) => {
       const snap = snapshots[mint];
       if (!snap) return [];
 
       const meta = metadataByMint.get(mint);
       const balance = snap.holdingAmount ?? 0;
+      if (!Number.isFinite(balance) || balance <= 0) return [];
       const currentPrice =
         balance > 0 && snap.holdingUsd !== null ? snap.holdingUsd / balance : null;
       const avgEntryPrice =
@@ -4926,19 +4932,26 @@ postsRouter.post(
         hasPnl = true;
       }
 
-      return [{
-        mint,
-        symbol: meta?.tokenSymbol ?? null,
-        name: meta?.tokenName ?? null,
-        image: meta?.tokenImage ?? null,
-        balance,
-        avgEntryPrice: avgEntryPrice !== null ? Math.round(avgEntryPrice * 1e8) / 1e8 : null,
-        currentPrice: currentPrice !== null ? Math.round(currentPrice * 1e8) / 1e8 : null,
-        costBasis: costBasis !== null ? Math.round(costBasis * 100) / 100 : null,
-        unrealizedPnl: unrealizedPnl !== null ? Math.round(unrealizedPnl * 100) / 100 : null,
-        unrealizedPnlPercent,
-      }];
+      return [
+        {
+          sortValue: Number.isFinite(currentValue) ? currentValue : 0,
+          position: {
+            mint,
+            symbol: meta?.tokenSymbol ?? null,
+            name: meta?.tokenName ?? null,
+            image: meta?.tokenImage ?? null,
+            balance,
+            avgEntryPrice: avgEntryPrice !== null ? Math.round(avgEntryPrice * 1e8) / 1e8 : null,
+            currentPrice: currentPrice !== null ? Math.round(currentPrice * 1e8) / 1e8 : null,
+            costBasis: costBasis !== null ? Math.round(costBasis * 100) / 100 : null,
+            unrealizedPnl: unrealizedPnl !== null ? Math.round(unrealizedPnl * 100) / 100 : null,
+            unrealizedPnlPercent,
+          },
+        },
+      ];
     });
+    positionsWithSort.sort((a, b) => b.sortValue - a.sortValue);
+    const positions = positionsWithSort.map((entry) => entry.position);
 
     return c.json({
       data: {
