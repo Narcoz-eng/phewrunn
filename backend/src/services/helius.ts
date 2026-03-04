@@ -721,6 +721,7 @@ export async function getWalletTradeSnapshotForSolanaToken(params: {
 export async function getWalletTradeSnapshotsForSolanaTokens(params: {
   walletAddress: string | null | undefined;
   tokenMints?: Array<string | null | undefined>;
+  withPricing?: boolean;
 }): Promise<Record<string, WalletTradeSnapshot> | null> {
   if (!HELIUS_RPC_URL) return null;
   if (!isLikelySolanaAddress(params.walletAddress)) return null;
@@ -743,6 +744,7 @@ export async function getWalletTradeSnapshotsForSolanaTokens(params: {
     return snapshots;
   }
 
+  const withPricing = params.withPricing !== false;
   const now = Date.now();
 
   const missingPriceMints: string[] = [];
@@ -758,7 +760,7 @@ export async function getWalletTradeSnapshotsForSolanaTokens(params: {
     missingPriceMints.push(mint);
   }
 
-  if (missingPriceMints.length > 0) {
+  if (withPricing && missingPriceMints.length > 0) {
     const prices = await Promise.all(
       missingPriceMints.map(async (mint) => [mint, await fetchDexTokenPriceUsd(mint)] as const)
     );
@@ -771,7 +773,7 @@ export async function getWalletTradeSnapshotsForSolanaTokens(params: {
     const snapshot = buildEmptyTradeSnapshot();
     const holdingAmount = holdingsByMint.get(mint)?.amount ?? 0;
     snapshot.holdingAmount = holdingAmount;
-    const priceUsd = priceByMint.get(mint) ?? null;
+    const priceUsd = withPricing ? (priceByMint.get(mint) ?? null) : null;
     if (priceUsd !== null) {
       snapshot.holdingUsd = roundMoney(holdingAmount * priceUsd);
     }

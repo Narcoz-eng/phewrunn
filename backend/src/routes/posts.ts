@@ -4875,11 +4875,13 @@ postsRouter.post(
   ),
   async (c) => {
     const { walletAddress, tokenMints } = c.req.valid("json");
+    const hasExplicitMints = Array.isArray(tokenMints) && tokenMints.length > 0;
 
     // Get trade snapshots (holdings + prices) for all mints
     const snapshots = await getWalletTradeSnapshotsForSolanaTokens({
       walletAddress,
       tokenMints,
+      withPricing: hasExplicitMints,
     });
 
     if (!snapshots) {
@@ -4890,13 +4892,14 @@ postsRouter.post(
     }
 
     const portfolioMints =
-      Array.isArray(tokenMints) && tokenMints.length > 0
+      hasExplicitMints
         ? tokenMints
         : Object.keys(snapshots);
 
-    // Get metadata for each token in parallel
+    // Enrich with metadata, but keep wallet-wide fetches bounded to avoid panel stalls.
+    const metadataMints = hasExplicitMints ? portfolioMints : portfolioMints.slice(0, 40);
     const metadataEntries = await Promise.all(
-      portfolioMints.map(async (mint) => {
+      metadataMints.map(async (mint) => {
         const meta = await getHeliusTokenMetadataForMint({ mint, chainType: "solana" });
         return [mint, meta] as const;
       })
@@ -4934,7 +4937,10 @@ postsRouter.post(
 
       return [
         {
-          sortValue: Number.isFinite(currentValue) ? currentValue : 0,
+          sortValue:
+            Number.isFinite(currentValue) && currentValue > 0
+              ? currentValue
+              : Math.max(0, balance),
           position: {
             mint,
             symbol: meta?.tokenSymbol ?? null,

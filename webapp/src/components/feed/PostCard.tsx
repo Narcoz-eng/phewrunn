@@ -9,6 +9,7 @@ import {
   Cell,
   CartesianGrid,
   ComposedChart,
+  Line,
   ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
@@ -860,12 +861,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 8_500);
     const walletAddr = tradeWalletPublicKey.toBase58();
     setIsPortfolioLoading(true);
     fetch("/api/posts/portfolio", {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
+      signal: controller.signal,
       body: JSON.stringify({ walletAddress: walletAddr }),
     })
       .then((res) => (res.ok ? res.json() : null))
@@ -883,12 +887,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         }
       })
       .finally(() => {
+        window.clearTimeout(timeoutId);
         if (!cancelled) {
           setIsPortfolioLoading(false);
         }
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
     };
   }, [isBuyDialogOpen, tradeWalletPublicKey]);
 
@@ -2320,7 +2327,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     retry: 1,
     retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
     placeholderData: (previousData) => previousData,
-    refetchInterval: isBuyDialogOpen ? (q) => (q.state.data ? 5_000 : 2_200) : false,
+    refetchInterval: isBuyDialogOpen
+      ? (q) => {
+          if (q.state.data) return 5_000;
+          if (q.state.error) return 7_500;
+          return 4_500;
+        }
+      : false,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
       if (!tradeAmountAtomic) {
@@ -3024,6 +3037,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, [chartCandlesQuery.data?.candles, chartRequestConfig.aggregate, chartRequestConfig.timeframe, post.createdAt, tradeChartData]);
   const hasProviderChartCandles = (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
   const hasProfessionalChartData = professionalChartData.length >= 2;
+  const canUseAdvancedChart = hasProfessionalChartData && professionalChartData.length >= 8;
   const isFallbackChartData = hasProfessionalChartData && !hasProviderChartCandles;
   const chartTotalPoints = professionalChartData.length;
   const chartWindowBounds = useMemo(() => {
@@ -4573,7 +4587,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
                       >
                         {hasProfessionalChartData ? (
-                          <ChartErrorBoundary key={`chart-eb-${chartInterval}`}>
+                          <ChartErrorBoundary
+                            key={`chart-eb-${post.id}-${chartInterval}-${professionalChartData.length}-${chartCandlesQuery.data?.source ?? "na"}`}
+                          >
                           <ResponsiveContainer width="100%" height="100%">
                             <ComposedChart
                               data={professionalChartData}
@@ -4615,7 +4631,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 tick={{ fill: "rgba(255,255,255,0.78)", fontSize: 10 }}
                                 tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
                               />
-                              {isChartInfoVisible ? (
+                              {isChartInfoVisible && canUseAdvancedChart ? (
                                 <YAxis
                                   yAxisId="volume"
                                   orientation="right"
@@ -4694,7 +4710,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                         <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.low ?? 0))}</span>
                                         <span className="text-white/35">C</span>
                                         <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.close ?? 0))}</span>
-                                        {isChartInfoVisible ? (
+                                        {isChartInfoVisible && canUseAdvancedChart ? (
                                           <>
                                             <span className="text-white/35">Vol</span>
                                             <span className="text-right font-medium text-white/80">
@@ -4707,50 +4723,66 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   );
                                 }}
                               />
-                              {isChartInfoVisible ? (
-                                <Bar
-                                  yAxisId="volume"
-                                  dataKey="volume"
-                                  barSize={3}
-                                  fill={`url(#buyChartVolumeFill-${post.id})`}
-                                  opacity={0.9}
-                                />
-                              ) : null}
-                              <Bar
-                                yAxisId="price"
-                                dataKey="wickRange"
-                                barSize={2}
-                                fill={`url(#buyChartWick-${post.id})`}
-                                opacity={isChartTradesVisible ? 1 : 0.7}
-                                tooltipType="none"
-                              />
-                              <Bar
-                                yAxisId="price"
-                                dataKey="bodyRange"
-                                barSize={8}
-                                radius={[1, 1, 1, 1]}
-                                tooltipType="none"
-                                isAnimationActive={false}
-                              >
-                                {professionalChartData.map((point) => (
-                                  <Cell
-                                    key={`candle-${post.id}-${point.ts}`}
-                                    fill={point.isBullish ? "#22c55e" : "#ef4444"}
-                                    fillOpacity={isChartTradesVisible ? 1 : 0.7}
+                              {canUseAdvancedChart ? (
+                                <>
+                                  {isChartInfoVisible ? (
+                                    <Bar
+                                      yAxisId="volume"
+                                      dataKey="volume"
+                                      barSize={3}
+                                      fill={`url(#buyChartVolumeFill-${post.id})`}
+                                      opacity={0.9}
+                                    />
+                                  ) : null}
+                                  <Bar
+                                    yAxisId="price"
+                                    dataKey="wickRange"
+                                    barSize={2}
+                                    fill={`url(#buyChartWick-${post.id})`}
+                                    opacity={isChartTradesVisible ? 1 : 0.7}
+                                    tooltipType="none"
                                   />
-                                ))}
-                              </Bar>
-                              <Brush
-                                dataKey="ts"
-                                height={20}
-                                stroke={professionalChartStroke}
-                                fill="rgba(255,255,255,0.04)"
-                                travellerWidth={8}
-                                startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
-                                endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
-                                onChange={handleChartBrushChange}
-                                tickFormatter={formatChartXAxisTick}
-                              />
+                                  <Bar
+                                    yAxisId="price"
+                                    dataKey="bodyRange"
+                                    barSize={8}
+                                    radius={[1, 1, 1, 1]}
+                                    tooltipType="none"
+                                    isAnimationActive={false}
+                                  >
+                                    {professionalChartData.map((point) => (
+                                      <Cell
+                                        key={`candle-${post.id}-${point.ts}`}
+                                        fill={point.isBullish ? "#22c55e" : "#ef4444"}
+                                        fillOpacity={isChartTradesVisible ? 1 : 0.7}
+                                      />
+                                    ))}
+                                  </Bar>
+                                  {professionalChartData.length > CHART_MIN_VISIBLE_POINTS ? (
+                                    <Brush
+                                      dataKey="ts"
+                                      height={20}
+                                      stroke={professionalChartStroke}
+                                      fill="rgba(255,255,255,0.04)"
+                                      travellerWidth={8}
+                                      startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
+                                      endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
+                                      onChange={handleChartBrushChange}
+                                      tickFormatter={formatChartXAxisTick}
+                                    />
+                                  ) : null}
+                                </>
+                              ) : (
+                                <Line
+                                  yAxisId="price"
+                                  type="monotone"
+                                  dataKey="close"
+                                  stroke={professionalChartStroke}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  isAnimationActive={false}
+                                />
+                              )}
                             </ComposedChart>
                           </ResponsiveContainer>
                           </ChartErrorBoundary>
