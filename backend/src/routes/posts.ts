@@ -4864,6 +4864,92 @@ async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<Char
   throw new Error("No chart provider available");
 }
 
+postsRouter.post(
+  "/portfolio",
+  zValidator(
+    "json",
+    z.object({
+      walletAddress: z.string(),
+      tokenMints: z.array(z.string()).min(1).max(50),
+    })
+  ),
+  async (c) => {
+    const { walletAddress, tokenMints } = c.req.valid("json");
+
+    // Get trade snapshots (holdings + prices) for all mints
+    const snapshots = await getWalletTradeSnapshotsForSolanaTokens({
+      walletAddress,
+      tokenMints,
+    });
+
+    if (!snapshots) {
+      return c.json(
+        { error: { message: "Failed to fetch portfolio data", code: "PORTFOLIO_FETCH_FAILED" } },
+        500
+      );
+    }
+
+    // Get metadata for each token in parallel
+    const metadataEntries = await Promise.all(
+      tokenMints.map(async (mint) => {
+        const meta = await getHeliusTokenMetadataForMint({ mint, chainType: "solana" });
+        return [mint, meta] as const;
+      })
+    );
+    const metadataByMint = new Map(metadataEntries);
+
+    let totalUnrealizedPnl = 0;
+    let hasPnl = false;
+
+    const positions = tokenMints
+      .filter((mint) => snapshots[mint])
+      .map((mint) => {
+        const snap = snapshots[mint];
+        const meta = metadataByMint.get(mint);
+
+        const balance = snap.holdingAmount ?? 0;
+        const currentPrice =
+          balance > 0 && snap.holdingUsd !== null ? snap.holdingUsd / balance : null;
+        const avgEntryPrice =
+          snap.boughtAmount && snap.boughtAmount > 0 && snap.boughtUsd !== null
+            ? snap.boughtUsd / snap.boughtAmount
+            : null;
+        const costBasis = avgEntryPrice !== null ? avgEntryPrice * balance : null;
+        const currentValue = snap.holdingUsd ?? 0;
+        const unrealizedPnl = costBasis !== null ? currentValue - costBasis : null;
+        const unrealizedPnlPercent =
+          costBasis !== null && costBasis > 0
+            ? Math.round(((currentValue - costBasis) / costBasis) * 10000) / 100
+            : null;
+
+        if (unrealizedPnl !== null) {
+          totalUnrealizedPnl += unrealizedPnl;
+          hasPnl = true;
+        }
+
+        return {
+          mint,
+          symbol: meta?.tokenSymbol ?? null,
+          name: meta?.tokenName ?? null,
+          image: meta?.tokenImage ?? null,
+          balance,
+          avgEntryPrice: avgEntryPrice !== null ? Math.round(avgEntryPrice * 1e8) / 1e8 : null,
+          currentPrice: currentPrice !== null ? Math.round(currentPrice * 1e8) / 1e8 : null,
+          costBasis: costBasis !== null ? Math.round(costBasis * 100) / 100 : null,
+          unrealizedPnl: unrealizedPnl !== null ? Math.round(unrealizedPnl * 100) / 100 : null,
+          unrealizedPnlPercent,
+        };
+      });
+
+    return c.json({
+      data: {
+        positions,
+        totalUnrealizedPnl: hasPnl ? Math.round(totalUnrealizedPnl * 100) / 100 : null,
+      },
+    });
+  }
+);
+
 postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), async (c) => {
   const payload = c.req.valid("json");
   const cacheKey = buildChartCandlesCacheKey(payload);

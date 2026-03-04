@@ -82,9 +82,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { TradingPanel } from "./TradingPanel";
+import PortfolioPanel from "./PortfolioPanel";
+import type { PortfolioPosition } from "./PortfolioPanel";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
+const TRADE_AUTO_CONFIRM_STORAGE_KEY = "phew.trade.auto-confirm";
 const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
@@ -606,6 +610,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
   const quickBuyRetryCountRef = useRef(0);
+  const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(TRADE_AUTO_CONFIRM_STORAGE_KEY) === "true";
+  });
+  const [portfolioPositions, setPortfolioPositions] = useState<PortfolioPosition[]>([]);
+  const [portfolioTotalPnl, setPortfolioTotalPnl] = useState<number | null>(null);
+  const [isPortfolioLoading, setIsPortfolioLoading] = useState(false);
   const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
@@ -834,6 +845,39 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       JSON.stringify(quickBuyPresetsSol)
     );
   }, [quickBuyPresetsSol]);
+
+  // Auto-confirm persistence
+  const handleAutoConfirmChange = useCallback((enabled: boolean) => {
+    setAutoConfirmEnabled(enabled);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TRADE_AUTO_CONFIRM_STORAGE_KEY, String(enabled));
+    }
+  }, []);
+
+  // Fetch portfolio when buy dialog opens and wallet is connected
+  useEffect(() => {
+    if (!isBuyDialogOpen || !tradeWalletPublicKey || !post.contractAddress) return;
+    const walletAddr = tradeWalletPublicKey.toBase58();
+    setIsPortfolioLoading(true);
+    fetch("/api/posts/portfolio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ walletAddress: walletAddr, tokenMints: [post.contractAddress] }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        const data = json?.data;
+        if (data?.positions) {
+          setPortfolioPositions(data.positions);
+          setPortfolioTotalPnl(data.totalUnrealizedPnl ?? null);
+        }
+      })
+      .catch(() => {
+        // Silently fail - portfolio is supplementary
+      })
+      .finally(() => setIsPortfolioLoading(false));
+  }, [isBuyDialogOpen, tradeWalletPublicKey, post.contractAddress]);
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
@@ -2382,6 +2426,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     // Quick-buy should execute immediately without forcing modal navigation.
     handleCloseBuyDialog();
   };
+
+  const handlePortfolioQuickSell = useCallback((mint: string, amount: number) => {
+    setTradeSide("sell");
+    setSellAmountToken(String(amount));
+  }, []);
 
   const applySlippagePercentInput = () => {
     const parsed = Number(slippageInputPercent);
@@ -4660,13 +4709,13 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 dataKey="wickRange"
                                 barSize={2}
                                 fill={`url(#buyChartWick-${post.id})`}
-                                opacity={isChartTradesVisible ? 0.95 : 0.65}
+                                opacity={isChartTradesVisible ? 1 : 0.7}
                                 tooltipType="none"
                               />
                               <Bar
                                 yAxisId="price"
                                 dataKey="bodyRange"
-                                barSize={6}
+                                barSize={8}
                                 radius={[1, 1, 1, 1]}
                                 tooltipType="none"
                                 isAnimationActive={false}
@@ -4674,8 +4723,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 {professionalChartData.map((point) => (
                                   <Cell
                                     key={`candle-${post.id}-${point.ts}`}
-                                    fill={point.isBullish ? "#74f37a" : "#ff6b6b"}
-                                    fillOpacity={isChartTradesVisible ? 0.95 : 0.6}
+                                    fill={point.isBullish ? "#22c55e" : "#ef4444"}
+                                    fillOpacity={isChartTradesVisible ? 1 : 0.7}
                                   />
                                 ))}
                               </Bar>
@@ -4750,41 +4799,55 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   </div>
 
                   <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
-                    <div className="order-1 rounded-xl border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-center justify-between gap-3 mb-3">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Order Ticket</div>
-                          <div className="text-sm font-medium text-foreground">Buy and sell instantly</div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setTradeSide("buy")}
-                          className={cn(
-                            "h-10 rounded-xl border text-sm font-semibold transition-colors",
-                            tradeSide === "buy"
-                              ? "border-lime-300/35 bg-lime-300/10 text-lime-100"
-                              : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/5"
-                          )}
-                        >
-                          Buy
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTradeSide("sell")}
-                          className={cn(
-                            "h-10 rounded-xl border text-sm font-semibold transition-colors",
-                            tradeSide === "sell"
-                              ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100"
-                              : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/5"
-                          )}
-                        >
-                          Sell
-                        </button>
-                      </div>
-                    </div>
+                    {/* New Trading Panel */}
+                    <TradingPanel
+                      tradeSide={tradeSide}
+                      onTradeSideChange={setTradeSide}
+                      buyAmountSol={buyAmountSol}
+                      onBuyAmountChange={setBuyAmountSol}
+                      sellAmountToken={sellAmountToken}
+                      onSellAmountChange={setSellAmountToken}
+                      tokenSymbol={displayTokenSymbol}
+                      tokenName={displayTokenLabel}
+                      tokenImage={resolvedTokenImage}
+                      slippageBps={slippageBps}
+                      onSlippageChange={setSlippageBps}
+                      jupiterOutputFormatted={jupiterOutputFormatted}
+                      jupiterMinReceiveFormatted={jupiterMinReceiveFormatted}
+                      jupiterPriceImpactDisplay={jupiterPriceImpactDisplay}
+                      jupiterPlatformFeeDisplay={jupiterPlatformFeeDisplay}
+                      jupiterStatusLabel={jupiterStatusLabel}
+                      isQuoteLoading={showQuoteLoading}
+                      isExecuting={isExecutingBuy}
+                      canExecute={canExecuteJupiterBuy}
+                      walletConnected={isWalletConnectedForTrade}
+                      walletBalance={null}
+                      walletTokenBalance={walletTokenBalance}
+                      walletTokenBalanceFormatted={walletTokenBalanceFormatted}
+                      onExecute={handleExecuteJupiterBuy}
+                      onConnectWallet={() => {
+                        setPendingBuyAfterWalletConnect(true);
+                        openWalletSelector();
+                      }}
+                      txSignature={buyTxSignature}
+                      quickBuyPresets={buyQuickAmounts}
+                      sellQuickPercents={sellQuickPercents}
+                      onQuickBuyPresetClick={(amount) => setBuyAmountSol(amount)}
+                      onSellPercentClick={(percent) => setSellAmountFromPercent(percent)}
+                      autoConfirmEnabled={autoConfirmEnabled}
+                      onAutoConfirmChange={handleAutoConfirmChange}
+                    />
 
+                    {/* Portfolio Panel */}
+                    <PortfolioPanel
+                      positions={portfolioPositions}
+                      isLoading={isPortfolioLoading}
+                      totalUnrealizedPnl={portfolioTotalPnl}
+                      onQuickSell={handlePortfolioQuickSell}
+                      walletConnected={isWalletConnectedForTrade}
+                    />
+                    {/* LEGACY_WALLET_SECTION_REMOVED */}
+                    {false && (
                     <div className="order-4 rounded-xl border border-white/10 bg-white/5 p-4">
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Wallet</div>
@@ -5115,6 +5178,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         </a>
                       ) : null}
                     </div>
+                    )}
                   </div>
                 </div>
           </div>
