@@ -660,6 +660,56 @@ async function createSessionRecord(params: {
 
   console.warn("[auth/session] Session store unavailable; continuing with signed stateless token fallback");
 }
+
+const SESSION_RECORD_WRITE_TIMEOUT_MS = (() => {
+  const raw = process.env.SESSION_RECORD_WRITE_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 1200 : 2500;
+})();
+
+async function createSessionRecordBestEffort(params: {
+  sessionToken: string;
+  userId: string;
+  expiresAt: Date;
+  now: Date;
+  ipAddress: string;
+  userAgent: string;
+}): Promise<void> {
+  let timedOut = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+  const writePromise = createSessionRecord(params)
+    .then(() => "written" as const)
+    .catch((error) => {
+      if (timedOut) {
+        console.warn("[auth/session] Session write failed after timeout window", error);
+      } else {
+        console.warn("[auth/session] Session write failed; using stateless token only", error);
+      }
+      return "failed" as const;
+    });
+
+  const timeoutPromise = new Promise<"timeout">((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      resolve("timeout");
+    }, SESSION_RECORD_WRITE_TIMEOUT_MS);
+  });
+
+  const outcome = await Promise.race([writePromise, timeoutPromise]);
+
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
+  }
+
+  if (outcome === "timeout") {
+    console.warn(
+      `[auth/session] Session write exceeded ${SESSION_RECORD_WRITE_TIMEOUT_MS}ms; continuing without blocking sign-in`
+    );
+  }
+}
+
 function resolveSessionCookieDomain(hostHeader: string | undefined): string | null {
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
@@ -875,7 +925,7 @@ app.post("/api/auth/wallet", async (c) => {
     });
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-    await createSessionRecord({
+    await createSessionRecordBestEffort({
       sessionToken,
       userId: user.id,
       expiresAt,
@@ -1005,7 +1055,7 @@ app.post("/api/auth/privy-sync", async (c) => {
           const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
           const userAgent = c.req.header("user-agent") ?? "unknown";
 
-          await createSessionRecord({
+          await createSessionRecordBestEffort({
             sessionToken,
             userId: fastPathUser.id,
             expiresAt,
@@ -1279,7 +1329,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "unknown";
 
-    await createSessionRecord({
+    await createSessionRecordBestEffort({
       sessionToken,
       userId: user.id,
       expiresAt,
