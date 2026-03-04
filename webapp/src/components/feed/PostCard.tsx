@@ -94,11 +94,11 @@ const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
-const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
-const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
-const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
+const JUPITER_QUOTE_TIMEOUT_MS = 6_500;
+const JUPITER_QUOTE_STALE_MAX_AGE_MS = 90_000;
+const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 5_000;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
-const ENABLE_ADVANCED_OHLC_CHART = false;
+const ENABLE_ADVANCED_OHLC_CHART = true;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -863,7 +863,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     }
     let cancelled = false;
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 8_500);
+    const timeoutId = window.setTimeout(() => controller.abort(), 14_000);
     const walletAddr = tradeWalletPublicKey.toBase58();
     setIsPortfolioLoading(true);
     fetch("/api/posts/portfolio", {
@@ -2155,10 +2155,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ],
     enabled: isBuyDialogOpen && canRequestChartCandles,
     staleTime: 5_000,
-    retry: 1,
+    retry: 2,
     refetchOnWindowFocus: false,
-    refetchInterval:
-      isBuyDialogOpen && chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000,
+    refetchInterval: isBuyDialogOpen
+      ? (q) => {
+          const candles = (q.state.data as ChartCandlesResponse | undefined)?.candles ?? [];
+          if (candles.length >= 2) {
+            return chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000;
+          }
+          return 4_000;
+        }
+      : false,
     queryFn: async () => {
       if (!canRequestChartCandles) {
         return {
@@ -2282,9 +2289,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     queryKey: ["walletSolBalance", tradeWalletPublicKey?.toBase58()],
     enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
     staleTime: 8_000,
-    retry: 1,
+    retry: 2,
     refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen ? 12_000 : false,
+    refetchInterval: isBuyDialogOpen ? (q) => (q.state.data ? 12_000 : 3_500) : false,
     queryFn: async () => {
       if (!tradeWalletPublicKey) return null;
       try {
@@ -2346,14 +2353,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
     staleTime: 2_500,
     gcTime: 45_000,
-    retry: 1,
+    retry: 2,
     retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
     placeholderData: (previousData) => previousData,
     refetchInterval: isBuyDialogOpen
       ? (q) => {
-          if (q.state.data) return 5_000;
-          if (q.state.error) return 7_500;
-          return 4_500;
+          if (q.state.data) return 4_500;
+          if (q.state.error) return 2_500;
+          return 2_000;
         }
       : false,
     refetchOnWindowFocus: false,
@@ -2489,7 +2496,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const amountLamports = Math.max(1, Math.floor(parsedAmount * LAMPORTS_PER_SOL));
     const payload = createJupiterQuotePayload("buy", amountLamports);
     if (!payload) return;
-    void fetchJupiterQuoteFast(payload, { timeoutMs: 2_200 }).catch(() => {
+    void fetchJupiterQuoteFast(payload, { timeoutMs: 4_200 }).catch(() => {
       // Query path will still fetch and surface status.
     });
   }, [createJupiterQuotePayload]);
