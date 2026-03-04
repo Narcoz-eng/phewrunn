@@ -305,6 +305,34 @@ function isPrismaClientError(error: unknown): boolean {
   return name.startsWith("PrismaClient");
 }
 
+const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
+  const raw = process.env.ME_DB_LOOKUP_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 1200 : 2500;
+})();
+
+async function withTimeoutResult<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<{ timedOut: true } | { timedOut: false; value: T }> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+      timeoutHandle = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    });
+    const result = await Promise.race([
+      promise.then((value) => ({ timedOut: false as const, value })),
+      timeoutPromise,
+    ]);
+    return result;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 function normalizeAuthResponseUser(
   user: {
     id: string;
@@ -1576,28 +1604,63 @@ app.get("/api/me", async (c) => {
     tradeFeePayoutAddress: null as string | null,
   };
 
-  try {
-    // Fetch full user data from database
-    dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        walletAddress: true,
-        username: true,
-        level: true,
-        xp: true,
-        bio: true,
-        isAdmin: true,
-        isVerified: true,
-        tradeFeeRewardsEnabled: true,
-        tradeFeeShareBps: true,
-        tradeFeePayoutAddress: true,
-        createdAt: true,
+  const sessionIsStatelessFallback =
+    typeof session?.session?.id === "string" &&
+    session.session.id.startsWith("stateless:");
+
+  if (sessionIsStatelessFallback && session?.user) {
+    return c.json({
+      data: {
+        id: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+        image: session.user.image,
+        walletAddress: session.user.walletAddress,
+        username: session.user.username,
+        level: session.user.level,
+        xp: session.user.xp,
+        bio: session.user.bio,
+        isAdmin: session.user.isAdmin,
+        isVerified: session.user.isVerified,
+        ...defaultFeeSettings,
+        createdAt: session.user.createdAt,
       },
     });
+  }
+
+  try {
+    // Fetch full user data from database
+    const fullLookup = await withTimeoutResult(
+      prisma.user.findUnique({
+        where: { id: user.id },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          walletAddress: true,
+          username: true,
+          level: true,
+          xp: true,
+          bio: true,
+          isAdmin: true,
+          isVerified: true,
+          tradeFeeRewardsEnabled: true,
+          tradeFeeShareBps: true,
+          tradeFeePayoutAddress: true,
+          createdAt: true,
+        },
+      }),
+      ME_DB_LOOKUP_TIMEOUT_MS
+    );
+
+    if (!fullLookup.timedOut) {
+      dbUser = fullLookup.value;
+    } else {
+      console.warn(
+        `[/api/me] User lookup exceeded ${ME_DB_LOOKUP_TIMEOUT_MS}ms; serving session fallback`
+      );
+    }
   } catch (error) {
     if (isPrismaSchemaDriftError(error)) {
       try {
