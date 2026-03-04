@@ -541,9 +541,9 @@ class ChartErrorBoundary extends Component<
         this.props.fallback ?? (
           <div className="flex h-full items-center justify-center p-6 text-center">
             <div className="space-y-3">
-              <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Chart encountered an error. Change the interval or reopen.
+              <BarChart3 className="mx-auto h-6 w-6 text-white/15" />
+              <p className="text-[11px] text-white/25">
+                Chart render error. Try a different interval.
               </p>
               <button
                 type="button"
@@ -4304,245 +4304,228 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         }
       }}>
         <DialogContent
-          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/10 bg-[#080a0f]/95 p-0 shadow-[0_40px_140px_-50px_rgba(0,0,0,0.95)] [&>button]:hidden"
+          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/[0.08] bg-[#07090e] p-0 shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden"
           onInteractOutside={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
         >
-          <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-lime-300/10 via-white/5 to-cyan-300/10" />
-            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-              <Zap className="h-4 w-4 text-primary" />
-              {isWalletConnectedForTrade ? "Trade" : "Connect Wallet"} - {displayTokenLabel}
-            </DialogTitle>
-            <DialogDescription className="text-xs sm:text-sm">
+          <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-4 pb-3 border-b border-white/[0.06] bg-[#0a0c12]">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle className="flex items-center gap-2.5 text-sm sm:text-base font-semibold text-white">
+                {resolvedTokenImage ? (
+                  <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-6 w-6 rounded-full ring-1 ring-white/[0.1]" />
+                ) : (
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/[0.1]">
+                    <Coins className="h-3 w-3 text-white/40" />
+                  </div>
+                )}
+                <span className="truncate">{displayTokenLabel}</span>
+                {post.chainType && (
+                  <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-white/35 font-medium">
+                    {post.chainType}
+                  </span>
+                )}
+              </DialogTitle>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className={cn("rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wide", jupiterStatusTone)}>
+                  {jupiterStatusLabel}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCloseBuyDialog}
+                  className="h-7 w-7 rounded-lg bg-white/[0.04] p-0 text-white/40 hover:bg-white/[0.08] hover:text-white/60"
+                >
+                  <Plus className="h-3.5 w-3.5 rotate-45" />
+                </Button>
+              </div>
+            </div>
+            <DialogDescription className="sr-only">
               {isSolanaTradeSupported
-                ? "Live chart and execution in one workspace."
-                : "Trading is available here for Solana posts. This post is on another chain."}
+                ? "Trade panel with live chart"
+                : "Chart view - trading available for Solana posts only"}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-[radial-gradient(circle_at_15%_0%,rgba(163,230,53,0.06),transparent_35%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.06),transparent_35%)]">
-            <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/[0.05] via-white/[0.03] to-transparent p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
-              <div className="flex items-start gap-3">
-                <div className="h-14 w-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0 shadow-inner shadow-black/40">
-                  {resolvedTokenImage ? (
-                    <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" />
-                  ) : (
-                    <Coins className="h-5 w-5 text-muted-foreground" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className="truncate text-base font-semibold text-foreground">
-                      {displayTokenLabel}
-                    </div>
-                    {post.chainType && (
-                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                        {post.chainType}
-                      </span>
-                    )}
-                    <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", jupiterStatusTone)}>
-                      {jupiterStatusLabel}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground truncate">
-                    {displayTokenSubtitle}
-                  </div>
-                  {post.contractAddress && (
-                    <div className="mt-2 inline-flex max-w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] font-mono text-muted-foreground break-all">
-                      {post.contractAddress}
-                    </div>
-                  )}
-                  {isBuyDialogOpen && dexTokenDataQuery.isFetching ? (
-                    <div className="mt-2 text-[11px] text-muted-foreground">
-                      Refreshing token data...
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-[#07090e]">
+            {/* Compact token stats bar */}
+            <div className="flex items-center gap-2 flex-wrap px-1">
+              {post.contractAddress && (
+                <span className="rounded-md bg-white/[0.04] px-2 py-1 text-[10px] font-mono text-white/30 truncate max-w-[200px]">
+                  {post.contractAddress}
+                </span>
+              )}
+              {isBuyDialogOpen && dexTokenDataQuery.isFetching && (
+                <span className="text-[10px] text-white/25 animate-pulse">Refreshing...</span>
+              )}
             </div>
 
             {!isSolanaTradeSupported ? (
-              <div className="rounded-xl border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
-                Trading is available for Solana posts only. Chart navigation remains available for this token.
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-xs text-white/40">
+                Trading is available for Solana posts only. Chart navigation remains available.
               </div>
             ) : null}
-            <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] lg:items-start">
-                  <div className="space-y-4 lg:min-h-0 lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
-                    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
-                      <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
-                      <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
-                      <div className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 backdrop-blur-sm">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Market Chart</div>
-                          <div className="text-sm font-semibold text-foreground">Candlestick Chart</div>
-                        </div>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em]", jupiterStatusTone)}>
-                            {jupiterStatusLabel}
-                          </span>
+            <div className="grid gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)] lg:items-start">
+                  <div className="space-y-3 lg:min-h-0 lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
+                    <div className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0a0c12]">
+                      {/* Chart Toolbar */}
+                      <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
                           {DEX_CHART_INTERVAL_OPTIONS.map((preset) => (
                             <button
                               key={preset.value}
                               type="button"
                               onClick={() => setChartInterval(preset.value)}
                               className={cn(
-                                "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
+                                "rounded-md px-2 py-1 text-[11px] font-medium transition-all duration-150",
                                 chartInterval === preset.value
-                                  ? "border-primary/40 bg-primary/15 text-foreground"
-                                  : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                  ? "bg-white/[0.1] text-white"
+                                  : "text-white/35 hover:text-white/60 hover:bg-white/[0.04]"
                               )}
                             >
                               {preset.label}
                             </button>
                           ))}
+                        </div>
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => setIsChartInfoVisible((prev) => !prev)}
                             className={cn(
-                              "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
+                              "rounded-md px-2 py-1 text-[10px] font-medium transition-all duration-150",
                               isChartInfoVisible
-                                ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
-                                : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                ? "bg-blue-500/10 text-blue-400"
+                                : "text-white/30 hover:text-white/50 hover:bg-white/[0.04]"
                             )}
                           >
-                            Volume
+                            Vol
                           </button>
                           <button
                             type="button"
                             onClick={() => setIsChartTradesVisible((prev) => !prev)}
                             className={cn(
-                              "rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.1em] transition-colors",
+                              "rounded-md px-2 py-1 text-[10px] font-medium transition-all duration-150",
                               isChartTradesVisible
-                                ? "border-lime-300/30 bg-lime-300/10 text-lime-100"
-                                : "border-white/10 bg-black/20 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                ? "bg-emerald-500/10 text-emerald-400"
+                                : "text-white/30 hover:text-white/50 hover:bg-white/[0.04]"
                             )}
                           >
-                            Candles
+                            OHLC
                           </button>
                         </div>
                       </div>
-                      <div className="relative px-4 pt-4">
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Entry MCap</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">{formatMarketCap(post.entryMcap)}</div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Current</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {resolvedMarketCap != null ? formatMarketCap(resolvedMarketCap) : "Waiting..."}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Price</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {resolvedPriceUsd != null ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}` : "-"}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Change</div>
-                            <div className={cn("mt-1 text-sm font-semibold", currentTradeDeltaPct == null ? "text-foreground" : currentTradeDeltaPct >= 0 ? "text-gain" : "text-loss")}>
-                              {currentTradeDeltaPct == null ? "-" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Status</div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {!localSettled ? "Live" : localIsWin ? "Won" : "Lost"}
-                            </div>
-                          </div>
+                      {/* Compact market stats */}
+                      <div className="flex items-center gap-3 overflow-x-auto px-4 py-2 border-b border-white/[0.05] text-[11px]">
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-white/30">MCap</span>
+                          <span className="font-medium text-white/70">{formatMarketCap(post.entryMcap)}</span>
+                          {resolvedMarketCap != null && (
+                            <>
+                              <span className="text-white/15">&rarr;</span>
+                              <span className="font-medium text-white/70">{formatMarketCap(resolvedMarketCap)}</span>
+                            </>
+                          )}
                         </div>
+                        <div className="w-px h-3 bg-white/[0.08] shrink-0" />
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-white/30">Price</span>
+                          <span className="font-medium text-white/70">
+                            {resolvedPriceUsd != null ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}` : "--"}
+                          </span>
+                        </div>
+                        <div className="w-px h-3 bg-white/[0.08] shrink-0" />
+                        <span className={cn(
+                          "font-semibold shrink-0",
+                          currentTradeDeltaPct == null ? "text-white/40" : currentTradeDeltaPct >= 0 ? "text-emerald-400" : "text-rose-400"
+                        )}>
+                          {currentTradeDeltaPct == null ? "--" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
+                        </span>
+                        <div className="w-px h-3 bg-white/[0.08] shrink-0" />
+                        <span className={cn(
+                          "rounded-md px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+                          !localSettled ? "bg-blue-500/10 text-blue-400" : localIsWin ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                        )}>
+                          {!localSettled ? "LIVE" : localIsWin ? "WON" : "LOST"}
+                        </span>
                       </div>
 
-                      <div className="relative px-4 pt-3">
-                        <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                                Visible Range
-                              </div>
-                              <div className="text-xs font-medium text-foreground">{chartVisibleRangeLabel}</div>
-                              {chartRangeDetailLabel ? (
-                                <div className="truncate text-[11px] text-muted-foreground">
-                                  {chartRangeDetailLabel}
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className="flex items-center gap-1">
+                      {/* Chart controls */}
+                      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-white/[0.05]">
+                        <div className="min-w-0 text-[10px] text-white/30 truncate">
+                          {chartVisibleRangeLabel}
+                          {chartRangeDetailLabel ? <span className="ml-1.5 text-white/20">{chartRangeDetailLabel}</span> : null}
+                        </div>
+                            <div className="flex items-center gap-0.5">
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 size="icon"
                                 onClick={() => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2)}
                                 disabled={!hasProfessionalChartData || !canPanChartLeft}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <ChevronLeft className="h-3.5 w-3.5" />
+                                <ChevronLeft className="h-3 w-3" />
                               </Button>
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 size="icon"
                                 onClick={() => panChartWindowBy(CHART_PAN_STEP_POINTS * 2)}
                                 disabled={!hasProfessionalChartData || !canPanChartRight}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <ChevronRight className="h-3.5 w-3.5" />
+                                <ChevronRight className="h-3 w-3" />
                               </Button>
+                              <div className="w-px h-3 bg-white/[0.08] mx-0.5" />
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 size="icon"
                                 onClick={() => zoomChartWindow("in")}
                                 disabled={!hasProfessionalChartData || !canZoomInChart}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <Plus className="h-3.5 w-3.5" />
+                                <Plus className="h-3 w-3" />
                               </Button>
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 size="icon"
                                 onClick={() => zoomChartWindow("out")}
                                 disabled={!hasProfessionalChartData || !canZoomOutChart}
-                                className="h-7 w-7 border-white/10 bg-black/25 text-foreground hover:bg-white/10 disabled:opacity-40"
+                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <Minus className="h-3.5 w-3.5" />
+                                <Minus className="h-3 w-3" />
                               </Button>
+                              <div className="w-px h-3 bg-white/[0.08] mx-0.5" />
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 onClick={resetChartWindow}
                                 disabled={!hasProfessionalChartData}
-                                className="h-7 border-white/10 bg-black/25 px-2 text-[11px] text-muted-foreground hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                                className="h-6 px-1.5 text-[10px] text-white/30 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-30"
                               >
                                 Reset
                               </Button>
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 onClick={centerChartOnEntry}
                                 disabled={!hasProfessionalChartData || chartEntryIndex < 0}
                                 className={cn(
-                                  "h-7 border-white/10 bg-black/25 px-2 text-[11px] hover:bg-white/10 disabled:opacity-40",
-                                  isEntryInCurrentView ? "text-cyan-100 border-cyan-300/30 bg-cyan-300/10" : "text-muted-foreground"
+                                  "h-6 px-1.5 text-[10px] hover:bg-white/[0.06] disabled:opacity-30",
+                                  isEntryInCurrentView ? "text-blue-400" : "text-white/30 hover:text-white/60"
                                 )}
                               >
-                                {isEntryInCurrentView ? "Entry in view" : "Go to Entry"}
+                                Entry
                               </Button>
                             </div>
                           </div>
-                          <div className="mt-1 text-[11px] text-foreground/80">
-                            Wheel to zoom, drag left/right to pan, Shift+wheel to move the window.
-                          </div>
-                        </div>
-                      </div>
 
                       <div
                         className={cn(
-                          "relative h-[300px] sm:h-[380px] lg:h-[500px] xl:h-[560px] rounded-xl border border-white/10 bg-[#070c14]/85 px-2 sm:px-3 pb-3 pt-3 overscroll-contain",
+                          "relative h-[280px] sm:h-[360px] lg:h-[460px] xl:h-[520px] bg-[#080a10] px-1 sm:px-2 pb-2 pt-2 overscroll-contain",
                           hasProfessionalChartData
                             ? isChartMousePanning
                               ? "cursor-grabbing"
@@ -4671,21 +4654,21 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                     | undefined;
                                   if (!point) return null;
                                   return (
-                                    <div className="rounded-xl border border-white/15 bg-[rgba(10,12,16,0.94)] p-3 text-xs text-white shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
-                                      <div className="mb-2 text-[11px] text-white/70">{point.fullLabel ?? ""}</div>
-                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                                        <span className="text-white/65">Open</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.open ?? 0))}</span>
-                                        <span className="text-white/65">High</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.high ?? 0))}</span>
-                                        <span className="text-white/65">Low</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.low ?? 0))}</span>
-                                        <span className="text-white/65">Close</span>
-                                        <span className="text-right font-semibold">{formatUsdCompact(Number(point.close ?? 0))}</span>
+                                    <div className="rounded-lg border border-white/[0.1] bg-[#0c0e14]/95 backdrop-blur-sm p-2.5 text-[11px] text-white shadow-[0_12px_32px_-16px_rgba(0,0,0,0.9)]">
+                                      <div className="mb-1.5 text-[10px] text-white/40 font-medium">{point.fullLabel ?? ""}</div>
+                                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                        <span className="text-white/35">O</span>
+                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.open ?? 0))}</span>
+                                        <span className="text-white/35">H</span>
+                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.high ?? 0))}</span>
+                                        <span className="text-white/35">L</span>
+                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.low ?? 0))}</span>
+                                        <span className="text-white/35">C</span>
+                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.close ?? 0))}</span>
                                         {isChartInfoVisible ? (
                                           <>
-                                            <span className="text-white/65">Volume</span>
-                                            <span className="text-right font-semibold">
+                                            <span className="text-white/35">Vol</span>
+                                            <span className="text-right font-medium text-white/80">
                                               {Number(point.volume ?? 0).toLocaleString()}
                                             </span>
                                           </>
@@ -4744,61 +4727,57 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                           </ChartErrorBoundary>
                         ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
                           <div className="flex h-full items-center justify-center">
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading chart...
+                            <div className="flex flex-col items-center gap-2">
+                              <Loader2 className="h-5 w-5 animate-spin text-white/20" />
+                              <span className="text-[11px] text-white/25">Loading chart data...</span>
+                            </div>
+                          </div>
+                        ) : chartCandlesQuery.error ? (
+                          <div className="flex h-full items-center justify-center p-6 text-center">
+                            <div className="space-y-2">
+                              <BarChart3 className="mx-auto h-6 w-6 text-white/15" />
+                              <p className="text-[11px] text-white/25">
+                                Chart feed unavailable. Try a different interval.
+                              </p>
                             </div>
                           </div>
                         ) : (
                           <div className="flex h-full items-center justify-center p-6 text-center">
-                            <div className="space-y-3">
-                              <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-                              <p className="text-sm text-muted-foreground">
-                                Candle data is not available yet for this token.
+                            <div className="space-y-2">
+                              <BarChart3 className="mx-auto h-6 w-6 text-white/15" />
+                              <p className="text-[11px] text-white/25">
+                                Candle data not yet available for this token.
                               </p>
                             </div>
                           </div>
                         )}
                       </div>
 
-                      <div className="relative border-t border-white/10 px-4 py-3 text-[11px] text-muted-foreground">
-                        {hasProfessionalChartData ? (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            <span>
-                              Chart feed: {chartFeedLabel} ({chartRequestConfig.timeframe}/{chartRequestConfig.aggregate})
-                            </span>
-                            <span>
-                              Updated: {professionalChartLast ? new Date(professionalChartLast.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "-"}
-                            </span>
-                          </div>
-                        ) : resolvedLiquidityUsd != null ||
-                          resolvedVolume24hUsd != null ||
-                          resolvedPriceChange24hPct != null ||
-                          resolvedBuys24h != null ||
-                          resolvedSells24h != null ||
-                          resolvedDexId ? (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            <span>Liquidity: {resolvedLiquidityUsd != null ? `$${resolvedLiquidityUsd.toLocaleString()}` : "-"}</span>
-                            <span>24h Vol: {resolvedVolume24hUsd != null ? `$${resolvedVolume24hUsd.toLocaleString()}` : "-"}</span>
-                            <span>
-                              24h Change: {resolvedPriceChange24hPct != null ? `${resolvedPriceChange24hPct >= 0 ? "+" : ""}${resolvedPriceChange24hPct.toFixed(2)}%` : "-"}
-                            </span>
-                            <span>
-                              24h Txns: {resolvedBuys24h != null ? resolvedBuys24h.toLocaleString() : "-"} / {resolvedSells24h != null ? resolvedSells24h.toLocaleString() : "-"}
-                            </span>
-                            <span>DEX: {resolvedDexId ?? "-"}</span>
-                          </div>
-                        ) : chartCandlesQuery.error ? (
-                          "Chart feed unavailable right now. Showing fallback market-cap view."
-                        ) : (
-                          "Chart and token data are sourced live from Dexscreener."
+                      {/* Chart footer */}
+                      <div className="flex items-center justify-between border-t border-white/[0.05] px-4 py-2 text-[10px] text-white/25">
+                        <div className="flex items-center gap-3">
+                          {hasProfessionalChartData && (
+                            <span>{chartFeedLabel} {chartRequestConfig.timeframe}/{chartRequestConfig.aggregate}</span>
+                          )}
+                          {resolvedLiquidityUsd != null && (
+                            <span>Liq ${resolvedLiquidityUsd.toLocaleString()}</span>
+                          )}
+                          {resolvedVolume24hUsd != null && (
+                            <span>24h Vol ${resolvedVolume24hUsd.toLocaleString()}</span>
+                          )}
+                          {resolvedDexId && <span>{resolvedDexId}</span>}
+                        </div>
+                        {hasProfessionalChartData && professionalChartLast && (
+                          <span>
+                            {new Date(professionalChartLast.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                          </span>
                         )}
                       </div>
                     </div>
 
                   </div>
 
-                  <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
+                  <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
                     {/* New Trading Panel */}
                     <TradingPanel
                       tradeSide={tradeSide}
@@ -4812,7 +4791,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       tokenImage={resolvedTokenImage}
                       slippageBps={slippageBps}
                       onSlippageChange={setSlippageBps}
-                      jupiterOutputFormatted={jupiterOutputFormatted}
+                      jupiterOutputFormatted={jupiterOutputAmountFormatted}
                       jupiterMinReceiveFormatted={jupiterMinReceiveFormatted}
                       jupiterPriceImpactDisplay={jupiterPriceImpactDisplay}
                       jupiterPlatformFeeDisplay={jupiterPlatformFeeDisplay}
@@ -4850,28 +4829,52 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                 </div>
           </div>
 
-          <DialogFooter className="relative z-20 px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
-            <Button type="button" variant="outline" onClick={handleCloseBuyDialog} className="w-full sm:w-auto">
-              Close
-            </Button>
-            <Button
-              type="button"
-              onClick={handleBuyFooterAction}
-              disabled={isBuyFooterDisabled}
-              className={cn(
-                "h-11 w-full sm:w-auto gap-2 text-sm font-semibold",
-                !hasWalletSignerForTrade && connectWalletTone
+          <DialogFooter className="relative z-20 px-4 sm:px-5 py-3 border-t border-white/[0.06] bg-[#0a0c12] flex-row items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {resolvedDexscreenerUrl && (
+                <a
+                  href={resolvedDexscreenerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-[10px] text-white/25 hover:text-white/50 transition-colors"
+                >
+                  DexScreener
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
               )}
-            >
-              {isExecutingBuy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : hasWalletSignerForTrade ? (
-                <Zap className="h-4 w-4" />
-              ) : (
-                <UserPlus className="h-4 w-4" />
-              )}
-              {hasWalletSignerForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : connectWalletCtaLabel}
-            </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleCloseBuyDialog}
+                className="h-8 px-3 text-[11px] text-white/40 hover:text-white/60 hover:bg-white/[0.04]"
+              >
+                Close
+              </Button>
+              <Button
+                type="button"
+                onClick={handleBuyFooterAction}
+                disabled={isBuyFooterDisabled}
+                className={cn(
+                  "h-8 px-4 text-[11px] font-semibold rounded-lg transition-all duration-200",
+                  hasWalletSignerForTrade
+                    ? tradeSide === "buy"
+                      ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                      : "bg-rose-600 hover:bg-rose-500 text-white"
+                    : "bg-white/[0.08] hover:bg-white/[0.12] text-white"
+                )}
+              >
+                {isExecutingBuy ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
+                ) : hasWalletSignerForTrade ? (
+                  <Zap className="h-3 w-3 mr-1.5" />
+                ) : (
+                  <UserPlus className="h-3 w-3 mr-1.5" />
+                )}
+                {hasWalletSignerForTrade ? (tradeSide === "buy" ? "Buy" : "Sell") : connectWalletCtaLabel}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

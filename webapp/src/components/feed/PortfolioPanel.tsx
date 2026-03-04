@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Loader2, TrendingUp, TrendingDown, Wallet, X } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, X, ChevronDown, ChevronUp } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useState } from "react";
 
 export interface PortfolioPosition {
   mint: string;
@@ -25,12 +26,12 @@ interface PortfolioPanelProps {
 }
 
 function formatUsd(value: number | null): string {
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined) return "--";
   return `$${Math.abs(value) < 0.01 ? value.toExponential(2) : value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
 }
 
 function formatPrice(value: number | null): string {
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined) return "--";
   if (value === 0) return "$0.00";
   if (value < 0.000001) return `$${value.toExponential(2)}`;
   if (value < 0.01) return `$${value.toFixed(6)}`;
@@ -53,58 +54,6 @@ function formatPercent(value: number | null): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
-function PnlDisplay({ pnl, pnlPercent }: { pnl: number | null; pnlPercent: number | null }) {
-  if (pnl === null) return <span className="text-white/40">—</span>;
-
-  const isProfit = pnl >= 0;
-
-  return (
-    <div className={cn("flex flex-col items-end", isProfit ? "text-[#74f37a]" : "text-[#ff6b6b]")}>
-      <span className="flex items-center gap-1 text-xs font-medium">
-        {isProfit ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-        {formatUsd(pnl)}
-      </span>
-      {pnlPercent !== null && (
-        <span className="text-[10px] opacity-70">{formatPercent(pnlPercent)}</span>
-      )}
-    </div>
-  );
-}
-
-function LoadingSkeleton() {
-  return (
-    <div className="flex flex-col gap-2 p-3">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <Skeleton className="h-6 w-6 rounded-full bg-white/5" />
-          <Skeleton className="h-4 w-16 bg-white/5" />
-          <Skeleton className="ml-auto h-4 w-12 bg-white/5" />
-          <Skeleton className="h-4 w-14 bg-white/5" />
-          <Skeleton className="h-4 w-14 bg-white/5" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-white/40">
-      <Wallet className="h-8 w-8" />
-      <p className="text-sm">No open positions</p>
-    </div>
-  );
-}
-
-function ConnectWalletState() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-white/40">
-      <Wallet className="h-8 w-8" />
-      <p className="text-sm">Connect wallet to view portfolio</p>
-    </div>
-  );
-}
-
 export default function PortfolioPanel({
   positions,
   isLoading,
@@ -112,138 +61,142 @@ export default function PortfolioPanel({
   onQuickSell,
   walletConnected,
 }: PortfolioPanelProps) {
+  const [isExpanded, setIsExpanded] = useState(true);
   const totalIsProfit = totalUnrealizedPnl !== null && totalUnrealizedPnl >= 0;
+  const positionCount = positions.length;
+
+  if (!walletConnected) {
+    return (
+      <div className="rounded-2xl bg-[#0a0c12] border border-white/[0.07] overflow-hidden">
+        <div className="flex flex-col items-center justify-center gap-2.5 py-8 text-white/30">
+          <div className="w-10 h-10 rounded-full bg-white/[0.04] flex items-center justify-center">
+            <Wallet className="h-4.5 w-4.5" />
+          </div>
+          <p className="text-[11px] tracking-wide">Connect wallet to view positions</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col rounded-lg border border-white/10 bg-[#0c0e14]">
+    <div className="rounded-2xl bg-[#0a0c12] border border-white/[0.07] overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-        <h2 className="text-sm font-semibold text-white">Portfolio</h2>
-        {walletConnected && totalUnrealizedPnl !== null && (
-          <div
-            className={cn(
-              "flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium",
-              totalIsProfit
-                ? "bg-[#74f37a]/10 text-[#74f37a]"
-                : "bg-[#ff6b6b]/10 text-[#ff6b6b]"
-            )}
-          >
-            {totalIsProfit ? (
-              <TrendingUp className="h-3 w-3" />
-            ) : (
-              <TrendingDown className="h-3 w-3" />
-            )}
-            <span>Total UPnL: {formatUsd(totalUnrealizedPnl)}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Content */}
-      {!walletConnected ? (
-        <ConnectWalletState />
-      ) : isLoading ? (
-        <LoadingSkeleton />
-      ) : positions.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <div className="max-h-[400px] overflow-auto">
-          {/* Table header */}
-          <div className="sticky top-0 z-10 grid grid-cols-[minmax(100px,1.5fr)_1fr_1fr_1fr_1fr_1fr_auto] gap-2 border-b border-white/5 bg-[#0c0e14] px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-white/40">
-            <span>Asset</span>
-            <span className="text-right">Balance</span>
-            <span className="text-right">Avg Entry</span>
-            <span className="text-right">Price</span>
-            <span className="text-right">Cost Basis</span>
-            <span className="text-right">UPnL</span>
-            <span className="w-16" />
-          </div>
-
-          {/* Rows */}
-          {positions.map((pos) => (
-            <div
-              key={pos.mint}
-              className="grid grid-cols-[minmax(100px,1.5fr)_1fr_1fr_1fr_1fr_1fr_auto] items-center gap-2 border-b border-white/5 px-4 py-2 transition-colors hover:bg-white/[0.03]"
-            >
-              {/* Asset */}
-              <div className="flex items-center gap-2 overflow-hidden">
-                {pos.image ? (
-                  <img
-                    src={pos.image}
-                    alt={pos.symbol}
-                    className="h-6 w-6 flex-shrink-0 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white/60">
-                    {pos.symbol.charAt(0)}
-                  </div>
-                )}
-                <div className="flex flex-col overflow-hidden">
-                  <span className="truncate text-xs font-medium text-white">
-                    {pos.symbol}
-                  </span>
-                  <span className="truncate text-[10px] text-white/30">{pos.name}</span>
-                </div>
-              </div>
-
-              {/* Balance */}
-              <span className="text-right text-xs text-white/70">
-                {formatBalance(pos.balance)}
-              </span>
-
-              {/* Avg Entry */}
-              <span className="text-right text-xs text-white/70">
-                {formatPrice(pos.avgEntryPrice)}
-              </span>
-
-              {/* Current Price */}
-              <span className="text-right text-xs text-white/70">
-                {formatPrice(pos.currentPrice)}
-              </span>
-
-              {/* Cost Basis */}
-              <span className="text-right text-xs text-white/70">
-                {formatUsd(pos.costBasis)}
-              </span>
-
-              {/* UPnL */}
-              <div className="flex justify-end">
-                <PnlDisplay pnl={pos.unrealizedPnl} pnlPercent={pos.unrealizedPnlPercent} />
-              </div>
-
-              {/* Quick Sell */}
-              <div className="flex w-16 justify-end">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 rounded-full bg-[#ff6b6b]/10 px-2 text-[10px] font-medium text-[#ff6b6b] hover:bg-[#ff6b6b]/20 hover:text-[#ff6b6b]"
-                  onClick={() => onQuickSell(pos.mint, pos.balance)}
-                >
-                  <X className="mr-0.5 h-3 w-3" />
-                  Sell
-                </Button>
-              </div>
-            </div>
-          ))}
-
-          {/* Total row */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex w-full items-center justify-between px-4 py-3 transition-colors hover:bg-white/[0.02]"
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-white/50">
+            Portfolio
+          </span>
+          {positionCount > 0 && (
+            <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-white/40">
+              {positionCount}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
           {totalUnrealizedPnl !== null && (
-            <div className="sticky bottom-0 grid grid-cols-[minmax(100px,1.5fr)_1fr_1fr_1fr_1fr_1fr_auto] items-center gap-2 border-t border-white/10 bg-[#0c0e14] px-4 py-2.5">
-              <span className="text-xs font-semibold text-white/60">Total</span>
-              <span />
-              <span />
-              <span />
-              <span />
-              <div className="flex justify-end">
-                <span
-                  className={cn(
-                    "text-xs font-semibold",
-                    totalIsProfit ? "text-[#74f37a]" : "text-[#ff6b6b]"
-                  )}
-                >
-                  {formatUsd(totalUnrealizedPnl)}
-                </span>
-              </div>
-              <span className="w-16" />
+            <div
+              className={cn(
+                "flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold",
+                totalIsProfit
+                  ? "text-emerald-400"
+                  : "text-rose-400"
+              )}
+            >
+              {totalIsProfit ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              {formatUsd(totalUnrealizedPnl)}
+            </div>
+          )}
+          {isExpanded ? (
+            <ChevronUp className="w-3.5 h-3.5 text-white/25" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5 text-white/25" />
+          )}
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="border-t border-white/[0.05]">
+          {isLoading ? (
+            <div className="flex flex-col gap-2 p-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-8 w-8 rounded-full bg-white/[0.04]" />
+                  <div className="flex-1 space-y-1">
+                    <Skeleton className="h-3 w-16 bg-white/[0.04]" />
+                    <Skeleton className="h-2.5 w-12 bg-white/[0.04]" />
+                  </div>
+                  <Skeleton className="h-3 w-14 bg-white/[0.04]" />
+                </div>
+              ))}
+            </div>
+          ) : positions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-8 text-white/25">
+              <Wallet className="h-5 w-5" />
+              <p className="text-[11px]">No open positions</p>
+            </div>
+          ) : (
+            <div className="max-h-[280px] overflow-y-auto">
+              {positions.map((pos) => {
+                const isProfit = pos.unrealizedPnl !== null && pos.unrealizedPnl >= 0;
+                return (
+                  <div
+                    key={pos.mint}
+                    className="group flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.04] last:border-0 transition-colors hover:bg-white/[0.02]"
+                  >
+                    {/* Token icon */}
+                    {pos.image ? (
+                      <img
+                        src={pos.image}
+                        alt={pos.symbol}
+                        className="h-8 w-8 flex-shrink-0 rounded-full object-cover ring-1 ring-white/[0.08]"
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-[10px] font-bold text-white/40 ring-1 ring-white/[0.08]">
+                        {pos.symbol.charAt(0)}
+                      </div>
+                    )}
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-semibold text-white truncate">{pos.symbol}</span>
+                        <span className="text-[10px] text-white/25">{formatBalance(pos.balance)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-white/30">
+                        <span>Entry {formatPrice(pos.avgEntryPrice)}</span>
+                        <span className="text-white/15">|</span>
+                        <span>Now {formatPrice(pos.currentPrice)}</span>
+                      </div>
+                    </div>
+
+                    {/* PnL */}
+                    <div className="flex items-center gap-2">
+                      {pos.unrealizedPnl !== null && (
+                        <div className={cn("text-right", isProfit ? "text-emerald-400" : "text-rose-400")}>
+                          <div className="text-[11px] font-semibold">{formatUsd(pos.unrealizedPnl)}</div>
+                          {pos.unrealizedPnlPercent !== null && (
+                            <div className="text-[9px] opacity-70">{formatPercent(pos.unrealizedPnlPercent)}</div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Quick Sell */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 rounded-md bg-rose-500/[0.08] px-2 text-[10px] font-semibold text-rose-400/80 hover:bg-rose-500/20 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => onQuickSell(pos.mint, pos.balance)}
+                      >
+                        <X className="mr-0.5 h-2.5 w-2.5" />
+                        Sell
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
