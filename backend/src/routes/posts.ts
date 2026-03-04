@@ -134,6 +134,9 @@ let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
 const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 4_500 : 2_000;
 const FEED_RESPONSE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
+const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_500 : 4_000;
+const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_600 : 3_000;
+const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_800 : 3_200;
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
@@ -510,6 +513,46 @@ function withTimeoutFallback<T>(promise: Promise<T>, timeoutMs: number, fallback
         settled = true;
         clearTimeout(timeout);
         resolve(fallback);
+      });
+  });
+}
+
+class FeedTimeoutError extends Error {
+  constructor(stage: string, timeoutMs: number) {
+    super(`[posts/feed] ${stage} timed out after ${timeoutMs}ms`);
+    this.name = "FeedTimeoutError";
+  }
+}
+
+function isFeedTimeoutError(error: unknown): error is FeedTimeoutError {
+  return error instanceof FeedTimeoutError;
+}
+
+function withFeedTimeout<T>(
+  promise: Promise<T>,
+  stage: string,
+  timeoutMs = FEED_DB_QUERY_TIMEOUT_MS
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new FeedTimeoutError(stage, timeoutMs));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(value);
+      })
+      .catch((error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(error);
       });
   });
 }
@@ -1673,13 +1716,20 @@ postsRouter.get("/", async (c) => {
   if (following && user) {
     let followedIds: string[] = [];
     try {
-      const followedUsers = await prisma.follow.findMany({
-        where: { followerId: user.id },
-        select: { followingId: true },
-      });
+      const followedUsers = await withFeedTimeout(
+        prisma.follow.findMany({
+          where: { followerId: user.id },
+          select: { followingId: true },
+        }),
+        "following_lookup"
+      );
       followedIds = followedUsers.map((f) => f.followingId);
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      if (
+        !isPrismaSchemaDriftError(error) &&
+        !isPrismaClientError(error) &&
+        !isFeedTimeoutError(error)
+      ) {
         throw error;
       }
       console.warn("[posts/feed] follow query unavailable; using feed cache fallback", {
@@ -1755,33 +1805,36 @@ postsRouter.get("/", async (c) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchedPosts: any[] = [];
   try {
-    fetchedPosts = await prisma.post.findMany({
-      ...(feedFindManyBase as Record<string, unknown>),
-      include: {
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-            walletAddress: true,
-            level: true,
-            xp: true,
-            isVerified: true,
+    fetchedPosts = await withFeedTimeout(
+      prisma.post.findMany({
+        ...(feedFindManyBase as Record<string, unknown>),
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              walletAddress: true,
+              level: true,
+              xp: true,
+              isVerified: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              reposts: true,
+            },
           },
         },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-            reposts: true,
-          },
-        },
-      },
-    } as any);
+      } as any),
+      "primary_posts_query"
+    );
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
-      if (isPrismaClientError(error)) {
+      if (isPrismaClientError(error) || isFeedTimeoutError(error)) {
         console.error("[posts/feed] primary query failed", {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -1792,55 +1845,58 @@ postsRouter.get("/", async (c) => {
     } else {
       console.warn("[posts/feed] schema drift detected; using compatibility select");
       try {
-        fetchedPosts = await prisma.post.findMany({
-          ...(feedFindManyBase as Record<string, unknown>),
-          select: {
-            id: true,
-            content: true,
-            authorId: true,
-            contractAddress: true,
-            chainType: true,
-            tokenName: true,
-            tokenSymbol: true,
-            tokenImage: true,
-            entryMcap: true,
-            currentMcap: true,
-            mcap1h: true,
-            mcap6h: true,
-            settled: true,
-            settledAt: true,
-            isWin: true,
-            isWin1h: true,
-            isWin6h: true,
-            percentChange1h: true,
-            percentChange6h: true,
-            createdAt: true,
-            viewCount: true,
-            dexscreenerUrl: true,
-            author: {
-              select: {
-                id: true,
-                name: true,
-                username: true,
-                image: true,
-                walletAddress: true,
-                level: true,
-                xp: true,
-                isVerified: true,
+        fetchedPosts = await withFeedTimeout(
+          prisma.post.findMany({
+            ...(feedFindManyBase as Record<string, unknown>),
+            select: {
+              id: true,
+              content: true,
+              authorId: true,
+              contractAddress: true,
+              chainType: true,
+              tokenName: true,
+              tokenSymbol: true,
+              tokenImage: true,
+              entryMcap: true,
+              currentMcap: true,
+              mcap1h: true,
+              mcap6h: true,
+              settled: true,
+              settledAt: true,
+              isWin: true,
+              isWin1h: true,
+              isWin6h: true,
+              percentChange1h: true,
+              percentChange6h: true,
+              createdAt: true,
+              viewCount: true,
+              dexscreenerUrl: true,
+              author: {
+                select: {
+                  id: true,
+                  name: true,
+                  username: true,
+                  image: true,
+                  walletAddress: true,
+                  level: true,
+                  xp: true,
+                  isVerified: true,
+                },
+              },
+              _count: {
+                select: {
+                  likes: true,
+                  comments: true,
+                  reposts: true,
+                },
               },
             },
-            _count: {
-              select: {
-                likes: true,
-                comments: true,
-                reposts: true,
-              },
-            },
-          },
-        } as any);
+          } as any),
+          "compat_posts_query"
+        );
       } catch (fallbackError) {
         if (!isPrismaSchemaDriftError(fallbackError)) {
-          if (isPrismaClientError(fallbackError)) {
+          if (isPrismaClientError(fallbackError) || isFeedTimeoutError(fallbackError)) {
             console.error("[posts/feed] compatibility query failed", {
               message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
             });
@@ -1851,32 +1907,35 @@ postsRouter.get("/", async (c) => {
         } else {
           console.warn("[posts/feed] legacy compatibility select engaged");
           try {
-            const legacyPosts = (await prisma.post.findMany({
-              ...(feedFindManyBase as Record<string, unknown>),
-              select: {
-                id: true,
-                content: true,
-                authorId: true,
-                contractAddress: true,
-                chainType: true,
-                entryMcap: true,
-                currentMcap: true,
-                settled: true,
-                settledAt: true,
-                isWin: true,
-                createdAt: true,
-                author: {
-                  select: {
-                    id: true,
-                    name: true,
-                    username: true,
-                    image: true,
-                    level: true,
-                    xp: true,
+            const legacyPosts = (await withFeedTimeout(
+              prisma.post.findMany({
+                ...(feedFindManyBase as Record<string, unknown>),
+                select: {
+                  id: true,
+                  content: true,
+                  authorId: true,
+                  contractAddress: true,
+                  chainType: true,
+                  entryMcap: true,
+                  currentMcap: true,
+                  settled: true,
+                  settledAt: true,
+                  isWin: true,
+                  createdAt: true,
+                  author: {
+                    select: {
+                      id: true,
+                      name: true,
+                      username: true,
+                      image: true,
+                      level: true,
+                      xp: true,
+                    },
                   },
                 },
-              },
-            } as any)) as any[];
+              } as any),
+              "legacy_posts_query"
+            )) as any[];
             fetchedPosts = legacyPosts.map((post) => ({
               ...post,
               tokenName: null,
@@ -1903,7 +1962,7 @@ postsRouter.get("/", async (c) => {
             }));
           } catch (legacyError) {
             if (!isPrismaSchemaDriftError(legacyError)) {
-              if (isPrismaClientError(legacyError)) {
+              if (isPrismaClientError(legacyError) || isFeedTimeoutError(legacyError)) {
                 console.error("[posts/feed] legacy query failed", {
                   message: legacyError instanceof Error ? legacyError.message : String(legacyError),
                 });
@@ -1914,22 +1973,25 @@ postsRouter.get("/", async (c) => {
             } else {
               console.warn("[posts/feed] ultra-legacy compatibility select engaged");
               try {
-                const minimalPosts = (await prisma.post.findMany({
-                  ...(feedFindManyBase as Record<string, unknown>),
-                  select: {
-                    id: true,
-                    content: true,
-                    authorId: true,
-                    createdAt: true,
-                    author: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
+                const minimalPosts = (await withFeedTimeout(
+                  prisma.post.findMany({
+                    ...(feedFindManyBase as Record<string, unknown>),
+                    select: {
+                      id: true,
+                      content: true,
+                      authorId: true,
+                      createdAt: true,
+                      author: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
                       },
                     },
-                  },
-                } as any)) as any[];
+                  } as any),
+                  "ultra_legacy_posts_query"
+                )) as any[];
                 fetchedPosts = minimalPosts.map((post) => ({
                   ...post,
                   contractAddress: null,
@@ -1965,7 +2027,7 @@ postsRouter.get("/", async (c) => {
                   },
                 }));
               } catch (minimalError) {
-                if (isPrismaClientError(minimalError)) {
+                if (isPrismaClientError(minimalError) || isFeedTimeoutError(minimalError)) {
                   console.error("[posts/feed] ultra-legacy query failed", {
                     message: minimalError instanceof Error ? minimalError.message : String(minimalError),
                   });
@@ -2008,35 +2070,43 @@ postsRouter.get("/", async (c) => {
     const authorIds = [...new Set(posts.map((p) => p.authorId))];
 
     try {
-      const [likes, reposts, follows] = await Promise.all([
-        prisma.like.findMany({
-          where: {
-            userId: user.id,
-            postId: { in: postIds },
-          },
-          select: { postId: true },
-        }),
-        prisma.repost.findMany({
-          where: {
-            userId: user.id,
-            postId: { in: postIds },
-          },
-          select: { postId: true },
-        }),
-        prisma.follow.findMany({
-          where: {
-            followerId: user.id,
-            followingId: { in: authorIds },
-          },
-          select: { followingId: true },
-        }),
-      ]);
+      const [likes, reposts, follows] = await withFeedTimeout(
+        Promise.all([
+          prisma.like.findMany({
+            where: {
+              userId: user.id,
+              postId: { in: postIds },
+            },
+            select: { postId: true },
+          }),
+          prisma.repost.findMany({
+            where: {
+              userId: user.id,
+              postId: { in: postIds },
+            },
+            select: { postId: true },
+          }),
+          prisma.follow.findMany({
+            where: {
+              followerId: user.id,
+              followingId: { in: authorIds },
+            },
+            select: { followingId: true },
+          }),
+        ]),
+        "social_flags_query",
+        FEED_SOCIAL_QUERY_TIMEOUT_MS
+      );
 
       userLikes = new Set(likes.map((l) => l.postId));
       userReposts = new Set(reposts.map((r) => r.postId));
       userFollowing = new Set(follows.map((f) => f.followingId));
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      if (
+        !isPrismaSchemaDriftError(error) &&
+        !isPrismaClientError(error) &&
+        !isFeedTimeoutError(error)
+      ) {
         throw error;
       }
       console.warn("[posts/feed] social relation lookup unavailable; continuing without personalized flags", {
@@ -2138,18 +2208,26 @@ postsRouter.get("/", async (c) => {
     if (missingContracts.length > 0) {
       let sharedAlphaCandidates: Array<{ contractAddress: string | null; authorId: string }> = [];
       try {
-        sharedAlphaCandidates = await prisma.post.findMany({
-          where: {
-            contractAddress: { in: missingContracts },
-            createdAt: { gte: fortyEightHoursAgo },
-          },
-          select: {
-            contractAddress: true,
-            authorId: true,
-          },
-        });
+        sharedAlphaCandidates = await withFeedTimeout(
+          prisma.post.findMany({
+            where: {
+              contractAddress: { in: missingContracts },
+              createdAt: { gte: fortyEightHoursAgo },
+            },
+            select: {
+              contractAddress: true,
+              authorId: true,
+            },
+          }),
+          "shared_alpha_query",
+          FEED_SOCIAL_QUERY_TIMEOUT_MS
+        );
       } catch (error) {
-        if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+        if (
+          !isPrismaSchemaDriftError(error) &&
+          !isPrismaClientError(error) &&
+          !isFeedTimeoutError(error)
+        ) {
           throw error;
         }
         console.warn("[posts/feed] shared alpha enrichment unavailable; continuing without sharedAlphaCount", {
@@ -2198,7 +2276,11 @@ postsRouter.get("/", async (c) => {
     return postWithSharedAlpha;
   });
 
-  const postsWithWalletTrade = await attachWalletTradeSnapshots(postsWithUpdatedMcap).catch((error) => {
+  const postsWithWalletTrade = await withFeedTimeout(
+    attachWalletTradeSnapshots(postsWithUpdatedMcap),
+    "wallet_snapshot_enrichment",
+    FEED_ENRICH_TIMEOUT_MS
+  ).catch((error) => {
     console.warn("[posts/feed] wallet trade enrichment unavailable; continuing with base feed payload", {
       message: error instanceof Error ? error.message : String(error),
     });
