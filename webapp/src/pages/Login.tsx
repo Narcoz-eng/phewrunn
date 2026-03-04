@@ -84,7 +84,7 @@ const levelRules = [
 function PrivyLoginButton() {
   const { login, ready: privyReady, isSyncing, syncError } = usePrivyLogin();
 
-  const isLoading = !privyReady || isSyncing;
+  const isLoading = isSyncing;
 
   return (
     <div className="space-y-2">
@@ -97,12 +97,12 @@ function PrivyLoginButton() {
         {isLoading ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
-            {isSyncing ? "Signing in..." : "Loading..."}
+            Signing in...
           </>
         ) : (
           <>
             <Mail className="w-4 h-4" />
-            Sign in with Email
+            {privyReady ? "Sign in with Email" : "Initialize Sign In"}
             <ArrowRight className="w-4 h-4" />
           </>
         )}

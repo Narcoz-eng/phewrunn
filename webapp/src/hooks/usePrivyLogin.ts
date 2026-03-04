@@ -70,9 +70,9 @@ export function usePrivyLogin() {
   const runPrivySync = useCallback(async (
     privyUser: PrivyUserLike,
     source: "manual" | "auto" = "manual"
-  ) => {
+  ): Promise<boolean> => {
     if (syncGuardRef.current) {
-      return;
+      return false;
     }
 
     syncGuardRef.current = true;
@@ -105,12 +105,13 @@ export function usePrivyLogin() {
       // so the first refetch resolves from cache instantly.
       await refetch();
       autoResyncAttemptsRef.current = 0;
+      return true;
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
       if (appSessionAuthenticatedRef.current) {
         setSyncError(null);
-        return;
+        return true;
       }
       // Show a friendlier message to the user instead of raw server errors
       const isTooManyRequests = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
@@ -145,6 +146,7 @@ export function usePrivyLogin() {
       if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage) && source === "auto") {
         rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
       }
+      return false;
     } finally {
       clearSyncTimeout();
       loginRequestedRef.current = false;
@@ -223,8 +225,27 @@ export function usePrivyLogin() {
     lastAutoResyncAtRef.current = 0;
     loginRequestedRef.current = true;
 
+    if (!ready) {
+      loginRequestedRef.current = false;
+      setSyncError("Sign-in is still initializing. Please wait a second and try again.");
+      toast.warning("Sign-in is still initializing...");
+      return;
+    }
+
     if (authenticated && user) {
-      void runPrivySync(user as PrivyUserLike, "manual");
+      void (async () => {
+        const synced = await runPrivySync(user as PrivyUserLike, "manual");
+        if (synced) {
+          return;
+        }
+        // Recover from stale Privy local state by forcing a fresh login modal.
+        try {
+          await privyLogout();
+        } catch (error) {
+          console.warn("[usePrivyLogin] Privy logout before re-auth failed", error);
+        }
+        login();
+      })();
       return;
     }
 
