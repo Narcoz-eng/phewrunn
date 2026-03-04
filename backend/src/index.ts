@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import "./env.js";
 import {
@@ -255,14 +255,13 @@ type AuthResponseUser = {
 };
 
 function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserClaims {
+  const normalizedName = user.name.trim();
+  const normalizedEmail = user.email.trim().toLowerCase();
   return {
-    name: user.name,
-    email: user.email,
-    image: user.image,
-    walletAddress: user.walletAddress,
-    walletProvider: user.walletProvider,
-    level: user.level,
-    xp: user.xp,
+    // Keep claims compact to avoid oversized cookie/header payloads.
+    // The database remains the source of truth for full user profile fields.
+    name: normalizedName.length > 120 ? normalizedName.slice(0, 120) : normalizedName,
+    email: normalizedEmail.length > 190 ? normalizedEmail.slice(0, 190) : normalizedEmail,
     isVerified: user.isVerified,
   };
 }
@@ -710,6 +709,87 @@ async function createSessionRecordBestEffort(params: {
   }
 }
 
+const LEGACY_SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "auth.session_token",
+] as const;
+
+function buildSessionCookie(params: {
+  name: string;
+  value: string;
+  domain?: string;
+  maxAgeSeconds: number;
+  secure: boolean;
+}): string {
+  return [
+    `${params.name}=${params.value}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${params.maxAgeSeconds}`,
+    params.domain ? `Domain=${params.domain}` : "",
+    params.secure ? "Secure" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function applySessionCookies(c: Context, sessionToken: string): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
+  const cookies: string[] = [];
+
+  // Clear host-only stale session cookies that can coexist with domain cookies.
+  cookies.push(
+    buildSessionCookie({
+      name: "phew.session_token",
+      value: "",
+      maxAgeSeconds: 0,
+      secure: isProd,
+    })
+  );
+  for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
+    cookies.push(
+      buildSessionCookie({
+        name: cookieName,
+        value: "",
+        maxAgeSeconds: 0,
+        secure: isProd,
+      })
+    );
+  }
+
+  // Clear legacy domain-wide cookies from older auth implementations.
+  if (cookieDomain) {
+    for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
+      cookies.push(
+        buildSessionCookie({
+          name: cookieName,
+          value: "",
+          domain: cookieDomain,
+          maxAgeSeconds: 0,
+          secure: isProd,
+        })
+      );
+    }
+  }
+
+  // Set the canonical session cookie last so it wins within the response.
+  cookies.push(
+    buildSessionCookie({
+      name: "phew.session_token",
+      value: sessionToken,
+      domain: cookieDomain ?? undefined,
+      maxAgeSeconds: 7 * 24 * 60 * 60,
+      secure: isProd,
+    })
+  );
+
+  cookies.forEach((cookie, index) => {
+    c.header("Set-Cookie", cookie, index === 0 ? undefined : { append: true });
+  });
+}
+
 function resolveSessionCookieDomain(hostHeader: string | undefined): string | null {
   if (!hostHeader) return null;
   const normalizedHost = hostHeader.split(":")[0]?.trim().toLowerCase() ?? "";
@@ -934,20 +1014,8 @@ app.post("/api/auth/wallet", async (c) => {
       userAgent: c.req.header("user-agent") || "unknown",
     });
 
-    // Set session cookie
-    const isProduction = process.env.NODE_ENV === "production";
-    const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
-    const cookieOptions = [
-      `phew.session_token=${sessionToken}`,
-      `Path=/`,
-      `HttpOnly`,
-      `SameSite=Lax`,
-      `Max-Age=${7 * 24 * 60 * 60}`,
-      cookieDomain ? `Domain=${cookieDomain}` : "",
-      isProduction ? "Secure" : "",
-    ].filter(Boolean).join("; ");
-
-    c.header("Set-Cookie", cookieOptions);
+    // Set canonical session cookie and clear stale legacy cookies.
+    applySessionCookies(c, sessionToken);
 
     return c.json({
       token: sessionToken,
@@ -1064,19 +1132,7 @@ app.post("/api/auth/privy-sync", async (c) => {
             userAgent,
           });
 
-          const isProd = process.env.NODE_ENV === "production";
-          const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
-          const cookieOptions = [
-            `phew.session_token=${sessionToken}`,
-            "Path=/",
-            "HttpOnly",
-            "SameSite=Lax",
-            `Max-Age=${7 * 24 * 60 * 60}`,
-            cookieDomain ? `Domain=${cookieDomain}` : "",
-            isProd ? "Secure" : "",
-          ].filter(Boolean).join("; ");
-
-          c.header("Set-Cookie", cookieOptions);
+          applySessionCookies(c, sessionToken);
 
           return c.json({
             token: sessionToken,
@@ -1338,20 +1394,8 @@ app.post("/api/auth/privy-sync", async (c) => {
       userAgent,
     });
 
-    // Also set a session cookie for cookie-based auth
-    const isProd = process.env.NODE_ENV === "production";
-    const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
-    const cookieOptions = [
-      `phew.session_token=${sessionToken}`,
-      "Path=/",
-      "HttpOnly",
-      "SameSite=Lax",
-      `Max-Age=${7 * 24 * 60 * 60}`,
-      cookieDomain ? `Domain=${cookieDomain}` : "",
-      isProd ? "Secure" : "",
-    ].filter(Boolean).join("; ");
-
-    c.header("Set-Cookie", cookieOptions);
+    // Set canonical session cookie and clear stale legacy cookies.
+    applySessionCookies(c, sessionToken);
 
     return c.json({
       token: sessionToken,
