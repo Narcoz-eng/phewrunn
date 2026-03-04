@@ -1048,17 +1048,68 @@ app.post("/api/auth/wallet", async (c) => {
 app.post("/api/auth/privy-sync", async (c) => {
   try {
     const existingSession = c.get("session");
-    if (existingSession?.session?.token && existingSession?.user?.id) {
+    if (existingSession?.user?.id) {
+      const sessionBackfillEmailRaw = existingSession.user.email?.trim() ?? "";
+      const sessionBackfillEmail =
+        sessionBackfillEmailRaw.length > 0
+          ? sessionBackfillEmailRaw.toLowerCase()
+          : `${existingSession.user.id.slice(0, 24).toLowerCase()}@privy.local`;
+      const sessionBackfillNameRaw = existingSession.user.name?.trim() ?? "";
+      const sessionBackfillName =
+        sessionBackfillNameRaw.length > 0
+          ? sessionBackfillNameRaw
+          : sessionBackfillEmail.split("@")[0] ?? "User";
+      const sessionBackfillUser = normalizeAuthResponseUser({
+        id: existingSession.user.id,
+        name: sessionBackfillName,
+        email: sessionBackfillEmail,
+        image: existingSession.user.image ?? null,
+        walletAddress: existingSession.user.walletAddress ?? null,
+        walletProvider: existingSession.user.walletProvider ?? null,
+        level:
+          typeof existingSession.user.level === "number" && Number.isFinite(existingSession.user.level)
+            ? existingSession.user.level
+            : 0,
+        xp:
+          typeof existingSession.user.xp === "number" && Number.isFinite(existingSession.user.xp)
+            ? existingSession.user.xp
+            : 0,
+        isVerified: Boolean(existingSession.user.isVerified),
+      });
+
+      // Always re-issue a compact token/cookie so stale bearer-only sessions
+      // are healed during Privy sync across devices and browsers.
+      const issuedAt = new Date();
+      const sessionToken = createSignedSessionToken({
+        userId: sessionBackfillUser.id,
+        now: issuedAt,
+        user: buildSessionTokenUserClaims(sessionBackfillUser),
+      });
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+      const userAgent = c.req.header("user-agent") ?? "unknown";
+
+      await createSessionRecordBestEffort({
+        sessionToken,
+        userId: sessionBackfillUser.id,
+        expiresAt,
+        now: issuedAt,
+        ipAddress,
+        userAgent,
+      });
+
+      applySessionCookies(c, sessionToken);
+
       return c.json({
-        token: existingSession.session.token,
+        token: sessionToken,
         user: {
-          id: existingSession.user.id,
-          name: existingSession.user.name,
-          email: existingSession.user.email,
-          image: existingSession.user.image ?? null,
-          level: typeof existingSession.user.level === "number" ? existingSession.user.level : 0,
-          xp: typeof existingSession.user.xp === "number" ? existingSession.user.xp : 0,
-          isVerified: Boolean(existingSession.user.isVerified),
+          id: sessionBackfillUser.id,
+          name: sessionBackfillUser.name,
+          email: sessionBackfillUser.email,
+          image: sessionBackfillUser.image,
+          level: sessionBackfillUser.level,
+          xp: sessionBackfillUser.xp,
+          isVerified: sessionBackfillUser.isVerified,
         },
       });
     }

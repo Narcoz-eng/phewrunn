@@ -49,6 +49,7 @@ const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 4;
 const PRIVY_SYNC_TIMEOUT_MS = 20_000;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [300, 800, 1500] as const;
+const AUTH_BEARER_TOKEN_MAX_LENGTH = 1400;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -111,6 +112,17 @@ let unauthorizedSessionFailures = 0;
 let inMemoryAuthToken: string | null = null;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
 
+function normalizeAuthToken(token: string | null | undefined): string | null {
+  if (typeof token !== "string") return null;
+  const trimmed = token.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > AUTH_BEARER_TOKEN_MAX_LENGTH) {
+    console.warn(`[Auth] Ignoring oversized auth token (${trimmed.length} chars)`);
+    return null;
+  }
+  return trimmed;
+}
+
 function getInMemoryCachedAuthUser(): AuthUser | null {
   if (!inMemoryCachedAuthUser) return null;
   if (Date.now() - inMemoryCachedAuthUser.cachedAt > AUTH_SESSION_CACHE_TTL_MS) {
@@ -121,9 +133,24 @@ function getInMemoryCachedAuthUser(): AuthUser | null {
 }
 
 function getStoredAuthToken(): string | null {
-  if (inMemoryAuthToken) return inMemoryAuthToken;
+  const normalizedInMemoryToken = normalizeAuthToken(inMemoryAuthToken);
+  if (normalizedInMemoryToken) {
+    return normalizedInMemoryToken;
+  }
+  if (inMemoryAuthToken) {
+    inMemoryAuthToken = null;
+  }
   try {
-    return localStorage.getItem("auth-token");
+    const stored = localStorage.getItem("auth-token");
+    const normalizedStoredToken = normalizeAuthToken(stored);
+    if (normalizedStoredToken) {
+      inMemoryAuthToken = normalizedStoredToken;
+      return normalizedStoredToken;
+    }
+    if (stored) {
+      localStorage.removeItem("auth-token");
+    }
+    return null;
   } catch (error) {
     console.warn("[Auth] Failed to read auth token from localStorage; using cookie auth only", error);
     return null;
@@ -131,9 +158,14 @@ function getStoredAuthToken(): string | null {
 }
 
 function setStoredAuthToken(token: string): void {
-  inMemoryAuthToken = token;
+  const normalizedToken = normalizeAuthToken(token);
+  if (!normalizedToken) {
+    clearStoredAuthToken();
+    return;
+  }
+  inMemoryAuthToken = normalizedToken;
   try {
-    localStorage.setItem("auth-token", token);
+    localStorage.setItem("auth-token", normalizedToken);
   } catch (error) {
     // Cookie-based auth is primary. localStorage token is only a fallback.
     console.warn("[Auth] Failed to persist auth token to localStorage; continuing with cookie auth", error);
@@ -152,6 +184,8 @@ function clearStoredAuthToken(): void {
 setAuthTokenGetter(async () => getStoredAuthToken());
 
 function hasSessionCookieHint(): boolean {
+  // Session cookies are HttpOnly and not readable from JS in modern browsers.
+  // Keep this best-effort check for legacy non-HttpOnly artifacts only.
   if (typeof document === "undefined") return false;
   const cookieHeader = document.cookie || "";
   if (!cookieHeader) return false;
@@ -425,10 +459,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     // Fresh tabs can momentarily race cookie/session propagation right after sign-in.
-    // Retry when we have either bearer token or session cookie hints.
+    // Retry when we have either bearer token/session hints, or immediately after a Privy sync.
     const hasStoredToken = Boolean(getStoredAuthToken());
     const hasCookieSessionHint = hasSessionCookieHint();
-    if (!hasStoredToken && !hasCookieSessionHint) {
+    const recentlySynced =
+      lastPrivySyncAt > 0 && Date.now() - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS;
+    if (!hasStoredToken && !hasCookieSessionHint && !recentlySynced) {
       return null;
     }
 
@@ -731,7 +767,6 @@ export async function syncPrivySession(
   privyIdToken?: string
 ): Promise<{ token: string; user: AuthUser }> {
   const maxAttempts = PRIVY_SYNC_RETRY_DELAYS_MS.length + 1;
-  const existingToken = getStoredAuthToken();
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
@@ -742,7 +777,6 @@ export async function syncPrivySession(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(existingToken ? { Authorization: `Bearer ${existingToken}` } : {}),
         },
         credentials: "include",
         signal: controller.signal,

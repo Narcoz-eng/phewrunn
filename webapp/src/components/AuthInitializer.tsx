@@ -16,25 +16,6 @@ type PrivyUserLike = {
 
 const AUTO_SYNC_COOLDOWN_MS = 2500;
 const AUTO_SYNC_MAX_ATTEMPTS = 4;
-const SESSION_COOKIE_CANDIDATES = [
-  "phew.session_token",
-  "better-auth.session_token",
-  "auth.session_token",
-] as const;
-
-function hasBackendAuthArtifact(): boolean {
-  try {
-    const token = localStorage.getItem("auth-token");
-    if (token) return true;
-  } catch {
-    // ignore
-  }
-
-  if (typeof document === "undefined") return false;
-  const cookieHeader = document.cookie || "";
-  if (!cookieHeader) return false;
-  return SESSION_COOKIE_CANDIDATES.some((name) => cookieHeader.includes(`${name}=`));
-}
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user } = usePrivy();
@@ -46,8 +27,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
-    const backendHasAuthArtifact = hasBackendAuthArtifact();
-    if (isAuthenticated && backendHasAuthArtifact) {
+    if (isAuthenticated) {
       attemptsRef.current = 0;
       lastSyncedPrivyUserRef.current = user.id;
       return;
