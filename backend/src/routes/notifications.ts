@@ -101,6 +101,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
             name: true,
             username: true,
             image: true,
+            level: true,
           },
         },
         post: {
@@ -128,6 +129,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
               name: true,
               username: true,
               image: true,
+              level: true,
             },
           },
           post: {
@@ -387,6 +389,7 @@ notificationsRouter.patch("/:id/click", requireAuth, async (c) => {
             name: true,
             username: true,
             image: true,
+            level: true,
           },
         },
         post: {
@@ -414,6 +417,7 @@ notificationsRouter.patch("/:id/click", requireAuth, async (c) => {
             name: true,
             username: true,
             image: true,
+            level: true,
           },
         },
         post: {

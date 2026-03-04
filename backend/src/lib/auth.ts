@@ -147,6 +147,7 @@ const sessionCache = new Map<string, SessionCacheEntry>();
 const sessionFetchInFlight = new Map<string, Promise<SessionRecord | null>>();
 const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MISS_TTL_MS = 1_500;
+const SESSION_CACHE_MAX_ENTRIES = 10_000;
 const SESSION_STORE_CIRCUIT_OPEN_MS = 30_000;
 const SESSION_STORE_LOG_COOLDOWN_MS = 15_000;
 let sessionStoreUnavailableUntilMs = 0;
@@ -417,6 +418,13 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
 
   const lookupPromise = (async () => {
     const cacheAndReturn = (value: SessionRecord | null): SessionRecord | null => {
+      // Evict oldest entry when cache is full
+      if (sessionCache.size >= SESSION_CACHE_MAX_ENTRIES && !sessionCache.has(token)) {
+        const oldestKey = sessionCache.keys().next().value;
+        if (typeof oldestKey === "string") {
+          sessionCache.delete(oldestKey);
+        }
+      }
       sessionCache.set(token, {
         value,
         expiresAtMs: value

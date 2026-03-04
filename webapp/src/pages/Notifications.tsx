@@ -207,10 +207,10 @@ export default function Notifications() {
     },
     initialData: cachedNotifications && cachedNotifications.length > 0 ? cachedNotifications : undefined,
     enabled: isAuthenticated,
-    staleTime: 30000,
+    staleTime: 20000,
     refetchOnMount: "always",
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     retry: (failureCount, error) => {
       const status =
         typeof error === "object" && error !== null && "status" in error

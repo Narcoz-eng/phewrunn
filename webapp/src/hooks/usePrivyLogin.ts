@@ -203,7 +203,10 @@ export function usePrivyLogin() {
     onComplete: async (params) => {
       autoResyncAttemptsRef.current = 0;
       lastAutoResyncAtRef.current = 0;
-      void runPrivySync(params.user as PrivyUserLike, "manual");
+      // Await the sync so auth state is hydrated before Privy's modal fully
+      // closes and React re-renders. This prevents a flash where GuestRoute
+      // still sees isAuthenticated=false and renders the login page.
+      await runPrivySync(params.user as PrivyUserLike, "manual");
     },
     onError: (error) => {
       clearSyncTimeout();
