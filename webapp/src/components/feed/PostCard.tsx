@@ -571,6 +571,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const { connection } = useConnection();
   const wallet = useWallet();
   const { visible: isWalletModalVisible, setVisible: setWalletModalVisible } = useWalletModal();
+  const tradeWalletPublicKey = wallet.publicKey ?? wallet.wallet?.adapter?.publicKey ?? null;
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -664,7 +665,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   // Complete the intended "connect then buy" flow without opening both popups at once.
   useEffect(() => {
-    if (!wallet.publicKey) return;
+    if (!tradeWalletPublicKey) return;
     if (isWalletModalVisible) {
       setWalletModalVisible(false);
     }
@@ -691,7 +692,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       window.setTimeout(clearPotentialScrollLock, 120);
     }
   }, [
-    wallet.publicKey,
+    tradeWalletPublicKey,
     isWalletConnectDialogOpen,
     pendingBuyAfterWalletConnect,
     pendingQuickBuyAutoExecute,
@@ -2151,17 +2152,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const tradeOutputTokenLabel = tradeSide === "buy" ? displayTokenSymbol : "SOL";
 
   const walletTokenBalanceQuery = useQuery({
-    queryKey: ["walletTokenBalance", wallet.publicKey?.toBase58(), post.contractAddress],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!wallet.publicKey,
+    queryKey: ["walletTokenBalance", tradeWalletPublicKey?.toBase58(), post.contractAddress],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
     staleTime: 8_000,
     retry: 1,
     refetchOnWindowFocus: false,
     refetchInterval: isBuyDialogOpen ? 15_000 : false,
     queryFn: async () => {
-      if (!wallet.publicKey || !post.contractAddress) return null;
+      if (!tradeWalletPublicKey || !post.contractAddress) return null;
       try {
         const mint = new PublicKey(post.contractAddress);
-        const accounts = await tradeReadConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint });
+        const accounts = await tradeReadConnection.getParsedTokenAccountsByOwner(tradeWalletPublicKey, { mint });
         let totalUiAmount = 0;
         for (const account of accounts.value) {
           type ParsedTokenAmountLike = {
@@ -2210,7 +2211,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     parsedSellAmountToken > walletTokenBalance + 1e-9;
   const sellHasNoTokens =
     tradeSide === "sell" &&
-    !!wallet.publicKey &&
+    !!tradeWalletPublicKey &&
     walletTokenBalance !== null &&
     walletTokenBalance <= 0;
   const sellBlockedByRpcTokenInfo =
@@ -2266,7 +2267,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     sell: null,
   });
   const refetchJupiterQuote = jupiterQuoteQuery.refetch;
-  const walletPublicKey = wallet.publicKey;
+  const walletPublicKey = tradeWalletPublicKey;
   const walletSignTransaction = wallet.signTransaction;
 
   useEffect(() => {
@@ -2365,7 +2366,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       }
     }
 
-    if (isSolanaTradeSupported && !wallet.publicKey) {
+    if (isSolanaTradeSupported && !walletPublicKey) {
       setPendingBuyAfterWalletConnect(true);
       openWalletSelector();
       return;
@@ -2417,11 +2418,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   };
 
   const handleTradeCtaClick = () => {
-    if (isSolanaTradeSupported && !wallet.publicKey) {
-      setPendingBuyAfterWalletConnect(true);
-      openWalletSelector();
-      return;
-    }
     handleOpenBuyDialog();
   };
 
@@ -2682,28 +2678,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
         : jupiterPlatformFeeAmountDisplay;
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
-  const walletShortAddress = wallet.publicKey
-    ? `${wallet.publicKey.toBase58().slice(0, 4)}...${wallet.publicKey.toBase58().slice(-4)}`
+  const hasWalletSignerForTrade = !!(walletPublicKey && wallet.signTransaction);
+  const isWalletConnectedForTrade = Boolean(wallet.connected || hasWalletSignerForTrade);
+  const walletShortAddress = walletPublicKey
+    ? `${walletPublicKey.toBase58().slice(0, 4)}...${walletPublicKey.toBase58().slice(-4)}`
     : null;
   const walletDisplayName = wallet.wallet?.adapter?.name ?? "Solana Wallet";
   const buyQuickAmounts = quickBuyPresetsSol;
   const sellQuickPercents = [25, 50, 75, 100];
-  const isWalletConnectedForTrade = !!wallet.publicKey;
   const canExecuteJupiterBuy =
     isSolanaTradeSupported &&
-    !!wallet.publicKey &&
+    hasWalletSignerForTrade &&
     !!wallet.signTransaction &&
     !!jupiterQuote &&
     !!tradeAmountAtomic &&
     !sellBlockedByRpcTokenInfo &&
     !sellAmountExceedsBalance &&
     !isExecutingBuy;
-  const connectWalletCtaLabel = "Start Trading";
+  const connectWalletCtaLabel = "Connect Wallet";
   const tradeCtaLabel = !isSolanaTradeSupported
     ? "Trade (Solana only)"
-    : isWalletConnectedForTrade
-      ? "Trade Now"
-      : connectWalletCtaLabel;
+    : "Trade Now";
   const shouldPulseTradeCta =
     isSolanaTradeSupported && (!isWalletConnectedForTrade || !localSettled);
   const connectWalletTone =
@@ -2717,9 +2712,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
           : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
       : connectWalletTone;
-  const canTriggerWalletConnectFromFooter = isSolanaTradeSupported && !isWalletConnectedForTrade;
+  const canTriggerWalletConnectFromFooter = isSolanaTradeSupported && !hasWalletSignerForTrade;
   const isBuyFooterDisabled = isSolanaTradeSupported
-    ? isWalletConnectedForTrade
+    ? hasWalletSignerForTrade
       ? !canExecuteJupiterBuy
       : false
     : true;
@@ -3505,7 +3500,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                   </div>
                 </div>
 
-                {isSolanaTradeSupported && isWalletConnectedForTrade && (
+                {isSolanaTradeSupported && (
                   <div className="mt-2 flex items-center justify-end gap-1.5 flex-wrap">
                     <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground mr-1">
                       Quick Buy
@@ -4088,7 +4083,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
         setIsWalletConnectDialogOpen(open);
         if (!open) {
           setPendingBuyAfterWalletConnect(false);
-          if (!wallet.publicKey) {
+          if (!tradeWalletPublicKey) {
             setPendingQuickBuyAutoExecute(false);
           }
         }
@@ -4248,11 +4243,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
             {!isSolanaTradeSupported ? (
               <div className="rounded-xl border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
-                This buy flow is available for Solana posts only. You can still use the chart for this token.
+                Trading is available for Solana posts only. Chart navigation remains available for this token.
               </div>
-            ) : (
-              <>
-                <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] lg:items-start">
+            ) : null}
+            <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] lg:items-start">
                   <div className="space-y-4 lg:min-h-0 lg:max-h-[min(72vh,56rem)] lg:overflow-y-auto lg:pr-1">
                     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
                       <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-lime-300/8 via-white/5 to-cyan-300/8" />
@@ -5050,9 +5044,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                     </div>
                   </div>
                 </div>
-
-              </>
-            )}
           </div>
 
           <DialogFooter className="relative z-20 px-5 sm:px-6 py-4 border-t border-border/50 bg-background/80">
@@ -5065,17 +5056,17 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               disabled={isBuyFooterDisabled}
               className={cn(
                 "h-11 w-full sm:w-auto gap-2 text-sm font-semibold",
-                !isWalletConnectedForTrade && connectWalletTone
+                !hasWalletSignerForTrade && connectWalletTone
               )}
             >
               {isExecutingBuy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : isWalletConnectedForTrade ? (
+              ) : hasWalletSignerForTrade ? (
                 <Zap className="h-4 w-4" />
               ) : (
                 <UserPlus className="h-4 w-4" />
               )}
-              {isWalletConnectedForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : connectWalletCtaLabel}
+              {hasWalletSignerForTrade ? (tradeSide === "buy" ? "Buy Now" : "Sell Now") : connectWalletCtaLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

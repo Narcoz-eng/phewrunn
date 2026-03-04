@@ -43,6 +43,7 @@ export function usePrivyLogin() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncGuardRef = useRef(false);
+  const appSessionAuthenticatedRef = useRef(appSessionAuthenticated);
   const syncTimeoutRef = useRef<number | null>(null);
   const loginRequestedRef = useRef(false);
   const lastAutoResyncAtRef = useRef(0);
@@ -105,11 +106,24 @@ export function usePrivyLogin() {
     } catch (err) {
       console.error("[usePrivyLogin] sync error:", err);
       const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
+      if (appSessionAuthenticatedRef.current) {
+        setSyncError(null);
+        return;
+      }
       // Show a friendlier message to the user instead of raw server errors
-      const userMessage = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage)
+      const isTooManyRequests = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
+      const userMessage = isTooManyRequests
         ? "Sign-in is busy. Retrying..."
         : rawMessage;
-      setSyncError(userMessage);
+      const shouldShowInlineError =
+        source === "manual" ||
+        !RETRYABLE_SYNC_ERROR_PATTERN.test(rawMessage) ||
+        autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+      if (shouldShowInlineError || !isTooManyRequests) {
+        setSyncError(userMessage);
+      } else {
+        setSyncError(null);
+      }
 
       if (source === "auto") {
         autoResyncAttemptsRef.current += 1;
@@ -144,6 +158,7 @@ export function usePrivyLogin() {
   }, [clearSyncTimeout]);
 
   useEffect(() => {
+    appSessionAuthenticatedRef.current = appSessionAuthenticated;
     if (!appSessionAuthenticated) return;
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;
