@@ -47,6 +47,14 @@ function normalizeDatabaseUrl(
     const notes: string[] = [];
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
+    const desiredConnectionLimit =
+      getPositiveIntEnv("PRISMA_CONNECTION_LIMIT") ??
+      (isServerlessRuntime
+        ? (isProduction ? 3 : 2)
+        : (isProduction ? 8 : 10));
+    const desiredPoolTimeout =
+      getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS") ??
+      (isProduction ? 20 : 10);
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
@@ -62,6 +70,20 @@ function normalizeDatabaseUrl(
     if (isSupabaseHost && !parsed.searchParams.has("sslmode")) {
       parsed.searchParams.set("sslmode", "require");
       notes.push("added sslmode=require");
+    }
+
+    if (isSupabaseHost) {
+      const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
+      if (!Number.isFinite(existingConnectionLimit) || existingConnectionLimit < desiredConnectionLimit) {
+        parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
+        notes.push(`set connection_limit=${desiredConnectionLimit}`);
+      }
+
+      const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
+      if (!Number.isFinite(existingPoolTimeout) || existingPoolTimeout < desiredPoolTimeout) {
+        parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
+        notes.push(`set pool_timeout=${desiredPoolTimeout}`);
+      }
     }
 
     // Supabase transaction pooler is ideal in serverless.
@@ -84,30 +106,6 @@ function normalizeDatabaseUrl(
       if (!parsed.searchParams.has("pgbouncer")) {
         parsed.searchParams.set("pgbouncer", "true");
         notes.push("added pgbouncer=true");
-      }
-
-      // In serverless, keep this low but not 1 so auth/feed bursts do not immediately
-      // deadlock on a single client connection.
-      const desiredConnectionLimit =
-        getPositiveIntEnv("PRISMA_CONNECTION_LIMIT") ??
-        (isServerlessRuntime
-          ? (isProduction ? 3 : 2)
-          : (isProduction ? 8 : 10));
-      const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
-      if (!Number.isFinite(existingConnectionLimit) || existingConnectionLimit < desiredConnectionLimit) {
-        parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
-        notes.push(`set connection_limit=${desiredConnectionLimit}`);
-      }
-
-      // Allow moderate queueing instead of immediate auth/feed failures when warm instances
-      // briefly saturate the pool.
-      const desiredPoolTimeout =
-        getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS") ??
-        (isProduction ? 20 : 10);
-      const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
-      if (!Number.isFinite(existingPoolTimeout) || existingPoolTimeout < desiredPoolTimeout) {
-        parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
-        notes.push(`set pool_timeout=${desiredPoolTimeout}`);
       }
 
       ensureSessionSafetyOptions(parsed, notes);
@@ -197,9 +195,14 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
   }
 }
 
+const explicitGuardrailsEnabled = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS === "true";
 const shouldRunCompatGuardrails =
-  process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS === "true" ||
-  (!isProduction && !isServerlessRuntime);
+  (explicitGuardrailsEnabled || (!isProduction && !isServerlessRuntime)) &&
+  !(isProduction && isServerlessRuntime);
+
+if (explicitGuardrailsEnabled && isProduction && isServerlessRuntime) {
+  console.warn("[Prisma] Ignoring PRISMA_ENABLE_COMPAT_GUARDRAILS=true in production serverless runtime");
+}
 
 if (isSqlite) {
   initSqlitePragmas(prisma).catch((error) => {
