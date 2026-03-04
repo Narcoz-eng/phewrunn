@@ -34,6 +34,7 @@ const SESSION_COOKIE_NAMES = [
 // In-memory store for rate limits
 // TODO: Replace with Redis for production multi-instance deployment
 const rateLimitStore = new Map<string, RateLimitEntry>();
+const RATE_LIMIT_STORE_MAX_ENTRIES = 50_000;
 
 // Cleanup interval reference
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
@@ -223,6 +224,13 @@ export function rateLimit(config: RateLimitConfig) {
     let entry = rateLimitStore.get(key);
 
     if (!entry || now > entry.resetTime) {
+      // Evict oldest entry when store is full to prevent unbounded memory growth
+      if (rateLimitStore.size >= RATE_LIMIT_STORE_MAX_ENTRIES && !rateLimitStore.has(key)) {
+        const oldestKey = rateLimitStore.keys().next().value;
+        if (typeof oldestKey === "string") {
+          rateLimitStore.delete(oldestKey);
+        }
+      }
       // Create new entry or reset expired one
       entry = {
         count: 1,

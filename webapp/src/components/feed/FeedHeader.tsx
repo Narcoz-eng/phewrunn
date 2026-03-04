@@ -47,15 +47,17 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
       return response;
     },
     enabled: !!user,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     refetchInterval: () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
       return 30000;
     },
-    staleTime: 15000,
+    staleTime: 10000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
   const unreadCount = unreadData?.count ?? 0;

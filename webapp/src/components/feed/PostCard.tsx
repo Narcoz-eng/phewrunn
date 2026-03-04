@@ -9,7 +9,6 @@ import {
   Cell,
   CartesianGrid,
   ComposedChart,
-  Line,
   ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
@@ -94,12 +93,10 @@ const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
-const JUPITER_QUOTE_TIMEOUT_MS = 6_500;
-const JUPITER_QUOTE_STALE_MAX_AGE_MS = 90_000;
-const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 5_000;
+const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
+const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
+const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
-const ENABLE_ADVANCED_OHLC_CHART =
-  String(import.meta.env.VITE_ENABLE_ADVANCED_OHLC_CHART ?? "").toLowerCase() === "true";
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -859,54 +856,28 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   // Fetch portfolio when buy dialog opens and wallet is connected
   useEffect(() => {
-    if (!isBuyDialogOpen || !tradeWalletPublicKey) {
-      return;
-    }
-    let cancelled = false;
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 14_000);
+    if (!isBuyDialogOpen || !tradeWalletPublicKey || !post.contractAddress) return;
     const walletAddr = tradeWalletPublicKey.toBase58();
     setIsPortfolioLoading(true);
     fetch("/api/posts/portfolio", {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
-      signal: controller.signal,
-      body: JSON.stringify({ walletAddress: walletAddr }),
+      body: JSON.stringify({ walletAddress: walletAddr, tokenMints: [post.contractAddress] }),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
-        if (cancelled) return;
         const data = json?.data;
-        setPortfolioPositions(Array.isArray(data?.positions) ? data.positions : []);
-        setPortfolioTotalPnl(typeof data?.totalUnrealizedPnl === "number" ? data.totalUnrealizedPnl : null);
+        if (data?.positions) {
+          setPortfolioPositions(data.positions);
+          setPortfolioTotalPnl(data.totalUnrealizedPnl ?? null);
+        }
       })
       .catch(() => {
         // Silently fail - portfolio is supplementary
-        if (!cancelled) {
-          setPortfolioPositions([]);
-          setPortfolioTotalPnl(null);
-        }
       })
-      .finally(() => {
-        window.clearTimeout(timeoutId);
-        if (!cancelled) {
-          setIsPortfolioLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [isBuyDialogOpen, tradeWalletPublicKey]);
-
-  useEffect(() => {
-    if (isBuyDialogOpen) return;
-    setPortfolioPositions([]);
-    setPortfolioTotalPnl(null);
-    setIsPortfolioLoading(false);
-  }, [isBuyDialogOpen]);
+      .finally(() => setIsPortfolioLoading(false));
+  }, [isBuyDialogOpen, tradeWalletPublicKey, post.contractAddress]);
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
@@ -2158,15 +2129,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     staleTime: 5_000,
     retry: 1,
     refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen
-      ? (q) => {
-          const candles = (q.state.data as ChartCandlesResponse | undefined)?.candles ?? [];
-          if (candles.length >= 2) {
-            return chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000;
-          }
-          return 4_000;
-        }
-      : false,
+    refetchInterval:
+      isBuyDialogOpen && chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000,
     queryFn: async () => {
       if (!canRequestChartCandles) {
         return {
@@ -2286,27 +2250,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     typeof walletTokenBalanceQuery.data === "number" && Number.isFinite(walletTokenBalanceQuery.data)
       ? walletTokenBalanceQuery.data
       : null;
-  const walletSolBalanceQuery = useQuery({
-    queryKey: ["walletSolBalance", tradeWalletPublicKey?.toBase58()],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
-    staleTime: 8_000,
-    retry: 2,
-    refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen ? (q) => (q.state.data ? 12_000 : 3_500) : false,
-    queryFn: async () => {
-      if (!tradeWalletPublicKey) return null;
-      try {
-        const lamports = await tradeReadConnection.getBalance(tradeWalletPublicKey, "processed");
-        return lamports / LAMPORTS_PER_SOL;
-      } catch {
-        return null;
-      }
-    },
-  });
-  const walletSolBalance =
-    typeof walletSolBalanceQuery.data === "number" && Number.isFinite(walletSolBalanceQuery.data)
-      ? walletSolBalanceQuery.data
-      : null;
   const walletTokenBalanceFormatted =
     walletTokenBalance === null
       ? "-"
@@ -2354,16 +2297,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
     staleTime: 2_500,
     gcTime: 45_000,
-    retry: 2,
+    retry: 1,
     retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
     placeholderData: (previousData) => previousData,
-    refetchInterval: isBuyDialogOpen
-      ? (q) => {
-          if (q.state.data) return 4_500;
-          if (q.state.error) return 2_500;
-          return 2_000;
-        }
-      : false,
+    refetchInterval: isBuyDialogOpen ? (q) => (q.state.data ? 5_000 : 2_200) : false,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
       if (!tradeAmountAtomic) {
@@ -2490,29 +2427,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     handleCloseBuyDialog();
   };
 
-  const handleTradePanelQuickBuyPresetClick = useCallback((amount: string) => {
-    setBuyAmountSol(amount);
-    const parsedAmount = Number(amount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return;
-    const amountLamports = Math.max(1, Math.floor(parsedAmount * LAMPORTS_PER_SOL));
-    const payload = createJupiterQuotePayload("buy", amountLamports);
-    if (!payload) return;
-    void fetchJupiterQuoteFast(payload, { timeoutMs: 4_200 }).catch(() => {
-      // Query path will still fetch and surface status.
-    });
-  }, [createJupiterQuotePayload]);
-
   const handlePortfolioQuickSell = useCallback((mint: string, amount: number) => {
-    const activeMint = post.contractAddress?.toLowerCase() ?? null;
-    if (!activeMint || mint.toLowerCase() !== activeMint) {
-      toast.info("Open that token's panel to close this position.");
-      return;
-    }
     setTradeSide("sell");
-    setSellAmountToken(
-      formatDecimalInputValue(amount, Math.max(2, outputTokenDecimals))
-    );
-  }, [post.contractAddress, outputTokenDecimals]);
+    setSellAmountToken(String(amount));
+  }, []);
 
   const applySlippagePercentInput = () => {
     const parsed = Number(slippageInputPercent);
@@ -3001,9 +2919,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const fallbackPoints = tradeChartData
       .map((point) => point.mcap)
       .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    if (fallbackPoints.length === 0) {
-      fallbackPoints.push(1, 1);
-    } else if (fallbackPoints.length === 1) {
+    if (fallbackPoints.length === 1) {
       fallbackPoints.push(fallbackPoints[0]);
     }
     const fallbackAnchorTs = Number.isFinite(new Date(post.createdAt).getTime())
@@ -3079,8 +2995,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, [chartCandlesQuery.data?.candles, chartRequestConfig.aggregate, chartRequestConfig.timeframe, post.createdAt, tradeChartData]);
   const hasProviderChartCandles = (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
   const hasProfessionalChartData = professionalChartData.length >= 2;
-  const canUseAdvancedChart =
-    ENABLE_ADVANCED_OHLC_CHART && hasProfessionalChartData && professionalChartData.length >= 8;
   const isFallbackChartData = hasProfessionalChartData && !hasProviderChartCandles;
   const chartTotalPoints = professionalChartData.length;
   const chartWindowBounds = useMemo(() => {
@@ -4630,9 +4544,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
                       >
                         {hasProfessionalChartData ? (
-                          <ChartErrorBoundary
-                            key={`chart-eb-${post.id}-${chartInterval}-${professionalChartData.length}-${chartCandlesQuery.data?.source ?? "na"}`}
-                          >
+                          <ChartErrorBoundary key={`chart-eb-${chartInterval}`}>
                           <ResponsiveContainer width="100%" height="100%">
                             <ComposedChart
                               data={professionalChartData}
@@ -4674,7 +4586,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 tick={{ fill: "rgba(255,255,255,0.78)", fontSize: 10 }}
                                 tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
                               />
-                              {isChartInfoVisible && canUseAdvancedChart ? (
+                              {isChartInfoVisible ? (
                                 <YAxis
                                   yAxisId="volume"
                                   orientation="right"
@@ -4691,7 +4603,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   }
                                 />
                               ) : null}
-                              {canUseAdvancedChart && chartEntryPrice !== null ? (
+                              {chartEntryPrice !== null ? (
                                 <ReferenceLine
                                   yAxisId="price"
                                   y={chartEntryPrice}
@@ -4706,7 +4618,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   }}
                                 />
                               ) : null}
-                              {canUseAdvancedChart && chartEntryCandle ? (
+                              {chartEntryCandle ? (
                                 <ReferenceLine
                                   x={chartEntryCandle.ts}
                                   stroke="rgba(96,165,250,0.45)"
@@ -4714,7 +4626,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   ifOverflow="discard"
                                 />
                               ) : null}
-                              {canUseAdvancedChart && chartEntryCandle ? (
+                              {chartEntryCandle ? (
                                 <ReferenceDot
                                   x={chartEntryCandle.ts}
                                   y={chartEntryCandle.close}
@@ -4753,7 +4665,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                         <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.low ?? 0))}</span>
                                         <span className="text-white/35">C</span>
                                         <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.close ?? 0))}</span>
-                                        {isChartInfoVisible && canUseAdvancedChart ? (
+                                        {isChartInfoVisible ? (
                                           <>
                                             <span className="text-white/35">Vol</span>
                                             <span className="text-right font-medium text-white/80">
@@ -4766,66 +4678,50 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   );
                                 }}
                               />
-                              {canUseAdvancedChart ? (
-                                <>
-                                  {isChartInfoVisible ? (
-                                    <Bar
-                                      yAxisId="volume"
-                                      dataKey="volume"
-                                      barSize={3}
-                                      fill={`url(#buyChartVolumeFill-${post.id})`}
-                                      opacity={0.9}
-                                    />
-                                  ) : null}
-                                  <Bar
-                                    yAxisId="price"
-                                    dataKey="wickRange"
-                                    barSize={2}
-                                    fill={`url(#buyChartWick-${post.id})`}
-                                    opacity={isChartTradesVisible ? 1 : 0.7}
-                                    tooltipType="none"
-                                  />
-                                  <Bar
-                                    yAxisId="price"
-                                    dataKey="bodyRange"
-                                    barSize={8}
-                                    radius={[1, 1, 1, 1]}
-                                    tooltipType="none"
-                                    isAnimationActive={false}
-                                  >
-                                    {professionalChartData.map((point) => (
-                                      <Cell
-                                        key={`candle-${post.id}-${point.ts}`}
-                                        fill={point.isBullish ? "#22c55e" : "#ef4444"}
-                                        fillOpacity={isChartTradesVisible ? 1 : 0.7}
-                                      />
-                                    ))}
-                                  </Bar>
-                                  {professionalChartData.length > CHART_MIN_VISIBLE_POINTS ? (
-                                    <Brush
-                                      dataKey="ts"
-                                      height={20}
-                                      stroke={professionalChartStroke}
-                                      fill="rgba(255,255,255,0.04)"
-                                      travellerWidth={8}
-                                      startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
-                                      endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
-                                      onChange={handleChartBrushChange}
-                                      tickFormatter={formatChartXAxisTick}
-                                    />
-                                  ) : null}
-                                </>
-                              ) : (
-                                <Line
-                                  yAxisId="price"
-                                  type="monotone"
-                                  dataKey="close"
-                                  stroke={professionalChartStroke}
-                                  strokeWidth={2}
-                                  dot={false}
-                                  isAnimationActive={false}
+                              {isChartInfoVisible ? (
+                                <Bar
+                                  yAxisId="volume"
+                                  dataKey="volume"
+                                  barSize={3}
+                                  fill={`url(#buyChartVolumeFill-${post.id})`}
+                                  opacity={0.9}
                                 />
-                              )}
+                              ) : null}
+                              <Bar
+                                yAxisId="price"
+                                dataKey="wickRange"
+                                barSize={2}
+                                fill={`url(#buyChartWick-${post.id})`}
+                                opacity={isChartTradesVisible ? 1 : 0.7}
+                                tooltipType="none"
+                              />
+                              <Bar
+                                yAxisId="price"
+                                dataKey="bodyRange"
+                                barSize={8}
+                                radius={[1, 1, 1, 1]}
+                                tooltipType="none"
+                                isAnimationActive={false}
+                              >
+                                {professionalChartData.map((point) => (
+                                  <Cell
+                                    key={`candle-${post.id}-${point.ts}`}
+                                    fill={point.isBullish ? "#22c55e" : "#ef4444"}
+                                    fillOpacity={isChartTradesVisible ? 1 : 0.7}
+                                  />
+                                ))}
+                              </Bar>
+                              <Brush
+                                dataKey="ts"
+                                height={20}
+                                stroke={professionalChartStroke}
+                                fill="rgba(255,255,255,0.04)"
+                                travellerWidth={8}
+                                startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
+                                endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
+                                onChange={handleChartBrushChange}
+                                tickFormatter={formatChartXAxisTick}
+                              />
                             </ComposedChart>
                           </ResponsiveContainer>
                           </ChartErrorBoundary>
@@ -4904,7 +4800,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       isExecuting={isExecutingBuy}
                       canExecute={canExecuteJupiterBuy}
                       walletConnected={isWalletConnectedForTrade}
-                      walletBalance={walletSolBalance}
+                      walletBalance={null}
                       walletTokenBalance={walletTokenBalance}
                       walletTokenBalanceFormatted={walletTokenBalanceFormatted}
                       onExecute={handleExecuteJupiterBuy}
@@ -4915,7 +4811,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       txSignature={buyTxSignature}
                       quickBuyPresets={buyQuickAmounts}
                       sellQuickPercents={sellQuickPercents}
-                      onQuickBuyPresetClick={handleTradePanelQuickBuyPresetClick}
+                      onQuickBuyPresetClick={(amount) => setBuyAmountSol(amount)}
                       onSellPercentClick={(percent) => setSellAmountFromPercent(percent)}
                       autoConfirmEnabled={autoConfirmEnabled}
                       onAutoConfirmChange={handleAutoConfirmChange}
@@ -4928,7 +4824,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       totalUnrealizedPnl={portfolioTotalPnl}
                       onQuickSell={handlePortfolioQuickSell}
                       walletConnected={isWalletConnectedForTrade}
-                      activeMint={post.contractAddress}
                     />
                   </div>
                 </div>
