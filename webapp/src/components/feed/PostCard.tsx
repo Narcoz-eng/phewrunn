@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { Connection, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -621,12 +622,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     y: number;
     mode: "pan" | "scroll" | null;
   } | null>(null);
+  const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
+  const walletConnectCooldownUntilRef = useRef(0);
   const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
     [heliusReadRpcUrl, connection]
   );
+  const isLikelyMobileDevice = useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent || "";
+    return /android|iphone|ipad|ipod|mobile/i.test(ua);
+  }, []);
 
   const hasGlobalDialogOpen = useCallback(() => {
     if (typeof document === "undefined") return false;
@@ -2396,6 +2404,42 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setIsBuyDialogOpen(true);
   };
 
+  const connectDetectedWalletDirect = useCallback(async (): Promise<boolean> => {
+    if (wallet.connected || wallet.publicKey || wallet.wallet?.adapter?.publicKey) {
+      return true;
+    }
+
+    const availableWallets = wallet.wallets ?? [];
+    if (availableWallets.length === 0) {
+      return false;
+    }
+
+    const preferredWallet =
+      availableWallets.find(
+        (entry) =>
+          entry.adapter.readyState === WalletReadyState.Installed &&
+          entry.adapter.name.toLowerCase().includes("phantom")
+      ) ??
+      availableWallets.find((entry) => entry.adapter.readyState === WalletReadyState.Installed) ??
+      availableWallets.find((entry) => entry.adapter.readyState === WalletReadyState.Loadable) ??
+      null;
+
+    if (!preferredWallet) {
+      return false;
+    }
+
+    const currentWalletName = wallet.wallet?.adapter?.name;
+    if (currentWalletName !== preferredWallet.adapter.name) {
+      wallet.select(preferredWallet.adapter.name);
+      if (typeof window !== "undefined") {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
+      }
+    }
+
+    await wallet.connect();
+    return true;
+  }, [wallet]);
+
   const openWalletSelector = ({
     closeBuyDialog = false,
     closeWalletConnectDialog = false,
@@ -2406,15 +2450,44 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     if (closeBuyDialog) {
       handleCloseBuyDialog();
     }
-    if (closeWalletConnectDialog) {
-      setIsWalletConnectDialogOpen(false);
+    const shouldCloseWalletConnectDialog = closeWalletConnectDialog;
+    if (wallet.connecting) {
+      return;
     }
-    const openModal = () => setWalletModalVisible(true);
-    if (typeof window !== "undefined") {
-      window.setTimeout(openModal, 16);
-    } else {
-      openModal();
+    const now = Date.now();
+    if (now < walletConnectCooldownUntilRef.current) {
+      return;
     }
+    walletConnectCooldownUntilRef.current = now + 450;
+    if (walletConnectAttemptRef.current) {
+      return;
+    }
+
+    const connectAttempt = (async () => {
+      if (isLikelyMobileDevice) {
+        try {
+          const connectedDirectly = await connectDetectedWalletDirect();
+          if (connectedDirectly) {
+            if (shouldCloseWalletConnectDialog) {
+              setIsWalletConnectDialogOpen(false);
+            }
+            return true;
+          }
+        } catch (error) {
+          console.warn("[trade] Direct mobile wallet connect failed; falling back to wallet selector", error);
+        }
+      }
+
+      if (shouldCloseWalletConnectDialog) {
+        setIsWalletConnectDialogOpen(false);
+      }
+      setWalletModalVisible(true);
+      return false;
+    })().finally(() => {
+      walletConnectAttemptRef.current = null;
+    });
+
+    walletConnectAttemptRef.current = connectAttempt;
   };
 
   const handleTradeCtaClick = () => {
