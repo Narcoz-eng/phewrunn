@@ -4812,7 +4812,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       tokenImage={resolvedTokenImage}
                       slippageBps={slippageBps}
                       onSlippageChange={setSlippageBps}
-                      jupiterOutputFormatted={jupiterOutputFormatted}
+                      jupiterOutputFormatted={jupiterOutputAmountFormatted}
                       jupiterMinReceiveFormatted={jupiterMinReceiveFormatted}
                       jupiterPriceImpactDisplay={jupiterPriceImpactDisplay}
                       jupiterPlatformFeeDisplay={jupiterPlatformFeeDisplay}

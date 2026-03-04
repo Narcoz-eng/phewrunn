@@ -4901,45 +4901,44 @@ postsRouter.post(
     let totalUnrealizedPnl = 0;
     let hasPnl = false;
 
-    const positions = tokenMints
-      .filter((mint) => snapshots[mint])
-      .map((mint) => {
-        const snap = snapshots[mint];
-        const meta = metadataByMint.get(mint);
+    const positions = tokenMints.flatMap((mint) => {
+      const snap = snapshots[mint];
+      if (!snap) return [];
 
-        const balance = snap.holdingAmount ?? 0;
-        const currentPrice =
-          balance > 0 && snap.holdingUsd !== null ? snap.holdingUsd / balance : null;
-        const avgEntryPrice =
-          snap.boughtAmount && snap.boughtAmount > 0 && snap.boughtUsd !== null
-            ? snap.boughtUsd / snap.boughtAmount
-            : null;
-        const costBasis = avgEntryPrice !== null ? avgEntryPrice * balance : null;
-        const currentValue = snap.holdingUsd ?? 0;
-        const unrealizedPnl = costBasis !== null ? currentValue - costBasis : null;
-        const unrealizedPnlPercent =
-          costBasis !== null && costBasis > 0
-            ? Math.round(((currentValue - costBasis) / costBasis) * 10000) / 100
-            : null;
+      const meta = metadataByMint.get(mint);
+      const balance = snap.holdingAmount ?? 0;
+      const currentPrice =
+        balance > 0 && snap.holdingUsd !== null ? snap.holdingUsd / balance : null;
+      const avgEntryPrice =
+        snap.boughtAmount && snap.boughtAmount > 0 && snap.boughtUsd !== null
+          ? snap.boughtUsd / snap.boughtAmount
+          : null;
+      const costBasis = avgEntryPrice !== null ? avgEntryPrice * balance : null;
+      const currentValue = snap.holdingUsd ?? 0;
+      const unrealizedPnl = costBasis !== null ? currentValue - costBasis : null;
+      const unrealizedPnlPercent =
+        costBasis !== null && costBasis > 0
+          ? Math.round(((currentValue - costBasis) / costBasis) * 10000) / 100
+          : null;
 
-        if (unrealizedPnl !== null) {
-          totalUnrealizedPnl += unrealizedPnl;
-          hasPnl = true;
-        }
+      if (unrealizedPnl !== null) {
+        totalUnrealizedPnl += unrealizedPnl;
+        hasPnl = true;
+      }
 
-        return {
-          mint,
-          symbol: meta?.tokenSymbol ?? null,
-          name: meta?.tokenName ?? null,
-          image: meta?.tokenImage ?? null,
-          balance,
-          avgEntryPrice: avgEntryPrice !== null ? Math.round(avgEntryPrice * 1e8) / 1e8 : null,
-          currentPrice: currentPrice !== null ? Math.round(currentPrice * 1e8) / 1e8 : null,
-          costBasis: costBasis !== null ? Math.round(costBasis * 100) / 100 : null,
-          unrealizedPnl: unrealizedPnl !== null ? Math.round(unrealizedPnl * 100) / 100 : null,
-          unrealizedPnlPercent,
-        };
-      });
+      return [{
+        mint,
+        symbol: meta?.tokenSymbol ?? null,
+        name: meta?.tokenName ?? null,
+        image: meta?.tokenImage ?? null,
+        balance,
+        avgEntryPrice: avgEntryPrice !== null ? Math.round(avgEntryPrice * 1e8) / 1e8 : null,
+        currentPrice: currentPrice !== null ? Math.round(currentPrice * 1e8) / 1e8 : null,
+        costBasis: costBasis !== null ? Math.round(costBasis * 100) / 100 : null,
+        unrealizedPnl: unrealizedPnl !== null ? Math.round(unrealizedPnl * 100) / 100 : null,
+        unrealizedPnlPercent,
+      }];
+    });
 
     return c.json({
       data: {
