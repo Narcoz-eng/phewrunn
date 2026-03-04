@@ -83,6 +83,25 @@ function isPrismaClientError(error: unknown): boolean {
   return name.startsWith("PrismaClient");
 }
 
+function isPrismaConnectivityError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P1001" || code === "P1002" || code === "P1008" || code === "P1017") {
+    return true;
+  }
+
+  const message = getErrorMessage(error);
+  return /timed out fetching a new connection|connection pool|error in connector|kind:\s*closed|server closed the connection|connection.*(closed|timed out|timeout|refused|terminated)|econnreset|etimedout|can't reach database/i.test(
+    message
+  );
+}
+
 function isSessionLookupUnavailableError(error: unknown): boolean {
   return isPrismaSchemaDriftError(error) || isPrismaClientError(error);
 }
@@ -128,6 +147,29 @@ const sessionCache = new Map<string, SessionCacheEntry>();
 const sessionFetchInFlight = new Map<string, Promise<SessionRecord | null>>();
 const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MISS_TTL_MS = 1_500;
+const SESSION_STORE_CIRCUIT_OPEN_MS = 30_000;
+const SESSION_STORE_LOG_COOLDOWN_MS = 15_000;
+let sessionStoreUnavailableUntilMs = 0;
+let sessionStoreLastWarningAtMs = 0;
+
+function markSessionStoreUnavailable(reason: string, error: unknown): void {
+  const now = Date.now();
+  sessionStoreUnavailableUntilMs = Math.max(
+    sessionStoreUnavailableUntilMs,
+    now + SESSION_STORE_CIRCUIT_OPEN_MS
+  );
+  if (now - sessionStoreLastWarningAtMs < SESSION_STORE_LOG_COOLDOWN_MS) {
+    return;
+  }
+  sessionStoreLastWarningAtMs = now;
+  console.warn(`[auth] Session store temporarily unavailable (${reason}); using signed-token fallback`, {
+    message: getErrorMessage(error),
+  });
+}
+
+function markSessionStoreAvailable(): void {
+  sessionStoreUnavailableUntilMs = 0;
+}
 
 function toSessionUser(
   user: {
@@ -221,8 +263,15 @@ async function findSessionUserByIdWithFallback(
     if (!fullUser) return { status: "not_found" };
     return { status: "found", user: toSessionUser(fullUser) };
   } catch (error) {
+    if (isPrismaConnectivityError(error)) {
+      markSessionStoreUnavailable("user.findUnique", error);
+      return { status: "unavailable" };
+    }
     if (!isSessionLookupUnavailableError(error)) {
       throw error;
+    }
+    if (!isPrismaSchemaDriftError(error)) {
+      return { status: "unavailable" };
     }
   }
 
@@ -234,8 +283,15 @@ async function findSessionUserByIdWithFallback(
     if (!fallbackUser) return { status: "not_found" };
     return { status: "found", user: toSessionUser(fallbackUser) };
   } catch (error) {
+    if (isPrismaConnectivityError(error)) {
+      markSessionStoreUnavailable("user.findUnique(fallback)", error);
+      return { status: "unavailable" };
+    }
     if (!isSessionLookupUnavailableError(error)) {
       throw error;
+    }
+    if (!isPrismaSchemaDriftError(error)) {
+      return { status: "unavailable" };
     }
   }
 
@@ -247,6 +303,10 @@ async function findSessionUserByIdWithFallback(
     if (!minimalUser) return { status: "not_found" };
     return { status: "found", user: toSessionUser(minimalUser) };
   } catch (error) {
+    if (isPrismaConnectivityError(error)) {
+      markSessionStoreUnavailable("user.findUnique(minimal)", error);
+      return { status: "unavailable" };
+    }
     if (!isSessionLookupUnavailableError(error)) {
       throw error;
     }
@@ -318,8 +378,28 @@ async function getSessionFromSignedToken(token: string): Promise<SessionRecord |
   };
 }
 
+function buildSessionFromVerifiedClaims(
+  verified: { userId: string; expiresAt: Date; userClaims: SessionTokenUserClaims | null },
+  token: string
+): SessionRecord | null {
+  if (!verified.userClaims) return null;
+  const syntheticNow = new Date();
+  return {
+    session: {
+      id: `stateless:${verified.userId}`,
+      userId: verified.userId,
+      token,
+      expiresAt: verified.expiresAt,
+      createdAt: syntheticNow,
+      updatedAt: syntheticNow,
+    },
+    user: buildSessionUserFromTokenClaims(verified.userId, verified.userClaims),
+  };
+}
+
 async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
   if (!token) return null;
+  const verifiedSignedToken = verifySignedSessionToken(token);
 
   const now = Date.now();
   const cached = sessionCache.get(token);
@@ -336,6 +416,30 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
   }
 
   const lookupPromise = (async () => {
+    const cacheAndReturn = (value: SessionRecord | null): SessionRecord | null => {
+      sessionCache.set(token, {
+        value,
+        expiresAtMs: value
+          ? Math.min(Date.now() + SESSION_CACHE_TTL_MS, value.session.expiresAt.getTime())
+          : now + SESSION_CACHE_MISS_TTL_MS,
+      });
+      return value;
+    };
+
+    const resolveSignedFallback = async (): Promise<SessionRecord | null> => {
+      const claimOnly =
+        verifiedSignedToken ? buildSessionFromVerifiedClaims(verifiedSignedToken, token) : null;
+      if (claimOnly) {
+        return claimOnly;
+      }
+      return await getSessionFromSignedToken(token);
+    };
+
+    if (sessionStoreUnavailableUntilMs > Date.now()) {
+      const fallback = await resolveSignedFallback();
+      return cacheAndReturn(fallback);
+    }
+
     let dbSession:
       | {
           id: string;
@@ -369,9 +473,15 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
             user: fullSession.user ? toSessionUser(fullSession.user) : null,
           }
         : null;
+      markSessionStoreAvailable();
     } catch (error) {
       if (!isSessionLookupUnavailableError(error)) {
         throw error;
+      }
+      if (!isPrismaSchemaDriftError(error)) {
+        markSessionStoreUnavailable("session.findUnique", error);
+        const fallback = await resolveSignedFallback();
+        return cacheAndReturn(fallback);
       }
       console.warn("[auth] Session lookup failed; using fallback select", {
         message: getErrorMessage(error),
@@ -399,9 +509,15 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
               user: fallbackSession.user ? toSessionUser(fallbackSession.user) : null,
             }
           : null;
+        markSessionStoreAvailable();
       } catch (fallbackError) {
         if (!isSessionLookupUnavailableError(fallbackError)) {
           throw fallbackError;
+        }
+        if (!isPrismaSchemaDriftError(fallbackError)) {
+          markSessionStoreUnavailable("session.findUnique(fallback)", fallbackError);
+          const fallback = await resolveSignedFallback();
+          return cacheAndReturn(fallback);
         }
         console.warn("[auth] Session fallback select unavailable; trying minimal compatibility select", {
           message: getErrorMessage(fallbackError),
@@ -429,32 +545,27 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
                 user: minimalSession.user ? toSessionUser(minimalSession.user) : null,
               }
             : null;
+          markSessionStoreAvailable();
         } catch (minimalError) {
           if (!isSessionLookupUnavailableError(minimalError)) {
             throw minimalError;
           }
-          console.warn("[auth] Session lookup unavailable after fallback attempts", {
-            message: getErrorMessage(minimalError),
-          });
-          dbSession = null;
+          if (isPrismaConnectivityError(minimalError)) {
+            markSessionStoreUnavailable("session.findUnique(minimal)", minimalError);
+          } else {
+            console.warn("[auth] Session lookup unavailable after fallback attempts", {
+              message: getErrorMessage(minimalError),
+            });
+          }
+          const fallback = await resolveSignedFallback();
+          return cacheAndReturn(fallback);
         }
       }
     }
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
-      const signedTokenSession = await getSessionFromSignedToken(token);
-      if (signedTokenSession) {
-        sessionCache.set(token, {
-          value: signedTokenSession,
-          expiresAtMs: Math.min(Date.now() + SESSION_CACHE_TTL_MS, signedTokenSession.session.expiresAt.getTime()),
-        });
-        return signedTokenSession;
-      }
-      sessionCache.set(token, {
-        value: null,
-        expiresAtMs: now + SESSION_CACHE_MISS_TTL_MS,
-      });
-      return null;
+      const signedTokenSession = await resolveSignedFallback();
+      return cacheAndReturn(signedTokenSession);
     }
 
     const sessionRecord: SessionRecord = {
@@ -468,14 +579,7 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
       },
       user: dbSession.user as SessionRecord["user"],
     };
-
-    const sessionExpiry = dbSession.expiresAt.getTime();
-    sessionCache.set(token, {
-      value: sessionRecord,
-      expiresAtMs: Math.min(Date.now() + SESSION_CACHE_TTL_MS, sessionExpiry),
-    });
-
-    return sessionRecord;
+    return cacheAndReturn(sessionRecord);
   })().finally(() => {
     sessionFetchInFlight.delete(token);
   });

@@ -305,6 +305,88 @@ function isPrismaClientError(error: unknown): boolean {
   return name.startsWith("PrismaClient");
 }
 
+const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
+  const raw = process.env.ME_DB_LOOKUP_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 2500 : 3000;
+})();
+const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
+const ME_RESPONSE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+type MeResponseUser = {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  walletAddress: string | null;
+  username: string | null;
+  level: number;
+  xp: number;
+  bio: string | null;
+  isAdmin: boolean;
+  isVerified: boolean;
+  tradeFeeRewardsEnabled: boolean;
+  tradeFeeShareBps: number;
+  tradeFeePayoutAddress: string | null;
+  createdAt: Date;
+};
+const meResponseCache = new Map<
+  string,
+  {
+    data: MeResponseUser;
+    expiresAtMs: number;
+  }
+>();
+
+function readCachedMeResponse(userId: string): MeResponseUser | null {
+  const cached = meResponseCache.get(userId);
+  if (!cached) return null;
+  if (cached.expiresAtMs <= Date.now()) {
+    meResponseCache.delete(userId);
+    return null;
+  }
+  return cached.data;
+}
+
+function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
+  if (meResponseCache.has(userId)) {
+    meResponseCache.delete(userId);
+  }
+
+  if (meResponseCache.size >= ME_RESPONSE_CACHE_MAX_ENTRIES) {
+    const oldestKey = meResponseCache.keys().next().value;
+    if (typeof oldestKey === "string") {
+      meResponseCache.delete(oldestKey);
+    }
+  }
+
+  meResponseCache.set(userId, {
+    data,
+    expiresAtMs: Date.now() + ME_RESPONSE_CACHE_TTL_MS,
+  });
+}
+
+async function withTimeoutResult<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<{ timedOut: true } | { timedOut: false; value: T }> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+      timeoutHandle = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    });
+    const result = await Promise.race([
+      promise.then((value) => ({ timedOut: false as const, value })),
+      timeoutPromise,
+    ]);
+    return result;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 function normalizeAuthResponseUser(
   user: {
     id: string;
@@ -1047,8 +1129,24 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   try {
+    const body = (await c.req
+      .json()
+      .catch(() => ({}))) as {
+      privyUserId?: unknown;
+      privyIdToken?: unknown;
+      email?: unknown;
+      name?: unknown;
+    };
+    const { privyUserId, privyIdToken, email, name } = body;
+    const hasPrivyIdentityInput =
+      (typeof privyUserId === "string" && privyUserId.length > 0) ||
+      (typeof privyIdToken === "string" && privyIdToken.length > 0);
+
     const existingSession = c.get("session");
-    if (existingSession?.user?.id) {
+    // Only short-circuit when this call is a session keepalive/backfill.
+    // If the client provides Privy identity, we must re-bind that identity
+    // instead of blindly reissuing whatever backend session is currently set.
+    if (existingSession?.user?.id && !hasPrivyIdentityInput) {
       const sessionBackfillEmailRaw = existingSession.user.email?.trim() ?? "";
       const sessionBackfillEmail =
         sessionBackfillEmailRaw.length > 0
@@ -1113,9 +1211,6 @@ app.post("/api/auth/privy-sync", async (c) => {
         },
       });
     }
-
-    const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
-    const { privyUserId, privyIdToken, email, name } = body;
     const providedEmail =
       typeof email === "string" && email.trim().includes("@")
         ? email.trim().toLowerCase()
@@ -1154,6 +1249,19 @@ app.post("/api/auth/privy-sync", async (c) => {
       if (fastPathAccount?.userId) {
         const fastPathUser = await findAuthUserById(fastPathAccount.userId);
         if (fastPathUser) {
+          const fastPathEmail = fastPathUser.email.trim().toLowerCase();
+          const shouldBypassFastPath = !!(
+            providedEmail &&
+            fastPathEmail &&
+            providedEmail !== fastPathEmail
+          );
+          if (shouldBypassFastPath) {
+            console.warn("[privy-sync] Fast path email mismatch, falling back to verified Privy sync", {
+              privyUserId,
+              providedEmail,
+              linkedEmail: fastPathEmail,
+            });
+          } else {
           // Update cache for future requests
           if (privyCacheKey) {
             privyIdentityCache.set(privyCacheKey, {
@@ -1197,6 +1305,7 @@ app.post("/api/auth/privy-sync", async (c) => {
               isVerified: fastPathUser.isVerified,
             },
           });
+          }
         }
       }
     }
@@ -1497,10 +1606,22 @@ app.post("/api/auth/logout", async (c) => {
 app.get("/api/me", async (c) => {
   let user = c.get("user");
   let session = c.get("session");
+  const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
+  const bearerToken =
+    authHeader && /^bearer\s+/i.test(authHeader)
+      ? authHeader.replace(/^bearer\s+/i, "").trim()
+      : "";
+  const cookieHeader = c.req.header("cookie") ?? "";
+  const hasSessionCookie = /(?:^|;\s*)(?:phew\.session_token|better-auth\.session_token|auth\.session_token|session_token)=/i.test(
+    cookieHeader
+  );
+  const hasBearerToken = bearerToken.length > 0;
 
-  if (!user || !session?.user) {
+  if ((!user || !session?.user) && (hasSessionCookie || hasBearerToken)) {
     try {
-      const recoveredSession = await auth.api.getSession({ headers: c.req.raw.headers });
+      const recoveredSession = hasSessionCookie
+        ? await auth.api.getSession({ headers: c.req.raw.headers })
+        : null;
       if (recoveredSession?.user) {
         session = recoveredSession;
         user = {
@@ -1510,21 +1631,17 @@ app.get("/api/me", async (c) => {
         };
         c.set("session", recoveredSession);
         c.set("user", user);
-      } else {
-        const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-        if (authHeader && /^bearer\s+/i.test(authHeader)) {
-          const token = authHeader.replace(/^bearer\s+/i, "").trim();
-          const bearerSession = await auth.api.getSessionByToken(token);
-          if (bearerSession?.user) {
-            session = bearerSession;
-            user = {
-              id: bearerSession.user.id,
-              email: bearerSession.user.email || null,
-              walletAddress: bearerSession.user.walletAddress || null,
-            };
-            c.set("session", bearerSession);
-            c.set("user", user);
-          }
+      } else if (hasBearerToken) {
+        const bearerSession = await auth.api.getSessionByToken(bearerToken);
+        if (bearerSession?.user) {
+          session = bearerSession;
+          user = {
+            id: bearerSession.user.id,
+            email: bearerSession.user.email || null,
+            walletAddress: bearerSession.user.walletAddress || null,
+          };
+          c.set("session", bearerSession);
+          c.set("user", user);
         }
       }
     } catch (recoverError) {
@@ -1533,38 +1650,23 @@ app.get("/api/me", async (c) => {
   }
 
   if (!user) {
-    const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-    const cookieHeader = c.req.header("cookie") ?? "";
-    const hasSessionCookie =
-      cookieHeader.includes("phew.session_token=") ||
-      cookieHeader.includes("better-auth.session_token=") ||
-      cookieHeader.includes("auth.session_token=");
-    console.warn("[/api/me] Unauthorized request", {
-      host: c.req.header("host") ?? null,
-      origin: c.req.header("origin") ?? null,
-      hasAuthorizationHeader: Boolean(authHeader && authHeader.trim().length > 0),
-      hasSessionCookie,
-    });
+    if (hasSessionCookie || hasBearerToken) {
+      console.warn("[/api/me] Unauthorized request", {
+        host: c.req.header("host") ?? null,
+        origin: c.req.header("origin") ?? null,
+        hasAuthorizationHeader: hasBearerToken,
+        hasSessionCookie,
+      });
+    }
     return c.body(null, 401);
   }
 
-  let dbUser: {
-    id: string;
-    name: string;
-    email: string;
-    image: string | null;
-    walletAddress: string | null;
-    username: string | null;
-    level: number;
-    xp: number;
-    bio: string | null;
-    isAdmin: boolean;
-    isVerified: boolean;
-    tradeFeeRewardsEnabled: boolean;
-    tradeFeeShareBps: number;
-    tradeFeePayoutAddress: string | null;
-    createdAt: Date;
-  } | null = null;
+  const cachedUser = readCachedMeResponse(user.id);
+  if (cachedUser) {
+    return c.json({ data: cachedUser });
+  }
+
+  let dbUser: MeResponseUser | null = null;
 
   const defaultFeeSettings = {
     tradeFeeRewardsEnabled: true,
@@ -1572,28 +1674,71 @@ app.get("/api/me", async (c) => {
     tradeFeePayoutAddress: null as string | null,
   };
 
+  const sessionIsStatelessFallback =
+    typeof session?.session?.id === "string" &&
+    session.session.id.startsWith("stateless:");
+
   try {
     // Fetch full user data from database
-    dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        walletAddress: true,
-        username: true,
-        level: true,
-        xp: true,
-        bio: true,
-        isAdmin: true,
-        isVerified: true,
-        tradeFeeRewardsEnabled: true,
-        tradeFeeShareBps: true,
-        tradeFeePayoutAddress: true,
-        createdAt: true,
-      },
-    });
+    let fullLookup = await withTimeoutResult(
+      prisma.user.findUnique({
+        where: { id: user.id },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          walletAddress: true,
+          username: true,
+          level: true,
+          xp: true,
+          bio: true,
+          isAdmin: true,
+          isVerified: true,
+          tradeFeeRewardsEnabled: true,
+          tradeFeeShareBps: true,
+          tradeFeePayoutAddress: true,
+          createdAt: true,
+        },
+      }),
+      ME_DB_LOOKUP_TIMEOUT_MS
+    );
+
+    if (fullLookup.timedOut) {
+      const retryTimeoutMs = Math.min(ME_DB_LOOKUP_TIMEOUT_MS + 1200, 5000);
+      fullLookup = await withTimeoutResult(
+        prisma.user.findUnique({
+          where: { id: user.id },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            walletAddress: true,
+            username: true,
+            level: true,
+            xp: true,
+            bio: true,
+            isAdmin: true,
+            isVerified: true,
+            tradeFeeRewardsEnabled: true,
+            tradeFeeShareBps: true,
+            tradeFeePayoutAddress: true,
+            createdAt: true,
+          },
+        }),
+        retryTimeoutMs
+      );
+      if (fullLookup.timedOut) {
+        console.warn(
+          `[/api/me] User lookup exceeded ${ME_DB_LOOKUP_TIMEOUT_MS}ms (+retry ${retryTimeoutMs}ms); serving fallback`
+        );
+      }
+    }
+
+    if (!fullLookup.timedOut) {
+      dbUser = fullLookup.value;
+    }
   } catch (error) {
     if (isPrismaSchemaDriftError(error)) {
       try {
@@ -1630,6 +1775,17 @@ app.get("/api/me", async (c) => {
   }
 
   if (!dbUser) {
+    if (sessionIsStatelessFallback) {
+      return c.json(
+        {
+          error: {
+            message: "Profile is temporarily unavailable. Please retry.",
+            code: "PROFILE_TEMPORARILY_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     if (session?.user) {
       return c.json({
         data: {
@@ -1655,6 +1811,7 @@ app.get("/api/me", async (c) => {
     );
   }
 
+  writeCachedMeResponse(user.id, dbUser);
   return c.json({ data: dbUser });
 });
 

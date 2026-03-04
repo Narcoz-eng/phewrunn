@@ -31,8 +31,8 @@ interface FeedPage {
 const FEED_PAGE_SIZE = 20;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
-const FEED_NEW_POSTS_POLL_MS = 15_000;
-const FEED_ACTIVE_TAB_POLL_MS = 20_000;
+const FEED_NEW_POSTS_POLL_MS = 25_000;
+const FEED_ACTIVE_TAB_POLL_MS = 35_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -316,7 +316,7 @@ export default function Feed() {
       return failureCount < 2;
     },
     staleTime: 30000, // 30 seconds
-    refetchInterval: session?.user && !isOverlayOpen ? 15_000 : false,
+    refetchInterval: session?.user && !isOverlayOpen ? 45_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
