@@ -1075,8 +1075,24 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   try {
+    const body = (await c.req
+      .json()
+      .catch(() => ({}))) as {
+      privyUserId?: unknown;
+      privyIdToken?: unknown;
+      email?: unknown;
+      name?: unknown;
+    };
+    const { privyUserId, privyIdToken, email, name } = body;
+    const hasPrivyIdentityInput =
+      (typeof privyUserId === "string" && privyUserId.length > 0) ||
+      (typeof privyIdToken === "string" && privyIdToken.length > 0);
+
     const existingSession = c.get("session");
-    if (existingSession?.user?.id) {
+    // Only short-circuit when this call is a session keepalive/backfill.
+    // If the client provides Privy identity, we must re-bind that identity
+    // instead of blindly reissuing whatever backend session is currently set.
+    if (existingSession?.user?.id && !hasPrivyIdentityInput) {
       const sessionBackfillEmailRaw = existingSession.user.email?.trim() ?? "";
       const sessionBackfillEmail =
         sessionBackfillEmailRaw.length > 0
@@ -1141,9 +1157,6 @@ app.post("/api/auth/privy-sync", async (c) => {
         },
       });
     }
-
-    const body = await c.req.json() as { privyUserId?: unknown; privyIdToken?: unknown; email?: unknown; name?: unknown };
-    const { privyUserId, privyIdToken, email, name } = body;
     const providedEmail =
       typeof email === "string" && email.trim().includes("@")
         ? email.trim().toLowerCase()

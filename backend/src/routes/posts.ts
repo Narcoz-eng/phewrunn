@@ -288,6 +288,8 @@ const JUPITER_SWAP_URLS = [
 const JUPITER_QUOTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500 : 600;
 const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 450 : 200;
 const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_000;
+const CHART_CANDLES_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
+const CHART_CANDLES_FETCH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_200 : 6_000;
 const CHART_POOL_ADDRESS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const CHART_PROVIDER_DEFAULT_LATENCY_MS: Record<ChartCandlesSource, number> = {
   birdeye: 380,
@@ -340,6 +342,7 @@ const chartCandlesCache = new Map<
   {
     result: ChartCandlesFetchResult;
     expiresAtMs: number;
+    staleUntilMs: number;
   }
 >();
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
@@ -1667,11 +1670,15 @@ postsRouter.get("/", async (c) => {
     if (stalePayload) {
       return c.json(stalePayload);
     }
-    return c.json({
-      data: [],
-      hasMore: false,
-      nextCursor: null,
-    } satisfies FeedResponsePayload);
+    return c.json(
+      {
+        error: {
+          message: "Feed is temporarily unavailable. Please retry.",
+          code: "FEED_TEMPORARILY_UNAVAILABLE",
+        },
+      },
+      503
+    );
   };
 
   if (!cursor) {
@@ -5068,13 +5075,19 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
       },
     });
   }
-  if (cached) {
+  const staleCachedResult = cached && cached.staleUntilMs > now ? cached.result : null;
+  if (cached && cached.staleUntilMs <= now) {
     chartCandlesCache.delete(cacheKey);
   }
 
   let request = chartCandlesInFlight.get(cacheKey);
   if (!request) {
-    request = fetchBestChartCandles(payload);
+    request = Promise.race<ChartCandlesFetchResult>([
+      fetchBestChartCandles(payload),
+      new Promise<ChartCandlesFetchResult>((_, reject) => {
+        setTimeout(() => reject(new Error("Chart candles request timed out")), CHART_CANDLES_FETCH_TIMEOUT_MS);
+      }),
+    ]);
     chartCandlesInFlight.set(cacheKey, request);
   }
 
@@ -5083,6 +5096,7 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
     chartCandlesCache.set(cacheKey, {
       result,
       expiresAtMs: Date.now() + CHART_CANDLES_CACHE_TTL_MS,
+      staleUntilMs: Date.now() + CHART_CANDLES_STALE_FALLBACK_MS,
     });
 
     return c.json({
@@ -5097,6 +5111,19 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
       },
     });
   } catch (error) {
+    if (staleCachedResult) {
+      return c.json({
+        data: {
+          source: staleCachedResult.source,
+          network: staleCachedResult.network,
+          poolAddress: payload.poolAddress ?? null,
+          tokenAddress: payload.tokenAddress ?? null,
+          timeframe: payload.timeframe ?? "minute",
+          aggregate: payload.aggregate ?? 5,
+          candles: staleCachedResult.candles,
+        },
+      });
+    }
     const message =
       error instanceof Error ? error.message : "Failed to load chart candles";
     return c.json(
