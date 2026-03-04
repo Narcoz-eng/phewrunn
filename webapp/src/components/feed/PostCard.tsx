@@ -98,6 +98,7 @@ const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
+const ENABLE_ADVANCED_OHLC_CHART = false;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -2277,6 +2278,27 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     typeof walletTokenBalanceQuery.data === "number" && Number.isFinite(walletTokenBalanceQuery.data)
       ? walletTokenBalanceQuery.data
       : null;
+  const walletSolBalanceQuery = useQuery({
+    queryKey: ["walletSolBalance", tradeWalletPublicKey?.toBase58()],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
+    staleTime: 8_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+    refetchInterval: isBuyDialogOpen ? 12_000 : false,
+    queryFn: async () => {
+      if (!tradeWalletPublicKey) return null;
+      try {
+        const lamports = await tradeReadConnection.getBalance(tradeWalletPublicKey, "processed");
+        return lamports / LAMPORTS_PER_SOL;
+      } catch {
+        return null;
+      }
+    },
+  });
+  const walletSolBalance =
+    typeof walletSolBalanceQuery.data === "number" && Number.isFinite(walletSolBalanceQuery.data)
+      ? walletSolBalanceQuery.data
+      : null;
   const walletTokenBalanceFormatted =
     walletTokenBalance === null
       ? "-"
@@ -2459,6 +2481,18 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     // Quick-buy should execute immediately without forcing modal navigation.
     handleCloseBuyDialog();
   };
+
+  const handleTradePanelQuickBuyPresetClick = useCallback((amount: string) => {
+    setBuyAmountSol(amount);
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return;
+    const amountLamports = Math.max(1, Math.floor(parsedAmount * LAMPORTS_PER_SOL));
+    const payload = createJupiterQuotePayload("buy", amountLamports);
+    if (!payload) return;
+    void fetchJupiterQuoteFast(payload, { timeoutMs: 2_200 }).catch(() => {
+      // Query path will still fetch and surface status.
+    });
+  }, [createJupiterQuotePayload]);
 
   const handlePortfolioQuickSell = useCallback((mint: string, amount: number) => {
     const activeMint = post.contractAddress?.toLowerCase() ?? null;
@@ -3037,7 +3071,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   }, [chartCandlesQuery.data?.candles, chartRequestConfig.aggregate, chartRequestConfig.timeframe, post.createdAt, tradeChartData]);
   const hasProviderChartCandles = (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
   const hasProfessionalChartData = professionalChartData.length >= 2;
-  const canUseAdvancedChart = hasProfessionalChartData && professionalChartData.length >= 8;
+  const canUseAdvancedChart =
+    ENABLE_ADVANCED_OHLC_CHART && hasProfessionalChartData && professionalChartData.length >= 8;
   const isFallbackChartData = hasProfessionalChartData && !hasProviderChartCandles;
   const chartTotalPoints = professionalChartData.length;
   const chartWindowBounds = useMemo(() => {
@@ -4648,7 +4683,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   }
                                 />
                               ) : null}
-                              {chartEntryPrice !== null ? (
+                              {canUseAdvancedChart && chartEntryPrice !== null ? (
                                 <ReferenceLine
                                   yAxisId="price"
                                   y={chartEntryPrice}
@@ -4663,7 +4698,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   }}
                                 />
                               ) : null}
-                              {chartEntryCandle ? (
+                              {canUseAdvancedChart && chartEntryCandle ? (
                                 <ReferenceLine
                                   x={chartEntryCandle.ts}
                                   stroke="rgba(96,165,250,0.45)"
@@ -4671,7 +4706,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                   ifOverflow="discard"
                                 />
                               ) : null}
-                              {chartEntryCandle ? (
+                              {canUseAdvancedChart && chartEntryCandle ? (
                                 <ReferenceDot
                                   x={chartEntryCandle.ts}
                                   y={chartEntryCandle.close}
@@ -4861,7 +4896,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       isExecuting={isExecutingBuy}
                       canExecute={canExecuteJupiterBuy}
                       walletConnected={isWalletConnectedForTrade}
-                      walletBalance={null}
+                      walletBalance={walletSolBalance}
                       walletTokenBalance={walletTokenBalance}
                       walletTokenBalanceFormatted={walletTokenBalanceFormatted}
                       onExecute={handleExecuteJupiterBuy}
@@ -4872,7 +4907,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       txSignature={buyTxSignature}
                       quickBuyPresets={buyQuickAmounts}
                       sellQuickPercents={sellQuickPercents}
-                      onQuickBuyPresetClick={(amount) => setBuyAmountSol(amount)}
+                      onQuickBuyPresetClick={handleTradePanelQuickBuyPresetClick}
                       onSellPercentClick={(percent) => setSellAmountFromPercent(percent)}
                       autoConfirmEnabled={autoConfirmEnabled}
                       onAutoConfirmChange={handleAutoConfirmChange}
