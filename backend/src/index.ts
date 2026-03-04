@@ -1497,10 +1497,22 @@ app.post("/api/auth/logout", async (c) => {
 app.get("/api/me", async (c) => {
   let user = c.get("user");
   let session = c.get("session");
+  const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
+  const bearerToken =
+    authHeader && /^bearer\s+/i.test(authHeader)
+      ? authHeader.replace(/^bearer\s+/i, "").trim()
+      : "";
+  const cookieHeader = c.req.header("cookie") ?? "";
+  const hasSessionCookie = /(?:^|;\s*)(?:phew\.session_token|better-auth\.session_token|auth\.session_token|session_token)=/i.test(
+    cookieHeader
+  );
+  const hasBearerToken = bearerToken.length > 0;
 
-  if (!user || !session?.user) {
+  if ((!user || !session?.user) && (hasSessionCookie || hasBearerToken)) {
     try {
-      const recoveredSession = await auth.api.getSession({ headers: c.req.raw.headers });
+      const recoveredSession = hasSessionCookie
+        ? await auth.api.getSession({ headers: c.req.raw.headers })
+        : null;
       if (recoveredSession?.user) {
         session = recoveredSession;
         user = {
@@ -1510,21 +1522,17 @@ app.get("/api/me", async (c) => {
         };
         c.set("session", recoveredSession);
         c.set("user", user);
-      } else {
-        const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-        if (authHeader && /^bearer\s+/i.test(authHeader)) {
-          const token = authHeader.replace(/^bearer\s+/i, "").trim();
-          const bearerSession = await auth.api.getSessionByToken(token);
-          if (bearerSession?.user) {
-            session = bearerSession;
-            user = {
-              id: bearerSession.user.id,
-              email: bearerSession.user.email || null,
-              walletAddress: bearerSession.user.walletAddress || null,
-            };
-            c.set("session", bearerSession);
-            c.set("user", user);
-          }
+      } else if (hasBearerToken) {
+        const bearerSession = await auth.api.getSessionByToken(bearerToken);
+        if (bearerSession?.user) {
+          session = bearerSession;
+          user = {
+            id: bearerSession.user.id,
+            email: bearerSession.user.email || null,
+            walletAddress: bearerSession.user.walletAddress || null,
+          };
+          c.set("session", bearerSession);
+          c.set("user", user);
         }
       }
     } catch (recoverError) {
@@ -1533,18 +1541,14 @@ app.get("/api/me", async (c) => {
   }
 
   if (!user) {
-    const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-    const cookieHeader = c.req.header("cookie") ?? "";
-    const hasSessionCookie =
-      cookieHeader.includes("phew.session_token=") ||
-      cookieHeader.includes("better-auth.session_token=") ||
-      cookieHeader.includes("auth.session_token=");
-    console.warn("[/api/me] Unauthorized request", {
-      host: c.req.header("host") ?? null,
-      origin: c.req.header("origin") ?? null,
-      hasAuthorizationHeader: Boolean(authHeader && authHeader.trim().length > 0),
-      hasSessionCookie,
-    });
+    if (hasSessionCookie || hasBearerToken) {
+      console.warn("[/api/me] Unauthorized request", {
+        host: c.req.header("host") ?? null,
+        origin: c.req.header("origin") ?? null,
+        hasAuthorizationHeader: hasBearerToken,
+        hasSessionCookie,
+      });
+    }
     return c.body(null, 401);
   }
 
