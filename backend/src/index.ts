@@ -51,6 +51,7 @@ startRateLimitCleanup(60000);
 const app = new Hono<{
   Variables: AuthVariables & { requestId?: string; sanitizedBody?: unknown; sanitizedQuery?: Record<string, string[]> };
 }>();
+const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 
 // =====================================================
 // Middleware Stack (order matters!)
@@ -2083,8 +2084,6 @@ app.route("/api/leaderboard", leaderboardRouter);
 // =====================================================
 // In production, serve the frontend build from ../webapp/dist
 if (process.env.NODE_ENV === "production") {
-  const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
-
   if (!isBunRuntime) {
     console.log("[Startup] Skipping Bun static file middleware (non-Bun runtime; handled by platform routes)");
   } else {
@@ -2150,10 +2149,14 @@ console.log(`
 // - [x] Better Auth for email/password authentication
 // =====================================================
 
-export default {
-  port,
-  // Bun defaults to a 10s idle timeout, which can abort long DB/network operations
-  // mid-flight and leave transaction state unhealthy under load.
-  idleTimeout: 60,
-  fetch: app.fetch,
-};
+export { app };
+
+export default isBunRuntime
+  ? {
+      port,
+      // Bun defaults to a 10s idle timeout, which can abort long DB/network operations
+      // mid-flight and leave transaction state unhealthy under load.
+      idleTimeout: 60,
+      fetch: app.fetch,
+    }
+  : app;
