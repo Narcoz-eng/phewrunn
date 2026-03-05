@@ -263,6 +263,11 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
     // The database remains the source of truth for full user profile fields.
     name: normalizedName.length > 120 ? normalizedName.slice(0, 120) : normalizedName,
     email: normalizedEmail.length > 190 ? normalizedEmail.slice(0, 190) : normalizedEmail,
+    image: user.image,
+    walletAddress: user.walletAddress,
+    walletProvider: user.walletProvider,
+    level: user.level,
+    xp: user.xp,
     isVerified: user.isVerified,
   };
 }
@@ -317,6 +322,36 @@ function isPrismaClientError(error: unknown): boolean {
       ? (error as { name: string }).name
       : "";
   return name.startsWith("PrismaClient");
+}
+
+function isPrismaConnectivityError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P1001" || code === "P1002" || code === "P1008" || code === "P1017") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "";
+
+  return /timed out fetching a new connection|connection pool|error in connector|kind:\s*closed|server closed the connection|connection.*(closed|timed out|timeout|refused|terminated)|econnreset|etimedout|can't reach database/i.test(
+    message
+  );
 }
 
 const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
@@ -432,8 +467,40 @@ function isUniqueConstraintError(error: unknown): error is { code: string } {
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    (error as { code?: unknown }).code === "P2002"
+      (error as { code?: unknown }).code === "P2002"
   );
+}
+
+function toAuthResponseUserFromSessionUser(
+  sessionUser:
+    | {
+        id: string;
+        name: string;
+        email: string;
+        image: string | null;
+        walletAddress: string | null;
+        walletProvider: string | null;
+        level: number;
+        xp: number;
+        isVerified: boolean;
+      }
+    | null
+    | undefined
+): AuthResponseUser | null {
+  if (!sessionUser?.id) return null;
+  const normalizedEmail = sessionUser.email?.trim() || `${sessionUser.id.slice(0, 24).toLowerCase()}@privy.local`;
+  const normalizedName = sessionUser.name?.trim() || normalizedEmail.split("@")[0] || "User";
+  return normalizeAuthResponseUser({
+    id: sessionUser.id,
+    name: normalizedName,
+    email: normalizedEmail,
+    image: sessionUser.image,
+    walletAddress: sessionUser.walletAddress,
+    walletProvider: sessionUser.walletProvider,
+    level: sessionUser.level,
+    xp: sessionUser.xp,
+    isVerified: sessionUser.isVerified,
+  });
 }
 
 async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponseUser | null> {
@@ -1142,6 +1209,7 @@ app.post("/api/auth/wallet", async (c) => {
 // Verifies the Privy user via the Privy API, then finds/creates
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
+  const existingSession = c.get("session");
   try {
     const body = (await c.req
       .json()
@@ -1156,7 +1224,6 @@ app.post("/api/auth/privy-sync", async (c) => {
       (typeof privyUserId === "string" && privyUserId.length > 0) ||
       (typeof privyIdToken === "string" && privyIdToken.length > 0);
 
-    const existingSession = c.get("session");
     // Only short-circuit when this call is a session keepalive/backfill.
     // If the client provides Privy identity, we must re-bind that identity
     // instead of blindly reissuing whatever backend session is currently set.
@@ -1584,6 +1651,55 @@ app.post("/api/auth/privy-sync", async (c) => {
       },
     });
   } catch (error) {
+    if (isPrismaConnectivityError(error)) {
+      const fallbackUser = toAuthResponseUserFromSessionUser(existingSession?.user);
+      if (fallbackUser) {
+        console.warn("[privy-sync] Database unavailable; reissuing signed session from existing auth state");
+        const issuedAt = new Date();
+        const sessionToken = createSignedSessionToken({
+          userId: fallbackUser.id,
+          now: issuedAt,
+          user: buildSessionTokenUserClaims(fallbackUser),
+        });
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+        const userAgent = c.req.header("user-agent") ?? "unknown";
+
+        await createSessionRecordBestEffort({
+          sessionToken,
+          userId: fallbackUser.id,
+          expiresAt,
+          now: issuedAt,
+          ipAddress,
+          userAgent,
+        });
+
+        applySessionCookies(c, sessionToken);
+
+        return c.json({
+          token: sessionToken,
+          user: {
+            id: fallbackUser.id,
+            name: fallbackUser.name,
+            email: fallbackUser.email,
+            image: fallbackUser.image,
+            level: fallbackUser.level,
+            xp: fallbackUser.xp,
+            isVerified: fallbackUser.isVerified,
+          },
+        });
+      }
+      c.header("Retry-After", "2");
+      return c.json(
+        {
+          error: {
+            message: "Auth is temporarily reconnecting. Please retry.",
+            code: "AUTH_TEMPORARILY_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     console.error("[privy-sync] Error:", error);
     return c.json({ error: { message: "Failed to sync Privy session", code: "INTERNAL_ERROR" } }, 500);
   }
@@ -1789,39 +1905,38 @@ app.get("/api/me", async (c) => {
   }
 
   if (!dbUser) {
-    if (sessionIsStatelessFallback) {
-      return c.json(
-        {
-          error: {
-            message: "Profile is temporarily unavailable. Please retry.",
-            code: "PROFILE_TEMPORARILY_UNAVAILABLE",
-          },
-        },
-        503
-      );
-    }
     if (session?.user) {
-      return c.json({
-        data: {
-          id: session.user.id,
-          name: session.user.name,
-          email: session.user.email,
-          image: session.user.image,
-          walletAddress: session.user.walletAddress,
-          username: session.user.username,
-          level: session.user.level,
-          xp: session.user.xp,
-          bio: session.user.bio,
-          isAdmin: session.user.isAdmin,
-          isVerified: session.user.isVerified,
-          ...defaultFeeSettings,
-          createdAt: session.user.createdAt,
-        },
-      });
+      const sessionBackedUser: MeResponseUser = {
+        id: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+        image: session.user.image,
+        walletAddress: session.user.walletAddress,
+        username: session.user.username,
+        level: session.user.level,
+        xp: session.user.xp,
+        bio: session.user.bio,
+        isAdmin: session.user.isAdmin,
+        isVerified: session.user.isVerified,
+        ...defaultFeeSettings,
+        createdAt: session.user.createdAt,
+      };
+      writeCachedMeResponse(user.id, sessionBackedUser);
+      if (sessionIsStatelessFallback) {
+        console.warn("[/api/me] Serving session-backed fallback profile while database is unavailable");
+      }
+      return c.json({ data: sessionBackedUser });
     }
     return c.json(
-      { error: { message: "User not found", code: "NOT_FOUND" } },
-      404
+      sessionIsStatelessFallback
+        ? {
+            error: {
+              message: "Profile is temporarily unavailable. Please retry.",
+              code: "PROFILE_TEMPORARILY_UNAVAILABLE",
+            },
+          }
+        : { error: { message: "User not found", code: "NOT_FOUND" } },
+      sessionIsStatelessFallback ? 503 : 404
     );
   }
 

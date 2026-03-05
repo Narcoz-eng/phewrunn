@@ -836,10 +836,12 @@ export async function syncPrivySession(
       const timeoutId = setTimeout(() => controller.abort(), PRIVY_SYNC_TIMEOUT_MS);
 
       try {
+        const token = getStoredAuthToken();
         const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           credentials: "include",
           signal: controller.signal,

@@ -168,11 +168,22 @@ const feedSharedResponseCache = new Map<
   }
 >();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
+const opportunisticMaintenanceEnabled = (() => {
+  const raw = process.env.POSTS_ENABLE_OPPORTUNISTIC_MAINTENANCE?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return process.env.NODE_ENV !== "production";
+})();
 
 function isCronMaintenanceHealthy(): boolean {
   if (!hasCronMaintenanceConfigured) return false;
   if (!lastCronMaintenanceCompletedAt) return false;
   return Date.now() - lastCronMaintenanceCompletedAt < CRON_MAINTENANCE_HEALTH_WINDOW_MS;
+}
+
+function shouldRunOpportunisticMaintenance(): boolean {
+  if (!opportunisticMaintenanceEnabled) return false;
+  return !hasCronMaintenanceConfigured || !isCronMaintenanceHealthy();
 }
 
 type MaintenanceCandidatePost = {
@@ -194,6 +205,7 @@ function triggerMaintenanceForStaleCandidates(
   reason: string,
   posts: MaintenanceCandidatePost[]
 ): void {
+  if (!shouldRunOpportunisticMaintenance()) return;
   if (!posts.some(shouldTriggerMaintenanceForPost)) return;
 
   const now = Date.now();
@@ -1706,7 +1718,7 @@ postsRouter.get("/", async (c) => {
 
   // Keep settlement/snapshot maintenance progressing from organic traffic.
   // Trigger is throttled + non-blocking, and only on first page to avoid feed jitter.
-  if (!cursor) {
+  if (!cursor && shouldRunOpportunisticMaintenance()) {
     const reason = search
       ? `feed:${sort}:search`
       : following
@@ -3873,7 +3885,7 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable
   // or configured but unhealthy (e.g. cron stopped running).
   // Keeps feed request path clean while still allowing 1H/6H status to catch up.
-  if (shouldTriggerMaintenanceForPost(post)) {
+  if (shouldRunOpportunisticMaintenance() && shouldTriggerMaintenanceForPost(post)) {
     triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
     triggerSettlementCycleNonBlocking(`price:${post.id}`);
   }
