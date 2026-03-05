@@ -171,6 +171,19 @@ export function usePrivyLogin() {
     setSyncError(null);
   }, [appSessionAuthenticated]);
 
+  // Reset all retry counters when Privy auth goes false (after logout).
+  // This ensures the next sign-in attempt starts fresh.
+  useEffect(() => {
+    if (!authenticated) {
+      autoResyncAttemptsRef.current = 0;
+      lastAutoResyncAtRef.current = 0;
+      rateLimitedUntilRef.current = 0;
+      lastPrivyUserIdRef.current = null;
+      loginRequestedRef.current = false;
+      setSyncError(null);
+    }
+  }, [authenticated]);
+
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
     if (appSessionAuthenticated) return;

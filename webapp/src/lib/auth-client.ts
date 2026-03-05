@@ -57,6 +57,23 @@ const SESSION_COOKIE_CANDIDATE_NAMES = [
 ] as const;
 const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 
+// Pre-logout hooks — called before React state is cleared so components
+// are still mounted (e.g. Privy logout needs its provider context).
+let preLogoutHooks: Array<() => Promise<void>> = [];
+
+export function registerPreLogoutHook(hook: () => Promise<void>): () => void {
+  preLogoutHooks.push(hook);
+  return () => {
+    preLogoutHooks = preLogoutHooks.filter((h) => h !== hook);
+  };
+}
+
+// Flag so ProtectedRoute can distinguish explicit logout from stale state.
+let explicitLogoutAt = 0;
+export function getExplicitLogoutAt(): number {
+  return explicitLogoutAt;
+}
+
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
   throw new Error("Email/password auth has been removed. Use Privy sign-in.");
@@ -521,6 +538,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
+    // 1. Run pre-logout hooks FIRST while components are still mounted.
+    //    This is critical: Privy logout needs its React provider context,
+    //    which unmounts once ProtectedRoute redirects to /login.
+    for (const hook of preLogoutHooks) {
+      try {
+        await hook();
+      } catch (error) {
+        console.warn("[Auth] Pre-logout hook failed:", error);
+      }
+    }
+
+    // 2. Now clear local state and tokens.
+    explicitLogoutAt = Date.now();
     clearStoredAuthToken();
     clearCachedAuthUser();
     sessionRateLimitedUntil = 0;
@@ -534,6 +564,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: false,
     });
 
+    // 3. Tell the backend to destroy the server-side session.
     try {
       await signOut();
     } catch (error) {

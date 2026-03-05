@@ -1,6 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { useSession } from "@/lib/auth-client";
+import { useSession, getExplicitLogoutAt } from "@/lib/auth-client";
+
+/**
+ * Maximum time (ms) to wait for a session to hydrate when we detect
+ * evidence of a prior login (localStorage token or sessionStorage cache).
+ * After this grace period we redirect to /login.
+ */
+const TOKEN_HYDRATION_GRACE_MS = 4_000;
+
+function hasStoredAuthHint(): boolean {
+  // Skip grace period if the user just explicitly logged out.
+  const logoutAt = getExplicitLogoutAt();
+  if (logoutAt > 0 && Date.now() - logoutAt < 10_000) {
+    return false;
+  }
+  try {
+    if (localStorage.getItem("auth-token")) return true;
+  } catch { /* ignore */ }
+  try {
+    if (sessionStorage.getItem("phew.auth.session.v1")) return true;
+  } catch { /* ignore */ }
+  return false;
+}
 
 /**
  * Maximum time (ms) to wait for a session to hydrate when we detect
