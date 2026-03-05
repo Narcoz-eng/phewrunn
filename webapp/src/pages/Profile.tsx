@@ -163,6 +163,10 @@ export default function Profile() {
   const cropRenderScale = cropBaseScale * cropZoom;
 
   const meProfileCacheKey = session?.user?.id ? `phew.profile.me:${session.user.id}` : null;
+  const profileMeQueryKey = useMemo(
+    () => ["profile", "me", session?.user?.id ?? "anonymous"] as const,
+    [session?.user?.id]
+  );
   const cachedProfileBySession = useMemo(
     () => (meProfileCacheKey ? readSessionCache<ExtendedUser>(meProfileCacheKey, PROFILE_ME_CACHE_TTL_MS) : null),
     [meProfileCacheKey]
@@ -172,6 +176,13 @@ export default function Profile() {
     []
   );
   const cachedProfile = cachedProfileBySession ?? cachedProfileLast;
+  const sessionBackedProfile = useMemo<ExtendedUser | null>(() => {
+    if (!session?.user) return cachedProfile;
+    return {
+      ...(cachedProfile ?? {}),
+      ...session.user,
+    };
+  }, [cachedProfile, session?.user]);
   const cachedPosts = useMemo(
     () =>
       session?.user?.id
@@ -202,17 +213,20 @@ export default function Profile() {
     refetch: refetchUser,
     isFetched: isUserFetched,
   } = useQuery({
-    queryKey: ["profile", "me"],
+    queryKey: profileMeQueryKey,
     queryFn: async () => {
-      if (!session?.user && cachedProfile) {
-        return cachedProfile;
+      if (!session?.user && sessionBackedProfile) {
+        return sessionBackedProfile;
       }
       try {
         const userData = await api.get<ExtendedUser>("/api/me");
         return userData;
       } catch (error) {
-        if (cachedProfile) {
-          return cachedProfile;
+        if (
+          sessionBackedProfile &&
+          (!(error instanceof ApiError) || (error.status !== 401 && error.status !== 403))
+        ) {
+          return sessionBackedProfile;
         }
         if (session?.user?.id) {
           try {
@@ -225,8 +239,8 @@ export default function Profile() {
         throw error;
       }
     },
-    initialData: cachedProfile ?? undefined,
-    enabled: !!session?.user || !!cachedProfile,
+    initialData: sessionBackedProfile ?? undefined,
+    enabled: !!session?.user || !!sessionBackedProfile,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
     refetchInterval: session?.user ? 15_000 : false,
@@ -388,7 +402,7 @@ export default function Profile() {
       return await api.patch<ExtendedUser>("/api/users/me", updateData);
     },
     onSuccess: (updatedUser) => {
-      queryClient.setQueryData(["profile", "me"], updatedUser);
+      queryClient.setQueryData(profileMeQueryKey, updatedUser);
       setIsEditing(false);
       setPreviewImage(null);
       toast.success("Profile updated!");
@@ -408,7 +422,7 @@ export default function Profile() {
     },
     onSuccess: (updated) => {
       queryClient.setQueryData(["profile", "fee-settings", user?.id], updated);
-      queryClient.setQueryData<ExtendedUser | undefined>(["profile", "me"], (prev) =>
+      queryClient.setQueryData<ExtendedUser | undefined>(profileMeQueryKey, (prev) =>
         prev
           ? {
               ...prev,

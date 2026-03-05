@@ -16,6 +16,7 @@ type ReputationFrame = {
   label: string;
   title: string;
   deltaLabel: string;
+  fromLevel: number;
   level: number;
   description: string;
   tone: "positive" | "neutral" | "negative";
@@ -33,6 +34,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
     label: "Win Settled",
     title: "A clean call lands and your level moves immediately.",
     deltaLabel: "+1 LVL",
+    fromLevel: 0,
     level: 1,
     description:
       "The market sees receipts, not promises. A real win adds proof to your profile and sharpens buyer trust on the next post.",
@@ -50,6 +52,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
     label: "Recovery Window",
     title: "A soft miss can recover before your reputation takes the hit.",
     deltaLabel: "0 LVL",
+    fromLevel: 1,
     level: 1,
     description:
       "Phew does not reward panic. Smaller misses get room to repair, which favors disciplined thesis management over noisy posting.",
@@ -67,6 +70,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
     label: "Consistency",
     title: "String together good calls and you unlock Veteran protection.",
     deltaLabel: "+4 LVL",
+    fromLevel: 1,
     level: 5,
     description:
       "Consistency compounds. Higher levels make your profile look earned, which means better first impressions before a trader even opens the post.",
@@ -84,6 +88,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
     label: "Penalty",
     title: "A severe bad call drags level, trust, and momentum back down.",
     deltaLabel: "-2 LVL",
+    fromLevel: 5,
     level: 3,
     description:
       "Bad conviction is public too. Severe misses cool attention fast and reprice your distribution until you earn the trust back.",
@@ -112,6 +117,10 @@ const meterClasses: Record<ReputationFrame["tone"], string> = {
   neutral: "from-primary to-accent",
   negative: "from-loss to-rose-300",
 };
+
+function formatLevelValue(level: number) {
+  return `LVL ${level > 0 ? `+${level}` : level}`;
+}
 
 export function ReputationEngine() {
   const isMobile = useIsMobile();
@@ -188,10 +197,10 @@ export function ReputationEngine() {
               <div className="rounded-2xl border border-border/45 bg-card/65 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs font-medium text-muted-foreground">
-                    Public level after settlement
+                    Public level path
                   </div>
                   <div className="text-sm font-mono font-bold text-foreground">
-                    LVL {activeFrame.level > 0 ? `+${activeFrame.level}` : activeFrame.level}
+                    {formatLevelValue(activeFrame.fromLevel)} {"->"} {formatLevelValue(activeFrame.level)}
                   </div>
                 </div>
                 <div className="mt-3">
@@ -201,6 +210,9 @@ export function ReputationEngine() {
                     showLabel={false}
                   />
                 </div>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  The bar shows the ending level for this outcome.
+                </p>
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   {activeFrame.metrics.map((metric) => (
                     <div
