@@ -1,12 +1,13 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { LevelBar } from "@/components/feed/LevelBar";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import {
   ArrowRight,
@@ -29,42 +30,84 @@ import {
 } from "@/types";
 import { FeeOrbit } from "@/components/login/FeeOrbit";
 import { AccuracyScoreCard } from "@/components/AccuracyScoreCard";
+import { ReputationEngine } from "@/components/login/ReputationEngine";
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
 const earlyCallerData = [
   {
     label: "Hour 0",
-    tag: "First Caller",
+    tag: "First Good Alpha",
     trades: 320,
     pct: 100,
     color: "bg-gain",
     textColor: "text-gain",
     borderColor: "border-gain/30",
     bgColor: "bg-gain/5",
-    desc: "Most buys happen in the first hour — your post captures them all",
+    desc: "When your alpha lands first and traders trust it, your post captures the cleanest flow and the strongest attention.",
   },
   {
     label: "Hour 2",
-    tag: "Late Caller",
+    tag: "Late But Right",
     trades: 72,
     pct: 23,
     color: "bg-primary",
     textColor: "text-primary",
     borderColor: "border-primary/30",
     bgColor: "bg-primary/5",
-    desc: "Early posts already absorbed the bulk of buy volume",
+    desc: "Even good alpha later in the cycle fights a market that already rewarded the first convincing post.",
   },
   {
     label: "Hour 6",
-    tag: "Very Late",
+    tag: "Crowded Trade",
     trades: 14,
     pct: 4,
     color: "bg-muted-foreground",
     textColor: "text-muted-foreground",
     borderColor: "border-border/40",
     bgColor: "bg-background/40",
-    desc: "Minimal buys left — minimal fees earned",
+    desc: "By the time the crowd arrives, the edge is diluted, the trade is crowded, and the fee stream is mostly gone.",
+  },
+];
+
+const timingPillars = [
+  {
+    icon: TrendingUp,
+    title: "Early good alpha gets the cleanest flow",
+    description:
+      "The first convincing post catches traders before the market gets crowded, which means better attention and more routed buys.",
+    accent: "border-gain/20 bg-gain/5 text-gain",
+  },
+  {
+    icon: Shield,
+    title: "Being right matters more than being loud",
+    description:
+      "The platform rewards conviction the market can verify, not volume. Early plus accurate is what creates separation.",
+    accent: "border-primary/20 bg-primary/5 text-primary",
+  },
+];
+
+const reputationPillars = [
+  {
+    icon: TrendingUp,
+    title: "Good calls lift your level",
+    description:
+      "Settled wins become visible proof. The next trader sees stronger signal before they even open your post.",
+    accent: "border-gain/20 bg-gain/5 text-gain",
+  },
+  {
+    icon: Shield,
+    title: "Bad calls mark you down in public",
+    description:
+      "Weak conviction and severe misses cool trust, cut reach, and force you to earn the edge back the hard way.",
+    accent: "border-loss/20 bg-loss/5 text-loss",
+  },
+  {
+    icon: Sparkles,
+    title: "Consistency unlocks protection",
+    description:
+      "Veteran tiers reward traders who keep putting up quality outcomes instead of farming attention with noise.",
+    accent: "border-primary/20 bg-primary/5 text-primary",
   },
 ];
 
@@ -72,27 +115,27 @@ const levelBarSnapshots = [
   {
     level: -4,
     title: "Danger Zone",
-    note: "Close to liquidation. Recovery calls matter most here.",
+    note: "One more bad stretch and your profile starts losing the right to lead.",
   },
   {
     level: STARTING_LEVEL,
-    title: "Neutral",
-    note: "Everyone begins here and builds from real outcomes.",
+    title: "Neutral Entry",
+    note: "Everyone starts from zero and earns trust in public from there.",
   },
   {
     level: 4,
-    title: "Veteran",
-    note: "Consistency moves you into stronger reputation tiers.",
+    title: "Credible",
+    note: "A visible streak starts to separate signal from random posting.",
   },
   {
     level: 5,
-    title: "High Conviction",
-    note: "Strong hit rate and discipline push you into upper-tier visibility.",
+    title: "Veteran",
+    note: "Protection kicks in once you have shown enough real quality.",
   },
   {
     level: 9,
     title: "Elite",
-    note: "Top performers with the strongest public track records.",
+    note: "Top-tier profiles carry the strongest proof, trust, and attention.",
   },
 ];
 
@@ -106,28 +149,28 @@ const levelRules = [
 const features = [
   {
     icon: Target,
-    title: "Post Your Call",
+    title: "Post Good Alpha First",
     description:
-      "Log your alpha with a timestamp. Every call becomes a public, immutable record — no edits, no hindsight.",
+      "Every call is timestamped in public. When you are early and right, the receipts stay attached to your name.",
   },
   {
     icon: TrendingUp,
     title: "Get Paid Every Time They Buy",
     description:
-      "Every time a trader buys directly from your post, you earn 0.5% of the trade. Automatically. Forever.",
+      "Every routed buy from your post sends you 0.5%. Stronger calls create stronger fee momentum.",
   },
   {
     icon: Users,
-    title: "Build a Verified Track Record",
+    title: "Build Reputation That Compounds",
     description:
-      "Accuracy scores, win rates, and level progression based on real outcomes — not follower counts.",
+      "Accuracy, level, and trust all move off outcomes the market can see. Good calls pull you up. Bad calls show too.",
   },
 ];
 
 const stats = [
-  { value: "10K+", label: "Calls Tracked" },
-  { value: "68%", label: "Avg Accuracy" },
-  { value: "2.4K", label: "Active Traders" },
+  { value: "10K+", label: "Calls Settled" },
+  { value: "68%", label: "Avg Public Accuracy" },
+  { value: "2.4K", label: "Traders Chasing Signal" },
 ];
 
 // ─── Auth buttons ──────────────────────────────────────────────────────────────
@@ -186,6 +229,9 @@ export default function Login() {
   const navigate = useNavigate();
   const { isAuthenticated, isReady } = useAuth();
   const privyAvailable = usePrivyAvailable();
+  const isMobile = useIsMobile();
+  const reduceMotion = useReducedMotion();
+  const optimizeMotion = isMobile || reduceMotion;
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -193,17 +239,35 @@ export default function Login() {
   }, [isReady, isAuthenticated, navigate]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoaded(true), 40);
-    return () => clearTimeout(t);
-  }, []);
+    if (optimizeMotion) {
+      setLoaded(true);
+      return;
+    }
+    const t = window.setTimeout(() => setLoaded(true), 40);
+    return () => window.clearTimeout(t);
+  }, [optimizeMotion]);
+
+  const deferredSectionStyle = isMobile
+    ? ({ contentVisibility: "auto", containIntrinsicSize: "900px" } as const)
+    : undefined;
 
   return (
     <div className="min-h-screen bg-background relative overflow-x-hidden">
       {/* ── Background atmosphere ── */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+      <div
+        className={cn(
+          "inset-0 pointer-events-none overflow-hidden z-0",
+          isMobile ? "absolute" : "fixed"
+        )}
+      >
         {/* Top-right glow */}
         <div
-          className="absolute -top-[15%] right-[-5%] w-[700px] h-[700px] rounded-full blur-[100px] motion-safe:animate-glow-pulse"
+          className={cn(
+            "absolute rounded-full",
+            optimizeMotion
+              ? "-top-[8%] right-[-10%] h-[340px] w-[340px] blur-[70px] opacity-70"
+              : "-top-[15%] right-[-5%] h-[700px] w-[700px] blur-[100px] motion-safe:animate-glow-pulse"
+          )}
           style={{
             background:
               "radial-gradient(ellipse, hsl(var(--primary)/0.13) 0%, transparent 65%)",
@@ -211,7 +275,12 @@ export default function Login() {
         />
         {/* Bottom-left glow */}
         <div
-          className="absolute bottom-[-10%] left-[-8%] w-[600px] h-[600px] rounded-full blur-[90px] motion-safe:animate-glow-pulse"
+          className={cn(
+            "absolute rounded-full",
+            optimizeMotion
+              ? "bottom-[-6%] left-[-12%] h-[300px] w-[300px] blur-[65px] opacity-60"
+              : "bottom-[-10%] left-[-8%] h-[600px] w-[600px] blur-[90px] motion-safe:animate-glow-pulse"
+          )}
           style={{
             background:
               "radial-gradient(ellipse, hsl(var(--accent)/0.1) 0%, transparent 65%)",
@@ -220,7 +289,10 @@ export default function Login() {
         />
         {/* Mid gain glow */}
         <div
-          className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full blur-[110px]"
+          className={cn(
+            "absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 rounded-full",
+            optimizeMotion ? "h-[220px] w-[220px] blur-[80px]" : "h-[400px] w-[400px] blur-[110px]"
+          )}
           style={{
             background:
               "radial-gradient(ellipse, hsl(var(--gain)/0.04) 0%, transparent 70%)",
@@ -228,11 +300,11 @@ export default function Login() {
         />
         {/* Grid */}
         <div
-          className="absolute inset-0 opacity-[0.025]"
+          className={cn("absolute inset-0", optimizeMotion ? "opacity-[0.018]" : "opacity-[0.025]")}
           style={{
             backgroundImage: `linear-gradient(hsl(var(--foreground)) 1px, transparent 1px),
               linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)`,
-            backgroundSize: "64px 64px",
+            backgroundSize: isMobile ? "56px 56px" : "64px 64px",
           }}
         />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent_0%,hsl(var(--background))_75%)]" />
@@ -241,9 +313,9 @@ export default function Login() {
       {/* ── Header ── */}
       <motion.header
         className="fixed top-0 left-0 right-0 z-50 border-b border-border/40 backdrop-blur-xl bg-background/70"
-        initial={{ opacity: 0, y: -12 }}
+        initial={optimizeMotion ? false : { opacity: 0, y: -12 }}
         animate={loaded ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.4, ease: "easeOut" }}
+        transition={{ duration: optimizeMotion ? 0 : 0.4, ease: "easeOut" }}
       >
         <div className="max-w-7xl mx-auto px-5 sm:px-6 py-3.5 flex items-center justify-between">
           <BrandLogo size="sm" showTagline />
@@ -267,14 +339,14 @@ export default function Login() {
             {/* Left — headline + features */}
             <motion.div
               className="order-2 xl:order-1 space-y-6"
-              initial={{ opacity: 0, y: 20 }}
+              initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
               animate={loaded ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.5, delay: 0.1 }}
+              transition={{ duration: optimizeMotion ? 0 : 0.5, delay: optimizeMotion ? 0 : 0.1 }}
             >
               {/* Badge */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary">
                 <Sparkles className="w-3.5 h-3.5" />
-                Your call. Their buy. Your cut.
+                Good alpha first. Fees follow.
               </div>
 
               {/* Headline */}
@@ -289,12 +361,10 @@ export default function Login() {
                   </span>
                 </h1>
                 <p className="mt-4 text-base sm:text-lg text-muted-foreground leading-relaxed max-w-xl">
-                  When traders buy directly from your post, you earn{" "}
-                  <span className="text-foreground font-semibold">
-                    0.5% of every buy
-                  </span>
-                  . No followers required. Just post your alpha and earn every
-                  time someone acts on it.
+                  The first good alpha does more than win attention. It routes buy
+                  flow, raises your public reputation, and pays you{" "}
+                  <span className="text-foreground font-semibold">0.5%</span> every
+                  time traders act directly from your post.
                 </p>
               </div>
 
@@ -304,9 +374,9 @@ export default function Login() {
                   <motion.div
                     key={stat.label}
                     className="rounded-xl border border-border/50 bg-card/60 p-3.5 backdrop-blur-sm"
-                    initial={{ opacity: 0, y: 12 }}
+                    initial={optimizeMotion ? false : { opacity: 0, y: 12 }}
                     animate={loaded ? { opacity: 1, y: 0 } : {}}
-                    transition={{ duration: 0.4, delay: 0.2 + i * 0.06 }}
+                    transition={{ duration: optimizeMotion ? 0 : 0.4, delay: optimizeMotion ? 0 : 0.2 + i * 0.06 }}
                   >
                     <div className="text-xl sm:text-2xl font-mono font-bold tracking-tight">
                       {stat.value}
@@ -321,9 +391,9 @@ export default function Login() {
               {/* AccuracyScoreCard */}
               <motion.div
                 className="max-w-md"
-                initial={{ opacity: 0, y: 12 }}
+                initial={optimizeMotion ? false : { opacity: 0, y: 12 }}
                 animate={loaded ? { opacity: 1, y: 0 } : {}}
-                transition={{ duration: 0.4, delay: 0.32 }}
+                transition={{ duration: optimizeMotion ? 0 : 0.4, delay: optimizeMotion ? 0 : 0.32 }}
               >
                 <AccuracyScoreCard />
               </motion.div>
@@ -334,9 +404,9 @@ export default function Login() {
                   <motion.div
                     key={f.title}
                     className="flex items-start gap-3 rounded-xl border border-border/50 bg-card/50 p-4 hover:border-primary/30 transition-colors duration-200"
-                    initial={{ opacity: 0, x: -12 }}
+                    initial={optimizeMotion ? false : { opacity: 0, x: -12 }}
                     animate={loaded ? { opacity: 1, x: 0 } : {}}
-                    transition={{ duration: 0.4, delay: 0.38 + i * 0.07 }}
+                    transition={{ duration: optimizeMotion ? 0 : 0.4, delay: optimizeMotion ? 0 : 0.38 + i * 0.07 }}
                   >
                     <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
                       <f.icon className="w-4.5 h-4.5 text-primary w-[18px] h-[18px]" />
@@ -355,11 +425,14 @@ export default function Login() {
             {/* Right — sign-in + fee orbit */}
             <div className="order-1 xl:order-2 w-full max-w-[420px] mx-auto xl:mx-0 xl:sticky xl:top-[80px]">
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
+                initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
                 animate={loaded ? { opacity: 1, y: 0 } : {}}
-                transition={{ duration: 0.5, delay: 0.15 }}
+                transition={{ duration: optimizeMotion ? 0 : 0.5, delay: optimizeMotion ? 0 : 0.15 }}
               >
-                <div className="relative rounded-[30px] p-[1px] bg-[linear-gradient(160deg,hsl(var(--primary)/0.55),hsl(var(--accent)/0.28),transparent_88%)] shadow-[0_32px_120px_-40px_hsl(var(--primary)/0.7)]">
+                <div className={cn(
+                  "relative rounded-[30px] p-[1px] bg-[linear-gradient(160deg,hsl(var(--primary)/0.55),hsl(var(--accent)/0.28),transparent_88%)]",
+                  isMobile ? "shadow-[0_24px_80px_-48px_hsl(var(--primary)/0.55)]" : "shadow-[0_32px_120px_-40px_hsl(var(--primary)/0.7)]"
+                )}>
                   <div className="absolute inset-[12%] rounded-full bg-primary/12 blur-3xl pointer-events-none" />
                   <div className="relative rounded-[29px] overflow-hidden border border-white/8 bg-background/92 backdrop-blur-2xl">
                     <div className="px-6 pt-6 pb-5 border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)]">
@@ -507,17 +580,18 @@ export default function Login() {
         </section>
 
         {/* ━━━━━━ SECTION 2: WHY EARLY MATTERS ━━━━━━ */}
-        <section className="border-t border-border/40 bg-card/30 backdrop-blur-sm">
+        <section
+          className="border-t border-border/40 bg-card/30 backdrop-blur-sm"
+          style={deferredSectionStyle}
+        >
           <div className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
             <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
-
-              {/* Fee orbit visualizer */}
               <motion.div
                 className="order-2 lg:order-1"
-                initial={{ opacity: 0, scale: 0.92 }}
-                whileInView={{ opacity: 1, scale: 1 }}
+                initial={optimizeMotion ? false : { opacity: 0, scale: 0.92 }}
+                whileInView={optimizeMotion ? undefined : { opacity: 1, scale: 1 }}
                 viewport={{ once: true, margin: "-80px" }}
-                transition={{ duration: 0.5 }}
+                transition={{ duration: optimizeMotion ? 0 : 0.45 }}
               >
                 <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-6 shadow-[0_20px_60px_-30px_hsl(var(--primary)/0.2)]">
                   <div className="text-center mb-2">
@@ -526,55 +600,73 @@ export default function Login() {
                       Live Trade Simulation
                     </div>
                     <h3 className="font-heading text-lg font-bold">
-                      Trades From Your Post
+                      First Good Alpha Wins The Route
                     </h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Each trader who buys from your post sends 0.5% to you
+                      Traders buy from the post they trust first. Every routed trade sends 0.5% back to you.
                     </p>
                   </div>
                   <FeeOrbit />
                 </div>
               </motion.div>
 
-              {/* Explanation + early caller bars */}
               <motion.div
                 className="order-1 lg:order-2 space-y-6"
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
+                initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+                whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: "-80px" }}
-                transition={{ duration: 0.5, delay: 0.1 }}
+                transition={{ duration: optimizeMotion ? 0 : 0.45, delay: optimizeMotion ? 0 : 0.08 }}
               >
                 <div>
                   <div className="inline-flex items-center gap-2 text-xs font-semibold text-gain uppercase tracking-widest mb-3">
                     <Clock className="w-3.5 h-3.5" />
-                    Timing Is Everything
+                    Time Is Everything
                   </div>
                   <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
-                    The Earlier You Post,
+                    Being First With Good Alpha,
                     <br />
-                    <span className="text-gradient">The More You Earn.</span>
+                    <span className="text-gradient">Changes The Entire Trade.</span>
                   </h2>
                   <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
-                    Buy volume peaks in the first hour after a call drops. Post
-                    first and your post absorbs the lion's share of buys — each
-                    one paying you 0.5%. Late callers fight over what's left.
+                    Phew is not about posting early for the sake of noise. It is
+                    about being early with conviction traders actually want to
+                    follow. The first strong call captures the best attention,
+                    the cleanest buy flow, and the biggest fee stream.
                   </p>
                 </div>
 
-                {/* Early caller comparison bars */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {timingPillars.map((pillar, index) => (
+                    <motion.div
+                      key={pillar.title}
+                      className={cn("rounded-xl border p-4", pillar.accent)}
+                      initial={optimizeMotion ? false : { opacity: 0, y: 14 }}
+                      whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
+                      viewport={{ once: true, margin: "-60px" }}
+                      transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : index * 0.08 }}
+                    >
+                      <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg border border-current/20 bg-background/55">
+                        <pillar.icon className="h-4 w-4" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        {pillar.title}
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {pillar.description}
+                      </p>
+                    </motion.div>
+                  ))}
+                </div>
+
                 <div className="space-y-3">
                   {earlyCallerData.map((row, i) => (
                     <motion.div
                       key={row.label}
-                      className={cn(
-                        "rounded-xl border p-4",
-                        row.borderColor,
-                        row.bgColor
-                      )}
-                      initial={{ opacity: 0, x: 20 }}
-                      whileInView={{ opacity: 1, x: 0 }}
+                      className={cn("rounded-xl border p-4", row.borderColor, row.bgColor)}
+                      initial={optimizeMotion ? false : { opacity: 0, x: 20 }}
+                      whileInView={optimizeMotion ? undefined : { opacity: 1, x: 0 }}
                       viewport={{ once: true, margin: "-60px" }}
-                      transition={{ duration: 0.4, delay: i * 0.1 }}
+                      transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : i * 0.08 }}
                     >
                       <div className="flex items-center justify-between gap-3 mb-2.5">
                         <div className="flex items-center gap-2">
@@ -589,18 +681,18 @@ export default function Login() {
                           {row.trades} buys from post
                         </span>
                       </div>
-                      {/* Bar */}
                       <div className="h-2 rounded-full bg-background/60 overflow-hidden">
                         <motion.div
                           className={cn("h-full rounded-full", row.color)}
-                          initial={{ width: 0 }}
-                          whileInView={{ width: `${row.pct}%` }}
+                          initial={optimizeMotion ? false : { width: 0 }}
+                          whileInView={optimizeMotion ? undefined : { width: `${row.pct}%` }}
                           viewport={{ once: true, margin: "-60px" }}
                           transition={{
-                            duration: 0.8,
-                            delay: 0.2 + i * 0.15,
+                            duration: optimizeMotion ? 0 : 0.7,
+                            delay: optimizeMotion ? 0 : 0.18 + i * 0.14,
                             ease: "easeOut",
                           }}
+                          style={optimizeMotion ? { width: `${row.pct}%` } : undefined}
                         />
                       </div>
                       <p className="mt-2 text-[11px] text-muted-foreground">
@@ -610,19 +702,19 @@ export default function Login() {
                   ))}
                 </div>
 
-                {/* Summary callout */}
                 <div className="rounded-xl border border-gain/25 bg-gain/5 p-4 flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-gain/15 border border-gain/25 flex items-center justify-center shrink-0 mt-0.5">
                     <TrendingUp className="w-4 h-4 text-gain" />
                   </div>
                   <div>
                     <div className="text-sm font-semibold text-gain">
-                      First callers earn up to 23× more in fees
+                      First good callers can capture up to 23x more routed flow.
                     </div>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      Buy volume spikes the moment a call drops and decays fast.
-                      Post first and your post captures the wave. Every buy
-                      through your post is 0.5% straight to your wallet.
+                      The edge is not just speed. It is speed plus quality. Be
+                      first with signal the market respects and the fee rail
+                      starts compounding through your post while everyone else
+                      is still reacting.
                     </p>
                   </div>
                 </div>
@@ -631,25 +723,107 @@ export default function Login() {
           </div>
         </section>
 
-        {/* ━━━━━━ SECTION 3: LEVEL SYSTEM ━━━━━━ */}
-        <section className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+        {/* ━━━━━━ SECTION 3: REPUTATION MARKET ━━━━━━ */}
+        <section
+          className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16"
+          style={deferredSectionStyle}
+        >
+          <div className="grid items-center gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
+            <motion.div
+              initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+              whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-80px" }}
+              transition={{ duration: optimizeMotion ? 0 : 0.45 }}
+            >
+              <ReputationEngine />
+            </motion.div>
+
+            <motion.div
+              className="space-y-5"
+              initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+              whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-80px" }}
+              transition={{ duration: optimizeMotion ? 0 : 0.45, delay: optimizeMotion ? 0 : 0.08 }}
+            >
+              <div>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Reputation Market
+                </div>
+                <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
+                  Good Calls Build A Public Edge.
+                </h2>
+                <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+                  Every outcome reprices your profile. Good calls raise level,
+                  trust, and future attention. Bad calls cool the room off. The
+                  entire platform is built to separate quality signal from
+                  random posting.
+                </p>
+              </div>
+
+              <div className="grid gap-3">
+                {reputationPillars.map((pillar, index) => (
+                  <motion.div
+                    key={pillar.title}
+                    className={cn("rounded-xl border p-4", pillar.accent)}
+                    initial={optimizeMotion ? false : { opacity: 0, x: 16 }}
+                    whileInView={optimizeMotion ? undefined : { opacity: 1, x: 0 }}
+                    viewport={{ once: true, margin: "-60px" }}
+                    transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : index * 0.07 }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-current/20 bg-background/55">
+                        <pillar.icon className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">{pillar.title}</h3>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          {pillar.description}
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+
+              <div className="rounded-2xl border border-border/50 bg-card/50 p-5">
+                <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  What traders are reading
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-foreground">
+                  When someone opens your post, they are not just reading a
+                  ticker. They are reading the quality of your last decisions.
+                  That is why better calls compound harder than better
+                  branding.
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        </section>
+
+        {/* ━━━━━━ SECTION 4: LEVEL SYSTEM ━━━━━━ */}
+        <section
+          className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16"
+          style={deferredSectionStyle}
+        >
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
+            initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+            whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "-80px" }}
-            transition={{ duration: 0.5 }}
+            transition={{ duration: optimizeMotion ? 0 : 0.45 }}
           >
             <div className="text-center mb-8">
               <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
                 <Sparkles className="w-3.5 h-3.5" />
-                Reputation System
+                Level System
               </div>
               <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
-                Levels Earned, Not Bought
+                Know Exactly What Moves You Up Or Down.
               </h2>
               <p className="mt-2 text-sm text-muted-foreground max-w-lg mx-auto leading-relaxed">
-                Your level is a live reflection of your track record. Win
-                consistently to rise. Lose badly and fall. No pay-to-win.
+                Levels are the public scorecard behind every profile. They move
+                with outcomes, not followers, and they tell the market who has
+                actually earned attention.
               </p>
             </div>
 
@@ -665,19 +839,19 @@ export default function Login() {
                 {
                   label: "Neutral Entry",
                   value: `LVL ${STARTING_LEVEL}`,
-                  desc: "Where everyone starts",
+                  desc: "Everyone starts here",
                   color: "border-border/50",
                 },
                 {
                   label: "Veteran",
                   value: "LVL +5",
-                  desc: "Drawdown protection",
+                  desc: "Protection unlocked",
                   color: "border-primary/30 bg-primary/5 text-primary",
                 },
                 {
                   label: "Elite Ceiling",
                   value: `LVL +${MAX_LEVEL}`,
-                  desc: "Top performers only",
+                  desc: "Top-tier trust",
                   color: "border-gain/30 bg-gain/5 text-gain",
                 },
               ].map((tier) => (
@@ -763,30 +937,33 @@ export default function Login() {
           </motion.div>
         </section>
 
-        {/* ━━━━━━ SECTION 4: BOTTOM CTA ━━━━━━ */}
-        <section className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent">
+        {/* ━━━━━━ SECTION 5: BOTTOM CTA ━━━━━━ */}
+        <section
+          className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent"
+          style={deferredSectionStyle}
+        >
           <div className="max-w-2xl mx-auto px-5 sm:px-6 py-14 text-center">
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
+              initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+              whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-60px" }}
-              transition={{ duration: 0.5 }}
+              transition={{ duration: optimizeMotion ? 0 : 0.45 }}
               className="space-y-4"
             >
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
                 <Sparkles className="w-3.5 h-3.5" />
-                0.5% per buy — live on Solana
+                0.5% per buy. Reputation earned in public.
               </div>
               <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
-                Your Next Call Could
+                Your Next Good Call Could
                 <br />
                 <span className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent">
-                  Pay You Forever.
+                  Pay You For A Long Time.
                 </span>
               </h2>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Sign up free. Post your first call. Every trader who buys from
-                your post sends 0.5% straight to your wallet — forever.
+                Sign up free. Post the right call early. Every trader who buys
+                from your post sends 0.5% back through the route you created.
               </p>
               <div className="pt-2">
                 {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
