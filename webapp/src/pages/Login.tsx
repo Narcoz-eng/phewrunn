@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
+import { Suspense, lazy, useRef, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
@@ -28,9 +29,127 @@ import {
   MIN_LEVEL,
   STARTING_LEVEL,
 } from "@/types";
-import { FeeOrbit } from "@/components/login/FeeOrbit";
 import { AccuracyScoreCard } from "@/components/AccuracyScoreCard";
-import { ReputationEngine } from "@/components/login/ReputationEngine";
+
+const FeeOrbit = lazy(() =>
+  import("@/components/login/FeeOrbit").then((module) => ({
+    default: module.FeeOrbit,
+  }))
+);
+
+const ReputationEngine = lazy(() =>
+  import("@/components/login/ReputationEngine").then((module) => ({
+    default: module.ReputationEngine,
+  }))
+);
+
+type DeferredViewportBlockProps = {
+  children: ReactNode;
+  fallback: ReactNode;
+  disabled?: boolean;
+  rootMargin?: string;
+};
+
+function DeferredViewportBlock({
+  children,
+  fallback,
+  disabled = false,
+  rootMargin = "260px",
+}: DeferredViewportBlockProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [isReady, setIsReady] = useState(disabled);
+
+  useEffect(() => {
+    if (disabled) {
+      setIsReady(true);
+      return;
+    }
+
+    const node = hostRef.current;
+    if (!node || typeof window === "undefined" || !("IntersectionObserver" in window)) {
+      setIsReady(true);
+      return;
+    }
+
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setIsReady(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [disabled, rootMargin]);
+
+  return <div ref={hostRef}>{isReady ? children : fallback}</div>;
+}
+
+function MarketingSectionPlaceholder({
+  eyebrow,
+  title,
+  className,
+}: {
+  eyebrow: string;
+  title: string;
+  className?: string;
+}) {
+  return (
+    <section className={className}>
+      <div className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+        <div className="rounded-[28px] border border-border/40 bg-card/35 p-6 sm:p-8">
+          <div className="animate-pulse space-y-4">
+            <div className="h-3 w-28 rounded-full bg-primary/20" />
+            <div className="h-8 max-w-lg rounded-full bg-foreground/10" />
+            <div className="h-4 max-w-2xl rounded-full bg-foreground/10" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="h-32 rounded-2xl border border-border/35 bg-background/45" />
+              <div className="h-32 rounded-2xl border border-border/35 bg-background/45" />
+            </div>
+          </div>
+          <div className="sr-only">
+            {eyebrow} {title}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function VisualizationCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-6 shadow-[0_20px_60px_-30px_hsl(var(--primary)/0.2)]">
+      <div className="animate-pulse space-y-4">
+        <div className="mx-auto h-5 w-40 rounded-full bg-primary/15" />
+        <div className="mx-auto h-[220px] w-full max-w-[260px] rounded-full border border-border/35 bg-card/50" />
+        <div className="h-10 rounded-xl border border-border/35 bg-card/50" />
+      </div>
+    </div>
+  );
+}
+
+function ReputationEngineSkeleton() {
+  return (
+    <div className="rounded-[28px] border border-primary/15 bg-[linear-gradient(180deg,hsl(var(--card)/0.92),hsl(var(--background)/0.88))] p-5 sm:p-6 shadow-[0_24px_80px_-44px_hsl(var(--primary)/0.45)]">
+      <div className="animate-pulse space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-2">
+            <div className="h-3 w-28 rounded-full bg-primary/15" />
+            <div className="h-7 w-56 rounded-full bg-foreground/10" />
+          </div>
+          <div className="h-8 w-28 rounded-full bg-background/60" />
+        </div>
+        <div className="grid gap-4 xl:grid-cols-[1.12fr_0.88fr]">
+          <div className="h-[320px] rounded-[24px] border border-border/45 bg-background/55" />
+          <div className="h-[320px] rounded-[24px] border border-border/45 bg-card/60" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
@@ -232,6 +351,8 @@ export default function Login() {
   const isMobile = useIsMobile();
   const reduceMotion = useReducedMotion();
   const optimizeMotion = isMobile || reduceMotion;
+  const shouldDeferMarketing =
+    isMobile || (typeof window !== "undefined" && window.innerWidth < 768);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -576,394 +697,427 @@ export default function Login() {
         </section>
 
         {/* ━━━━━━ SECTION 2: WHY EARLY MATTERS ━━━━━━ */}
-        <section
-          className="border-t border-border/40 bg-card/30 backdrop-blur-sm"
+        <DeferredViewportBlock
+          disabled={!shouldDeferMarketing}
+          fallback={
+            <MarketingSectionPlaceholder
+              eyebrow="Time Is Everything"
+              title="Being first with good alpha changes the entire trade."
+              className="border-t border-border/40 bg-card/30 backdrop-blur-sm"
+            />
+          }
         >
-          <div className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
-            <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+          <section className="border-t border-border/40 bg-card/30 backdrop-blur-sm">
+            <div className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+              <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+                <motion.div
+                  className="order-2 lg:order-1"
+                  initial={optimizeMotion ? false : { opacity: 0, scale: 0.92 }}
+                  whileInView={optimizeMotion ? undefined : { opacity: 1, scale: 1 }}
+                  viewport={{ once: true, margin: "-80px" }}
+                  transition={{ duration: optimizeMotion ? 0 : 0.45 }}
+                >
+                  <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-6 shadow-[0_20px_60px_-30px_hsl(var(--primary)/0.2)]">
+                    <div className="text-center mb-2">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary mb-3">
+                        <Sparkles className="w-3 h-3" />
+                        Live Trade Simulation
+                      </div>
+                      <h3 className="font-heading text-lg font-bold">
+                        First Good Alpha Wins The Route
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Traders buy from the post they trust first. Every routed trade sends 0.5% back to you.
+                      </p>
+                    </div>
+                    <Suspense fallback={<VisualizationCardSkeleton />}>
+                      <FeeOrbit />
+                    </Suspense>
+                  </div>
+                </motion.div>
+
+                <motion.div
+                  className="order-1 lg:order-2 space-y-6"
+                  initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+                  whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: "-80px" }}
+                  transition={{ duration: optimizeMotion ? 0 : 0.45, delay: optimizeMotion ? 0 : 0.08 }}
+                >
+                  <div>
+                    <div className="inline-flex items-center gap-2 text-xs font-semibold text-gain uppercase tracking-widest mb-3">
+                      <Clock className="w-3.5 h-3.5" />
+                      Time Is Everything
+                    </div>
+                    <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
+                      Being First With Good Alpha,
+                      <br />
+                      <span className="text-gradient">Changes The Entire Trade.</span>
+                    </h2>
+                    <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+                      Phew is not about posting early for the sake of noise. It is
+                      about being early with conviction traders actually want to
+                      follow. The first strong call captures the best attention,
+                      the cleanest buy flow, and the biggest fee stream.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {timingPillars.map((pillar, index) => (
+                      <motion.div
+                        key={pillar.title}
+                        className={cn("rounded-xl border p-4", pillar.accent)}
+                        initial={optimizeMotion ? false : { opacity: 0, y: 14 }}
+                        whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
+                        viewport={{ once: true, margin: "-60px" }}
+                        transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : index * 0.08 }}
+                      >
+                        <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg border border-current/20 bg-background/55">
+                          <pillar.icon className="h-4 w-4" />
+                        </div>
+                        <h3 className="text-sm font-semibold text-foreground">
+                          {pillar.title}
+                        </h3>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          {pillar.description}
+                        </p>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3">
+                    {earlyCallerData.map((row, i) => (
+                      <motion.div
+                        key={row.label}
+                        className={cn("rounded-xl border p-4", row.borderColor, row.bgColor)}
+                        initial={optimizeMotion ? false : { opacity: 0, x: 20 }}
+                        whileInView={optimizeMotion ? undefined : { opacity: 1, x: 0 }}
+                        viewport={{ once: true, margin: "-60px" }}
+                        transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : i * 0.08 }}
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className={cn("text-xs font-bold", row.textColor)}>
+                              {row.label}
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-background/60 border border-border/40 text-muted-foreground">
+                              {row.tag}
+                            </span>
+                          </div>
+                          <span className={cn("text-sm font-mono font-bold", row.textColor)}>
+                            {row.trades} buys from post
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-background/60 overflow-hidden">
+                          <motion.div
+                            className={cn("h-full rounded-full", row.color)}
+                            initial={optimizeMotion ? false : { width: 0 }}
+                            whileInView={optimizeMotion ? undefined : { width: `${row.pct}%` }}
+                            viewport={{ once: true, margin: "-60px" }}
+                            transition={{
+                              duration: optimizeMotion ? 0 : 0.7,
+                              delay: optimizeMotion ? 0 : 0.18 + i * 0.14,
+                              ease: "easeOut",
+                            }}
+                            style={optimizeMotion ? { width: `${row.pct}%` } : undefined}
+                          />
+                        </div>
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          {row.desc}
+                        </p>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-xl border border-gain/25 bg-gain/5 p-4 flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-gain/15 border border-gain/25 flex items-center justify-center shrink-0 mt-0.5">
+                      <TrendingUp className="w-4 h-4 text-gain" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-gain">
+                        First good callers can capture up to 23x more routed flow.
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                        The edge is not just speed. It is speed plus quality. Be
+                        first with signal the market respects and the fee rail
+                        starts compounding through your post while everyone else
+                        is still reacting.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              </div>
+            </div>
+          </section>
+        </DeferredViewportBlock>
+
+        {/* ━━━━━━ SECTION 3: REPUTATION MARKET ━━━━━━ */}
+        <DeferredViewportBlock
+          disabled={!shouldDeferMarketing}
+          fallback={
+            <MarketingSectionPlaceholder
+              eyebrow="Reputation Market"
+              title="Good calls build a public edge."
+            />
+          }
+        >
+          <section className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+            <div className="grid items-center gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
               <motion.div
-                className="order-2 lg:order-1"
-                initial={optimizeMotion ? false : { opacity: 0, scale: 0.92 }}
-                whileInView={optimizeMotion ? undefined : { opacity: 1, scale: 1 }}
+                initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+                whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: "-80px" }}
                 transition={{ duration: optimizeMotion ? 0 : 0.45 }}
               >
-                <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-6 shadow-[0_20px_60px_-30px_hsl(var(--primary)/0.2)]">
-                  <div className="text-center mb-2">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary mb-3">
-                      <Sparkles className="w-3 h-3" />
-                      Live Trade Simulation
-                    </div>
-                    <h3 className="font-heading text-lg font-bold">
-                      First Good Alpha Wins The Route
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Traders buy from the post they trust first. Every routed trade sends 0.5% back to you.
-                    </p>
-                  </div>
-                  <FeeOrbit />
-                </div>
+                <Suspense fallback={<ReputationEngineSkeleton />}>
+                  <ReputationEngine />
+                </Suspense>
               </motion.div>
 
               <motion.div
-                className="order-1 lg:order-2 space-y-6"
+                className="space-y-5"
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
                 whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: "-80px" }}
                 transition={{ duration: optimizeMotion ? 0 : 0.45, delay: optimizeMotion ? 0 : 0.08 }}
               >
                 <div>
-                  <div className="inline-flex items-center gap-2 text-xs font-semibold text-gain uppercase tracking-widest mb-3">
-                    <Clock className="w-3.5 h-3.5" />
-                    Time Is Everything
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Reputation Market
                   </div>
-                  <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
-                    Being First With Good Alpha,
-                    <br />
-                    <span className="text-gradient">Changes The Entire Trade.</span>
+                  <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
+                    Good Calls Build A Public Edge.
                   </h2>
                   <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
-                    Phew is not about posting early for the sake of noise. It is
-                    about being early with conviction traders actually want to
-                    follow. The first strong call captures the best attention,
-                    the cleanest buy flow, and the biggest fee stream.
+                    Every outcome reprices your profile. Good calls raise level,
+                    trust, and future attention. Bad calls cool the room off. The
+                    entire platform is built to separate quality signal from
+                    random posting.
                   </p>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {timingPillars.map((pillar, index) => (
+                <div className="grid gap-3">
+                  {reputationPillars.map((pillar, index) => (
                     <motion.div
                       key={pillar.title}
                       className={cn("rounded-xl border p-4", pillar.accent)}
-                      initial={optimizeMotion ? false : { opacity: 0, y: 14 }}
-                      whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
-                      viewport={{ once: true, margin: "-60px" }}
-                      transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : index * 0.08 }}
-                    >
-                      <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg border border-current/20 bg-background/55">
-                        <pillar.icon className="h-4 w-4" />
-                      </div>
-                      <h3 className="text-sm font-semibold text-foreground">
-                        {pillar.title}
-                      </h3>
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {pillar.description}
-                      </p>
-                    </motion.div>
-                  ))}
-                </div>
-
-                <div className="space-y-3">
-                  {earlyCallerData.map((row, i) => (
-                    <motion.div
-                      key={row.label}
-                      className={cn("rounded-xl border p-4", row.borderColor, row.bgColor)}
-                      initial={optimizeMotion ? false : { opacity: 0, x: 20 }}
+                      initial={optimizeMotion ? false : { opacity: 0, x: 16 }}
                       whileInView={optimizeMotion ? undefined : { opacity: 1, x: 0 }}
                       viewport={{ once: true, margin: "-60px" }}
-                      transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : i * 0.08 }}
+                      transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : index * 0.07 }}
                     >
-                      <div className="flex items-center justify-between gap-3 mb-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className={cn("text-xs font-bold", row.textColor)}>
-                            {row.label}
-                          </span>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-background/60 border border-border/40 text-muted-foreground">
-                            {row.tag}
-                          </span>
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-current/20 bg-background/55">
+                          <pillar.icon className="h-4 w-4" />
                         </div>
-                        <span className={cn("text-sm font-mono font-bold", row.textColor)}>
-                          {row.trades} buys from post
-                        </span>
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">{pillar.title}</h3>
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                            {pillar.description}
+                          </p>
+                        </div>
                       </div>
-                      <div className="h-2 rounded-full bg-background/60 overflow-hidden">
-                        <motion.div
-                          className={cn("h-full rounded-full", row.color)}
-                          initial={optimizeMotion ? false : { width: 0 }}
-                          whileInView={optimizeMotion ? undefined : { width: `${row.pct}%` }}
-                          viewport={{ once: true, margin: "-60px" }}
-                          transition={{
-                            duration: optimizeMotion ? 0 : 0.7,
-                            delay: optimizeMotion ? 0 : 0.18 + i * 0.14,
-                            ease: "easeOut",
-                          }}
-                          style={optimizeMotion ? { width: `${row.pct}%` } : undefined}
-                        />
-                      </div>
-                      <p className="mt-2 text-[11px] text-muted-foreground">
-                        {row.desc}
-                      </p>
                     </motion.div>
                   ))}
                 </div>
 
-                <div className="rounded-xl border border-gain/25 bg-gain/5 p-4 flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-gain/15 border border-gain/25 flex items-center justify-center shrink-0 mt-0.5">
-                    <TrendingUp className="w-4 h-4 text-gain" />
+                <div className="rounded-2xl border border-border/50 bg-card/50 p-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    What traders are reading
                   </div>
-                  <div>
-                    <div className="text-sm font-semibold text-gain">
-                      First good callers can capture up to 23x more routed flow.
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      The edge is not just speed. It is speed plus quality. Be
-                      first with signal the market respects and the fee rail
-                      starts compounding through your post while everyone else
-                      is still reacting.
-                    </p>
-                  </div>
+                  <p className="mt-3 text-sm leading-relaxed text-foreground">
+                    When someone opens your post, they are not just reading a
+                    ticker. They are reading the quality of your last decisions.
+                    That is why better calls compound harder than better
+                    branding.
+                  </p>
                 </div>
               </motion.div>
             </div>
-          </div>
-        </section>
+          </section>
+        </DeferredViewportBlock>
 
-        {/* ━━━━━━ SECTION 3: REPUTATION MARKET ━━━━━━ */}
-        <section
-          className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16"
+        {/* ━━━━━━ SECTION 4: LEVEL SYSTEM ━━━━━━ */}
+        <DeferredViewportBlock
+          disabled={!shouldDeferMarketing}
+          fallback={
+            <MarketingSectionPlaceholder
+              eyebrow="Level System"
+              title="Know exactly what moves you up or down."
+            />
+          }
         >
-          <div className="grid items-center gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
+          <section className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
             <motion.div
               initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
               whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-80px" }}
               transition={{ duration: optimizeMotion ? 0 : 0.45 }}
             >
-              <ReputationEngine />
-            </motion.div>
-
-            <motion.div
-              className="space-y-5"
-              initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
-              whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-80px" }}
-              transition={{ duration: optimizeMotion ? 0 : 0.45, delay: optimizeMotion ? 0 : 0.08 }}
-            >
-              <div>
+              <div className="text-center mb-8">
                 <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
                   <Sparkles className="w-3.5 h-3.5" />
-                  Reputation Market
+                  Level System
                 </div>
                 <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
-                  Good Calls Build A Public Edge.
+                  Know Exactly What Moves You Up Or Down.
                 </h2>
-                <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
-                  Every outcome reprices your profile. Good calls raise level,
-                  trust, and future attention. Bad calls cool the room off. The
-                  entire platform is built to separate quality signal from
-                  random posting.
+                <p className="mt-2 text-sm text-muted-foreground max-w-lg mx-auto leading-relaxed">
+                  Levels are the public scorecard behind every profile. They move
+                  with outcomes, not followers, and they tell the market who has
+                  actually earned attention.
                 </p>
               </div>
 
-              <div className="grid gap-3">
-                {reputationPillars.map((pillar, index) => (
-                  <motion.div
-                    key={pillar.title}
-                    className={cn("rounded-xl border p-4", pillar.accent)}
-                    initial={optimizeMotion ? false : { opacity: 0, x: 16 }}
-                    whileInView={optimizeMotion ? undefined : { opacity: 1, x: 0 }}
-                    viewport={{ once: true, margin: "-60px" }}
-                    transition={{ duration: optimizeMotion ? 0 : 0.35, delay: optimizeMotion ? 0 : index * 0.07 }}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                {[
+                  {
+                    label: "Liquidation",
+                    value: `LVL ${MIN_LEVEL}`,
+                    desc: "Posts disabled",
+                    color: "border-red-500/25 bg-red-500/5 text-red-400",
+                  },
+                  {
+                    label: "Neutral Entry",
+                    value: `LVL ${STARTING_LEVEL}`,
+                    desc: "Everyone starts here",
+                    color: "border-border/50",
+                  },
+                  {
+                    label: "Veteran",
+                    value: "LVL +5",
+                    desc: "Protection unlocked",
+                    color: "border-primary/30 bg-primary/5 text-primary",
+                  },
+                  {
+                    label: "Elite Ceiling",
+                    value: `LVL +${MAX_LEVEL}`,
+                    desc: "Top-tier trust",
+                    color: "border-gain/30 bg-gain/5 text-gain",
+                  },
+                ].map((tier) => (
+                  <div
+                    key={tier.label}
+                    className={cn(
+                      "rounded-xl border p-4 backdrop-blur-sm bg-card/50",
+                      tier.color
+                    )}
                   >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-current/20 bg-background/55">
-                        <pillar.icon className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-semibold text-foreground">{pillar.title}</h3>
-                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                          {pillar.description}
-                        </p>
-                      </div>
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+                      {tier.label}
                     </div>
-                  </motion.div>
+                    <div
+                      className={cn(
+                        "text-lg font-mono font-bold",
+                        tier.color.includes("text-") ? "" : "text-foreground"
+                      )}
+                    >
+                      {tier.value}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      {tier.desc}
+                    </div>
+                  </div>
                 ))}
               </div>
 
-              <div className="rounded-2xl border border-border/50 bg-card/50 p-5">
-                <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  What traders are reading
+              <div className="grid lg:grid-cols-[1.3fr_0.7fr] gap-5">
+                <div className="rounded-2xl border border-primary/15 bg-card/60 p-5 shadow-[0_10px_40px_-24px_hsl(var(--primary)/0.3)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">
+                    Key Level States
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {levelBarSnapshots.map((snap) => (
+                      <div
+                        key={snap.title}
+                        className="rounded-xl border border-border/50 bg-background/40 p-3.5"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-semibold">{snap.title}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border border-border/50 bg-background/50 text-muted-foreground font-mono">
+                            LVL {snap.level > 0 ? `+${snap.level}` : snap.level}
+                          </span>
+                        </div>
+                        <LevelBar level={snap.level} size="sm" showLabel={false} />
+                        <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+                          {snap.note}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <p className="mt-3 text-sm leading-relaxed text-foreground">
-                  When someone opens your post, they are not just reading a
-                  ticker. They are reading the quality of your last decisions.
-                  That is why better calls compound harder than better
-                  branding.
-                </p>
+
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-border/50 bg-card/50 p-5">
+                    <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                      Level Rules
+                    </div>
+                    <ul className="space-y-2.5">
+                      {levelRules.map((rule) => (
+                        <li key={rule} className="flex items-start gap-2.5">
+                          <div className="mt-[5px] w-1.5 h-1.5 rounded-full bg-primary/70 shrink-0" />
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            {rule}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+                    <p className="text-xs text-red-400 leading-relaxed">
+                      Liquidation triggers at{" "}
+                      <span className="font-semibold">LVL {LIQUIDATION_LEVEL}</span>.
+                      Posting is disabled until your reputation recovers.
+                    </p>
+                  </div>
+                </div>
               </div>
             </motion.div>
-          </div>
-        </section>
-
-        {/* ━━━━━━ SECTION 4: LEVEL SYSTEM ━━━━━━ */}
-        <section
-          className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16"
-        >
-          <motion.div
-            initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
-            whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
-            transition={{ duration: optimizeMotion ? 0 : 0.45 }}
-          >
-            <div className="text-center mb-8">
-              <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
-                <Sparkles className="w-3.5 h-3.5" />
-                Level System
-              </div>
-              <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
-                Know Exactly What Moves You Up Or Down.
-              </h2>
-              <p className="mt-2 text-sm text-muted-foreground max-w-lg mx-auto leading-relaxed">
-                Levels are the public scorecard behind every profile. They move
-                with outcomes, not followers, and they tell the market who has
-                actually earned attention.
-              </p>
-            </div>
-
-            {/* Level tier indicators */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-              {[
-                {
-                  label: "Liquidation",
-                  value: `LVL ${MIN_LEVEL}`,
-                  desc: "Posts disabled",
-                  color: "border-red-500/25 bg-red-500/5 text-red-400",
-                },
-                {
-                  label: "Neutral Entry",
-                  value: `LVL ${STARTING_LEVEL}`,
-                  desc: "Everyone starts here",
-                  color: "border-border/50",
-                },
-                {
-                  label: "Veteran",
-                  value: "LVL +5",
-                  desc: "Protection unlocked",
-                  color: "border-primary/30 bg-primary/5 text-primary",
-                },
-                {
-                  label: "Elite Ceiling",
-                  value: `LVL +${MAX_LEVEL}`,
-                  desc: "Top-tier trust",
-                  color: "border-gain/30 bg-gain/5 text-gain",
-                },
-              ].map((tier) => (
-                <div
-                  key={tier.label}
-                  className={cn(
-                    "rounded-xl border p-4 backdrop-blur-sm bg-card/50",
-                    tier.color
-                  )}
-                >
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
-                    {tier.label}
-                  </div>
-                  <div
-                    className={cn(
-                      "text-lg font-mono font-bold",
-                      tier.color.includes("text-") ? "" : "text-foreground"
-                    )}
-                  >
-                    {tier.value}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">
-                    {tier.desc}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Level snapshots + rules */}
-            <div className="grid lg:grid-cols-[1.3fr_0.7fr] gap-5">
-              {/* Snapshot cards */}
-              <div className="rounded-2xl border border-primary/15 bg-card/60 p-5 shadow-[0_10px_40px_-24px_hsl(var(--primary)/0.3)]">
-                <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">
-                  Key Level States
-                </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {levelBarSnapshots.map((snap) => (
-                    <div
-                      key={snap.title}
-                      className="rounded-xl border border-border/50 bg-background/40 p-3.5"
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="text-xs font-semibold">{snap.title}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-border/50 bg-background/50 text-muted-foreground font-mono">
-                          LVL {snap.level > 0 ? `+${snap.level}` : snap.level}
-                        </span>
-                      </div>
-                      <LevelBar level={snap.level} size="sm" showLabel={false} />
-                      <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
-                        {snap.note}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Rules */}
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-border/50 bg-card/50 p-5">
-                  <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    Level Rules
-                  </div>
-                  <ul className="space-y-2.5">
-                    {levelRules.map((rule) => (
-                      <li key={rule} className="flex items-start gap-2.5">
-                        <div className="mt-[5px] w-1.5 h-1.5 rounded-full bg-primary/70 shrink-0" />
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          {rule}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
-                  <p className="text-xs text-red-400 leading-relaxed">
-                    Liquidation triggers at{" "}
-                    <span className="font-semibold">LVL {LIQUIDATION_LEVEL}</span>.
-                    Posting is disabled until your reputation recovers.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </section>
+          </section>
+        </DeferredViewportBlock>
 
         {/* ━━━━━━ SECTION 5: BOTTOM CTA ━━━━━━ */}
-        <section
-          className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent"
-          style={deferredSectionStyle}
+        <DeferredViewportBlock
+          disabled={!shouldDeferMarketing}
+          fallback={
+            <MarketingSectionPlaceholder
+              eyebrow="0.5% per buy"
+              title="Your next good call could pay you for a long time."
+              className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent"
+            />
+          }
         >
-          <div className="max-w-2xl mx-auto px-5 sm:px-6 py-14 text-center">
-            <motion.div
-              initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
-              whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-60px" }}
-              transition={{ duration: optimizeMotion ? 0 : 0.45 }}
-              className="space-y-4"
-            >
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
-                <Sparkles className="w-3.5 h-3.5" />
-                0.5% per buy. Reputation earned in public.
-              </div>
-              <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
-                Your Next Good Call Could
-                <br />
-                <span className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent">
-                  Pay You For A Long Time.
-                </span>
-              </h2>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Sign up free. Post the right call early. Every trader who buys
-                from your post sends 0.5% back through the route you created.
-              </p>
-              <div className="pt-2">
-                {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
-              </div>
-            </motion.div>
-          </div>
-        </section>
+          <section className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent">
+            <div className="max-w-2xl mx-auto px-5 sm:px-6 py-14 text-center">
+              <motion.div
+                initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
+                whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-60px" }}
+                transition={{ duration: optimizeMotion ? 0 : 0.45 }}
+                className="space-y-4"
+              >
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  0.5% per buy. Reputation earned in public.
+                </div>
+                <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
+                  Your Next Good Call Could
+                  <br />
+                  <span className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent">
+                    Pay You For A Long Time.
+                  </span>
+                </h2>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Sign up free. Post the right call early. Every trader who buys
+                  from your post sends 0.5% back through the route you created.
+                </p>
+                <div className="pt-2">
+                  {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
+                </div>
+              </motion.div>
+            </div>
+          </section>
+        </DeferredViewportBlock>
       </main>
 
       {/* ── Footer ── */}
