@@ -197,7 +197,7 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
 
 const explicitGuardrailsEnabled = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS === "true";
 const shouldRunCompatGuardrails =
-  (explicitGuardrailsEnabled || (!isProduction && !isServerlessRuntime)) &&
+  explicitGuardrailsEnabled &&
   !(isProduction && isServerlessRuntime);
 
 if (explicitGuardrailsEnabled && isProduction && isServerlessRuntime) {
@@ -218,7 +218,7 @@ if (isSqlite) {
         console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
       });
   } else {
-    console.log("[Prisma] Postgres compatibility guardrails disabled for this runtime");
+    console.log("[Prisma] Postgres compatibility guardrails disabled by default; enable PRISMA_ENABLE_COMPAT_GUARDRAILS=true only for controlled maintenance runs");
   }
 }
 
