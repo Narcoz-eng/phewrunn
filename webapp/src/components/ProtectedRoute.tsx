@@ -2,13 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useSession } from "@/lib/auth-client";
 
-/**
- * Maximum time (ms) to wait for a session to hydrate when we detect
- * evidence of a prior login (localStorage token or sessionStorage cache).
- * After this grace period we redirect to /login.
- */
-const TOKEN_HYDRATION_GRACE_MS = 4_000;
-
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
   const hadTokenHint = useRef((() => {
@@ -18,10 +11,10 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   })());
   const [graceExpired, setGraceExpired] = useState(false);
 
-  // Start a grace timer if we had a token hint but no session yet.
+  // Start a grace timer (4s) if we had a token hint but no session yet.
   useEffect(() => {
     if (session?.user || isPending || !hadTokenHint.current) return;
-    const timer = setTimeout(() => setGraceExpired(true), TOKEN_HYDRATION_GRACE_MS);
+    const timer = setTimeout(() => setGraceExpired(true), 4_000);
     return () => clearTimeout(timer);
   }, [session?.user, isPending]);
 
