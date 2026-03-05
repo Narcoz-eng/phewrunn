@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+﻿import React, { useEffect, useRef } from "react";
 import { getIdentityToken, usePrivy } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession, registerPreLogoutHook } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
@@ -25,8 +25,6 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   const lastAttemptAtRef = useRef(0);
   const lastSyncedPrivyUserRef = useRef<string | null>(null);
 
-  // Register Privy logout as a pre-logout hook so it runs while
-  // the PrivyProvider is still mounted (before React state clears).
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
       try {
@@ -35,10 +33,10 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         console.warn("[AuthInitializer] Privy logout in pre-logout hook failed:", error);
       }
     });
+
     return unregister;
   }, [privyLogout]);
 
-  // Reset retry counters when Privy auth goes false (after logout).
   useEffect(() => {
     if (!authenticated) {
       attemptsRef.current = 0;
@@ -50,6 +48,10 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
+    const pathname =
+      typeof window !== "undefined" ? window.location.pathname : "";
+    // Login page owns manual auth UX/sync; avoid duplicate sync attempts here.
+    if (pathname === "/login") return;
     if (isAuthenticated) {
       attemptsRef.current = 0;
       lastSyncedPrivyUserRef.current = user.id;

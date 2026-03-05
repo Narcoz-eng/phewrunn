@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
+﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
 import { setAuthTokenGetter } from "./api";
 
@@ -57,19 +57,17 @@ const SESSION_COOKIE_CANDIDATE_NAMES = [
 ] as const;
 const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 
-// Pre-logout hooks — called before React state is cleared so components
-// are still mounted (e.g. Privy logout needs its provider context).
 let preLogoutHooks: Array<() => Promise<void>> = [];
 
 export function registerPreLogoutHook(hook: () => Promise<void>): () => void {
   preLogoutHooks.push(hook);
   return () => {
-    preLogoutHooks = preLogoutHooks.filter((h) => h !== hook);
+    preLogoutHooks = preLogoutHooks.filter((currentHook) => currentHook !== hook);
   };
 }
 
-// Flag so ProtectedRoute can distinguish explicit logout from stale state.
 let explicitLogoutAt = 0;
+
 export function getExplicitLogoutAt(): number {
   return explicitLogoutAt;
 }
@@ -538,9 +536,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
-    // 1. Run pre-logout hooks FIRST while components are still mounted.
-    //    This is critical: Privy logout needs its React provider context,
-    //    which unmounts once ProtectedRoute redirects to /login.
     for (const hook of preLogoutHooks) {
       try {
         await hook();
@@ -549,7 +544,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 2. Now clear local state and tokens.
     explicitLogoutAt = Date.now();
     clearStoredAuthToken();
     clearCachedAuthUser();
@@ -564,7 +558,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: false,
     });
 
-    // 3. Tell the backend to destroy the server-side session.
     try {
       await signOut();
     } catch (error) {

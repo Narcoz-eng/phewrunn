@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
 import { toast } from "sonner";
@@ -171,8 +171,6 @@ export function usePrivyLogin() {
     setSyncError(null);
   }, [appSessionAuthenticated]);
 
-  // Reset all retry counters when Privy auth goes false (after logout).
-  // This ensures the next sign-in attempt starts fresh.
   useEffect(() => {
     if (!authenticated) {
       autoResyncAttemptsRef.current = 0;
@@ -216,9 +214,6 @@ export function usePrivyLogin() {
     onComplete: async (params) => {
       autoResyncAttemptsRef.current = 0;
       lastAutoResyncAtRef.current = 0;
-      // Await the sync so auth state is hydrated before Privy's modal fully
-      // closes and React re-renders. This prevents a flash where GuestRoute
-      // still sees isAuthenticated=false and renders the login page.
       await runPrivySync(params.user as PrivyUserLike, "manual");
     },
     onError: (error) => {
