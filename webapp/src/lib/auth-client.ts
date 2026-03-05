@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
 import { setAuthTokenGetter } from "./api";
+import { clearSessionCacheByPrefix } from "./session-cache";
 
 // Get the backend URL
 const getBaseUrl = () => {
@@ -81,8 +82,8 @@ export async function signUp() {
   throw new Error("Email/password auth has been removed. Use Privy sign-in.");
 }
 
-export async function signOut() {
-  const token = getStoredAuthToken();
+export async function signOut(options?: { token?: string | null }) {
+  const token = normalizeAuthToken(options?.token) ?? getStoredAuthToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -110,7 +111,18 @@ export interface AuthUser {
   email: string;
   name: string;
   image?: string | null;
+  walletAddress?: string | null;
+  walletProvider?: string | null;
+  username?: string | null;
+  level?: number;
+  xp?: number;
+  bio?: string | null;
+  isAdmin?: boolean;
   isVerified?: boolean;
+  tradeFeeRewardsEnabled?: boolean;
+  tradeFeeShareBps?: number;
+  tradeFeePayoutAddress?: string | null;
+  createdAt?: string | null;
 }
 
 type AuthSessionSyncEventDetail = {
@@ -215,10 +227,6 @@ function hasSessionCookieHint(): boolean {
   );
 }
 
-function hasBackendSessionArtifact(): boolean {
-  return Boolean(getStoredAuthToken() || hasSessionCookieHint());
-}
-
 function readCachedAuthUser(): AuthUser | null {
   if (typeof window === "undefined") return getInMemoryCachedAuthUser();
   try {
@@ -273,6 +281,42 @@ function writeCachedAuthUser(user: AuthUser | null): void {
 
 function clearCachedAuthUser(): void {
   writeCachedAuthUser(null);
+}
+
+function toAuthUser(
+  user: Partial<AuthUser> & { id: string; email?: string | null; name?: string | null }
+): AuthUser {
+  const normalizedEmail =
+    typeof user.email === "string" && user.email.trim().length > 0
+      ? user.email.trim()
+      : `${user.id.slice(0, 24).toLowerCase()}@privy.local`;
+  const normalizedName =
+    typeof user.name === "string" && user.name.trim().length > 0
+      ? user.name.trim()
+      : normalizedEmail.split("@")[0] || "User";
+
+  return {
+    id: user.id,
+    email: normalizedEmail,
+    name: normalizedName,
+    image: user.image ?? null,
+    walletAddress: user.walletAddress ?? null,
+    walletProvider: user.walletProvider ?? null,
+    username: user.username ?? null,
+    level: typeof user.level === "number" && Number.isFinite(user.level) ? user.level : 0,
+    xp: typeof user.xp === "number" && Number.isFinite(user.xp) ? user.xp : 0,
+    bio: user.bio ?? null,
+    isAdmin: user.isAdmin ?? false,
+    isVerified: user.isVerified ?? false,
+    tradeFeeRewardsEnabled:
+      typeof user.tradeFeeRewardsEnabled === "boolean" ? user.tradeFeeRewardsEnabled : undefined,
+    tradeFeeShareBps:
+      typeof user.tradeFeeShareBps === "number" && Number.isFinite(user.tradeFeeShareBps)
+        ? user.tradeFeeShareBps
+        : undefined,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
+    createdAt: typeof user.createdAt === "string" ? user.createdAt : null,
+  };
 }
 
 function emitAuthSessionSynced(user: AuthUser): void {
@@ -407,13 +451,7 @@ async function fetchSession(): Promise<AuthUser | null> {
       // /api/me returns user data directly wrapped in { data: user }
       const user = data.data || data;
       if (user && user.id) {
-        const authUser = {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-          isVerified: user.isVerified,
-        };
+        const authUser = toAuthUser(user);
         writeCachedAuthUser(authUser);
         return authUser;
       }
@@ -457,15 +495,6 @@ async function fetchSession(): Promise<AuthUser | null> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>(() => {
     const cachedUser = readCachedAuthUser();
-    const hasBackendArtifact = hasBackendSessionArtifact();
-    if (cachedUser && !hasBackendArtifact) {
-      clearCachedAuthUser();
-      return {
-        user: null,
-        isLoading: true,
-        isAuthenticated: false,
-      };
-    }
     return {
       user: cachedUser,
       isLoading: !cachedUser,
@@ -536,6 +565,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
+    const logoutToken = getStoredAuthToken();
+
     for (const hook of preLogoutHooks) {
       try {
         await hook();
@@ -547,8 +578,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     explicitLogoutAt = Date.now();
     clearStoredAuthToken();
     clearCachedAuthUser();
+    clearSessionCacheByPrefix("phew.");
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
+    privySyncInFlight = null;
     lastPrivySyncAt = 0;
     lastSuccessfulSessionAt = 0;
     unauthorizedSessionFailures = 0;
@@ -559,7 +592,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     try {
-      await signOut();
+      await signOut({ token: logoutToken });
     } catch (error) {
       console.error("[Auth] Logout error:", error);
     }
@@ -651,7 +684,7 @@ export function usePrivyAuth() {
       ? {
           id: auth.user.id,
           email: auth.user.email,
-          walletAddress: null,
+          walletAddress: auth.user.walletAddress ?? null,
           linkedAccounts: [],
         }
       : null,
@@ -829,6 +862,7 @@ export async function syncPrivySession(
   }
 
   const maxAttempts = PRIVY_SYNC_RETRY_DELAYS_MS.length + 1;
+  const syncStartedAt = Date.now();
 
   privySyncInFlight = (async () => {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -883,6 +917,11 @@ export async function syncPrivySession(
           throw new Error(message);
         }
 
+        const syncedUser = toAuthUser(data.user);
+        if (explicitLogoutAt > syncStartedAt) {
+          throw new Error("Session sync completed after logout");
+        }
+
         // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
         lastPrivySyncAt = Date.now();
         lastSuccessfulSessionAt = Date.now();
@@ -892,9 +931,9 @@ export async function syncPrivySession(
 
         // Store the session token for Bearer auth fallback
         setStoredAuthToken(data.token);
-        writeCachedAuthUser(data.user);
-        emitAuthSessionSynced(data.user);
-        return { token: data.token, user: data.user };
+        writeCachedAuthUser(syncedUser);
+        emitAuthSessionSynced(syncedUser);
+        return { token: data.token, user: syncedUser };
       } catch (error) {
         const isAbort = error instanceof Error && error.name === "AbortError";
         const message = error instanceof Error ? error.message : String(error);

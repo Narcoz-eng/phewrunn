@@ -63,7 +63,6 @@ type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
 type ProfileViewTab = "profile" | "settings";
 const PROFILE_ME_CACHE_TTL_MS = 60_000;
-const PROFILE_ME_LAST_CACHE_KEY = "phew.profile.me:last";
 const PROFILE_POSTS_CACHE_TTL_MS = 45_000;
 const PROFILE_WALLET_CACHE_TTL_MS = 60_000;
 
@@ -171,18 +170,13 @@ export default function Profile() {
     () => (meProfileCacheKey ? readSessionCache<ExtendedUser>(meProfileCacheKey, PROFILE_ME_CACHE_TTL_MS) : null),
     [meProfileCacheKey]
   );
-  const cachedProfileLast = useMemo(
-    () => readSessionCache<ExtendedUser>(PROFILE_ME_LAST_CACHE_KEY, PROFILE_ME_CACHE_TTL_MS),
-    []
-  );
-  const cachedProfile = cachedProfileBySession ?? cachedProfileLast;
   const sessionBackedProfile = useMemo<ExtendedUser | null>(() => {
-    if (!session?.user) return cachedProfile;
+    if (!session?.user) return cachedProfileBySession;
     return {
-      ...(cachedProfile ?? {}),
+      ...(cachedProfileBySession ?? {}),
       ...session.user,
     };
-  }, [cachedProfile, session?.user]);
+  }, [cachedProfileBySession, session?.user]);
   const cachedPosts = useMemo(
     () =>
       session?.user?.id
@@ -368,7 +362,6 @@ export default function Profile() {
 
   useEffect(() => {
     if (!user || !isUserFetched) return;
-    writeSessionCache(PROFILE_ME_LAST_CACHE_KEY, user);
     if (meProfileCacheKey) {
       writeSessionCache(meProfileCacheKey, user);
     }

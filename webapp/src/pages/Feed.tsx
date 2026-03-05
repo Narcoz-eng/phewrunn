@@ -165,7 +165,39 @@ export default function Feed() {
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
-  const cachedFeedUser = readSessionCache<User>(FEED_CURRENT_USER_CACHE_KEY, FEED_CURRENT_USER_CACHE_TTL_MS);
+  const feedCurrentUserCacheKey = useMemo(
+    () => (session?.user?.id ? `${FEED_CURRENT_USER_CACHE_KEY}:${session.user.id}` : null),
+    [session?.user?.id]
+  );
+  const cachedFeedUser = useMemo(
+    () =>
+      feedCurrentUserCacheKey
+        ? readSessionCache<User>(feedCurrentUserCacheKey, FEED_CURRENT_USER_CACHE_TTL_MS)
+        : null,
+    [feedCurrentUserCacheKey]
+  );
+  const sessionBackedUser = useMemo<User | null>(() => {
+    if (!session?.user) return cachedFeedUser;
+    return {
+      id: session.user.id,
+      name: session.user.name,
+      email: session.user.email,
+      image: session.user.image ?? null,
+      walletAddress: session.user.walletAddress ?? cachedFeedUser?.walletAddress ?? null,
+      username: session.user.username ?? cachedFeedUser?.username ?? null,
+      level: session.user.level ?? cachedFeedUser?.level ?? 0,
+      xp: session.user.xp ?? cachedFeedUser?.xp ?? 0,
+      bio: session.user.bio ?? cachedFeedUser?.bio ?? null,
+      isAdmin: session.user.isAdmin ?? cachedFeedUser?.isAdmin ?? false,
+      isVerified: session.user.isVerified ?? cachedFeedUser?.isVerified,
+      tradeFeeRewardsEnabled:
+        session.user.tradeFeeRewardsEnabled ?? cachedFeedUser?.tradeFeeRewardsEnabled,
+      tradeFeeShareBps: session.user.tradeFeeShareBps ?? cachedFeedUser?.tradeFeeShareBps,
+      tradeFeePayoutAddress:
+        session.user.tradeFeePayoutAddress ?? cachedFeedUser?.tradeFeePayoutAddress ?? null,
+      createdAt: session.user.createdAt ?? cachedFeedUser?.createdAt ?? new Date(0).toISOString(),
+    };
+  }, [cachedFeedUser, session?.user]);
 
   const getFeedQueryKey = useCallback((tab: FeedTab, search: string) => ["posts", tab, search] as const, []);
 
@@ -291,23 +323,23 @@ export default function Feed() {
     refetch: refetchUser,
     isFetched: isUserFetched,
   } = useQuery({
-    queryKey: ["currentUser"],
+    queryKey: ["currentUser", session?.user?.id ?? "anonymous"],
     queryFn: async () => {
       try {
         return await api.get<User>("/api/me");
       } catch (error) {
-        if (cachedFeedUser) {
+        if (sessionBackedUser) {
           if (!(error instanceof ApiError)) {
-            return cachedFeedUser;
+            return sessionBackedUser;
           }
           if (error.status !== 401 && error.status !== 403) {
-            return cachedFeedUser;
+            return sessionBackedUser;
           }
         }
         throw error;
       }
     },
-    initialData: cachedFeedUser ?? undefined,
+    initialData: sessionBackedUser ?? undefined,
     enabled: !!session?.user,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 429)) {
@@ -322,9 +354,9 @@ export default function Feed() {
   });
 
   useEffect(() => {
-    if (!isUserFetched || !user) return;
-    writeSessionCache(FEED_CURRENT_USER_CACHE_KEY, user);
-  }, [isUserFetched, user]);
+    if (!isUserFetched || !user || !feedCurrentUserCacheKey) return;
+    writeSessionCache(feedCurrentUserCacheKey, user);
+  }, [feedCurrentUserCacheKey, isUserFetched, user]);
 
   // Fetch posts with React Query
   const {

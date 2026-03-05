@@ -225,9 +225,12 @@ const AUTH_RESPONSE_USER_SELECT = {
   image: true,
   walletAddress: true,
   walletProvider: true,
+  username: true,
   level: true,
   xp: true,
+  isAdmin: true,
   isVerified: true,
+  createdAt: true,
 } as const;
 
 const AUTH_RESPONSE_USER_FALLBACK_SELECT = {
@@ -250,14 +253,21 @@ type AuthResponseUser = {
   image: string | null;
   walletAddress: string | null;
   walletProvider: string | null;
+  username: string | null;
   level: number;
   xp: number;
+  isAdmin: boolean;
   isVerified: boolean;
+  createdAt: Date;
 };
 
 function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserClaims {
   const normalizedName = user.name.trim();
   const normalizedEmail = user.email.trim().toLowerCase();
+  const createdAtIso =
+    user.createdAt instanceof Date && !Number.isNaN(user.createdAt.getTime())
+      ? user.createdAt.toISOString()
+      : null;
   return {
     // Keep claims compact to avoid oversized cookie/header payloads.
     // The database remains the source of truth for full user profile fields.
@@ -266,9 +276,12 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
     image: user.image,
     walletAddress: user.walletAddress,
     walletProvider: user.walletProvider,
+    username: user.username,
     level: user.level,
     xp: user.xp,
+    isAdmin: user.isAdmin,
     isVerified: user.isVerified,
+    createdAt: createdAtIso,
   };
 }
 
@@ -444,9 +457,12 @@ function normalizeAuthResponseUser(
     image?: string | null;
     walletAddress?: string | null;
     walletProvider?: string | null;
+    username?: string | null;
     level?: number | null;
     xp?: number | null;
+    isAdmin?: boolean | null;
     isVerified?: boolean | null;
+    createdAt?: Date | null;
   }
 ): AuthResponseUser {
   return {
@@ -456,9 +472,12 @@ function normalizeAuthResponseUser(
     image: user.image ?? null,
     walletAddress: user.walletAddress ?? null,
     walletProvider: user.walletProvider ?? null,
+    username: user.username ?? null,
     level: user.level ?? 0,
     xp: user.xp ?? 0,
+    isAdmin: user.isAdmin ?? false,
     isVerified: user.isVerified ?? false,
+    createdAt: user.createdAt ?? new Date(),
   };
 }
 
@@ -480,9 +499,12 @@ function toAuthResponseUserFromSessionUser(
         image: string | null;
         walletAddress: string | null;
         walletProvider: string | null;
+        username?: string | null;
         level: number;
         xp: number;
+        isAdmin?: boolean;
         isVerified: boolean;
+        createdAt?: Date;
       }
     | null
     | undefined
@@ -497,9 +519,12 @@ function toAuthResponseUserFromSessionUser(
     image: sessionUser.image,
     walletAddress: sessionUser.walletAddress,
     walletProvider: sessionUser.walletProvider,
+    username: sessionUser.username,
     level: sessionUser.level,
     xp: sessionUser.xp,
+    isAdmin: sessionUser.isAdmin,
     isVerified: sessionUser.isVerified,
+    createdAt: sessionUser.createdAt,
   });
 }
 
@@ -902,40 +927,7 @@ function applySessionCookies(c: Context, sessionToken: string): void {
   const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
   const cookies: string[] = [];
 
-  // Clear host-only stale session cookies that can coexist with domain cookies.
-  cookies.push(
-    buildSessionCookie({
-      name: "phew.session_token",
-      value: "",
-      maxAgeSeconds: 0,
-      secure: isProd,
-    })
-  );
-  for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
-    cookies.push(
-      buildSessionCookie({
-        name: cookieName,
-        value: "",
-        maxAgeSeconds: 0,
-        secure: isProd,
-      })
-    );
-  }
-
-  // Clear legacy domain-wide cookies from older auth implementations.
-  if (cookieDomain) {
-    for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
-      cookies.push(
-        buildSessionCookie({
-          name: cookieName,
-          value: "",
-          domain: cookieDomain,
-          maxAgeSeconds: 0,
-          secure: isProd,
-        })
-      );
-    }
-  }
+  cookies.push(...buildClearedSessionCookies(c.req.header("host")));
 
   // Set the canonical session cookie last so it wins within the response.
   cookies.push(
@@ -951,6 +943,55 @@ function applySessionCookies(c: Context, sessionToken: string): void {
   cookies.forEach((cookie, index) => {
     c.header("Set-Cookie", cookie, index === 0 ? undefined : { append: true });
   });
+}
+
+function buildClearedSessionCookies(hostHeader: string | undefined): string[] {
+  const isProd = process.env.NODE_ENV === "production";
+  const cookieDomain = resolveSessionCookieDomain(hostHeader);
+  const cookies: string[] = [
+    buildSessionCookie({
+      name: "phew.session_token",
+      value: "",
+      maxAgeSeconds: 0,
+      secure: isProd,
+    }),
+  ];
+
+  for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
+    cookies.push(
+      buildSessionCookie({
+        name: cookieName,
+        value: "",
+        maxAgeSeconds: 0,
+        secure: isProd,
+      })
+    );
+  }
+
+  if (cookieDomain) {
+    cookies.push(
+      buildSessionCookie({
+        name: "phew.session_token",
+        value: "",
+        domain: cookieDomain,
+        maxAgeSeconds: 0,
+        secure: isProd,
+      })
+    );
+    for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
+      cookies.push(
+        buildSessionCookie({
+          name: cookieName,
+          value: "",
+          domain: cookieDomain,
+          maxAgeSeconds: 0,
+          secure: isProd,
+        })
+      );
+    }
+  }
+
+  return cookies;
 }
 
 function resolveSessionCookieDomain(hostHeader: string | undefined): string | null {
@@ -1714,7 +1755,11 @@ app.post("/api/auth/logout", async (c) => {
   try {
     const result = await auth.api.signOut({ headers: c.req.raw.headers });
 
-    result.clearedCookies.forEach((cookie, index) => {
+    const clearedCookies = [
+      ...result.clearedCookies,
+      ...buildClearedSessionCookies(c.req.header("host")),
+    ];
+    clearedCookies.forEach((cookie, index) => {
       c.header("Set-Cookie", cookie, index === 0 ? undefined : { append: true });
     });
 

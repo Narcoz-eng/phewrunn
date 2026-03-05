@@ -39,14 +39,31 @@ export default function Leaderboard() {
   const { data: session } = useSession();
   const { signOut } = useAuth();
   const { logout: privyLogout } = usePrivy();
+  const sessionBackedUser = session?.user
+    ? {
+        id: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+        image: session.user.image ?? null,
+        walletAddress: session.user.walletAddress ?? null,
+        username: session.user.username ?? null,
+        level: session.user.level ?? 0,
+        xp: session.user.xp ?? 0,
+        bio: session.user.bio ?? null,
+        isAdmin: session.user.isAdmin ?? false,
+        isVerified: session.user.isVerified,
+        createdAt: session.user.createdAt ?? new Date(0).toISOString(),
+      }
+    : null;
 
   // Fetch current user
   const { data: user } = useQuery({
-    queryKey: ["currentUser"],
+    queryKey: ["currentUser", session?.user?.id ?? "anonymous"],
     queryFn: async () => {
       const data = await api.get<User>("/api/me");
       return data;
     },
+    initialData: sessionBackedUser ?? undefined,
     enabled: !!session?.user,
     staleTime: 30000,
     refetchOnWindowFocus: false,

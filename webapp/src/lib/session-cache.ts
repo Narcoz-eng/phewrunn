@@ -34,3 +34,22 @@ export function writeSessionCache<T>(key: string, data: T): void {
   }
 }
 
+export function clearSessionCacheByPrefix(prefix: string): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    const keysToClear: string[] = [];
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (typeof key === "string" && key.startsWith(prefix)) {
+        keysToClear.push(key);
+      }
+    }
+
+    for (const key of keysToClear) {
+      window.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore privacy mode / storage access issues
+  }
+}
