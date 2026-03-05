@@ -36,35 +36,35 @@ const earlyCallerData = [
   {
     label: "Hour 0",
     tag: "First Caller",
-    users: 320,
+    trades: 320,
     pct: 100,
     color: "bg-gain",
     textColor: "text-gain",
     borderColor: "border-gain/30",
     bgColor: "bg-gain/5",
-    desc: "Maximum reach, maximum earnings",
+    desc: "Most copy-trades happen in the first hour — you capture them all",
   },
   {
     label: "Hour 2",
     tag: "Late Caller",
-    users: 80,
-    pct: 25,
+    trades: 72,
+    pct: 23,
     color: "bg-primary",
     textColor: "text-primary",
     borderColor: "border-primary/30",
     bgColor: "bg-primary/5",
-    desc: "Most early followers already claimed",
+    desc: "Early posts already absorbed the bulk of copy-trade volume",
   },
   {
     label: "Hour 6",
     tag: "Very Late",
-    users: 18,
-    pct: 6,
+    trades: 14,
+    pct: 4,
     color: "bg-muted-foreground",
     textColor: "text-muted-foreground",
     borderColor: "border-border/40",
     bgColor: "bg-background/40",
-    desc: "Minimal followers, minimal fees",
+    desc: "Minimal copy-trades left — minimal fees earned",
   },
 ];
 
@@ -106,21 +106,21 @@ const levelRules = [
 const features = [
   {
     icon: Target,
-    title: "Track Alpha Calls",
+    title: "Post Your Call",
     description:
-      "Log predictions with timestamps and build a public, immutable record.",
+      "Log your alpha with a timestamp. Every call becomes a public, immutable record — no edits, no hindsight.",
   },
   {
     icon: TrendingUp,
-    title: "Measure Real Performance",
+    title: "Earn When They Copy-Trade",
     description:
-      "Show accuracy, ROI signals, and consistency with transparent scoring.",
+      "Every time a trader buys directly from your post, you earn 0.5% of the trade. Automatically. Forever.",
   },
   {
     icon: Users,
-    title: "Build Reputation",
+    title: "Build a Verified Track Record",
     description:
-      "Followers evaluate proof, not hype. Signal rises, noise falls.",
+      "Accuracy scores, win rates, and level progression based on real outcomes — not follower counts.",
   },
 ];
 
@@ -271,27 +271,27 @@ export default function Login() {
               {/* Badge */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary">
                 <Sparkles className="w-3.5 h-3.5" />
-                Verified trading reputation — built in public
+                The first copy-trade platform with real on-chain fees
               </div>
 
               {/* Headline */}
               <div>
                 <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.08]">
-                  Post First.
+                  Post a Call.
                   <br />
                   <span
                     className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent"
                   >
-                    Earn Every Trade.
+                    Get Paid on Every Buy.
                   </span>
                 </h1>
                 <p className="mt-4 text-base sm:text-lg text-muted-foreground leading-relaxed max-w-xl">
-                  Every trader who follows your call earns you{" "}
+                  When traders copy-trade directly from your post, you earn{" "}
                   <span className="text-foreground font-semibold">
-                    0.5% in fees
+                    0.5% of every buy
                   </span>
-                  . No cut taken away. No hindsight. Just a track record that
-                  pays you forever.
+                  . No followers required. Just post your alpha and earn every
+                  time someone acts on it.
                 </p>
               </div>
 
@@ -369,8 +369,8 @@ export default function Login() {
                       </h2>
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed pl-[38px]">
-                      Sign in to post calls and earn 0.5% from every follower
-                      trade.
+                      Post your alpha call and earn 0.5% of every buy executed
+                      directly from your post.
                     </p>
                   </div>
 
@@ -400,25 +400,25 @@ export default function Login() {
                         </span>
                         <div>
                           <div className="text-xs font-semibold text-foreground">
-                            Per Follower Trade
+                            Per Buy From Your Post
                           </div>
                           <div className="text-[11px] text-muted-foreground">
-                            Paid to you, automatically
+                            On-chain. Automatic. Yours.
                           </div>
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-2 text-center">
                         {[
-                          { n: "10", label: "followers", fee: "5%" },
-                          { n: "100", label: "followers", fee: "50%" },
-                          { n: "1K", label: "followers", fee: "500%" },
+                          { n: "$1K", label: "traded from post", fee: "$5" },
+                          { n: "$10K", label: "traded from post", fee: "$50" },
+                          { n: "$100K", label: "traded from post", fee: "$500" },
                         ].map((row) => (
                           <div
                             key={row.n}
                             className="rounded-lg border border-border/40 bg-background/60 py-2 px-1"
                           >
                             <div className="text-sm font-mono font-bold text-gain">
-                              +{row.fee}
+                              {row.fee}
                             </div>
                             <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
                               {row.n}
@@ -465,13 +465,13 @@ export default function Login() {
                   <div className="text-center mb-2">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary mb-3">
                       <Sparkles className="w-3 h-3" />
-                      Fee Model Simulation
+                      Live Copy-Trade Simulation
                     </div>
                     <h3 className="font-heading text-lg font-bold">
-                      Your Follower Network
+                      Trades From Your Post
                     </h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Each orbiting user generates 0.5% for you on every trade
+                      Each trader who buys from your post sends 0.5% to you
                     </p>
                   </div>
                   <FeeOrbit />
@@ -492,15 +492,15 @@ export default function Login() {
                     Timing Is Everything
                   </div>
                   <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
-                    The Earlier You Call,
+                    The Earlier You Post,
                     <br />
                     <span className="text-gradient">The More You Earn.</span>
                   </h2>
                   <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
-                    When you post a call, followers who act on it generate
-                    0.5% fee rewards for you — forever. First callers capture
-                    the bulk of the follower pool. Late callers compete for
-                    scraps.
+                    Copy-trade volume is highest in the first hour after a call
+                    drops. Post first and your post absorbs the lion's share of
+                    buys — each one paying you 0.5%. Late callers fight over
+                    what's left.
                   </p>
                 </div>
 
@@ -529,7 +529,7 @@ export default function Login() {
                           </span>
                         </div>
                         <span className={cn("text-sm font-mono font-bold", row.textColor)}>
-                          {row.users} users
+                          {row.trades} copy-trades
                         </span>
                       </div>
                       {/* Bar */}
@@ -560,12 +560,12 @@ export default function Login() {
                   </div>
                   <div>
                     <div className="text-sm font-semibold text-gain">
-                      Early callers earn up to 17× more
+                      First callers earn up to 23× more in fees
                     </div>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      Being first isn't just a reputation game. It's a revenue
-                      strategy. The sooner you post your call, the larger your
-                      fee-generating follower base.
+                      Copy-trade volume spikes the moment a call is posted and
+                      decays fast. Post first and your post captures the wave.
+                      Every buy through your post is 0.5% straight to your wallet.
                     </p>
                   </div>
                 </div>
@@ -718,7 +718,7 @@ export default function Login() {
             >
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
                 <Sparkles className="w-3.5 h-3.5" />
-                The alpha economy is live
+                Copy-trade fees live on Solana
               </div>
               <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
                 Your Next Call Could
@@ -728,8 +728,8 @@ export default function Login() {
                 </span>
               </h2>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Sign up free. Post your first call. Watch the fees roll in as
-                followers act on your alpha.
+                Sign up free. Post your first call. Every trader who buys from
+                your post sends 0.5% straight to your wallet — forever.
               </p>
               <div className="pt-2">
                 {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}

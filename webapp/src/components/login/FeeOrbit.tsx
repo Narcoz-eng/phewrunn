@@ -2,54 +2,78 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
-interface OrbitalUser {
+// Each incoming trade: wallet address fragment + buy amount
+interface IncomingTrade {
   id: number;
-  radius: number;
-  duration: number;
-  initAngle: number;
-  label: string;
+  angle: number;       // degrees (where it enters from)
+  radius: number;      // orbit radius
+  duration: number;    // orbital speed
+  initAngle: number;   // starting angle
+  label: string;       // short wallet
+  amount: string;      // buy size
 }
 
-const ORBITAL_USERS: OrbitalUser[] = [
-  { id: 1, radius: 90, duration: 14, initAngle: 0, label: "@whale" },
-  { id: 2, radius: 82, duration: 10, initAngle: 45, label: "@bull" },
-  { id: 3, radius: 95, duration: 18, initAngle: 90, label: "@degen" },
-  { id: 4, radius: 86, duration: 12, initAngle: 135, label: "@alpha" },
-  { id: 5, radius: 91, duration: 16, initAngle: 180, label: "@hodl" },
-  { id: 6, radius: 83, duration: 11, initAngle: 225, label: "@moon" },
-  { id: 7, radius: 88, duration: 15, initAngle: 270, label: "@chad" },
-  { id: 8, radius: 79, duration: 13, initAngle: 315, label: "@ape" },
+const TRADERS: IncomingTrade[] = [
+  { id: 1, radius: 90, duration: 13, initAngle: 0,   label: "0x3f..a1", amount: "$420" },
+  { id: 2, radius: 82, duration: 10, initAngle: 40,  label: "0x7c..b9", amount: "$85"  },
+  { id: 3, radius: 95, duration: 17, initAngle: 90,  label: "0xd2..44", amount: "$1.2K"},
+  { id: 4, radius: 86, duration: 11, initAngle: 140, label: "0xa8..f3", amount: "$230" },
+  { id: 5, radius: 91, duration: 15, initAngle: 185, label: "0x5e..c7", amount: "$660" },
+  { id: 6, radius: 83, duration: 12, initAngle: 225, label: "0x1b..e0", amount: "$90"  },
+  { id: 7, radius: 88, duration: 16, initAngle: 270, label: "0x9a..77", amount: "$3.5K"},
+  { id: 8, radius: 79, duration: 14, initAngle: 315, label: "0x4f..2d", amount: "$175" },
+];
+
+// Recent buy feed
+const BUY_LABELS = [
+  "0x3f..a1 copied → $420",
+  "0x9a..77 copied → $3.5K",
+  "0xd2..44 copied → $1.2K",
+  "0x5e..c7 copied → $660",
+  "0x7c..b9 copied → $85",
+  "0xa8..f3 copied → $230",
 ];
 
 export function FeeOrbit() {
   const [visibleCount, setVisibleCount] = useState(0);
   const [totalFees, setTotalFees] = useState(0);
+  const [tradeCount, setTradeCount] = useState(0);
   const [activePulse, setActivePulse] = useState<number | null>(null);
   const [particleKey, setParticleKey] = useState(0);
   const [particleAngle, setParticleAngle] = useState(0);
   const [particleRadius, setParticleRadius] = useState(90);
+  const [lastBuy, setLastBuy] = useState<string | null>(null);
+  const [buyFeedKey, setBuyFeedKey] = useState(0);
 
-  // Users appear one by one with stagger
+  // Traders appear one by one
   useEffect(() => {
-    if (visibleCount >= ORBITAL_USERS.length) return;
+    if (visibleCount >= TRADERS.length) return;
     const t = setTimeout(() => setVisibleCount((v) => v + 1), 300);
     return () => clearTimeout(t);
   }, [visibleCount]);
 
-  // Fee accumulation loop
+  // Trade execution loop — someone buys from the post
   useEffect(() => {
     if (visibleCount === 0) return;
     const interval = setInterval(() => {
       const idx = Math.floor(Math.random() * visibleCount);
-      const user = ORBITAL_USERS[idx];
-      if (!user) return;
+      const trader = TRADERS[idx];
+      if (!trader) return;
+
       setActivePulse(idx);
-      setParticleAngle(user.initAngle);
-      setParticleRadius(user.radius);
+      setParticleAngle(trader.initAngle);
+      setParticleRadius(trader.radius);
       setParticleKey((k) => k + 1);
       setTotalFees((prev) => prev + 0.5);
+      setTradeCount((prev) => prev + 1);
+
+      // Show buy feed
+      const label = BUY_LABELS[idx % BUY_LABELS.length];
+      setLastBuy(label ?? null);
+      setBuyFeedKey((k) => k + 1);
+
       setTimeout(() => setActivePulse(null), 700);
-    }, 700);
+    }, 800);
     return () => clearInterval(interval);
   }, [visibleCount]);
 
@@ -60,50 +84,42 @@ export function FeeOrbit() {
 
   return (
     <div className="select-none">
-      {/* Label */}
+      {/* Top label */}
       <div className="text-center mb-3">
         <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
           <span className="inline-block w-2 h-2 rounded-full bg-gain animate-pulse" />
-          Live simulation — every follower generates 0.5% fee
+          Live sim — traders buying from this post
         </div>
       </div>
 
+      {/* Canvas */}
       <div className="relative w-[260px] h-[260px] mx-auto">
-        {/* Background orbital rings */}
+        {/* Orbital rings */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
           viewBox="0 0 260 260"
           fill="none"
         >
           <circle
-            cx="130"
-            cy="130"
-            r="82"
+            cx="130" cy="130" r="82"
             stroke="hsl(var(--primary)/0.18)"
-            strokeWidth="1"
-            strokeDasharray="4 8"
+            strokeWidth="1" strokeDasharray="4 8"
           />
           <circle
-            cx="130"
-            cy="130"
-            r="97"
+            cx="130" cy="130" r="97"
             stroke="hsl(var(--primary)/0.08)"
-            strokeWidth="1"
-            strokeDasharray="3 12"
+            strokeWidth="1" strokeDasharray="3 12"
           />
-          {/* Radial connection lines (static) */}
-          {ORBITAL_USERS.slice(0, visibleCount).map((user) => {
-            const rad = (user.initAngle * Math.PI) / 180;
-            const x = 130 + Math.cos(rad) * user.radius;
-            const y = 130 + Math.sin(rad) * user.radius;
+          {/* "buy" flow lines — trader → post */}
+          {TRADERS.slice(0, visibleCount).map((trader) => {
+            const rad = (trader.initAngle * Math.PI) / 180;
+            const x = 130 + Math.cos(rad) * trader.radius;
+            const y = 130 + Math.sin(rad) * trader.radius;
             return (
               <motion.line
-                key={user.id}
-                x1="130"
-                y1="130"
-                x2={x}
-                y2={y}
-                stroke="hsl(var(--gain)/0.18)"
+                key={trader.id}
+                x1={x} y1={y} x2="130" y2="130"
+                stroke="hsl(var(--gain)/0.2)"
                 strokeWidth="0.75"
                 strokeDasharray="3 5"
                 initial={{ opacity: 0 }}
@@ -114,28 +130,28 @@ export function FeeOrbit() {
           })}
         </svg>
 
-        {/* Orbiting users */}
-        {ORBITAL_USERS.slice(0, visibleCount).map((user, i) => (
+        {/* Orbiting traders */}
+        {TRADERS.slice(0, visibleCount).map((trader, i) => (
           <motion.div
-            key={user.id}
+            key={trader.id}
             className="absolute top-1/2 left-1/2"
             style={{
-              width: user.radius * 2,
-              height: user.radius * 2,
-              marginLeft: -user.radius,
-              marginTop: -user.radius,
+              width: trader.radius * 2,
+              height: trader.radius * 2,
+              marginLeft: -trader.radius,
+              marginTop: -trader.radius,
             }}
             initial={{ opacity: 0, scale: 0.3 }}
             animate={{
               opacity: 1,
               scale: 1,
-              rotate: [user.initAngle, user.initAngle + 360],
+              rotate: [trader.initAngle, trader.initAngle + 360],
             }}
             transition={{
               opacity: { duration: 0.3 },
               scale: { duration: 0.3 },
               rotate: {
-                duration: user.duration,
+                duration: trader.duration,
                 ease: "linear",
                 repeat: Infinity,
               },
@@ -143,31 +159,44 @@ export function FeeOrbit() {
           >
             <motion.div
               className={cn(
-                "absolute w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold transition-colors duration-200 text-[9px]",
+                "absolute flex flex-col items-center justify-center rounded-lg border px-1.5 py-1 text-center",
                 activePulse === i
-                  ? "bg-gain/20 border-gain/60 text-gain"
+                  ? "bg-gain/20 border-gain/50 text-gain"
                   : "bg-card border-border/60 text-muted-foreground"
               )}
-              style={{ top: -16, left: "50%", marginLeft: -16 }}
+              style={{
+                top: -18,
+                left: "50%",
+                marginLeft: -22,
+                width: 44,
+                minHeight: 28,
+              }}
               animate={{
-                rotate: [-user.initAngle, -(user.initAngle + 360)],
+                rotate: [-trader.initAngle, -(trader.initAngle + 360)],
               }}
               transition={{
-                duration: user.duration,
+                duration: trader.duration,
                 ease: "linear",
                 repeat: Infinity,
               }}
             >
-              {user.label.slice(1, 3).toUpperCase()}
+              <span className="text-[8px] font-mono leading-none">
+                {activePulse === i ? "BUY ↗" : trader.label}
+              </span>
+              {activePulse === i && (
+                <span className="text-[8px] font-bold leading-none">
+                  {trader.amount}
+                </span>
+              )}
             </motion.div>
           </motion.div>
         ))}
 
-        {/* Fee particle flying to center */}
+        {/* Fee particle flying from trade → you (center) */}
         <AnimatePresence>
           <motion.div
             key={particleKey}
-            className="absolute top-1/2 left-1/2 w-3 h-3 rounded-full bg-gain pointer-events-none z-20"
+            className="absolute top-1/2 left-1/2 w-3 h-3 rounded-full bg-gain pointer-events-none z-20 flex items-center justify-center"
             style={{ marginLeft: -6, marginTop: -6 }}
             initial={{ x: particleStartX, y: particleStartY, opacity: 1, scale: 1.8 }}
             animate={{ x: 0, y: 0, opacity: 0, scale: 0 }}
@@ -176,10 +205,10 @@ export function FeeOrbit() {
           />
         </AnimatePresence>
 
-        {/* Center caller node */}
+        {/* Center — YOUR POST node */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
           <motion.div
-            className="w-[66px] h-[66px] rounded-full bg-card border-2 border-primary/60 flex flex-col items-center justify-center gap-0.5 shadow-glow-sm"
+            className="w-[72px] h-[72px] rounded-2xl bg-card border-2 border-primary/60 flex flex-col items-center justify-center gap-0.5 shadow-glow-sm"
             animate={{
               boxShadow: [
                 "0 0 0px 0 hsl(var(--primary)/0.4)",
@@ -189,11 +218,14 @@ export function FeeOrbit() {
             }}
             transition={{ duration: 2.5, repeat: Infinity }}
           >
-            <span className="text-[8px] font-semibold text-muted-foreground uppercase tracking-widest">
-              YOU
+            <span className="text-[8px] font-semibold text-muted-foreground uppercase tracking-widest leading-none">
+              YOUR
+            </span>
+            <span className="text-[8px] font-semibold text-muted-foreground uppercase tracking-widest leading-none">
+              POST
             </span>
             <motion.span
-              className="text-[12px] font-mono font-bold text-gain leading-none"
+              className="text-[11px] font-mono font-bold text-gain leading-none mt-1"
               key={totalFees}
               initial={{ y: -3, opacity: 0.6 }}
               animate={{ y: 0, opacity: 1 }}
@@ -205,8 +237,35 @@ export function FeeOrbit() {
         </div>
       </div>
 
+      {/* Buy feed ticker */}
+      <div className="mt-3 h-6 overflow-hidden rounded-lg border border-border/40 bg-card/50 px-3 flex items-center">
+        <AnimatePresence mode="wait">
+          {lastBuy ? (
+            <motion.div
+              key={buyFeedKey}
+              className="text-[11px] text-gain font-mono w-full"
+              initial={{ y: 10, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -10, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              ↗ {lastBuy} → <span className="text-foreground font-bold">+0.5%</span> to you
+            </motion.div>
+          ) : (
+            <motion.div
+              key="idle"
+              className="text-[11px] text-muted-foreground w-full"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              Waiting for trades from your post…
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       {/* Stats row */}
-      <div className="flex gap-3 mt-4">
+      <div className="flex gap-3 mt-3">
         <div className="flex-1 rounded-xl border border-gain/20 bg-gain/5 p-3 text-center">
           <motion.div
             className="text-xl font-mono font-bold text-gain"
@@ -217,15 +276,11 @@ export function FeeOrbit() {
           >
             +{totalFees.toFixed(1)}%
           </motion.div>
-          <div className="text-[11px] text-muted-foreground mt-0.5">
-            Fees Earned
-          </div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Fees Earned</div>
         </div>
         <div className="flex-1 rounded-xl border border-border/50 bg-card/60 p-3 text-center">
-          <div className="text-xl font-mono font-bold">{visibleCount}</div>
-          <div className="text-[11px] text-muted-foreground mt-0.5">
-            Followers
-          </div>
+          <div className="text-xl font-mono font-bold">{tradeCount}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Trades from Post</div>
         </div>
       </div>
     </div>
