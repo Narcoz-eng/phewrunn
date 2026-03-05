@@ -31,19 +31,13 @@ function hasStoredAuthHint(): boolean {
  */
 const TOKEN_HYDRATION_GRACE_MS = 4_000;
 
-function hasStoredAuthHint(): boolean {
-  try {
-    if (localStorage.getItem("auth-token")) return true;
-  } catch { /* ignore */ }
-  try {
-    if (sessionStorage.getItem("phew.auth.session.v1")) return true;
-  } catch { /* ignore */ }
-  return false;
-}
-
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
-  const hadTokenHint = useRef(hasStoredAuthHint());
+  const hadTokenHint = useRef((() => {
+    try { if (localStorage.getItem("auth-token")) return true; } catch { /* ignore */ }
+    try { if (sessionStorage.getItem("phew.auth.session.v1")) return true; } catch { /* ignore */ }
+    return false;
+  })());
   const [graceExpired, setGraceExpired] = useState(false);
 
   // Start a grace timer if we had a token hint but no session yet.
