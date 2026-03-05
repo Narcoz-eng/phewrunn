@@ -174,7 +174,28 @@ export default function Profile() {
     if (!session?.user) return cachedProfileBySession;
     return {
       ...(cachedProfileBySession ?? {}),
-      ...session.user,
+      id: session.user.id,
+      name: session.user.name,
+      email: session.user.email,
+      image: session.user.image ?? cachedProfileBySession?.image ?? null,
+      walletAddress: session.user.walletAddress ?? cachedProfileBySession?.walletAddress ?? null,
+      username: session.user.username ?? cachedProfileBySession?.username ?? null,
+      level: session.user.level ?? cachedProfileBySession?.level ?? 0,
+      xp: session.user.xp ?? cachedProfileBySession?.xp ?? 0,
+      bio: session.user.bio ?? cachedProfileBySession?.bio ?? null,
+      isAdmin: session.user.isAdmin ?? cachedProfileBySession?.isAdmin ?? false,
+      isVerified: session.user.isVerified ?? cachedProfileBySession?.isVerified,
+      tradeFeeRewardsEnabled:
+        session.user.tradeFeeRewardsEnabled ?? cachedProfileBySession?.tradeFeeRewardsEnabled,
+      tradeFeeShareBps: session.user.tradeFeeShareBps ?? cachedProfileBySession?.tradeFeeShareBps,
+      tradeFeePayoutAddress:
+        session.user.tradeFeePayoutAddress ?? cachedProfileBySession?.tradeFeePayoutAddress ?? null,
+      createdAt: session.user.createdAt ?? cachedProfileBySession?.createdAt ?? new Date(0).toISOString(),
+      followersCount: cachedProfileBySession?.followersCount,
+      followingCount: cachedProfileBySession?.followingCount,
+      postsCount: cachedProfileBySession?.postsCount,
+      winsCount: cachedProfileBySession?.winsCount,
+      lossesCount: cachedProfileBySession?.lossesCount,
     };
   }, [cachedProfileBySession, session?.user]);
   const cachedPosts = useMemo(
@@ -777,7 +798,7 @@ export default function Profile() {
       return value;
     }
   };
-  const shouldShowProfileSignInState = !session?.user && !cachedProfile;
+  const shouldShowProfileSignInState = !session?.user && !cachedProfileBySession;
 
   return (
     <div className="min-h-screen bg-background">

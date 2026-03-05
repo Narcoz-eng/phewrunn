@@ -1,4 +1,4 @@
-import { Component, createContext, useContext, type ReactNode, type ErrorInfo } from "react";
+import { Component, createContext, useContext, type ErrorInfo, type ReactNode } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
 
 interface PrivyWalletProviderProps {
@@ -10,7 +10,6 @@ interface ErrorBoundaryState {
   error?: Error;
 }
 
-// Context to signal whether Privy is available
 export const PrivyAvailableContext = createContext<boolean>(false);
 
 export function usePrivyAvailable() {
@@ -31,7 +30,6 @@ class PrivyErrorBoundary extends Component<PrivyWalletProviderProps, ErrorBounda
   render() {
     if (this.state.hasError) {
       console.warn("[PrivyWalletProvider] Privy failed to initialize, falling back to non-Privy mode");
-      // Render children but signal Privy is NOT available
       return (
         <PrivyAvailableContext.Provider value={false}>
           {this.props.children}
@@ -46,7 +44,7 @@ function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
   const appId = import.meta.env.VITE_PRIVY_APP_ID as string | undefined;
 
   if (!appId) {
-    console.warn("[PrivyWalletProvider] Missing VITE_PRIVY_APP_ID — Privy login disabled");
+    console.warn("[PrivyWalletProvider] Missing VITE_PRIVY_APP_ID - Privy login disabled");
     return (
       <PrivyAvailableContext.Provider value={false}>
         {children}
@@ -61,7 +59,9 @@ function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
         appearance: {
           theme: "dark",
         },
+        loginMethods: ["email", "twitter"],
         embeddedWallets: {
+          showWalletUIs: false,
           ethereum: { createOnLogin: "off" },
           solana: { createOnLogin: "off" },
         },

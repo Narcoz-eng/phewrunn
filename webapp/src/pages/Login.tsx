@@ -300,28 +300,58 @@ function PrivyLoginButton() {
     onSuccess: () => navigate("/", { replace: true }),
   });
   const isLoading = isSyncing;
+  const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
+  const xLabel = privyReady ? "Continue with X" : "Initialize X";
 
   return (
-    <div className="space-y-2">
-      <Button
-        type="button"
-        className="w-full h-14 rounded-2xl border border-white/20 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] text-slate-950 font-semibold gap-3 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.85)] transition-all duration-300 text-sm hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_28px_70px_-28px_rgba(152,233,220,0.95)]"
-        onClick={login}
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Signing in…
-          </>
-        ) : (
-          <>
-            <Mail className="w-4 h-4" />
-            {privyReady ? "Sign in with Email" : "Initialize Sign In"}
-            <ArrowRight className="w-4 h-4" />
-          </>
-        )}
-      </Button>
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Button
+          type="button"
+          className="h-14 rounded-2xl border border-white/20 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] text-slate-950 font-semibold gap-3 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.85)] transition-all duration-300 text-sm hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_28px_70px_-28px_rgba(152,233,220,0.95)]"
+          onClick={() => login({ loginMethods: ["email"] })}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Signing in...
+            </>
+          ) : (
+            <>
+              <Mail className="w-4 h-4" />
+              {emailLabel}
+              <ArrowRight className="w-4 h-4" />
+            </>
+          )}
+        </Button>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="h-14 rounded-2xl border border-white/20 bg-black/35 text-white font-semibold gap-3 shadow-[0_20px_60px_-34px_rgba(0,0,0,0.95)] transition-all duration-300 text-sm hover:-translate-y-0.5 hover:bg-black/50"
+          onClick={() => login({ loginMethods: ["twitter"] })}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Signing in...
+            </>
+          ) : (
+            <>
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 text-[11px] font-black">
+                X
+              </span>
+              {xLabel}
+              <ArrowRight className="w-4 h-4" />
+            </>
+          )}
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground leading-relaxed">
+        Wallet linking is handled separately in your profile after sign-in.
+      </p>
       {syncError ? (
         <p className="text-[11px] text-red-400 leading-relaxed">{syncError}</p>
       ) : null}
@@ -331,14 +361,25 @@ function PrivyLoginButton() {
 
 function FallbackLoginButton() {
   return (
-    <Button
-      type="button"
-      className="w-full h-14 rounded-2xl font-semibold gap-3 opacity-50"
-      disabled
-    >
-      <Loader2 className="w-4 h-4 animate-spin" />
-      Initializing…
-    </Button>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Button
+        type="button"
+        className="h-14 rounded-2xl font-semibold gap-3 opacity-50"
+        disabled
+      >
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Initializing Email
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        className="h-14 rounded-2xl font-semibold gap-3 opacity-50"
+        disabled
+      >
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Initializing X
+      </Button>
+    </div>
   );
 }
 

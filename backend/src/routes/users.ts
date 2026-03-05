@@ -2115,13 +2115,34 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   return c.json({ data: postsWithSocial });
 });
 
+async function resolveUserIdFromIdentifier(identifier: string): Promise<string | null> {
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { id: identifier },
+        { username: identifier },
+      ],
+    },
+    select: {
+      id: true,
+    },
+  });
+  return user?.id ?? null;
+}
+
 // Follow a user
 usersRouter.post("/:id/follow", requireAuth, async (c) => {
   const currentUser = c.get("user");
-  const targetUserId = c.req.param("id");
+  const targetIdentifier = c.req.param("id");
 
   if (!currentUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const targetUserId = await resolveUserIdFromIdentifier(targetIdentifier);
+
+  if (!targetUserId) {
+    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
   // Cannot follow yourself
@@ -2166,10 +2187,15 @@ usersRouter.post("/:id/follow", requireAuth, async (c) => {
 // Unfollow a user
 usersRouter.delete("/:id/follow", requireAuth, async (c) => {
   const currentUser = c.get("user");
-  const targetUserId = c.req.param("id");
+  const targetIdentifier = c.req.param("id");
 
   if (!currentUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const targetUserId = await resolveUserIdFromIdentifier(targetIdentifier);
+  if (!targetUserId) {
+    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
   // Delete follow

@@ -1,18 +1,17 @@
-﻿import React, { useEffect, useRef } from "react";
-import { getIdentityToken, usePrivy } from "@privy-io/react-auth";
+import React, { useEffect, useRef } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession, registerPreLogoutHook } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
+import {
+  getPrivyDisplayName,
+  getPrivyIdentityTokenFast,
+  getPrivyPrimaryEmail,
+  type PrivyUserLike,
+} from "@/lib/privy-user";
 
 interface AuthInitializerProps {
   children: React.ReactNode;
 }
-
-type PrivyUserLike = {
-  id: string;
-  email?: { address?: string } | null;
-  google?: { name?: string } | null;
-  linkedAccounts?: Array<{ type: string; address?: string }> | null;
-};
 
 const AUTO_SYNC_COOLDOWN_MS = 2500;
 const AUTO_SYNC_MAX_ATTEMPTS = 4;
@@ -71,16 +70,9 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     void (async () => {
       try {
         const privyUser = user as PrivyUserLike;
-        const privyIdToken = await getIdentityToken();
-        const email =
-          privyUser.email?.address ??
-          privyUser.linkedAccounts?.find((account) => account.type === "email")?.address ??
-          undefined;
-        const name =
-          privyUser.google?.name ??
-          (typeof email === "string" && email.includes("@")
-            ? email.split("@")[0]
-            : undefined);
+        const privyIdToken = await getPrivyIdentityTokenFast();
+        const email = getPrivyPrimaryEmail(privyUser);
+        const name = getPrivyDisplayName(privyUser, email);
 
         await syncPrivySession(
           privyUser.id,

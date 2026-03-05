@@ -60,14 +60,14 @@ function hasActiveTradeDialogMarker(): boolean {
   return Boolean(active);
 }
 
-function getFeedFirstPageCacheKey(tab: FeedTab, search: string): string {
-  return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${tab}:${search}`;
+function getFeedFirstPageCacheKey(viewerScope: string, tab: FeedTab, search: string): string {
+  return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${viewerScope}:${tab}:${search}`;
 }
 
-function readCachedFirstFeedPage(tab: FeedTab, search: string): FeedPage | null {
+function readCachedFirstFeedPage(viewerScope: string, tab: FeedTab, search: string): FeedPage | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(getFeedFirstPageCacheKey(tab, search));
+    const raw = window.sessionStorage.getItem(getFeedFirstPageCacheKey(viewerScope, tab, search));
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as {
@@ -91,10 +91,15 @@ function readCachedFirstFeedPage(tab: FeedTab, search: string): FeedPage | null 
   }
 }
 
-function writeCachedFirstFeedPage(tab: FeedTab, search: string, page: FeedPage): void {
+function writeCachedFirstFeedPage(
+  viewerScope: string,
+  tab: FeedTab,
+  search: string,
+  page: FeedPage
+): void {
   if (typeof window === "undefined") return;
   try {
-    const cacheKey = getFeedFirstPageCacheKey(tab, search);
+    const cacheKey = getFeedFirstPageCacheKey(viewerScope, tab, search);
     if (!Array.isArray(page.items) || page.items.length === 0) {
       window.sessionStorage.removeItem(cacheKey);
       return;
@@ -164,7 +169,11 @@ export default function Feed() {
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
-  const cachedFirstPage = readCachedFirstFeedPage(activeTab, effectiveSearchQuery);
+  const feedViewerScope = session?.user?.id ?? "anonymous";
+  const cachedFirstPage = useMemo(
+    () => readCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery),
+    [activeTab, effectiveSearchQuery, feedViewerScope]
+  );
   const feedCurrentUserCacheKey = useMemo(
     () => (session?.user?.id ? `${FEED_CURRENT_USER_CACHE_KEY}:${session.user.id}` : null),
     [session?.user?.id]
@@ -199,7 +208,15 @@ export default function Feed() {
     };
   }, [cachedFeedUser, session?.user]);
 
-  const getFeedQueryKey = useCallback((tab: FeedTab, search: string) => ["posts", tab, search] as const, []);
+  const getFeedQueryKey = useCallback(
+    (tab: FeedTab, search: string, viewerScope: string) =>
+      ["posts", viewerScope, tab, search] as const,
+    []
+  );
+  const activeFeedQueryKey = useMemo(
+    () => getFeedQueryKey(activeTab, effectiveSearchQuery, feedViewerScope),
+    [activeTab, effectiveSearchQuery, feedViewerScope, getFeedQueryKey]
+  );
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") return;
@@ -369,7 +386,7 @@ export default function Feed() {
     fetchNextPage,
     hasNextPage,
   } = useInfiniteQuery({
-    queryKey: getFeedQueryKey(activeTab, effectiveSearchQuery),
+    queryKey: activeFeedQueryKey,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => fetchFeedPage(activeTab, effectiveSearchQuery, pageParam),
     getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
@@ -390,7 +407,7 @@ export default function Feed() {
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchOnMount: false,
+    refetchOnMount: "always",
     refetchInterval: false,
   });
 
@@ -420,12 +437,12 @@ export default function Feed() {
   useEffect(() => {
     const firstPage = postsPages?.pages?.[0];
     if (!firstPage || !session?.user) return;
-    writeCachedFirstFeedPage(activeTab, effectiveSearchQuery, firstPage);
-  }, [activeTab, effectiveSearchQuery, postsPages?.pages, session?.user]);
+    writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, firstPage);
+  }, [activeTab, effectiveSearchQuery, feedViewerScope, postsPages?.pages, session?.user]);
 
   const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
     queryClient.setQueryData<InfiniteData<FeedPage>>(
-      ["posts", activeTab, effectiveSearchQuery],
+      activeFeedQueryKey,
       (oldData) => {
         if (!oldData) return oldData;
         return {
@@ -437,69 +454,74 @@ export default function Feed() {
         };
       }
     );
-  }, [activeTab, effectiveSearchQuery, queryClient]);
+  }, [activeFeedQueryKey, queryClient]);
 
   const applyFirstPageToCache = useCallback(
     (tab: FeedTab, search: string, nextFirstPage: FeedPage) => {
-      queryClient.setQueryData<InfiniteData<FeedPage>>(getFeedQueryKey(tab, search), (oldData) => {
-        if (!oldData || oldData.pages.length === 0) {
+      queryClient.setQueryData<InfiniteData<FeedPage>>(
+        getFeedQueryKey(tab, search, feedViewerScope),
+        (oldData) => {
+          if (!oldData || oldData.pages.length === 0) {
+            return {
+              pages: [nextFirstPage],
+              pageParams: [undefined],
+            };
+          }
+
+          const preserveDisplacedItems = hasLiveOverlay();
+          if (preserveDisplacedItems) {
+            return oldData;
+          }
+          const nextIds = new Set(nextFirstPage.items.map((item) => item.id));
+          const [previousFirstPage, ...restPages] = oldData.pages;
+          const carryOverItems = (previousFirstPage?.items ?? []).filter(
+            (item) => !nextIds.has(item.id)
+          );
+
+          const nextPages: FeedPage[] = [nextFirstPage];
+          const globalSeenIds = new Set(nextFirstPage.items.map((item) => item.id));
+
+          const restWithCarry: FeedPage[] = [];
+          if (carryOverItems.length > 0) {
+            restWithCarry.push({
+              hasMore: true,
+              nextCursor: nextFirstPage.nextCursor ?? null,
+              items: carryOverItems,
+            });
+          }
+          restWithCarry.push(...restPages);
+
+          for (const page of restWithCarry) {
+            const dedupedItems = page.items.filter((item) => {
+              if (nextIds.has(item.id)) return false;
+              if (globalSeenIds.has(item.id)) return false;
+              globalSeenIds.add(item.id);
+              return true;
+            });
+            if (dedupedItems.length === 0) continue;
+            nextPages.push({
+              ...page,
+              items: dedupedItems,
+            });
+          }
+
           return {
-            pages: [nextFirstPage],
-            pageParams: [undefined],
+            ...oldData,
+            pages: nextPages,
           };
         }
-
-        const preserveDisplacedItems = hasLiveOverlay();
-        if (preserveDisplacedItems) {
-          return oldData;
-        }
-        const nextIds = new Set(nextFirstPage.items.map((item) => item.id));
-        const [previousFirstPage, ...restPages] = oldData.pages;
-        const carryOverItems = (previousFirstPage?.items ?? []).filter((item) => !nextIds.has(item.id));
-
-        const nextPages: FeedPage[] = [nextFirstPage];
-        const globalSeenIds = new Set(nextFirstPage.items.map((item) => item.id));
-
-        const restWithCarry: FeedPage[] = [];
-        if (carryOverItems.length > 0) {
-          restWithCarry.push({
-            hasMore: true,
-            nextCursor: nextFirstPage.nextCursor ?? null,
-            items: carryOverItems,
-          });
-        }
-        restWithCarry.push(...restPages);
-
-        for (const page of restWithCarry) {
-          const dedupedItems = page.items.filter((item) => {
-            if (nextIds.has(item.id)) return false;
-            if (globalSeenIds.has(item.id)) return false;
-            globalSeenIds.add(item.id);
-            return true;
-          });
-          if (dedupedItems.length === 0) continue;
-          nextPages.push({
-            ...page,
-            items: dedupedItems,
-          });
-        }
-
-        return {
-          ...oldData,
-          pages: nextPages,
-        };
-      });
+      );
     },
-    [getFeedQueryKey, hasLiveOverlay, queryClient]
+    [feedViewerScope, getFeedQueryKey, hasLiveOverlay, queryClient]
   );
 
   const applyPendingLatestPosts = useCallback(() => {
     if (!pendingLatestFirstPage) return;
     applyFirstPageToCache("latest", "", pendingLatestFirstPage);
-    writeCachedFirstFeedPage("latest", "", pendingLatestFirstPage);
+    writeCachedFirstFeedPage(feedViewerScope, "latest", "", pendingLatestFirstPage);
     setPendingLatestFirstPage(null);
     setPendingLatestCount(0);
-  }, [applyFirstPageToCache, pendingLatestFirstPage]);
+  }, [applyFirstPageToCache, feedViewerScope, pendingLatestFirstPage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -524,7 +546,7 @@ export default function Feed() {
       const tabsToPrefetch: FeedTab[] = ["trending", "following"];
 
       for (const tab of tabsToPrefetch) {
-        const key = getFeedQueryKey(tab, "");
+        const key = getFeedQueryKey(tab, "", feedViewerScope);
         const state = queryClient.getQueryState(key);
         if (state?.status === "success" && Date.now() - state.dataUpdatedAt < 45_000) {
           continue;
@@ -541,7 +563,16 @@ export default function Feed() {
     }, 600);
 
     return () => window.clearTimeout(timer);
-  }, [activeTab, fetchFeedPage, getFeedQueryKey, postsPages?.pages?.length, queryClient, searchQuery, session?.user]);
+  }, [
+    activeTab,
+    feedViewerScope,
+    fetchFeedPage,
+    getFeedQueryKey,
+    postsPages?.pages?.length,
+    queryClient,
+    searchQuery,
+    session?.user,
+  ]);
 
   useEffect(() => {
     if (!hasNextPage || isFetchingNextPage) return;
@@ -584,7 +615,9 @@ export default function Feed() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       if (hasLiveOverlay()) return;
 
-      const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey("latest", ""));
+      const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
+        getFeedQueryKey("latest", "", feedViewerScope)
+      );
       const currentFirstPage = currentData?.pages?.[0];
       if (!currentFirstPage || currentFirstPage.items.length === 0) return;
 
@@ -606,7 +639,7 @@ export default function Feed() {
 
           if (currentFingerprint !== freshFingerprint) {
             applyFirstPageToCache("latest", "", freshFirstPage);
-            writeCachedFirstFeedPage("latest", "", freshFirstPage);
+            writeCachedFirstFeedPage(feedViewerScope, "latest", "", freshFirstPage);
             setPendingLatestFirstPage(null);
             setPendingLatestCount(0);
             void refetchUser();
@@ -631,7 +664,7 @@ export default function Feed() {
         // If user is near the top, apply instantly for a seamless "live" feel.
         if (window.scrollY < FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) {
           applyFirstPageToCache("latest", "", freshFirstPage);
-          writeCachedFirstFeedPage("latest", "", freshFirstPage);
+          writeCachedFirstFeedPage(feedViewerScope, "latest", "", freshFirstPage);
           setPendingLatestFirstPage(null);
           setPendingLatestCount(0);
           return;
@@ -664,6 +697,7 @@ export default function Feed() {
     activeTab,
     applyFirstPageToCache,
     effectiveSearchQuery,
+    feedViewerScope,
     fetchFeedPage,
     getFeedQueryKey,
     hasLiveOverlay,
@@ -690,7 +724,7 @@ export default function Feed() {
       if (hasLiveOverlay()) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
-        getFeedQueryKey(activeTab, effectiveSearchQuery)
+        getFeedQueryKey(activeTab, effectiveSearchQuery, feedViewerScope)
       );
       const currentFirstPage = currentData?.pages?.[0];
       if (!currentFirstPage || currentFirstPage.items.length === 0) return;
@@ -714,7 +748,7 @@ export default function Feed() {
         }
 
         applyFirstPageToCache(activeTab, effectiveSearchQuery, freshFirstPage);
-        writeCachedFirstFeedPage(activeTab, effectiveSearchQuery, freshFirstPage);
+        writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, freshFirstPage);
       } catch {
         // Keep current feed visible; next interval will retry.
       } finally {
@@ -744,6 +778,7 @@ export default function Feed() {
     activeTab,
     applyFirstPageToCache,
     effectiveSearchQuery,
+    feedViewerScope,
     fetchFeedPage,
     getFeedQueryKey,
     hasLiveOverlay,
@@ -759,7 +794,7 @@ export default function Feed() {
     },
     onSuccess: (newPost) => {
       // Add new post to the beginning of the first loaded page (if present)
-      queryClient.setQueryData<InfiniteData<FeedPage>>(["posts", activeTab, effectiveSearchQuery], (oldData) => {
+      queryClient.setQueryData<InfiniteData<FeedPage>>(activeFeedQueryKey, (oldData) => {
         if (!oldData || oldData.pages.length === 0) {
           return oldData;
         }
@@ -912,11 +947,11 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
         applyFirstPageToCache(activeTab, effectiveSearchQuery, freshFirstPage);
-        writeCachedFirstFeedPage(activeTab, effectiveSearchQuery, freshFirstPage);
+        writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, freshFirstPage);
       } catch {
         // Fallback to react-query refetch if manual refresh fails
         queryClient.setQueryData<InfiniteData<FeedPage>>(
-          getFeedQueryKey(activeTab, effectiveSearchQuery),
+          activeFeedQueryKey,
           (oldData) => {
             if (!oldData) return oldData;
             return {

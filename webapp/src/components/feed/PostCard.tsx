@@ -24,8 +24,8 @@ import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
-import { api } from "@/lib/api";
-import { getPostPriceSnapshotBatched } from "@/lib/post-price-batch";
+import { api, ApiError } from "@/lib/api";
+import { getPostPriceSnapshotBatched, type BatchedPostPriceSnapshot } from "@/lib/post-price-batch";
 import {
   Post,
   Comment,
@@ -975,15 +975,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
     // Optimistic update - change state immediately
     const wasFollowing = isFollowing;
+    const followTargetIdentifier = post.author.username || post.author.id;
     setIsFollowing(!wasFollowing);
     setIsFollowLoading(true);
 
     try {
       if (wasFollowing) {
-        await api.delete(`/api/users/${post.author.id}/follow`);
+        await api.delete(`/api/users/${followTargetIdentifier}/follow`);
         toast.success(`Unfollowed ${post.author.username || post.author.name}`);
       } else {
-        await api.post(`/api/users/${post.author.id}/follow`, {});
+        await api.post(`/api/users/${followTargetIdentifier}/follow`, {});
         toast.success(`Following ${post.author.username || post.author.name}`);
       }
       // Invalidate relevant queries to refresh data
@@ -993,9 +994,25 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       queryClient.invalidateQueries({ queryKey: ["userPosts"] });
       queryClient.invalidateQueries({ queryKey: ["userReposts"] });
     } catch (error) {
+      if (error instanceof ApiError) {
+        const alreadyFollowing = !wasFollowing && error.status === 400 && /already following/i.test(error.message);
+        const notFollowing = wasFollowing && error.status === 404 && /not following/i.test(error.message);
+
+        if (alreadyFollowing || notFollowing) {
+          setIsFollowing(alreadyFollowing);
+          queryClient.invalidateQueries({ queryKey: ["posts"] });
+          queryClient.invalidateQueries({ queryKey: ["users"] });
+          queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+          queryClient.invalidateQueries({ queryKey: ["userPosts"] });
+          queryClient.invalidateQueries({ queryKey: ["userReposts"] });
+          toast.success(alreadyFollowing ? `Following ${post.author.username || post.author.name}` : `Unfollowed ${post.author.username || post.author.name}`);
+          return;
+        }
+      }
+
       // Revert on error
       setIsFollowing(wasFollowing);
-      toast.error("Failed to update follow status");
+      toast.error(error instanceof Error ? error.message : "Failed to update follow status");
     } finally {
       setIsFollowLoading(false);
     }
@@ -2248,7 +2265,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     [post.contractAddress, post.id, slippageBps]
   );
 
-  const jupiterQuoteQuery = useQuery({
+  const jupiterQuoteQuery = useQuery<JupiterQuoteResponse>({
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
     enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
     staleTime: 2_500,
@@ -2623,8 +2640,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     setBuyTxSignature(null);
     try {
       const swapPayload = await buildSwapTransaction(quote);
-
-      const txBytes = Uint8Array.from(atob(swapPayload.swapTransaction), (c) => c.charCodeAt(0));
+      const swapTransaction = swapPayload.swapTransaction;
+      if (!swapTransaction) {
+        throw new Error("No swap transaction returned");
+      }
+      const txBytes = Uint8Array.from(atob(swapTransaction), (c) => c.charCodeAt(0));
       const tx = VersionedTransaction.deserialize(txBytes);
       const signedTx = await walletSignTransaction(tx);
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {

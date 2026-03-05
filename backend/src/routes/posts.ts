@@ -1697,7 +1697,11 @@ postsRouter.get("/", async (c) => {
     const nowMs = Date.now();
     const stalePayload =
       readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs, { allowStale: true }) ??
-      readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs, { allowStale: true });
+      (!user
+        ? readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs, {
+            allowStale: true,
+          })
+        : null);
     console.warn("[posts/feed] falling back to cached payload after database error", {
       sort,
       following,
@@ -1725,7 +1729,7 @@ postsRouter.get("/", async (c) => {
     const nowMs = Date.now();
     const freshPayload =
       readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs) ??
-      readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs);
+      (!user ? readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs) : null);
     if (freshPayload) {
       return c.json(freshPayload);
     }
@@ -2346,7 +2350,9 @@ postsRouter.get("/", async (c) => {
     nextCursor,
   };
   writeFeedResponseToCache(feedResponseCache, feedCacheKey, responsePayload);
-  writeFeedResponseToCache(feedSharedResponseCache, sharedFeedCacheKey, responsePayload);
+  if (!user) {
+    writeFeedResponseToCache(feedSharedResponseCache, sharedFeedCacheKey, responsePayload);
+  }
   return c.json(responsePayload);
 });
 

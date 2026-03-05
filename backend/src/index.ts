@@ -285,6 +285,23 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
   };
 }
 
+function buildClientAuthUser(user: AuthResponseUser) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    image: user.image,
+    walletAddress: user.walletAddress,
+    walletProvider: user.walletProvider,
+    username: user.username,
+    level: user.level,
+    xp: user.xp,
+    isAdmin: user.isAdmin,
+    isVerified: user.isVerified,
+    createdAt: user.createdAt.toISOString(),
+  };
+}
+
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
     typeof error === "object" &&
@@ -1223,17 +1240,7 @@ app.post("/api/auth/wallet", async (c) => {
 
     return c.json({
       token: sessionToken,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        image: user.image,
-        walletAddress: user.walletAddress,
-        walletProvider: user.walletProvider,
-        level: user.level,
-        xp: user.xp,
-        isVerified: user.isVerified,
-      },
+      user: buildClientAuthUser(user),
     });
   } catch (error) {
     console.error("Wallet auth error:", error);
@@ -1322,15 +1329,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
       return c.json({
         token: sessionToken,
-        user: {
-          id: sessionBackfillUser.id,
-          name: sessionBackfillUser.name,
-          email: sessionBackfillUser.email,
-          image: sessionBackfillUser.image,
-          level: sessionBackfillUser.level,
-          xp: sessionBackfillUser.xp,
-          isVerified: sessionBackfillUser.isVerified,
-        },
+        user: buildClientAuthUser(sessionBackfillUser),
       });
     }
     const providedEmail =
@@ -1417,15 +1416,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
           return c.json({
             token: sessionToken,
-            user: {
-              id: fastPathUser.id,
-              name: fastPathUser.name,
-              email: fastPathUser.email,
-              image: fastPathUser.image,
-              level: fastPathUser.level,
-              xp: fastPathUser.xp,
-              isVerified: fastPathUser.isVerified,
-            },
+            user: buildClientAuthUser(fastPathUser),
           });
           }
         }
@@ -1681,15 +1672,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     return c.json({
       token: sessionToken,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        image: user.image,
-        level: user.level,
-        xp: user.xp,
-        isVerified: user.isVerified,
-      },
+      user: buildClientAuthUser(user),
     });
   } catch (error) {
     if (isPrismaConnectivityError(error)) {
@@ -1719,15 +1702,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
         return c.json({
           token: sessionToken,
-          user: {
-            id: fallbackUser.id,
-            name: fallbackUser.name,
-            email: fallbackUser.email,
-            image: fallbackUser.image,
-            level: fallbackUser.level,
-            xp: fallbackUser.xp,
-            isVerified: fallbackUser.isVerified,
-          },
+          user: buildClientAuthUser(fallbackUser),
         });
       }
       c.header("Retry-After", "2");

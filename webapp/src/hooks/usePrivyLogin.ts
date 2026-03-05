@@ -1,44 +1,35 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
-import { getIdentityToken, usePrivy, useLogin } from "@privy-io/react-auth";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePrivy, useLogin } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession } from "@/lib/auth-client";
+import {
+  getPrivyDisplayName,
+  getPrivyIdentityTokenFast,
+  getPrivyPrimaryEmail,
+  type PrivyUserLike,
+} from "@/lib/privy-user";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 12_000;
 const AUTO_RESYNC_COOLDOWN_MS = 2_000;
 const AUTO_RESYNC_MAX_ATTEMPTS = 5;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
-const IDENTITY_TOKEN_ATTEMPTS = 4;
-const IDENTITY_TOKEN_RETRY_DELAYS_MS = [60, 100, 160] as const;
 const RETRYABLE_SYNC_ERROR_PATTERN =
   /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
 const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
-type PrivyUserLike = {
-  id: string;
-  email?: { address?: string } | null;
-  google?: { name?: string } | null;
-  linkedAccounts?: Array<{ type: string; address?: string }> | null;
-};
 
 type UsePrivyLoginOptions = {
   onSuccess?: () => void;
 };
 
-async function getIdentityTokenFast(): Promise<string | undefined> {
-  for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    const token = await getIdentityToken();
-    if (token) {
-      return token;
-    }
-    const delayMs = IDENTITY_TOKEN_RETRY_DELAYS_MS[attempt];
-    if (!delayMs) {
-      continue;
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, delayMs);
-    });
-  }
-  return undefined;
-}
+type LoginMethodOverride = "email" | "twitter";
+
+type StartLoginOptions = {
+  loginMethods?: LoginMethodOverride[];
+  prefill?: {
+    type: "email";
+    value: string;
+  };
+};
 
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
@@ -97,19 +88,14 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       startSyncTimeout();
 
       try {
-        const privyIdToken = await getIdentityTokenFast();
-        const email =
-          privyUser.email?.address ??
-          (privyUser.linkedAccounts?.find(
-            (a: { type: string; address?: string }) => a.type === "email"
-          ) as { type: string; address?: string } | undefined)?.address ??
-          "";
+        const privyIdToken = await getPrivyIdentityTokenFast();
+        const email = getPrivyPrimaryEmail(privyUser) ?? "";
 
         if (!email && !privyIdToken) {
           console.warn("[usePrivyLogin] Privy returned no email/idToken; falling back to privyUserId sync");
         }
 
-        const name = (privyUser.google as { name?: string } | undefined)?.name ?? email.split("@")[0] ?? "";
+        const name = getPrivyDisplayName(privyUser, email) ?? "";
 
         await syncPrivySession(
           privyUser.id,
@@ -117,11 +103,11 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
           name || undefined,
           privyIdToken ?? undefined
         );
-        // Keep UI responsive: syncPrivySession already updates cached auth state.
-        // Refetch in the background to reconcile server state without blocking login flow.
+
         void refetch().catch((error) => {
           console.warn("[usePrivyLogin] background refetch after sync failed", error);
         });
+
         autoResyncAttemptsRef.current = 0;
         return true;
       } catch (err) {
@@ -131,16 +117,15 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
           setSyncError(null);
           return true;
         }
-        // Show a friendlier message to the user instead of raw server errors
+
         const isTooManyRequests = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
         const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(rawMessage);
-        const userMessage = isTooManyRequests
-          ? "Sign-in is busy. Retrying..."
-          : rawMessage;
+        const userMessage = isTooManyRequests ? "Sign-in is busy. Retrying..." : rawMessage;
         const shouldShowInlineError =
           source === "manual"
             ? !isRetryable
             : !isRetryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+
         if (shouldShowInlineError || !isTooManyRequests) {
           setSyncError(userMessage);
         } else {
@@ -160,10 +145,10 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
           toast.error(userMessage);
         }
 
-        // Only apply short backoff for auto-retries, never block manual sign-in
         if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage) && source === "auto") {
           rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
         }
+
         return false;
       } finally {
         clearSyncTimeout();
@@ -257,16 +242,25 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       syncGuardRef.current = false;
       console.error("[usePrivyLogin] Privy login error:", error);
       setIsSyncing(false);
-      setSyncError(error instanceof Error ? error.message : "Privy sign-in failed");
+      const errorMessage =
+        typeof error === "string"
+          ? error
+          : typeof error === "object" &&
+              error !== null &&
+              "message" in error &&
+              typeof (error as { message?: unknown }).message === "string"
+            ? (error as { message: string }).message
+            : "Privy sign-in failed";
+      setSyncError(errorMessage);
       toast.error("Privy sign-in failed");
     },
   });
 
-  const startLogin = () => {
+  const startLogin = (loginOptions?: StartLoginOptions) => {
     if (syncGuardRef.current || isSyncing) {
       return;
     }
-    // Always allow manual sign-in — clear any previous rate-limit lockout
+
     rateLimitedUntilRef.current = 0;
     setSyncError(null);
     autoResyncAttemptsRef.current = 0;
@@ -287,18 +281,19 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         if (synced) {
           return;
         }
-        // Recover from stale Privy local state by forcing a fresh login modal.
+
         try {
           await privyLogout();
         } catch (error) {
           console.warn("[usePrivyLogin] Privy logout before re-auth failed", error);
         }
-        login();
+
+        login(loginOptions);
       })();
       return;
     }
 
-    login();
+    login(loginOptions);
   };
 
   return { login: startLogin, ready, authenticated, user, privyLogout, isSyncing, syncError };

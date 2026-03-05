@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import bs58 from "bs58";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { updateCachedAuthUser, useSession } from "@/lib/auth-client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,6 +40,11 @@ interface WalletStatus {
   address?: string | null;
   provider?: string | null;
   connectedAt?: string | null;
+}
+
+interface WalletMutationResponse {
+  walletAddress?: string | null;
+  walletProvider?: string | null;
 }
 
 type WalletProviderId = "phantom" | "solflare" | "other";
@@ -90,10 +96,12 @@ interface WalletConnectionProps {
 
 export function WalletConnection({ className }: WalletConnectionProps) {
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [autoLinkAttemptedFor, setAutoLinkAttemptedFor] = useState<string | null>(null);
+  const walletStatusQueryKey = ["wallet-status", session?.user?.id ?? "anonymous"] as const;
 
   const {
     connected: adapterConnected,
@@ -112,11 +120,32 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["wallet-status"],
-    queryFn: () => api.get<WalletStatus>("/api/users/me/wallet"),
+    queryKey: walletStatusQueryKey,
+    queryFn: async () => {
+      try {
+        return await api.get<WalletStatus>("/api/users/me/wallet");
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403) && session?.user) {
+          return {
+            connected: Boolean(session.user.walletAddress),
+            address: session.user.walletAddress ?? null,
+            provider: session.user.walletProvider ?? null,
+            connectedAt: null,
+          } satisfies WalletStatus;
+        }
+        throw error;
+      }
+    },
+    enabled: !!session?.user,
     staleTime: 60_000,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        return failureCount < 2;
+      }
+      return failureCount < 1;
+    },
   });
   const isLinked = Boolean(walletStatus?.connected && walletStatus?.address);
 
@@ -126,10 +155,15 @@ export function WalletConnection({ className }: WalletConnectionProps) {
       walletProvider: WalletProviderId;
       signature: string;
       message: string;
-    }) => api.post("/api/users/me/wallet", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wallet-status"] });
+    }) => api.post<WalletMutationResponse>("/api/users/me/wallet", data),
+    onSuccess: (updatedUser) => {
+      updateCachedAuthUser({
+        walletAddress: updatedUser.walletAddress ?? null,
+        walletProvider: updatedUser.walletProvider ?? null,
+      });
+      queryClient.invalidateQueries({ queryKey: walletStatusQueryKey });
       queryClient.invalidateQueries({ queryKey: ["profile", "me"] });
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
       toast.success("Wallet verified and linked");
     },
     onError: (error: Error) => {
@@ -138,10 +172,15 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   });
 
   const disconnectMutation = useMutation({
-    mutationFn: () => api.delete("/api/users/me/wallet"),
+    mutationFn: () => api.delete<WalletMutationResponse>("/api/users/me/wallet"),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wallet-status"] });
+      updateCachedAuthUser({
+        walletAddress: null,
+        walletProvider: null,
+      });
+      queryClient.invalidateQueries({ queryKey: walletStatusQueryKey });
       queryClient.invalidateQueries({ queryKey: ["profile", "me"] });
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
       setDisconnectOpen(false);
       toast.success("Wallet disconnected");
     },
@@ -178,8 +217,11 @@ export function WalletConnection({ className }: WalletConnectionProps) {
 
     try {
       setIsVerifying(true);
-      const me = await api.get<{ id: string }>("/api/me");
-      const message = buildWalletLinkMessage(me.id, adapterWalletAddress);
+      const sessionUserId = session?.user?.id;
+      if (!sessionUserId) {
+        throw new Error("Your session is still loading. Please try again.");
+      }
+      const message = buildWalletLinkMessage(sessionUserId, adapterWalletAddress);
       const signatureBytes = await signMessage(new TextEncoder().encode(message));
       const signature = bs58.encode(signatureBytes);
 
@@ -197,7 +239,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     } finally {
       setIsVerifying(false);
     }
-  }, [adapterConnected, adapterProviderId, adapterWalletAddress, connectMutation, signMessage]);
+  }, [adapterConnected, adapterProviderId, adapterWalletAddress, connectMutation, session?.user?.id, signMessage]);
 
   useEffect(() => {
     if (!adapterConnected || !adapterWalletAddress || isLinked) return;
@@ -221,7 +263,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     handleVerifyAndLink,
   ]);
 
-  if (isLoading) {
+  if (!session?.user || isLoading) {
     return (
       <Card className={className}>
         <CardHeader>
@@ -319,7 +361,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
                     </p>
                     <div className="font-mono text-xs break-all mb-3">{adapterWalletAddress}</div>
                     <Button
-                      onClick={handleVerifyAndLink}
+                      onClick={() => void handleVerifyAndLink()}
                       disabled={isVerifying || connectMutation.isPending || adapterConnecting}
                       className="w-full gap-2"
                       size="sm"
@@ -403,7 +445,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
                     </div>
                     <div className="font-mono text-sm break-all">{adapterWalletAddress}</div>
                     <Button
-                      onClick={handleVerifyAndLink}
+                      onClick={() => void handleVerifyAndLink()}
                       disabled={isVerifying || connectMutation.isPending || adapterConnecting}
                       className="w-full gap-2"
                     >

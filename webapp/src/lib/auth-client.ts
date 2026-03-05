@@ -41,13 +41,13 @@ const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
-const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 2;
+const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const SESSION_FETCH_TIMEOUT_MS = 2200;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 const AUTH_SESSION_RETRY_DELAY_MS = 300;
-const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 2;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
-const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 2;
+const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 7_500;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [250, 600] as const;
 const AUTH_BEARER_TOKEN_MAX_LENGTH = 1400;
@@ -281,6 +281,30 @@ function writeCachedAuthUser(user: AuthUser | null): void {
 
 function clearCachedAuthUser(): void {
   writeCachedAuthUser(null);
+}
+
+export function updateCachedAuthUser(
+  updates:
+    | Partial<AuthUser>
+    | ((currentUser: AuthUser) => AuthUser | null)
+): void {
+  const currentUser = readCachedAuthUser();
+  if (!currentUser) {
+    return;
+  }
+
+  const nextUser =
+    typeof updates === "function"
+      ? updates(currentUser)
+      : {
+          ...currentUser,
+          ...updates,
+        };
+
+  writeCachedAuthUser(nextUser);
+  if (nextUser) {
+    emitAuthSessionSynced(nextUser);
+  }
 }
 
 function toAuthUser(

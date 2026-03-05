@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { Post, calculatePercentChange, getAvatarUrl, LIQUIDATION_LEVEL } from "@/types";
 import { LevelBadge } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
@@ -80,26 +80,51 @@ export default function UserProfile() {
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [walletCopied, setWalletCopied] = useState(false);
   const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
+  const viewerCacheScope = session?.user?.id ?? "anonymous";
+  const userProfileQueryKey = useMemo(
+    () => ["userProfile", userId, viewerCacheScope] as const,
+    [userId, viewerCacheScope]
+  );
+  const userPostsQueryKey = useMemo(
+    () => ["userPosts", userId, viewerCacheScope] as const,
+    [userId, viewerCacheScope]
+  );
+  const userRepostsQueryKey = useMemo(
+    () => ["userReposts", userId, viewerCacheScope] as const,
+    [userId, viewerCacheScope]
+  );
+  const userProfileCacheKey = useMemo(
+    () => (userId ? `phew.user-profile:${viewerCacheScope}:${userId}` : null),
+    [userId, viewerCacheScope]
+  );
+  const userPostsCacheKey = useMemo(
+    () => (userId ? `phew.user-posts:${viewerCacheScope}:${userId}` : null),
+    [userId, viewerCacheScope]
+  );
+  const userRepostsCacheKey = useMemo(
+    () => (userId ? `phew.user-reposts:${viewerCacheScope}:${userId}` : null),
+    [userId, viewerCacheScope]
+  );
   const cachedUserProfile = useMemo(
     () =>
-      userId
-        ? readSessionCache<UserProfileData>(`phew.user-profile:${userId}`, USER_PROFILE_CACHE_TTL_MS)
+      userProfileCacheKey
+        ? readSessionCache<UserProfileData>(userProfileCacheKey, USER_PROFILE_CACHE_TTL_MS)
         : null,
-    [userId]
+    [userProfileCacheKey]
   );
   const cachedUserPosts = useMemo(
     () =>
-      userId
-        ? readSessionCache<Post[]>(`phew.user-posts:${userId}`, USER_PROFILE_POSTS_CACHE_TTL_MS)
+      userPostsCacheKey
+        ? readSessionCache<Post[]>(userPostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
         : null,
-    [userId]
+    [userPostsCacheKey]
   );
   const cachedUserReposts = useMemo(
     () =>
-      userId
-        ? readSessionCache<Post[]>(`phew.user-reposts:${userId}`, USER_PROFILE_POSTS_CACHE_TTL_MS)
+      userRepostsCacheKey
+        ? readSessionCache<Post[]>(userRepostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
         : null,
-    [userId]
+    [userRepostsCacheKey]
   );
   const cachedUserWalletOverview = useMemo(
     () =>
@@ -116,7 +141,7 @@ export default function UserProfile() {
     error: userError,
     isFetched: isUserFetched,
   } = useQuery({
-    queryKey: ["userProfile", userId],
+    queryKey: userProfileQueryKey,
     queryFn: async () => {
       const data = await api.get<UserProfileData>(`/api/users/${userId}`);
       return data;
@@ -126,6 +151,7 @@ export default function UserProfile() {
     staleTime: 60000,
     gcTime: 300000,
     refetchInterval: userId ? 15_000 : false,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -137,7 +163,7 @@ export default function UserProfile() {
     isLoading: isLoadingPosts,
     isFetched: isPostsFetched,
   } = useQuery({
-    queryKey: ["userPosts", userId],
+    queryKey: userPostsQueryKey,
     queryFn: async () => {
       const data = await api.get<Post[]>(`/api/users/${userId}/posts`);
       return data;
@@ -147,6 +173,7 @@ export default function UserProfile() {
     staleTime: 60000,
     gcTime: 300000,
     refetchInterval: userId ? 15_000 : false,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -158,7 +185,7 @@ export default function UserProfile() {
     isLoading: isLoadingReposts,
     isFetched: isRepostsFetched,
   } = useQuery({
-    queryKey: ["userReposts", userId],
+    queryKey: userRepostsQueryKey,
     queryFn: async () => {
       const data = await api.get<Post[]>(`/api/users/${userId}/reposts`);
       return data;
@@ -168,6 +195,7 @@ export default function UserProfile() {
     staleTime: 60000,
     gcTime: 300000,
     refetchInterval: userId && (mainTab === "reposts" || !!cachedUserReposts) ? 20_000 : false,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -192,9 +220,9 @@ export default function UserProfile() {
   });
 
   useEffect(() => {
-    if (!userId || !user || !isUserFetched) return;
-    writeSessionCache(`phew.user-profile:${userId}`, user);
-  }, [isUserFetched, user, userId]);
+    if (!user || !isUserFetched || !userProfileCacheKey) return;
+    writeSessionCache(userProfileCacheKey, user);
+  }, [isUserFetched, user, userProfileCacheKey]);
 
   useEffect(() => {
     setEnableWalletOverviewQuery(false);
@@ -204,14 +232,14 @@ export default function UserProfile() {
   }, [user?.walletAddress]);
 
   useEffect(() => {
-    if (!userId || !isPostsFetched) return;
-    writeSessionCache(`phew.user-posts:${userId}`, posts);
-  }, [isPostsFetched, posts, userId]);
+    if (!isPostsFetched || !userPostsCacheKey) return;
+    writeSessionCache(userPostsCacheKey, posts);
+  }, [isPostsFetched, posts, userPostsCacheKey]);
 
   useEffect(() => {
-    if (!userId || !isRepostsFetched) return;
-    writeSessionCache(`phew.user-reposts:${userId}`, reposts);
-  }, [isRepostsFetched, reposts, userId]);
+    if (!isRepostsFetched || !userRepostsCacheKey) return;
+    writeSessionCache(userRepostsCacheKey, reposts);
+  }, [isRepostsFetched, reposts, userRepostsCacheKey]);
 
   useEffect(() => {
     if (!userId || !isWalletOverviewFetched || !walletOverview) return;
@@ -221,16 +249,20 @@ export default function UserProfile() {
   // Follow mutation
   const followMutation = useMutation({
     mutationFn: async () => {
+      const targetIdentifier = user?.username ?? user?.id ?? userId;
+      if (!targetIdentifier) {
+        throw new Error("User not found");
+      }
       if (user?.isFollowing) {
-        return await api.delete<FollowMutationResponse>(`/api/users/${userId}/follow`);
+        return await api.delete<FollowMutationResponse>(`/api/users/${targetIdentifier}/follow`);
       } else {
-        return await api.post<FollowMutationResponse>(`/api/users/${userId}/follow`);
+        return await api.post<FollowMutationResponse>(`/api/users/${targetIdentifier}/follow`);
       }
     },
     onSuccess: (result) => {
       const nextFollowing = result.following;
 
-      queryClient.setQueryData<UserProfileData | undefined>(["userProfile", userId], (prev) => {
+      queryClient.setQueryData<UserProfileData | undefined>(userProfileQueryKey, (prev) => {
         if (!prev) return prev;
         return {
           ...prev,
@@ -247,16 +279,37 @@ export default function UserProfile() {
           post.author.id === user?.id ? { ...post, isFollowingAuthor: nextFollowing } : post
         ) ?? prev;
 
-      queryClient.setQueryData<Post[] | undefined>(["userPosts", userId], syncPostFollowState);
-      queryClient.setQueryData<Post[] | undefined>(["userReposts", userId], syncPostFollowState);
+      queryClient.setQueryData<Post[] | undefined>(userPostsQueryKey, syncPostFollowState);
+      queryClient.setQueryData<Post[] | undefined>(userRepostsQueryKey, syncPostFollowState);
 
-      queryClient.invalidateQueries({ queryKey: ["userProfile", userId] });
-      queryClient.invalidateQueries({ queryKey: ["userPosts", userId] });
-      queryClient.invalidateQueries({ queryKey: ["userReposts", userId] });
+      queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
+      queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
+      queryClient.invalidateQueries({ queryKey: userRepostsQueryKey });
       toast.success(nextFollowing ? "Following" : "Unfollowed");
     },
-    onError: () => {
-      toast.error("Failed to update follow status");
+    onError: (error) => {
+      if (error instanceof ApiError) {
+        const alreadyFollowing = error.status === 400 && /already following/i.test(error.message);
+        const notFollowing = error.status === 404 && /not following/i.test(error.message);
+
+        if (alreadyFollowing || notFollowing) {
+          const nextFollowing = alreadyFollowing;
+          queryClient.setQueryData<UserProfileData | undefined>(userProfileQueryKey, (prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              isFollowing: nextFollowing,
+            };
+          });
+          queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
+          queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
+          queryClient.invalidateQueries({ queryKey: userRepostsQueryKey });
+          toast.success(nextFollowing ? "Following" : "Unfollowed");
+          return;
+        }
+      }
+
+      toast.error(error instanceof Error ? error.message : "Failed to update follow status");
     },
   });
 
@@ -281,8 +334,8 @@ export default function UserProfile() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["userPosts", userId] });
-      queryClient.invalidateQueries({ queryKey: ["userReposts", userId] });
+      queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
+      queryClient.invalidateQueries({ queryKey: userRepostsQueryKey });
     },
   });
 
@@ -293,7 +346,7 @@ export default function UserProfile() {
     },
     onSuccess: () => {
       toast.success("Comment added!");
-      queryClient.invalidateQueries({ queryKey: ["userPosts", userId] });
+      queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
     },
   });
 
