@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { useSession } from "@/lib/auth-client";
+import { useSession, getExplicitLogoutAt } from "@/lib/auth-client";
 
 /**
  * Maximum time (ms) to wait for a session to hydrate when we detect
@@ -10,6 +10,11 @@ import { useSession } from "@/lib/auth-client";
 const TOKEN_HYDRATION_GRACE_MS = 4_000;
 
 function hasStoredAuthHint(): boolean {
+  // Skip grace period if the user just explicitly logged out.
+  const logoutAt = getExplicitLogoutAt();
+  if (logoutAt > 0 && Date.now() - logoutAt < 10_000) {
+    return false;
+  }
   try {
     if (localStorage.getItem("auth-token")) return true;
   } catch { /* ignore */ }
