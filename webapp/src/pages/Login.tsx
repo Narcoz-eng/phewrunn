@@ -42,7 +42,7 @@ const earlyCallerData = [
     textColor: "text-gain",
     borderColor: "border-gain/30",
     bgColor: "bg-gain/5",
-    desc: "Most copy-trades happen in the first hour — you capture them all",
+    desc: "Most buys happen in the first hour — your post captures them all",
   },
   {
     label: "Hour 2",
@@ -53,7 +53,7 @@ const earlyCallerData = [
     textColor: "text-primary",
     borderColor: "border-primary/30",
     bgColor: "bg-primary/5",
-    desc: "Early posts already absorbed the bulk of copy-trade volume",
+    desc: "Early posts already absorbed the bulk of buy volume",
   },
   {
     label: "Hour 6",
@@ -64,7 +64,7 @@ const earlyCallerData = [
     textColor: "text-muted-foreground",
     borderColor: "border-border/40",
     bgColor: "bg-background/40",
-    desc: "Minimal copy-trades left — minimal fees earned",
+    desc: "Minimal buys left — minimal fees earned",
   },
 ];
 
@@ -112,7 +112,7 @@ const features = [
   },
   {
     icon: TrendingUp,
-    title: "Earn When They Copy-Trade",
+    title: "Get Paid Every Time They Buy",
     description:
       "Every time a trader buys directly from your post, you earn 0.5% of the trade. Automatically. Forever.",
   },
@@ -271,7 +271,7 @@ export default function Login() {
               {/* Badge */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary">
                 <Sparkles className="w-3.5 h-3.5" />
-                The first copy-trade platform with real on-chain fees
+                Your call. Their buy. Your cut.
               </div>
 
               {/* Headline */}
@@ -286,7 +286,7 @@ export default function Login() {
                   </span>
                 </h1>
                 <p className="mt-4 text-base sm:text-lg text-muted-foreground leading-relaxed max-w-xl">
-                  When traders copy-trade directly from your post, you earn{" "}
+                  When traders buy directly from your post, you earn{" "}
                   <span className="text-foreground font-semibold">
                     0.5% of every buy
                   </span>
@@ -465,7 +465,7 @@ export default function Login() {
                   <div className="text-center mb-2">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary mb-3">
                       <Sparkles className="w-3 h-3" />
-                      Live Copy-Trade Simulation
+                      Live Trade Simulation
                     </div>
                     <h3 className="font-heading text-lg font-bold">
                       Trades From Your Post
@@ -497,10 +497,9 @@ export default function Login() {
                     <span className="text-gradient">The More You Earn.</span>
                   </h2>
                   <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
-                    Copy-trade volume is highest in the first hour after a call
-                    drops. Post first and your post absorbs the lion's share of
-                    buys — each one paying you 0.5%. Late callers fight over
-                    what's left.
+                    Buy volume peaks in the first hour after a call drops. Post
+                    first and your post absorbs the lion's share of buys — each
+                    one paying you 0.5%. Late callers fight over what's left.
                   </p>
                 </div>
 
@@ -529,7 +528,7 @@ export default function Login() {
                           </span>
                         </div>
                         <span className={cn("text-sm font-mono font-bold", row.textColor)}>
-                          {row.trades} copy-trades
+                          {row.trades} buys from post
                         </span>
                       </div>
                       {/* Bar */}
@@ -563,9 +562,9 @@ export default function Login() {
                       First callers earn up to 23× more in fees
                     </div>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      Copy-trade volume spikes the moment a call is posted and
-                      decays fast. Post first and your post captures the wave.
-                      Every buy through your post is 0.5% straight to your wallet.
+                      Buy volume spikes the moment a call drops and decays fast.
+                      Post first and your post captures the wave. Every buy
+                      through your post is 0.5% straight to your wallet.
                     </p>
                   </div>
                 </div>
@@ -718,7 +717,7 @@ export default function Login() {
             >
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
                 <Sparkles className="w-3.5 h-3.5" />
-                Copy-trade fees live on Solana
+                0.5% per buy — live on Solana
               </div>
               <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
                 Your Next Call Could

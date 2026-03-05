@@ -14,24 +14,24 @@ interface IncomingTrade {
 }
 
 const TRADERS: IncomingTrade[] = [
-  { id: 1, radius: 90, duration: 13, initAngle: 0,   label: "0x3f..a1", amount: "$420" },
-  { id: 2, radius: 82, duration: 10, initAngle: 40,  label: "0x7c..b9", amount: "$85"  },
-  { id: 3, radius: 95, duration: 17, initAngle: 90,  label: "0xd2..44", amount: "$1.2K"},
-  { id: 4, radius: 86, duration: 11, initAngle: 140, label: "0xa8..f3", amount: "$230" },
-  { id: 5, radius: 91, duration: 15, initAngle: 185, label: "0x5e..c7", amount: "$660" },
-  { id: 6, radius: 83, duration: 12, initAngle: 225, label: "0x1b..e0", amount: "$90"  },
-  { id: 7, radius: 88, duration: 16, initAngle: 270, label: "0x9a..77", amount: "$3.5K"},
-  { id: 8, radius: 79, duration: 14, initAngle: 315, label: "0x4f..2d", amount: "$175" },
+  { id: 1, radius: 90, duration: 13, initAngle: 0,   label: "7xKX..gAsU", amount: "$420" },
+  { id: 2, radius: 82, duration: 10, initAngle: 40,  label: "Gh9Z..KtKJ", amount: "$85"  },
+  { id: 3, radius: 95, duration: 17, initAngle: 90,  label: "mT3P..vY8n", amount: "$1.2K"},
+  { id: 4, radius: 86, duration: 11, initAngle: 140, label: "9wQR..aB4f", amount: "$230" },
+  { id: 5, radius: 91, duration: 15, initAngle: 185, label: "xE7L..pN2k", amount: "$660" },
+  { id: 6, radius: 83, duration: 12, initAngle: 225, label: "Hf3R..k2L7", amount: "$90"  },
+  { id: 7, radius: 88, duration: 16, initAngle: 270, label: "TkN8..3rXp", amount: "$3.5K"},
+  { id: 8, radius: 79, duration: 14, initAngle: 315, label: "Bv5Q..mJ9e", amount: "$175" },
 ];
 
 // Recent buy feed
 const BUY_LABELS = [
-  "0x3f..a1 copied → $420",
-  "0x9a..77 copied → $3.5K",
-  "0xd2..44 copied → $1.2K",
-  "0x5e..c7 copied → $660",
-  "0x7c..b9 copied → $85",
-  "0xa8..f3 copied → $230",
+  "7xKX..gAsU bought → $420",
+  "TkN8..3rXp bought → $3.5K",
+  "mT3P..vY8n bought → $1.2K",
+  "xE7L..pN2k bought → $660",
+  "Gh9Z..KtKJ bought → $85",
+  "9wQR..aB4f bought → $230",
 ];
 
 export function FeeOrbit() {
