@@ -1,21 +1,7 @@
-import { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
-import type { ReactNode, ErrorInfo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Bar,
-  Brush,
-  Cell,
-  CartesianGrid,
-  ComposedChart,
-  ReferenceDot,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
@@ -36,6 +22,7 @@ import { RepostersDialog } from "./RepostersDialog";
 import { SharedAlphaDialog } from "./SharedAlphaDialog";
 import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
+import { CandlestickChart } from "./CandlestickChart";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api } from "@/lib/api";
 import { getPostPriceSnapshotBatched } from "@/lib/post-price-batch";
@@ -519,46 +506,6 @@ async function fetchDexscreenerTokenData(args: {
   }
 
   return null;
-}
-
-class ChartErrorBoundary extends Component<
-  { children: ReactNode; fallback?: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[ChartErrorBoundary] Chart render error:", error.message, info);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        this.props.fallback ?? (
-          <div className="flex h-full items-center justify-center p-6 text-center">
-            <div className="space-y-3">
-              <BarChart3 className="mx-auto h-6 w-6 text-white/15" />
-              <p className="text-[11px] text-white/25">
-                Chart render error. Try a different interval.
-              </p>
-              <button
-                type="button"
-                onClick={() => this.setState({ hasError: false })}
-                className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-foreground hover:bg-white/10 transition-colors"
-              >
-                Retry
-              </button>
-            </div>
-          </div>
-        )
-      );
-    }
-    return this.props.children;
-  }
 }
 
 interface PostCardProps {
@@ -2127,10 +2074,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     ],
     enabled: isBuyDialogOpen && canRequestChartCandles,
     staleTime: 5_000,
+    placeholderData: (previousData) => previousData,
     retry: 1,
     refetchOnWindowFocus: false,
     refetchInterval:
-      isBuyDialogOpen && chartRequestConfig.timeframe !== "day" ? 15_000 : 45_000,
+      isBuyDialogOpen
+        ? chartRequestConfig.timeframe === "minute"
+          ? chartRequestConfig.aggregate <= 5
+            ? 8_000
+            : 12_000
+          : chartRequestConfig.timeframe === "hour"
+            ? 20_000
+            : 60_000
+        : false,
     queryFn: async () => {
       if (!canRequestChartCandles) {
         return {
@@ -2976,8 +2932,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           low,
           close,
           volume: Number.isFinite(volume) ? volume : 0,
-          wickRange: [low, high] as [number, number],
-          bodyRange: [Math.min(open, close), Math.max(open, close)] as [number, number],
           isBullish: close >= open,
           label,
           fullLabel,
@@ -3101,25 +3055,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const maxVisiblePoints = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints || CHART_MAX_VISIBLE_POINTS);
   const canZoomInChart = chartWindowBounds.visibleCount > minVisiblePoints;
   const canZoomOutChart = chartWindowBounds.visibleCount < maxVisiblePoints;
-  const setChartWindowWithinBounds = useCallback(
-    (start: number, end: number) => {
-      if (chartTotalPoints <= 0) return;
-      const minVisible = Math.min(CHART_MIN_VISIBLE_POINTS, chartTotalPoints);
-      const maxVisible = Math.min(CHART_MAX_VISIBLE_POINTS, chartTotalPoints);
-      const unsafeStart = Number.isFinite(start) ? Math.floor(start) : 0;
-      const unsafeEnd = Number.isFinite(end) ? Math.floor(end) : chartTotalPoints - 1;
-      const center = Math.round((unsafeStart + unsafeEnd) / 2);
-      const width = Math.max(
-        minVisible,
-        Math.min(maxVisible, Math.max(1, unsafeEnd - unsafeStart + 1))
-      );
-      let nextStart = center - Math.floor(width / 2);
-      nextStart = Math.max(0, Math.min(nextStart, chartTotalPoints - width));
-      const nextEnd = nextStart + width - 1;
-      setChartWindow({ startIndex: nextStart, endIndex: nextEnd });
-    },
-    [chartTotalPoints]
-  );
   const panChartWindowBy = useCallback(
     (deltaPoints: number) => {
       if (chartTotalPoints <= 1 || chartWindowBounds.visibleCount <= 0) return;
@@ -3200,22 +3135,6 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     });
     setChartActiveIndex(chartEntryIndex);
   }, [chartEntryIndex, chartTotalPoints, chartWindowBounds.visibleCount]);
-  const handleChartBrushChange = useCallback(
-    (range: { startIndex?: number; endIndex?: number } | null | undefined) => {
-      if (!range || chartTotalPoints <= 0) return;
-      const nextStart =
-        typeof range.startIndex === "number" ? range.startIndex : chartWindowBounds.startIndex;
-      const nextEnd =
-        typeof range.endIndex === "number" ? range.endIndex : chartWindowBounds.endIndex;
-      setChartWindowWithinBounds(nextStart, nextEnd);
-    },
-    [
-      chartTotalPoints,
-      chartWindowBounds.endIndex,
-      chartWindowBounds.startIndex,
-      setChartWindowWithinBounds,
-    ]
-  );
   const handleChartWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (!hasProfessionalChartData || chartWindowBounds.visibleCount <= 0) return;
@@ -4544,187 +4463,34 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
                       >
                         {hasProfessionalChartData ? (
-                          <ChartErrorBoundary key={`chart-eb-${chartInterval}`}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart
-                              data={professionalChartData}
-                              margin={{ top: 8, right: 10, left: 4, bottom: 8 }}
-                              onMouseMove={(state: { activeTooltipIndex?: number }) => {
-                                if (typeof state?.activeTooltipIndex === "number") {
-                                  setChartActiveIndex(state.activeTooltipIndex);
-                                } else {
-                                  setChartActiveIndex(null);
-                                }
-                              }}
-                              onMouseLeave={() => setChartActiveIndex(null)}
-                            >
-                              <defs>
-                                <linearGradient id={`buyChartVolumeFill-${post.id}`} x1="0" x2="0" y1="0" y2="1">
-                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.22} />
-                                  <stop offset="100%" stopColor={professionalChartStroke} stopOpacity={0.03} />
-                                </linearGradient>
-                                <linearGradient id={`buyChartWick-${post.id}`} x1="0" x2="0" y1="0" y2="1">
-                                  <stop offset="0%" stopColor={professionalChartStroke} stopOpacity={0.72} />
-                                  <stop offset="100%" stopColor={professionalChartFill} stopOpacity={0.3} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                              <XAxis
-                                dataKey="ts"
-                                axisLine={false}
-                                tickLine={false}
-                                minTickGap={28}
-                                tickMargin={8}
-                                tickFormatter={formatChartXAxisTick}
-                                tick={{ fill: "rgba(255,255,255,0.80)", fontSize: 11 }}
-                              />
-                              <YAxis
-                                yAxisId="price"
-                                axisLine={false}
-                                tickLine={false}
-                                width={78}
-                                tick={{ fill: "rgba(255,255,255,0.78)", fontSize: 10 }}
-                                tickFormatter={(v: number) => formatUsdCompact(Number(v)).replace("$", "")}
-                              />
-                              {isChartInfoVisible ? (
-                                <YAxis
-                                  yAxisId="volume"
-                                  orientation="right"
-                                  axisLine={false}
-                                  tickLine={false}
-                                  width={56}
-                                  tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }}
-                                  tickFormatter={(v: number) =>
-                                    Number(v) >= 1_000_000
-                                      ? `${(Number(v) / 1_000_000).toFixed(1)}M`
-                                      : Number(v) >= 1_000
-                                        ? `${(Number(v) / 1_000).toFixed(1)}K`
-                                        : `${Math.round(Number(v))}`
-                                  }
-                                />
-                              ) : null}
-                              {chartEntryPrice !== null ? (
-                                <ReferenceLine
-                                  yAxisId="price"
-                                  y={chartEntryPrice}
-                                  stroke="rgba(96,165,250,0.65)"
-                                  strokeDasharray="4 4"
-                                  ifOverflow="extendDomain"
-                                  label={{
-                                    value: "Entry",
-                                    position: "insideTopLeft",
-                                    fill: "rgba(147,197,253,0.9)",
-                                    fontSize: 10,
-                                  }}
-                                />
-                              ) : null}
-                              {chartEntryCandle ? (
-                                <ReferenceLine
-                                  x={chartEntryCandle.ts}
-                                  stroke="rgba(96,165,250,0.45)"
-                                  strokeDasharray="3 3"
-                                  ifOverflow="discard"
-                                />
-                              ) : null}
-                              {chartEntryCandle ? (
-                                <ReferenceDot
-                                  x={chartEntryCandle.ts}
-                                  y={chartEntryCandle.close}
-                                  yAxisId="price"
-                                  r={4.5}
-                                  fill="#60a5fa"
-                                  stroke="rgba(8,10,15,0.92)"
-                                  strokeWidth={1.8}
-                                  ifOverflow="visible"
-                                />
-                              ) : null}
-                              <RechartsTooltip
-                                cursor={{ stroke: "rgba(255,255,255,0.08)", strokeDasharray: "4 4" }}
-                                content={({ active, payload }) => {
-                                  if (!active || !payload?.length) return null;
-                                  const point = payload[0]?.payload as
-                                    | {
-                                        fullLabel?: string;
-                                        open?: number;
-                                        high?: number;
-                                        low?: number;
-                                        close?: number;
-                                        volume?: number;
-                                      }
-                                    | undefined;
-                                  if (!point) return null;
-                                  return (
-                                    <div className="rounded-lg border border-white/[0.1] bg-[#0c0e14]/95 backdrop-blur-sm p-2.5 text-[11px] text-white shadow-[0_12px_32px_-16px_rgba(0,0,0,0.9)]">
-                                      <div className="mb-1.5 text-[10px] text-white/40 font-medium">{point.fullLabel ?? ""}</div>
-                                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                                        <span className="text-white/35">O</span>
-                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.open ?? 0))}</span>
-                                        <span className="text-white/35">H</span>
-                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.high ?? 0))}</span>
-                                        <span className="text-white/35">L</span>
-                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.low ?? 0))}</span>
-                                        <span className="text-white/35">C</span>
-                                        <span className="text-right font-medium text-white/80">{formatUsdCompact(Number(point.close ?? 0))}</span>
-                                        {isChartInfoVisible ? (
-                                          <>
-                                            <span className="text-white/35">Vol</span>
-                                            <span className="text-right font-medium text-white/80">
-                                              {Number(point.volume ?? 0).toLocaleString()}
-                                            </span>
-                                          </>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  );
-                                }}
-                              />
-                              {isChartInfoVisible ? (
-                                <Bar
-                                  yAxisId="volume"
-                                  dataKey="volume"
-                                  barSize={3}
-                                  fill={`url(#buyChartVolumeFill-${post.id})`}
-                                  opacity={0.9}
-                                />
-                              ) : null}
-                              <Bar
-                                yAxisId="price"
-                                dataKey="wickRange"
-                                barSize={2}
-                                fill={`url(#buyChartWick-${post.id})`}
-                                opacity={isChartTradesVisible ? 1 : 0.7}
-                                tooltipType="none"
-                              />
-                              <Bar
-                                yAxisId="price"
-                                dataKey="bodyRange"
-                                barSize={8}
-                                radius={[1, 1, 1, 1]}
-                                tooltipType="none"
-                                isAnimationActive={false}
-                              >
-                                {professionalChartData.map((point) => (
-                                  <Cell
-                                    key={`candle-${post.id}-${point.ts}`}
-                                    fill={point.isBullish ? "#22c55e" : "#ef4444"}
-                                    fillOpacity={isChartTradesVisible ? 1 : 0.7}
-                                  />
-                                ))}
-                              </Bar>
-                              <Brush
-                                dataKey="ts"
-                                height={20}
-                                stroke={professionalChartStroke}
-                                fill="rgba(255,255,255,0.04)"
-                                travellerWidth={8}
-                                startIndex={Math.max(0, Math.min(chartWindowBounds.startIndex, professionalChartData.length - 1))}
-                                endIndex={Math.max(0, Math.min(chartWindowBounds.endIndex, professionalChartData.length - 1))}
-                                onChange={handleChartBrushChange}
-                                tickFormatter={formatChartXAxisTick}
-                              />
-                            </ComposedChart>
-                          </ResponsiveContainer>
-                          </ChartErrorBoundary>
+                          <CandlestickChart
+                            data={professionalChartData}
+                            visibleStartIndex={chartWindowBounds.startIndex}
+                            visibleEndIndex={chartWindowBounds.endIndex}
+                            showVolume={isChartInfoVisible}
+                            showCandles={isChartTradesVisible}
+                            stroke={professionalChartStroke}
+                            fill={professionalChartFill}
+                            entryPrice={chartEntryPrice}
+                            entryPoint={
+                              chartEntryCandle
+                                ? { ts: chartEntryCandle.ts, close: chartEntryCandle.close }
+                                : null
+                            }
+                            onHoverIndexChange={setChartActiveIndex}
+                            onOverviewSelect={(index) => {
+                              const width = chartWindowBounds.visibleCount;
+                              let startIndex = index - Math.floor(width / 2);
+                              startIndex = Math.max(0, Math.min(startIndex, Math.max(0, chartTotalPoints - width)));
+                              setChartWindow({
+                                startIndex,
+                                endIndex: startIndex + width - 1,
+                              });
+                              setChartActiveIndex(index);
+                            }}
+                            formatPrice={formatUsdCompact}
+                            formatTick={formatChartXAxisTick}
+                          />
                         ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
                           <div className="flex h-full items-center justify-center">
                             <div className="flex flex-col items-center gap-2">
@@ -4739,6 +4505,16 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               <p className="text-[11px] text-white/25">
                                 Chart feed unavailable. Try a different interval.
                               </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                  void chartCandlesQuery.refetch();
+                                }}
+                                className="h-7 border-white/10 bg-white/[0.03] px-3 text-[10px] text-white/70 hover:bg-white/[0.06]"
+                              >
+                                Retry
+                              </Button>
                             </div>
                           </div>
                         ) : (

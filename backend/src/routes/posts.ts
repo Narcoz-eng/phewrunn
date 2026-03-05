@@ -515,6 +515,21 @@ function normalizeChartCandle(input: {
   };
 }
 
+function finalizeChartCandles(
+  candles: Array<NormalizedChartCandle | null>,
+  limit: number
+): NormalizedChartCandle[] {
+  const deduped = new Map<number, NormalizedChartCandle>();
+  for (const candle of candles) {
+    if (!candle) continue;
+    deduped.set(candle.timestamp, candle);
+  }
+
+  return [...deduped.values()]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-limit);
+}
+
 function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell" {
   const inputMint = safeString(quote.inputMint);
   return inputMint === SOL_MINT ? "buy" : "sell";
@@ -4797,8 +4812,8 @@ async function fetchGeckoTerminalCandles(payload: ChartCandlesPayload): Promise<
     const attributes = safeRecord(data?.attributes);
     const rawList = Array.isArray(attributes?.ohlcv_list) ? attributes.ohlcv_list : [];
 
-    const candles = rawList
-      .map((row) => {
+    const candles = finalizeChartCandles(
+      rawList.map((row) => {
         if (!Array.isArray(row) || row.length < 6) return null;
         return normalizeChartCandle({
           timestamp: row[0],
@@ -4808,15 +4823,75 @@ async function fetchGeckoTerminalCandles(payload: ChartCandlesPayload): Promise<
           close: row[4],
           volume: row[5],
         });
-      })
-      .filter((entry): entry is NormalizedChartCandle => entry !== null)
-      .sort((a, b) => a.timestamp - b.timestamp);
+      }),
+      payload.limit ?? 260
+    );
 
     return {
       source: "geckoterminal",
       network,
       candles,
     };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseBirdeyeCandlesFromBody(bodyText: string, limit: number): NormalizedChartCandle[] {
+  const parsed = JSON.parse(bodyText) as unknown;
+  const top = safeRecord(parsed);
+  const successFlag = top?.success;
+  if (successFlag === false) {
+    throw new Error("Birdeye returned an unsuccessful response");
+  }
+  const data = safeRecord(top?.data);
+  const rawItems = Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.history)
+      ? data.history
+      : [];
+
+  return finalizeChartCandles(
+    rawItems.map((row) => {
+      const item = safeRecord(row);
+      if (!item) return null;
+      const value = safeFiniteNumber(item.value);
+      return normalizeChartCandle({
+        timestamp: item.unixTime ?? item.time ?? item.timestamp,
+        open: item.o ?? item.open ?? value,
+        high: item.h ?? item.high ?? value,
+        low: item.l ?? item.low ?? value,
+        close: item.c ?? item.close ?? value,
+        volume: item.v ?? item.volume ?? item.baseVolume ?? item.quoteVolume ?? 0,
+      });
+    }),
+    limit
+  );
+}
+
+async function requestBirdeyeCandles(args: {
+  endpointPath: "/defi/v3/ohlcv/pair" | "/defi/v3/ohlcv" | "/defi/ohlcv";
+  params: URLSearchParams;
+  limit: number;
+}): Promise<NormalizedChartCandle[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_800);
+  try {
+    const response = await fetch(`https://public-api.birdeye.so${args.endpointPath}?${args.params.toString()}`, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        "x-chain": "solana",
+        "X-API-KEY": BIRDEYE_API_KEY,
+      },
+      signal: controller.signal,
+    });
+    const bodyText = await response.text();
+    if (!response.ok) {
+      throw new Error(bodyText || `Birdeye request failed (${response.status})`);
+    }
+
+    return parseBirdeyeCandlesFromBody(bodyText, args.limit);
   } finally {
     clearTimeout(timeout);
   }
@@ -4840,74 +4915,72 @@ async function fetchBirdeyeCandles(payload: ChartCandlesPayload): Promise<ChartC
   const timeTo = Math.floor(Date.now() / 1000);
   const timeFrom = Math.max(0, timeTo - intervalSeconds * (limit + 6));
   const type = toBirdeyeInterval(timeframe, aggregate);
-  const params = new URLSearchParams({
-    address: payload.tokenAddress,
-    address_type: "token",
+  const baseParams = {
     type,
     time_from: String(timeFrom),
     time_to: String(timeTo),
+  };
+  const pairAddress = await resolveChartPoolAddress(payload).catch(() => null);
+  const attempts: Array<{
+    label: string;
+    endpointPath: "/defi/v3/ohlcv/pair" | "/defi/v3/ohlcv" | "/defi/ohlcv";
+    params: URLSearchParams;
+  }> = [];
+
+  if (pairAddress) {
+    attempts.push({
+      label: "pair-v3",
+      endpointPath: "/defi/v3/ohlcv/pair",
+      params: new URLSearchParams({
+        address: pairAddress,
+        count_limit: String(limit),
+        ...baseParams,
+      }),
+    });
+  }
+
+  attempts.push({
+    label: "token-v3",
+    endpointPath: "/defi/v3/ohlcv",
+    params: new URLSearchParams({
+      address: payload.tokenAddress,
+      address_type: "token",
+      count_limit: String(limit),
+      ...baseParams,
+    }),
+  });
+  attempts.push({
+    label: "token-legacy",
+    endpointPath: "/defi/ohlcv",
+    params: new URLSearchParams({
+      address: payload.tokenAddress,
+      address_type: "token",
+      ...baseParams,
+    }),
   });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2_500);
-  try {
-    const response = await fetch(`https://public-api.birdeye.so/defi/ohlcv?${params.toString()}`, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        "x-chain": "solana",
-        "X-API-KEY": BIRDEYE_API_KEY,
-      },
-      signal: controller.signal,
-    });
-    const bodyText = await response.text();
-    if (!response.ok) {
-      throw new Error(bodyText || `Birdeye request failed (${response.status})`);
+  const errors: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      const candles = await requestBirdeyeCandles({
+        endpointPath: attempt.endpointPath,
+        params: attempt.params,
+        limit,
+      });
+      if (candles.length >= 2) {
+        return {
+          source: "birdeye",
+          network: "solana",
+          candles,
+        };
+      }
+      errors.push(`${attempt.label}: insufficient candle data`);
+    } catch (error) {
+      errors.push(`${attempt.label}: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    const parsed = JSON.parse(bodyText) as unknown;
-    const top = safeRecord(parsed);
-    const successFlag = top?.success;
-    if (successFlag === false) {
-      throw new Error("Birdeye returned an unsuccessful response");
-    }
-    const data = safeRecord(top?.data);
-    const rawItems = Array.isArray(data?.items)
-      ? data.items
-      : Array.isArray(data?.history)
-        ? data.history
-        : [];
-
-    const candles = rawItems
-      .map((row) => {
-        const item = safeRecord(row);
-        if (!item) return null;
-        const value = safeFiniteNumber(item.value);
-        return normalizeChartCandle({
-          timestamp: item.unixTime ?? item.time ?? item.timestamp,
-          open: item.o ?? item.open ?? value,
-          high: item.h ?? item.high ?? value,
-          low: item.l ?? item.low ?? value,
-          close: item.c ?? item.close ?? value,
-          volume: item.v ?? item.volume ?? item.baseVolume ?? item.quoteVolume ?? 0,
-        });
-      })
-      .filter((entry): entry is NormalizedChartCandle => entry !== null)
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .slice(-limit);
-
-    if (candles.length < 2) {
-      throw new Error("Birdeye returned insufficient candle data");
-    }
-
-    return {
-      source: "birdeye",
-      network: "solana",
-      candles,
-    };
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error(errors.join(" | ") || "Birdeye returned insufficient candle data");
 }
 
 async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
