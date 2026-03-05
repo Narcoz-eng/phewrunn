@@ -247,10 +247,6 @@ export default function Login() {
     return () => window.clearTimeout(t);
   }, [optimizeMotion]);
 
-  const deferredSectionStyle = isMobile
-    ? ({ contentVisibility: "auto", containIntrinsicSize: "900px" } as const)
-    : undefined;
-
   return (
     <div className="min-h-screen bg-background relative overflow-x-hidden">
       {/* ── Background atmosphere ── */}
@@ -582,7 +578,6 @@ export default function Login() {
         {/* ━━━━━━ SECTION 2: WHY EARLY MATTERS ━━━━━━ */}
         <section
           className="border-t border-border/40 bg-card/30 backdrop-blur-sm"
-          style={deferredSectionStyle}
         >
           <div className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
             <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
@@ -726,7 +721,6 @@ export default function Login() {
         {/* ━━━━━━ SECTION 3: REPUTATION MARKET ━━━━━━ */}
         <section
           className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16"
-          style={deferredSectionStyle}
         >
           <div className="grid items-center gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
             <motion.div
@@ -804,7 +798,6 @@ export default function Login() {
         {/* ━━━━━━ SECTION 4: LEVEL SYSTEM ━━━━━━ */}
         <section
           className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16"
-          style={deferredSectionStyle}
         >
           <motion.div
             initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
