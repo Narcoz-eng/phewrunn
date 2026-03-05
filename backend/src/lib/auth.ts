@@ -69,7 +69,20 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
 
   const message = getErrorMessage(error);
 
-  return /does not exist|unknown arg|unknown field|column|table|no such column|invalid\s+`prisma\.[^`]+`\s+invocation/i.test(message);
+  const normalizedMessage = message.toLowerCase();
+
+  return (
+    normalizedMessage.includes("does not exist in the current database") ||
+    normalizedMessage.includes("no such column") ||
+    normalizedMessage.includes("no such table") ||
+    normalizedMessage.includes("has no column named") ||
+    normalizedMessage.includes("unknown arg") ||
+    normalizedMessage.includes("unknown argument") ||
+    normalizedMessage.includes("unknown field") ||
+    (normalizedMessage.includes("column") && normalizedMessage.includes("does not exist")) ||
+    (normalizedMessage.includes("table") && normalizedMessage.includes("does not exist")) ||
+    (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist"))
+  );
 }
 
 function isPrismaClientError(error: unknown): boolean {
