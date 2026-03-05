@@ -133,14 +133,17 @@ const stats = [
 // ─── Auth buttons ──────────────────────────────────────────────────────────────
 
 function PrivyLoginButton() {
-  const { login, ready: privyReady, isSyncing, syncError } = usePrivyLogin();
+  const navigate = useNavigate();
+  const { login, ready: privyReady, isSyncing, syncError } = usePrivyLogin({
+    onSuccess: () => navigate("/", { replace: true }),
+  });
   const isLoading = isSyncing;
 
   return (
     <div className="space-y-2">
       <Button
         type="button"
-        className="w-full h-12 font-semibold gap-3 shadow-glow hover:shadow-glow-lg transition-all duration-300 text-sm"
+        className="w-full h-14 rounded-2xl border border-white/20 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] text-slate-950 font-semibold gap-3 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.85)] transition-all duration-300 text-sm hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_28px_70px_-28px_rgba(152,233,220,0.95)]"
         onClick={login}
         disabled={isLoading}
       >
@@ -168,7 +171,7 @@ function FallbackLoginButton() {
   return (
     <Button
       type="button"
-      className="w-full h-12 font-semibold gap-3 opacity-50"
+      className="w-full h-14 rounded-2xl font-semibold gap-3 opacity-50"
       disabled
     >
       <Loader2 className="w-4 h-4 animate-spin" />
@@ -351,97 +354,152 @@ export default function Login() {
 
             {/* Right — sign-in + fee orbit */}
             <div className="order-1 xl:order-2 w-full max-w-[420px] mx-auto xl:mx-0 xl:sticky xl:top-[80px]">
-              {/* Sign-in card */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={loaded ? { opacity: 1, y: 0 } : {}}
                 transition={{ duration: 0.5, delay: 0.15 }}
               >
-                <div className="rounded-2xl border border-border/60 bg-background/85 backdrop-blur-xl overflow-hidden shadow-[0_24px_80px_-30px_hsl(var(--foreground)/0.4)]">
-                  {/* Card header */}
-                  <div className="px-6 pt-6 pb-4 border-b border-border/50 bg-gradient-to-b from-primary/[0.06] to-transparent">
-                    <div className="flex items-center gap-2.5 mb-1">
-                      <div className="w-7 h-7 rounded-lg bg-primary/15 border border-primary/25 flex items-center justify-center">
-                        <Zap className="w-3.5 h-3.5 text-primary" />
-                      </div>
-                      <h2 className="text-lg font-semibold tracking-tight">
-                        Start Earning Today
-                      </h2>
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed pl-[38px]">
-                      Post your alpha call and earn 0.5% of every buy executed
-                      directly from your post.
-                    </p>
-                  </div>
-
-                  {/* Sign-in body */}
-                  <div className="p-5 space-y-4">
-                    {/* Main CTA */}
-                    <div className="rounded-xl border border-border/60 bg-card/70 p-4 space-y-3">
-                      {privyAvailable ? (
-                        <PrivyLoginButton />
-                      ) : (
-                        <FallbackLoginButton />
-                      )}
-                      <div className="flex items-start gap-2 rounded-lg bg-secondary/20 px-3 py-2 border border-border/40">
-                        <Shield className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
-                        <p className="text-[11px] text-muted-foreground leading-relaxed">
-                          Secure email verification. No wallet required to get
-                          started.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Mini fee explainer */}
-                    <div className="rounded-xl border border-gain/20 bg-gain/5 p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-gain font-bold text-xl font-mono">
-                          0.5%
-                        </span>
-                        <div>
-                          <div className="text-xs font-semibold text-foreground">
-                            Per Buy From Your Post
+                <div className="relative rounded-[30px] p-[1px] bg-[linear-gradient(160deg,hsl(var(--primary)/0.55),hsl(var(--accent)/0.28),transparent_88%)] shadow-[0_32px_120px_-40px_hsl(var(--primary)/0.7)]">
+                  <div className="absolute inset-[12%] rounded-full bg-primary/12 blur-3xl pointer-events-none" />
+                  <div className="relative rounded-[29px] overflow-hidden border border-white/8 bg-background/92 backdrop-blur-2xl">
+                    <div className="px-6 pt-6 pb-5 border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-11 h-11 rounded-2xl bg-primary/12 border border-primary/25 flex items-center justify-center shrink-0 shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]">
+                            <Zap className="w-4.5 h-4.5 text-primary" />
                           </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            On-chain. Automatic. Yours.
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.28em] text-primary/75 mb-2">
+                              Creator Fee Rail
+                            </div>
+                            <h2 className="text-xl font-semibold tracking-tight">
+                              Start Earning Today
+                            </h2>
+                            <p className="text-xs text-muted-foreground leading-relaxed mt-1.5 max-w-[250px]">
+                              Route every buy through your post and turn public conviction into instant payout momentum.
+                            </p>
                           </div>
                         </div>
+                        <div className="shrink-0 rounded-full border border-gain/20 bg-gain/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-gain">
+                          0.5% Live
+                        </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-center">
+
+                      <div className="mt-5 grid grid-cols-3 gap-2">
                         {[
-                          { n: "$1K", label: "traded from post", fee: "$5" },
-                          { n: "$10K", label: "traded from post", fee: "$50" },
-                          { n: "$100K", label: "traded from post", fee: "$500" },
-                        ].map((row) => (
+                          { label: "Account", value: "Instant" },
+                          { label: "Payouts", value: "On-chain" },
+                          { label: "Setup", value: "Email first" },
+                        ].map((item) => (
                           <div
-                            key={row.n}
-                            className="rounded-lg border border-border/40 bg-background/60 py-2 px-1"
+                            key={item.label}
+                            className="rounded-2xl border border-border/45 bg-background/45 px-3 py-3"
                           >
-                            <div className="text-sm font-mono font-bold text-gain">
-                              {row.fee}
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                              {item.label}
                             </div>
-                            <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
-                              {row.n}
-                              <br />
-                              {row.label}
+                            <div className="text-sm font-semibold tracking-tight mt-1">
+                              {item.value}
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* Trust indicators */}
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground">
-                  <div className="flex items-center gap-1.5">
-                    <Shield className="w-3 h-3" />
-                    Secure email
+                    <div className="p-5 space-y-4">
+                      <div className="rounded-[24px] border border-primary/18 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.14),transparent_58%),linear-gradient(180deg,hsl(var(--card)/0.92),hsl(var(--background)/0.82))] p-4 shadow-[0_20px_60px_-34px_hsl(var(--primary)/0.55)]">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+                              Secure Access
+                            </div>
+                            <div className="text-sm font-semibold tracking-tight mt-1">
+                              Launch your creator dashboard
+                            </div>
+                          </div>
+                          <div className="w-9 h-9 rounded-2xl border border-border/50 bg-background/60 flex items-center justify-center shrink-0">
+                            <Shield className="w-4 h-4 text-primary" />
+                          </div>
+                        </div>
+                        {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
+                        <div className="mt-3 flex items-start gap-2 rounded-2xl border border-border/45 bg-background/55 px-3 py-3">
+                          <Shield className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                            Secure email verification. Your account opens instantly and you can connect payout rails later.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-gain/20 bg-[linear-gradient(180deg,hsl(var(--gain)/0.11),transparent_18%),linear-gradient(180deg,hsl(var(--background)/0.78),hsl(var(--background)/0.96))] p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.24em] text-gain/80">
+                              Fee Capture Model
+                            </div>
+                            <div className="mt-2 text-4xl font-mono font-bold text-gain">
+                              0.5%
+                            </div>
+                            <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed max-w-[190px]">
+                              Every buy executed from your post routes a slice of flow back to you automatically.
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-gain/15 bg-background/55 px-3 py-3 min-w-[108px]">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                              Status
+                            </div>
+                            <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                              <span className="w-2 h-2 rounded-full bg-gain animate-pulse" />
+                              Routing live
+                            </div>
+                            <div className="mt-1 text-[11px] text-muted-foreground">
+                              Payout rail active
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-3 gap-2">
+                          {[
+                            { volume: "$1K", payout: "$5", accent: "border-border/45" },
+                            { volume: "$10K", payout: "$50", accent: "border-gain/30 shadow-[0_16px_40px_-30px_hsl(var(--gain)/0.45)]" },
+                            { volume: "$100K", payout: "$500", accent: "border-border/45" },
+                          ].map((tier) => (
+                            <div
+                              key={tier.volume}
+                              className={cn(
+                                "rounded-2xl bg-background/60 px-3 py-3 text-center border",
+                                tier.accent
+                              )}
+                            >
+                              <div className="text-lg font-mono font-bold text-gain">
+                                {tier.payout}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground mt-1">
+                                from {tier.volume}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground mt-2 leading-snug">
+                                traded from your post
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-[11px]">
+                        {[
+                          "Secure email",
+                          "Auto account creation",
+                          "No wallet needed",
+                        ].map((item) => (
+                          <div
+                            key={item}
+                            className="rounded-2xl border border-border/45 bg-background/45 px-3 py-3 text-center text-muted-foreground"
+                          >
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  <span className="hidden sm:block w-1 h-1 rounded-full bg-border" />
-                  <div>Auto account creation</div>
-                  <span className="hidden sm:block w-1 h-1 rounded-full bg-border" />
-                  <div>No wallet needed</div>
                 </div>
               </motion.div>
             </div>
