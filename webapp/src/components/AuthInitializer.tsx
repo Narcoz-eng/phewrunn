@@ -48,10 +48,6 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
-    const pathname =
-      typeof window !== "undefined" ? window.location.pathname : "";
-    // Login page owns manual auth UX/sync; avoid duplicate sync attempts here.
-    if (pathname === "/login") return;
     if (isAuthenticated) {
       attemptsRef.current = 0;
       lastSyncedPrivyUserRef.current = user.id;
