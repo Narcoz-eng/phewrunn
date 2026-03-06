@@ -8,6 +8,7 @@ import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { LevelBar } from "@/components/feed/LevelBar";
+import { CreatorFeeRailIcon } from "@/components/login/CreatorFeeRailIcon";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +21,6 @@ import {
   Target,
   TrendingUp,
   Users,
-  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -617,8 +617,8 @@ export default function Login() {
                     <div className="border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)] px-3.5 pb-4 pt-4.5 sm:px-6 sm:pb-5 sm:pt-6">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex items-start gap-3">
-                          <div className="w-11 h-11 rounded-2xl bg-primary/12 border border-primary/25 flex items-center justify-center shrink-0 shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]">
-                            <Zap className="w-4.5 h-4.5 text-primary" />
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-primary/25 bg-[radial-gradient(circle_at_32%_28%,hsl(var(--primary)/0.22),transparent_62%),linear-gradient(180deg,rgba(12,18,24,0.9),rgba(8,12,16,0.88))] shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]">
+                            <CreatorFeeRailIcon className="h-5 w-5" />
                           </div>
                           <div>
                             <div className="text-[10px] uppercase tracking-[0.28em] text-primary/75 mb-2">
