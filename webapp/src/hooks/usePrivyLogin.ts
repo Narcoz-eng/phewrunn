@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
-import { type AuthUser, useAuth, syncPrivySession } from "@/lib/auth-client";
+import { type AuthUser, readCachedAuthUserSnapshot, useAuth, syncPrivySession } from "@/lib/auth-client";
 import {
   resolvePrivyAuthPayload,
   type PrivyUserLike,
 } from "@/lib/privy-user";
+import {
+  clearPrivyLoginIntent,
+  writePrivyLoginIntent,
+} from "@/lib/privy-login-intent";
 import { toast } from "sonner";
 
 const LOGIN_SYNC_TIMEOUT_MS = 12_000;
@@ -87,6 +91,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       return;
     }
     successfulLoginHandledRef.current = true;
+    clearPrivyLoginIntent();
     onSuccess?.(syncedUser);
   }, [onSuccess]);
 
@@ -137,7 +142,8 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
         if (source === "auto" && appSessionAuthenticatedRef.current) {
           setSyncError(null);
-          return true;
+          clearPrivyLoginIntent();
+          return readCachedAuthUserSnapshot();
         }
 
         const isTooManyRequests = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
@@ -160,6 +166,13 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
         if (source === "auto") {
           autoResyncAttemptsRef.current += 1;
+        }
+
+        const exhaustedAutoRetries =
+          source === "auto" &&
+          (!isRetryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS);
+        if (source === "manual" || exhaustedAutoRetries) {
+          clearPrivyLoginIntent();
         }
 
         const shouldToast =
@@ -201,6 +214,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;
     lastSyncFailureRef.current = null;
+    clearPrivyLoginIntent();
     setSyncError(null);
   }, [appSessionAuthenticated]);
 
@@ -273,6 +287,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     clearSyncTimeout();
     loginRequestedRef.current = false;
     syncGuardRef.current = false;
+    clearPrivyLoginIntent();
     lastSyncFailureRef.current = {
       message: getPrivyErrorMessage(error),
       retryable: false,
@@ -316,10 +331,19 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     successfulLoginHandledRef.current = false;
 
     if (!ready) {
+      if (isXLogin) {
+        clearPrivyLoginIntent();
+      }
       loginRequestedRef.current = false;
       setSyncError("Sign-in is still initializing. Please wait a second and try again.");
       toast.warning("Sign-in is still initializing...");
       return;
+    }
+
+    if (isXLogin) {
+      writePrivyLoginIntent("twitter");
+    } else {
+      clearPrivyLoginIntent();
     }
 
     if (authenticated && user) {
@@ -340,6 +364,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         }
 
         if (isXLogin) {
+          clearPrivyLoginIntent();
           const resetMessage = "Previous sign-in session was reset. Tap Continue with X again.";
           setSyncError(resetMessage);
           toast.warning(resetMessage);

@@ -28,6 +28,7 @@ import {
   MAX_LEVEL,
   MIN_LEVEL,
   STARTING_LEVEL,
+  VETERAN_THRESHOLD,
 } from "@/types";
 import { AccuracyScoreCard } from "@/components/AccuracyScoreCard";
 
@@ -259,10 +260,10 @@ const levelBarSnapshots = [
 ];
 
 const levelRules = [
-  "1H win: +1 level immediately.",
-  "Soft loss (<30%) gets a 6H recovery chance before penalty.",
-  "Veteran protection starts at LVL +5, making drawdowns less punishing.",
-  "Severe loss (≥30%) can level you down.",
+  "Win above 3%: +1 level at 1H. Very large runners can scale higher.",
+  "Small wins up to 3% are XP-only and do not move level.",
+  "Soft loss under 30% gets a 6H recovery chance before any penalty.",
+  "Veteran protection starts at LVL +5. Severe loss of 30%+ costs 1 level immediately.",
 ];
 
 const features = [
@@ -302,7 +303,9 @@ function PrivyLoginButton() {
   });
   const isLoading = isSyncing;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
-  const xLabel = privyReady ? "Continue with X" : "Initialize X";
+  const xLabel = privyReady ? "Sign in with X" : "Start X";
+  const emailSubLabel = "Fastest path. Verification code lands instantly.";
+  const xSubLabel = "Fast X access.";
 
   return (
     <div className="space-y-3">
@@ -320,18 +323,18 @@ function PrivyLoginButton() {
             </>
           ) : (
             <>
-              <span className="flex items-center gap-3">
+              <span className="flex min-w-0 flex-1 items-center gap-3">
                 <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-950/10 bg-slate-950/10">
                   <Mail className="h-4 w-4" />
                 </span>
-                <span className="space-y-0.5">
-                  <span className="block text-sm font-semibold">{emailLabel}</span>
-                  <span className="block text-xs text-slate-700">
-                    Fastest path. Verification code lands instantly.
+                <span className="min-w-0 flex-1 space-y-0.5 pr-2">
+                  <span className="block truncate text-sm font-semibold leading-tight">{emailLabel}</span>
+                  <span className="block truncate text-xs text-slate-700 max-[380px]:hidden">
+                    {emailSubLabel}
                   </span>
                 </span>
               </span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="h-4 w-4 shrink-0" />
             </>
           )}
         </Button>
@@ -350,18 +353,18 @@ function PrivyLoginButton() {
             </>
           ) : (
             <>
-              <span className="flex items-center gap-3">
+              <span className="flex min-w-0 flex-1 items-center gap-3">
                 <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-black">
                   X
                 </span>
-                <span className="space-y-0.5">
-                  <span className="block text-sm font-semibold">{xLabel}</span>
-                  <span className="block text-xs text-white/60">
-                    Use your X identity and jump in with the same account.
+                <span className="min-w-0 flex-1 space-y-0.5 pr-2">
+                  <span className="block truncate text-sm font-semibold leading-tight">{xLabel}</span>
+                  <span className="block truncate text-xs text-white/60 max-[420px]:hidden">
+                    {xSubLabel}
                   </span>
                 </span>
               </span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="h-4 w-4 shrink-0" />
             </>
           )}
         </Button>
@@ -1044,7 +1047,7 @@ export default function Login() {
                   },
                   {
                     label: "Veteran",
-                    value: "LVL +5",
+                    value: `LVL +${VETERAN_THRESHOLD}`,
                     desc: "Protection unlocked",
                     color: "border-primary/30 bg-primary/5 text-primary",
                   },

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
+  ArrowRight,
   ArrowDownRight,
   ArrowUpRight,
   ShieldCheck,
@@ -15,7 +16,6 @@ type ReputationFrame = {
   id: string;
   label: string;
   title: string;
-  deltaLabel: string;
   fromLevel: number;
   level: number;
   description: string;
@@ -32,30 +32,28 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
   {
     id: "clean-win",
     label: "Win Settled",
-    title: "A clean call lands and your level moves immediately.",
-    deltaLabel: "+1 LVL",
+    title: "A win above 3% moves your level up immediately.",
     fromLevel: 0,
     level: 1,
     description:
-      "The market sees receipts, not promises. A real win adds proof to your profile and sharpens buyer trust on the next post.",
+      "The market sees receipts, not promises. A strong win adds public proof to your profile. Smaller wins can still add XP even when they do not move your level.",
     tone: "positive",
     metrics: [
       { label: "Trust", value: 68 },
       { label: "Reach", value: 56 },
       { label: "Buyer Flow", value: 52 },
     ],
-    footnote: "Wins turn signal into reputation.",
+    footnote: "Strong wins move level fast.",
     icon: ArrowUpRight,
   },
   {
     id: "soft-recovery",
     label: "Recovery Window",
-    title: "A soft miss can recover before your reputation takes the hit.",
-    deltaLabel: "0 LVL",
-    fromLevel: 1,
-    level: 1,
+    title: "Losses under 30% get a 6H recovery window before any penalty.",
+    fromLevel: 0,
+    level: 0,
     description:
-      "Phew does not reward panic. Smaller misses get room to repair, which favors disciplined thesis management over noisy posting.",
+      "Soft misses do not level you down at 1H. If the trade recovers by 6H, your level stays intact instead of taking a delayed hit.",
     tone: "neutral",
     metrics: [
       { label: "Trust", value: 60 },
@@ -67,13 +65,12 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
   },
   {
     id: "veteran-streak",
-    label: "Consistency",
-    title: "String together good calls and you unlock Veteran protection.",
-    deltaLabel: "+4 LVL",
-    fromLevel: 1,
+    label: "Veteran Unlock",
+    title: "Reach LVL +5 and Veteran protection turns on.",
+    fromLevel: 4,
     level: 5,
     description:
-      "Consistency compounds. Higher levels make your profile look earned, which means better first impressions before a trader even opens the post.",
+      "Consistent wins compound into trust. Once you hit LVL +5, softer drawdowns become less punishing and your profile carries more earned weight.",
     tone: "positive",
     metrics: [
       { label: "Trust", value: 86 },
@@ -85,20 +82,19 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
   },
   {
     id: "severe-loss",
-    label: "Penalty",
-    title: "A severe bad call drags level, trust, and momentum back down.",
-    deltaLabel: "-2 LVL",
+    label: "Severe Loss",
+    title: "A severe loss costs a full level immediately.",
     fromLevel: 5,
-    level: 3,
+    level: 4,
     description:
-      "Bad conviction is public too. Severe misses cool attention fast and reprice your distribution until you earn the trust back.",
+      "Losses of 30% or worse do not get a recovery window. They settle fast, hit your public level, and cool trust until you rebuild it.",
     tone: "negative",
     metrics: [
       { label: "Trust", value: 48 },
       { label: "Reach", value: 39 },
       { label: "Buyer Flow", value: 34 },
     ],
-    footnote: "Noise gets marked down in public.",
+    footnote: "30%+ losses skip recovery.",
     icon: ShieldAlert,
   },
 ];
@@ -120,6 +116,17 @@ const meterClasses: Record<ReputationFrame["tone"], string> = {
 
 function formatLevelValue(level: number) {
   return `LVL ${level > 0 ? `+${level}` : level}`;
+}
+
+function formatLevelDelta(fromLevel: number, level: number) {
+  const delta = level - fromLevel;
+  if (delta > 0) {
+    return `+${delta} LVL`;
+  }
+  if (delta < 0) {
+    return `${delta} LVL`;
+  }
+  return "0 LVL";
 }
 
 export function ReputationEngine() {
@@ -172,7 +179,7 @@ export function ReputationEngine() {
                 toneClasses[activeFrame.tone]
               )}
             >
-              {activeFrame.deltaLabel}
+              {formatLevelDelta(activeFrame.fromLevel, activeFrame.level)}
             </div>
           </div>
 
@@ -203,15 +210,24 @@ export function ReputationEngine() {
                     {formatLevelValue(activeFrame.fromLevel)} {"->"} {formatLevelValue(activeFrame.level)}
                   </div>
                 </div>
-                <div className="mt-3">
-                  <LevelBar
-                    level={activeFrame.level}
-                    size={isMobile ? "md" : "lg"}
-                    showLabel={false}
-                  />
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="shrink-0 rounded-xl border border-border/45 bg-background/60 px-2.5 py-1 text-[11px] font-mono font-semibold text-muted-foreground">
+                    {formatLevelValue(activeFrame.fromLevel)}
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <LevelBar
+                      level={activeFrame.level}
+                      size={isMobile ? "md" : "lg"}
+                      showLabel={false}
+                    />
+                  </div>
+                  <div className="shrink-0 rounded-xl border border-border/45 bg-background/60 px-2.5 py-1 text-[11px] font-mono font-semibold text-foreground">
+                    {formatLevelValue(activeFrame.level)}
+                  </div>
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  The bar shows the ending level for this outcome.
+                  These examples match the live level rules shown on the platform.
                 </p>
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   {activeFrame.metrics.map((metric) => (
@@ -279,8 +295,8 @@ export function ReputationEngine() {
                           <div className="text-sm font-semibold tracking-tight">
                             {frame.label}
                           </div>
-                          <div className="text-xs font-mono font-bold text-muted-foreground">
-                            {frame.deltaLabel}
+                          <div className="text-xs font-mono font-bold text-muted-foreground whitespace-nowrap">
+                            {formatLevelDelta(frame.fromLevel, frame.level)}
                           </div>
                         </div>
                         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">

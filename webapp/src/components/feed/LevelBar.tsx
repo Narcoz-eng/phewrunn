@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { MIN_LEVEL, MAX_LEVEL, LIQUIDATION_LEVEL } from "@/types";
+import { MIN_LEVEL, MAX_LEVEL, LIQUIDATION_LEVEL, VETERAN_THRESHOLD } from "@/types";
 import { getLevelColor, getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { AlertTriangle, Skull } from "lucide-react";
 
@@ -60,7 +60,7 @@ export function LevelBar({ level, showLabel = true, showWarningBanner = false, s
       <div className="flex items-center gap-3">
         {showLabel && (
           <div className="flex items-center gap-2">
-            <span
+              <span
               className={cn(
                 "font-mono font-bold min-w-[3.5rem] tracking-tight",
                 labelSizeClasses[size],
@@ -69,8 +69,10 @@ export function LevelBar({ level, showLabel = true, showWarningBanner = false, s
               style={{
                 textShadow: level >= 8
                   ? "0 0 8px rgba(245,158,11,0.6)"
-                  : level >= 4
+                  : level >= VETERAN_THRESHOLD
                   ? "0 0 8px rgba(148,163,184,0.4)"
+                  : level >= 4
+                  ? "0 0 8px rgba(161,161,170,0.32)"
                   : level >= 1
                   ? "0 0 8px rgba(234,88,12,0.4)"
                   : level >= -2
@@ -105,7 +107,8 @@ export function LevelBar({ level, showLabel = true, showWarningBanner = false, s
                   i < 5 && "bg-red-600/10 dark:bg-red-600/15", // -5 to -1
                   i >= 5 && i < 6 && "bg-orange-600/10 dark:bg-orange-600/15", // 0
                   i >= 6 && i < 9 && "bg-orange-500/10 dark:bg-orange-500/15", // 1-3
-                  i >= 9 && i < 13 && "bg-slate-400/10 dark:bg-slate-400/15", // 4-7
+                  i >= 9 && i < 10 && "bg-zinc-400/10 dark:bg-zinc-400/15", // 4
+                  i >= 10 && i < 13 && "bg-slate-400/10 dark:bg-slate-400/15", // 5-7
                   i >= 13 && "bg-amber-500/10 dark:bg-amber-500/15" // 8-10
                 )}
               />
@@ -124,8 +127,10 @@ export function LevelBar({ level, showLabel = true, showWarningBanner = false, s
               width: `${Math.max(normalizedLevel, 3)}%`,
               background: level >= 8
                 ? "linear-gradient(90deg, #f59e0b, #fbbf24)"
-                : level >= 4
+                : level >= VETERAN_THRESHOLD
                 ? "linear-gradient(90deg, #94a3b8, #cbd5e1)"
+                : level >= 4
+                ? "linear-gradient(90deg, #71717a, #d4d4d8)"
                 : level >= 1
                 ? "linear-gradient(90deg, #c2410c, #ea580c)"
                 : level >= -2

@@ -3,6 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import { getExplicitLogoutAt, readCachedAuthUserSnapshot, useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
+import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 
 function RouteLoading({ label }: { label: string }) {
   return (
@@ -103,13 +104,24 @@ function ProtectedRouteWithPrivy({
   const [graceExpired, setGraceExpired] = useState(false);
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
+  const activeLoginIntent = !effectiveUser ? readPrivyLoginIntent() : null;
+  const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivySyncHint = ready && authenticated && !effectiveUser;
 
   useEffect(() => {
-    if (effectiveUser || isPending || (!hadTokenHint.current && !hasPrivySyncHint)) return;
-    const timer = window.setTimeout(() => setGraceExpired(true), hasPrivySyncHint ? 12_000 : 4_000);
+    if (
+      effectiveUser ||
+      isPending ||
+      (!hadTokenHint.current && !hasPrivySyncHint && !hasOAuthReturnHint)
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setGraceExpired(true),
+      hasPrivySyncHint || hasOAuthReturnHint ? 12_000 : 4_000
+    );
     return () => window.clearTimeout(timer);
-  }, [effectiveUser, hasPrivySyncHint, isPending]);
+  }, [effectiveUser, hasOAuthReturnHint, hasPrivySyncHint, isPending]);
 
   if (effectiveUser) {
     hadTokenHint.current = false;
@@ -120,6 +132,9 @@ function ProtectedRouteWithPrivy({
   }
 
   if (!effectiveUser) {
+    if (hasOAuthReturnHint && !ready) {
+      return <RouteLoading label={graceExpired ? "Still returning from X..." : "Returning from X..."} />;
+    }
     if (hasPrivySyncHint) {
       return <RouteLoading label={graceExpired ? "Still finalizing sign-in..." : "Completing sign-in..."} />;
     }

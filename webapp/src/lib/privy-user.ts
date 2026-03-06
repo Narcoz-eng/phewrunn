@@ -3,6 +3,8 @@ import { getIdentityToken } from "@privy-io/react-auth";
 const IDENTITY_TOKEN_ATTEMPTS = 4;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [70, 120, 180] as const;
 const AUTH_PAYLOAD_READY_DELAYS_MS = [120, 220, 360] as const;
+const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
+const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 140;
 
 type LinkedAccountLike = {
   type: string;
@@ -32,9 +34,26 @@ async function waitFor(delayMs: number): Promise<void> {
   });
 }
 
+async function getIdentityTokenWithin(timeoutMs: number): Promise<string | undefined> {
+  return Promise.race<string | undefined>([
+    getIdentityToken().catch(() => undefined),
+    waitFor(timeoutMs).then(() => undefined),
+  ]);
+}
+
+function hasOAuthIdentity(user: PrivyUserLike): boolean {
+  if (user.twitter?.username || user.twitter?.name) {
+    return true;
+  }
+
+  return Boolean(
+    user.linkedAccounts?.some((account) => account.type.endsWith("_oauth"))
+  );
+}
+
 export async function getPrivyIdentityTokenFast(): Promise<string | undefined> {
   for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    const token = await getIdentityToken().catch(() => undefined);
+    const token = await getIdentityTokenWithin(IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS);
     if (token) {
       return token;
     }
@@ -121,6 +140,19 @@ export async function resolvePrivyAuthPayload({
       user: latestUser,
       email,
       name,
+    };
+  }
+
+  // X / OAuth-only logins often return before the identity token is ready.
+  // The backend can safely resolve the Privy user by id, so avoid holding the
+  // UI open through the full retry budget when we already know the provider identity.
+  if (hasOAuthIdentity(latestUser)) {
+    const quickPrivyIdToken = await getIdentityTokenWithin(OAUTH_IDENTITY_TOKEN_TIMEOUT_MS);
+    return {
+      user: latestUser,
+      email,
+      name,
+      privyIdToken: quickPrivyIdToken,
     };
   }
 

@@ -112,6 +112,7 @@ export const MIN_LEVEL = -5;
 export const MAX_LEVEL = 10;
 export const STARTING_LEVEL = 0;
 export const LIQUIDATION_LEVEL = -5;
+export const VETERAN_THRESHOLD = 5;
 
 // Contract Address Detection (client-side preview)
 export const SOLANA_ADDRESS_REGEX = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;

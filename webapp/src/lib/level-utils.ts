@@ -1,5 +1,6 @@
 // Level UI utility functions
 // Color coding and labels for user levels
+import { VETERAN_THRESHOLD } from "@/types";
 
 export interface LevelColors {
   bg: string;
@@ -11,7 +12,8 @@ export interface LevelColors {
 /**
  * Get color classes for a given level
  * - Gold (Elite): level >= 8
- * - Silver (Veteran): level >= 4
+ * - Silver (Veteran): level >= 5
+ * - Steel (Credible): level = 4
  * - Bronze (Rising): level >= 1
  * - Pale Red (At Risk): level >= -2
  * - Deep Red (Liquidated): level < -2
@@ -25,12 +27,20 @@ export function getLevelColor(level: number): LevelColors {
       glow: 'shadow-[0_0_12px_rgba(245,158,11,0.4)]',
     };
   }
-  if (level >= 4) {
+  if (level >= VETERAN_THRESHOLD) {
     return {
       bg: 'bg-slate-300/20',
       text: 'text-slate-300',
       border: 'border-slate-400',
       glow: 'shadow-[0_0_12px_rgba(148,163,184,0.4)]',
+    };
+  }
+  if (level >= 4) {
+    return {
+      bg: 'bg-zinc-300/15',
+      text: 'text-zinc-200',
+      border: 'border-zinc-500',
+      glow: 'shadow-[0_0_10px_rgba(161,161,170,0.28)]',
     };
   }
   if (level >= 1) {
@@ -63,7 +73,8 @@ export function getLevelColor(level: number): LevelColors {
  */
 export function getLevelLabel(level: number): string {
   if (level >= 8) return 'Elite';
-  if (level >= 4) return 'Veteran';
+  if (level >= VETERAN_THRESHOLD) return 'Veteran';
+  if (level >= 4) return 'Credible';
   if (level >= 1) return 'Rising';
   if (level >= -2) return 'At Risk';
   return 'Liquidated';

@@ -11,6 +11,7 @@ import {
   resolvePrivyAuthPayload,
   type PrivyUserLike,
 } from "@/lib/privy-user";
+import { clearPrivyLoginIntent } from "@/lib/privy-login-intent";
 
 interface AuthInitializerProps {
   children: React.ReactNode;
@@ -43,6 +44,14 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   useEffect(() => {
     latestPrivyUserRef.current = user ? (user as PrivyUserLike) : null;
   }, [user]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    clearPrivyLoginIntent();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!authenticated) {
