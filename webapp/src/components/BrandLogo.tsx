@@ -1,8 +1,7 @@
 import { cn } from "@/lib/utils";
 
 type BrandLogoSize = "sm" | "md" | "lg";
-const WORDMARK_LOGO_IMAGE_SRC = "/phew-logo.svg";
-const MARK_LOGO_IMAGE_SRC = "/phew-mark.svg";
+const EXACT_LOGO_IMAGE_SRC = "https://i.imgur.com/yDZerPC.png";
 
 interface BrandLogoProps {
   size?: BrandLogoSize;
@@ -37,25 +36,6 @@ export function BrandLogo({
 }: BrandLogoProps) {
   const styles = sizeMap[size];
 
-  if (showTagline) {
-    return (
-      <div className={cn("flex items-center", className)}>
-        <img
-          src={WORDMARK_LOGO_IMAGE_SRC}
-          alt="Phew.run"
-          className={cn(
-            "w-auto object-contain drop-shadow-[0_8px_24px_rgba(0,0,0,0.42)]",
-            size === "sm" && "h-10 sm:h-11",
-            size === "md" && "h-12",
-            size === "lg" && "h-14"
-          )}
-          loading="eager"
-          decoding="async"
-        />
-      </div>
-    );
-  }
-
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <div
@@ -67,7 +47,7 @@ export function BrandLogo({
         )}
       >
         <img
-          src={MARK_LOGO_IMAGE_SRC}
+          src={EXACT_LOGO_IMAGE_SRC}
           alt=""
           aria-hidden="true"
           className="h-full w-full object-cover"
@@ -85,12 +65,12 @@ export function BrandLogo({
           )}
         >
           <span className="text-foreground">PHEW</span>
-          <span className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent">.RUN</span>
+          <span className="bg-gradient-to-r from-[#A9FF34] via-[#76FF44] to-[#41E8CF] bg-clip-text text-transparent">.RUN</span>
         </div>
         {showTagline ? (
           <div
             className={cn(
-              "mt-0.5 text-white/65 tracking-[0.14em] uppercase leading-none",
+              "mt-0.5 text-white/80 tracking-[0.14em] uppercase leading-none",
               "drop-shadow-[0_1px_6px_rgba(0,0,0,0.28)]",
               styles.subtitle
             )}
