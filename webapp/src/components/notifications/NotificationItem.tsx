@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 
 const notificationIcons: Record<string, { icon: typeof Bell; colorClass: string }> = {
   like: { icon: Heart, colorClass: "text-rose-500" },
@@ -77,7 +78,7 @@ export function NotificationItem({
     notification.postId
       ? `/post/${notification.postId}`
       : fromUser
-        ? `/profile/${fromUser.username || fromUser.id}`
+        ? buildProfilePath(fromUser.id, fromUser.username)
         : null;
 
   const handleRowActivate = () => {
@@ -234,7 +235,7 @@ export function NotificationItem({
               const itemHref = item.postId
                 ? `/post/${item.postId}`
                 : item.fromUser
-                  ? `/profile/${item.fromUser.username || item.fromUser.id}`
+                  ? buildProfilePath(item.fromUser.id, item.fromUser.username)
                   : null;
               return (
                 <button

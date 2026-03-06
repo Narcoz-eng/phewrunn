@@ -22,6 +22,7 @@ import { LevelBadge } from "./LevelBar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Users, AlertCircle, RefreshCw, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 
 interface RepostersDialogProps {
   postId: string;
@@ -49,7 +50,7 @@ function RepostersList({ postId, onClose }: { postId: string; onClose?: () => vo
   const handleUserClick = (reposter: Reposter) => {
     onClose?.();
     // Prefer username for cleaner URLs
-    navigate(`/profile/${reposter.username || reposter.id}`);
+    navigate(buildProfilePath(reposter.id, reposter.username));
   };
 
   if (isLoading) {

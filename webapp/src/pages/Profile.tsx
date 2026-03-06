@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { useSession, useAuth } from "@/lib/auth-client";
+import { useSession, useAuth, updateCachedAuthUser } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
 import { User, Post, getAvatarUrl, calculatePercentChange, LIQUIDATION_LEVEL } from "@/types";
 import { LevelBadge, LevelBar } from "@/components/feed/LevelBar";
@@ -50,6 +50,11 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import {
+  buildProfilePath,
+  getProfileHandleValidationMessage,
+  normalizeProfileHandleInput,
+} from "@/lib/profile-path";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -272,7 +277,7 @@ export default function Profile() {
   // Update edit form state when user data loads
   useEffect(() => {
     if (user) {
-      setEditUsername(user.username || user.name || "");
+      setEditUsername(user.username || "");
       setEditBio(user.bio || "");
     }
   }, [user]);
@@ -417,6 +422,10 @@ export default function Profile() {
     },
     onSuccess: (updatedUser) => {
       queryClient.setQueryData(profileMeQueryKey, updatedUser);
+      if (meProfileCacheKey) {
+        writeSessionCache(meProfileCacheKey, updatedUser);
+      }
+      updateCachedAuthUser(updatedUser);
       setIsEditing(false);
       setPreviewImage(null);
       toast.success("Profile updated!");
@@ -647,15 +656,22 @@ export default function Profile() {
 
   // Save profile changes
   const handleSave = async () => {
-    if (!editUsername.trim()) {
-      toast.error("Username cannot be empty");
+    const normalizedHandle = normalizeProfileHandleInput(editUsername);
+    const handleError = getProfileHandleValidationMessage(normalizedHandle);
+    const currentNormalizedHandle = normalizeProfileHandleInput(user?.username ?? "");
+
+    if (handleError) {
+      toast.error(handleError);
       return;
     }
 
     const updateData: { username?: string; bio?: string; image?: string } = {
-      username: editUsername.trim(),
       bio: editBio.trim() || undefined,
     };
+
+    if (normalizedHandle !== currentNormalizedHandle) {
+      updateData.username = normalizedHandle;
+    }
 
     if (previewImage) {
       updateData.image = previewImage;
@@ -667,7 +683,7 @@ export default function Profile() {
   // Cancel editing
   const handleCancel = () => {
     setIsEditing(false);
-    setEditUsername(user?.username || user?.name || "");
+    setEditUsername(user?.username || "");
     setEditBio(user?.bio || "");
     setPreviewImage(null);
     resetCropDialog();
@@ -1072,8 +1088,11 @@ export default function Profile() {
               {isEditing ? (
                 <Input
                   value={editUsername}
-                  onChange={(e) => setEditUsername(e.target.value)}
-                  placeholder="Username"
+                  onChange={(e) => setEditUsername(normalizeProfileHandleInput(e.target.value))}
+                  placeholder="your_handle"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   className="mt-4 max-w-xs text-center font-semibold text-lg"
                 />
               ) : (
@@ -1098,13 +1117,18 @@ export default function Profile() {
 
               {/* Bio */}
               {isEditing ? (
-                <Textarea
-                  value={editBio}
-                  onChange={(e) => setEditBio(e.target.value)}
-                  placeholder="Write a short bio..."
-                  className="mt-2 max-w-sm text-center resize-none"
-                  rows={2}
-                />
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Profile URL: {user ? buildProfilePath(user.id, editUsername) : `/profile/${session?.user?.id ?? ""}`}
+                  </p>
+                  <Textarea
+                    value={editBio}
+                    onChange={(e) => setEditBio(e.target.value)}
+                    placeholder="Write a short bio..."
+                    className="max-w-sm text-center resize-none"
+                    rows={2}
+                  />
+                </div>
               ) : user.bio ? (
                 <p className="mt-2 text-muted-foreground max-w-sm">{user.bio}</p>
               ) : null}

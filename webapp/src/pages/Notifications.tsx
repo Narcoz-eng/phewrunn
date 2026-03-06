@@ -11,6 +11,7 @@ import { NotificationItem, NotificationItemSkeleton } from "@/components/notific
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
 const NOTIFICATIONS_CACHE_TTL_MS = 45_000;
@@ -361,7 +362,7 @@ export default function Notifications() {
   };
 
   const handleProfileClick = (userId: string, username?: string | null) => {
-    navigate(`/profile/${username || userId}`);
+    navigate(buildProfilePath(userId, username));
   };
 
   const mergedNotifications = useMemo(() => mergeNotifications(notifications), [notifications]);

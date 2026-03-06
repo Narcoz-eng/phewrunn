@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl, formatMarketCap } from "@/types";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 import { Trophy, Medal, Award, TrendingUp } from "lucide-react";
 
 // Type for daily gainer from API
@@ -119,7 +120,7 @@ export function DailyGainersTable() {
       {gainers.map((gainer, index) => (
         <div
           key={gainer.postId}
-          onClick={() => navigate(`/profile/${gainer.user.username || gainer.user.id}`)}
+          onClick={() => navigate(buildProfilePath(gainer.user.id, gainer.user.username))}
           className={cn(
             "flex items-center gap-4 p-4 rounded-lg bg-card border transition-all cursor-pointer",
             "hover:border-primary/50 hover:shadow-md hover:shadow-primary/5",

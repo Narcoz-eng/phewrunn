@@ -297,7 +297,8 @@ const stats = [
 function PrivyLoginButton() {
   const navigate = useNavigate();
   const { login, ready: privyReady, isSyncing, syncError } = usePrivyLogin({
-    onSuccess: () => navigate("/", { replace: true }),
+    onSuccess: (user) =>
+      navigate(user.username ? "/" : "/welcome", { replace: true }),
   });
   const isLoading = isSyncing;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
@@ -305,10 +306,10 @@ function PrivyLoginButton() {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="space-y-3">
         <Button
           type="button"
-          className="h-14 rounded-2xl border border-white/20 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] text-slate-950 font-semibold gap-3 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.85)] transition-all duration-300 text-sm hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_28px_70px_-28px_rgba(152,233,220,0.95)]"
+          className="h-auto min-h-[76px] w-full justify-between rounded-[24px] border border-white/15 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] px-4 py-4 text-left text-slate-950 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.85)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_28px_70px_-28px_rgba(152,233,220,0.95)]"
           onClick={() => login({ loginMethods: ["email"] })}
           disabled={isLoading}
         >
@@ -319,8 +320,17 @@ function PrivyLoginButton() {
             </>
           ) : (
             <>
-              <Mail className="w-4 h-4" />
-              {emailLabel}
+              <span className="flex items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-950/10 bg-slate-950/10">
+                  <Mail className="h-4 w-4" />
+                </span>
+                <span className="space-y-0.5">
+                  <span className="block text-sm font-semibold">{emailLabel}</span>
+                  <span className="block text-xs text-slate-700">
+                    Fastest path. Verification code lands instantly.
+                  </span>
+                </span>
+              </span>
               <ArrowRight className="w-4 h-4" />
             </>
           )}
@@ -329,7 +339,7 @@ function PrivyLoginButton() {
         <Button
           type="button"
           variant="outline"
-          className="h-14 rounded-2xl border border-white/20 bg-black/35 text-white font-semibold gap-3 shadow-[0_20px_60px_-34px_rgba(0,0,0,0.95)] transition-all duration-300 text-sm hover:-translate-y-0.5 hover:bg-black/50"
+          className="h-auto min-h-[76px] w-full justify-between rounded-[24px] border border-white/15 bg-[linear-gradient(180deg,rgba(14,18,20,0.94),rgba(8,11,12,0.9))] px-4 py-4 text-left text-white shadow-[0_20px_60px_-34px_rgba(0,0,0,0.95)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-black/50"
           onClick={() => login({ loginMethods: ["twitter"] })}
           disabled={isLoading}
         >
@@ -340,10 +350,17 @@ function PrivyLoginButton() {
             </>
           ) : (
             <>
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 text-[11px] font-black">
-                X
+              <span className="flex items-center gap-3">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-black">
+                  X
+                </span>
+                <span className="space-y-0.5">
+                  <span className="block text-sm font-semibold">{xLabel}</span>
+                  <span className="block text-xs text-white/60">
+                    Use your X identity and jump in with the same account.
+                  </span>
+                </span>
               </span>
-              {xLabel}
               <ArrowRight className="w-4 h-4" />
             </>
           )}
@@ -361,10 +378,10 @@ function PrivyLoginButton() {
 
 function FallbackLoginButton() {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="space-y-3">
       <Button
         type="button"
-        className="h-14 rounded-2xl font-semibold gap-3 opacity-50"
+        className="h-auto min-h-[76px] w-full justify-start rounded-[24px] px-4 py-4 font-semibold opacity-50"
         disabled
       >
         <Loader2 className="w-4 h-4 animate-spin" />
@@ -373,7 +390,7 @@ function FallbackLoginButton() {
       <Button
         type="button"
         variant="outline"
-        className="h-14 rounded-2xl font-semibold gap-3 opacity-50"
+        className="h-auto min-h-[76px] w-full justify-start rounded-[24px] px-4 py-4 font-semibold opacity-50"
         disabled
       >
         <Loader2 className="w-4 h-4 animate-spin" />
@@ -387,7 +404,7 @@ function FallbackLoginButton() {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { isAuthenticated, isReady } = useAuth();
+  const { user, isAuthenticated, isReady } = useAuth();
   const privyAvailable = usePrivyAvailable();
   const isMobile = useIsMobile();
   const reduceMotion = useReducedMotion();
@@ -397,8 +414,9 @@ export default function Login() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (isReady && isAuthenticated) navigate("/", { replace: true });
-  }, [isReady, isAuthenticated, navigate]);
+    if (!isReady || !isAuthenticated) return;
+    navigate(user?.username ? "/" : "/welcome", { replace: true });
+  }, [isAuthenticated, isReady, navigate, user?.username]);
 
   useEffect(() => {
     if (optimizeMotion) {

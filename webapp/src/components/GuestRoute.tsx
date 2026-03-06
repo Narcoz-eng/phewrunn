@@ -15,6 +15,10 @@ function RouteLoading({ label }: { label: string }) {
   );
 }
 
+function getSignedInDestination(username: string | null | undefined): string {
+  return typeof username === "string" && username.trim().length > 0 ? "/" : "/welcome";
+}
+
 function GuestRouteFallback({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
 
@@ -23,7 +27,7 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
   }
 
   if (session?.user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={getSignedInDestination(session.user.username)} replace />;
   }
 
   return <>{children}</>;
@@ -50,7 +54,7 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   }
 
   if (session?.user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={getSignedInDestination(session.user.username)} replace />;
   }
 
   if (hasPrivySyncHint && !graceExpired) {

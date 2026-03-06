@@ -31,6 +31,35 @@ const DEFAULT_FEE_SETTINGS = {
   tradeFeeShareBps: 100,
   tradeFeePayoutAddress: null as string | null,
 };
+const RESERVED_USERNAME_HANDLES = new Set([
+  "admin",
+  "api",
+  "assets",
+  "docs",
+  "feed",
+  "leaderboard",
+  "login",
+  "notifications",
+  "post",
+  "privacy",
+  "profile",
+  "terms",
+  "welcome",
+]);
+
+function normalizeUsernameHandle(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function buildUserIdentifierWhere(identifier: string) {
+  const normalizedIdentifier = normalizeUsernameHandle(identifier);
+  return {
+    OR: [
+      { id: identifier },
+      { username: { equals: normalizedIdentifier, mode: "insensitive" as const } },
+    ],
+  };
+}
 
 function buildFeeSettingsResponse(user: {
   walletAddress: string | null;
@@ -904,9 +933,7 @@ usersRouter.get("/:identifier/wallet/overview", async (c) => {
   const identifier = c.req.param("identifier");
 
   const user = await prisma.user.findFirst({
-    where: {
-      OR: [{ id: identifier }, { username: identifier }],
-    },
+    where: buildUserIdentifierWhere(identifier),
     select: {
       id: true,
       walletAddress: true,
@@ -1380,12 +1407,7 @@ usersRouter.get("/:identifier", async (c) => {
 
   try {
     user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: identifier },
-          { username: identifier },
-        ],
-      },
+      where: buildUserIdentifierWhere(identifier),
       select: {
         id: true,
         name: true,
@@ -1414,12 +1436,7 @@ usersRouter.get("/:identifier", async (c) => {
       throw error;
     }
     const fallbackUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: identifier },
-          { username: identifier },
-        ],
-      },
+      where: buildUserIdentifierWhere(identifier),
       select: {
         id: true,
         name: true,
@@ -1545,9 +1562,42 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
 
   const now = new Date();
   const updateData: Record<string, unknown> = {};
+  const normalizedRequestedUsername =
+    username !== undefined ? normalizeUsernameHandle(username) : undefined;
+  const currentNormalizedUsername = currentUserData.username
+    ? normalizeUsernameHandle(currentUserData.username)
+    : null;
+  const needsUsernameNormalizationOnly =
+    normalizedRequestedUsername !== undefined &&
+    normalizedRequestedUsername === currentNormalizedUsername &&
+    normalizedRequestedUsername !== currentUserData.username;
+  const isUsernameChanged =
+    normalizedRequestedUsername !== undefined &&
+    normalizedRequestedUsername !== currentNormalizedUsername;
+  const shouldValidateRequestedUsername =
+    normalizedRequestedUsername !== undefined &&
+    (needsUsernameNormalizationOnly || isUsernameChanged);
 
   // Check username update cooldown (7 days)
-  if (username !== undefined && username !== currentUserData.username) {
+  if (shouldValidateRequestedUsername && normalizedRequestedUsername) {
+    if (RESERVED_USERNAME_HANDLES.has(normalizedRequestedUsername)) {
+      return c.json(
+        {
+          error: {
+            message: "This handle is reserved. Please choose another one.",
+            code: "USERNAME_RESERVED",
+          },
+        },
+        400
+      );
+    }
+
+    if (needsUsernameNormalizationOnly) {
+      updateData.username = normalizedRequestedUsername;
+    }
+  }
+
+  if (isUsernameChanged && normalizedRequestedUsername) {
     if (currentUserData.lastUsernameUpdate) {
       const daysSinceLastUpdate = (now.getTime() - currentUserData.lastUsernameUpdate.getTime()) / (1000 * 60 * 60 * 24);
       if (daysSinceLastUpdate < USERNAME_UPDATE_COOLDOWN_DAYS) {
@@ -1564,8 +1614,14 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
     // Check if username is taken
     const existing = await prisma.user.findFirst({
       where: {
-        username,
+        username: {
+          equals: normalizedRequestedUsername,
+          mode: "insensitive",
+        },
         NOT: { id: sessionUser.id },
+      },
+      select: {
+        id: true,
       },
     });
 
@@ -1575,7 +1631,7 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
       }, 400);
     }
 
-    updateData.username = username;
+    updateData.username = normalizedRequestedUsername;
     updateData.lastUsernameUpdate = now;
   }
 
@@ -1765,12 +1821,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
   const currentUser = c.get("user");
 
   const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: identifier },
-        { username: identifier },
-      ],
-    },
+    where: buildUserIdentifierWhere(identifier),
     select: {
       id: true,
       walletAddress: true,
@@ -1939,12 +1990,7 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   const currentUser = c.get("user");
 
   const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: identifier },
-        { username: identifier },
-      ],
-    },
+    where: buildUserIdentifierWhere(identifier),
     select: {
       id: true,
     },
@@ -2117,12 +2163,7 @@ usersRouter.get("/:identifier/reposts", async (c) => {
 
 async function resolveUserIdFromIdentifier(identifier: string): Promise<string | null> {
   const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: identifier },
-        { username: identifier },
-      ],
-    },
+    where: buildUserIdentifierWhere(identifier),
     select: {
       id: true,
     },
@@ -2225,12 +2266,7 @@ usersRouter.get("/:id/followers", async (c) => {
 
   // Check if user exists
   const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: userId },
-        { username: userId },
-      ],
-    },
+    where: buildUserIdentifierWhere(userId),
     select: {
       id: true,
     },
@@ -2286,12 +2322,7 @@ usersRouter.get("/:id/following", async (c) => {
 
   // Check if user exists
   const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: userId },
-        { username: userId },
-      ],
-    },
+    where: buildUserIdentifierWhere(userId),
     select: {
       id: true,
     },

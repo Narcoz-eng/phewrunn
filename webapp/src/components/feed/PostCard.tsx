@@ -68,6 +68,7 @@ import {
   Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 import { toast } from "sonner";
 import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
@@ -2714,8 +2715,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   // Navigate to user profile (prefer username over ID for cleaner URLs)
   const handleProfileClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const profilePath = post.author.username || post.author.id;
-    navigate(`/profile/${profilePath}`);
+    navigate(buildProfilePath(post.author.id, post.author.username));
   };
 
   const staleQuoteForSideCandidate = lastGoodQuoteBySide[tradeSide];
@@ -4090,7 +4090,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                       >
                         <Avatar
                           className="h-7 w-7 cursor-pointer border border-border"
-                          onClick={() => navigate(`/profile/${comment.author.username || comment.author.id}`)}
+                          onClick={() => navigate(buildProfilePath(comment.author.id, comment.author.username))}
                         >
                           <AvatarImage src={getAvatarUrl(comment.author.id, comment.author.image)} />
                           <AvatarFallback className="text-[10px] bg-muted">
@@ -4100,7 +4100,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             <button
-                              onClick={() => navigate(`/profile/${comment.author.username || comment.author.id}`)}
+                              onClick={() => navigate(buildProfilePath(comment.author.id, comment.author.username))}
                               className="text-xs font-semibold text-foreground hover:text-primary hover:underline transition-colors"
                             >
                               {comment.author.username || comment.author.name}

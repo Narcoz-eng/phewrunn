@@ -9,6 +9,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { getAvatarUrl } from "@/types";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 import { Trophy, Medal, Award, Users, ChevronLeft, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
 
 // Type for top user from API
@@ -257,7 +258,7 @@ export function TopUsersTable() {
         {users.map((item, index) => (
           <div
             key={item.user.id}
-            onClick={() => navigate(`/profile/${item.user.id}`)}
+            onClick={() => navigate(buildProfilePath(item.user.id, item.user.username))}
             className={cn(
               "flex items-center gap-4 p-4 rounded-lg bg-card border transition-all cursor-pointer",
               "hover:border-primary/50 hover:shadow-md hover:shadow-primary/5",

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
@@ -36,6 +36,7 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { buildProfilePath } from "@/lib/profile-path";
 
 interface UserProfileData {
   id: string;
@@ -73,6 +74,7 @@ const USER_PROFILE_WALLET_CACHE_TTL_MS = 60_000;
 
 export default function UserProfile() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { userId } = useParams<{ userId: string }>();
   const { data: session } = useSession();
   const queryClient = useQueryClient();
@@ -245,6 +247,21 @@ export default function UserProfile() {
     if (!userId || !isWalletOverviewFetched || !walletOverview) return;
     writeSessionCache(`phew.user-wallet:${userId}`, walletOverview);
   }, [isWalletOverviewFetched, userId, walletOverview]);
+
+  useEffect(() => {
+    if (!user || !userId) return;
+
+    const canonicalPath = buildProfilePath(user.id, user.username);
+    if (location.pathname === canonicalPath) {
+      return;
+    }
+
+    const legacyPath = `/profile/${userId}`;
+    const publicPath = `/${userId}`;
+    if (location.pathname === legacyPath || location.pathname === publicPath) {
+      navigate(`${canonicalPath}${location.search}${location.hash}`, { replace: true });
+    }
+  }, [location.hash, location.pathname, location.search, navigate, user, userId]);
 
   // Follow mutation
   const followMutation = useMutation({
@@ -445,7 +462,7 @@ export default function UserProfile() {
   };
 
   // Check if this is current user's profile
-  const isOwnProfile = session?.user?.id === userId;
+  const isOwnProfile = session?.user?.id === user?.id;
 
   return (
     <div className="min-h-screen bg-background">

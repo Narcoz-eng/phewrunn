@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import { getExplicitLogoutAt, useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
@@ -33,8 +33,19 @@ function useStoredAuthHint(): boolean {
   return false;
 }
 
-function ProtectedRouteFallback({ children }: { children: React.ReactNode }) {
+function hasCompletedHandle(username: string | null | undefined): boolean {
+  return typeof username === "string" && username.trim().length > 0;
+}
+
+function ProtectedRouteFallback({
+  children,
+  allowMissingUsername,
+}: {
+  children: React.ReactNode;
+  allowMissingUsername: boolean;
+}) {
   const { data: session, isPending } = useSession();
+  const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
 
@@ -59,12 +70,29 @@ function ProtectedRouteFallback({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
+  if (!allowMissingUsername && !hasCompletedHandle(session.user.username)) {
+    return (
+      <Navigate
+        to="/welcome"
+        replace
+        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
+      />
+    );
+  }
+
   return <>{children}</>;
 }
 
-function ProtectedRouteWithPrivy({ children }: { children: React.ReactNode }) {
+function ProtectedRouteWithPrivy({
+  children,
+  allowMissingUsername,
+}: {
+  children: React.ReactNode;
+  allowMissingUsername: boolean;
+}) {
   const { data: session, isPending } = useSession();
   const { ready, authenticated } = usePrivy();
+  const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
   const hasPrivySyncHint = ready && authenticated && !session?.user;
@@ -93,15 +121,39 @@ function ProtectedRouteWithPrivy({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
+  if (!allowMissingUsername && !hasCompletedHandle(session.user.username)) {
+    return (
+      <Navigate
+        to="/welcome"
+        replace
+        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
+      />
+    );
+  }
+
   return <>{children}</>;
 }
 
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+export function ProtectedRoute({
+  children,
+  allowMissingUsername = false,
+}: {
+  children: React.ReactNode;
+  allowMissingUsername?: boolean;
+}) {
   const privyAvailable = usePrivyAvailable();
 
   if (!privyAvailable) {
-    return <ProtectedRouteFallback>{children}</ProtectedRouteFallback>;
+    return (
+      <ProtectedRouteFallback allowMissingUsername={allowMissingUsername}>
+        {children}
+      </ProtectedRouteFallback>
+    );
   }
 
-  return <ProtectedRouteWithPrivy>{children}</ProtectedRouteWithPrivy>;
+  return (
+    <ProtectedRouteWithPrivy allowMissingUsername={allowMissingUsername}>
+      {children}
+    </ProtectedRouteWithPrivy>
+  );
 }

@@ -24,7 +24,13 @@ export const UserSchema = z.object({
 export type User = z.infer<typeof UserSchema>;
 
 export const UpdateProfileSchema = z.object({
-  username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores").optional(),
+  username: z
+    .string()
+    .trim()
+    .min(3)
+    .max(20)
+    .regex(/^[a-zA-Z0-9_]+$/, "Handle can only contain letters, numbers, and underscores")
+    .optional(),
   walletAddress: z.string().optional(),
   bio: z.string().max(200).optional(),
   image: z.string().url().optional(),

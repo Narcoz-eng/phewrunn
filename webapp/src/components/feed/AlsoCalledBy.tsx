@@ -3,6 +3,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LevelBadge } from "./LevelBar";
 import { SharedAlphaUser, getAvatarUrl } from "@/types";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 import { Sparkles } from "lucide-react";
 
 interface AlsoCalledByProps {
@@ -28,7 +29,7 @@ export function AlsoCalledBy({
 
   const handleUserClick = (e: React.MouseEvent, user: SharedAlphaUser) => {
     e.stopPropagation();
-    navigate(`/profile/${user.username || user.id}`);
+    navigate(buildProfilePath(user.id, user.username));
   };
 
   return (

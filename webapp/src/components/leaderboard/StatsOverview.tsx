@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl } from "@/types";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 import {
   Users,
   Activity,
@@ -256,7 +257,7 @@ export function StatsOverview() {
                 <button
                   key={user.id}
                   type="button"
-                  onClick={() => navigate(`/profile/${user.username || user.id}`)}
+                  onClick={() => navigate(buildProfilePath(user.id, user.username))}
                   className="w-full text-left flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors"
                 >
                   <span className="text-sm font-mono text-muted-foreground w-4">

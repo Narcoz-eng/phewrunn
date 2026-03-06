@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
-import { useAuth, syncPrivySession } from "@/lib/auth-client";
+import { type AuthUser, useAuth, syncPrivySession } from "@/lib/auth-client";
 import {
   resolvePrivyAuthPayload,
   type PrivyUserLike,
@@ -16,7 +16,7 @@ const RETRYABLE_SYNC_ERROR_PATTERN =
 const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
 
 type UsePrivyLoginOptions = {
-  onSuccess?: () => void;
+  onSuccess?: (user: AuthUser) => void;
 };
 
 type LoginMethodOverride = "email" | "twitter";
@@ -54,7 +54,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncGuardRef = useRef(false);
-  const activeSyncPromiseRef = useRef<Promise<boolean> | null>(null);
+  const activeSyncPromiseRef = useRef<Promise<AuthUser | null> | null>(null);
   const appSessionAuthenticatedRef = useRef(appSessionAuthenticated);
   const syncTimeoutRef = useRef<number | null>(null);
   const loginRequestedRef = useRef(false);
@@ -82,23 +82,23 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }, LOGIN_SYNC_TIMEOUT_MS);
   }, [clearSyncTimeout]);
 
-  const handleSuccessfulLogin = useCallback(() => {
+  const handleSuccessfulLogin = useCallback((syncedUser: AuthUser) => {
     if (successfulLoginHandledRef.current) {
       return;
     }
     successfulLoginHandledRef.current = true;
-    onSuccess?.();
+    onSuccess?.(syncedUser);
   }, [onSuccess]);
 
   const runPrivySync = useCallback((
     privyUser: PrivyUserLike,
     source: "manual" | "auto" = "manual"
-  ): Promise<boolean> => {
+  ): Promise<AuthUser | null> => {
     if (activeSyncPromiseRef.current) {
       return activeSyncPromiseRef.current;
     }
 
-    const syncPromise = (async (): Promise<boolean> => {
+    const syncPromise = (async (): Promise<AuthUser | null> => {
       syncGuardRef.current = true;
       setIsSyncing(true);
       setSyncError(null);
@@ -118,7 +118,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
         const name = resolvedPayload.name ?? "";
 
-        await syncPrivySession(
+        const syncResult = await syncPrivySession(
           resolvedPayload.user.id,
           email || undefined,
           name || undefined,
@@ -131,7 +131,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
         autoResyncAttemptsRef.current = 0;
         lastSyncFailureRef.current = null;
-        return true;
+        return syncResult.user;
       } catch (err) {
         console.error("[usePrivyLogin] sync error:", err);
         const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
@@ -175,7 +175,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
           rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
         }
 
-        return false;
+        return null;
       } finally {
         clearSyncTimeout();
         loginRequestedRef.current = false;
@@ -248,19 +248,19 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     setSyncError(null);
     const shouldRedirectOnSuccess = loginRequestedRef.current;
     loginRequestedRef.current = true;
-    void runPrivySync(user as PrivyUserLike, "auto").then((synced) => {
-      if (synced && shouldRedirectOnSuccess) {
-        handleSuccessfulLogin();
+    void runPrivySync(user as PrivyUserLike, "auto").then((syncedUser) => {
+      if (syncedUser && shouldRedirectOnSuccess) {
+        handleSuccessfulLogin(syncedUser);
       }
     });
   }, [appSessionAuthenticated, authenticated, handleSuccessfulLogin, isSyncing, ready, runPrivySync, user]);
 
-  const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<boolean> => {
-    const synced = await runPrivySync(privyUser, "manual");
-    if (synced) {
-      handleSuccessfulLogin();
+  const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<AuthUser | null> => {
+    const syncedUser = await runPrivySync(privyUser, "manual");
+    if (syncedUser) {
+      handleSuccessfulLogin(syncedUser);
     }
-    return synced;
+    return syncedUser;
   }, [handleSuccessfulLogin, runPrivySync]);
 
   const handlePrivyAuthComplete = useCallback(async (privyUser: PrivyUserLike) => {
@@ -324,8 +324,8 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
     if (authenticated && user) {
       void (async () => {
-        const synced = await runManualSync(user as PrivyUserLike);
-        if (synced) {
+        const syncedUser = await runManualSync(user as PrivyUserLike);
+        if (syncedUser) {
           return;
         }
 

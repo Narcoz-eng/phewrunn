@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/lib/auth-client";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
 import { AuthInitializer } from "@/components/AuthInitializer";
+import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 
 // Lazy load page components
 const Feed = lazy(() => import("./pages/Feed"));
@@ -20,6 +21,7 @@ const UserProfile = lazy(() => import("./pages/UserProfile"));
 const Notifications = lazy(() => import("./pages/Notifications"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard"));
 const Admin = lazy(() => import("./pages/Admin"));
+const HandleOnboarding = lazy(() => import("./pages/HandleOnboarding"));
 const Login = lazy(() => import("./pages/Login"));
 const PostDetail = lazy(() => import("./pages/PostDetail"));
 const Terms = lazy(() => import("./pages/Terms"));
@@ -39,6 +41,16 @@ function PageSkeleton() {
       </div>
     </div>
   );
+}
+
+function PublicHandleProfileRoute() {
+  const { userId } = useParams<{ userId: string }>();
+
+  if (!isPossiblePublicProfileSegment(userId)) {
+    return <NotFound />;
+  }
+
+  return <UserProfile />;
 }
 
 const queryClient = new QueryClient({
@@ -97,6 +109,14 @@ const App = () => (
                     }
                   />
                   <Route
+                    path="/welcome"
+                    element={
+                      <ProtectedRoute allowMissingUsername>
+                        <HandleOnboarding />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/profile/:userId"
                     element={<UserProfile />}
                   />
@@ -143,6 +163,7 @@ const App = () => (
                   <Route path="/terms" element={<Terms />} />
                   <Route path="/privacy" element={<Privacy />} />
                   <Route path="/docs" element={<Docs />} />
+                  <Route path="/:userId" element={<PublicHandleProfileRoute />} />
                   <Route path="*" element={<NotFound />} />
                     </Routes>
                   </Suspense>

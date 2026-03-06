@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { Sparkles, RefreshCw, AlertCircle, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buildProfilePath } from "@/lib/profile-path";
 
 interface SharedAlphaDialogProps {
   postId: string;
@@ -65,7 +66,7 @@ export function SharedAlphaDialog({
   const handleUserClick = (user: SharedAlphaUser) => {
     onOpenChange(false);
     // Prefer username for cleaner URLs
-    navigate(`/profile/${user.username || user.id}`);
+    navigate(buildProfilePath(user.id, user.username));
   };
 
   const Content = (
