@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
-import { readCachedAuthUserSnapshot, useSession } from "@/lib/auth-client";
+import { readCachedAuthUserSnapshot, usePrivySyncFailureSnapshot, useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 
@@ -42,6 +42,8 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const [graceExpired, setGraceExpired] = useState(false);
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
+  const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
+  const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
   const activeLoginIntent = !effectiveUser ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivySyncHint = ready && authenticated && !effectiveUser;
@@ -65,11 +67,11 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
     return <Navigate to={getSignedInDestination(effectiveUser.username)} replace />;
   }
 
-  if (shouldHoldForOAuthReturn && !graceExpired) {
+  if (shouldHoldForOAuthReturn && !graceExpired && !privySyncFailure) {
     return <RouteLoading label="Returning from X..." />;
   }
 
-  if (hasPrivySyncHint && !graceExpired) {
+  if (hasPrivySyncHint && !graceExpired && !privySyncFailure) {
     return <RouteLoading label="Completing sign-in..." />;
   }
 

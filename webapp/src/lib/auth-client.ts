@@ -57,6 +57,14 @@ const SESSION_COOKIE_CANDIDATE_NAMES = [
   "auth.session_token",
 ] as const;
 const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
+const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
+const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
+const AUTH_PRIVY_SYNC_FAILURE_EVENT = "phew:auth-privy-sync-failure";
+
+type PrivySyncFailureSnapshot = {
+  message: string;
+  recordedAt: number;
+};
 
 let preLogoutHooks: Array<() => Promise<void>> = [];
 
@@ -144,6 +152,7 @@ let lastSuccessfulSessionAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryAuthToken: string | null = null;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
+let inMemoryPrivySyncFailure: PrivySyncFailureSnapshot | null = null;
 
 function normalizeAuthToken(token: string | null | undefined): string | null {
   if (typeof token !== "string") return null;
@@ -294,6 +303,117 @@ export function readCachedAuthUserSnapshot(): AuthUser | null {
   }
 
   return readCachedAuthUser();
+}
+
+function clearPrivySyncFailureSnapshot(): void {
+  inMemoryPrivySyncFailure = null;
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(PRIVY_SYNC_FAILURE_STORAGE_KEY);
+  } catch {
+    // ignore sessionStorage errors
+  }
+  window.dispatchEvent(new CustomEvent(AUTH_PRIVY_SYNC_FAILURE_EVENT));
+}
+
+function writePrivySyncFailureSnapshot(message: string): void {
+  const normalizedMessage = message.trim();
+  if (!normalizedMessage) {
+    clearPrivySyncFailureSnapshot();
+    return;
+  }
+
+  const snapshot: PrivySyncFailureSnapshot = {
+    message: normalizedMessage,
+    recordedAt: Date.now(),
+  };
+  inMemoryPrivySyncFailure = snapshot;
+
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(
+        PRIVY_SYNC_FAILURE_STORAGE_KEY,
+        JSON.stringify(snapshot)
+      );
+    } catch {
+      // ignore sessionStorage errors
+    }
+
+    window.dispatchEvent(new CustomEvent(AUTH_PRIVY_SYNC_FAILURE_EVENT));
+  }
+}
+
+export function readPrivySyncFailureSnapshot(): PrivySyncFailureSnapshot | null {
+  if (inMemoryPrivySyncFailure) {
+    if (Date.now() - inMemoryPrivySyncFailure.recordedAt <= PRIVY_SYNC_FAILURE_TTL_MS) {
+      return inMemoryPrivySyncFailure;
+    }
+    inMemoryPrivySyncFailure = null;
+  }
+
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(PRIVY_SYNC_FAILURE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PrivySyncFailureSnapshot>;
+    if (
+      typeof parsed.message !== "string" ||
+      parsed.message.trim().length === 0 ||
+      typeof parsed.recordedAt !== "number" ||
+      !Number.isFinite(parsed.recordedAt)
+    ) {
+      clearPrivySyncFailureSnapshot();
+      return null;
+    }
+    if (Date.now() - parsed.recordedAt > PRIVY_SYNC_FAILURE_TTL_MS) {
+      clearPrivySyncFailureSnapshot();
+      return null;
+    }
+    const snapshot: PrivySyncFailureSnapshot = {
+      message: parsed.message.trim(),
+      recordedAt: parsed.recordedAt,
+    };
+    inMemoryPrivySyncFailure = snapshot;
+    return snapshot;
+  } catch {
+    clearPrivySyncFailureSnapshot();
+    return null;
+  }
+}
+
+export function usePrivySyncFailureSnapshot(): PrivySyncFailureSnapshot | null {
+  const [snapshot, setSnapshot] = useState<PrivySyncFailureSnapshot | null>(() =>
+    readPrivySyncFailureSnapshot()
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const refreshSnapshot = () => {
+      setSnapshot(readPrivySyncFailureSnapshot());
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== PRIVY_SYNC_FAILURE_STORAGE_KEY) {
+        return;
+      }
+      refreshSnapshot();
+    };
+
+    window.addEventListener(AUTH_PRIVY_SYNC_FAILURE_EVENT, refreshSnapshot as EventListener);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener(AUTH_PRIVY_SYNC_FAILURE_EVENT, refreshSnapshot as EventListener);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  return snapshot;
 }
 
 export function updateCachedAuthUser(
@@ -490,6 +610,7 @@ async function fetchSession(): Promise<AuthUser | null> {
       if (user && user.id) {
         const authUser = toAuthUser(user);
         writeCachedAuthUser(authUser);
+        clearPrivySyncFailureSnapshot();
         return authUser;
       }
 
@@ -615,6 +736,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     explicitLogoutAt = Date.now();
     clearStoredAuthToken();
     clearCachedAuthUser();
+    clearPrivySyncFailureSnapshot();
     clearSessionCacheByPrefix("phew.");
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
@@ -969,6 +1091,7 @@ export async function syncPrivySession(
         // Store the session token for Bearer auth fallback
         setStoredAuthToken(data.token);
         writeCachedAuthUser(syncedUser);
+        clearPrivySyncFailureSnapshot();
         emitAuthSessionSynced(syncedUser);
         return { token: data.token, user: syncedUser };
       } catch (error) {
@@ -985,14 +1108,20 @@ export async function syncPrivySession(
           continue;
         }
 
+        const finalMessage = isAbort
+          ? "Sign-in timed out while connecting to the server"
+          : error instanceof Error
+            ? error.message
+            : "Failed to sync Privy session";
+        writePrivySyncFailureSnapshot(finalMessage);
         console.error("[Auth] syncPrivySession error:", error);
         if (isAbort) {
-          throw new Error("Sign-in timed out while connecting to the server");
+          throw new Error(finalMessage);
         }
         if (error instanceof Error) {
           throw error;
         }
-        throw new Error("Failed to sync Privy session");
+        throw new Error(finalMessage);
       } finally {
         clearTimeout(timeoutId);
       }

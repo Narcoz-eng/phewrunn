@@ -5,6 +5,7 @@ import {
   syncPrivySession,
   registerPreLogoutHook,
   hasStoredAuthTokenHint,
+  usePrivySyncFailureSnapshot,
 } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import {
@@ -18,7 +19,7 @@ interface AuthInitializerProps {
 }
 
 const AUTO_SYNC_COOLDOWN_MS = 2500;
-const AUTO_SYNC_MAX_ATTEMPTS = 4;
+const AUTO_SYNC_MAX_ATTEMPTS = 2;
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
@@ -28,6 +29,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   const lastAttemptAtRef = useRef(0);
   const lastSyncedPrivyUserRef = useRef<string | null>(null);
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
+  const privySyncFailure = usePrivySyncFailureSnapshot();
 
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
@@ -64,7 +66,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   }, [authenticated]);
 
   useEffect(() => {
-    if (!ready || !authenticated || !user) return;
+    if (!ready || !authenticated || !user || privySyncFailure) return;
     const shouldRepairMissingFallbackToken = isAuthenticated && !hasStoredAuthTokenHint();
     if (isAuthenticated && !shouldRepairMissingFallbackToken) {
       attemptsRef.current = 0;
@@ -107,7 +109,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         syncInFlightRef.current = false;
       }
     })();
-  }, [authenticated, isAuthenticated, ready, refetch, user]);
+  }, [authenticated, isAuthenticated, privySyncFailure, ready, refetch, user]);
 
   return <>{children}</>;
 }

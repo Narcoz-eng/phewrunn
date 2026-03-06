@@ -496,6 +496,66 @@ async function withTimeoutResult<T>(
   }
 }
 
+const AUTH_DB_LOOKUP_TIMEOUT_MS = (() => {
+  const raw = process.env.AUTH_DB_LOOKUP_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 1800 : 3000;
+})();
+
+class AuthDbTimeoutError extends Error {
+  constructor(stage: string, timeoutMs: number) {
+    super("[auth/db] " + stage + " timed out after " + timeoutMs + "ms");
+    this.name = "AuthDbTimeoutError";
+  }
+}
+
+function isAuthDbTimeoutError(error: unknown): error is AuthDbTimeoutError {
+  return error instanceof AuthDbTimeoutError;
+}
+
+const PRIVY_API_TIMEOUT_MS = (() => {
+  const raw = process.env.PRIVY_API_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 2500 : 4000;
+})();
+
+class PrivyApiTimeoutError extends Error {
+  constructor(stage: string, timeoutMs: number) {
+    super("[privy] " + stage + " timed out after " + timeoutMs + "ms");
+    this.name = "PrivyApiTimeoutError";
+  }
+}
+
+function isPrivyApiTimeoutError(error: unknown): error is PrivyApiTimeoutError {
+  return error instanceof PrivyApiTimeoutError;
+}
+
+async function withPrivyApiTimeout<T>(
+  promise: Promise<T>,
+  stage: string,
+  timeoutMs = PRIVY_API_TIMEOUT_MS
+): Promise<T> {
+  const result = await withTimeoutResult(promise, timeoutMs);
+  if (result.timedOut) {
+    throw new PrivyApiTimeoutError(stage, timeoutMs);
+  }
+  return result.value;
+}
+
+async function withAuthDbTimeout<T>(
+  promise: Promise<T>,
+  stage: string,
+  timeoutMs = AUTH_DB_LOOKUP_TIMEOUT_MS
+): Promise<T> {
+  const result = await withTimeoutResult(promise, timeoutMs);
+  if (result.timedOut) {
+    throw new AuthDbTimeoutError(stage, timeoutMs);
+  }
+  return result.value;
+}
+
 function normalizeAuthResponseUser(
   user: {
     id: string;
@@ -673,11 +733,14 @@ async function reconcilePrivyLinkedUserProfile(params: {
   }
 
   try {
-    const updatedUser = await prisma.user.update({
-      where: { id: params.user.id },
-      data: updateData,
-      select: AUTH_RESPONSE_USER_SELECT,
-    });
+    const updatedUser = await withAuthDbTimeout(
+      prisma.user.update({
+        where: { id: params.user.id },
+        data: updateData,
+        select: AUTH_RESPONSE_USER_SELECT,
+      }),
+      "user.update(reconcile)"
+    );
     clearCachedMeResponse(params.user.id);
     return normalizeAuthResponseUser(updatedUser);
   } catch (error) {
@@ -695,11 +758,14 @@ async function reconcilePrivyLinkedUserProfile(params: {
       return params.user;
     }
 
-    const updatedNameOnlyUser = await prisma.user.update({
-      where: { id: params.user.id },
-      data: { name: nextResolvedName },
-      select: AUTH_RESPONSE_USER_SELECT,
-    });
+    const updatedNameOnlyUser = await withAuthDbTimeout(
+      prisma.user.update({
+        where: { id: params.user.id },
+        data: { name: nextResolvedName },
+        select: AUTH_RESPONSE_USER_SELECT,
+      }),
+      "user.update(reconcileNameOnly)"
+    );
     clearCachedMeResponse(params.user.id);
     return normalizeAuthResponseUser(updatedNameOnlyUser);
   }
@@ -707,20 +773,26 @@ async function reconcilePrivyLinkedUserProfile(params: {
 
 async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponseUser | null> {
   try {
-    const user = await prisma.user.findFirst({
-      where: { walletAddress },
-      select: AUTH_RESPONSE_USER_SELECT,
-    });
+    const user = await withAuthDbTimeout(
+      prisma.user.findFirst({
+        where: { walletAddress },
+        select: AUTH_RESPONSE_USER_SELECT,
+      }),
+      "user.findFirst(wallet)"
+    );
     return user ? normalizeAuthResponseUser(user) : null;
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
     try {
-      const fallbackUser = await prisma.user.findFirst({
-        where: { walletAddress },
-        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-      });
+      const fallbackUser = await withAuthDbTimeout(
+        prisma.user.findFirst({
+          where: { walletAddress },
+          select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+        }),
+        "user.findFirst(wallet:fallback)"
+      );
       return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
     } catch (fallbackError) {
       if (isPrismaSchemaDriftError(fallbackError)) {
@@ -733,30 +805,39 @@ async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponse
 
 async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | null> {
   try {
-    const user = await prisma.user.findFirst({
-      where: { email },
-      select: AUTH_RESPONSE_USER_SELECT,
-    });
+    const user = await withAuthDbTimeout(
+      prisma.user.findFirst({
+        where: { email },
+        select: AUTH_RESPONSE_USER_SELECT,
+      }),
+      "user.findFirst(email)"
+    );
     return user ? normalizeAuthResponseUser(user) : null;
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
     try {
-      const fallbackUser = await prisma.user.findFirst({
-        where: { email },
-        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-      });
+      const fallbackUser = await withAuthDbTimeout(
+        prisma.user.findFirst({
+          where: { email },
+          select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+        }),
+        "user.findFirst(email:fallback)"
+      );
       return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
     } catch (fallbackError) {
       if (!isPrismaSchemaDriftError(fallbackError)) {
         throw fallbackError;
       }
       try {
-        const minimalUser = await prisma.user.findFirst({
-          where: { email },
-          select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
-        });
+        const minimalUser = await withAuthDbTimeout(
+          prisma.user.findFirst({
+            where: { email },
+            select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
+          }),
+          "user.findFirst(email:minimal)"
+        );
         return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
       } catch (minimalError) {
         if (isPrismaSchemaDriftError(minimalError)) {
@@ -770,30 +851,39 @@ async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | nu
 
 async function findAuthUserById(id: string): Promise<AuthResponseUser | null> {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id },
-      select: AUTH_RESPONSE_USER_SELECT,
-    });
+    const user = await withAuthDbTimeout(
+      prisma.user.findUnique({
+        where: { id },
+        select: AUTH_RESPONSE_USER_SELECT,
+      }),
+      "user.findUnique(id)"
+    );
     return user ? normalizeAuthResponseUser(user) : null;
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
     try {
-      const fallbackUser = await prisma.user.findUnique({
-        where: { id },
-        select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-      });
+      const fallbackUser = await withAuthDbTimeout(
+        prisma.user.findUnique({
+          where: { id },
+          select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
+        }),
+        "user.findUnique(id:fallback)"
+      );
       return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
     } catch (fallbackError) {
       if (!isPrismaSchemaDriftError(fallbackError)) {
         throw fallbackError;
       }
       try {
-        const minimalUser = await prisma.user.findUnique({
-          where: { id },
-          select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
-        });
+        const minimalUser = await withAuthDbTimeout(
+          prisma.user.findUnique({
+            where: { id },
+            select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
+          }),
+          "user.findUnique(id:minimal)"
+        );
         return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
       } catch (minimalError) {
         if (isPrismaSchemaDriftError(minimalError)) {
@@ -814,7 +904,8 @@ async function createWalletAuthUser(params: {
   const normalizedWalletAddress = params.walletAddress;
   const now = params.now;
   try {
-    const created = await prisma.user.create({
+    const created = await withAuthDbTimeout(
+      prisma.user.create({
       data: {
         id: userId,
         email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
@@ -831,7 +922,9 @@ async function createWalletAuthUser(params: {
         updatedAt: now,
       },
       select: AUTH_RESPONSE_USER_SELECT,
-    });
+      }),
+      "user.create(wallet)"
+    );
     return normalizeAuthResponseUser(created);
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
@@ -848,7 +941,8 @@ async function createWalletAuthUser(params: {
       | null = null;
 
     try {
-      fallbackCreated = await prisma.user.create({
+      fallbackCreated = await withAuthDbTimeout(
+        prisma.user.create({
         data: {
           id: userId,
           email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
@@ -857,11 +951,14 @@ async function createWalletAuthUser(params: {
           emailVerified: false,
         },
         select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-      });
+        }),
+        "user.create(wallet:fallback)"
+      );
     } catch (fallbackCreateError) {
       if (isPrismaSchemaDriftError(fallbackCreateError)) {
         try {
-          fallbackCreated = await prisma.user.create({
+          fallbackCreated = await withAuthDbTimeout(
+            prisma.user.create({
             data: {
               id: userId,
               email: `${normalizedWalletAddress.slice(0, 8).toLowerCase()}@wallet.local`,
@@ -869,7 +966,9 @@ async function createWalletAuthUser(params: {
               emailVerified: false,
             },
             select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-          });
+            }),
+            "user.create(wallet:minimalCompat)"
+          );
 
           return normalizeAuthResponseUser({
             ...fallbackCreated,
@@ -910,7 +1009,8 @@ async function upsertAuthUserByEmail(params: {
   now: Date;
 }): Promise<AuthResponseUser> {
   try {
-    const user = await prisma.user.upsert({
+    const user = await withAuthDbTimeout(
+      prisma.user.upsert({
       where: { email: params.email },
       update: {
         emailVerified: true,
@@ -928,7 +1028,9 @@ async function upsertAuthUserByEmail(params: {
         updatedAt: params.now,
       },
       select: AUTH_RESPONSE_USER_SELECT,
-    });
+      }),
+      "user.upsert(email)"
+    );
     return normalizeAuthResponseUser(user);
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
@@ -941,7 +1043,8 @@ async function upsertAuthUserByEmail(params: {
     }
 
     try {
-      const fallbackCreated = await prisma.user.create({
+      const fallbackCreated = await withAuthDbTimeout(
+        prisma.user.create({
         data: {
           id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
           email: params.email,
@@ -949,7 +1052,9 @@ async function upsertAuthUserByEmail(params: {
           emailVerified: true,
         },
         select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-      });
+        }),
+        "user.create(email:fallback)"
+      );
       return normalizeAuthResponseUser(fallbackCreated);
     } catch (fallbackCreateError) {
       if (isUniqueConstraintError(fallbackCreateError)) {
@@ -959,14 +1064,17 @@ async function upsertAuthUserByEmail(params: {
         }
       }
       if (isPrismaSchemaDriftError(fallbackCreateError)) {
-        const minimalCreated = await prisma.user.create({
+        const minimalCreated = await withAuthDbTimeout(
+          prisma.user.create({
           data: {
             id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
             email: params.email,
             name: params.displayName,
           },
           select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
-        });
+          }),
+          "user.create(email:minimal)"
+        );
         return normalizeAuthResponseUser(minimalCreated);
       }
       throw fallbackCreateError;
@@ -1515,7 +1623,8 @@ app.post("/api/auth/privy-sync", async (c) => {
     if (typeof privyUserId === "string" && privyUserId.length > 0) {
       let fastPathAccount: { id: string; userId: string } | null = null;
       try {
-        fastPathAccount = await prisma.account.findUnique({
+        fastPathAccount = await withAuthDbTimeout(
+          prisma.account.findUnique({
           where: {
             providerId_accountId: {
               providerId: "privy",
@@ -1523,7 +1632,9 @@ app.post("/api/auth/privy-sync", async (c) => {
             },
           },
           select: { id: true, userId: true },
-        });
+          }),
+          "account.findUnique(privyFastPath)"
+        );
       } catch (error) {
         if (!isPrismaSchemaDriftError(error)) throw error;
       }
@@ -1635,12 +1746,18 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!verifiedPrivyUserId && typeof privyIdToken === "string" && privyIdToken.length > 0) {
       try {
-        const tokenUser = await PRIVY_CLIENT.getUser({ idToken: privyIdToken }) as PrivyUserLike;
+        const tokenUser = await withPrivyApiTimeout(
+          PRIVY_CLIENT.getUser({ idToken: privyIdToken }) as Promise<PrivyUserLike>,
+          "privy.getUser(idToken)"
+        ) as PrivyUserLike;
         verifiedPrivyUserId = typeof tokenUser.id === "string" ? tokenUser.id : null;
         verifiedEmail = getPrivyEmail(tokenUser);
 
         if (!verifiedEmail && !providedEmail && verifiedPrivyUserId) {
-          const fullUser = await PRIVY_CLIENT.getUserById(verifiedPrivyUserId) as PrivyUserLike;
+          const fullUser = await withPrivyApiTimeout(
+            PRIVY_CLIENT.getUserById(verifiedPrivyUserId) as Promise<PrivyUserLike>,
+            "privy.getUserById(verifiedPrivyUserId)"
+          ) as PrivyUserLike;
           verifiedEmail = getPrivyEmail(fullUser);
         }
       } catch (error) {
@@ -1651,6 +1768,12 @@ app.post("/api/auth/privy-sync", async (c) => {
           console.warn("[privy-sync] Privy API failed, falling back to client-provided identity");
           verifiedPrivyUserId = privyUserId;
           verifiedEmail = providedEmail;
+        } else if (isPrivyApiTimeoutError(error)) {
+          c.header("Retry-After", "2");
+          return c.json(
+            { error: { message: "Auth provider timed out. Please retry.", code: "AUTH_PROVIDER_TIMEOUT" } },
+            503
+          );
         } else {
           return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
         }
@@ -1669,11 +1792,21 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!verifiedPrivyUserId && typeof privyUserId === "string") {
       try {
-        const fullUser = await PRIVY_CLIENT.getUserById(privyUserId) as PrivyUserLike;
+        const fullUser = await withPrivyApiTimeout(
+          PRIVY_CLIENT.getUserById(privyUserId) as Promise<PrivyUserLike>,
+          "privy.getUserById(privyUserId)"
+        ) as PrivyUserLike;
         verifiedPrivyUserId = typeof fullUser.id === "string" ? fullUser.id : privyUserId;
         verifiedEmail = getPrivyEmail(fullUser);
       } catch (error) {
         console.error("[privy-sync] Failed to fetch Privy user:", error);
+        if (isPrivyApiTimeoutError(error)) {
+          c.header("Retry-After", "2");
+          return c.json(
+            { error: { message: "Auth provider timed out. Please retry.", code: "AUTH_PROVIDER_TIMEOUT" } },
+            503
+          );
+        }
         return c.json({ error: { message: "Invalid Privy user", code: "UNAUTHORIZED" } }, 401);
       }
     }
@@ -1704,7 +1837,8 @@ app.post("/api/auth/privy-sync", async (c) => {
     // We resolve the user in a second query so orphaned rows don't crash the route.
     let existingPrivyAccount: { id: string; userId: string } | null = null;
     try {
-      existingPrivyAccount = await prisma.account.findUnique({
+      existingPrivyAccount = await withAuthDbTimeout(
+        prisma.account.findUnique({
         where: {
           providerId_accountId: {
             providerId: "privy",
@@ -1712,7 +1846,9 @@ app.post("/api/auth/privy-sync", async (c) => {
           },
         },
         select: { id: true, userId: true },
-      });
+        }),
+        "account.findUnique(privyExisting)"
+      );
     } catch (error) {
       if (!isPrismaSchemaDriftError(error)) {
         throw error;
@@ -1750,7 +1886,8 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!hasValidPrivyAccountLink) {
       try {
-        const linkedAccount = await prisma.account.upsert({
+        const linkedAccount = await withAuthDbTimeout(
+          prisma.account.upsert({
           where: {
             providerId_accountId: {
               providerId: "privy",
@@ -1767,7 +1904,9 @@ app.post("/api/auth/privy-sync", async (c) => {
             updatedAt: now,
           },
           select: { userId: true },
-        });
+          }),
+          "account.upsert(privyLink)"
+        );
         const linkedUser = await findAuthUserById(linkedAccount.userId);
         if (linkedUser) {
           user = linkedUser;
@@ -1784,7 +1923,8 @@ app.post("/api/auth/privy-sync", async (c) => {
           // Another concurrent sync may have created the account between our check and create.
           let linkedAccount: { id: string; userId: string } | null = null;
           try {
-            linkedAccount = await prisma.account.findUnique({
+            linkedAccount = await withAuthDbTimeout(
+              prisma.account.findUnique({
               where: {
                 providerId_accountId: {
                   providerId: "privy",
@@ -1792,7 +1932,9 @@ app.post("/api/auth/privy-sync", async (c) => {
                 },
               },
               select: { id: true, userId: true },
-            });
+              }),
+              "account.findUnique(privyConcurrentLink)"
+            );
           } catch (lookupError) {
             if (!isPrismaSchemaDriftError(lookupError)) {
               throw lookupError;
@@ -1852,7 +1994,7 @@ app.post("/api/auth/privy-sync", async (c) => {
       user: buildClientAuthUser(user),
     });
   } catch (error) {
-    if (isPrismaConnectivityError(error)) {
+    if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
       const fallbackUser = toAuthResponseUserFromSessionUser(existingSession?.user);
       if (fallbackUser) {
         console.warn("[privy-sync] Database unavailable; reissuing signed session from existing auth state");
@@ -1889,6 +2031,18 @@ app.post("/api/auth/privy-sync", async (c) => {
           error: {
             message: "Auth is temporarily reconnecting. Please retry.",
             code: "AUTH_TEMPORARILY_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
+    if (isPrivyApiTimeoutError(error)) {
+      c.header("Retry-After", "2");
+      return c.json(
+        {
+          error: {
+            message: "Auth provider timed out. Please retry.",
+            code: "AUTH_PROVIDER_TIMEOUT",
           },
         },
         503

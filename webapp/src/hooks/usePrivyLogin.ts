@@ -236,38 +236,6 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }
   }, [authenticated]);
 
-  useEffect(() => {
-    if (!ready || !authenticated || !user) return;
-    if (appSessionAuthenticated) return;
-    if (syncGuardRef.current || isSyncing) return;
-    if (rateLimitedUntilRef.current > Date.now()) return;
-
-    if (lastPrivyUserIdRef.current !== user.id) {
-      autoResyncAttemptsRef.current = 0;
-      lastAutoResyncAtRef.current = 0;
-      lastPrivyUserIdRef.current = user.id;
-    }
-
-    if (autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS) {
-      setSyncError("Sign-in is delayed. Please tap sign in again.");
-      return;
-    }
-
-    const now = Date.now();
-    const dynamicCooldown =
-      AUTO_RESYNC_COOLDOWN_MS * Math.max(1, autoResyncAttemptsRef.current + 1);
-    if (now - lastAutoResyncAtRef.current < dynamicCooldown) return;
-    lastAutoResyncAtRef.current = now;
-
-    setSyncError(null);
-    const shouldRedirectOnSuccess = loginRequestedRef.current;
-    loginRequestedRef.current = true;
-    void runPrivySync(user as PrivyUserLike, "auto").then((syncedUser) => {
-      if (syncedUser && shouldRedirectOnSuccess) {
-        handleSuccessfulLogin(syncedUser);
-      }
-    });
-  }, [appSessionAuthenticated, authenticated, handleSuccessfulLogin, isSyncing, ready, runPrivySync, user]);
 
   const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<AuthUser | null> => {
     const syncedUser = await runPrivySync(privyUser, "manual");

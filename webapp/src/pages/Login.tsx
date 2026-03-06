@@ -2,7 +2,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Suspense, lazy, useRef, type ReactNode } from "react";
-import { useAuth } from "@/lib/auth-client";
+import { useAuth, usePrivySyncFailureSnapshot } from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -306,6 +306,9 @@ function PrivyLoginButton() {
       navigate(user.username ? "/" : "/welcome", { replace: true }),
   });
   const isLoading = isSyncing;
+  const privySyncFailure = usePrivySyncFailureSnapshot();
+  const syncFailureMessage = privySyncFailure?.message ?? null;
+  const visibleSyncError = syncError ?? syncFailureMessage;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
   const xLabel = privyReady ? "Sign in with X" : "Start X";
   const emailSubLabel = "Fastest path. Verification code lands instantly.";
@@ -376,8 +379,8 @@ function PrivyLoginButton() {
       <p className="text-[11px] text-muted-foreground leading-relaxed">
         Wallet linking is handled separately in your profile after sign-in.
       </p>
-      {syncError ? (
-        <p className="text-[11px] text-red-400 leading-relaxed">{syncError}</p>
+      {visibleSyncError ? (
+        <p className="text-[11px] text-red-400 leading-relaxed">{visibleSyncError}</p>
       ) : null}
     </div>
   );

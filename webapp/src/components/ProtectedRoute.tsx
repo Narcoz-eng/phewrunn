@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
-import { getExplicitLogoutAt, readCachedAuthUserSnapshot, useSession } from "@/lib/auth-client";
+import { getExplicitLogoutAt, readCachedAuthUserSnapshot, usePrivySyncFailureSnapshot, useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 
@@ -104,6 +104,8 @@ function ProtectedRouteWithPrivy({
   const [graceExpired, setGraceExpired] = useState(false);
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
+  const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
+  const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
   const activeLoginIntent = !effectiveUser ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivySyncHint = ready && authenticated && !effectiveUser;
@@ -112,6 +114,7 @@ function ProtectedRouteWithPrivy({
     if (
       effectiveUser ||
       isPending ||
+      privySyncFailure ||
       (!hadTokenHint.current && !hasPrivySyncHint && !hasOAuthReturnHint)
     ) {
       return;
@@ -121,7 +124,7 @@ function ProtectedRouteWithPrivy({
       hasPrivySyncHint || hasOAuthReturnHint ? 12_000 : 4_000
     );
     return () => window.clearTimeout(timer);
-  }, [effectiveUser, hasOAuthReturnHint, hasPrivySyncHint, isPending]);
+  }, [effectiveUser, hasOAuthReturnHint, hasPrivySyncHint, isPending, privySyncFailure]);
 
   if (effectiveUser) {
     hadTokenHint.current = false;
@@ -132,11 +135,23 @@ function ProtectedRouteWithPrivy({
   }
 
   if (!effectiveUser) {
-    if (hasOAuthReturnHint && !ready) {
+    if (hasOAuthReturnHint && !ready && !privySyncFailure) {
       return <RouteLoading label={graceExpired ? "Still returning from X..." : "Returning from X..."} />;
     }
-    if (hasPrivySyncHint) {
+    if (hasPrivySyncHint && !privySyncFailure) {
       return <RouteLoading label={graceExpired ? "Still finalizing sign-in..." : "Completing sign-in..."} />;
+    }
+    if (privySyncFailure) {
+      return (
+        <Navigate
+          to="/login"
+          replace
+          state={{
+            from: location.pathname + location.search + location.hash,
+            syncError: privySyncFailure.message,
+          }}
+        />
+      );
     }
     if (hadTokenHint.current && !graceExpired) {
       return <RouteLoading label="Signing in..." />;
