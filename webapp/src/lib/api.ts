@@ -36,7 +36,7 @@ const API_BASE_URL = (() => {
 
 // Default timeout for requests (12 seconds)
 const DEFAULT_TIMEOUT = 12000;
-const AUTH_BEARER_TOKEN_MAX_LENGTH = 1400;
+const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public data?: unknown) {

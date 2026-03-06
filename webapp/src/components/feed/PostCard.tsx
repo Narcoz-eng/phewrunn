@@ -2560,11 +2560,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
           dynamicSlippage: true,
         });
 
-        const swapRes = await fetch("/api/posts/jupiter/swap", {
+        const swapRes = await api.raw("/api/posts/jupiter/swap", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: swapPayloadBody,
-          credentials: "same-origin",
         });
 
         if (!swapRes.ok) {
@@ -2675,16 +2674,11 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
       setBuyTxSignature(signature);
       if (swapPayload.tradeFeeEventId) {
-        void fetch("/api/posts/jupiter/fee-confirm", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({
+        void api.post("/api/posts/jupiter/fee-confirm", {
             tradeFeeEventId: swapPayload.tradeFeeEventId,
             txSignature: signature,
             walletAddress: walletPublicKey.toBase58(),
-          }),
-        }).catch((error) => {
+          }).catch((error) => {
           console.warn("[trade-fee] Failed to confirm fee event", error);
         });
       }

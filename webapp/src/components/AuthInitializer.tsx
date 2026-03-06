@@ -1,6 +1,11 @@
 import React, { useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useAuth, syncPrivySession, registerPreLogoutHook } from "@/lib/auth-client";
+import {
+  useAuth,
+  syncPrivySession,
+  registerPreLogoutHook,
+  hasStoredAuthTokenHint,
+} from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import {
   resolvePrivyAuthPayload,
@@ -51,7 +56,8 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
-    if (isAuthenticated) {
+    const shouldRepairMissingFallbackToken = isAuthenticated && !hasStoredAuthTokenHint();
+    if (isAuthenticated && !shouldRepairMissingFallbackToken) {
       attemptsRef.current = 0;
       lastSyncedPrivyUserRef.current = user.id;
       return;

@@ -272,26 +272,35 @@ type AuthResponseUser = {
 function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserClaims {
   const normalizedName = user.name.trim();
   const normalizedEmail = user.email.trim().toLowerCase();
-  const normalizedBio =
-    typeof user.bio === "string" && user.bio.trim().length > 0
-      ? user.bio.trim().slice(0, 160)
+  const normalizedWalletProvider =
+    typeof user.walletProvider === "string" && user.walletProvider.trim().length > 0
+      ? user.walletProvider.trim().slice(0, 32)
+      : null;
+  const normalizedUsername =
+    typeof user.username === "string" && user.username.trim().length > 0
+      ? user.username.trim().slice(0, 40)
+      : null;
+  const normalizedImage =
+    typeof user.image === "string" &&
+    /^https?:\/\//i.test(user.image.trim()) &&
+    user.image.trim().length > 0
+      ? user.image.trim().slice(0, 240)
       : null;
   const createdAtIso =
     user.createdAt instanceof Date && !Number.isNaN(user.createdAt.getTime())
       ? user.createdAt.toISOString()
       : null;
   return {
-    // Keep claims compact to avoid oversized cookie/header payloads.
-    // The database remains the source of truth for full user profile fields.
+    // Keep stateless auth claims compact so cookies/bearer headers stay reliable.
+    // Rich profile fields continue to come from /api/me and the login payload.
     name: normalizedName.length > 120 ? normalizedName.slice(0, 120) : normalizedName,
     email: normalizedEmail.length > 190 ? normalizedEmail.slice(0, 190) : normalizedEmail,
-    image: user.image,
+    image: normalizedImage,
     walletAddress: user.walletAddress,
-    walletProvider: user.walletProvider,
-    username: user.username,
+    walletProvider: normalizedWalletProvider,
+    username: normalizedUsername,
     level: user.level,
     xp: user.xp,
-    bio: normalizedBio,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,

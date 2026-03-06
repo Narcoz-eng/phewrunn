@@ -50,7 +50,7 @@ const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 7_500;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [250, 600] as const;
-const AUTH_BEARER_TOKEN_MAX_LENGTH = 1400;
+const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -215,6 +215,10 @@ function clearStoredAuthToken(): void {
 }
 
 setAuthTokenGetter(async () => getStoredAuthToken());
+
+export function hasStoredAuthTokenHint(): boolean {
+  return Boolean(getStoredAuthToken());
+}
 
 function hasSessionCookieHint(): boolean {
   // Session cookies are HttpOnly and not readable from JS in modern browsers.
