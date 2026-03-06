@@ -448,8 +448,8 @@ export const FeedQuerySchema = z.object({
     z.boolean().default(false)
   ),
   limit: z.preprocess(
-    (val) => (val ? parseInt(val as string) : 50),
-    z.number().int().min(1).max(100).default(50)
+    (val) => (val ? parseInt(val as string) : 10),
+    z.number().int().min(1).max(100).default(10)
   ),
   cursor: z.string().optional(),
   search: z.string().optional(),

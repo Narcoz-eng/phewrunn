@@ -28,8 +28,9 @@ interface FeedPage {
   nextCursor: string | null;
 }
 
-const FEED_PAGE_SIZE = 20;
-const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v1";
+const FEED_PAGE_SIZE = 10;
+const FEED_MAX_PAGES = 5;
+const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
 const FEED_NEW_POSTS_POLL_MS = 25_000;
 const FEED_ACTIVE_TAB_POLL_MS = 35_000;
@@ -390,7 +391,7 @@ export default function Feed() {
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => fetchFeedPage(activeTab, effectiveSearchQuery, pageParam),
     getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
-    maxPages: 8,
+    maxPages: FEED_MAX_PAGES,
     initialData: cachedFirstPage
       ? {
           pages: [cachedFirstPage],
@@ -542,7 +543,7 @@ export default function Feed() {
     if (searchQuery.trim().length >= 3) return;
     if (!postsPages?.pages?.length) return;
 
-    const timer = window.setTimeout(() => {
+    const prefetchTabs = () => {
       const tabsToPrefetch: FeedTab[] = ["trending", "following"];
 
       for (const tab of tabsToPrefetch) {
@@ -560,9 +561,26 @@ export default function Feed() {
           staleTime: 60_000,
         });
       }
-    }, 600);
+    };
 
-    return () => window.clearTimeout(timer);
+    let idleHandle: number | null = null;
+    const timer = window.setTimeout(() => {
+      if ("requestIdleCallback" in window) {
+        idleHandle = window.requestIdleCallback(() => {
+          prefetchTabs();
+        }, { timeout: 1500 });
+        return;
+      }
+
+      prefetchTabs();
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (idleHandle !== null && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleHandle);
+      }
+    };
   }, [
     activeTab,
     feedViewerScope,
@@ -590,7 +608,7 @@ export default function Feed() {
       },
       {
         root: null,
-        rootMargin: "220px 0px",
+        rootMargin: "100px 0px",
         threshold: 0,
       }
     );

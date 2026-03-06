@@ -1677,7 +1677,7 @@ postsRouter.get("/", async (c) => {
   const parsed = FeedQuerySchema.safeParse(queryParams);
   const { sort, following, limit, cursor, search } = parsed.success
     ? parsed.data
-    : { sort: "latest" as const, following: false, limit: 50, cursor: undefined, search: undefined };
+    : { sort: "latest" as const, following: false, limit: 10, cursor: undefined, search: undefined };
   const feedCacheKey = buildFeedResponseCacheKey({
     userId: user?.id ?? null,
     sort,

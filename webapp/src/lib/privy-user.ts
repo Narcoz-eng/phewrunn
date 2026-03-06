@@ -1,8 +1,8 @@
 import { getIdentityToken } from "@privy-io/react-auth";
 
-const IDENTITY_TOKEN_ATTEMPTS = 7;
-const IDENTITY_TOKEN_RETRY_DELAYS_MS = [80, 140, 220, 320, 480, 700] as const;
-const AUTH_PAYLOAD_READY_DELAYS_MS = [160, 260, 420, 700, 1100] as const;
+const IDENTITY_TOKEN_ATTEMPTS = 4;
+const IDENTITY_TOKEN_RETRY_DELAYS_MS = [70, 120, 180] as const;
+const AUTH_PAYLOAD_READY_DELAYS_MS = [120, 220, 360] as const;
 
 type LinkedAccountLike = {
   type: string;
@@ -113,9 +113,19 @@ export async function resolvePrivyAuthPayload({
   let latestUser = getLatestUser?.() ?? user;
   let email = getPrivyPrimaryEmail(latestUser);
   let name = getPrivyDisplayName(latestUser, email);
-  let privyIdToken = await getPrivyIdentityTokenFast();
 
-  if (email || privyIdToken) {
+  // If Privy has already surfaced a verified email, do not hold up sign-in waiting
+  // for an identity token. The backend can verify from privyUserId/email if needed.
+  if (email) {
+    return {
+      user: latestUser,
+      email,
+      name,
+    };
+  }
+
+  let privyIdToken = await getPrivyIdentityTokenFast();
+  if (privyIdToken) {
     return {
       user: latestUser,
       email,
@@ -130,11 +140,15 @@ export async function resolvePrivyAuthPayload({
     email = getPrivyPrimaryEmail(latestUser);
     name = getPrivyDisplayName(latestUser, email);
 
+    if (email) {
+      break;
+    }
+
     if (!privyIdToken) {
       privyIdToken = await getPrivyIdentityTokenFast();
     }
 
-    if (email || privyIdToken) {
+    if (privyIdToken) {
       break;
     }
   }
