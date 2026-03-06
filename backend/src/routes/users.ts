@@ -57,7 +57,7 @@ function buildUserIdentifierWhere(identifier: string) {
   return {
     OR: [
       { id: identifier },
-      { username: { equals: normalizedIdentifier, mode: "insensitive" as const } },
+      { username: normalizedIdentifier },
     ],
   };
 }
@@ -2163,13 +2163,21 @@ usersRouter.get("/:identifier/reposts", async (c) => {
 });
 
 async function resolveUserIdFromIdentifier(identifier: string): Promise<string | null> {
-  const user = await prisma.user.findFirst({
-    where: buildUserIdentifierWhere(identifier),
-    select: {
-      id: true,
-    },
+  const normalizedIdentifier = normalizeUsernameHandle(identifier);
+
+  const byUsername = await prisma.user.findUnique({
+    where: { username: normalizedIdentifier },
+    select: { id: true },
   });
-  return user?.id ?? null;
+  if (byUsername?.id) {
+    return byUsername.id;
+  }
+
+  const byId = await prisma.user.findUnique({
+    where: { id: identifier },
+    select: { id: true },
+  });
+  return byId?.id ?? null;
 }
 
 // Follow a user
@@ -2190,12 +2198,6 @@ usersRouter.post("/:id/follow", requireAuth, async (c) => {
   // Cannot follow yourself
   if (currentUser.id === targetUserId) {
     return c.json({ error: { message: "Cannot follow yourself", code: "CANNOT_FOLLOW_SELF" } }, 400);
-  }
-
-  // Check if target user exists
-  const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
-  if (!targetUser) {
-    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
   // Create follow idempotently so stale UI or repeated taps do not surface raw Prisma errors.

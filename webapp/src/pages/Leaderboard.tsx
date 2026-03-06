@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
@@ -36,6 +37,8 @@ type LeaderboardSection = "gainers" | "users" | "stats";
 
 export default function Leaderboard() {
   const navigate = useNavigate();
+  const [topUsersReady, setTopUsersReady] = useState(false);
+  const [statsReady, setStatsReady] = useState(false);
   const { data: session } = useSession();
   const { signOut } = useAuth();
   const { logout: privyLogout } = usePrivy();
@@ -90,6 +93,20 @@ export default function Leaderboard() {
   });
 
   const unreadCount = unreadData?.count ?? 0;
+
+  useEffect(() => {
+    const topUsersTimer = window.setTimeout(() => {
+      setTopUsersReady(true);
+    }, 200);
+    const statsTimer = window.setTimeout(() => {
+      setStatsReady(true);
+    }, 650);
+
+    return () => {
+      window.clearTimeout(topUsersTimer);
+      window.clearTimeout(statsTimer);
+    };
+  }, []);
 
   const handleLogout = async () => {
     await signOut();
@@ -230,7 +247,11 @@ export default function Leaderboard() {
               </div>
               <h2 className="text-xl font-semibold">Top Users (All Time)</h2>
             </div>
-            <TopUsersTable />
+            {topUsersReady ? (
+              <TopUsersTable />
+            ) : (
+              <div className="rounded-xl border border-border bg-card/40 h-48 animate-pulse" />
+            )}
           </section>
 
           {/* Platform Statistics Section */}
@@ -241,7 +262,11 @@ export default function Leaderboard() {
               </div>
               <h2 className="text-xl font-semibold">Platform Stats</h2>
             </div>
-            <StatsOverview />
+            {statsReady ? (
+              <StatsOverview />
+            ) : (
+              <div className="rounded-xl border border-border bg-card/40 h-64 animate-pulse" />
+            )}
           </section>
         </div>
       </main>

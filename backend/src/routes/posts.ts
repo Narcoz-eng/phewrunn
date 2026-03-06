@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import {
@@ -443,6 +444,105 @@ function isPrismaClientError(error: unknown): boolean {
   return name.startsWith("PrismaClient");
 }
 
+function isPrismaKnownRequestError(error: unknown, code?: string): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    (code ? error.code === code : true)
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return "";
+}
+
+function logNonCriticalNotificationFailure(operation: string, error: unknown): void {
+  console.warn(`[notifications] ${operation} failed; continuing without blocking the main action`, {
+    message: getErrorMessage(error),
+  });
+}
+
+async function createNotificationSafely(params: {
+  operation: string;
+  data: Prisma.NotificationUncheckedCreateInput;
+  fallbackData?: Prisma.NotificationUncheckedCreateInput;
+}): Promise<void> {
+  try {
+    await prisma.notification.create({ data: params.data });
+    return;
+  } catch (error) {
+    if (params.fallbackData && isPrismaSchemaDriftError(error)) {
+      try {
+        await prisma.notification.create({ data: params.fallbackData });
+        return;
+      } catch (fallbackError) {
+        logNonCriticalNotificationFailure(params.operation, fallbackError);
+        return;
+      }
+    }
+
+    logNonCriticalNotificationFailure(params.operation, error);
+  }
+}
+
+async function createManyNotificationsSafely(params: {
+  operation: string;
+  data: Prisma.NotificationCreateManyInput[];
+  fallbackData?: Prisma.NotificationCreateManyInput[];
+}): Promise<void> {
+  if (params.data.length === 0) return;
+
+  try {
+    await prisma.notification.createMany({ data: params.data });
+    return;
+  } catch (error) {
+    if (
+      params.fallbackData &&
+      params.fallbackData.length > 0 &&
+      isPrismaSchemaDriftError(error)
+    ) {
+      try {
+        await prisma.notification.createMany({ data: params.fallbackData });
+        return;
+      } catch (fallbackError) {
+        logNonCriticalNotificationFailure(params.operation, fallbackError);
+        return;
+      }
+    }
+
+    logNonCriticalNotificationFailure(params.operation, error);
+  }
+}
+
+async function listFollowerIdsSafely(params: {
+  followingId: string;
+  take?: number;
+  operation: string;
+}): Promise<string[]> {
+  try {
+    const followers = await prisma.follow.findMany({
+      where: { followingId: params.followingId },
+      select: { followerId: true },
+      ...(typeof params.take === "number" ? { take: params.take } : {}),
+    });
+    return followers.map((follower) => follower.followerId);
+  } catch (error) {
+    console.warn(`[followers] ${params.operation} failed; continuing without follower fanout`, {
+      message: getErrorMessage(error),
+    });
+    return [];
+  }
+}
+
 function safeRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -741,23 +841,30 @@ async function notifyFollowersOfBigGain(params: {
 }): Promise<void> {
   if (params.percentChange1h < FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT) return;
 
-  const followers = await prisma.follow.findMany({
-    where: { followingId: params.authorId },
-    select: { followerId: true },
+  const followerIds = await listFollowerIdsSafely({
+    followingId: params.authorId,
     take: 500,
+    operation: "big_gain_alert_follower_lookup",
   });
-  if (followers.length === 0) return;
+  if (followerIds.length === 0) return;
 
   const displayName = params.authorUsername || params.authorName || "A trader";
   const message = `${displayName} posted a runner: +${params.percentChange1h.toFixed(1)}% at 1H`;
 
-  await prisma.notification.createMany({
-    data: followers.map((f) => ({
-      userId: f.followerId,
+  await createManyNotificationsSafely({
+    operation: "big_gain_alert_fanout",
+    data: followerIds.map((followerId) => ({
+      userId: followerId,
       type: "alpha_gain_alert",
       message,
       postId: params.postId,
       fromUserId: params.authorId,
+    })),
+    fallbackData: followerIds.map((followerId) => ({
+      userId: followerId,
+      type: "alpha_gain_alert",
+      message,
+      postId: params.postId,
     })),
   });
 }
@@ -1056,7 +1163,8 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           settlementMsg = `1H LOSS: ${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
         }
 
-        await prisma.notification.create({
+        await createNotificationSafely({
+          operation: "settlement_1h_author_notification",
           data: {
             userId: post.authorId,
             type: "settlement",
@@ -1191,7 +1299,8 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             msg6h = `6H SNAPSHOT WIN! +${percentChange6h.toFixed(1)}% | XP ${xpDisplay}`;
           }
 
-          await prisma.notification.create({
+          await createNotificationSafely({
+            operation: "settlement_6h_author_notification",
             data: {
               userId: post.authorId,
               type: "settlement",
@@ -2709,38 +2818,29 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
   }
 
   // Create notifications for all followers
-  const followers = await prisma.follow.findMany({
-    where: { followingId: user.id },
-    select: { followerId: true },
+  const followerIds = await listFollowerIdsSafely({
+    followingId: user.id,
+    operation: "new_post_follower_lookup",
   });
 
-  if (followers.length > 0) {
+  if (followerIds.length > 0) {
     const displayName = dbUser.username || dbUser.name || "A trader";
-    try {
-      await prisma.notification.createMany({
-        data: followers.map((follower) => ({
-          userId: follower.followerId,
-          type: "new_post",
-          message: `${displayName} just posted a new Alpha!`,
-          postId: post.id,
-          fromUserId: user.id,
-        })),
-      });
-    } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
-        throw error;
-      }
-
-      // Older schemas may not have all notification relation fields yet.
-      await prisma.notification.createMany({
-        data: followers.map((follower) => ({
-          userId: follower.followerId,
-          type: "new_post",
-          message: `${displayName} just posted a new Alpha!`,
-          postId: post.id,
-        })),
-      });
-    }
+    await createManyNotificationsSafely({
+      operation: "new_post_follower_notification",
+      data: followerIds.map((followerId) => ({
+        userId: followerId,
+        type: "new_post",
+        message: `${displayName} just posted a new Alpha!`,
+        postId: post.id,
+        fromUserId: user.id,
+      })),
+      fallbackData: followerIds.map((followerId) => ({
+        userId: followerId,
+        type: "new_post",
+        message: `${displayName} just posted a new Alpha!`,
+        postId: post.id,
+      })),
+    });
   }
 
   return c.json({
@@ -3342,25 +3442,30 @@ postsRouter.post("/:id/like", requireAuth, async (c) => {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
-  // Check if already liked
+  // Repeated taps or stale UI should reconcile to the final liked state instead of surfacing a DB race.
   const existingLike = await prisma.like.findUnique({
     where: { userId_postId: { userId: user.id, postId } },
   });
 
-  if (existingLike) {
-    return c.json({ error: { message: "Already liked", code: "ALREADY_LIKED" } }, 400);
+  let createdLike = false;
+  if (!existingLike) {
+    try {
+      await prisma.like.create({
+        data: {
+          userId: user.id,
+          postId,
+        },
+      });
+      createdLike = true;
+    } catch (error) {
+      if (!isPrismaKnownRequestError(error, "P2002")) {
+        throw error;
+      }
+    }
   }
 
-  // Create like
-  await prisma.like.create({
-    data: {
-      userId: user.id,
-      postId,
-    },
-  });
-
   // Create notification for post author (if not liking own post)
-  if (post.authorId !== user.id) {
+  if (createdLike && post.authorId !== user.id) {
     // Get current user's name from database
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
@@ -3368,13 +3473,20 @@ postsRouter.post("/:id/like", requireAuth, async (c) => {
     });
     const userName = dbUser?.name || "Someone";
 
-    await prisma.notification.create({
+    await createNotificationSafely({
+      operation: "like_author_notification",
       data: {
         userId: post.authorId,
         type: "like",
         message: `${userName} liked your Alpha!`,
         postId: post.id,
         fromUserId: user.id,
+      },
+      fallbackData: {
+        userId: post.authorId,
+        type: "like",
+        message: `${userName} liked your Alpha!`,
+        postId: post.id,
       },
     });
   }
@@ -3399,8 +3511,10 @@ postsRouter.delete("/:id/like", requireAuth, async (c) => {
     await prisma.like.delete({
       where: { userId_postId: { userId: user.id, postId } },
     });
-  } catch {
-    return c.json({ error: { message: "Like not found", code: "NOT_FOUND" } }, 404);
+  } catch (error) {
+    if (!isPrismaKnownRequestError(error, "P2025")) {
+      throw error;
+    }
   }
 
   // Get updated count
@@ -3470,40 +3584,54 @@ postsRouter.post("/:id/repost", requireAuth, async (c) => {
     return c.json({ error: { message: "Cannot repost own post", code: "CANNOT_REPOST_OWN" } }, 400);
   }
 
-  // Check if already reposted
+  // Repeated taps or stale UI should reconcile to the final reposted state instead of surfacing a DB race.
   const existingRepost = await prisma.repost.findUnique({
     where: { userId_postId: { userId: user.id, postId } },
   });
 
-  if (existingRepost) {
-    return c.json({ error: { message: "Already reposted", code: "ALREADY_REPOSTED" } }, 400);
+  let createdRepost = false;
+  if (!existingRepost) {
+    try {
+      await prisma.repost.create({
+        data: {
+          userId: user.id,
+          postId,
+        },
+      });
+      createdRepost = true;
+    } catch (error) {
+      if (!isPrismaKnownRequestError(error, "P2002")) {
+        throw error;
+      }
+    }
   }
-
-  // Create repost
-  await prisma.repost.create({
-    data: {
-      userId: user.id,
-      postId,
-    },
-  });
 
   // Create notification for post author
   // Get current user's name from database
-  const dbUser = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: { name: true },
-  });
-  const userName = dbUser?.name || "Someone";
+  if (createdRepost) {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { name: true },
+    });
+    const userName = dbUser?.name || "Someone";
 
-  await prisma.notification.create({
-    data: {
-      userId: post.authorId,
-      type: "repost",
-      message: `${userName} reposted your Alpha!`,
-      postId: post.id,
-      fromUserId: user.id,
-    },
-  });
+    await createNotificationSafely({
+      operation: "repost_author_notification",
+      data: {
+        userId: post.authorId,
+        type: "repost",
+        message: `${userName} reposted your Alpha!`,
+        postId: post.id,
+        fromUserId: user.id,
+      },
+      fallbackData: {
+        userId: post.authorId,
+        type: "repost",
+        message: `${userName} reposted your Alpha!`,
+        postId: post.id,
+      },
+    });
+  }
 
   // Get updated count
   const repostCount = await prisma.repost.count({ where: { postId } });
@@ -3525,8 +3653,10 @@ postsRouter.delete("/:id/repost", requireAuth, async (c) => {
     await prisma.repost.delete({
       where: { userId_postId: { userId: user.id, postId } },
     });
-  } catch {
-    return c.json({ error: { message: "Repost not found", code: "NOT_FOUND" } }, 404);
+  } catch (error) {
+    if (!isPrismaKnownRequestError(error, "P2025")) {
+      throw error;
+    }
   }
 
   // Get updated count
