@@ -51,6 +51,7 @@ interface DexscreenerPair {
     name?: string;
     symbol?: string;
   };
+  url?: string;
   info?: {
     imageUrl?: string;
     header?: string;
@@ -80,6 +81,7 @@ export interface MarketCapResult {
   tokenName?: string;
   tokenSymbol?: string;
   tokenImage?: string;
+  dexscreenerUrl?: string;
   error?: string;
 }
 
@@ -311,6 +313,7 @@ export async function fetchMarketCap(
           tokenName: selectedPair.matchedToken?.name ?? selectedPair.pair.baseToken?.name,
           tokenSymbol: selectedPair.matchedToken?.symbol ?? selectedPair.pair.baseToken?.symbol,
           tokenImage: pickDexImageUrl(selectedPair.pair),
+          dexscreenerUrl: selectedPair.pair.url?.trim() || undefined,
         };
       }
 

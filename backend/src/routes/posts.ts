@@ -38,6 +38,7 @@ import {
   getHeliusTokenMetadataForMint,
   isHeliusConfigured,
 } from "../services/helius.js";
+import { invalidateLeaderboardCaches } from "./leaderboard.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -212,9 +213,8 @@ function triggerMaintenanceForStaleCandidates(
   if (!posts.some(shouldTriggerMaintenanceForPost)) return;
 
   const now = Date.now();
-  if (now - lastMaintenanceRunStartedAt < MAINTENANCE_STALE_PROBE_COOLDOWN_MS) return;
+  if (now - lastSettlementRunStartedAt < MAINTENANCE_STALE_PROBE_COOLDOWN_MS) return;
 
-  triggerMaintenanceCycleNonBlocking(reason);
   triggerSettlementCycleNonBlocking(reason);
 }
 
@@ -291,6 +291,19 @@ function writeFeedResponseToCache(
     expiresAtMs: nowMs + FEED_RESPONSE_CACHE_TTL_MS,
     staleUntilMs: nowMs + FEED_RESPONSE_STALE_FALLBACK_MS,
   });
+}
+
+function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
+  feedResponseCache.clear();
+  feedSharedResponseCache.clear();
+  feedMcapCache.clear();
+  sharedAlphaAuthorCache.clear();
+  trendingCache = null;
+  trendingInFlight = null;
+
+  if (options?.leaderboard) {
+    invalidateLeaderboardCaches();
+  }
 }
 const JUPITER_QUOTE_URLS = [
   "https://lite-api.jup.ag/swap/v1/quote",
@@ -1095,7 +1108,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         // Keep settlement + user rewards/penalties atomic to avoid "settled but no level/xp" failures.
         try {
           await prisma.$transaction([
-            prisma.post.update({
+            prisma.post.updateMany({
               where: { id: post.id },
               data: {
                 settled: true,
@@ -1111,13 +1124,12 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 lastMcapUpdate: settledAt,
               },
             }),
-            prisma.user.update({
+            prisma.user.updateMany({
               where: { id: post.authorId },
               data: {
                 level: newLevel,
                 xp: newXp,
               },
-              select: { id: true },
             }),
           ]);
         } catch (error) {
@@ -1126,7 +1138,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           }
 
           await prisma.$transaction([
-            prisma.post.update({
+            prisma.post.updateMany({
               where: { id: post.id },
               data: {
                 settled: true,
@@ -1135,13 +1147,12 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 currentMcap: mcap1h,
               },
             }),
-            prisma.user.update({
+            prisma.user.updateMany({
               where: { id: post.authorId },
               data: {
                 level: newLevel,
                 xp: newXp,
               },
-              select: { id: true },
             }),
           ]);
         }
@@ -1236,7 +1247,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           const newXp = Math.max(0, currentUser.xp + xpChange6h);
           try {
             await prisma.$transaction([
-              prisma.post.update({
+              prisma.post.updateMany({
                 where: { id: post.id },
                 data: {
                   mcap6h: mcap6h,
@@ -1248,13 +1259,12 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                   lastMcapUpdate: snapshotUpdatedAt,
                 },
               }),
-              prisma.user.update({
+              prisma.user.updateMany({
                 where: { id: post.authorId },
                 data: {
                   level: newLevel,
                   xp: newXp,
                 },
-                select: { id: true },
               }),
             ]);
           } catch (error) {
@@ -1263,19 +1273,18 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             }
 
             await prisma.$transaction([
-              prisma.post.update({
+              prisma.post.updateMany({
                 where: { id: post.id },
                 data: {
                   currentMcap: mcap6h,
                 },
               }),
-              prisma.user.update({
+              prisma.user.updateMany({
                 where: { id: post.authorId },
                 data: {
                   level: newLevel,
                   xp: newXp,
                 },
-                select: { id: true },
               }),
             ]);
           }
@@ -1317,7 +1326,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           }
         } else {
           try {
-            await prisma.post.update({
+            await prisma.post.updateMany({
               where: { id: post.id },
               data: {
                 mcap6h: mcap6h,
@@ -1332,7 +1341,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             if (!isPrismaSchemaDriftError(error)) {
               throw error;
             }
-            await prisma.post.update({
+            await prisma.post.updateMany({
               where: { id: post.id },
               data: {
                 currentMcap: mcap6h,
@@ -1350,6 +1359,10 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
     }
   } catch (err) {
     console.error("[Settlement] Background check error:", err);
+  }
+
+  if (settled1hCount > 0 || snapshot6hCount > 0 || levelChanges6hCount > 0) {
+    invalidatePostReadCaches({ leaderboard: true });
   }
 
   return { settled1h: settled1hCount, snapshot6h: snapshot6hCount, levelChanges6h: levelChanges6hCount, errors: errorCount };
@@ -1384,6 +1397,7 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
         tokenName: true,
         tokenSymbol: true,
         tokenImage: true,
+        dexscreenerUrl: true,
       },
       orderBy: [
         { lastMcapUpdate: "asc" },
@@ -1433,7 +1447,7 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
             if (!post.tokenImage && heliusMetadata.tokenImage) updateData.tokenImage = heliusMetadata.tokenImage;
 
             if (Object.keys(updateData).length > 0) {
-              await prisma.post.update({
+              await prisma.post.updateMany({
                 where: { id: post.id },
                 data: updateData,
               });
@@ -1509,6 +1523,7 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
             tokenName?: string | null;
             tokenSymbol?: string | null;
             tokenImage?: string | null;
+            dexscreenerUrl?: string | null;
           } = {};
 
           if (post.entryMcap === null && marketCapResult.mcap !== null) {
@@ -1536,10 +1551,13 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
           if (!post.tokenImage && (marketCapResult.tokenImage || heliusMetadata?.tokenImage)) {
             updateData.tokenImage = marketCapResult.tokenImage ?? heliusMetadata?.tokenImage;
           }
+          if (!post.dexscreenerUrl && marketCapResult.dexscreenerUrl) {
+            updateData.dexscreenerUrl = marketCapResult.dexscreenerUrl;
+          }
 
           if (Object.keys(updateData).length === 0) continue;
 
-          await prisma.post.update({
+          await prisma.post.updateMany({
             where: { id: post.id },
             data: updateData,
           });
@@ -1557,6 +1575,10 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
   } catch (error) {
     console.error("[Maintenance] Market refresh scan failed:", error);
     result.errors++;
+  }
+
+  if (result.updatedPosts > 0) {
+    invalidatePostReadCaches({ leaderboard: true });
   }
 
   return result;
@@ -1846,15 +1868,14 @@ postsRouter.get("/", async (c) => {
     }
   }
 
-  // Keep settlement/snapshot maintenance progressing from organic traffic.
-  // Trigger is throttled + non-blocking, and only on first page to avoid feed jitter.
+  // Keep settlement/snapshot state progressing from organic traffic without running the full
+  // market-refresh job on the feed path. Cron/manual maintenance handles the heavier updates.
   if (!cursor && shouldRunOpportunisticMaintenance()) {
     const reason = search
       ? `feed:${sort}:search`
       : following
         ? `feed:${sort}:following`
         : `feed:${sort}`;
-    triggerMaintenanceCycleNonBlocking(reason);
     triggerSettlementCycleNonBlocking(reason);
   }
 
@@ -2693,6 +2714,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult.tokenName ?? null,
     tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol ?? null,
     tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
+    dexscreenerUrl: marketCapResult.dexscreenerUrl ?? null,
     trackingMode: TRACKING_MODE_ACTIVE, // New posts start in active tracking mode
     lastMcapUpdate: new Date(),
   };
@@ -2708,6 +2730,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     tokenName: string | null;
     tokenSymbol: string | null;
     tokenImage: string | null;
+    dexscreenerUrl: string | null;
     trackingMode: string | null;
     lastMcapUpdate: Date | null;
     settled: boolean;
@@ -2812,6 +2835,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
       tokenName: marketCapResult.tokenName ?? heliusTokenMetadata?.tokenName ?? null,
       tokenSymbol: marketCapResult.tokenSymbol ?? heliusTokenMetadata?.tokenSymbol ?? null,
       tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
+      dexscreenerUrl: marketCapResult.dexscreenerUrl ?? null,
       trackingMode: TRACKING_MODE_ACTIVE,
       lastMcapUpdate: new Date(),
     };
@@ -2842,6 +2866,8 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
       })),
     });
   }
+
+  invalidatePostReadCaches({ leaderboard: true });
 
   return c.json({
     data: {
@@ -2936,7 +2962,7 @@ postsRouter.post("/settle", async (c) => {
 
     try {
       await prisma.$transaction([
-        prisma.post.update({
+        prisma.post.updateMany({
           where: { id: post.id },
           data: {
             settled: true,
@@ -2952,13 +2978,12 @@ postsRouter.post("/settle", async (c) => {
             lastMcapUpdate: settledAt,
           },
         }),
-        prisma.user.update({
+        prisma.user.updateMany({
           where: { id: post.authorId },
           data: {
             level: newLevel,
             xp: newXp,
           },
-          select: { id: true },
         }),
       ]);
     } catch (error) {
@@ -2967,7 +2992,7 @@ postsRouter.post("/settle", async (c) => {
       }
 
       await prisma.$transaction([
-        prisma.post.update({
+        prisma.post.updateMany({
           where: { id: post.id },
           data: {
             settled: true,
@@ -2976,13 +3001,12 @@ postsRouter.post("/settle", async (c) => {
             currentMcap: mcap1h,
           },
         }),
-        prisma.user.update({
+        prisma.user.updateMany({
           where: { id: post.authorId },
           data: {
             level: newLevel,
             xp: newXp,
           },
-          select: { id: true },
         }),
       ]);
     }
@@ -3051,7 +3075,7 @@ postsRouter.post("/settle", async (c) => {
 
       try {
         await prisma.$transaction([
-          prisma.post.update({
+          prisma.post.updateMany({
             where: { id: post.id },
             data: {
               mcap6h: mcap6h,
@@ -3063,13 +3087,12 @@ postsRouter.post("/settle", async (c) => {
               lastMcapUpdate: snapshotUpdatedAt,
             },
           }),
-          prisma.user.update({
+          prisma.user.updateMany({
             where: { id: post.authorId },
             data: {
               level: newLevel,
               xp: newXp,
             },
-            select: { id: true },
           }),
         ]);
       } catch (error) {
@@ -3078,26 +3101,25 @@ postsRouter.post("/settle", async (c) => {
         }
 
         await prisma.$transaction([
-          prisma.post.update({
+          prisma.post.updateMany({
             where: { id: post.id },
             data: {
               currentMcap: mcap6h,
             },
           }),
-          prisma.user.update({
+          prisma.user.updateMany({
             where: { id: post.authorId },
             data: {
               level: newLevel,
               xp: newXp,
             },
-            select: { id: true },
           }),
         ]);
       }
     } else {
       // ALWAYS update post with 6H snapshot data (for ALL posts)
       try {
-        await prisma.post.update({
+        await prisma.post.updateMany({
           where: { id: post.id },
           data: {
             mcap6h: mcap6h,
@@ -3113,7 +3135,7 @@ postsRouter.post("/settle", async (c) => {
         if (!isPrismaSchemaDriftError(error)) {
           throw error;
         }
-        await prisma.post.update({
+        await prisma.post.updateMany({
           where: { id: post.id },
           data: {
             currentMcap: mcap6h,
@@ -3135,6 +3157,10 @@ postsRouter.post("/settle", async (c) => {
       recoveryEligible,
       hadLevelChange: levelChange6h !== 0,
     });
+  }
+
+  if (results1h.length > 0 || results6h.length > 0) {
+    invalidatePostReadCaches({ leaderboard: true });
   }
 
   return c.json({
@@ -4024,11 +4050,9 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     };
   }
 
-  // Fallback settlement trigger (non-blocking) for live post polling when cron is unavailable
-  // or configured but unhealthy (e.g. cron stopped running).
-  // Keeps feed request path clean while still allowing 1H/6H status to catch up.
+  // Live post polling can still nudge settlement forward when cron is unavailable, but it
+  // must not run the heavier market-refresh job on this hot request path.
   if (shouldRunOpportunisticMaintenance() && shouldTriggerMaintenanceForPost(post)) {
-    triggerMaintenanceCycleNonBlocking(`price:${post.id}`);
     triggerSettlementCycleNonBlocking(`price:${post.id}`);
   }
 

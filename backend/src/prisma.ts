@@ -186,6 +186,7 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeRewardsEnabled" BOOLEAN NOT NULL DEFAULT true;`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeShareBps" INTEGER NOT NULL DEFAULT 100;`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeePayoutAddress" TEXT;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "dexscreenerUrl" TEXT;`,
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "dismissed" BOOLEAN NOT NULL DEFAULT false;`,
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "clickedAt" TIMESTAMP(3);`,
   ] as const;
@@ -195,31 +196,48 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
   }
 }
 
-const explicitGuardrailsEnabled = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS === "true";
-const shouldRunCompatGuardrails =
-  explicitGuardrailsEnabled &&
-  !(isProduction && isServerlessRuntime);
+const compatGuardrailsSetting = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS?.trim().toLowerCase();
+const shouldRunCompatGuardrails = isPostgres && compatGuardrailsSetting !== "false";
+let prismaReadyPromise: Promise<void> | null = null;
 
-if (explicitGuardrailsEnabled && isProduction && isServerlessRuntime) {
-  console.warn("[Prisma] Ignoring PRISMA_ENABLE_COMPAT_GUARDRAILS=true in production serverless runtime");
-}
+async function initializePrismaRuntime(): Promise<void> {
+  if (isSqlite) {
+    await initSqlitePragmas(prisma);
+    return;
+  }
 
-if (isSqlite) {
-  initSqlitePragmas(prisma).catch((error) => {
-    console.warn("[Prisma] Failed to apply SQLite PRAGMAs:", error);
-  });
-} else if (isPostgres) {
-  if (shouldRunCompatGuardrails) {
-    initPostgresCompatColumns(prisma)
-      .then(() => {
-        console.log("[Prisma] Postgres compatibility columns check complete");
-      })
-      .catch((error) => {
-        console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
-      });
-  } else {
-    console.log("[Prisma] Postgres compatibility guardrails disabled by default; enable PRISMA_ENABLE_COMPAT_GUARDRAILS=true only for controlled maintenance runs");
+  if (!isPostgres) {
+    return;
+  }
+
+  if (!shouldRunCompatGuardrails) {
+    console.log("[Prisma] Postgres compatibility guardrails explicitly disabled");
+    return;
+  }
+
+  try {
+    await initPostgresCompatColumns(prisma);
+    console.log("[Prisma] Postgres compatibility columns check complete");
+  } catch (error) {
+    console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
   }
 }
 
-export { prisma };
+function ensurePrismaReady(): Promise<void> {
+  if (prismaReadyPromise) {
+    return prismaReadyPromise;
+  }
+
+  prismaReadyPromise = initializePrismaRuntime().catch((error) => {
+    prismaReadyPromise = null;
+    throw error;
+  });
+
+  return prismaReadyPromise;
+}
+
+void ensurePrismaReady().catch((error) => {
+  console.warn("[Prisma] Startup initialization failed:", error);
+});
+
+export { prisma, ensurePrismaReady };

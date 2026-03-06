@@ -6,7 +6,7 @@ import {
   auth,
   type AuthVariables,
 } from "./auth.js";
-import { prisma } from "./prisma.js";
+import { prisma, ensurePrismaReady } from "./prisma.js";
 import { postsRouter } from "./routes/posts.js";
 import { usersRouter } from "./routes/users.js";
 import { adminRouter } from "./routes/admin.js";
@@ -158,7 +158,13 @@ app.use("*", structuredLogger({
 // 9. Global error handler - doesn't leak stack traces in production
 app.onError(createErrorHandler());
 
-// 10. Better Auth middleware - populates user from session cookie
+// 10. Prisma runtime initialization - await one-time compat/setup work before auth and DB routes
+app.use("*", async (_c, next) => {
+  await ensurePrismaReady();
+  return next();
+});
+
+// 11. Better Auth middleware - populates user from session cookie
 app.use("*", betterAuthMiddleware);
 
 // =====================================================
