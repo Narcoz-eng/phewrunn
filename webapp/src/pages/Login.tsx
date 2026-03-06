@@ -496,8 +496,8 @@ export default function Login() {
         animate={loaded ? { opacity: 1, y: 0 } : {}}
         transition={{ duration: optimizeMotion ? 0 : 0.4, ease: "easeOut" }}
       >
-        <div className="max-w-7xl mx-auto px-5 sm:px-6 py-3.5 flex items-center justify-between">
-          <BrandLogo size="sm" showTagline />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
+          <BrandLogo size="sm" showTagline={!isMobile} />
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-muted-foreground border border-border/50 rounded-full px-3 py-1 bg-card/50">
               <span className="w-1.5 h-1.5 rounded-full bg-gain animate-pulse" />
@@ -512,18 +512,18 @@ export default function Login() {
       <main className="relative z-10 pt-[72px]">
 
         {/* ━━━━━━ SECTION 1: HERO ━━━━━━ */}
-        <section className="max-w-7xl mx-auto px-5 sm:px-6 pt-10 pb-8 md:pt-14 md:pb-12">
-          <div className="grid xl:grid-cols-[1fr_420px] gap-8 xl:gap-12 items-start">
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 pt-7 pb-6 sm:pt-10 sm:pb-8 md:pt-14 md:pb-12">
+          <div className="grid xl:grid-cols-[1fr_420px] gap-6 sm:gap-8 xl:gap-12 items-start">
 
             {/* Left — headline + features */}
             <motion.div
-              className="order-2 xl:order-1 space-y-6"
+              className="order-2 xl:order-1 space-y-5 sm:space-y-6"
               initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
               animate={loaded ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: optimizeMotion ? 0 : 0.5, delay: optimizeMotion ? 0 : 0.1 }}
             >
               {/* Badge */}
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary">
+              <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] font-medium text-primary sm:px-3.5 sm:text-xs">
                 <Sparkles className="w-3.5 h-3.5" />
                 Good alpha first. Fees follow.
               </div>
@@ -539,7 +539,7 @@ export default function Login() {
                     Get Paid on Every Buy.
                   </span>
                 </h1>
-                <p className="mt-4 text-base sm:text-lg text-muted-foreground leading-relaxed max-w-xl">
+                <p className="mt-3.5 max-w-xl text-[15px] leading-relaxed text-muted-foreground sm:mt-4 sm:text-lg">
                   The first good alpha does more than win attention. It routes buy
                   flow, raises your public reputation, and pays you{" "}
                   <span className="text-foreground font-semibold">0.5%</span> every
@@ -548,19 +548,19 @@ export default function Login() {
               </div>
 
               {/* Stats row */}
-              <div className="grid grid-cols-3 gap-3 max-w-md">
+              <div className="grid max-w-md grid-cols-3 gap-2 sm:gap-3">
                 {stats.map((stat, i) => (
                   <motion.div
                     key={stat.label}
-                    className="rounded-xl border border-border/50 bg-card/60 p-3.5 backdrop-blur-sm"
+                    className="rounded-xl border border-border/50 bg-card/60 p-3 sm:p-3.5 backdrop-blur-sm"
                     initial={optimizeMotion ? false : { opacity: 0, y: 12 }}
                     animate={loaded ? { opacity: 1, y: 0 } : {}}
                     transition={{ duration: optimizeMotion ? 0 : 0.4, delay: optimizeMotion ? 0 : 0.2 + i * 0.06 }}
                   >
-                    <div className="text-xl sm:text-2xl font-mono font-bold tracking-tight">
+                    <div className="text-lg sm:text-2xl font-mono font-bold tracking-tight">
                       {stat.value}
                     </div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                    <div className="mt-0.5 text-[10px] text-muted-foreground sm:text-[11px]">
                       {stat.label}
                     </div>
                   </motion.div>
@@ -582,7 +582,7 @@ export default function Login() {
                 {features.map((f, i) => (
                   <motion.div
                     key={f.title}
-                    className="flex items-start gap-3 rounded-xl border border-border/50 bg-card/50 p-4 hover:border-primary/30 transition-colors duration-200"
+                    className="flex items-start gap-3 rounded-xl border border-border/50 bg-card/50 p-3.5 sm:p-4 hover:border-primary/30 transition-colors duration-200"
                     initial={optimizeMotion ? false : { opacity: 0, x: -12 }}
                     animate={loaded ? { opacity: 1, x: 0 } : {}}
                     transition={{ duration: optimizeMotion ? 0 : 0.4, delay: optimizeMotion ? 0 : 0.38 + i * 0.07 }}
@@ -602,7 +602,7 @@ export default function Login() {
             </motion.div>
 
             {/* Right — sign-in + fee orbit */}
-            <div className="order-1 xl:order-2 w-full max-w-[420px] mx-auto xl:mx-0 xl:sticky xl:top-[80px]">
+            <div className="order-1 xl:order-2 w-full max-w-[390px] sm:max-w-[420px] mx-auto xl:mx-0 xl:sticky xl:top-[80px]">
               <motion.div
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
                 animate={loaded ? { opacity: 1, y: 0 } : {}}
@@ -614,8 +614,8 @@ export default function Login() {
                 )}>
                   <div className="absolute inset-[12%] rounded-full bg-primary/12 blur-3xl pointer-events-none" />
                   <div className="relative rounded-[29px] overflow-hidden border border-white/8 bg-background/92 backdrop-blur-2xl">
-                    <div className="px-6 pt-6 pb-5 border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)]">
-                      <div className="flex items-start justify-between gap-3">
+                    <div className="border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)] px-4 pb-4 pt-5 sm:px-6 sm:pb-5 sm:pt-6">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex items-start gap-3">
                           <div className="w-11 h-11 rounded-2xl bg-primary/12 border border-primary/25 flex items-center justify-center shrink-0 shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]">
                             <Zap className="w-4.5 h-4.5 text-primary" />
@@ -637,15 +637,18 @@ export default function Login() {
                         </div>
                       </div>
 
-                      <div className="mt-5 grid grid-cols-3 gap-2">
+                      <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:grid-cols-3">
                         {[
                           { label: "Account", value: "Instant" },
                           { label: "Payouts", value: "On-chain" },
                           { label: "Setup", value: "Email first" },
-                        ].map((item) => (
+                        ].map((item, index) => (
                           <div
                             key={item.label}
-                            className="rounded-2xl border border-border/45 bg-background/45 px-3 py-3"
+                            className={cn(
+                              "rounded-2xl border border-border/45 bg-background/45 px-3 py-3",
+                              index === 2 && "col-span-2 sm:col-span-1"
+                            )}
                           >
                             <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                               {item.label}
@@ -658,8 +661,8 @@ export default function Login() {
                       </div>
                     </div>
 
-                    <div className="p-5 space-y-4">
-                      <div className="rounded-[24px] border border-primary/18 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.14),transparent_58%),linear-gradient(180deg,hsl(var(--card)/0.92),hsl(var(--background)/0.82))] p-4 shadow-[0_20px_60px_-34px_hsl(var(--primary)/0.55)]">
+                    <div className="space-y-3.5 p-4 sm:space-y-4 sm:p-5">
+                      <div className="rounded-[24px] border border-primary/18 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.14),transparent_58%),linear-gradient(180deg,hsl(var(--card)/0.92),hsl(var(--background)/0.82))] p-3.5 sm:p-4 shadow-[0_20px_60px_-34px_hsl(var(--primary)/0.55)]">
                         <div className="flex items-center justify-between gap-3 mb-3">
                           <div>
                             <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
@@ -682,8 +685,8 @@ export default function Login() {
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-gain/20 bg-[linear-gradient(180deg,hsl(var(--gain)/0.11),transparent_18%),linear-gradient(180deg,hsl(var(--background)/0.78),hsl(var(--background)/0.96))] p-4">
-                        <div className="flex items-start justify-between gap-4">
+                      <div className="rounded-[24px] border border-gain/20 bg-[linear-gradient(180deg,hsl(var(--gain)/0.11),transparent_18%),linear-gradient(180deg,hsl(var(--background)/0.78),hsl(var(--background)/0.96))] p-3.5 sm:p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                           <div>
                             <div className="text-[10px] uppercase tracking-[0.24em] text-gain/80">
                               Fee Capture Model
@@ -709,7 +712,7 @@ export default function Login() {
                           </div>
                         </div>
 
-                        <div className="mt-4 grid grid-cols-3 gap-2">
+                        <div className="mt-4 grid grid-cols-1 gap-2 min-[400px]:grid-cols-3">
                           {[
                             { volume: "$1K", payout: "$5", accent: "border-border/45" },
                             { volume: "$10K", payout: "$50", accent: "border-gain/30 shadow-[0_16px_40px_-30px_hsl(var(--gain)/0.45)]" },
@@ -736,7 +739,7 @@ export default function Login() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 text-[11px]">
+                      <div className="grid grid-cols-1 gap-2 text-[11px] min-[390px]:grid-cols-3">
                         {[
                           "Secure email",
                           "Auto account creation",
@@ -770,7 +773,7 @@ export default function Login() {
           }
         >
           <section className="border-t border-border/40 bg-card/30 backdrop-blur-sm">
-            <div className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
               <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
                 <motion.div
                   className="order-2 lg:order-1"
@@ -922,7 +925,7 @@ export default function Login() {
             />
           }
         >
-          <section className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+          <section className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
             <div className="grid items-center gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
               <motion.div
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
@@ -1009,7 +1012,7 @@ export default function Login() {
             />
           }
         >
-          <section className="max-w-7xl mx-auto px-5 sm:px-6 py-12 md:py-16">
+          <section className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
             <motion.div
               initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
               whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
@@ -1150,7 +1153,7 @@ export default function Login() {
           }
         >
           <section className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent">
-            <div className="max-w-2xl mx-auto px-5 sm:px-6 py-14 text-center">
+            <div className="max-w-2xl mx-auto px-4 sm:px-6 py-12 sm:py-14 text-center">
               <motion.div
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
                 whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
@@ -1184,8 +1187,8 @@ export default function Login() {
 
       {/* ── Footer ── */}
       <footer className="relative z-10 border-t border-border/40 py-7">
-        <div className="max-w-7xl mx-auto px-5 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <BrandLogo size="sm" showTagline />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <BrandLogo size="sm" showTagline={!isMobile} />
           <div className="flex items-center gap-5 text-xs text-muted-foreground">
             <Link to="/terms" className="hover:text-foreground transition-colors">
               Terms

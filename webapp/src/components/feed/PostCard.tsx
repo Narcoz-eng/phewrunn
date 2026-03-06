@@ -583,7 +583,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   } | null>(null);
   const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
   const walletConnectCooldownUntilRef = useRef(0);
-  const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
+  const exactLogoImageSrc = "/phew-mark.svg";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),

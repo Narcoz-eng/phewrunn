@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 type BrandLogoSize = "sm" | "md" | "lg";
-const EXACT_LOGO_IMAGE_SRC = "https://i.imgur.com/yDZerPC.png";
+const EXACT_LOGO_IMAGE_SRC = "/phew-mark.svg";
 
 interface BrandLogoProps {
   size?: BrandLogoSize;

@@ -20,7 +20,7 @@ export function AccuracyScoreCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border bg-card p-5",
+        "relative overflow-hidden rounded-xl border border-border bg-card p-4 sm:p-5",
         "transition-all duration-300 hover:border-primary/30",
         className
       )}
@@ -35,46 +35,46 @@ export function AccuracyScoreCard({
 
       <div className="relative z-10">
         {/* Label */}
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+        <div className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground sm:mb-3 sm:text-xs">
           Accuracy Score
         </div>
 
         {/* Score and Chart Row */}
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-col gap-3 min-[390px]:flex-row min-[390px]:items-end min-[390px]:justify-between sm:gap-4">
           {/* Score Section */}
           <div className="flex flex-col">
             {/* Large Percentage */}
             <div
-              className="text-4xl md:text-5xl font-bold tracking-tight"
+              className="text-[2rem] font-bold tracking-tight sm:text-4xl md:text-5xl"
               style={{ color: "hsl(var(--gain))" }}
             >
               {score.toFixed(1)}%
             </div>
 
             {/* Trend Indicator */}
-            <div className="flex items-center gap-1.5 mt-2">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 sm:mt-2">
               <TrendingUp
-                className="w-4 h-4"
+                className="h-3.5 w-3.5 sm:h-4 sm:w-4"
                 style={{ color: "hsl(var(--gain))" }}
               />
               <span
-                className="text-sm font-medium"
+                className="text-xs font-medium sm:text-sm"
                 style={{ color: "hsl(var(--gain))" }}
               >
                 +{trend.toFixed(1)}%
               </span>
-              <span className="text-sm text-muted-foreground">
+              <span className="text-xs text-muted-foreground sm:text-sm">
                 {trendLabel}
               </span>
             </div>
           </div>
 
           {/* Mini Bar Chart */}
-          <div className="flex items-end gap-1.5 h-16">
+          <div className="flex h-14 items-end gap-1 sm:self-start min-[390px]:self-auto sm:h-16 sm:gap-1.5">
             {barHeights.map((height, index) => (
               <div
                 key={index}
-                className="w-2.5 rounded-sm transition-all duration-300"
+                className="w-2 rounded-sm transition-all duration-300 sm:w-2.5"
                 style={{
                   height: `${height}%`,
                   backgroundColor: index === barHeights.length - 1
