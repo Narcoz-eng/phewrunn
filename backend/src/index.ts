@@ -4,6 +4,8 @@ import "./env.js";
 import {
   betterAuthMiddleware,
   auth,
+  invalidateResolvedSessionCache,
+  startSessionMaintenance,
   type AuthVariables,
 } from "./auth.js";
 import { prisma } from "./prisma.js";
@@ -43,6 +45,7 @@ logProductionStatus();
 
 // Start rate limit cleanup (cleans expired entries every minute)
 startRateLimitCleanup(60000);
+startSessionMaintenance();
 
 // =====================================================
 // App Configuration
@@ -217,7 +220,50 @@ const PRIVY_CLIENT =
     ? new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET)
     : null;
 const PRIVY_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const PRIVY_IDENTITY_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const privyIdentityCache = new Map<string, { userId: string; email: string | null; cachedAt: number }>();
+
+function readCachedPrivyIdentity(cacheKey: string | null) {
+  if (!cacheKey) return null;
+
+  const cached = privyIdentityCache.get(cacheKey);
+  if (!cached) return null;
+
+  if (Date.now() - cached.cachedAt > PRIVY_IDENTITY_CACHE_TTL_MS) {
+    privyIdentityCache.delete(cacheKey);
+    return null;
+  }
+
+  if (privyIdentityCache.has(cacheKey)) {
+    privyIdentityCache.delete(cacheKey);
+    privyIdentityCache.set(cacheKey, cached);
+  }
+
+  return cached;
+}
+
+function writeCachedPrivyIdentity(
+  cacheKey: string | null,
+  value: { userId: string; email: string | null }
+): void {
+  if (!cacheKey) return;
+
+  if (privyIdentityCache.has(cacheKey)) {
+    privyIdentityCache.delete(cacheKey);
+  }
+
+  if (privyIdentityCache.size >= PRIVY_IDENTITY_CACHE_MAX_ENTRIES) {
+    const oldestKey = privyIdentityCache.keys().next().value;
+    if (typeof oldestKey === "string") {
+      privyIdentityCache.delete(oldestKey);
+    }
+  }
+
+  privyIdentityCache.set(cacheKey, {
+    ...value,
+    cachedAt: Date.now(),
+  });
+}
 
 const AUTH_RESPONSE_USER_SELECT = {
   id: true,
@@ -302,6 +348,7 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
     username: normalizedUsername,
     level: user.level,
     xp: user.xp,
+    bio: user.bio,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
@@ -778,11 +825,11 @@ async function reconcilePrivyLinkedUserProfile(params: {
 async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponseUser | null> {
   try {
     const user = await withAuthDbTimeout(
-      prisma.user.findFirst({
+      prisma.user.findUnique({
         where: { walletAddress },
         select: AUTH_RESPONSE_USER_SELECT,
       }),
-      "user.findFirst(wallet)"
+      "user.findUnique(wallet)"
     );
     return user ? normalizeAuthResponseUser(user) : null;
   } catch (error) {
@@ -791,11 +838,11 @@ async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponse
     }
     try {
       const fallbackUser = await withAuthDbTimeout(
-        prisma.user.findFirst({
+        prisma.user.findUnique({
           where: { walletAddress },
           select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
         }),
-        "user.findFirst(wallet:fallback)"
+        "user.findUnique(wallet:fallback)"
       );
       return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
     } catch (fallbackError) {
@@ -810,11 +857,11 @@ async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponse
 async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | null> {
   try {
     const user = await withAuthDbTimeout(
-      prisma.user.findFirst({
+      prisma.user.findUnique({
         where: { email },
         select: AUTH_RESPONSE_USER_SELECT,
       }),
-      "user.findFirst(email)"
+      "user.findUnique(email)"
     );
     return user ? normalizeAuthResponseUser(user) : null;
   } catch (error) {
@@ -823,11 +870,11 @@ async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | nu
     }
     try {
       const fallbackUser = await withAuthDbTimeout(
-        prisma.user.findFirst({
+        prisma.user.findUnique({
           where: { email },
           select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
         }),
-        "user.findFirst(email:fallback)"
+        "user.findUnique(email:fallback)"
       );
       return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
     } catch (fallbackError) {
@@ -836,11 +883,11 @@ async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | nu
       }
       try {
         const minimalUser = await withAuthDbTimeout(
-          prisma.user.findFirst({
+          prisma.user.findUnique({
             where: { email },
             select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
           }),
-          "user.findFirst(email:minimal)"
+          "user.findUnique(email:minimal)"
         );
         return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
       } catch (minimalError) {
@@ -1189,6 +1236,7 @@ async function createSessionRecordBestEffort(params: {
 const LEGACY_SESSION_COOKIE_NAMES = [
   "better-auth.session_token",
   "auth.session_token",
+  "session_token",
 ] as const;
 
 function buildSessionCookie(params: {
@@ -1690,13 +1738,10 @@ app.post("/api/auth/privy-sync", async (c) => {
             }
 
             // Update cache for future requests
-            if (privyCacheKey) {
-              privyIdentityCache.set(privyCacheKey, {
-                userId: privyUserId,
-                email: reconciledFastPathUser.email,
-                cachedAt: Date.now(),
-              });
-            }
+            writeCachedPrivyIdentity(privyCacheKey, {
+              userId: privyUserId,
+              email: reconciledFastPathUser.email,
+            });
 
             // Issue signed session token directly
             const issuedAt = new Date();
@@ -1755,19 +1800,16 @@ app.post("/api/auth/privy-sync", async (c) => {
     let verifiedPrivyUserId: string | null = null;
     let verifiedEmail: string | null = null;
 
-    if (privyCacheKey) {
-      const cachedIdentity = privyIdentityCache.get(privyCacheKey);
-      if (cachedIdentity && Date.now() - cachedIdentity.cachedAt <= PRIVY_IDENTITY_CACHE_TTL_MS) {
-        if (
-          typeof privyUserId !== "string" ||
+    {
+      const cachedIdentity = readCachedPrivyIdentity(privyCacheKey);
+      if (
+        cachedIdentity &&
+        (typeof privyUserId !== "string" ||
           privyUserId.length === 0 ||
-          cachedIdentity.userId === privyUserId
-        ) {
-          verifiedPrivyUserId = cachedIdentity.userId;
-          verifiedEmail = cachedIdentity.email;
-        }
-      } else if (cachedIdentity) {
-        privyIdentityCache.delete(privyCacheKey);
+          cachedIdentity.userId === privyUserId)
+      ) {
+        verifiedPrivyUserId = cachedIdentity.userId;
+        verifiedEmail = cachedIdentity.email;
       }
     }
 
@@ -1850,13 +1892,10 @@ app.post("/api/auth/privy-sync", async (c) => {
       verifiedEmail = `${verifiedPrivyUserId.slice(0, 24).toLowerCase()}@privy.local`;
     }
 
-    if (privyCacheKey) {
-      privyIdentityCache.set(privyCacheKey, {
-        userId: verifiedPrivyUserId,
-        email: verifiedEmail,
-        cachedAt: Date.now(),
-      });
-    }
+    writeCachedPrivyIdentity(privyCacheKey, {
+      userId: verifiedPrivyUserId,
+      email: verifiedEmail,
+    });
 
     const now = new Date();
 
@@ -2122,6 +2161,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 app.post("/api/auth/logout", async (c) => {
   try {
     const result = await auth.api.signOut({ headers: c.req.raw.headers });
+    invalidateResolvedSessionCache(result.tokens);
 
     const clearedCookies = [
       ...result.clearedCookies,

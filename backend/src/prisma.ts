@@ -201,6 +201,8 @@ const shouldRunCompatGuardrails = isPostgres && compatGuardrailsSetting !== "fal
 let prismaReadyPromise: Promise<void> | null = null;
 
 async function initializePrismaRuntime(): Promise<void> {
+  await prisma.$connect();
+
   if (isSqlite) {
     await initSqlitePragmas(prisma);
     return;

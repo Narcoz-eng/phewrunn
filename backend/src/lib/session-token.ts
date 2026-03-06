@@ -65,6 +65,14 @@ type SessionTokenPayload = {
   usr?: SessionTokenUserClaims;
 };
 
+export type VerifiedSignedSessionToken = {
+  userId: string;
+  issuedAt: Date;
+  expiresAt: Date;
+  jti: string;
+  userClaims: SessionTokenUserClaims | null;
+};
+
 function toOptionalString(value: unknown): string | null | undefined {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -196,7 +204,7 @@ export function createSignedSessionToken(params: {
 
 export function verifySignedSessionToken(
   token: string
-): { userId: string; expiresAt: Date; userClaims: SessionTokenUserClaims | null } | null {
+): VerifiedSignedSessionToken | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
 
@@ -241,7 +249,9 @@ export function verifySignedSessionToken(
     typeof payload.uid !== "string" ||
     payload.uid.length === 0 ||
     typeof payload.iat !== "number" ||
-    typeof payload.exp !== "number"
+    typeof payload.exp !== "number" ||
+    typeof payload.jti !== "string" ||
+    payload.jti.length === 0
   ) {
     return null;
   }
@@ -252,7 +262,9 @@ export function verifySignedSessionToken(
 
   return {
     userId: payload.uid,
+    issuedAt: new Date(payload.iat),
     expiresAt: new Date(payload.exp),
+    jti: payload.jti,
     userClaims: parseUserClaims(payload.usr),
   };
 }

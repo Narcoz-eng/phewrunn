@@ -55,6 +55,7 @@ const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
   "auth.session_token",
+  "session_token",
 ] as const;
 const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";

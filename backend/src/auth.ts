@@ -7,9 +7,11 @@
 
 export {
   betterAuthMiddleware,
+  invalidateResolvedSessionCache,
   requireAuth,
-  auth,
   type AuthUser,
   type SimpleUser,
   type AuthVariables,
 } from "./middleware/auth.js";
+
+export { auth, startSessionMaintenance } from "./lib/auth.js";

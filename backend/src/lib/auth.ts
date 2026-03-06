@@ -1,5 +1,10 @@
 import { prisma } from "../prisma.js";
 import { verifySignedSessionToken, type SessionTokenUserClaims } from "./session-token.js";
+import {
+  isSignedSessionTokenRevoked,
+  pruneExpiredSessionRevocations,
+  revokeSignedSessionTokens,
+} from "./session-revocation.js";
 
 const SESSION_USER_SELECT = {
   id: true,
@@ -310,6 +315,7 @@ function getSessionTokensFromHeaders(headers: Headers): string[] {
     ...getCookieValues(cookieHeader, "phew.session_token"),
     ...getCookieValues(cookieHeader, "better-auth.session_token"),
     ...getCookieValues(cookieHeader, "auth.session_token"),
+    ...getCookieValues(cookieHeader, "session_token"),
   ].filter((token) => token.length > 0);
   return [...new Set(tokens)];
 }
@@ -431,6 +437,7 @@ function buildSessionUserFromTokenClaims(
 async function getSessionFromSignedToken(token: string): Promise<SessionRecord | null> {
   const verified = verifySignedSessionToken(token);
   if (!verified) return null;
+  if (await isSignedSessionTokenRevoked(verified)) return null;
 
   const userLookup = await findSessionUserByIdWithFallback(verified.userId);
   let resolvedUser: SessionRecord["user"] | null = null;
@@ -454,25 +461,6 @@ async function getSessionFromSignedToken(token: string): Promise<SessionRecord |
       updatedAt: syntheticNow,
     },
     user: resolvedUser,
-  };
-}
-
-function buildSessionFromVerifiedClaims(
-  verified: { userId: string; expiresAt: Date; userClaims: SessionTokenUserClaims | null },
-  token: string
-): SessionRecord | null {
-  if (!verified.userClaims) return null;
-  const syntheticNow = new Date();
-  return {
-    session: {
-      id: `stateless:${verified.userId}`,
-      userId: verified.userId,
-      token,
-      expiresAt: verified.expiresAt,
-      createdAt: syntheticNow,
-      updatedAt: syntheticNow,
-    },
-    user: buildSessionUserFromTokenClaims(verified.userId, verified.userClaims),
   };
 }
 
@@ -513,10 +501,8 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
     };
 
     const resolveSignedFallback = async (): Promise<SessionRecord | null> => {
-      const claimOnly =
-        verifiedSignedToken ? buildSessionFromVerifiedClaims(verifiedSignedToken, token) : null;
-      if (claimOnly) {
-        return claimOnly;
+      if (await isSignedSessionTokenRevoked(verifiedSignedToken)) {
+        return null;
       }
       return await getSessionFromSignedToken(token);
     };
@@ -750,10 +736,14 @@ export const auth = {
           });
         } catch (error) {
           if (!isSessionLookupUnavailableError(error)) {
-            throw error;
+            console.warn("[auth/signOut] Session table delete failed; falling back to signed-token revocation", {
+              message: getErrorMessage(error),
+            });
+          } else {
+            console.warn("[auth/signOut] Session table delete skipped due unavailable session store");
           }
-          console.warn("[auth/signOut] Session table delete skipped due unavailable session store");
         }
+        await revokeSignedSessionTokens(tokens);
         clearSessionCache(tokens);
       }
 
@@ -762,6 +752,7 @@ export const auth = {
         "phew.session_token",
         "better-auth.session_token",
         "auth.session_token",
+        "session_token",
       ] as const;
 
       const clearedCookies = cookieNames.map((cookieName) => buildExpiredCookie(cookieName));
@@ -772,6 +763,7 @@ export const auth = {
       }
 
       return {
+        tokens,
         clearedCookies,
       };
     },
@@ -792,4 +784,94 @@ export const auth = {
 
 export type Session = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["session"];
 export type User = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["user"];
+
+const SESSION_MAINTENANCE_INTERVAL_MS = (() => {
+  const raw = process.env.AUTH_SESSION_MAINTENANCE_INTERVAL_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 15 * 60 * 1000 : 5 * 60 * 1000;
+})();
+
+const SESSION_MAINTENANCE_BATCH_SIZE = (() => {
+  const raw = process.env.AUTH_SESSION_MAINTENANCE_BATCH_SIZE;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return process.env.NODE_ENV === "production" ? 500 : 100;
+})();
+
+const SESSION_MAINTENANCE_MAX_BATCHES_PER_RUN = 5;
+let sessionMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+let sessionMaintenanceInFlight = false;
+
+async function pruneExpiredSessionsOnce(): Promise<number> {
+  let totalDeleted = 0;
+
+  for (let batch = 0; batch < SESSION_MAINTENANCE_MAX_BATCHES_PER_RUN; batch += 1) {
+    const expiredSessions = await prisma.session.findMany({
+      where: {
+        expiresAt: { lt: new Date() },
+      },
+      orderBy: { expiresAt: "asc" },
+      select: { id: true },
+      take: SESSION_MAINTENANCE_BATCH_SIZE,
+    });
+
+    if (expiredSessions.length === 0) {
+      break;
+    }
+
+    const ids = expiredSessions.map((session) => session.id);
+    const deleted = await prisma.session.deleteMany({
+      where: {
+        id: { in: ids },
+      },
+    });
+    totalDeleted += deleted.count;
+
+    if (expiredSessions.length < SESSION_MAINTENANCE_BATCH_SIZE) {
+      break;
+    }
+  }
+
+  for (let batch = 0; batch < SESSION_MAINTENANCE_MAX_BATCHES_PER_RUN; batch += 1) {
+    const deletedCount = await pruneExpiredSessionRevocations(SESSION_MAINTENANCE_BATCH_SIZE);
+    totalDeleted += deletedCount;
+    if (deletedCount < SESSION_MAINTENANCE_BATCH_SIZE) {
+      break;
+    }
+  }
+
+  return totalDeleted;
+}
+
+export function startSessionMaintenance(): void {
+  if (sessionMaintenanceTimer || process.env.AUTH_DISABLE_SESSION_MAINTENANCE === "true") {
+    return;
+  }
+
+  const runMaintenance = async () => {
+    if (sessionMaintenanceInFlight) {
+      return;
+    }
+
+    sessionMaintenanceInFlight = true;
+    try {
+      const deletedCount = await pruneExpiredSessionsOnce();
+      if (deletedCount > 0) {
+        console.log(`[auth/session] Pruned ${deletedCount} expired sessions`);
+      }
+    } catch (error) {
+      console.warn("[auth/session] Expired session maintenance failed", error);
+    } finally {
+      sessionMaintenanceInFlight = false;
+    }
+  };
+
+  sessionMaintenanceTimer = setInterval(() => {
+    void runMaintenance();
+  }, SESSION_MAINTENANCE_INTERVAL_MS);
+  sessionMaintenanceTimer.unref?.();
+
+  void runMaintenance();
+}
 

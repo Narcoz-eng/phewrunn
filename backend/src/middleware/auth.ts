@@ -62,6 +62,10 @@ function hasSessionCookieHeader(cookieHeader: string | undefined): boolean {
 }
 
 function shouldSkipAuthResolution(path: string): boolean {
+  if (path === "/api/auth/privy-sync" || path === "/api/auth/logout") {
+    return false;
+  }
+
   return (
     path === "/health" ||
     path.startsWith("/api/auth/") ||
@@ -120,6 +124,13 @@ function writeCachedSession(cacheKey: string, session: AuthSession | null, ttlMs
     session,
     expiresAt: Date.now() + ttlMs,
   });
+}
+
+export function invalidateResolvedSessionCache(tokens: string[]): void {
+  for (const token of tokens) {
+    sessionLookupCache.delete(`bearer:${token}`);
+    sessionLookupCache.delete(`cookie:${token}`);
+  }
 }
 
 /**
