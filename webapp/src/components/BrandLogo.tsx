@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 
 type BrandLogoSize = "sm" | "md" | "lg";
-const EXACT_LOGO_IMAGE_SRC = "/phew-mark.svg";
+const WORDMARK_LOGO_IMAGE_SRC = "/phew-logo.svg";
+const MARK_LOGO_IMAGE_SRC = "/phew-mark.svg";
 
 interface BrandLogoProps {
   size?: BrandLogoSize;
@@ -36,6 +37,25 @@ export function BrandLogo({
 }: BrandLogoProps) {
   const styles = sizeMap[size];
 
+  if (showTagline) {
+    return (
+      <div className={cn("flex items-center", className)}>
+        <img
+          src={WORDMARK_LOGO_IMAGE_SRC}
+          alt="Phew.run"
+          className={cn(
+            "w-auto object-contain drop-shadow-[0_8px_24px_rgba(0,0,0,0.42)]",
+            size === "sm" && "h-10 sm:h-11",
+            size === "md" && "h-12",
+            size === "lg" && "h-14"
+          )}
+          loading="eager"
+          decoding="async"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <div
@@ -47,7 +67,7 @@ export function BrandLogo({
         )}
       >
         <img
-          src={EXACT_LOGO_IMAGE_SRC}
+          src={MARK_LOGO_IMAGE_SRC}
           alt=""
           aria-hidden="true"
           className="h-full w-full object-cover"
