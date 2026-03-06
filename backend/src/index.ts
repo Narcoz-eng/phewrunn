@@ -500,7 +500,7 @@ const AUTH_DB_LOOKUP_TIMEOUT_MS = (() => {
   const raw = process.env.AUTH_DB_LOOKUP_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 1800 : 3000;
+  return process.env.NODE_ENV === "production" ? 3500 : 5000;
 })();
 
 class AuthDbTimeoutError extends Error {
@@ -530,6 +530,10 @@ class PrivyApiTimeoutError extends Error {
 
 function isPrivyApiTimeoutError(error: unknown): error is PrivyApiTimeoutError {
   return error instanceof PrivyApiTimeoutError;
+}
+
+function isTransientAuthAvailabilityError(error: unknown): boolean {
+  return isPrismaConnectivityError(error) || isAuthDbTimeoutError(error);
 }
 
 async function withPrivyApiTimeout<T>(
@@ -1526,6 +1530,8 @@ app.post("/api/auth/wallet", async (c) => {
 // a local user and issues a Better Auth session token.
 app.post("/api/auth/privy-sync", async (c) => {
   const existingSession = c.get("session");
+  let hasPrivyIdentityInput = false;
+  let resolvedAuthUser: AuthResponseUser | null = null;
   try {
     const body = (await c.req
       .json()
@@ -1536,7 +1542,7 @@ app.post("/api/auth/privy-sync", async (c) => {
       name?: unknown;
     };
     const { privyUserId, privyIdToken, email, name } = body;
-    const hasPrivyIdentityInput =
+    hasPrivyIdentityInput =
       (typeof privyUserId === "string" && privyUserId.length > 0) ||
       (typeof privyIdToken === "string" && privyIdToken.length > 0);
 
@@ -1636,12 +1642,21 @@ app.post("/api/auth/privy-sync", async (c) => {
           "account.findUnique(privyFastPath)"
         );
       } catch (error) {
-        if (!isPrismaSchemaDriftError(error)) throw error;
+        if (isPrismaSchemaDriftError(error)) {
+          // Continue without the fast-path link table.
+        } else if (isTransientAuthAvailabilityError(error)) {
+          console.warn("[privy-sync] Fast path account lookup unavailable; continuing with verified sync", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          throw error;
+        }
       }
 
       if (fastPathAccount?.userId) {
         const fastPathUser = await findAuthUserById(fastPathAccount.userId);
         if (fastPathUser) {
+          resolvedAuthUser = fastPathUser;
           const fastPathEmail = fastPathUser.email.trim().toLowerCase();
           const shouldBypassFastPath = !!(
             providedEmail &&
@@ -1655,12 +1670,24 @@ app.post("/api/auth/privy-sync", async (c) => {
               linkedEmail: fastPathEmail,
             });
           } else {
-            const reconciledFastPathUser = await reconcilePrivyLinkedUserProfile({
-              user: fastPathUser,
-              verifiedEmail: providedEmail ?? fastPathUser.email,
-              preferredName: normalizeOptionalDisplayName(name),
-              privyUserId,
-            });
+            let reconciledFastPathUser = fastPathUser;
+            try {
+              reconciledFastPathUser = await reconcilePrivyLinkedUserProfile({
+                user: fastPathUser,
+                verifiedEmail: providedEmail ?? fastPathUser.email,
+                preferredName: normalizeOptionalDisplayName(name),
+                privyUserId,
+              });
+              resolvedAuthUser = reconciledFastPathUser;
+            } catch (error) {
+              if (!isTransientAuthAvailabilityError(error)) {
+                throw error;
+              }
+              console.warn("[privy-sync] Fast path profile reconciliation unavailable; continuing with existing user", {
+                message: error instanceof Error ? error.message : String(error),
+                userId: fastPathUser.id,
+              });
+            }
 
             // Update cache for future requests
             if (privyCacheKey) {
@@ -1850,7 +1877,13 @@ app.post("/api/auth/privy-sync", async (c) => {
         "account.findUnique(privyExisting)"
       );
     } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
+      if (isPrismaSchemaDriftError(error)) {
+        // Continue without the account link lookup.
+      } else if (isTransientAuthAvailabilityError(error)) {
+        console.warn("[privy-sync] Existing Privy account lookup unavailable; continuing with email mapping", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } else {
         throw error;
       }
     }
@@ -1858,6 +1891,9 @@ app.post("/api/auth/privy-sync", async (c) => {
     let user = existingPrivyAccount?.userId
       ? await findAuthUserById(existingPrivyAccount.userId)
       : null;
+    if (user) {
+      resolvedAuthUser = user;
+    }
 
     if (existingPrivyAccount && !user) {
       console.warn("[privy-sync] Found orphaned Privy account link; removing stale link", {
@@ -1870,11 +1906,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     }
     const hasValidPrivyAccountLink = !!(existingPrivyAccount && user);
 
-    // If no linked Privy account exists yet, find/create the local user by verified email.
-    if (!user) {
-      user = await findAuthUserByEmail(verifiedEmail);
-    }
-
+    // If no linked Privy account exists yet, resolve/create the local user by verified email.
     if (!user) {
       const displayName = typeof name === "string" && name.trim() ? name.trim() : verifiedEmail.split("@")[0] ?? "User";
       user = await upsertAuthUserByEmail({
@@ -1882,6 +1914,7 @@ app.post("/api/auth/privy-sync", async (c) => {
         displayName,
         now,
       });
+      resolvedAuthUser = user;
     }
 
     if (!hasValidPrivyAccountLink) {
@@ -1910,11 +1943,17 @@ app.post("/api/auth/privy-sync", async (c) => {
         const linkedUser = await findAuthUserById(linkedAccount.userId);
         if (linkedUser) {
           user = linkedUser;
+          resolvedAuthUser = linkedUser;
         }
       } catch (error) {
         if (isPrismaSchemaDriftError(error)) {
           console.warn("[privy-sync] Privy account link sync skipped (schema not ready)");
           // If account table isn't ready yet, keep auth functional via email mapping.
+        } else if (isTransientAuthAvailabilityError(error)) {
+          console.warn("[privy-sync] Privy account link sync unavailable; continuing with resolved user", {
+            message: error instanceof Error ? error.message : String(error),
+            userId: user.id,
+          });
         } else if (!isUniqueConstraintError(error)) {
           throw error;
         }
@@ -1936,35 +1975,57 @@ app.post("/api/auth/privy-sync", async (c) => {
               "account.findUnique(privyConcurrentLink)"
             );
           } catch (lookupError) {
-            if (!isPrismaSchemaDriftError(lookupError)) {
+            if (isPrismaSchemaDriftError(lookupError)) {
+              // Keep the resolved email-mapped user and retry linking later.
+            } else if (isTransientAuthAvailabilityError(lookupError)) {
+              console.warn("[privy-sync] Concurrent Privy link lookup unavailable; continuing with resolved user", {
+                message: lookupError instanceof Error ? lookupError.message : String(lookupError),
+                userId: user.id,
+              });
+            } else {
               throw lookupError;
             }
           }
           if (!linkedAccount?.userId) {
-            throw error;
-          }
-          const linkedUser = await findAuthUserById(linkedAccount.userId);
-          if (!linkedUser) {
-            console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
-              accountId: linkedAccount.id,
-              userId: linkedAccount.userId,
+            console.warn("[privy-sync] Concurrent Privy link could not be confirmed; continuing with resolved user", {
+              userId: user.id,
             });
-            await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
-              console.warn("[privy-sync] Failed to delete stale concurrent Privy link:", deleteError);
-            });
-            throw error;
+          } else {
+            const linkedUser = await findAuthUserById(linkedAccount.userId);
+            if (!linkedUser) {
+              console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
+                accountId: linkedAccount.id,
+                userId: linkedAccount.userId,
+              });
+              await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
+                console.warn("[privy-sync] Failed to delete stale concurrent Privy link:", deleteError);
+              });
+            } else {
+              user = linkedUser;
+              resolvedAuthUser = linkedUser;
+            }
           }
-          user = linkedUser;
         }
       }
     }
 
-    user = await reconcilePrivyLinkedUserProfile({
-      user,
-      verifiedEmail,
-      preferredName: normalizeOptionalDisplayName(name),
-      privyUserId: verifiedPrivyUserId,
-    });
+    try {
+      user = await reconcilePrivyLinkedUserProfile({
+        user,
+        verifiedEmail,
+        preferredName: normalizeOptionalDisplayName(name),
+        privyUserId: verifiedPrivyUserId,
+      });
+      resolvedAuthUser = user;
+    } catch (error) {
+      if (!isTransientAuthAvailabilityError(error)) {
+        throw error;
+      }
+      console.warn("[privy-sync] Profile reconciliation unavailable; continuing with resolved user", {
+        message: error instanceof Error ? error.message : String(error),
+        userId: user.id,
+      });
+    }
 
     // Issue signed session token (stateless fallback works even if session table drifts).
     const sessionToken = createSignedSessionToken({
@@ -1995,7 +2056,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     });
   } catch (error) {
     if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
-      const fallbackUser = toAuthResponseUserFromSessionUser(existingSession?.user);
+      const fallbackUser = resolvedAuthUser ?? (!hasPrivyIdentityInput ? toAuthResponseUserFromSessionUser(existingSession?.user) : null);
       if (fallbackUser) {
         console.warn("[privy-sync] Database unavailable; reissuing signed session from existing auth state");
         const issuedAt = new Date();

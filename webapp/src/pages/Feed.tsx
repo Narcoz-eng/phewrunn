@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
@@ -159,6 +159,7 @@ export default function Feed() {
   const { signOut } = useAuth();
   const { logout: privyLogout } = usePrivy();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<FeedTab>("latest");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
@@ -929,6 +930,8 @@ export default function Feed() {
       await privyLogout();
     } catch (error) {
       console.error("[Feed] Privy logout failed:", error);
+    } finally {
+      navigate("/login", { replace: true });
     }
   };
 
