@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
@@ -2197,27 +2198,27 @@ usersRouter.post("/:id/follow", requireAuth, async (c) => {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  // Check if already following
-  const existingFollow = await prisma.follow.findUnique({
-    where: {
-      followerId_followingId: {
+  // Create follow idempotently so stale UI or repeated taps do not surface raw Prisma errors.
+  try {
+    await prisma.follow.create({
+      data: {
         followerId: currentUser.id,
         followingId: targetUserId,
       },
-    },
-  });
-
-  if (existingFollow) {
-    return c.json({ error: { message: "Already following", code: "ALREADY_FOLLOWING" } }, 400);
+    });
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+      console.error("[users] Failed to follow user", {
+        followerId: currentUser.id,
+        followingId: targetUserId,
+        error,
+      });
+      return c.json(
+        { error: { message: "Failed to follow user", code: "INTERNAL_ERROR" } },
+        500
+      );
+    }
   }
-
-  // Create follow
-  await prisma.follow.create({
-    data: {
-      followerId: currentUser.id,
-      followingId: targetUserId,
-    },
-  });
 
   // Get updated counts
   const followerCount = await prisma.follow.count({ where: { followingId: targetUserId } });
@@ -2239,7 +2240,7 @@ usersRouter.delete("/:id/follow", requireAuth, async (c) => {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  // Delete follow
+  // Delete follow idempotently so stale UI can safely reconcile to the final state.
   try {
     await prisma.follow.delete({
       where: {
@@ -2249,8 +2250,18 @@ usersRouter.delete("/:id/follow", requireAuth, async (c) => {
         },
       },
     });
-  } catch {
-    return c.json({ error: { message: "Not following", code: "NOT_FOLLOWING" } }, 404);
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2025") {
+      console.error("[users] Failed to unfollow user", {
+        followerId: currentUser.id,
+        followingId: targetUserId,
+        error,
+      });
+      return c.json(
+        { error: { message: "Failed to unfollow user", code: "INTERNAL_ERROR" } },
+        500
+      );
+    }
   }
 
   // Get updated counts
