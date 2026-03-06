@@ -287,6 +287,15 @@ function clearCachedAuthUser(): void {
   writeCachedAuthUser(null);
 }
 
+export function readCachedAuthUserSnapshot(): AuthUser | null {
+  const logoutAt = getExplicitLogoutAt();
+  if (logoutAt > 0 && Date.now() - logoutAt < 10_000) {
+    return null;
+  }
+
+  return readCachedAuthUser();
+}
+
 export function updateCachedAuthUser(
   updates:
     | Partial<AuthUser>

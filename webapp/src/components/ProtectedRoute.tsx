@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
-import { getExplicitLogoutAt, useSession } from "@/lib/auth-client";
+import { getExplicitLogoutAt, readCachedAuthUserSnapshot, useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 
 function RouteLoading({ label }: { label: string }) {
@@ -48,14 +48,16 @@ function ProtectedRouteFallback({
   const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
+  const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
+  const effectiveUser = session?.user ?? cachedUser;
 
   useEffect(() => {
-    if (session?.user || isPending || !hadTokenHint.current) return;
+    if (effectiveUser || isPending || !hadTokenHint.current) return;
     const timer = window.setTimeout(() => setGraceExpired(true), 4_000);
     return () => window.clearTimeout(timer);
-  }, [isPending, session?.user]);
+  }, [effectiveUser, isPending]);
 
-  if (session?.user) {
+  if (effectiveUser) {
     hadTokenHint.current = false;
   }
 
@@ -63,14 +65,14 @@ function ProtectedRouteFallback({
     return <RouteLoading label="Loading..." />;
   }
 
-  if (!session?.user) {
+  if (!effectiveUser) {
     if (hadTokenHint.current && !graceExpired) {
       return <RouteLoading label="Signing in..." />;
     }
     return <Navigate to="/login" replace />;
   }
 
-  if (!allowMissingUsername && !hasCompletedHandle(session.user.username)) {
+  if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {
     return (
       <Navigate
         to="/welcome"
@@ -78,6 +80,10 @@ function ProtectedRouteFallback({
         state={{ from: `${location.pathname}${location.search}${location.hash}` }}
       />
     );
+  }
+
+  if (!session?.user) {
+    return <RouteLoading label="Preparing your account..." />;
   }
 
   return <>{children}</>;
@@ -95,15 +101,17 @@ function ProtectedRouteWithPrivy({
   const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
-  const hasPrivySyncHint = ready && authenticated && !session?.user;
+  const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
+  const effectiveUser = session?.user ?? cachedUser;
+  const hasPrivySyncHint = ready && authenticated && !effectiveUser;
 
   useEffect(() => {
-    if (session?.user || isPending || (!hadTokenHint.current && !hasPrivySyncHint)) return;
+    if (effectiveUser || isPending || (!hadTokenHint.current && !hasPrivySyncHint)) return;
     const timer = window.setTimeout(() => setGraceExpired(true), hasPrivySyncHint ? 12_000 : 4_000);
     return () => window.clearTimeout(timer);
-  }, [hasPrivySyncHint, isPending, session?.user]);
+  }, [effectiveUser, hasPrivySyncHint, isPending]);
 
-  if (session?.user) {
+  if (effectiveUser) {
     hadTokenHint.current = false;
   }
 
@@ -111,7 +119,7 @@ function ProtectedRouteWithPrivy({
     return <RouteLoading label="Loading..." />;
   }
 
-  if (!session?.user) {
+  if (!effectiveUser) {
     if (hasPrivySyncHint) {
       return <RouteLoading label={graceExpired ? "Still finalizing sign-in..." : "Completing sign-in..."} />;
     }
@@ -121,7 +129,7 @@ function ProtectedRouteWithPrivy({
     return <Navigate to="/login" replace />;
   }
 
-  if (!allowMissingUsername && !hasCompletedHandle(session.user.username)) {
+  if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {
     return (
       <Navigate
         to="/welcome"
@@ -129,6 +137,10 @@ function ProtectedRouteWithPrivy({
         state={{ from: `${location.pathname}${location.search}${location.hash}` }}
       />
     );
+  }
+
+  if (!session?.user) {
+    return <RouteLoading label="Preparing your account..." />;
   }
 
   return <>{children}</>;

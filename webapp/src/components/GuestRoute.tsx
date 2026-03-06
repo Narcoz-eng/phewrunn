@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
-import { useSession } from "@/lib/auth-client";
+import { readCachedAuthUserSnapshot, useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 
 function RouteLoading({ label }: { label: string }) {
@@ -21,13 +21,15 @@ function getSignedInDestination(username: string | null | undefined): string {
 
 function GuestRouteFallback({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
+  const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
+  const effectiveUser = session?.user ?? cachedUser;
 
   if (isPending) {
     return <RouteLoading label="Loading..." />;
   }
 
-  if (session?.user) {
-    return <Navigate to={getSignedInDestination(session.user.username)} replace />;
+  if (effectiveUser) {
+    return <Navigate to={getSignedInDestination(effectiveUser.username)} replace />;
   }
 
   return <>{children}</>;
@@ -37,7 +39,9 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
   const { ready, authenticated } = usePrivy();
   const [graceExpired, setGraceExpired] = useState(false);
-  const hasPrivySyncHint = ready && authenticated && !session?.user;
+  const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
+  const effectiveUser = session?.user ?? cachedUser;
+  const hasPrivySyncHint = ready && authenticated && !effectiveUser;
 
   useEffect(() => {
     if (!hasPrivySyncHint) {
@@ -53,8 +57,8 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
     return <RouteLoading label="Loading..." />;
   }
 
-  if (session?.user) {
-    return <Navigate to={getSignedInDestination(session.user.username)} replace />;
+  if (effectiveUser) {
+    return <Navigate to={getSignedInDestination(effectiveUser.username)} replace />;
   }
 
   if (hasPrivySyncHint && !graceExpired) {
