@@ -317,6 +317,10 @@ function clearPrivySyncFailureSnapshot(): void {
   window.dispatchEvent(new CustomEvent(AUTH_PRIVY_SYNC_FAILURE_EVENT));
 }
 
+export function clearPrivySyncFailureState(): void {
+  clearPrivySyncFailureSnapshot();
+}
+
 function writePrivySyncFailureSnapshot(message: string): void {
   const normalizedMessage = message.trim();
   if (!normalizedMessage) {
@@ -415,6 +419,10 @@ export function usePrivySyncFailureSnapshot(): PrivySyncFailureSnapshot | null {
   }, []);
 
   return snapshot;
+}
+
+function getResolvedAuthUser(contextUser: AuthUser | null): AuthUser | null {
+  return contextUser ?? readCachedAuthUserSnapshot();
 }
 
 export function updateCachedAuthUser(
@@ -708,17 +716,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refetch = useCallback(async () => {
     try {
-      const user = await resolveSessionWithRetry();
+      const user = (await resolveSessionWithRetry()) ?? readCachedAuthUserSnapshot();
       setState({
         user,
         isLoading: false,
         isAuthenticated: !!user,
       });
     } catch {
+      const fallbackUser = readCachedAuthUserSnapshot();
       setState({
-        user: null,
+        user: fallbackUser,
         isLoading: false,
-        isAuthenticated: false,
+        isAuthenticated: !!fallbackUser,
       });
     }
   }, [resolveSessionWithRetry]);
@@ -763,7 +772,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     const checkSession = async () => {
-      const user = await resolveSessionWithRetry();
+      const user = (await resolveSessionWithRetry()) ?? readCachedAuthUserSnapshot();
       if (mounted) {
         setState({
           user,
@@ -813,9 +822,12 @@ export function useAuth() {
     throw new Error("useAuth must be used within AuthProvider");
   }
 
+  const resolvedUser = getResolvedAuthUser(context.user);
+  const isAuthenticated = Boolean(resolvedUser);
+
   return {
-    user: context.user,
-    isAuthenticated: context.isAuthenticated,
+    user: resolvedUser,
+    isAuthenticated,
     isReady: !context.isLoading,
     isPending: context.isLoading,
     signOut: context.logout,
@@ -830,8 +842,10 @@ export function useSession() {
     throw new Error("useSession must be used within AuthProvider");
   }
 
+  const resolvedUser = getResolvedAuthUser(context.user);
+
   return {
-    data: context.user ? { user: context.user } : null,
+    data: resolvedUser ? { user: resolvedUser } : null,
     isPending: context.isLoading,
   };
 }
@@ -1083,6 +1097,7 @@ export async function syncPrivySession(
         }
 
         // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
+        explicitLogoutAt = 0;
         lastPrivySyncAt = Date.now();
         lastSuccessfulSessionAt = Date.now();
         sessionRateLimitedUntil = 0;

@@ -138,8 +138,16 @@ function ProtectedRouteWithPrivy({
     if (hasOAuthReturnHint && !ready && !privySyncFailure) {
       return <RouteLoading label={graceExpired ? "Still returning from X..." : "Returning from X..."} />;
     }
-    if (hasPrivySyncHint && !privySyncFailure) {
-      return <RouteLoading label={graceExpired ? "Still finalizing sign-in..." : "Completing sign-in..."} />;
+    if (hasPrivySyncHint) {
+      return (
+        <RouteLoading
+          label={
+            privySyncFailure
+              ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
+              : (graceExpired ? "Still finalizing sign-in..." : "Completing sign-in...")
+          }
+        />
+      );
     }
     if (privySyncFailure) {
       return (
@@ -167,10 +175,6 @@ function ProtectedRouteWithPrivy({
         state={{ from: `${location.pathname}${location.search}${location.hash}` }}
       />
     );
-  }
-
-  if (!session?.user) {
-    return <RouteLoading label="Preparing your account..." />;
   }
 
   return <>{children}</>;

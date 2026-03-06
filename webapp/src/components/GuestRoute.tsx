@@ -71,8 +71,16 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
     return <RouteLoading label="Returning from X..." />;
   }
 
-  if (hasPrivySyncHint && !graceExpired && !privySyncFailure) {
-    return <RouteLoading label="Completing sign-in..." />;
+  if (hasPrivySyncHint) {
+    return (
+      <RouteLoading
+        label={
+          privySyncFailure
+            ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
+            : "Completing sign-in..."
+        }
+      />
+    );
   }
 
   return <>{children}</>;

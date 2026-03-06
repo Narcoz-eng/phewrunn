@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
-import { type AuthUser, readCachedAuthUserSnapshot, useAuth, syncPrivySession } from "@/lib/auth-client";
+import {
+  clearPrivySyncFailureState,
+  type AuthUser,
+  readCachedAuthUserSnapshot,
+  useAuth,
+  syncPrivySession,
+} from "@/lib/auth-client";
 import {
   resolvePrivyAuthPayload,
   type PrivyUserLike,
@@ -248,6 +254,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const handlePrivyAuthComplete = useCallback(async (privyUser: PrivyUserLike) => {
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;
+    clearPrivySyncFailureState();
     await runManualSync(privyUser);
   }, [runManualSync]);
 
@@ -292,6 +299,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         : null;
     const isXLogin = requestedMethod === "twitter";
     rateLimitedUntilRef.current = 0;
+    clearPrivySyncFailureState();
     setSyncError(null);
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;

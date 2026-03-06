@@ -18,8 +18,8 @@ interface AuthInitializerProps {
   children: React.ReactNode;
 }
 
-const AUTO_SYNC_COOLDOWN_MS = 2500;
-const AUTO_SYNC_MAX_ATTEMPTS = 2;
+const AUTO_SYNC_COOLDOWN_MS = 3000;
+const AUTO_SYNC_MAX_ATTEMPTS = 6;
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
@@ -66,7 +66,13 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   }, [authenticated]);
 
   useEffect(() => {
-    if (!ready || !authenticated || !user || privySyncFailure) return;
+    if (!ready || !authenticated || !user) return;
+    if (
+      privySyncFailure &&
+      Date.now() - privySyncFailure.recordedAt < AUTO_SYNC_COOLDOWN_MS
+    ) {
+      return;
+    }
     const shouldRepairMissingFallbackToken = isAuthenticated && !hasStoredAuthTokenHint();
     if (isAuthenticated && !shouldRepairMissingFallbackToken) {
       attemptsRef.current = 0;
