@@ -3,9 +3,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useAuth, syncPrivySession, registerPreLogoutHook } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import {
-  getPrivyDisplayName,
-  getPrivyIdentityTokenFast,
-  getPrivyPrimaryEmail,
+  resolvePrivyAuthPayload,
   type PrivyUserLike,
 } from "@/lib/privy-user";
 
@@ -23,6 +21,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   const attemptsRef = useRef(0);
   const lastAttemptAtRef = useRef(0);
   const lastSyncedPrivyUserRef = useRef<string | null>(null);
+  const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
 
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
@@ -37,11 +36,16 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   }, [privyLogout]);
 
   useEffect(() => {
+    latestPrivyUserRef.current = user ? (user as PrivyUserLike) : null;
+  }, [user]);
+
+  useEffect(() => {
     if (!authenticated) {
       attemptsRef.current = 0;
       lastAttemptAtRef.current = 0;
       syncInFlightRef.current = false;
       lastSyncedPrivyUserRef.current = null;
+      latestPrivyUserRef.current = null;
     }
   }, [authenticated]);
 
@@ -69,16 +73,16 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
     void (async () => {
       try {
-        const privyUser = user as PrivyUserLike;
-        const privyIdToken = await getPrivyIdentityTokenFast();
-        const email = getPrivyPrimaryEmail(privyUser);
-        const name = getPrivyDisplayName(privyUser, email);
+        const resolvedPayload = await resolvePrivyAuthPayload({
+          user: user as PrivyUserLike,
+          getLatestUser: () => latestPrivyUserRef.current,
+        });
 
         await syncPrivySession(
-          privyUser.id,
-          email,
-          name,
-          privyIdToken ?? undefined
+          resolvedPayload.user.id,
+          resolvedPayload.email,
+          resolvedPayload.name,
+          resolvedPayload.privyIdToken ?? undefined
         );
         await refetch();
         attemptsRef.current = 0;

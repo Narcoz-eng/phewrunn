@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
+import { usePrivy } from "@privy-io/react-auth";
 import { useSession } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 
@@ -29,6 +31,19 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
 
 function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
+  const { ready, authenticated } = usePrivy();
+  const [graceExpired, setGraceExpired] = useState(false);
+  const hasPrivySyncHint = ready && authenticated && !session?.user;
+
+  useEffect(() => {
+    if (!hasPrivySyncHint) {
+      setGraceExpired(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => setGraceExpired(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [hasPrivySyncHint]);
 
   if (isPending) {
     return <RouteLoading label="Loading..." />;
@@ -36,6 +51,10 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
 
   if (session?.user) {
     return <Navigate to="/" replace />;
+  }
+
+  if (hasPrivySyncHint && !graceExpired) {
+    return <RouteLoading label="Completing sign-in..." />;
   }
 
   return <>{children}</>;

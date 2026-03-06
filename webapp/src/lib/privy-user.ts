@@ -1,7 +1,8 @@
 import { getIdentityToken } from "@privy-io/react-auth";
 
-const IDENTITY_TOKEN_ATTEMPTS = 4;
-const IDENTITY_TOKEN_RETRY_DELAYS_MS = [60, 100, 160] as const;
+const IDENTITY_TOKEN_ATTEMPTS = 7;
+const IDENTITY_TOKEN_RETRY_DELAYS_MS = [80, 140, 220, 320, 480, 700] as const;
+const AUTH_PAYLOAD_READY_DELAYS_MS = [160, 260, 420, 700, 1100] as const;
 
 type LinkedAccountLike = {
   type: string;
@@ -18,9 +19,22 @@ export type PrivyUserLike = {
   linkedAccounts?: LinkedAccountLike[] | null;
 };
 
+export type ResolvedPrivyAuthPayload = {
+  user: PrivyUserLike;
+  email?: string;
+  name?: string;
+  privyIdToken?: string;
+};
+
+async function waitFor(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
+}
+
 export async function getPrivyIdentityTokenFast(): Promise<string | undefined> {
   for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    const token = await getIdentityToken();
+    const token = await getIdentityToken().catch(() => undefined);
     if (token) {
       return token;
     }
@@ -30,9 +44,7 @@ export async function getPrivyIdentityTokenFast(): Promise<string | undefined> {
       continue;
     }
 
-    await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, delayMs);
-    });
+    await waitFor(delayMs);
   }
 
   return undefined;
@@ -89,4 +101,48 @@ export function getPrivyDisplayName(user: PrivyUserLike, email?: string): string
   }
 
   return undefined;
+}
+
+export async function resolvePrivyAuthPayload({
+  user,
+  getLatestUser,
+}: {
+  user: PrivyUserLike;
+  getLatestUser?: () => PrivyUserLike | null | undefined;
+}): Promise<ResolvedPrivyAuthPayload> {
+  let latestUser = getLatestUser?.() ?? user;
+  let email = getPrivyPrimaryEmail(latestUser);
+  let name = getPrivyDisplayName(latestUser, email);
+  let privyIdToken = await getPrivyIdentityTokenFast();
+
+  if (email || privyIdToken) {
+    return {
+      user: latestUser,
+      email,
+      name,
+      privyIdToken,
+    };
+  }
+
+  for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
+    await waitFor(delayMs);
+    latestUser = getLatestUser?.() ?? latestUser;
+    email = getPrivyPrimaryEmail(latestUser);
+    name = getPrivyDisplayName(latestUser, email);
+
+    if (!privyIdToken) {
+      privyIdToken = await getPrivyIdentityTokenFast();
+    }
+
+    if (email || privyIdToken) {
+      break;
+    }
+  }
+
+  return {
+    user: latestUser,
+    email,
+    name,
+    privyIdToken,
+  };
 }
