@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  ArrowRight,
   ArrowDownRight,
   ArrowUpRight,
   ShieldCheck,
@@ -204,30 +203,21 @@ export function ReputationEngine() {
               <div className="rounded-2xl border border-border/45 bg-card/65 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs font-medium text-muted-foreground">
-                    Public level path
+                    Example level state
                   </div>
-                  <div className="text-sm font-mono font-bold text-foreground">
-                    {formatLevelValue(activeFrame.fromLevel)} {"->"} {formatLevelValue(activeFrame.level)}
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Example only
                   </div>
                 </div>
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="shrink-0 rounded-xl border border-border/45 bg-background/60 px-2.5 py-1 text-[11px] font-mono font-semibold text-muted-foreground">
-                    {formatLevelValue(activeFrame.fromLevel)}
-                  </div>
-                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <LevelBar
-                      level={activeFrame.level}
-                      size={isMobile ? "md" : "lg"}
-                      showLabel={false}
-                    />
-                  </div>
-                  <div className="shrink-0 rounded-xl border border-border/45 bg-background/60 px-2.5 py-1 text-[11px] font-mono font-semibold text-foreground">
-                    {formatLevelValue(activeFrame.level)}
-                  </div>
+                <div className="mt-3">
+                  <LevelBar
+                    level={activeFrame.level}
+                    size={isMobile ? "md" : "lg"}
+                    showLabel={false}
+                  />
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  These examples match the live level rules shown on the platform.
+                  Example only. Your public level changes only from your own settled posts.
                 </p>
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   {activeFrame.metrics.map((metric) => (

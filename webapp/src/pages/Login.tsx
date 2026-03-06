@@ -496,7 +496,7 @@ export default function Login() {
         animate={loaded ? { opacity: 1, y: 0 } : {}}
         transition={{ duration: optimizeMotion ? 0 : 0.4, ease: "easeOut" }}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3.5 flex items-center justify-between">
           <BrandLogo size="sm" showTagline={!isMobile} />
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-muted-foreground border border-border/50 rounded-full px-3 py-1 bg-card/50">
@@ -512,8 +512,8 @@ export default function Login() {
       <main className="relative z-10 pt-[72px]">
 
         {/* ━━━━━━ SECTION 1: HERO ━━━━━━ */}
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 pt-7 pb-6 sm:pt-10 sm:pb-8 md:pt-14 md:pb-12">
-          <div className="grid xl:grid-cols-[1fr_420px] gap-6 sm:gap-8 xl:gap-12 items-start">
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 pt-6 pb-6 sm:pt-10 sm:pb-8 md:pt-14 md:pb-12">
+          <div className="grid xl:grid-cols-[1fr_420px] gap-5 sm:gap-8 xl:gap-12 items-start">
 
             {/* Left — headline + features */}
             <motion.div
@@ -530,7 +530,7 @@ export default function Login() {
 
               {/* Headline */}
               <div>
-                <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.08]">
+                <h1 className="font-heading text-[2.6rem] sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.05]">
                   Post a Call.
                   <br />
                   <span
@@ -548,7 +548,7 @@ export default function Login() {
               </div>
 
               {/* Stats row */}
-              <div className="grid max-w-md grid-cols-3 gap-2 sm:gap-3">
+              <div className="grid max-w-[22rem] grid-cols-3 gap-1.5 sm:max-w-md sm:gap-3">
                 {stats.map((stat, i) => (
                   <motion.div
                     key={stat.label}
@@ -602,7 +602,7 @@ export default function Login() {
             </motion.div>
 
             {/* Right — sign-in + fee orbit */}
-            <div className="order-1 xl:order-2 w-full max-w-[390px] sm:max-w-[420px] mx-auto xl:mx-0 xl:sticky xl:top-[80px]">
+            <div className="order-1 xl:order-2 w-full max-w-[352px] sm:max-w-[420px] mx-auto xl:mx-0 xl:sticky xl:top-[80px]">
               <motion.div
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
                 animate={loaded ? { opacity: 1, y: 0 } : {}}
@@ -614,7 +614,7 @@ export default function Login() {
                 )}>
                   <div className="absolute inset-[12%] rounded-full bg-primary/12 blur-3xl pointer-events-none" />
                   <div className="relative rounded-[29px] overflow-hidden border border-white/8 bg-background/92 backdrop-blur-2xl">
-                    <div className="border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)] px-4 pb-4 pt-5 sm:px-6 sm:pb-5 sm:pt-6">
+                    <div className="border-b border-border/50 bg-[linear-gradient(180deg,hsl(var(--primary)/0.14),transparent_75%)] px-3.5 pb-4 pt-4.5 sm:px-6 sm:pb-5 sm:pt-6">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex items-start gap-3">
                           <div className="w-11 h-11 rounded-2xl bg-primary/12 border border-primary/25 flex items-center justify-center shrink-0 shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]">
@@ -661,7 +661,7 @@ export default function Login() {
                       </div>
                     </div>
 
-                    <div className="space-y-3.5 p-4 sm:space-y-4 sm:p-5">
+                    <div className="space-y-3 p-3.5 sm:space-y-4 sm:p-5">
                       <div className="rounded-[24px] border border-primary/18 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.14),transparent_58%),linear-gradient(180deg,hsl(var(--card)/0.92),hsl(var(--background)/0.82))] p-3.5 sm:p-4 shadow-[0_20px_60px_-34px_hsl(var(--primary)/0.55)]">
                         <div className="flex items-center justify-between gap-3 mb-3">
                           <div>
@@ -773,7 +773,7 @@ export default function Login() {
           }
         >
           <section className="border-t border-border/40 bg-card/30 backdrop-blur-sm">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
+            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-10 sm:py-12 md:py-16">
               <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
                 <motion.div
                   className="order-2 lg:order-1"
@@ -925,7 +925,7 @@ export default function Login() {
             />
           }
         >
-          <section className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
+          <section className="max-w-7xl mx-auto px-3 sm:px-6 py-10 sm:py-12 md:py-16">
             <div className="grid items-center gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
               <motion.div
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
@@ -1012,7 +1012,7 @@ export default function Login() {
             />
           }
         >
-          <section className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
+          <section className="max-w-7xl mx-auto px-3 sm:px-6 py-10 sm:py-12 md:py-16">
             <motion.div
               initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
               whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
@@ -1153,7 +1153,7 @@ export default function Login() {
           }
         >
           <section className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent">
-            <div className="max-w-2xl mx-auto px-4 sm:px-6 py-12 sm:py-14 text-center">
+            <div className="max-w-2xl mx-auto px-3 sm:px-6 py-12 sm:py-14 text-center">
               <motion.div
                 initial={optimizeMotion ? false : { opacity: 0, y: 20 }}
                 whileInView={optimizeMotion ? undefined : { opacity: 1, y: 0 }}
@@ -1187,7 +1187,7 @@ export default function Login() {
 
       {/* ── Footer ── */}
       <footer className="relative z-10 border-t border-border/40 py-7">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <BrandLogo size="sm" showTagline={!isMobile} />
           <div className="flex items-center gap-5 text-xs text-muted-foreground">
             <Link to="/terms" className="hover:text-foreground transition-colors">
