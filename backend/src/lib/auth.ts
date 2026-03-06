@@ -19,6 +19,9 @@ const SESSION_USER_SELECT = {
   isAdmin: true,
   isBanned: true,
   isVerified: true,
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: true,
+  tradeFeePayoutAddress: true,
   lastUsernameUpdate: true,
   lastPhotoUpdate: true,
 } as const;
@@ -146,6 +149,9 @@ type SessionRecord = {
     isAdmin: boolean;
     isBanned: boolean;
     isVerified: boolean;
+    tradeFeeRewardsEnabled: boolean;
+    tradeFeeShareBps: number;
+    tradeFeePayoutAddress: string | null;
     lastUsernameUpdate: Date | null;
     lastPhotoUpdate: Date | null;
   };
@@ -204,6 +210,9 @@ function toSessionUser(
     isAdmin?: boolean | null;
     isBanned?: boolean | null;
     isVerified?: boolean | null;
+    tradeFeeRewardsEnabled?: boolean | null;
+    tradeFeeShareBps?: number | null;
+    tradeFeePayoutAddress?: string | null;
     lastUsernameUpdate?: Date | null;
     lastPhotoUpdate?: Date | null;
   }
@@ -228,6 +237,9 @@ function toSessionUser(
     isAdmin: user.isAdmin ?? false,
     isBanned: user.isBanned ?? false,
     isVerified: user.isVerified ?? false,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
+    tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
     lastUsernameUpdate: user.lastUsernameUpdate ?? null,
     lastPhotoUpdate: user.lastPhotoUpdate ?? null,
   };
@@ -358,6 +370,9 @@ function buildSessionUserFromTokenClaims(
     isAdmin: claims?.isAdmin ?? false,
     isBanned: claims?.isBanned ?? false,
     isVerified: claims?.isVerified ?? false,
+    tradeFeeRewardsEnabled: claims?.tradeFeeRewardsEnabled ?? true,
+    tradeFeeShareBps: claims?.tradeFeeShareBps ?? 100,
+    tradeFeePayoutAddress: claims?.tradeFeePayoutAddress ?? null,
     createdAt,
     updatedAt,
   });

@@ -1801,30 +1801,19 @@ postsRouter.get("/", async (c) => {
     whereConditions.push({ authorId: { in: followedIds } });
   }
 
-  // Add search conditions if search query provided
-  // Note: SQLite doesn't support mode: "insensitive", so we use LOWER() via raw queries
-  // For now, we use contains which is case-sensitive, and filter in application layer if needed
+  // Add search conditions if search query provided.
+  // PostgreSQL can handle case-insensitive matching directly, which keeps the
+  // feed search query smaller and lets CA/ticker/name lookups stay responsive.
   if (search && search.trim().length > 0) {
     const searchTerm = search.trim();
     whereConditions.push({
       OR: [
-        { tokenName: { contains: searchTerm } },
-        { tokenSymbol: { contains: searchTerm } },
-        { content: { contains: searchTerm } },
-        { author: { username: { contains: searchTerm } } },
-        { author: { name: { contains: searchTerm } } },
-        // Also search for lowercase versions
-        { tokenName: { contains: searchTerm.toLowerCase() } },
-        { tokenSymbol: { contains: searchTerm.toLowerCase() } },
-        { content: { contains: searchTerm.toLowerCase() } },
-        { author: { username: { contains: searchTerm.toLowerCase() } } },
-        { author: { name: { contains: searchTerm.toLowerCase() } } },
-        // Also search for uppercase versions
-        { tokenName: { contains: searchTerm.toUpperCase() } },
-        { tokenSymbol: { contains: searchTerm.toUpperCase() } },
-        { content: { contains: searchTerm.toUpperCase() } },
-        { author: { username: { contains: searchTerm.toUpperCase() } } },
-        { author: { name: { contains: searchTerm.toUpperCase() } } },
+        { contractAddress: { contains: searchTerm, mode: "insensitive" } },
+        { tokenName: { contains: searchTerm, mode: "insensitive" } },
+        { tokenSymbol: { contains: searchTerm, mode: "insensitive" } },
+        { content: { contains: searchTerm, mode: "insensitive" } },
+        { author: { username: { contains: searchTerm, mode: "insensitive" } } },
+        { author: { name: { contains: searchTerm, mode: "insensitive" } } },
       ],
     });
   }

@@ -18,6 +18,9 @@ export type SessionTokenUserClaims = {
   isAdmin?: boolean | null;
   isBanned?: boolean | null;
   isVerified?: boolean | null;
+  tradeFeeRewardsEnabled?: boolean | null;
+  tradeFeeShareBps?: number | null;
+  tradeFeePayoutAddress?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -128,6 +131,9 @@ function sanitizeUserClaims(
   assign("isAdmin", toOptionalBoolean(claims.isAdmin));
   assign("isBanned", toOptionalBoolean(claims.isBanned));
   assign("isVerified", toOptionalBoolean(claims.isVerified));
+  assign("tradeFeeRewardsEnabled", toOptionalBoolean(claims.tradeFeeRewardsEnabled));
+  assign("tradeFeeShareBps", toOptionalFiniteNumber(claims.tradeFeeShareBps));
+  assign("tradeFeePayoutAddress", toOptionalString(claims.tradeFeePayoutAddress));
   assign("createdAt", toOptionalIsoDateString(claims.createdAt));
   assign("updatedAt", toOptionalIsoDateString(claims.updatedAt));
 
@@ -154,6 +160,9 @@ function parseUserClaims(value: unknown): SessionTokenUserClaims | null {
     isAdmin: toOptionalBoolean(claims.isAdmin),
     isBanned: toOptionalBoolean(claims.isBanned),
     isVerified: toOptionalBoolean(claims.isVerified),
+    tradeFeeRewardsEnabled: toOptionalBoolean(claims.tradeFeeRewardsEnabled),
+    tradeFeeShareBps: toOptionalFiniteNumber(claims.tradeFeeShareBps),
+    tradeFeePayoutAddress: toOptionalString(claims.tradeFeePayoutAddress),
     createdAt: toOptionalIsoDateString(claims.createdAt),
     updatedAt: toOptionalIsoDateString(claims.updatedAt),
   });

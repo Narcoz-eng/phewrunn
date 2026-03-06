@@ -228,8 +228,12 @@ const AUTH_RESPONSE_USER_SELECT = {
   username: true,
   level: true,
   xp: true,
+  bio: true,
   isAdmin: true,
   isVerified: true,
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: true,
+  tradeFeePayoutAddress: true,
   createdAt: true,
 } as const;
 
@@ -256,14 +260,22 @@ type AuthResponseUser = {
   username: string | null;
   level: number;
   xp: number;
+  bio: string | null;
   isAdmin: boolean;
   isVerified: boolean;
+  tradeFeeRewardsEnabled: boolean;
+  tradeFeeShareBps: number;
+  tradeFeePayoutAddress: string | null;
   createdAt: Date;
 };
 
 function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserClaims {
   const normalizedName = user.name.trim();
   const normalizedEmail = user.email.trim().toLowerCase();
+  const normalizedBio =
+    typeof user.bio === "string" && user.bio.trim().length > 0
+      ? user.bio.trim().slice(0, 160)
+      : null;
   const createdAtIso =
     user.createdAt instanceof Date && !Number.isNaN(user.createdAt.getTime())
       ? user.createdAt.toISOString()
@@ -279,8 +291,12 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
     username: user.username,
     level: user.level,
     xp: user.xp,
+    bio: normalizedBio,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: user.tradeFeeShareBps,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     createdAt: createdAtIso,
   };
 }
@@ -296,8 +312,12 @@ function buildClientAuthUser(user: AuthResponseUser) {
     username: user.username,
     level: user.level,
     xp: user.xp,
+    bio: user.bio,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: user.tradeFeeShareBps,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     createdAt: user.createdAt.toISOString(),
   };
 }
@@ -477,8 +497,12 @@ function normalizeAuthResponseUser(
     username?: string | null;
     level?: number | null;
     xp?: number | null;
+    bio?: string | null;
     isAdmin?: boolean | null;
     isVerified?: boolean | null;
+    tradeFeeRewardsEnabled?: boolean | null;
+    tradeFeeShareBps?: number | null;
+    tradeFeePayoutAddress?: string | null;
     createdAt?: Date | null;
   }
 ): AuthResponseUser {
@@ -492,8 +516,12 @@ function normalizeAuthResponseUser(
     username: user.username ?? null,
     level: user.level ?? 0,
     xp: user.xp ?? 0,
+    bio: user.bio ?? null,
     isAdmin: user.isAdmin ?? false,
     isVerified: user.isVerified ?? false,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
+    tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
     createdAt: user.createdAt ?? new Date(),
   };
 }
@@ -519,8 +547,12 @@ function toAuthResponseUserFromSessionUser(
         username?: string | null;
         level: number;
         xp: number;
+        bio?: string | null;
         isAdmin?: boolean;
         isVerified: boolean;
+        tradeFeeRewardsEnabled?: boolean;
+        tradeFeeShareBps?: number;
+        tradeFeePayoutAddress?: string | null;
         createdAt?: Date;
       }
     | null
@@ -539,10 +571,128 @@ function toAuthResponseUserFromSessionUser(
     username: sessionUser.username,
     level: sessionUser.level,
     xp: sessionUser.xp,
+    bio: sessionUser.bio,
     isAdmin: sessionUser.isAdmin,
     isVerified: sessionUser.isVerified,
+    tradeFeeRewardsEnabled: sessionUser.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: sessionUser.tradeFeeShareBps,
+    tradeFeePayoutAddress: sessionUser.tradeFeePayoutAddress,
     createdAt: sessionUser.createdAt,
   });
+}
+
+function clearCachedMeResponse(userId: string): void {
+  meResponseCache.delete(userId);
+}
+
+function normalizeOptionalDisplayName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isSyntheticAuthEmail(email: string | null | undefined): boolean {
+  if (typeof email !== "string") return false;
+  const normalized = email.trim().toLowerCase();
+  return normalized.endsWith("@privy.local") || normalized.endsWith("@wallet.local");
+}
+
+function shouldUpdateAuthDisplayName(user: AuthResponseUser, nextName: string | null): boolean {
+  if (!nextName) return false;
+
+  const currentName = user.name.trim();
+  const normalizedCurrentName = currentName.toLowerCase();
+  const normalizedNextName = nextName.trim().toLowerCase();
+  if (!normalizedNextName || normalizedCurrentName === normalizedNextName) {
+    return false;
+  }
+
+  if (!currentName) {
+    return true;
+  }
+
+  const currentEmailLocalPart = user.email.trim().toLowerCase().split("@")[0] ?? "";
+  return (
+    normalizedCurrentName === currentEmailLocalPart ||
+    normalizedCurrentName === "user" ||
+    (isSyntheticAuthEmail(user.email) && normalizedCurrentName === currentEmailLocalPart)
+  );
+}
+
+async function reconcilePrivyLinkedUserProfile(params: {
+  user: AuthResponseUser;
+  verifiedEmail: string;
+  preferredName?: string | null;
+  privyUserId: string;
+}): Promise<AuthResponseUser> {
+  const currentEmail = params.user.email.trim().toLowerCase();
+  const verifiedEmail = params.verifiedEmail.trim().toLowerCase();
+  const nextName = normalizeOptionalDisplayName(params.preferredName);
+  const nextEmailCandidate =
+    verifiedEmail && verifiedEmail !== currentEmail ? verifiedEmail : currentEmail;
+
+  let nextEmail = currentEmail;
+  if (nextEmailCandidate !== currentEmail && !isSyntheticAuthEmail(nextEmailCandidate)) {
+    const conflictingUser = await findAuthUserByEmail(nextEmailCandidate);
+    if (conflictingUser && conflictingUser.id !== params.user.id) {
+      console.warn("[privy-sync] Verified email is already mapped to a different local user", {
+        privyUserId: params.privyUserId,
+        userId: params.user.id,
+        conflictingUserId: conflictingUser.id,
+        currentEmail,
+        verifiedEmail: nextEmailCandidate,
+      });
+    } else {
+      nextEmail = nextEmailCandidate;
+    }
+  }
+
+  const shouldUpdateName = shouldUpdateAuthDisplayName(params.user, nextName);
+  const nextResolvedName = shouldUpdateName && nextName ? nextName : params.user.name;
+
+  if (nextEmail === currentEmail && nextResolvedName === params.user.name) {
+    return params.user;
+  }
+
+  const updateData: { email?: string; name?: string } = {};
+  if (nextEmail !== currentEmail) {
+    updateData.email = nextEmail;
+  }
+  if (nextResolvedName !== params.user.name) {
+    updateData.name = nextResolvedName;
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: params.user.id },
+      data: updateData,
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    clearCachedMeResponse(params.user.id);
+    return normalizeAuthResponseUser(updatedUser);
+  } catch (error) {
+    if (!isUniqueConstraintError(error) || !("email" in updateData)) {
+      throw error;
+    }
+
+    console.warn("[privy-sync] Email reconciliation lost a uniqueness race; preserving current email", {
+      privyUserId: params.privyUserId,
+      userId: params.user.id,
+      attemptedEmail: updateData.email,
+    });
+
+    if (!("name" in updateData)) {
+      return params.user;
+    }
+
+    const updatedNameOnlyUser = await prisma.user.update({
+      where: { id: params.user.id },
+      data: { name: nextResolvedName },
+      select: AUTH_RESPONSE_USER_SELECT,
+    });
+    clearCachedMeResponse(params.user.id);
+    return normalizeAuthResponseUser(updatedNameOnlyUser);
+  }
 }
 
 async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponseUser | null> {
@@ -1326,6 +1476,7 @@ app.post("/api/auth/privy-sync", async (c) => {
       });
 
       applySessionCookies(c, sessionToken);
+      clearCachedMeResponse(sessionBackfillUser.id);
 
       return c.json({
         token: sessionToken,
@@ -1383,41 +1534,49 @@ app.post("/api/auth/privy-sync", async (c) => {
               linkedEmail: fastPathEmail,
             });
           } else {
-          // Update cache for future requests
-          if (privyCacheKey) {
-            privyIdentityCache.set(privyCacheKey, {
-              userId: privyUserId,
-              email: fastPathUser.email,
-              cachedAt: Date.now(),
+            const reconciledFastPathUser = await reconcilePrivyLinkedUserProfile({
+              user: fastPathUser,
+              verifiedEmail: providedEmail ?? fastPathUser.email,
+              preferredName: normalizeOptionalDisplayName(name),
+              privyUserId,
             });
-          }
 
-          // Issue signed session token directly
-          const issuedAt = new Date();
-          const sessionToken = createSignedSessionToken({
-            userId: fastPathUser.id,
-            now: issuedAt,
-            user: buildSessionTokenUserClaims(fastPathUser),
-          });
-          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-          const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
-          const userAgent = c.req.header("user-agent") ?? "unknown";
+            // Update cache for future requests
+            if (privyCacheKey) {
+              privyIdentityCache.set(privyCacheKey, {
+                userId: privyUserId,
+                email: reconciledFastPathUser.email,
+                cachedAt: Date.now(),
+              });
+            }
 
-          await createSessionRecordBestEffort({
-            sessionToken,
-            userId: fastPathUser.id,
-            expiresAt,
-            now: issuedAt,
-            ipAddress,
-            userAgent,
-          });
+            // Issue signed session token directly
+            const issuedAt = new Date();
+            const sessionToken = createSignedSessionToken({
+              userId: reconciledFastPathUser.id,
+              now: issuedAt,
+              user: buildSessionTokenUserClaims(reconciledFastPathUser),
+            });
+            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+            const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+            const userAgent = c.req.header("user-agent") ?? "unknown";
 
-          applySessionCookies(c, sessionToken);
+            await createSessionRecordBestEffort({
+              sessionToken,
+              userId: reconciledFastPathUser.id,
+              expiresAt,
+              now: issuedAt,
+              ipAddress,
+              userAgent,
+            });
 
-          return c.json({
-            token: sessionToken,
-            user: buildClientAuthUser(fastPathUser),
-          });
+            applySessionCookies(c, sessionToken);
+            clearCachedMeResponse(reconciledFastPathUser.id);
+
+            return c.json({
+              token: sessionToken,
+              user: buildClientAuthUser(reconciledFastPathUser),
+            });
           }
         }
       }
@@ -1648,6 +1807,13 @@ app.post("/api/auth/privy-sync", async (c) => {
       }
     }
 
+    user = await reconcilePrivyLinkedUserProfile({
+      user,
+      verifiedEmail,
+      preferredName: normalizeOptionalDisplayName(name),
+      privyUserId: verifiedPrivyUserId,
+    });
+
     // Issue signed session token (stateless fallback works even if session table drifts).
     const sessionToken = createSignedSessionToken({
       userId: user.id,
@@ -1669,6 +1835,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // Set canonical session cookie and clear stale legacy cookies.
     applySessionCookies(c, sessionToken);
+    clearCachedMeResponse(user.id);
 
     return c.json({
       token: sessionToken,
@@ -1699,6 +1866,7 @@ app.post("/api/auth/privy-sync", async (c) => {
         });
 
         applySessionCookies(c, sessionToken);
+        clearCachedMeResponse(fallbackUser.id);
 
         return c.json({
           token: sessionToken,
@@ -1938,7 +2106,11 @@ app.get("/api/me", async (c) => {
         bio: session.user.bio,
         isAdmin: session.user.isAdmin,
         isVerified: session.user.isVerified,
-        ...defaultFeeSettings,
+        tradeFeeRewardsEnabled:
+          session.user.tradeFeeRewardsEnabled ?? defaultFeeSettings.tradeFeeRewardsEnabled,
+        tradeFeeShareBps: session.user.tradeFeeShareBps ?? defaultFeeSettings.tradeFeeShareBps,
+        tradeFeePayoutAddress:
+          session.user.tradeFeePayoutAddress ?? defaultFeeSettings.tradeFeePayoutAddress,
         createdAt: session.user.createdAt,
       };
       writeCachedMeResponse(user.id, sessionBackedUser);
