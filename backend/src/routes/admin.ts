@@ -8,12 +8,16 @@ import type { AuthVariables } from "../auth.js";
 import {
   AdminUsersQuerySchema,
   AdminPostsQuerySchema,
+  AdminReportsQuerySchema,
   AdminAnnouncementsQuerySchema,
   CreateAnnouncementSchema,
   UpdateAnnouncementSchema,
+  UpdateAdminReportSchema,
   MIN_LEVEL,
   MAX_LEVEL,
   type AdminStats,
+  type AdminReport,
+  type AdminReportsResponse,
   type AdminUser,
   type AdminUsersResponse,
   type AdminPost,
@@ -24,6 +28,248 @@ import {
 
 const adminRouter = new Hono<{ Variables: AuthVariables }>();
 const ADMIN_EMAIL_ALLOWLIST = new Set(["rengarro@gmail.com"]);
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const ACTIVE_REPORT_STATUSES = ["open", "reviewing"] as const;
+
+function isPrismaSchemaDriftError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P2021" || code === "P2022") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "";
+
+  const normalizedMessage = message.toLowerCase();
+
+  return (
+    normalizedMessage.includes("does not exist in the current database") ||
+    normalizedMessage.includes("no such column") ||
+    normalizedMessage.includes("no such table") ||
+    normalizedMessage.includes("has no column named") ||
+    normalizedMessage.includes("unknown arg") ||
+    normalizedMessage.includes("unknown argument") ||
+    normalizedMessage.includes("unknown field") ||
+    (normalizedMessage.includes("column") && normalizedMessage.includes("does not exist")) ||
+    (normalizedMessage.includes("table") && normalizedMessage.includes("does not exist")) ||
+    (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist"))
+  );
+}
+
+function toSafeNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value instanceof Prisma.Decimal) {
+    return value.toNumber();
+  }
+  return 0;
+}
+
+function toRoundedSol(lamports: unknown): number {
+  return Math.round((toSafeNumber(lamports) / 1_000_000_000) * 10_000) / 10_000;
+}
+
+function toCount(value: unknown): number {
+  return Math.max(0, Math.round(toSafeNumber(value)));
+}
+
+async function getTradeSummary() {
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{ volumeLamports: Prisma.Decimal | number | string | null; tradeCount: bigint | number | null }>
+    >(Prisma.sql`
+      SELECT
+        COALESCE(SUM(
+          CASE
+            WHEN "inputMint" = ${SOL_MINT} THEN CAST("inAmountAtomic" AS numeric)
+            WHEN "outputMint" = ${SOL_MINT} THEN CAST("outAmountAtomic" AS numeric)
+            ELSE 0
+          END
+        ), 0) AS "volumeLamports",
+        COUNT(*) AS "tradeCount"
+      FROM "TradeFeeEvent"
+      WHERE "txSignature" IS NOT NULL
+    `);
+
+    const row = rows[0];
+    return {
+      confirmedTrades: toCount(row?.tradeCount ?? 0),
+      routedVolumeSol: toRoundedSol(row?.volumeLamports ?? 0),
+    };
+  } catch (error) {
+    if (isPrismaSchemaDriftError(error)) {
+      return {
+        confirmedTrades: 0,
+        routedVolumeSol: 0,
+      };
+    }
+    throw error;
+  }
+}
+
+async function getUserVolumeMaps(userIds: string[]) {
+  const traderMap = new Map<string, { confirmedTradeCount: number; traderVolumeSol: number }>();
+  const drivenMap = new Map<string, { drivenTradeCount: number; drivenVolumeSol: number }>();
+
+  if (userIds.length === 0) {
+    return { traderMap, drivenMap };
+  }
+
+  try {
+    const [traderRows, drivenRows] = await Promise.all([
+      prisma.$queryRaw<
+        Array<{ userId: string; tradeCount: bigint | number | null; volumeLamports: Prisma.Decimal | number | string | null }>
+      >(Prisma.sql`
+        SELECT
+          "traderUserId" AS "userId",
+          COUNT(*) AS "tradeCount",
+          COALESCE(SUM(
+            CASE
+              WHEN "inputMint" = ${SOL_MINT} THEN CAST("inAmountAtomic" AS numeric)
+              WHEN "outputMint" = ${SOL_MINT} THEN CAST("outAmountAtomic" AS numeric)
+              ELSE 0
+            END
+          ), 0) AS "volumeLamports"
+        FROM "TradeFeeEvent"
+        WHERE "txSignature" IS NOT NULL
+          AND "traderUserId" IN (${Prisma.join(userIds)})
+        GROUP BY "traderUserId"
+      `),
+      prisma.$queryRaw<
+        Array<{ userId: string; tradeCount: bigint | number | null; volumeLamports: Prisma.Decimal | number | string | null }>
+      >(Prisma.sql`
+        SELECT
+          "posterUserId" AS "userId",
+          COUNT(*) AS "tradeCount",
+          COALESCE(SUM(
+            CASE
+              WHEN "inputMint" = ${SOL_MINT} THEN CAST("inAmountAtomic" AS numeric)
+              WHEN "outputMint" = ${SOL_MINT} THEN CAST("outAmountAtomic" AS numeric)
+              ELSE 0
+            END
+          ), 0) AS "volumeLamports"
+        FROM "TradeFeeEvent"
+        WHERE "txSignature" IS NOT NULL
+          AND "posterUserId" IN (${Prisma.join(userIds)})
+        GROUP BY "posterUserId"
+      `),
+    ]);
+
+    for (const row of traderRows) {
+      traderMap.set(row.userId, {
+        confirmedTradeCount: toCount(row.tradeCount),
+        traderVolumeSol: toRoundedSol(row.volumeLamports),
+      });
+    }
+
+    for (const row of drivenRows) {
+      drivenMap.set(row.userId, {
+        drivenTradeCount: toCount(row.tradeCount),
+        drivenVolumeSol: toRoundedSol(row.volumeLamports),
+      });
+    }
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+  }
+
+  return { traderMap, drivenMap };
+}
+
+async function getUserReportMap(userIds: string[]) {
+  const reportMap = new Map<string, { reportCount: number; openReportCount: number }>();
+
+  if (userIds.length === 0) {
+    return reportMap;
+  }
+
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{ userId: string; reportCount: bigint | number | null; openReportCount: bigint | number | null }>
+    >(Prisma.sql`
+      SELECT
+        "targetUserId" AS "userId",
+        COUNT(*) AS "reportCount",
+        COUNT(*) FILTER (WHERE "status" IN (${Prisma.join(ACTIVE_REPORT_STATUSES)})) AS "openReportCount"
+      FROM "Report"
+      WHERE "targetUserId" IN (${Prisma.join(userIds)})
+      GROUP BY "targetUserId"
+    `);
+
+    for (const row of rows) {
+      reportMap.set(row.userId, {
+        reportCount: toCount(row.reportCount),
+        openReportCount: toCount(row.openReportCount),
+      });
+    }
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+  }
+
+  return reportMap;
+}
+
+async function getPostReportMap(postIds: string[]) {
+  const reportMap = new Map<string, { reportCount: number; openReportCount: number }>();
+
+  if (postIds.length === 0) {
+    return reportMap;
+  }
+
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{ postId: string; reportCount: bigint | number | null; openReportCount: bigint | number | null }>
+    >(Prisma.sql`
+      SELECT
+        "postId",
+        COUNT(*) AS "reportCount",
+        COUNT(*) FILTER (WHERE "status" IN (${Prisma.join(ACTIVE_REPORT_STATUSES)})) AS "openReportCount"
+      FROM "Report"
+      WHERE "postId" IN (${Prisma.join(postIds)})
+      GROUP BY "postId"
+    `);
+
+    for (const row of rows) {
+      reportMap.set(row.postId, {
+        reportCount: toCount(row.reportCount),
+        openReportCount: toCount(row.openReportCount),
+      });
+    }
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+  }
+
+  return reportMap;
+}
 
 const AdminUpdateUserSchema = z
   .object({
@@ -111,7 +357,29 @@ adminRouter.get("/stats", async (c) => {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  // Run all queries in parallel
+  const reportSummaryPromise = (async () => {
+    try {
+      const [totalReports, openReports] = await Promise.all([
+        prisma.report.count(),
+        prisma.report.count({
+          where: {
+            status: { in: [...ACTIVE_REPORT_STATUSES] },
+          },
+        }),
+      ]);
+
+      return { totalReports, openReports };
+    } catch (error) {
+      if (isPrismaSchemaDriftError(error)) {
+        return {
+          totalReports: 0,
+          openReports: 0,
+        };
+      }
+      throw error;
+    }
+  })();
+
   const [
     totalUsers,
     totalPosts,
@@ -121,6 +389,8 @@ adminRouter.get("/stats", async (c) => {
     totalReposts,
     avgLevelResult,
     settlementStats,
+    tradeSummary,
+    reportSummary,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.post.count(),
@@ -138,6 +408,8 @@ adminRouter.get("/stats", async (c) => {
       where: { settled: true },
       _count: true,
     }),
+    getTradeSummary(),
+    reportSummaryPromise,
   ]);
 
   // Calculate settlement stats
@@ -153,6 +425,10 @@ adminRouter.get("/stats", async (c) => {
     totalLikes,
     totalComments,
     totalReposts,
+    confirmedTrades: tradeSummary.confirmedTrades,
+    routedVolumeSol: tradeSummary.routedVolumeSol,
+    totalReports: reportSummary.totalReports,
+    openReports: reportSummary.openReports,
     averageLevel: avgLevelResult._avg.level || 0,
     settlementStats: {
       total: settledPosts,
@@ -179,9 +455,9 @@ adminRouter.get(
     const where = search
       ? {
           OR: [
-            { username: { contains: search } },
-            { email: { contains: search } },
-            { name: { contains: search } },
+            { username: { contains: search, mode: "insensitive" as const } },
+            { email: { contains: search, mode: "insensitive" as const } },
+            { name: { contains: search, mode: "insensitive" as const } },
           ],
         }
       : {};
@@ -227,23 +503,41 @@ adminRouter.get(
       prisma.user.count({ where }),
     ]);
 
+    const userIds = users.map((user) => user.id);
+    const [{ traderMap, drivenMap }, userReportMap] = await Promise.all([
+      getUserVolumeMaps(userIds),
+      getUserReportMap(userIds),
+    ]);
+
     const response: AdminUsersResponse = {
-      users: users.map((user): AdminUser => ({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        username: user.username,
-        image: user.image,
-        bio: user.bio,
-        walletAddress: user.walletAddress,
-        level: user.level,
-        xp: user.xp,
-        isAdmin: user.isAdmin,
-        isBanned: user.isBanned,
-        isVerified: user.isVerified,
-        createdAt: user.createdAt.toISOString(),
-        _count: user._count,
-      })),
+      users: users.map((user): AdminUser => {
+        const traderMetrics = traderMap.get(user.id);
+        const drivenMetrics = drivenMap.get(user.id);
+        const reportMetrics = userReportMap.get(user.id);
+
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          username: user.username,
+          image: user.image,
+          bio: user.bio,
+          walletAddress: user.walletAddress,
+          level: user.level,
+          xp: user.xp,
+          isAdmin: user.isAdmin,
+          isBanned: user.isBanned,
+          isVerified: user.isVerified,
+          createdAt: user.createdAt.toISOString(),
+          confirmedTradeCount: traderMetrics?.confirmedTradeCount ?? 0,
+          traderVolumeSol: traderMetrics?.traderVolumeSol ?? 0,
+          drivenTradeCount: drivenMetrics?.drivenTradeCount ?? 0,
+          drivenVolumeSol: drivenMetrics?.drivenVolumeSol ?? 0,
+          reportCount: reportMetrics?.reportCount ?? 0,
+          openReportCount: reportMetrics?.openReportCount ?? 0,
+          _count: user._count,
+        };
+      }),
       total,
       page,
       limit,
@@ -393,25 +687,33 @@ adminRouter.get(
       prisma.post.count({ where }),
     ]);
 
+    const postReportMap = await getPostReportMap(posts.map((post) => post.id));
+
     const response: AdminPostsResponse = {
-      posts: posts.map((post): AdminPost => ({
-        id: post.id,
-        content: post.content,
-        authorId: post.authorId,
-        author: post.author,
-        contractAddress: post.contractAddress,
-        chainType: post.chainType,
-        tokenName: post.tokenName,
-        tokenSymbol: post.tokenSymbol,
-        entryMcap: post.entryMcap,
-        currentMcap: post.currentMcap,
-        settled: post.settled,
-        settledAt: post.settledAt?.toISOString() ?? null,
-        isWin: post.isWin,
-        viewCount: post.viewCount,
-        createdAt: post.createdAt.toISOString(),
-        _count: post._count,
-      })),
+      posts: posts.map((post): AdminPost => {
+        const reportMetrics = postReportMap.get(post.id);
+
+        return {
+          id: post.id,
+          content: post.content,
+          authorId: post.authorId,
+          author: post.author,
+          contractAddress: post.contractAddress,
+          chainType: post.chainType,
+          tokenName: post.tokenName,
+          tokenSymbol: post.tokenSymbol,
+          entryMcap: post.entryMcap,
+          currentMcap: post.currentMcap,
+          settled: post.settled,
+          settledAt: post.settledAt?.toISOString() ?? null,
+          isWin: post.isWin,
+          viewCount: post.viewCount,
+          createdAt: post.createdAt.toISOString(),
+          reportCount: reportMetrics?.reportCount ?? 0,
+          openReportCount: reportMetrics?.openReportCount ?? 0,
+          _count: post._count,
+        };
+      }),
       total,
       page,
       limit,
@@ -582,6 +884,197 @@ adminRouter.delete("/posts/:id", async (c) => {
     },
   });
 });
+
+/**
+ * GET /api/admin/reports - List moderation reports
+ */
+adminRouter.get(
+  "/reports",
+  zValidator("query", AdminReportsQuerySchema),
+  async (c) => {
+    const { page, limit, status, targetType } = c.req.valid("query");
+    const skip = (page - 1) * limit;
+
+    const where = {
+      ...(status !== "all" ? { status } : {}),
+      ...(targetType !== "all" ? { entityType: targetType } : {}),
+    };
+
+    try {
+      const [reports, total] = await Promise.all([
+        prisma.report.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: [{ createdAt: "desc" }],
+          include: {
+            reporter: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+              },
+            },
+            targetUser: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+              },
+            },
+            post: {
+              select: {
+                id: true,
+                content: true,
+                author: {
+                  select: {
+                    id: true,
+                    name: true,
+                    username: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+            reviewedBy: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+              },
+            },
+          },
+        }),
+        prisma.report.count({ where }),
+      ]);
+
+      const response: AdminReportsResponse = {
+        reports: reports.map((report): AdminReport => ({
+          id: report.id,
+          entityType: report.entityType as AdminReport["entityType"],
+          reason: report.reason as AdminReport["reason"],
+          details: report.details,
+          status: report.status as AdminReport["status"],
+          createdAt: report.createdAt.toISOString(),
+          updatedAt: report.updatedAt.toISOString(),
+          resolvedAt: report.resolvedAt?.toISOString() ?? null,
+          reviewerNotes: report.reviewerNotes ?? null,
+          reporter: report.reporter,
+          targetUser: report.targetUser,
+          post: report.post
+            ? {
+                id: report.post.id,
+                content: report.post.content,
+                author: report.post.author,
+              }
+            : null,
+          reviewedBy: report.reviewedBy,
+        })),
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
+
+      return c.json({ data: response });
+    } catch (error) {
+      if (isPrismaSchemaDriftError(error)) {
+        const response: AdminReportsResponse = {
+          reports: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+        };
+        return c.json({ data: response });
+      }
+
+      console.error("[Admin] Failed to load reports:", error);
+      return c.json(
+        { error: { message: "Failed to load reports", code: "INTERNAL_ERROR" } },
+        500
+      );
+    }
+  }
+);
+
+/**
+ * PATCH /api/admin/reports/:id - Update report review status
+ */
+adminRouter.patch(
+  "/reports/:id",
+  zValidator("json", UpdateAdminReportSchema),
+  async (c) => {
+    const reportId = c.req.param("id");
+    const reviewer = c.get("user");
+    const payload = c.req.valid("json");
+
+    if (!reviewer) {
+      return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    try {
+      const existing = await prisma.report.findUnique({
+        where: { id: reportId },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        return c.json(
+          { error: { message: "Report not found", code: "NOT_FOUND" } },
+          404
+        );
+      }
+
+      const nextResolvedAt =
+        payload.status === "resolved" || payload.status === "dismissed" ? new Date() : null;
+
+      const updated = await prisma.report.update({
+        where: { id: reportId },
+        data: {
+          status: payload.status,
+          reviewerNotes: payload.reviewerNotes ?? null,
+          reviewedById: reviewer.id,
+          resolvedAt: nextResolvedAt,
+        },
+        select: {
+          id: true,
+          status: true,
+          resolvedAt: true,
+          reviewerNotes: true,
+        },
+      });
+
+      return c.json({
+        data: {
+          success: true,
+          report: {
+            id: updated.id,
+            status: updated.status,
+            resolvedAt: updated.resolvedAt?.toISOString() ?? null,
+            reviewerNotes: updated.reviewerNotes ?? null,
+          },
+        },
+      });
+    } catch (error) {
+      if (isPrismaSchemaDriftError(error)) {
+        return c.json(
+          { error: { message: "Reports schema is not available yet", code: "REPORTS_UNAVAILABLE" } },
+          503
+        );
+      }
+
+      console.error("[Admin] Failed to update report:", error);
+      return c.json(
+        { error: { message: "Failed to update report", code: "INTERNAL_ERROR" } },
+        500
+      );
+    }
+  }
+);
 
 // =====================================================
 // Announcement Routes

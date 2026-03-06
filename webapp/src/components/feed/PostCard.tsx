@@ -73,6 +73,7 @@ import { toast } from "sonner";
 import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
 import type { PortfolioPosition } from "./PortfolioPanel";
+import { ReportDialog } from "@/components/reporting/ReportDialog";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
@@ -3415,32 +3416,43 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
               <span className="text-muted-foreground text-xs">
                 {formatTimeAgo(post.createdAt)}
               </span>
-              {/* Follow Button - Only show if logged in and not own post */}
+              {/* Account actions */}
               {currentUserId && currentUserId !== post.author.id && (
-                <button
-                  onClick={handleFollow}
-                  disabled={isFollowLoading}
-                  className={cn(
-                    "ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
-                    isFollowing
-                      ? "bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90"
-                  )}
-                >
-                  {isFollowLoading ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : isFollowing ? (
-                    <>
-                      <UserCheck className="h-3 w-3" />
-                      <span>Following</span>
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="h-3 w-3" />
-                      <span>Follow</span>
-                    </>
-                  )}
-                </button>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <ReportDialog
+                    targetType="post"
+                    targetId={post.id}
+                    targetLabel={resolvedTokenSymbol ?? post.author.username ?? post.author.name}
+                    buttonVariant="ghost"
+                    buttonSize="icon"
+                    buttonClassName="h-8 w-8 rounded-full border border-border/70 text-muted-foreground hover:text-foreground"
+                    iconOnly
+                  />
+                  <button
+                    onClick={handleFollow}
+                    disabled={isFollowLoading}
+                    className={cn(
+                      "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+                      isFollowing
+                        ? "bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20"
+                        : "bg-primary text-primary-foreground hover:bg-primary/90"
+                    )}
+                  >
+                    {isFollowLoading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : isFollowing ? (
+                      <>
+                        <UserCheck className="h-3 w-3" />
+                        <span>Following</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="h-3 w-3" />
+                        <span>Follow</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
             </div>
 

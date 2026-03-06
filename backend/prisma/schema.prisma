@@ -56,6 +56,9 @@ model User {
   viewedAnnouncements AnnouncementView[] // track which announcements user has seen
   posterTradeFeeEvents TradeFeeEvent[] @relation("PosterTradeFeeEvents")
   traderTradeFeeEvents TradeFeeEvent[] @relation("TraderTradeFeeEvents")
+  reportsFiled       Report[] @relation("ReportsFiled")
+  reportsReceived    Report[] @relation("ReportsReceived")
+  reportReviews      Report[] @relation("ReportReviews")
 
   @@index([createdAt])
   @@index([level, xp])
@@ -181,6 +184,7 @@ model Post {
   reposts         Repost[]
   notifications   Notification[]
   tradeFeeEvents  TradeFeeEvent[]
+  reports         Report[]
 
   // Indexes for efficient queries
   @@index([authorId, settled]) // For user stats queries
@@ -224,6 +228,34 @@ model TradeFeeEvent {
   @@index([postId, createdAt])
   @@index([txSignature])
   @@index([traderUserId, createdAt])
+}
+
+model Report {
+  id            String   @id @default(cuid())
+  entityType    String   // "post" | "user"
+  reason        String
+  details       String?
+  status        String   @default("open") // "open" | "reviewing" | "resolved" | "dismissed"
+  reporterUserId String
+  targetUserId  String?
+  postId        String?
+  reviewedById  String?
+  resolvedAt    DateTime?
+  reviewerNotes String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  reporter   User  @relation("ReportsFiled", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  targetUser User? @relation("ReportsReceived", fields: [targetUserId], references: [id], onDelete: Cascade)
+  post       Post? @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("ReportReviews", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([entityType, status, createdAt])
+  @@index([reporterUserId, createdAt])
+  @@index([targetUserId, status, createdAt])
+  @@index([postId, status, createdAt])
+  @@index([reviewedById, createdAt])
 }
 
 // Like model for post likes

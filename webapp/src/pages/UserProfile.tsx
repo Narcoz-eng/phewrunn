@@ -33,6 +33,7 @@ import {
   Skull,
 } from "lucide-react";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
@@ -484,27 +485,39 @@ export default function UserProfile() {
           </div>
 
           {!isOwnProfile && user && (
-            <Button
-              variant={user.isFollowing ? "outline" : "default"}
-              size="sm"
-              onClick={() => followMutation.mutate()}
-              disabled={followMutation.isPending}
-              className="h-8 px-3 gap-1.5"
-            >
-              {followMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : user.isFollowing ? (
-                <>
-                  <UserMinus className="h-3.5 w-3.5" />
-                  Unfollow
-                </>
-              ) : (
-                <>
-                  <UserPlus className="h-3.5 w-3.5" />
-                  Follow
-                </>
-              )}
-            </Button>
+            <div className="flex items-center gap-2">
+              {session?.user ? (
+                <ReportDialog
+                  targetType="user"
+                  targetId={user.id}
+                  targetLabel={user.username || user.name}
+                  buttonVariant="outline"
+                  buttonSize="sm"
+                  buttonClassName="h-8 px-3 gap-1.5"
+                />
+              ) : null}
+              <Button
+                variant={user.isFollowing ? "outline" : "default"}
+                size="sm"
+                onClick={() => followMutation.mutate()}
+                disabled={followMutation.isPending}
+                className="h-8 px-3 gap-1.5"
+              >
+                {followMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : user.isFollowing ? (
+                  <>
+                    <UserMinus className="h-3.5 w-3.5" />
+                    Unfollow
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="h-3.5 w-3.5" />
+                    Follow
+                  </>
+                )}
+              </Button>
+            </div>
           )}
 
           {isOwnProfile && (

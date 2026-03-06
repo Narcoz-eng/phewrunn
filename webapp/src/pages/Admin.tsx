@@ -69,6 +69,8 @@ import {
   Trash2,
   BadgeCheck,
   Pencil,
+  Coins,
+  Flag,
 } from "lucide-react";
 import {
   BarChart,
@@ -83,9 +85,17 @@ import {
   Cell,
 } from "recharts";
 import { AnnouncementManager } from "@/components/admin/AnnouncementManager";
+import { ReportsManager } from "@/components/admin/ReportsManager";
 import { toast } from "sonner";
 
 const ADMIN_EMAIL = "rengarro@gmail.com";
+
+function formatSolAmount(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 SOL";
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: value >= 1000 ? 0 : 2,
+  })} SOL`;
+}
 
 // Stats card component
 function StatsCard({
@@ -160,6 +170,23 @@ function OverviewTab() {
           loading={isLoading}
         />
         <StatsCard
+          title="Confirmed Trades"
+          value={stats?.confirmedTrades ?? 0}
+          icon={Activity}
+          description="Completed routed swaps"
+          loading={isLoading}
+        />
+        <StatsCard
+          title="Routed Volume"
+          value={formatSolAmount(stats?.routedVolumeSol ?? 0)}
+          icon={Coins}
+          description="SOL-equivalent volume"
+          loading={isLoading}
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatsCard
           title="Average Level"
           value={stats ? stats.averageLevel.toFixed(1) : "0.0"}
           icon={TrendingUp}
@@ -172,9 +199,22 @@ function OverviewTab() {
           description={`${stats?.settlementStats.total ?? 0} settled posts`}
           loading={isLoading}
         />
+        <StatsCard
+          title="Open Reports"
+          value={stats?.openReports ?? 0}
+          icon={Flag}
+          description="Open or reviewing"
+          loading={isLoading}
+        />
+        <StatsCard
+          title="Total Reports"
+          value={stats?.totalReports ?? 0}
+          icon={Shield}
+          loading={isLoading}
+        />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatsCard
           title="Total Likes"
           value={stats?.totalLikes ?? 0}
@@ -191,6 +231,13 @@ function OverviewTab() {
           title="Total Reposts"
           value={stats?.totalReposts ?? 0}
           icon={Repeat2}
+          loading={isLoading}
+        />
+        <StatsCard
+          title="Settled Posts"
+          value={stats?.settlementStats.total ?? 0}
+          icon={Megaphone}
+          description="Posts with finalized outcomes"
           loading={isLoading}
         />
       </div>
@@ -431,7 +478,9 @@ function UsersTab() {
               <TableHead>Level</TableHead>
               <TableHead>XP</TableHead>
               <TableHead>Posts</TableHead>
-              <TableHead>Followers</TableHead>
+              <TableHead>Trader Volume</TableHead>
+              <TableHead>Driven Volume</TableHead>
+              <TableHead>Reports</TableHead>
               <TableHead>Joined</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -440,7 +489,7 @@ function UsersTab() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 9 }).map((_, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-20" />
                     </TableCell>
@@ -449,7 +498,7 @@ function UsersTab() {
               ))
             ) : data?.users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
                   No users found
                 </TableCell>
               </TableRow>
@@ -488,7 +537,30 @@ function UsersTab() {
                   </TableCell>
                   <TableCell className="font-mono">{user.xp.toLocaleString()}</TableCell>
                   <TableCell>{user._count.posts}</TableCell>
-                  <TableCell>{user._count.followers}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{formatSolAmount(user.traderVolumeSol)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {user.confirmedTradeCount} trades
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{formatSolAmount(user.drivenVolumeSol)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {user.drivenTradeCount} routed
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{user.reportCount}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {user.openReportCount} open
+                      </span>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(user.createdAt).toLocaleDateString()}
                   </TableCell>
@@ -774,6 +846,7 @@ function PostsTab() {
               <TableHead>Token</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Engagement</TableHead>
+              <TableHead>Reports</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -782,7 +855,7 @@ function PostsTab() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-20" />
                     </TableCell>
@@ -791,7 +864,7 @@ function PostsTab() {
               ))
             ) : data?.posts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   No posts found
                 </TableCell>
               </TableRow>
@@ -846,6 +919,14 @@ function PostsTab() {
                       <span className="flex items-center gap-1">
                         <Repeat2 className="h-3 w-3" />
                         {post._count.reposts}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{post.reportCount}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {post.openReportCount} open
                       </span>
                     </div>
                   </TableCell>
@@ -1047,7 +1128,7 @@ export default function Admin() {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full max-w-lg grid-cols-4">
+          <TabsList className="grid w-full max-w-2xl grid-cols-5">
             <TabsTrigger value="overview" className="flex items-center gap-2">
               <Activity className="h-4 w-4" />
               Overview
@@ -1059,6 +1140,10 @@ export default function Admin() {
             <TabsTrigger value="posts" className="flex items-center gap-2">
               <FileText className="h-4 w-4" />
               Posts
+            </TabsTrigger>
+            <TabsTrigger value="reports" className="flex items-center gap-2">
+              <Flag className="h-4 w-4" />
+              Reports
             </TabsTrigger>
             <TabsTrigger value="announcements" className="flex items-center gap-2">
               <Megaphone className="h-4 w-4" />
@@ -1076,6 +1161,10 @@ export default function Admin() {
 
           <TabsContent value="posts">
             <PostsTab />
+          </TabsContent>
+
+          <TabsContent value="reports">
+            <ReportsManager />
           </TabsContent>
 
           <TabsContent value="announcements">

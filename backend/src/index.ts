@@ -11,6 +11,7 @@ import { postsRouter } from "./routes/posts.js";
 import { usersRouter } from "./routes/users.js";
 import { adminRouter } from "./routes/admin.js";
 import { notificationsRouter } from "./routes/notifications.js";
+import { reportsRouter } from "./routes/reports.js";
 import { announcementsRouter } from "./routes/announcements.js";
 import { leaderboardRouter } from "./routes/leaderboard.js";
 
@@ -2405,6 +2406,7 @@ app.route("/api/posts", postsRouter);
 app.route("/api/users", usersRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/notifications", notificationsRouter);
+app.route("/api/reports", reportsRouter);
 app.route("/api/announcements", announcementsRouter);
 app.route("/api/leaderboard", leaderboardRouter);
 

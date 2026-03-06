@@ -579,6 +579,10 @@ export const AdminStatsSchema = z.object({
   totalLikes: z.number(),
   totalComments: z.number(),
   totalReposts: z.number(),
+  confirmedTrades: z.number(),
+  routedVolumeSol: z.number(),
+  totalReports: z.number(),
+  openReports: z.number(),
   averageLevel: z.number(),
   settlementStats: z.object({
     total: z.number(),
@@ -605,6 +609,12 @@ export const AdminUserSchema = z.object({
   isBanned: z.boolean().default(false),
   isVerified: z.boolean().default(false),
   createdAt: z.string(),
+  confirmedTradeCount: z.number().default(0),
+  traderVolumeSol: z.number().default(0),
+  drivenTradeCount: z.number().default(0),
+  drivenVolumeSol: z.number().default(0),
+  reportCount: z.number().default(0),
+  openReportCount: z.number().default(0),
   _count: z.object({
     posts: z.number(),
     followers: z.number(),
@@ -665,6 +675,8 @@ export const AdminPostSchema = z.object({
   isWin: z.boolean().nullable(),
   viewCount: z.number(),
   createdAt: z.string(),
+  reportCount: z.number().default(0),
+  openReportCount: z.number().default(0),
   _count: z.object({
     likes: z.number(),
     comments: z.number(),
@@ -699,6 +711,101 @@ export const AdminPostsQuerySchema = z.object({
 });
 
 export type AdminPostsQuery = z.infer<typeof AdminPostsQuerySchema>;
+
+// =====================================================
+// Report Types
+// =====================================================
+
+export const REPORT_ENTITY_TYPE_VALUES = ["post", "user"] as const;
+export const REPORT_REASON_VALUES = [
+  "spam",
+  "scam",
+  "abuse",
+  "harassment",
+  "impersonation",
+  "misleading",
+  "other",
+] as const;
+export const REPORT_STATUS_VALUES = ["open", "reviewing", "resolved", "dismissed"] as const;
+
+export const CreateReportSchema = z.object({
+  targetType: z.enum(REPORT_ENTITY_TYPE_VALUES),
+  targetId: z.string().trim().min(1),
+  reason: z.enum(REPORT_REASON_VALUES),
+  details: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+    z.string().trim().max(500).nullable().optional()
+  ),
+});
+
+export type CreateReport = z.infer<typeof CreateReportSchema>;
+
+const ReportActorSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  username: z.string().nullable(),
+  image: z.string().nullable().optional(),
+});
+
+export const AdminReportSchema = z.object({
+  id: z.string(),
+  entityType: z.enum(REPORT_ENTITY_TYPE_VALUES),
+  reason: z.enum(REPORT_REASON_VALUES),
+  details: z.string().nullable(),
+  status: z.enum(REPORT_STATUS_VALUES),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  resolvedAt: z.string().nullable(),
+  reviewerNotes: z.string().nullable(),
+  reporter: ReportActorSchema,
+  targetUser: ReportActorSchema.nullable().optional(),
+  post: z
+    .object({
+      id: z.string(),
+      content: z.string(),
+      author: ReportActorSchema,
+    })
+    .nullable()
+    .optional(),
+  reviewedBy: ReportActorSchema.nullable().optional(),
+});
+
+export type AdminReport = z.infer<typeof AdminReportSchema>;
+
+export const AdminReportsResponseSchema = z.object({
+  reports: z.array(AdminReportSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+  totalPages: z.number(),
+});
+
+export type AdminReportsResponse = z.infer<typeof AdminReportsResponseSchema>;
+
+export const AdminReportsQuerySchema = z.object({
+  page: z.preprocess(
+    (val) => (val ? parseInt(val as string) : 1),
+    z.number().int().min(1).default(1)
+  ),
+  limit: z.preprocess(
+    (val) => (val ? parseInt(val as string) : 20),
+    z.number().int().min(1).max(100).default(20)
+  ),
+  status: z.union([z.literal("all"), z.enum(REPORT_STATUS_VALUES)]).default("all"),
+  targetType: z.union([z.literal("all"), z.enum(REPORT_ENTITY_TYPE_VALUES)]).default("all"),
+});
+
+export type AdminReportsQuery = z.infer<typeof AdminReportsQuerySchema>;
+
+export const UpdateAdminReportSchema = z.object({
+  status: z.enum(REPORT_STATUS_VALUES),
+  reviewerNotes: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+    z.string().trim().max(500).nullable().optional()
+  ),
+});
+
+export type UpdateAdminReport = z.infer<typeof UpdateAdminReportSchema>;
 
 // =====================================================
 // Announcement Types
