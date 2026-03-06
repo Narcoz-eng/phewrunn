@@ -102,8 +102,28 @@ const CHART_ZOOM_STEP_POINTS = 16;
 const CHART_PAN_STEP_POINTS = 6;
 const CHART_TOUCH_PAN_THRESHOLD_PX = 12;
 const CHART_TOUCH_PAN_STEP_PX = 14;
+const CHART_TOUCH_PINCH_THRESHOLD_PX = 18;
 
 type TradeSide = "buy" | "sell";
+
+function getTouchMidpoint(touches: TouchList): { x: number; y: number } | null {
+  const first = touches[0];
+  const second = touches[1];
+  if (!first || !second) return null;
+  return {
+    x: (first.clientX + second.clientX) / 2,
+    y: (first.clientY + second.clientY) / 2,
+  };
+}
+
+function getTouchDistance(touches: TouchList): number | null {
+  const first = touches[0];
+  const second = touches[1];
+  if (!first || !second) return null;
+  const deltaX = second.clientX - first.clientX;
+  const deltaY = second.clientY - first.clientY;
+  return Math.hypot(deltaX, deltaY);
+}
 
 type JupiterQuoteRequestPayload = {
   inputMint: string;
@@ -522,6 +542,7 @@ interface PostCardProps {
 export function PostCard({ post, className, currentUserId, onLike, onRepost, onComment }: PostCardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const chartInteractionRef = useRef<HTMLDivElement>(null);
   const { connection } = useConnection();
   const wallet = useWallet();
   const { visible: isWalletModalVisible, setVisible: setWalletModalVisible } = useWalletModal();
@@ -575,7 +596,8 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const chartTouchGestureRef = useRef<{
     x: number;
     y: number;
-    mode: "pan" | "scroll" | null;
+    distance: number | null;
+    mode: "pan" | "scroll" | "pinch" | null;
   } | null>(null);
   const chartMouseGestureRef = useRef<{
     x: number;
@@ -3171,21 +3193,100 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       zoomChartWindow,
     ]
   );
+  const resolveChartTouchAnchorIndex = useCallback(
+    (clientX: number) => {
+      if (chartTotalPoints <= 0 || chartWindowBounds.visibleCount <= 0) {
+        return chartActiveIndex ?? 0;
+      }
+      const node = chartInteractionRef.current;
+      if (!node) {
+        return chartActiveIndex ?? chartWindowBounds.endIndex;
+      }
+      const rect = node.getBoundingClientRect();
+      const safeWidth = Math.max(1, rect.width);
+      const relativeRatio = Math.max(0, Math.min(1, (clientX - rect.left) / safeWidth));
+      const span = Math.max(0, chartWindowBounds.visibleCount - 1);
+      return Math.max(
+        0,
+        Math.min(
+          chartTotalPoints - 1,
+          chartWindowBounds.startIndex + Math.round(relativeRatio * span)
+        )
+      );
+    },
+    [
+      chartActiveIndex,
+      chartTotalPoints,
+      chartWindowBounds.endIndex,
+      chartWindowBounds.startIndex,
+      chartWindowBounds.visibleCount,
+    ]
+  );
   const handleChartTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length >= 2) {
+      const midpoint = getTouchMidpoint(event.touches);
+      const distance = getTouchDistance(event.touches);
+      if (!midpoint || distance === null) return;
+      chartTouchGestureRef.current = {
+        x: midpoint.x,
+        y: midpoint.y,
+        distance,
+        mode: "pinch",
+      };
+      return;
+    }
+
     const touch = event.touches[0];
     if (!touch) return;
     chartTouchGestureRef.current = {
       x: touch.clientX,
       y: touch.clientY,
+      distance: null,
       mode: null,
     };
   }, []);
   const handleChartTouchMove = useCallback(
     (event: React.TouchEvent<HTMLDivElement>) => {
       if (!hasProfessionalChartData || chartWindowBounds.visibleCount <= 0) return;
-      const touch = event.touches[0];
       const gesture = chartTouchGestureRef.current;
-      if (!touch || !gesture) return;
+      if (!gesture) return;
+
+      if (event.touches.length >= 2) {
+        const midpoint = getTouchMidpoint(event.touches);
+        const distance = getTouchDistance(event.touches);
+        if (!midpoint || distance === null) return;
+        if (gesture.mode !== "pinch") {
+          gesture.mode = "pinch";
+          gesture.x = midpoint.x;
+          gesture.y = midpoint.y;
+          gesture.distance = distance;
+          return;
+        }
+
+        const priorDistance = gesture.distance ?? distance;
+        const deltaDistance = distance - priorDistance;
+        if (Math.abs(deltaDistance) < CHART_TOUCH_PINCH_THRESHOLD_PX) {
+          return;
+        }
+
+        event.preventDefault();
+        const anchorIndex = resolveChartTouchAnchorIndex(midpoint.x);
+        zoomChartWindow(deltaDistance > 0 ? "in" : "out", anchorIndex);
+        gesture.x = midpoint.x;
+        gesture.y = midpoint.y;
+        gesture.distance = distance;
+        return;
+      }
+
+      const touch = event.touches[0];
+      if (!touch) return;
+      if (gesture.mode === "pinch") {
+        gesture.mode = null;
+        gesture.distance = null;
+        gesture.x = touch.clientX;
+        gesture.y = touch.clientY;
+        return;
+      }
 
       const deltaX = touch.clientX - gesture.x;
       const deltaY = touch.clientY - gesture.y;
@@ -3207,8 +3308,15 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       panChartWindowBy(-steps * CHART_PAN_STEP_POINTS);
       gesture.x = touch.clientX;
       gesture.y = touch.clientY;
+      gesture.distance = null;
     },
-    [chartWindowBounds.visibleCount, hasProfessionalChartData, panChartWindowBy]
+    [
+      chartWindowBounds.visibleCount,
+      hasProfessionalChartData,
+      panChartWindowBy,
+      resolveChartTouchAnchorIndex,
+      zoomChartWindow,
+    ]
   );
   const handleChartTouchEnd = useCallback(() => {
     chartTouchGestureRef.current = null;
@@ -4408,9 +4516,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 size="icon"
                                 onClick={() => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2)}
                                 disabled={!hasProfessionalChartData || !canPanChartLeft}
-                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <ChevronLeft className="h-3 w-3" />
+                                <ChevronLeft className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
                               <Button
                                 type="button"
@@ -4418,9 +4526,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 size="icon"
                                 onClick={() => panChartWindowBy(CHART_PAN_STEP_POINTS * 2)}
                                 disabled={!hasProfessionalChartData || !canPanChartRight}
-                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <ChevronRight className="h-3 w-3" />
+                                <ChevronRight className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
                               <div className="w-px h-3 bg-white/[0.08] mx-0.5" />
                               <Button
@@ -4429,9 +4537,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 size="icon"
                                 onClick={() => zoomChartWindow("in")}
                                 disabled={!hasProfessionalChartData || !canZoomInChart}
-                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <Plus className="h-3 w-3" />
+                                <Plus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
                               <Button
                                 type="button"
@@ -4439,9 +4547,9 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 size="icon"
                                 onClick={() => zoomChartWindow("out")}
                                 disabled={!hasProfessionalChartData || !canZoomOutChart}
-                                className="h-6 w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
                               >
-                                <Minus className="h-3 w-3" />
+                                <Minus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
                               <div className="w-px h-3 bg-white/[0.08] mx-0.5" />
                               <Button
@@ -4449,7 +4557,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 variant="ghost"
                                 onClick={resetChartWindow}
                                 disabled={!hasProfessionalChartData}
-                                className="h-6 px-1.5 text-[10px] text-white/30 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-30"
+                                className="h-7 px-2 sm:h-6 sm:px-1.5 text-[10px] text-white/30 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-30"
                               >
                                 Reset
                               </Button>
@@ -4459,7 +4567,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                                 onClick={centerChartOnEntry}
                                 disabled={!hasProfessionalChartData || chartEntryIndex < 0}
                                 className={cn(
-                                  "h-6 px-1.5 text-[10px] hover:bg-white/[0.06] disabled:opacity-30",
+                                  "h-7 px-2 sm:h-6 sm:px-1.5 text-[10px] hover:bg-white/[0.06] disabled:opacity-30",
                                   isEntryInCurrentView ? "text-blue-400" : "text-white/30 hover:text-white/60"
                                 )}
                               >
@@ -4467,8 +4575,14 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                               </Button>
                             </div>
                           </div>
+                          {isLikelyMobileDevice ? (
+                            <div className="mt-1 text-[10px] text-white/28">
+                              Pinch to zoom. Drag sideways to pan.
+                            </div>
+                          ) : null}
 
                       <div
+                        ref={chartInteractionRef}
                         className={cn(
                           "relative h-[280px] sm:h-[360px] lg:h-[460px] xl:h-[520px] bg-[#080a10] px-1 sm:px-2 pb-2 pt-2 overscroll-contain",
                           hasProfessionalChartData
@@ -4486,7 +4600,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
                         onMouseMove={handleChartMouseMove}
                         onMouseUp={handleChartMouseUp}
                         onMouseLeave={handleChartMouseUp}
-                        style={{ touchAction: "pan-y", userSelect: isChartMousePanning ? "none" : "auto" }}
+                        style={{
+                          touchAction: hasProfessionalChartData ? "pan-y" : "auto",
+                          userSelect: isChartMousePanning ? "none" : "auto",
+                        }}
                       >
                         {hasProfessionalChartData ? (
                           <CandlestickChart
