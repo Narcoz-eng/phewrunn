@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { type ComponentType, useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import {
-  ArrowDownRight,
-  ArrowUpRight,
-  ShieldCheck,
-  ShieldAlert,
-  Sparkles,
-} from "lucide-react";
 import { LevelBar } from "@/components/feed/LevelBar";
+import {
+  ConsistencyGridIcon,
+  OutcomeLiftIcon,
+  PenaltyMarkIcon,
+  RecoveryWindowIcon,
+  SignalCompoundIcon,
+} from "@/components/login/LoginPageIcons";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,7 @@ type ReputationFrame = {
     value: number;
   }>;
   footnote: string;
-  icon: typeof ArrowUpRight;
+  icon: ComponentType<{ className?: string }>;
 };
 
 const REPUTATION_FRAMES: ReputationFrame[] = [
@@ -43,7 +43,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
       { label: "Buyer Flow", value: 52 },
     ],
     footnote: "Strong wins move level fast.",
-    icon: ArrowUpRight,
+    icon: OutcomeLiftIcon,
   },
   {
     id: "soft-recovery",
@@ -60,7 +60,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
       { label: "Buyer Flow", value: 44 },
     ],
     footnote: "Discipline protects edge.",
-    icon: ShieldCheck,
+    icon: RecoveryWindowIcon,
   },
   {
     id: "veteran-streak",
@@ -77,7 +77,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
       { label: "Buyer Flow", value: 81 },
     ],
     footnote: "Good calls create gravity.",
-    icon: Sparkles,
+    icon: ConsistencyGridIcon,
   },
   {
     id: "severe-loss",
@@ -94,7 +94,7 @@ const REPUTATION_FRAMES: ReputationFrame[] = [
       { label: "Buyer Flow", value: 34 },
     ],
     footnote: "30%+ losses skip recovery.",
-    icon: ShieldAlert,
+    icon: PenaltyMarkIcon,
   },
 ];
 
@@ -303,7 +303,7 @@ export function ReputationEngine() {
           <div className="rounded-[24px] border border-primary/18 bg-[linear-gradient(180deg,hsl(var(--primary)/0.1),transparent_75%)] p-4">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-primary/25 bg-primary/10">
-                <ArrowDownRight className="h-4 w-4 text-primary" />
+                <SignalCompoundIcon className="h-4 w-4 text-primary" />
               </div>
               <div>
                 <div className="text-sm font-semibold tracking-tight">

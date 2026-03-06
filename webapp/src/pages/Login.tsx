@@ -9,19 +9,23 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { LevelBar } from "@/components/feed/LevelBar";
 import { CreatorFeeRailIcon } from "@/components/login/CreatorFeeRailIcon";
+import {
+  CommunityTrustIcon,
+  FlowRouteIcon,
+  InboxRouteIcon,
+  LevelTierIcon,
+  OutcomeLiftIcon,
+  PenaltyMarkIcon,
+  ProofShieldIcon,
+  RouteArrowIcon,
+  SignalBurstIcon,
+  SignalTargetIcon,
+  TimingWindowIcon,
+  ConsistencyGridIcon,
+} from "@/components/login/LoginPageIcons";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
-import {
-  ArrowRight,
-  Clock,
-  Loader2,
-  Mail,
-  Shield,
-  Sparkles,
-  Target,
-  TrendingUp,
-  Users,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   LIQUIDATION_LEVEL,
@@ -192,14 +196,14 @@ const earlyCallerData = [
 
 const timingPillars = [
   {
-    icon: TrendingUp,
+    icon: FlowRouteIcon,
     title: "Early good alpha gets the cleanest flow",
     description:
       "The first convincing post catches traders before the market gets crowded, which means better attention and more routed buys.",
     accent: "border-gain/20 bg-gain/5 text-gain",
   },
   {
-    icon: Shield,
+    icon: ProofShieldIcon,
     title: "Being right matters more than being loud",
     description:
       "The platform rewards conviction the market can verify, not volume. Early plus accurate is what creates separation.",
@@ -209,21 +213,21 @@ const timingPillars = [
 
 const reputationPillars = [
   {
-    icon: TrendingUp,
+    icon: OutcomeLiftIcon,
     title: "Good calls lift your level",
     description:
       "Settled wins become visible proof. The next trader sees stronger signal before they even open your post.",
     accent: "border-gain/20 bg-gain/5 text-gain",
   },
   {
-    icon: Shield,
+    icon: PenaltyMarkIcon,
     title: "Bad calls mark you down in public",
     description:
       "Weak conviction and severe misses cool trust, cut reach, and force you to earn the edge back the hard way.",
     accent: "border-loss/20 bg-loss/5 text-loss",
   },
   {
-    icon: Sparkles,
+    icon: ConsistencyGridIcon,
     title: "Consistency unlocks protection",
     description:
       "Veteran tiers reward traders who keep putting up quality outcomes instead of farming attention with noise.",
@@ -268,19 +272,19 @@ const levelRules = [
 
 const features = [
   {
-    icon: Target,
+    icon: SignalTargetIcon,
     title: "Post Good Alpha First",
     description:
       "Every call is timestamped in public. When you are early and right, the receipts stay attached to your name.",
   },
   {
-    icon: TrendingUp,
+    icon: FlowRouteIcon,
     title: "Get Paid Every Time They Buy",
     description:
       "Every routed buy from your post sends you 0.5%. Stronger calls create stronger fee momentum.",
   },
   {
-    icon: Users,
+    icon: CommunityTrustIcon,
     title: "Build Reputation That Compounds",
     description:
       "Accuracy, level, and trust all move off outcomes the market can see. Good calls pull you up. Bad calls show too.",
@@ -325,7 +329,7 @@ function PrivyLoginButton() {
             <>
               <span className="flex min-w-0 flex-1 items-center gap-3">
                 <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-950/10 bg-slate-950/10">
-                  <Mail className="h-4 w-4" />
+                  <InboxRouteIcon className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1 space-y-0.5 pr-2">
                   <span className="block truncate text-sm font-semibold leading-tight">{emailLabel}</span>
@@ -334,7 +338,7 @@ function PrivyLoginButton() {
                   </span>
                 </span>
               </span>
-              <ArrowRight className="h-4 w-4 shrink-0" />
+              <RouteArrowIcon className="h-4 w-4 shrink-0" />
             </>
           )}
         </Button>
@@ -364,7 +368,7 @@ function PrivyLoginButton() {
                   </span>
                 </span>
               </span>
-              <ArrowRight className="h-4 w-4 shrink-0" />
+              <RouteArrowIcon className="h-4 w-4 shrink-0" />
             </>
           )}
         </Button>
@@ -524,7 +528,7 @@ export default function Login() {
             >
               {/* Badge */}
               <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] font-medium text-primary sm:px-3.5 sm:text-xs">
-                <Sparkles className="w-3.5 h-3.5" />
+                <SignalBurstIcon className="w-3.5 h-3.5" />
                 Good alpha first. Fees follow.
               </div>
 
@@ -673,12 +677,12 @@ export default function Login() {
                             </div>
                           </div>
                           <div className="w-9 h-9 rounded-2xl border border-border/50 bg-background/60 flex items-center justify-center shrink-0">
-                            <Shield className="w-4 h-4 text-primary" />
+                            <ProofShieldIcon className="w-4 h-4 text-primary" />
                           </div>
                         </div>
                         {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
                         <div className="mt-3 flex items-start gap-2 rounded-2xl border border-border/45 bg-background/55 px-3 py-3">
-                          <Shield className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
+                          <ProofShieldIcon className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
                           <p className="text-[11px] text-muted-foreground leading-relaxed">
                             Secure email verification. Your account opens instantly and you can connect payout rails later.
                           </p>
@@ -785,7 +789,7 @@ export default function Login() {
                   <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-6 shadow-[0_20px_60px_-30px_hsl(var(--primary)/0.2)]">
                     <div className="text-center mb-2">
                       <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-xs font-medium text-primary mb-3">
-                        <Sparkles className="w-3 h-3" />
+                        <SignalBurstIcon className="w-3 h-3" />
                         Live Trade Simulation
                       </div>
                       <h3 className="font-heading text-lg font-bold">
@@ -810,7 +814,7 @@ export default function Login() {
                 >
                   <div>
                     <div className="inline-flex items-center gap-2 text-xs font-semibold text-gain uppercase tracking-widest mb-3">
-                      <Clock className="w-3.5 h-3.5" />
+                      <TimingWindowIcon className="w-3.5 h-3.5" />
                       Time Is Everything
                     </div>
                     <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
@@ -895,7 +899,7 @@ export default function Login() {
 
                   <div className="rounded-xl border border-gain/25 bg-gain/5 p-4 flex items-start gap-3">
                     <div className="w-8 h-8 rounded-lg bg-gain/15 border border-gain/25 flex items-center justify-center shrink-0 mt-0.5">
-                      <TrendingUp className="w-4 h-4 text-gain" />
+                      <FlowRouteIcon className="w-4 h-4 text-gain" />
                     </div>
                     <div>
                       <div className="text-sm font-semibold text-gain">
@@ -947,7 +951,7 @@ export default function Login() {
               >
                 <div>
                   <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
-                    <Sparkles className="w-3.5 h-3.5" />
+                    <SignalBurstIcon className="w-3.5 h-3.5" />
                     Reputation Market
                   </div>
                   <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
@@ -1021,7 +1025,7 @@ export default function Login() {
             >
               <div className="text-center mb-8">
                 <div className="inline-flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-widest mb-3">
-                  <Sparkles className="w-3.5 h-3.5" />
+                  <LevelTierIcon className="w-3.5 h-3.5" />
                   Level System
                 </div>
                 <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
@@ -1162,7 +1166,7 @@ export default function Login() {
                 className="space-y-4"
               >
                 <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
-                  <Sparkles className="w-3.5 h-3.5" />
+                  <FlowRouteIcon className="w-3.5 h-3.5" />
                   0.5% per buy. Reputation earned in public.
                 </div>
                 <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">

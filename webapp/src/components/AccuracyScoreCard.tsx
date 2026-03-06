@@ -1,4 +1,4 @@
-import { TrendingUp } from "lucide-react";
+import { FlowRouteIcon } from "@/components/login/LoginPageIcons";
 import { cn } from "@/lib/utils";
 
 interface AccuracyScoreCardProps {
@@ -53,7 +53,7 @@ export function AccuracyScoreCard({
 
             {/* Trend Indicator */}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 sm:mt-2">
-              <TrendingUp
+              <FlowRouteIcon
                 className="h-3.5 w-3.5 sm:h-4 sm:w-4"
                 style={{ color: "hsl(var(--gain))" }}
               />
