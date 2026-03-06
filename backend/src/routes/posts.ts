@@ -172,7 +172,9 @@ const opportunisticMaintenanceEnabled = (() => {
   const raw = process.env.POSTS_ENABLE_OPPORTUNISTIC_MAINTENANCE?.trim().toLowerCase();
   if (raw === "true") return true;
   if (raw === "false") return false;
-  return process.env.NODE_ENV !== "production";
+  // In production, keep the fallback runner enabled unless explicitly turned off.
+  // It is throttled and only activates when cron is missing or unhealthy.
+  return true;
 })();
 
 function isCronMaintenanceHealthy(): boolean {
