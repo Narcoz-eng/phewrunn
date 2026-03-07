@@ -196,6 +196,28 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeShareBps" INTEGER NOT NULL DEFAULT 100;`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeePayoutAddress" TEXT;`,
     `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "dexscreenerUrl" TEXT;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "tokenSymbol" TEXT;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "tokenName" TEXT;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "tokenImage" TEXT;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "mcap1h" DOUBLE PRECISION;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "mcap6h" DOUBLE PRECISION;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "isWin1h" BOOLEAN;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "isWin6h" BOOLEAN;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "percentChange1h" DOUBLE PRECISION;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "percentChange6h" DOUBLE PRECISION;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "recoveryEligible" BOOLEAN;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "settled6h" BOOLEAN NOT NULL DEFAULT false;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "levelChange1h" INTEGER;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "levelChange6h" INTEGER;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "viewCount" INTEGER NOT NULL DEFAULT 0;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "trackingMode" TEXT;`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "lastMcapUpdate" TIMESTAMP(3);`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "walletProvider" TEXT;`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "walletConnectedAt" TIMESTAMP(3);`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bio" TEXT;`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "isVerified" BOOLEAN NOT NULL DEFAULT false;`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "lastUsernameUpdate" TIMESTAMP(3);`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "lastPhotoUpdate" TIMESTAMP(3);`,
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "dismissed" BOOLEAN NOT NULL DEFAULT false;`,
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "clickedAt" TIMESTAMP(3);`,
     `CREATE TABLE IF NOT EXISTS "AggregateSnapshot" (
@@ -217,7 +239,15 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
   ] as const;
 
   for (const statement of statements) {
-    await prisma.$executeRawUnsafe(statement);
+    try {
+      await prisma.$executeRawUnsafe(statement);
+    } catch (err) {
+      // Log but continue - one failing guardrail shouldn't block the rest
+      console.warn("[Prisma] Compat guardrail failed (continuing):", {
+        statement: statement.substring(0, 80),
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 

@@ -287,7 +287,8 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
     normalizedMessage.includes("unknown field") ||
     (normalizedMessage.includes("column") && normalizedMessage.includes("does not exist")) ||
     (normalizedMessage.includes("table") && normalizedMessage.includes("does not exist")) ||
-    (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist"))
+    (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist")) ||
+    (normalizedMessage.includes("invalid") && normalizedMessage.includes("invocation"))
   );
 }
 
