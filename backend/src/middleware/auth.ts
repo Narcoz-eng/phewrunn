@@ -46,7 +46,7 @@ const SESSION_COOKIE_PATTERN =
 const AUTH_ERROR_LOG_COOLDOWN_MS = 15_000;
 const authErrorLastLoggedAt = new Map<string, number>();
 const SESSION_CACHE_TTL_MS = 8_000;
-const SESSION_CACHE_MISS_TTL_MS = 2_000;
+const SESSION_CACHE_MISS_TTL_MS = 300;
 const SESSION_CACHE_MAX_ENTRIES = 5_000;
 const sessionLookupCache = new Map<string, { expiresAt: number; session: AuthSession | null }>();
 

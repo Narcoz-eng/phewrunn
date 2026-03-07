@@ -5,8 +5,12 @@ import { verifySignedSessionToken } from "./session-token.js";
 
 const LOCAL_REVOKED_SESSION_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const SESSION_REVOCATION_IDENTIFIER = "session-revocation";
+const SESSION_REVOCATION_DB_ENABLED =
+  process.env.AUTH_SESSION_REVOCATION_DB_ENABLED?.trim().toLowerCase() === "true";
+const SESSION_REVOCATION_LOG_COOLDOWN_MS = 15_000;
 
 const localRevokedSessionTokens = new Map<string, number>();
+let lastSessionRevocationDbWarningAt = 0;
 
 function getRevokedSessionKey(jti: string): string {
   return `auth:revoked-session:${jti}`;
@@ -37,10 +41,24 @@ function rememberRevokedSessionJti(jti: string, expiresAtMs: number): void {
   localRevokedSessionTokens.set(jti, expiresAtMs);
 }
 
+function logSessionRevocationDbWarning(stage: string, error: unknown): void {
+  const now = Date.now();
+  if (now - lastSessionRevocationDbWarningAt < SESSION_REVOCATION_LOG_COOLDOWN_MS) {
+    return;
+  }
+  lastSessionRevocationDbWarningAt = now;
+  console.warn(`[auth/session-revocation] ${stage} unavailable; continuing without DB persistence`, {
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
+
 async function persistSessionRevocationToDatabase(
   jti: string,
   expiresAt: Date
 ): Promise<void> {
+  if (!SESSION_REVOCATION_DB_ENABLED) {
+    return;
+  }
   await prisma.verification.create({
     data: {
       id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
@@ -54,6 +72,9 @@ async function persistSessionRevocationToDatabase(
 async function readSessionRevocationFromDatabase(
   jti: string
 ): Promise<{ expiresAt: Date } | null> {
+  if (!SESSION_REVOCATION_DB_ENABLED) {
+    return null;
+  }
   return await prisma.verification.findFirst({
     where: {
       identifier: SESSION_REVOCATION_IDENTIFIER,
@@ -74,10 +95,14 @@ export async function revokeSignedSessionToken(token: string): Promise<void> {
   if (ttlMs <= 0) return;
 
   rememberRevokedSessionJti(verified.jti, verified.expiresAt.getTime());
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     redisSetString(getRevokedSessionKey(verified.jti), "1", ttlMs),
     persistSessionRevocationToDatabase(verified.jti, verified.expiresAt),
   ]);
+  const dbResult = results[1];
+  if (dbResult?.status === "rejected") {
+    logSessionRevocationDbWarning("persist", dbResult.reason);
+  }
 }
 
 export async function revokeSignedSessionTokens(tokens: string[]): Promise<void> {
@@ -105,7 +130,10 @@ export async function isSignedSessionTokenRevoked(
     return true;
   }
 
-  const dbHit = await readSessionRevocationFromDatabase(verified.jti).catch(() => null);
+  const dbHit = await readSessionRevocationFromDatabase(verified.jti).catch((error) => {
+    logSessionRevocationDbWarning("read", error);
+    return null;
+  });
   if (dbHit) {
     rememberRevokedSessionJti(verified.jti, dbHit.expiresAt.getTime());
     return true;
@@ -115,6 +143,9 @@ export async function isSignedSessionTokenRevoked(
 }
 
 export async function pruneExpiredSessionRevocations(batchSize: number): Promise<number> {
+  if (!SESSION_REVOCATION_DB_ENABLED) {
+    return 0;
+  }
   const expiredRows = await prisma.verification.findMany({
     where: {
       identifier: SESSION_REVOCATION_IDENTIFIER,
