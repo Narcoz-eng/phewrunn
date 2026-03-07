@@ -1,6 +1,11 @@
 import { createMiddleware } from "hono/factory";
 import { auth } from "../lib/auth.js";
 import { prisma } from "../prisma.js";
+import {
+  appendAuthDecision,
+  buildApiMeAuthTrace,
+  type ApiMeAuthTrace,
+} from "../lib/auth-trace.js";
 
 // Define the user type that will be available in context
 // This matches the Better Auth user structure
@@ -42,6 +47,7 @@ export interface SimpleUser {
 export type AuthVariables = {
   user: SimpleUser | null;
   session: Awaited<ReturnType<typeof auth.api.getSession>> | null;
+  authTrace: ApiMeAuthTrace | null;
 };
 
 type AuthSession = Awaited<ReturnType<typeof auth.api.getSession>>;
@@ -143,10 +149,14 @@ export function invalidateResolvedSessionCache(tokens: string[]): void {
  * Sets user to null if no session or invalid session
  * Does NOT block requests - use requireAuth for protected routes
  */
-export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables }>(
+export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables & { requestId?: string } }>(
   async (c, next) => {
     let session: AuthSession | null = null;
     const path = c.req.path;
+    const shouldTraceApiMe = path === "/api/me";
+    const authTrace = shouldTraceApiMe
+      ? buildApiMeAuthTrace(c.req.raw.headers, c.get("requestId") ?? null)
+      : null;
     const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
     const bearerToken = parseBearerToken(authHeader);
     const cookieHeader = c.req.header("cookie");
@@ -160,8 +170,10 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
     let cacheHit = false;
 
     if (shouldSkipAuthResolution(path) || (!hasSessionCookie && !bearerToken)) {
+      appendAuthDecision(authTrace, "middleware:auth_resolution_skipped_or_no_credentials");
       c.set("user", null);
       c.set("session", null);
+      c.set("authTrace", authTrace);
       return next();
     }
 
@@ -170,6 +182,7 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
       if (cachedSession !== undefined) {
         session = cachedSession;
         cacheHit = true;
+        appendAuthDecision(authTrace, "middleware:session_lookup_cache_hit");
       }
     }
 
@@ -177,10 +190,13 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
       // First try cookie-based session.
       if (hasSessionCookie) {
         try {
+          appendAuthDecision(authTrace, "middleware:cookie_session_lookup_start");
           session = await auth.api.getSession({
             headers: c.req.raw.headers,
+            trace: authTrace,
           });
         } catch (error) {
+          appendAuthDecision(authTrace, "middleware:cookie_session_lookup_error");
           logAuthLookupError("cookie", error);
         }
       }
@@ -189,11 +205,13 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
       // failures do not automatically skip bearer auth.
       if (!session?.user && bearerToken) {
         try {
-          const bearerSession = await auth.api.getSessionByToken(bearerToken);
+          appendAuthDecision(authTrace, "middleware:bearer_session_lookup_start");
+          const bearerSession = await auth.api.getSessionByToken(bearerToken, authTrace);
           if (bearerSession?.user) {
             session = bearerSession as AuthSession;
           }
         } catch (error) {
+          appendAuthDecision(authTrace, "middleware:bearer_session_lookup_error");
           logAuthLookupError("bearer", error);
         }
       }
@@ -208,6 +226,7 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
     }
 
     if (session?.user) {
+      appendAuthDecision(authTrace, "middleware:session_resolved");
       // Create simplified user object for backwards compatibility
       const user: SimpleUser = {
         id: session.user.id,
@@ -221,9 +240,12 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
       c.set("user", user);
       c.set("session", session);
     } else {
+      appendAuthDecision(authTrace, "middleware:session_missing");
       c.set("user", null);
       c.set("session", null);
     }
+
+    c.set("authTrace", authTrace);
 
     return next();
   }

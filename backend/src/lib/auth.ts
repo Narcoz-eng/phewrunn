@@ -1,10 +1,21 @@
 import { prisma } from "../prisma.js";
-import { verifySignedSessionToken, type SessionTokenUserClaims } from "./session-token.js";
+import {
+  inspectSignedSessionToken,
+  verifySignedSessionToken,
+  type SessionTokenUserClaims,
+} from "./session-token.js";
 import {
   isSignedSessionTokenRevoked,
   pruneExpiredSessionRevocations,
   revokeSignedSessionTokens,
 } from "./session-revocation.js";
+import {
+  appendAuthDecision,
+  createAuthTokenAttemptTrace,
+  getAuthCookieEntries,
+  type ApiMeAuthTrace,
+  type AuthTokenAttemptTrace,
+} from "./auth-trace.js";
 
 const SESSION_USER_SELECT = {
   id: true,
@@ -356,32 +367,10 @@ function toSessionUser(
   };
 }
 
-function getCookieValues(cookieHeader: string | null | undefined, name: string): string[] {
-  if (!cookieHeader) return [];
-
-  const values: string[] = [];
-  for (const part of cookieHeader.split(";")) {
-    const [rawKey, ...rest] = part.trim().split("=");
-    if (rawKey !== name) continue;
-    const value = rest.join("=");
-    if (!value) continue;
-    try {
-      values.push(decodeURIComponent(value));
-    } catch {
-      values.push(value);
-    }
-  }
-  return values;
-}
-
 function getSessionTokensFromHeaders(headers: Headers): string[] {
-  const cookieHeader = headers.get("cookie");
-  const tokens = [
-    ...getCookieValues(cookieHeader, "phew.session_token"),
-    ...getCookieValues(cookieHeader, "better-auth.session_token"),
-    ...getCookieValues(cookieHeader, "auth.session_token"),
-    ...getCookieValues(cookieHeader, "session_token"),
-  ].filter((token) => token.length > 0);
+  const tokens = getAuthCookieEntries(headers.get("cookie"))
+    .map((entry) => entry.value)
+    .filter((token) => token.length > 0);
   return [...new Set(tokens)];
 }
 
@@ -391,7 +380,9 @@ type SessionUserLookupResult =
   | { status: "unavailable" };
 
 async function findSessionUserByIdWithFallback(
-  userId: string
+  userId: string,
+  trace?: ApiMeAuthTrace | null,
+  attempt?: AuthTokenAttemptTrace | null
 ): Promise<SessionUserLookupResult> {
   for (const mode of getAuthLookupModes(sessionUserLookupCompatibilityMode)) {
     const stage =
@@ -408,6 +399,7 @@ async function findSessionUserByIdWithFallback(
           : SESSION_USER_MINIMAL_SELECT;
 
     try {
+      appendAuthDecision(trace, `user_lookup:${stage}:start`);
       const candidateUser = await withSessionLookupTimeout(
         prisma.user.findUnique({
           where: { id: userId },
@@ -416,11 +408,17 @@ async function findSessionUserByIdWithFallback(
         stage
       );
       if (!candidateUser) {
+        appendAuthDecision(trace, `user_lookup:${stage}:not_found`);
         return { status: "not_found" };
       }
+      if (attempt) {
+        attempt.userRowFound = true;
+      }
+      appendAuthDecision(trace, `user_lookup:${stage}:found`);
       return { status: "found", user: toSessionUser(candidateUser) };
     } catch (error) {
       if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
+        appendAuthDecision(trace, `user_lookup:${stage}:unavailable`);
         markSessionStoreUnavailable(stage, error);
         return { status: "unavailable" };
       }
@@ -440,6 +438,7 @@ async function findSessionUserByIdWithFallback(
       console.warn("[auth] User lookup unavailable for signed token fallback", {
         message: getErrorMessage(error),
       });
+      appendAuthDecision(trace, `user_lookup:${stage}:compat_unavailable`);
       return { status: "unavailable" };
     }
   }
@@ -508,27 +507,61 @@ function buildSessionUserFromTokenClaims(
   });
 }
 
-async function getSessionFromSignedToken(token: string): Promise<SessionRecord | null> {
+async function getSessionFromSignedToken(
+  token: string,
+  trace?: ApiMeAuthTrace | null,
+  attempt?: AuthTokenAttemptTrace | null
+): Promise<SessionRecord | null> {
   const verified = verifySignedSessionToken(token);
-  if (!verified) return null;
-  if (await isSignedSessionTokenRevoked(verified)) return null;
+  if (!verified) {
+    if (attempt && !attempt.reason) {
+      attempt.reason = "signed_token_verification_failed";
+    }
+    appendAuthDecision(trace, "signed_token:verification_failed");
+    return null;
+  }
+  appendAuthDecision(trace, "signed_token:verified");
+  if (await isSignedSessionTokenRevoked(verified, attempt)) {
+    if (attempt && !attempt.reason) {
+      attempt.reason = "signed_token_revoked";
+    }
+    appendAuthDecision(trace, "signed_token:revoked");
+    return null;
+  }
 
   let resolvedUser: SessionRecord["user"] | null = verified.userClaims
     ? buildSessionUserFromTokenClaims(verified.userId, verified.userClaims)
     : null;
+  if (resolvedUser) {
+    appendAuthDecision(trace, "signed_token:user_claims_used");
+  }
 
   if (!resolvedUser) {
-    const userLookup = await findSessionUserByIdWithFallback(verified.userId);
+    const userLookup = await findSessionUserByIdWithFallback(verified.userId, trace, attempt);
     if (userLookup.status === "found") {
       resolvedUser = userLookup.user;
     } else if (userLookup.status === "unavailable" && verified.userClaims) {
       resolvedUser = buildSessionUserFromTokenClaims(verified.userId, verified.userClaims);
+      appendAuthDecision(trace, "signed_token:user_claims_used_after_db_unavailable");
     }
   }
 
-  if (!resolvedUser) return null;
+  if (!resolvedUser) {
+    if (attempt && !attempt.reason) {
+      attempt.reason = "signed_token_user_unresolved";
+    }
+    appendAuthDecision(trace, "signed_token:user_unresolved");
+    return null;
+  }
 
   const syntheticNow = new Date();
+  if (attempt) {
+    attempt.sessionResolved = true;
+    if (!attempt.reason) {
+      attempt.reason = "signed_token_session_resolved";
+    }
+  }
+  appendAuthDecision(trace, "signed_token:session_resolved");
   return {
     session: {
       id: `stateless:${verified.userId}`,
@@ -558,7 +591,9 @@ type DbSessionLookupResult =
   | { status: "unavailable" };
 
 async function findDbSessionByTokenWithCompatibility(
-  token: string
+  token: string,
+  trace?: ApiMeAuthTrace | null,
+  attempt?: AuthTokenAttemptTrace | null
 ): Promise<DbSessionLookupResult> {
   for (const mode of getAuthLookupModes(sessionRecordLookupCompatibilityMode)) {
     const stage =
@@ -569,6 +604,7 @@ async function findDbSessionByTokenWithCompatibility(
           : "session.findUnique(minimal)";
 
     try {
+      appendAuthDecision(trace, `db_session_lookup:${stage}:start`);
       if (mode === "full") {
         const fullSession = await withSessionLookupTimeout(
           prisma.session.findUnique({
@@ -588,6 +624,14 @@ async function findDbSessionByTokenWithCompatibility(
           stage
         );
         markSessionStoreAvailable();
+        if (fullSession && attempt) {
+          attempt.sessionRowFound = true;
+          attempt.userRowFound = Boolean(fullSession.user);
+        }
+        appendAuthDecision(
+          trace,
+          fullSession ? `db_session_lookup:${stage}:found` : `db_session_lookup:${stage}:not_found`
+        );
         return fullSession
           ? {
               status: "found",
@@ -620,6 +664,16 @@ async function findDbSessionByTokenWithCompatibility(
           stage
         );
         markSessionStoreAvailable();
+        if (fallbackSession && attempt) {
+          attempt.sessionRowFound = true;
+          attempt.userRowFound = Boolean(fallbackSession.user);
+        }
+        appendAuthDecision(
+          trace,
+          fallbackSession
+            ? `db_session_lookup:${stage}:found`
+            : `db_session_lookup:${stage}:not_found`
+        );
         return fallbackSession
           ? {
               status: "found",
@@ -649,6 +703,14 @@ async function findDbSessionByTokenWithCompatibility(
         stage
       );
       markSessionStoreAvailable();
+      if (minimalSession && attempt) {
+        attempt.sessionRowFound = true;
+        attempt.userRowFound = Boolean(minimalSession.user);
+      }
+      appendAuthDecision(
+        trace,
+        minimalSession ? `db_session_lookup:${stage}:found` : `db_session_lookup:${stage}:not_found`
+      );
       return minimalSession
         ? {
             status: "found",
@@ -662,6 +724,7 @@ async function findDbSessionByTokenWithCompatibility(
         : { status: "not_found" };
     } catch (error) {
       if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
+        appendAuthDecision(trace, `db_session_lookup:${stage}:unavailable`);
         markSessionStoreUnavailable(stage, error);
         return { status: "unavailable" };
       }
@@ -681,6 +744,7 @@ async function findDbSessionByTokenWithCompatibility(
       console.warn("[auth] Session lookup unavailable after compatibility fallbacks", {
         message: getErrorMessage(error),
       });
+      appendAuthDecision(trace, `db_session_lookup:${stage}:compat_unavailable`);
       return { status: "unavailable" };
     }
   }
@@ -688,21 +752,71 @@ async function findDbSessionByTokenWithCompatibility(
   return { status: "unavailable" };
 }
 
-async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
-  if (!token) return null;
-  const verifiedSignedToken = verifySignedSessionToken(token);
+async function getSessionFromToken(
+  token: string | null,
+  trace?: ApiMeAuthTrace | null,
+  attempt?: AuthTokenAttemptTrace | null
+): Promise<SessionRecord | null> {
+  if (!token) {
+    if (attempt && !attempt.reason) {
+      attempt.reason = "missing_token";
+    }
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:missing_token`);
+    return null;
+  }
+
+  const signedInspection = looksLikeSignedSessionToken(token)
+    ? inspectSignedSessionToken(token)
+    : null;
+  const verifiedSignedToken = signedInspection?.verified ?? null;
+  if (attempt) {
+    attempt.signedTokenPresent = looksLikeSignedSessionToken(token);
+    attempt.signedTokenParseSuccess = Boolean(signedInspection?.payloadParsed);
+    attempt.signatureVerifySuccess = Boolean(signedInspection?.signatureVerified);
+    attempt.tokenExpiryValid = Boolean(
+      signedInspection &&
+        signedInspection.payloadValid &&
+        !signedInspection.expired &&
+        !signedInspection.futureIat
+    );
+  }
+  if (signedInspection?.verified) {
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:signed_token_verified`);
+  } else if (signedInspection) {
+    appendAuthDecision(
+      trace,
+      `${attempt?.source ?? "token"}:signed_token_invalid:${signedInspection.failureReason ?? "unknown"}`
+    );
+    if (attempt && !attempt.reason) {
+      attempt.reason = `signed_token_${signedInspection.failureReason ?? "invalid"}`;
+    }
+  } else {
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:non_signed_token`);
+  }
 
   const now = Date.now();
   const cached = sessionCache.get(token);
   if (cached && cached.expiresAtMs > now) {
+    if (attempt) {
+      attempt.sessionResolved = Boolean(cached.value);
+      if (!attempt.reason) {
+        attempt.reason = cached.value ? "session_cache_hit" : "session_cache_miss";
+      }
+    }
+    appendAuthDecision(
+      trace,
+      cached.value ? `${attempt?.source ?? "token"}:session_cache_hit` : `${attempt?.source ?? "token"}:session_cache_hit_null`
+    );
     return cached.value;
   }
   if (cached) {
     sessionCache.delete(token);
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:session_cache_expired`);
   }
 
   const existingInFlight = sessionFetchInFlight.get(token);
   if (existingInFlight) {
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:session_lookup_inflight_reused`);
     return existingInFlight;
   }
 
@@ -733,37 +847,66 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
     };
 
     const resolveSignedFallback = async (): Promise<SessionRecord | null> => {
-      if (await isSignedSessionTokenRevoked(verifiedSignedToken)) {
-        return null;
+      appendAuthDecision(trace, `${attempt?.source ?? "token"}:signed_fallback_start`);
+      const fallbackSession = await getSessionFromSignedToken(token, trace, attempt);
+      if (!fallbackSession && attempt && !attempt.reason) {
+        attempt.reason = "signed_fallback_unresolved";
       }
-      return await getSessionFromSignedToken(token);
+      appendAuthDecision(
+        trace,
+        fallbackSession
+          ? `${attempt?.source ?? "token"}:signed_fallback_resolved`
+          : `${attempt?.source ?? "token"}:signed_fallback_null`
+      );
+      return fallbackSession;
     };
 
     if (verifiedSignedToken) {
-      const signedSession = await getSessionFromSignedToken(token);
+      const signedSession = await getSessionFromSignedToken(token, trace, attempt);
       return cacheAndReturn(signedSession);
     }
 
     if (sessionStoreUnavailableUntilMs > Date.now()) {
+      appendAuthDecision(trace, `${attempt?.source ?? "token"}:session_store_circuit_open`);
       const fallback = await resolveSignedFallback();
       return cacheAndReturn(fallback);
     }
 
-    const dbSessionLookup = await findDbSessionByTokenWithCompatibility(token);
+    if (attempt) {
+      attempt.fallbackToDbUsed = true;
+    }
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:db_fallback_start`);
+    const dbSessionLookup = await findDbSessionByTokenWithCompatibility(token, trace, attempt);
     if (dbSessionLookup.status === "unavailable") {
+      if (attempt && !attempt.reason) {
+        attempt.reason = "db_session_lookup_unavailable";
+      }
       const fallback = await resolveSignedFallback();
       return cacheAndReturn(fallback);
     }
     if (dbSessionLookup.status === "not_found") {
+      if (attempt && !attempt.reason) {
+        attempt.reason = "db_session_not_found";
+      }
       const fallback = await resolveSignedFallback();
       return cacheAndReturn(fallback);
     }
     const dbSession = dbSessionLookup.session;
     if (!verifiedSignedToken) {
       logSignedTokenDbFallback(token);
+      appendAuthDecision(trace, `${attempt?.source ?? "token"}:db_fallback_used_after_signed_verify_failure`);
     }
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
+      if (attempt && !attempt.reason) {
+        attempt.reason = !dbSession?.user ? "db_session_user_missing" : "db_session_expired";
+      }
+      appendAuthDecision(
+        trace,
+        !dbSession?.user
+          ? `${attempt?.source ?? "token"}:db_session_user_missing`
+          : `${attempt?.source ?? "token"}:db_session_expired`
+      );
       const signedTokenSession = await resolveSignedFallback();
       return cacheAndReturn(signedTokenSession);
     }
@@ -779,6 +922,13 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
       },
       user: dbSession.user as SessionRecord["user"],
     };
+    if (attempt) {
+      attempt.sessionResolved = true;
+      attempt.sessionRowFound = true;
+      attempt.userRowFound = true;
+      attempt.reason = "db_session_resolved";
+    }
+    appendAuthDecision(trace, `${attempt?.source ?? "token"}:db_session_resolved`);
     return cacheAndReturn(sessionRecord);
   })().finally(() => {
     sessionFetchInFlight.delete(token);
@@ -825,10 +975,26 @@ function buildExpiredCookie(name: string, domain?: string): string {
 
 export const auth = {
   api: {
-    getSession: async ({ headers }: { headers: Headers }): Promise<SessionRecord | null> => {
-      const tokens = getSessionTokensFromHeaders(headers);
+    getSession: async ({
+      headers,
+      trace,
+    }: {
+      headers: Headers;
+      trace?: ApiMeAuthTrace | null;
+    }): Promise<SessionRecord | null> => {
+      const cookieEntries = getAuthCookieEntries(headers.get("cookie"));
+      const tokens = [...new Set(cookieEntries.map((entry) => entry.value).filter((token) => token.length > 0))];
+      appendAuthDecision(trace, `cookie_candidates:${cookieEntries.length}`);
       for (const token of tokens) {
-        const session = await getSessionFromToken(token);
+        const attempt = createAuthTokenAttemptTrace({
+          source: "cookie",
+          cookieNames: cookieEntries
+            .filter((entry) => entry.value === token)
+            .map((entry) => entry.name),
+          token,
+        });
+        trace?.tokenAttempts.push(attempt);
+        const session = await getSessionFromToken(token, trace, attempt);
         if (session) {
           return session;
         }
@@ -836,8 +1002,17 @@ export const auth = {
       return null;
     },
 
-    getSessionByToken: async (token: string | null): Promise<SessionRecord | null> => {
-      return getSessionFromToken(token);
+    getSessionByToken: async (
+      token: string | null,
+      trace?: ApiMeAuthTrace | null
+    ): Promise<SessionRecord | null> => {
+      if (!token) return null;
+      const attempt = createAuthTokenAttemptTrace({
+        source: "bearer",
+        token,
+      });
+      trace?.tokenAttempts.push(attempt);
+      return getSessionFromToken(token, trace, attempt);
     },
 
     signOut: async ({ headers }: { headers: Headers }) => {

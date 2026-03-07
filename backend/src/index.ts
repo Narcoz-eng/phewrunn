@@ -251,6 +251,11 @@ import {
   verifySignedSessionToken,
   type SessionTokenUserClaims,
 } from "./lib/session-token.js";
+import {
+  appendAuthDecision,
+  buildApiMeAuthTrace,
+  finalizeApiMeAuthTrace,
+} from "./lib/auth-trace.js";
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET;
@@ -1853,10 +1858,16 @@ function logIssuedSessionCookie(
 ): void {
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
+  const clearedCookieNames = [SESSION_COOKIE_NAME, ...LEGACY_SESSION_COOKIE_NAMES];
   console.info("[auth/session] Issued session cookie", {
+    requestId: c.get("requestId") ?? null,
     host: c.req.header("host") ?? null,
+    origin: c.req.header("origin") ?? null,
+    userAgent: c.req.header("user-agent") ?? null,
     userId,
     cookieName: SESSION_COOKIE_NAME,
+    clearedCookieNames,
+    setCookieCount: buildClearedSessionCookies(c.req.header("host")).length + 1,
     domain: cookieDomain ?? null,
     path: SESSION_COOKIE_PATH,
     httpOnly: true,
@@ -2939,6 +2950,7 @@ app.get("/api/me", async (c) => {
   let user = c.get("user");
   let session = c.get("session");
   const requestId = c.get("requestId") ?? null;
+  const authTrace = c.get("authTrace") ?? buildApiMeAuthTrace(c.req.raw.headers, requestId);
   const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
   const bearerToken =
     authHeader && /^bearer\s+/i.test(authHeader)
@@ -2951,22 +2963,28 @@ app.get("/api/me", async (c) => {
     cookieHeader
   );
   const hasBearerToken = bearerToken.length > 0;
-  let dbFallbackTriggered = false;
   let finalAuthReason = "middleware_session";
+  appendAuthDecision(authTrace, user ? "/api/me:middleware_user_present" : "/api/me:middleware_user_missing");
 
   if ((!user || !session?.user) && (hasSessionCookie || hasBearerToken)) {
     try {
+      appendAuthDecision(authTrace, "/api/me:recovery_lookup_start");
       const recoveredSession = hasSessionCookie
-        ? await auth.api.getSession({ headers: c.req.raw.headers })
+        ? await auth.api.getSession({ headers: c.req.raw.headers, trace: authTrace })
         : null;
       if (recoveredSession?.user) {
-        dbFallbackTriggered = Boolean(
-          cookieToken &&
-          cookieToken.startsWith("v1.") &&
-          signedTokenInspection &&
-          !signedTokenInspection.verified
+        const recoveredFromDbFallback = Boolean(
+          authTrace.tokenAttempts.some(
+            (attempt) =>
+              attempt.source === "cookie" &&
+              attempt.fallbackToDbUsed &&
+              attempt.sessionResolved
+          )
         );
-        finalAuthReason = dbFallbackTriggered ? "db_fallback_recovered_session" : "cookie_recovered_session";
+        finalAuthReason = recoveredFromDbFallback
+          ? "db_fallback_recovered_session"
+          : "cookie_recovered_session";
+        appendAuthDecision(authTrace, `/api/me:${finalAuthReason}`);
         session = recoveredSession;
         user = {
           id: recoveredSession.user.id,
@@ -2987,9 +3005,10 @@ app.get("/api/me", async (c) => {
         c.set("session", recoveredSession);
         c.set("user", user);
       } else if (hasBearerToken) {
-        const bearerSession = await auth.api.getSessionByToken(bearerToken);
+        const bearerSession = await auth.api.getSessionByToken(bearerToken, authTrace);
         if (bearerSession?.user) {
           finalAuthReason = "bearer_recovered_session";
+          appendAuthDecision(authTrace, "/api/me:bearer_recovered_session");
           session = bearerSession;
           user = {
             id: bearerSession.user.id,
@@ -3013,11 +3032,25 @@ app.get("/api/me", async (c) => {
       }
     } catch (recoverError) {
       finalAuthReason = "session_recovery_exception";
+      appendAuthDecision(authTrace, "/api/me:session_recovery_exception");
       console.warn("[/api/me] Session recovery fallback failed", recoverError);
     }
   }
 
   if (!user) {
+    const failedAttempt =
+      authTrace.tokenAttempts[authTrace.tokenAttempts.length - 1] ??
+      authTrace.tokenAttempts[0] ??
+      null;
+    const exact401Reason = hasSessionCookie
+      ? failedAttempt?.reason ??
+        (signedTokenInspection?.failureReason
+          ? `signed_token_${signedTokenInspection.failureReason}`
+          : finalAuthReason)
+      : hasBearerToken
+        ? failedAttempt?.reason ?? "bearer_session_missing"
+        : "no_session_credentials";
+    appendAuthDecision(authTrace, `/api/me:final_401:${exact401Reason}`);
     if (hasSessionCookie || hasBearerToken) {
       console.warn("[/api/me] Unauthorized request", {
         host: c.req.header("host") ?? null,
@@ -3026,38 +3059,13 @@ app.get("/api/me", async (c) => {
         hasSessionCookie,
       });
     }
-    console.warn("[/api/me][auth-trace]", {
-      requestId,
-      host: c.req.header("host") ?? null,
-      cookiePresent: Boolean(cookieToken),
-      signedTokenParseSuccess: signedTokenInspection?.payloadParsed ?? null,
-      signedTokenSignatureVerified: signedTokenInspection?.signatureVerified ?? null,
-      signedTokenFailureReason: signedTokenInspection?.failureReason ?? null,
-      dbFallbackTriggered,
-      finalStatus: 401,
-      finalReason: hasSessionCookie
-        ? signedTokenInspection?.failureReason ?? finalAuthReason
-        : hasBearerToken
-          ? "bearer_session_missing"
-          : "no_session_credentials",
-    });
+    console.warn("[/api/me][auth-trace]", finalizeApiMeAuthTrace(authTrace, 401, exact401Reason));
     return c.body(null, 401);
   }
 
   maybeRefreshSessionCookieAfterFallback(c, session?.user);
-  if (dbFallbackTriggered || (cookieToken && cookieToken.startsWith("v1.") && !signedTokenInspection?.verified)) {
-    console.warn("[/api/me][auth-trace]", {
-      requestId,
-      host: c.req.header("host") ?? null,
-      cookiePresent: Boolean(cookieToken),
-      signedTokenParseSuccess: signedTokenInspection?.payloadParsed ?? null,
-      signedTokenSignatureVerified: signedTokenInspection?.signatureVerified ?? null,
-      signedTokenFailureReason: signedTokenInspection?.failureReason ?? null,
-      dbFallbackTriggered,
-      finalStatus: 200,
-      finalReason: finalAuthReason,
-    });
-  }
+  appendAuthDecision(authTrace, `/api/me:final_200:${finalAuthReason}`);
+  console.info("[/api/me][auth-trace]", finalizeApiMeAuthTrace(authTrace, 200, null));
 
   const cachedUser = await readCachedMeResponse(user.id);
   if (cachedUser) {

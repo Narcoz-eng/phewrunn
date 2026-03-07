@@ -2,6 +2,7 @@ import { prisma } from "../prisma.js";
 import { isRedisFastForHotPath, redisGetString, redisSetString } from "./redis.js";
 import type { VerifiedSignedSessionToken } from "./session-token.js";
 import { verifySignedSessionToken } from "./session-token.js";
+import type { AuthTokenAttemptTrace } from "./auth-trace.js";
 
 const LOCAL_REVOKED_SESSION_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const SESSION_REVOCATION_IDENTIFIER = "session-revocation";
@@ -118,7 +119,8 @@ export async function revokeSignedSessionTokens(tokens: string[]): Promise<void>
 }
 
 export async function isSignedSessionTokenRevoked(
-  verified: VerifiedSignedSessionToken | null
+  verified: VerifiedSignedSessionToken | null,
+  attempt?: AuthTokenAttemptTrace | null
 ): Promise<boolean> {
   if (!verified) return false;
 
@@ -127,15 +129,36 @@ export async function isSignedSessionTokenRevoked(
 
   const localExpiry = localRevokedSessionTokens.get(verified.jti);
   if (typeof localExpiry === "number" && localExpiry > now) {
+    if (attempt) {
+      attempt.redisResult = "local_revocation_hit";
+    }
     return true;
   }
 
   if (SHOULD_READ_REVOCATIONS_FROM_REDIS) {
-    const redisHit = await redisGetString(getRevokedSessionKey(verified.jti)).catch(() => null);
+    if (attempt) {
+      attempt.redisTouched = true;
+    }
+    const redisHit = await redisGetString(getRevokedSessionKey(verified.jti)).catch((error) => {
+      if (attempt) {
+        const message = error instanceof Error ? error.message : String(error);
+        attempt.redisResult = /timed out|timeout/i.test(message) ? "timeout" : "error";
+      }
+      return null;
+    });
     if (redisHit) {
       rememberRevokedSessionJti(verified.jti, verified.expiresAt.getTime());
+      if (attempt) {
+        attempt.redisResult = "hit";
+      }
       return true;
     }
+    if (attempt && !attempt.redisResult) {
+      attempt.redisResult = "miss";
+    }
+  } else if (attempt) {
+    attempt.redisTouched = false;
+    attempt.redisResult = "skipped";
   }
 
   const dbHit = await readSessionRevocationFromDatabase(verified.jti).catch((error) => {
