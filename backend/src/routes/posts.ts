@@ -683,6 +683,168 @@ async function loadEmergencyFeedPostsRaw(params: {
   cursor?: string;
   search?: string;
 }): Promise<any[]> {
+  // Try full query first, fall back to minimal if columns don't exist
+  try {
+    return await loadEmergencyFeedPostsRawFull(params);
+  } catch (fullError) {
+    console.warn("[posts/feed] full raw emergency failed, trying minimal", {
+      message: fullError instanceof Error ? fullError.message : String(fullError),
+    });
+    return await loadEmergencyFeedPostsRawMinimal(params);
+  }
+}
+
+// Minimal raw query using ONLY core columns guaranteed to exist in any DB version
+async function loadEmergencyFeedPostsRawMinimal(params: {
+  sort: "latest" | "trending";
+  following: boolean;
+  followedIds: string[];
+  limit: number;
+  cursor?: string;
+  search?: string;
+}): Promise<any[]> {
+  const conditions: Prisma.Sql[] = [];
+
+  if (params.sort === "trending") {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    conditions.push(Prisma.sql`p."createdAt" >= ${sevenDaysAgo}`);
+  }
+
+  if (params.following && params.followedIds.length > 0) {
+    conditions.push(Prisma.sql`p."authorId" IN (${Prisma.join(params.followedIds)})`);
+  } else if (params.following) {
+    return [];
+  }
+
+  if (params.search && params.search.trim().length > 0) {
+    const likeTerm = `%${params.search.trim()}%`;
+    conditions.push(Prisma.sql`(
+      p.content ILIKE ${likeTerm}
+      OR u.username ILIKE ${likeTerm}
+      OR u.name ILIKE ${likeTerm}
+    )`);
+  }
+
+  if (params.cursor) {
+    const cursorRows = await prisma.$queryRaw<Array<{ id: string; createdAt: Date }>>(Prisma.sql`
+      SELECT p.id, p."createdAt" FROM "Post" p WHERE p.id = ${params.cursor} LIMIT 1
+    `);
+    const cursorRow = cursorRows[0];
+    if (cursorRow) {
+      conditions.push(
+        Prisma.sql`(p."createdAt" < ${cursorRow.createdAt} OR (p."createdAt" = ${cursorRow.createdAt} AND p.id < ${cursorRow.id}))`
+      );
+    }
+  }
+
+  const whereSql =
+    conditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
+      : Prisma.sql``;
+
+  // Only select columns that exist in the ORIGINAL schema (no optional/newer columns)
+  const rows = await withFeedTimeout(
+    prisma.$queryRaw<Array<{
+      id: string;
+      content: string;
+      authorId: string;
+      contractAddress: string | null;
+      chainType: string | null;
+      entryMcap: number | null;
+      currentMcap: number | null;
+      settled: boolean | null;
+      settledAt: Date | null;
+      isWin: boolean | null;
+      createdAt: Date;
+      authorName: string;
+      authorUsername: string | null;
+      authorImage: string | null;
+      authorLevel: number | null;
+      authorXp: number | null;
+      likesCount: number | bigint | null;
+      commentsCount: number | bigint | null;
+      repostsCount: number | bigint | null;
+    }>>(Prisma.sql`
+      SELECT
+        p.id,
+        p.content,
+        p."authorId",
+        p."contractAddress",
+        p."chainType",
+        p."entryMcap",
+        p."currentMcap",
+        p.settled,
+        p."settledAt",
+        p."isWin",
+        p."createdAt",
+        u.name AS "authorName",
+        u.username AS "authorUsername",
+        u.image AS "authorImage",
+        u.level AS "authorLevel",
+        u.xp AS "authorXp",
+        (SELECT COUNT(*)::int FROM "Like" l WHERE l."postId" = p.id) AS "likesCount",
+        (SELECT COUNT(*)::int FROM "Comment" c WHERE c."postId" = p.id) AS "commentsCount",
+        (SELECT COUNT(*)::int FROM "Repost" r WHERE r."postId" = p.id) AS "repostsCount"
+      FROM "Post" p
+      JOIN "User" u ON u.id = p."authorId"
+      ${whereSql}
+      ORDER BY p."createdAt" DESC, p.id DESC
+      LIMIT ${params.limit + 1}
+    `),
+    "raw_minimal_emergency_posts_query",
+    Math.min(FEED_DB_QUERY_TIMEOUT_MS + 2000, 7_000)
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    content: row.content,
+    authorId: row.authorId,
+    contractAddress: row.contractAddress ?? null,
+    chainType: row.chainType ?? null,
+    tokenName: null,
+    tokenSymbol: null,
+    tokenImage: null,
+    entryMcap: row.entryMcap ?? null,
+    currentMcap: row.currentMcap ?? null,
+    mcap1h: null,
+    mcap6h: null,
+    settled: row.settled === true,
+    settledAt: row.settledAt,
+    isWin: row.isWin,
+    isWin1h: null,
+    isWin6h: null,
+    percentChange1h: null,
+    percentChange6h: null,
+    createdAt: row.createdAt,
+    viewCount: 0,
+    dexscreenerUrl: null,
+    author: {
+      id: row.authorId,
+      name: row.authorName,
+      username: row.authorUsername ?? null,
+      image: row.authorImage ?? null,
+      walletAddress: null,
+      level: toFiniteNumber(row.authorLevel, 0),
+      xp: toFiniteNumber(row.authorXp, 0),
+      isVerified: false,
+    },
+    _count: {
+      likes: toFiniteNumber(row.likesCount, 0),
+      comments: toFiniteNumber(row.commentsCount, 0),
+      reposts: toFiniteNumber(row.repostsCount, 0),
+    },
+  }));
+}
+
+// Full raw query with all columns (may fail if newer columns don't exist)
+async function loadEmergencyFeedPostsRawFull(params: {
+  sort: "latest" | "trending";
+  following: boolean;
+  followedIds: string[];
+  limit: number;
+  cursor?: string;
+  search?: string;
+}): Promise<any[]> {
   const conditions: Prisma.Sql[] = [];
 
   if (params.sort === "trending") {
