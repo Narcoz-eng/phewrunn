@@ -27,7 +27,7 @@ if (typeof window !== "undefined") {
     }
 
     const redirectUrl =
-      `https://phew.run${window.location.pathname}${window.location.search}${window.location.hash}`;
+      `https://www.phew.run${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.location.replace(redirectUrl);
   };
   const isVercelPreviewHost =
@@ -36,7 +36,7 @@ if (typeof window !== "undefined") {
     host !== "www.phew.run" &&
     !host.endsWith(".phew.run");
 
-  if (host === "www.phew.run") {
+  if (host === "phew.run") {
     redirectToCanonicalHost();
   }
 

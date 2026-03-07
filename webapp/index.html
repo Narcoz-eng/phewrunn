@@ -47,14 +47,14 @@
           } catch (_error) {}
 
           var redirectUrl =
-            "https://phew.run" +
+            "https://www.phew.run" +
             window.location.pathname +
             window.location.search +
             window.location.hash;
           window.location.replace(redirectUrl);
         };
 
-        if (host === "www.phew.run") {
+        if (host === "phew.run") {
           redirectToCanonicalHost();
           return;
         }
