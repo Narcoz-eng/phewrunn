@@ -4,7 +4,8 @@ const IDENTITY_TOKEN_ATTEMPTS = 4;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [70, 120, 180] as const;
 const AUTH_PAYLOAD_READY_DELAYS_MS = [120, 220, 360] as const;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
-const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 140;
+const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
+const QUICK_IDENTITY_TOKEN_TIMEOUT_MS = 120;
 
 type LinkedAccountLike = {
   type: string;
@@ -136,10 +137,12 @@ export async function resolvePrivyAuthPayload({
   // If Privy has already surfaced a verified email, do not hold up sign-in waiting
   // for an identity token. The backend can verify from privyUserId/email if needed.
   if (email) {
+    const quickPrivyIdToken = await getIdentityTokenWithin(QUICK_IDENTITY_TOKEN_TIMEOUT_MS);
     return {
       user: latestUser,
       email,
       name,
+      privyIdToken: quickPrivyIdToken,
     };
   }
 
