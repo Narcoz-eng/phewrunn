@@ -228,9 +228,10 @@ export default function Notifications() {
         ? initialCachedNotifications
         : undefined,
     enabled: isAuthenticated && hasLiveSession,
-    staleTime: 20000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    staleTime: 60_000,
+    refetchOnMount:
+      initialCachedNotifications && initialCachedNotifications.length > 0 ? false : "always",
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     retry: (failureCount, error) => {
       const status =
@@ -250,7 +251,7 @@ export default function Notifications() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
-      return hasLiveSession ? 60000 : false;
+      return hasLiveSession ? 120_000 : false;
     },
   });
   const notificationsErrorMessage = useMemo(() => {

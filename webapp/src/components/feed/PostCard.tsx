@@ -537,9 +537,18 @@ interface PostCardProps {
   onLike?: (postId: string) => void;
   onRepost?: (postId: string) => void;
   onComment?: (postId: string, content: string) => Promise<void> | void;
+  enableRealtimePricePolling?: boolean;
 }
 
-export function PostCard({ post, className, currentUserId, onLike, onRepost, onComment }: PostCardProps) {
+export function PostCard({
+  post,
+  className,
+  currentUserId,
+  onLike,
+  onRepost,
+  onComment,
+  enableRealtimePricePolling = false,
+}: PostCardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const chartInteractionRef = useRef<HTMLDivElement>(null);
@@ -852,6 +861,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
   // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
+    if (!enableRealtimePricePolling) {
+      setIsInViewport(false);
+      return;
+    }
     if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
       return;
     }
@@ -874,7 +887,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [enableRealtimePricePolling]);
 
   // Real-time price state
   const [currentMcap, setCurrentMcap] = useState(post.currentMcap);
@@ -898,6 +911,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   // - Settled posts (>= 1 hour): Update every 5 minutes
   // Also auto-refresh when post settles to show final 1H result
   useEffect(() => {
+    if (!enableRealtimePricePolling) return;
     if (!post.contractAddress) return;
     if (!isInViewport) return;
 
@@ -958,7 +972,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
     const postAgeMs = Date.now() - new Date(post.createdAt).getTime();
     const waitingForSixHourSnapshot =
       localSettled && localMcap6h === null && postAgeMs >= 6 * 60 * 60 * 1000;
-    const baseInterval = waitingForSixHourSnapshot ? 20_000 : localSettled ? 2 * 60 * 1000 : 15_000;
+    const baseInterval = waitingForSixHourSnapshot ? 45_000 : localSettled ? 5 * 60 * 1000 : 30_000;
     const initialDelay =
       post.currentMcap == null
         ? 0
@@ -971,7 +985,19 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
       clearTimeout(initialTimer);
       clearInterval(intervalTimer);
     };
-  }, [post.id, post.contractAddress, post.entryMcap, post.currentMcap, post.createdAt, localSettled, localMcap1h, localMcap6h, isInViewport, queryClient]);
+  }, [
+    enableRealtimePricePolling,
+    post.id,
+    post.contractAddress,
+    post.entryMcap,
+    post.currentMcap,
+    post.createdAt,
+    localSettled,
+    localMcap1h,
+    localMcap6h,
+    isInViewport,
+    queryClient,
+  ]);
 
   // Fetch comments when expanded
   const { data: comments, isLoading: isCommentsLoading, refetch: refetchComments } = useQuery({
@@ -988,7 +1014,7 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
   const { data: sharedAlphaUsers } = useQuery({
     queryKey: ["shared-alpha", post.id],
     queryFn: () => api.get<SharedAlphaUser[]>(`/api/posts/${post.id}/shared-alpha`),
-    enabled: (post.sharedAlphaCount ?? 0) > 0, // Only fetch if there are shared alphas
+    enabled: isSharedAlphaOpen && (post.sharedAlphaCount ?? 0) > 0,
     staleTime: 60000,
   });
 
@@ -3584,10 +3610,10 @@ export function PostCard({ post, className, currentUserId, onLike, onRepost, onC
             )}
 
             {/* Also Called By - Show other users who called this token */}
-            {sharedAlphaUsers && sharedAlphaUsers.length > 0 && (
+            {(post.sharedAlphaCount ?? 0) > 0 && (
               <AlsoCalledBy
-                users={sharedAlphaUsers}
-                totalCount={post.sharedAlphaCount ?? sharedAlphaUsers.length}
+                users={sharedAlphaUsers ?? []}
+                totalCount={post.sharedAlphaCount ?? sharedAlphaUsers?.length ?? 0}
                 onShowMore={() => setIsSharedAlphaOpen(true)}
               />
             )}

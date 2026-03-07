@@ -42,6 +42,18 @@ export function AlsoCalledBy({
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
+        {displayUsers.length === 0 ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onShowMore();
+            }}
+            className="inline-flex items-center rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80"
+          >
+            View {totalCount} trader{totalCount === 1 ? "" : "s"}
+          </button>
+        ) : null}
+
         {/* Stacked Avatars */}
         <div className="flex -space-x-2">
           {displayUsers.map((user) => (

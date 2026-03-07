@@ -56,15 +56,15 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
     },
     initialData: cachedUnreadCount !== null ? { count: cachedUnreadCount } : undefined,
     enabled: !!user && hasLiveSession,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     refetchInterval: () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
-      return 30000;
+      return 90_000;
     },
-    staleTime: 10000,
+    staleTime: 45_000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });

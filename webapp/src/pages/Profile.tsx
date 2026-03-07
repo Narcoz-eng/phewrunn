@@ -263,7 +263,8 @@ export default function Profile() {
     enabled: hasLiveSession || (!session?.user && !!sessionBackedProfile),
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
-    refetchInterval: hasLiveSession ? 15_000 : false,
+    refetchInterval: false,
+    refetchOnMount: sessionBackedProfile ? false : "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: (failureCount, error) => {
@@ -305,7 +306,8 @@ export default function Profile() {
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchInterval: user?.id ? 15_000 : false,
+    refetchInterval: false,
+    refetchOnMount: cachedPosts ? false : "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -342,10 +344,11 @@ export default function Profile() {
       return repostsData;
     },
     initialData: user?.id ? (cachedReposts ?? undefined) : undefined,
-    enabled: !!user?.id && (mainTab === "reposts" || !!cachedReposts),
+    enabled: !!user?.id && mainTab === "reposts",
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchInterval: user?.id && (mainTab === "reposts" || !!cachedReposts) ? 20_000 : false,
+    refetchInterval: false,
+    refetchOnMount: cachedReposts ? false : "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,

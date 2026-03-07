@@ -95,6 +95,7 @@ export default function PostDetail() {
             <PostCard
               post={post}
               currentUserId={hasLiveSession ? session?.user?.id : undefined}
+              enableRealtimePricePolling
               onLike={async (postId) => {
                 if (!guardPostInteraction()) return;
                 try {

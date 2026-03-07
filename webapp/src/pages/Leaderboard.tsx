@@ -95,9 +95,9 @@ export default function Leaderboard() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
-      return 60000;
+      return 90_000;
     },
-    staleTime: 30000,
+    staleTime: 45_000,
     retry: 1,
   });
 

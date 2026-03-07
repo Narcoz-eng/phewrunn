@@ -1252,6 +1252,7 @@ export default function Feed() {
                         onLike={handleLike}
                         onRepost={handleRepost}
                         onComment={handleComment}
+                        enableRealtimePricePolling={index < 4}
                       />
                     </div>
                   </div>
