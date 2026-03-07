@@ -1661,20 +1661,50 @@ function logNonCriticalNotificationFailure(operation: string, error: unknown): v
   });
 }
 
+function buildNotificationDedupeKey(params: {
+  type: string;
+  userId: string;
+  postId?: string | null;
+  fromUserId?: string | null;
+  scope?: string | null;
+}): string {
+  const normalize = (value: string | null | undefined): string =>
+    value && value.length > 0 ? value.replaceAll(":", "_") : "-";
+
+  return [
+    normalize(params.type),
+    normalize(params.scope),
+    normalize(params.userId),
+    normalize(params.fromUserId),
+    normalize(params.postId),
+  ].join(":");
+}
+
 async function createNotificationSafely(params: {
   operation: string;
-  data: Prisma.NotificationUncheckedCreateInput;
-  fallbackData?: Prisma.NotificationUncheckedCreateInput;
+  data: Prisma.NotificationCreateManyInput;
+  fallbackData?: Prisma.NotificationCreateManyInput;
 }): Promise<void> {
   try {
-    await prisma.notification.create({ data: params.data });
+    await prisma.notification.create({
+      data: params.data as Prisma.NotificationUncheckedCreateInput,
+    });
     return;
   } catch (error) {
+    if (isPrismaKnownRequestError(error, "P2002")) {
+      return;
+    }
+
     if (params.fallbackData && isPrismaSchemaDriftError(error)) {
       try {
-        await prisma.notification.create({ data: params.fallbackData });
+        await prisma.notification.create({
+          data: params.fallbackData as Prisma.NotificationUncheckedCreateInput,
+        });
         return;
       } catch (fallbackError) {
+        if (isPrismaKnownRequestError(fallbackError, "P2002")) {
+          return;
+        }
         logNonCriticalNotificationFailure(params.operation, fallbackError);
         return;
       }
@@ -1692,7 +1722,7 @@ async function createManyNotificationsSafely(params: {
   if (params.data.length === 0) return;
 
   try {
-    await prisma.notification.createMany({ data: params.data });
+    await prisma.notification.createMany({ data: params.data, skipDuplicates: true });
     return;
   } catch (error) {
     if (
@@ -2063,6 +2093,13 @@ function triggerNewPostFollowerFanout(params: {
           userId: followerId,
           type: "new_post",
           message: `${displayName} just posted a new Alpha!`,
+          dedupeKey: buildNotificationDedupeKey({
+            type: "new_post",
+            scope: "post_create",
+            userId: followerId,
+            fromUserId: params.authorId,
+            postId: params.postId,
+          }),
           postId: params.postId,
           fromUserId: params.authorId,
         })),
@@ -2071,6 +2108,7 @@ function triggerNewPostFollowerFanout(params: {
           type: "new_post",
           message: `${displayName} just posted a new Alpha!`,
           postId: params.postId,
+          fromUserId: params.authorId,
         })),
       });
     })().catch((error) => {
@@ -2395,6 +2433,13 @@ async function notifyFollowersOfBigGain(params: {
       userId: followerId,
       type: "alpha_gain_alert",
       message,
+      dedupeKey: buildNotificationDedupeKey({
+        type: "alpha_gain_alert",
+        scope: "1h",
+        userId: followerId,
+        fromUserId: params.authorId,
+        postId: params.postId,
+      }),
       postId: params.postId,
       fromUserId: params.authorId,
     })),
@@ -2706,6 +2751,12 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             userId: post.authorId,
             type: "settlement",
             message: settlementMsg,
+            dedupeKey: buildNotificationDedupeKey({
+              type: "settlement",
+              scope: "1h",
+              userId: post.authorId,
+              postId: post.id,
+            }),
             postId: post.id,
           },
         });
@@ -2840,6 +2891,12 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
               userId: post.authorId,
               type: "settlement",
               message: msg6h,
+              dedupeKey: buildNotificationDedupeKey({
+                type: "settlement",
+                scope: "6h",
+                userId: post.authorId,
+                postId: post.id,
+              }),
               postId: post.id,
             },
           });
@@ -4877,6 +4934,12 @@ postsRouter.post("/:id/like", requireAuth, async (c) => {
         userId: post.authorId,
         type: "like",
         message: `${userName} liked your Alpha!`,
+        dedupeKey: buildNotificationDedupeKey({
+          type: "like",
+          userId: post.authorId,
+          fromUserId: user.id,
+          postId: post.id,
+        }),
         postId: post.id,
         fromUserId: user.id,
       },
@@ -5019,6 +5082,12 @@ postsRouter.post("/:id/repost", requireAuth, async (c) => {
         userId: post.authorId,
         type: "repost",
         message: `${userName} reposted your Alpha!`,
+        dedupeKey: buildNotificationDedupeKey({
+          type: "repost",
+          userId: post.authorId,
+          fromUserId: user.id,
+          postId: post.id,
+        }),
         postId: post.id,
         fromUserId: user.id,
       },

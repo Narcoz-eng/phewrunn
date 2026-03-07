@@ -331,6 +331,7 @@ model Notification {
   userId    String    // user receiving the notification
   type      String    // 'new_post', 'like', 'comment', 'follow', 'repost', 'settlement', 'win_1h', 'loss_1h', 'win_6h', 'loss_6h', 'level_up', 'achievement'
   message   String    // notification text
+  dedupeKey String?   @unique
   read      Boolean   @default(false)
   dismissed Boolean   @default(false) // soft delete - user dismissed but kept for analytics
   clickedAt DateTime? // track when notification was clicked (for analytics)
