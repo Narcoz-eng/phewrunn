@@ -245,7 +245,11 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PrivyClient } from "@privy-io/server-auth";
-import { createSignedSessionToken, type SessionTokenUserClaims } from "./lib/session-token.js";
+import {
+  createSignedSessionToken,
+  verifySignedSessionToken,
+  type SessionTokenUserClaims,
+} from "./lib/session-token.js";
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET;
@@ -1775,6 +1779,28 @@ const SESSION_COOKIE_NAME = "phew.session_token";
 const SESSION_COOKIE_PATH = "/";
 const SESSION_COOKIE_SAME_SITE = "Lax";
 const SESSION_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const INCOMING_SESSION_COOKIE_NAMES = [
+  SESSION_COOKIE_NAME,
+  ...LEGACY_SESSION_COOKIE_NAMES,
+] as const;
+
+function readSessionCookieToken(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+
+  for (const cookieName of INCOMING_SESSION_COOKIE_NAMES) {
+    const escapedName = cookieName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]+)`));
+    const rawValue = match?.[1]?.trim();
+    if (!rawValue) continue;
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+
+  return null;
+}
 
 function buildSessionCookie(params: {
   name: string;
@@ -1838,6 +1864,66 @@ function logIssuedSessionCookie(
     maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
     sessionRecordWriteOutcome,
   });
+}
+
+function maybeRefreshSessionCookieAfterFallback(
+  c: Context,
+  sessionUser:
+    | {
+        id: string;
+        name: string;
+        email: string;
+        image: string | null;
+        walletAddress: string | null;
+        walletProvider: string | null;
+        username?: string | null;
+        level: number;
+        xp: number;
+        bio?: string | null;
+        role?: string | null;
+        isAdmin?: boolean;
+        isVerified: boolean;
+        tradeFeeRewardsEnabled?: boolean;
+        tradeFeeShareBps?: number;
+        tradeFeePayoutAddress?: string | null;
+        createdAt?: Date;
+      }
+    | null
+    | undefined
+): void {
+  if (!sessionUser?.id) return;
+
+  const cookieToken = readSessionCookieToken(c.req.header("cookie"));
+  if (!cookieToken || !cookieToken.startsWith("v1.")) {
+    return;
+  }
+
+  if (verifySignedSessionToken(cookieToken)) {
+    return;
+  }
+
+  const authUser = toAuthResponseUserFromSessionUser(sessionUser);
+  if (!authUser) {
+    return;
+  }
+
+  const now = new Date();
+  const refreshedToken = createSignedSessionToken({
+    userId: authUser.id,
+    now,
+    user: buildSessionTokenUserClaims(authUser),
+  });
+  applySessionCookies(c, refreshedToken);
+  logIssuedSessionCookie(c, authUser.id, "written");
+  queueSessionRecordBestEffort({
+    sessionToken: refreshedToken,
+    userId: authUser.id,
+    expiresAt: new Date(now.getTime() + SESSION_COOKIE_MAX_AGE_SECONDS * 1000),
+    now,
+    ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown",
+    userAgent: c.req.header("user-agent") || "unknown",
+  });
+  console.warn("[/api/me] Refreshed invalid signed session cookie from recovered session");
 }
 
 async function issueAuthSessionResponse(
@@ -2927,6 +3013,8 @@ app.get("/api/me", async (c) => {
     }
     return c.body(null, 401);
   }
+
+  maybeRefreshSessionCookieAfterFallback(c, session?.user);
 
   const cachedUser = await readCachedMeResponse(user.id);
   if (cachedUser) {

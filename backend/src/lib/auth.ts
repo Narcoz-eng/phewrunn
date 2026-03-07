@@ -474,7 +474,7 @@ function logSignedTokenDbFallback(token: string): void {
   }
   signedTokenDbFallbackLastWarningAtMs = now;
   console.warn(
-    "[auth] Signed session token required DB fallback; check AUTH_SESSION_TOKEN_SECRET consistency across instances"
+    "[auth] Signed session token required DB fallback; check AUTH_SESSION_TOKEN_SECRET consistency and instance clock skew"
   );
 }
 
