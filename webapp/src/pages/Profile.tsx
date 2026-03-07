@@ -124,7 +124,7 @@ export default function Profile() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data: session } = useSession();
-  const { signOut } = useAuth();
+  const { signOut, hasLiveSession } = useAuth();
   const { publicKey: connectedWalletPublicKey } = useWallet();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cropDragRef = useRef<{
@@ -260,10 +260,10 @@ export default function Profile() {
       }
     },
     initialData: sessionBackedProfile ?? undefined,
-    enabled: !!session?.user || !!sessionBackedProfile,
+    enabled: hasLiveSession || (!session?.user && !!sessionBackedProfile),
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
-    refetchInterval: session?.user ? 15_000 : false,
+    refetchInterval: hasLiveSession ? 15_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: (failureCount, error) => {
@@ -359,7 +359,7 @@ export default function Profile() {
     queryFn: async () => {
       return await api.get<FeeSettingsData>("/api/users/me/fee-settings");
     },
-    enabled: !!user?.id && profileViewTab === "settings",
+    enabled: hasLiveSession && !!user?.id && profileViewTab === "settings",
     staleTime: 60_000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -375,7 +375,7 @@ export default function Profile() {
     queryFn: async () => {
       return await api.get<FeeEarningsData>("/api/users/me/fee-earnings");
     },
-    enabled: !!user?.id && profileViewTab === "settings",
+    enabled: hasLiveSession && !!user?.id && profileViewTab === "settings",
     staleTime: 20_000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

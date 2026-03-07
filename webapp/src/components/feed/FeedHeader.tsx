@@ -15,6 +15,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { User, getAvatarUrl } from "@/types";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth-client";
 import { LevelBadge } from "./LevelBar";
 import { LogOut, Settings, User as UserIcon, Bell, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ const tabs: { id: FeedTab; label: string }[] = [
 
 export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeaderProps) {
   const navigate = useNavigate();
+  const { hasLiveSession } = useAuth();
   const tabRefs = useRef<Map<FeedTab, HTMLButtonElement>>(new Map());
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
 
@@ -46,7 +48,7 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
       return response;
     },
-    enabled: !!user,
+    enabled: !!user && hasLiveSession,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: () => {
@@ -60,7 +62,7 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
-  const unreadCount = unreadData?.count ?? 0;
+  const unreadCount = hasLiveSession ? (unreadData?.count ?? 0) : 0;
 
   useEffect(() => {
     const activeTabElement = tabRefs.current.get(activeTab);

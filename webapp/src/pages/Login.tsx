@@ -414,7 +414,7 @@ function FallbackLoginButton() {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, isReady } = useAuth();
+  const { user, hasLiveSession, isReady } = useAuth();
   const privyAvailable = usePrivyAvailable();
   const isMobile = useIsMobile();
   const reduceMotion = useReducedMotion();
@@ -424,9 +424,9 @@ export default function Login() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (!isReady || !isAuthenticated) return;
+    if (!isReady || !hasLiveSession) return;
     navigate(user?.username ? "/" : "/welcome", { replace: true });
-  }, [isAuthenticated, isReady, navigate, user?.username]);
+  }, [hasLiveSession, isReady, navigate, user?.username]);
 
   useEffect(() => {
     if (optimizeMotion) {

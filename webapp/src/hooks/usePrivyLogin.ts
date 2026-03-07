@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   clearPrivySyncFailureState,
+  isExplicitLogoutCoolingDown,
   type AuthUser,
   readCachedAuthUserSnapshot,
   useAuth,
@@ -21,6 +22,7 @@ const LOGIN_SYNC_TIMEOUT_MS = 12_000;
 const AUTO_RESYNC_COOLDOWN_MS = 2_000;
 const AUTO_RESYNC_MAX_ATTEMPTS = 5;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
+const PRIVY_LOGOUT_SETTLE_MS = 250;
 const RETRYABLE_SYNC_ERROR_PATTERN =
   /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
 const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
@@ -324,6 +326,25 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
     if (authenticated && user) {
       void (async () => {
+        if (isExplicitLogoutCoolingDown()) {
+          try {
+            await privyLogout();
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, PRIVY_LOGOUT_SETTLE_MS);
+            });
+          } catch (error) {
+            console.warn("[usePrivyLogin] Privy logout before account switch failed", error);
+          }
+
+          if (isXLogin) {
+            void initOAuth({ provider: "twitter" }).catch(handlePrivyAuthError);
+            return;
+          }
+
+          login(loginOptions);
+          return;
+        }
+
         const syncedUser = await runManualSync(user as PrivyUserLike);
         if (syncedUser) {
           return;

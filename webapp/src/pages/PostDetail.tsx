@@ -7,11 +7,12 @@ import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { toast } from "sonner";
 
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
-  const { data: session } = useSession();
+  const { data: session, hasLiveSession } = useSession();
 
   const {
     data: post,
@@ -36,6 +37,20 @@ export default function PostDetail() {
     } else {
       navigate("/");
     }
+  };
+
+  const guardPostInteraction = () => {
+    if (!session?.user) {
+      toast.info("Sign in to interact with posts.");
+      return false;
+    }
+
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Try again in a moment.");
+      return false;
+    }
+
+    return true;
   };
 
   return (
@@ -79,8 +94,9 @@ export default function PostDetail() {
           ) : post ? (
             <PostCard
               post={post}
-              currentUserId={session?.user?.id}
+              currentUserId={hasLiveSession ? session?.user?.id : undefined}
               onLike={async (postId) => {
+                if (!guardPostInteraction()) return;
                 try {
                   if (post.isLiked) {
                     await api.delete(`/api/posts/${postId}/like`);
@@ -92,6 +108,7 @@ export default function PostDetail() {
                 }
               }}
               onRepost={async (postId) => {
+                if (!guardPostInteraction()) return;
                 try {
                   if (post.isReposted) {
                     await api.delete(`/api/posts/${postId}/repost`);
@@ -103,6 +120,7 @@ export default function PostDetail() {
                 }
               }}
               onComment={async (postId, content) => {
+                if (!guardPostInteraction()) return;
                 try {
                   await api.post(`/api/posts/${postId}/comments`, { content });
                 } catch (e) {

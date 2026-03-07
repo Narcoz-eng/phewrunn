@@ -17,6 +17,7 @@ interface CreatePostProps {
   user: User | null;
   onSubmit: (content: string) => Promise<void>;
   isSubmitting: boolean;
+  isAuthPending?: boolean;
 }
 
 interface TokenInfo {
@@ -140,7 +141,12 @@ function pickImageFromPair(pair: DexPair, token: DexTokenRef | null): string | n
   return null;
 }
 
-export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
+export function CreatePost({
+  user,
+  onSubmit,
+  isSubmitting,
+  isAuthPending = false,
+}: CreatePostProps) {
   const navigate = useNavigate();
   const [content, setContent] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -149,6 +155,7 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const isLiquidated = user !== null && user.level <= LIQUIDATION_LEVEL;
+  const isComposerDisabled = isSubmitting || isLiquidated || isAuthPending;
   const detected = detectContractAddress(content);
   const charCount = content.length;
 
@@ -304,18 +311,29 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
         <div className="flex-1 space-y-3">
           <textarea
             ref={textareaRef}
-            placeholder={isLiquidated ? "Posting disabled - Account liquidated" : "Drop your alpha... (paste a contract address)"}
+            placeholder={
+              isLiquidated
+                ? "Posting disabled - Account liquidated"
+                : isAuthPending
+                  ? "Finishing sign-in..."
+                  : "Drop your alpha... (paste a contract address)"
+            }
             value={content}
-            onChange={(e) => !isLiquidated && setContent(e.target.value)}
-            disabled={isSubmitting || isLiquidated}
+            onChange={(e) => !isLiquidated && !isAuthPending && setContent(e.target.value)}
+            disabled={isComposerDisabled}
             rows={3}
             className={cn(
               "w-full min-h-[80px] max-h-[200px] resize-y bg-background border border-border rounded-lg px-3 py-2",
               "focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary",
               "placeholder:text-muted-foreground/60 text-foreground leading-relaxed",
-              isLiquidated && "opacity-40 cursor-not-allowed bg-muted/50 grayscale"
+              (isLiquidated || isAuthPending) && "opacity-40 cursor-not-allowed bg-muted/50 grayscale"
             )}
           />
+          {isAuthPending ? (
+            <p className="text-xs text-muted-foreground">
+              Session is still finalizing. Posting unlocks automatically in a moment.
+            </p>
+          ) : null}
 
           {/* Token Preview */}
           {detected && (
@@ -420,7 +438,7 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
 
             <Button
               onClick={handleSubmit}
-              disabled={isSubmitting || isLiquidated}
+              disabled={isComposerDisabled}
               size="sm"
               className={cn(
                 "gap-2 relative overflow-hidden",
@@ -435,6 +453,11 @@ export function CreatePost({ user, onSubmit, isSubmitting }: CreatePostProps) {
                 <>
                   <Lock className="h-4 w-4" />
                   <span>Locked</span>
+                </>
+              ) : isAuthPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Syncing...</span>
                 </>
               ) : isSubmitting ? (
                 <>

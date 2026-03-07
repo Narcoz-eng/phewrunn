@@ -134,11 +134,11 @@ const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
-const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 4_500 : 2_000;
-const FEED_RESPONSE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
-const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_500 : 4_000;
-const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_600 : 3_000;
-const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_800 : 3_200;
+const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 9_000 : 3_000;
+const FEED_RESPONSE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 180_000 : 30_000;
+const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 4_800;
+const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
+const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;

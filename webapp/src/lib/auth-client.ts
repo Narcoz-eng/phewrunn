@@ -42,13 +42,15 @@ const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
-const SESSION_FETCH_TIMEOUT_MS = 2200;
+// Keep this comfortably above the backend /api/me lookup budget so the client
+// does not abort session hydration before the server can serve a fallback.
+const SESSION_FETCH_TIMEOUT_MS = 8000;
 const SIGN_OUT_TIMEOUT_MS = 2500;
 const AUTH_SESSION_RETRY_DELAY_MS = 300;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
-const PRIVY_SYNC_TIMEOUT_MS = 12_000;
+const PRIVY_SYNC_TIMEOUT_MS = 18_000;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [300, 900, 1800] as const;
 const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
@@ -61,6 +63,7 @@ const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
 const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
 const AUTH_PRIVY_SYNC_FAILURE_EVENT = "phew:auth-privy-sync-failure";
+const EXPLICIT_LOGOUT_COOLDOWN_MS = 12_000;
 
 type PrivySyncFailureSnapshot = {
   message: string;
@@ -80,6 +83,17 @@ let explicitLogoutAt = 0;
 
 export function getExplicitLogoutAt(): number {
   return explicitLogoutAt;
+}
+
+export function isExplicitLogoutCoolingDown(referenceTime = Date.now()): boolean {
+  return explicitLogoutAt > 0 && referenceTime - explicitLogoutAt < EXPLICIT_LOGOUT_COOLDOWN_MS;
+}
+
+export function hasValidatedAuthSession(referenceTime = Date.now()): boolean {
+  if (isExplicitLogoutCoolingDown(referenceTime)) {
+    return false;
+  }
+  return lastSuccessfulSessionAt > 0 || lastPrivySyncAt > 0;
 }
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
@@ -298,8 +312,7 @@ function clearCachedAuthUser(): void {
 }
 
 export function readCachedAuthUserSnapshot(): AuthUser | null {
-  const logoutAt = getExplicitLogoutAt();
-  if (logoutAt > 0 && Date.now() - logoutAt < 10_000) {
+  if (isExplicitLogoutCoolingDown()) {
     return null;
   }
 
@@ -824,10 +837,13 @@ export function useAuth() {
 
   const resolvedUser = getResolvedAuthUser(context.user);
   const isAuthenticated = Boolean(resolvedUser);
+  const hasLiveSession = isAuthenticated && hasValidatedAuthSession();
 
   return {
     user: resolvedUser,
     isAuthenticated,
+    hasLiveSession,
+    isUsingCachedUser: isAuthenticated && !hasLiveSession,
     isReady: !context.isLoading,
     isPending: context.isLoading,
     signOut: context.logout,
@@ -843,10 +859,13 @@ export function useSession() {
   }
 
   const resolvedUser = getResolvedAuthUser(context.user);
+  const hasLiveSession = Boolean(resolvedUser) && hasValidatedAuthSession();
 
   return {
     data: resolvedUser ? { user: resolvedUser } : null,
     isPending: context.isLoading,
+    hasLiveSession,
+    isUsingCachedUser: Boolean(resolvedUser) && !hasLiveSession,
   };
 }
 

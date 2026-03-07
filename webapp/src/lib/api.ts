@@ -37,6 +37,7 @@ const API_BASE_URL = (() => {
 // Default timeout for requests (12 seconds)
 const DEFAULT_TIMEOUT = 12000;
 const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
+const AUTH_MUTATION_401_RETRY_DELAY_MS = 450;
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public data?: unknown) {
@@ -115,9 +116,32 @@ function getStoredAuthTokenFallback(): string | null {
   }
 }
 
-async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+function shouldRetryUnauthorizedMutation(
+  method: string | null | undefined,
+  status: number,
+  hasRetriedUnauthorizedMutation: boolean
+): boolean {
+  if (hasRetriedUnauthorizedMutation || status !== 401) {
+    return false;
+  }
+
+  const normalizedMethod = (method ?? "GET").toUpperCase();
+  return (
+    normalizedMethod === "POST" ||
+    normalizedMethod === "PUT" ||
+    normalizedMethod === "PATCH" ||
+    normalizedMethod === "DELETE"
+  );
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestOptions = {},
+  hasRetriedUnauthorizedMutation = false
+): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options;
+  const method = (fetchOptions.method ?? "GET").toUpperCase();
 
   // Get auth token - try getter first, then localStorage fallback
   let token = getAuthToken ? await getAuthToken() : null;
@@ -169,6 +193,13 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   }
 
   if (!response.ok) {
+    if (shouldRetryUnauthorizedMutation(method, response.status, hasRetriedUnauthorizedMutation)) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, AUTH_MUTATION_401_RETRY_DELAY_MS);
+      });
+      return request<T>(endpoint, options, true);
+    }
+
     const json = await response.json().catch(() => null);
     throw new ApiError(
       // Try app-route format first, fallback to generic message (Better Auth uses this)

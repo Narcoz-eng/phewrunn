@@ -156,7 +156,7 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
 
 export default function Feed() {
   const { data: session } = useSession();
-  const { signOut } = useAuth();
+  const { signOut, hasLiveSession, isUsingCachedUser } = useAuth();
   const { logout: privyLogout } = usePrivy();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -171,7 +171,7 @@ export default function Feed() {
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
-  const feedViewerScope = session?.user?.id ?? "anonymous";
+  const feedViewerScope = hasLiveSession && session?.user?.id ? session.user.id : "anonymous";
   const cachedFirstPage = useMemo(
     () => readCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery),
     [activeTab, effectiveSearchQuery, feedViewerScope]
@@ -209,6 +209,15 @@ export default function Feed() {
       createdAt: session.user.createdAt ?? cachedFeedUser?.createdAt ?? new Date(0).toISOString(),
     };
   }, [cachedFeedUser, session?.user]);
+  const isAuthWritePending = Boolean(isUsingCachedUser);
+
+  const guardPendingAuthWrite = useCallback(() => {
+    if (!isAuthWritePending) {
+      return false;
+    }
+    toast.warning("Still finalizing sign-in. Try again in a moment.");
+    return true;
+  }, [isAuthWritePending]);
 
   const getFeedQueryKey = useCallback(
     (tab: FeedTab, search: string, viewerScope: string) =>
@@ -359,7 +368,7 @@ export default function Feed() {
       }
     },
     initialData: sessionBackedUser ?? undefined,
-    enabled: !!session?.user,
+    enabled: hasLiveSession,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 429)) {
         return false;
@@ -367,7 +376,7 @@ export default function Feed() {
       return failureCount < 2;
     },
     staleTime: 30000, // 30 seconds
-    refetchInterval: session?.user && !isOverlayOpen ? 45_000 : false,
+    refetchInterval: hasLiveSession && !isOverlayOpen ? 45_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -399,7 +408,7 @@ export default function Feed() {
           pageParams: [undefined],
         }
       : undefined,
-    enabled: activeTab !== "following" || !!session?.user,
+    enabled: activeTab !== "following" || hasLiveSession,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 429) {
         return false;
@@ -430,7 +439,7 @@ export default function Feed() {
     setFrozenPostsWhileOverlayOpen(null);
   }, [posts, shouldFreezeFeedItems]);
   const displayedPosts = frozenPostsWhileOverlayOpen ?? posts;
-  const shouldShowFollowingAuthState = activeTab === "following" && !session?.user;
+  const shouldShowFollowingAuthState = activeTab === "following" && !hasLiveSession;
   const hasPosts = displayedPosts.length > 0;
   const shouldShowFeedFatalError = Boolean(postsError && !hasPosts && !shouldShowFollowingAuthState);
   const shouldShowFeedSoftError = Boolean(postsError && hasPosts);
@@ -438,9 +447,9 @@ export default function Feed() {
 
   useEffect(() => {
     const firstPage = postsPages?.pages?.[0];
-    if (!firstPage || !session?.user) return;
+    if (!firstPage) return;
     writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, firstPage);
-  }, [activeTab, effectiveSearchQuery, feedViewerScope, postsPages?.pages, session?.user]);
+  }, [activeTab, effectiveSearchQuery, feedViewerScope, postsPages?.pages]);
 
   const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
     queryClient.setQueryData<InfiniteData<FeedPage>>(
@@ -539,7 +548,7 @@ export default function Feed() {
   }, []);
 
   useEffect(() => {
-    if (!session?.user) return;
+    if (!hasLiveSession) return;
     if (activeTab !== "latest") return;
     if (searchQuery.trim().length >= 3) return;
     if (!postsPages?.pages?.length) return;
@@ -590,7 +599,7 @@ export default function Feed() {
     postsPages?.pages?.length,
     queryClient,
     searchQuery,
-    session?.user,
+    hasLiveSession,
   ]);
 
   useEffect(() => {
@@ -621,7 +630,7 @@ export default function Feed() {
   // X-style lightweight new-post detection on Latest:
   // poll only the first page every 30s, then show a "new posts" button (or auto-apply near top).
   useEffect(() => {
-    if (!session?.user) return;
+    if (!hasLiveSession) return;
     if (activeTab !== "latest") return;
     if (effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
@@ -722,13 +731,13 @@ export default function Feed() {
     hasLiveOverlay,
     queryClient,
     refetchUser,
-    session?.user,
+    hasLiveSession,
   ]);
 
   // Keep non-latest tabs (and searched latest) fresh with lightweight first-page sync.
   // This stays visibility-aware and online-aware to reduce unnecessary traffic.
   useEffect(() => {
-    if (!session?.user) return;
+    if (!hasLiveSession) return;
     if (activeTab === "latest" && !effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
     if (typeof window === "undefined") return;
@@ -802,7 +811,7 @@ export default function Feed() {
     getFeedQueryKey,
     hasLiveOverlay,
     queryClient,
-    session?.user,
+    hasLiveSession,
   ]);
 
   // Create post mutation
@@ -921,6 +930,9 @@ export default function Feed() {
 
   // Handlers
   const handleCreatePost = async (content: string) => {
+    if (guardPendingAuthWrite()) {
+      return;
+    }
     await createPostMutation.mutateAsync(content);
   };
 
@@ -936,6 +948,9 @@ export default function Feed() {
   };
 
   const handleLike = async (postId: string) => {
+    if (guardPendingAuthWrite()) {
+      return;
+    }
     const post = displayedPosts.find((p) => p.id === postId);
     if (post) {
       likeMutation.mutate({ postId, isLiked: post.isLiked });
@@ -943,6 +958,9 @@ export default function Feed() {
   };
 
   const handleRepost = async (postId: string) => {
+    if (guardPendingAuthWrite()) {
+      return;
+    }
     const post = displayedPosts.find((p) => p.id === postId);
     if (post) {
       repostMutation.mutate({ postId, isReposted: post.isReposted });
@@ -950,6 +968,9 @@ export default function Feed() {
   };
 
   const handleComment = async (postId: string, content: string) => {
+    if (guardPendingAuthWrite()) {
+      return;
+    }
     await commentMutation.mutateAsync({ postId, content });
   };
 
@@ -1064,6 +1085,7 @@ export default function Feed() {
             user={user ?? null}
             onSubmit={handleCreatePost}
             isSubmitting={createPostMutation.isPending}
+            isAuthPending={isAuthWritePending}
           />
         </div>
 

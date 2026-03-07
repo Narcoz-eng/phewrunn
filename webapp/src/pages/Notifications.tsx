@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import { useSession } from "@/lib/auth-client";
+import { useAuth, useSession } from "@/lib/auth-client";
 import { Notification } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Bell, CheckCheck, ArrowLeft, BellOff } from "lucide-react";
@@ -150,7 +150,7 @@ export default function Notifications() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: session } = useSession();
-  const isAuthenticated = !!session?.user;
+  const { isAuthenticated, hasLiveSession, isUsingCachedUser } = useAuth();
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
   const notificationsQueryKey = useMemo(
     () => ["notifications", session?.user?.id ?? "anonymous"] as const,
@@ -207,7 +207,7 @@ export default function Notifications() {
       return Array.isArray(payload?.data) ? payload.data : [];
     },
     initialData: cachedNotifications && cachedNotifications.length > 0 ? cachedNotifications : undefined,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && hasLiveSession,
     staleTime: 20000,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -230,7 +230,7 @@ export default function Notifications() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
-      return isAuthenticated ? 60000 : false;
+      return hasLiveSession ? 60000 : false;
     },
   });
   const notificationsErrorMessage = useMemo(() => {
@@ -350,14 +350,26 @@ export default function Notifications() {
   };
 
   const handleMarkClicked = (notification: Notification) => {
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Notifications will refresh in a moment.");
+      return;
+    }
     markClickedMutation.mutate(getNotificationIds(notification));
   };
 
   const handleDismiss = (notification: Notification) => {
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Notifications will refresh in a moment.");
+      return;
+    }
     dismissMutation.mutate(getNotificationIds(notification));
   };
 
   const handleMarkAllRead = () => {
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Notifications will refresh in a moment.");
+      return;
+    }
     markAllReadMutation.mutate();
   };
 
@@ -370,6 +382,8 @@ export default function Notifications() {
   const filteredNotifications = activeFilter === "unread"
     ? mergedNotifications.filter((notification) => !notification.read)
     : mergedNotifications;
+  const shouldShowSessionRecovery = isAuthenticated && isUsingCachedUser && filteredNotifications.length === 0;
+  const shouldShowRecoveryBanner = isAuthenticated && isUsingCachedUser && filteredNotifications.length > 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -402,7 +416,7 @@ export default function Notifications() {
               size="sm"
               className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
               onClick={handleMarkAllRead}
-              disabled={markAllReadMutation.isPending}
+              disabled={markAllReadMutation.isPending || !hasLiveSession}
             >
               <CheckCheck className="h-4 w-4" />
               <span className="text-xs">Mark all read</span>
@@ -451,6 +465,37 @@ export default function Notifications() {
                   Activity alerts appear here after you sign in.
                 </p>
               </div>
+            </div>
+          ) : shouldShowSessionRecovery ? (
+            <div className="py-6">
+              {[0, 1, 2].map((i) => (
+                <NotificationItemSkeleton key={i} />
+              ))}
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                Finalizing your session and loading notifications...
+              </p>
+            </div>
+          ) : shouldShowRecoveryBanner ? (
+            <div>
+              <div className="mx-4 mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                Notifications are showing cached activity while sign-in finishes. Actions will unlock automatically.
+              </div>
+              <WindowVirtualList
+                items={filteredNotifications}
+                getItemKey={(notification) => notification.id}
+                estimateItemHeight={104}
+                overscanPx={900}
+                renderItem={(notification, index) => (
+                  <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
+                    <NotificationItem
+                      notification={notification}
+                      onMarkClicked={handleMarkClicked}
+                      onDismiss={handleDismiss}
+                      onProfileClick={handleProfileClick}
+                    />
+                  </div>
+                )}
+              />
             </div>
           ) : isLoading || (!isFetched && filteredNotifications.length === 0) ? (
             // Loading skeletons

@@ -37,7 +37,7 @@ type ProfileUpdateResponse = {
 export default function HandleOnboarding() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, hasLiveSession } = useSession();
   const { signOut } = useAuth();
   const [handle, setHandle] = useState("");
   const redirectTarget = useMemo(() => {
@@ -57,7 +57,7 @@ export default function HandleOnboarding() {
   }, [location.state]);
 
   useEffect(() => {
-    if (!session?.user) {
+    if (!session?.user || !hasLiveSession) {
       return;
     }
 
@@ -73,7 +73,7 @@ export default function HandleOnboarding() {
         session.user.id
       )
     );
-  }, [navigate, redirectTarget, session?.user]);
+  }, [hasLiveSession, navigate, redirectTarget, session?.user]);
 
   const normalizedHandle = normalizeProfileHandleInput(handle);
   const validationMessage = getProfileHandleValidationMessage(normalizedHandle);
@@ -98,6 +98,11 @@ export default function HandleOnboarding() {
   });
 
   const handleSubmit = () => {
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Saving your handle will unlock in a moment.");
+      return;
+    }
+
     if (validationMessage) {
       toast.error(validationMessage);
       return;
@@ -106,12 +111,14 @@ export default function HandleOnboarding() {
     saveHandleMutation.mutate(normalizedHandle);
   };
 
-  if (isPending || !session?.user) {
+  if (isPending || !session?.user || !hasLiveSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Preparing your account...</p>
+          <p className="text-sm text-muted-foreground">
+            {session?.user ? "Finalizing your account..." : "Preparing your account..."}
+          </p>
         </div>
       </div>
     );

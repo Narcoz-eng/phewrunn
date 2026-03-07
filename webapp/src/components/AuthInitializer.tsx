@@ -5,6 +5,7 @@ import {
   syncPrivySession,
   registerPreLogoutHook,
   hasStoredAuthTokenHint,
+  isExplicitLogoutCoolingDown,
   usePrivySyncFailureSnapshot,
 } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
@@ -67,6 +68,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
+    if (isExplicitLogoutCoolingDown()) return;
     if (
       privySyncFailure &&
       Date.now() - privySyncFailure.recordedAt < AUTO_SYNC_COOLDOWN_MS

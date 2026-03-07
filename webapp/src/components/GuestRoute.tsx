@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
-import { readCachedAuthUserSnapshot, usePrivySyncFailureSnapshot, useSession } from "@/lib/auth-client";
+import {
+  isExplicitLogoutCoolingDown,
+  readCachedAuthUserSnapshot,
+  usePrivySyncFailureSnapshot,
+  useSession,
+} from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 
@@ -43,11 +48,14 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
+  const logoutCooldownActive = isExplicitLogoutCoolingDown();
   const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
-  const activeLoginIntent = !effectiveUser ? readPrivyLoginIntent() : null;
+  const activeLoginIntent =
+    !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
-  const hasPrivySyncHint = ready && authenticated && !effectiveUser;
-  const shouldHoldForOAuthReturn = hasOAuthReturnHint && !ready && !effectiveUser;
+  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
+  const shouldHoldForOAuthReturn =
+    hasOAuthReturnHint && !ready && !effectiveUser && !logoutCooldownActive;
 
   useEffect(() => {
     if (!hasPrivySyncHint && !shouldHoldForOAuthReturn) {

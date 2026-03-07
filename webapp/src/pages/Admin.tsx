@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth-client";
 import {
   type AdminStats,
   type AdminUser,
@@ -1070,6 +1071,7 @@ function PostsTab() {
 
 // Main Admin page component
 export default function Admin() {
+  const { isAuthenticated, hasLiveSession } = useAuth();
   // Check if current user is admin
   const { data: currentUser, isLoading: userLoading, error } = useQuery({
     queryKey: ["admin", "me"],
@@ -1077,6 +1079,7 @@ export default function Admin() {
       const res = await api.get<{ id: string; email?: string | null; isAdmin?: boolean }>("/api/me");
       return res;
     },
+    enabled: hasLiveSession,
     retry: false,
   });
 
@@ -1089,7 +1092,7 @@ export default function Admin() {
   });
 
   // If still loading, show loading state
-  if (userLoading) {
+  if (userLoading || (isAuthenticated && !hasLiveSession)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">

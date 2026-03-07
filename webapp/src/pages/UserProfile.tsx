@@ -77,7 +77,7 @@ export default function UserProfile() {
   const navigate = useNavigate();
   const location = useLocation();
   const { userId } = useParams<{ userId: string }>();
-  const { data: session } = useSession();
+  const { data: session, hasLiveSession } = useSession();
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
@@ -267,6 +267,12 @@ export default function UserProfile() {
   // Follow mutation
   const followMutation = useMutation({
     mutationFn: async () => {
+      if (!session?.user) {
+        throw new Error("Sign in to follow users");
+      }
+      if (!hasLiveSession) {
+        throw new Error("Still finalizing sign-in. Try again in a moment.");
+      }
       const targetIdentifier = user?.username ?? user?.id ?? userId;
       if (!targetIdentifier) {
         throw new Error("User not found");
@@ -370,6 +376,14 @@ export default function UserProfile() {
 
   // Handlers
   const handleLike = (postId: string) => {
+    if (!session?.user) {
+      toast.info("Sign in to interact with posts.");
+      return;
+    }
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Try again in a moment.");
+      return;
+    }
     const post = posts.find((p) => p.id === postId) || reposts.find((p) => p.id === postId);
     if (post) {
       likeMutation.mutate({ postId, isLiked: post.isLiked });
@@ -377,6 +391,14 @@ export default function UserProfile() {
   };
 
   const handleRepost = (postId: string) => {
+    if (!session?.user) {
+      toast.info("Sign in to interact with posts.");
+      return;
+    }
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Try again in a moment.");
+      return;
+    }
     const post = posts.find((p) => p.id === postId) || reposts.find((p) => p.id === postId);
     if (post) {
       repostMutation.mutate({ postId, isReposted: post.isReposted });
@@ -384,6 +406,14 @@ export default function UserProfile() {
   };
 
   const handleComment = (postId: string, content: string) => {
+    if (!session?.user) {
+      toast.info("Sign in to interact with posts.");
+      return;
+    }
+    if (!hasLiveSession) {
+      toast.info("Still finalizing sign-in. Try again in a moment.");
+      return;
+    }
     commentMutation.mutate({ postId, content });
   };
 
@@ -486,7 +516,7 @@ export default function UserProfile() {
 
           {!isOwnProfile && user && (
             <div className="flex items-center gap-2">
-              {session?.user ? (
+              {hasLiveSession ? (
                 <ReportDialog
                   targetType="user"
                   targetId={user.id}
@@ -499,8 +529,18 @@ export default function UserProfile() {
               <Button
                 variant={user.isFollowing ? "outline" : "default"}
                 size="sm"
-                onClick={() => followMutation.mutate()}
-                disabled={followMutation.isPending}
+                onClick={() => {
+                  if (!session?.user) {
+                    toast.info("Sign in to follow users.");
+                    return;
+                  }
+                  if (!hasLiveSession) {
+                    toast.info("Still finalizing sign-in. Try again in a moment.");
+                    return;
+                  }
+                  followMutation.mutate();
+                }}
+                disabled={followMutation.isPending || !session?.user || !hasLiveSession}
                 className="h-8 px-3 gap-1.5"
               >
                 {followMutation.isPending ? (
@@ -525,6 +565,7 @@ export default function UserProfile() {
               variant="outline"
               size="sm"
               onClick={() => navigate("/profile")}
+              disabled={!hasLiveSession}
               className="h-8 px-3"
             >
               Edit Profile
@@ -765,7 +806,7 @@ export default function UserProfile() {
                               >
                                 <PostCard
                                   post={post}
-                                  currentUserId={session?.user?.id}
+                                  currentUserId={hasLiveSession ? session?.user?.id : undefined}
                                   onLike={handleLike}
                                   onRepost={handleRepost}
                                   onComment={handleComment}
@@ -813,7 +854,7 @@ export default function UserProfile() {
                           >
                             <PostCard
                               post={post}
-                              currentUserId={session?.user?.id}
+                              currentUserId={hasLiveSession ? session?.user?.id : undefined}
                               onLike={handleLike}
                               onRepost={handleRepost}
                               onComment={handleComment}

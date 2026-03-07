@@ -40,7 +40,7 @@ export default function Leaderboard() {
   const [topUsersReady, setTopUsersReady] = useState(false);
   const [statsReady, setStatsReady] = useState(false);
   const { data: session } = useSession();
-  const { signOut } = useAuth();
+  const { signOut, hasLiveSession } = useAuth();
   const { logout: privyLogout } = usePrivy();
   const sessionBackedUser = session?.user
     ? {
@@ -67,7 +67,7 @@ export default function Leaderboard() {
       return data;
     },
     initialData: sessionBackedUser ?? undefined,
-    enabled: !!session?.user,
+    enabled: !!session?.user && hasLiveSession,
     staleTime: 30000,
     refetchOnWindowFocus: false,
     retry: false,
@@ -80,7 +80,7 @@ export default function Leaderboard() {
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
       return response;
     },
-    enabled: !!user,
+    enabled: !!user && hasLiveSession,
     refetchOnWindowFocus: false,
     refetchInterval: () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -92,7 +92,7 @@ export default function Leaderboard() {
     retry: 1,
   });
 
-  const unreadCount = unreadData?.count ?? 0;
+  const unreadCount = hasLiveSession ? (unreadData?.count ?? 0) : 0;
 
   useEffect(() => {
     const topUsersTimer = window.setTimeout(() => {

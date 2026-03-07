@@ -6,6 +6,93 @@ import { NotificationsQuerySchema } from "../types.js";
 
 export const notificationsRouter = new Hono<{ Variables: AuthVariables }>();
 
+const NOTIFICATIONS_LIST_CACHE_TTL_MS =
+  process.env.NODE_ENV === "production" ? 15_000 : 4_000;
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS =
+  process.env.NODE_ENV === "production" ? 10_000 : 3_000;
+const NOTIFICATIONS_CACHE_MAX_ENTRIES =
+  process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+
+const notificationsListCache = new Map<
+  string,
+  {
+    data: unknown[];
+    expiresAtMs: number;
+  }
+>();
+const notificationsUnreadCountCache = new Map<
+  string,
+  {
+    count: number;
+    expiresAtMs: number;
+  }
+>();
+
+function trimNotificationCache<T>(
+  cache: Map<string, T>,
+  maxEntries = NOTIFICATIONS_CACHE_MAX_ENTRIES
+): void {
+  while (cache.size >= maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+}
+
+function readNotificationsListCache(cacheKey: string): unknown[] | null {
+  const cached = notificationsListCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAtMs <= Date.now()) {
+    notificationsListCache.delete(cacheKey);
+    return null;
+  }
+  return cached.data;
+}
+
+function writeNotificationsListCache(cacheKey: string, data: unknown[]): void {
+  if (notificationsListCache.has(cacheKey)) {
+    notificationsListCache.delete(cacheKey);
+  }
+  trimNotificationCache(notificationsListCache);
+  notificationsListCache.set(cacheKey, {
+    data,
+    expiresAtMs: Date.now() + NOTIFICATIONS_LIST_CACHE_TTL_MS,
+  });
+}
+
+function readNotificationsUnreadCountCache(userId: string): number | null {
+  const cached = notificationsUnreadCountCache.get(userId);
+  if (!cached) return null;
+  if (cached.expiresAtMs <= Date.now()) {
+    notificationsUnreadCountCache.delete(userId);
+    return null;
+  }
+  return cached.count;
+}
+
+function writeNotificationsUnreadCountCache(userId: string, count: number): void {
+  if (notificationsUnreadCountCache.has(userId)) {
+    notificationsUnreadCountCache.delete(userId);
+  }
+  trimNotificationCache(notificationsUnreadCountCache);
+  notificationsUnreadCountCache.set(userId, {
+    count,
+    expiresAtMs: Date.now() + NOTIFICATIONS_UNREAD_CACHE_TTL_MS,
+  });
+}
+
+function invalidateNotificationsCache(userId: string): void {
+  notificationsUnreadCountCache.delete(userId);
+  const prefix = `${userId}:`;
+  for (const key of notificationsListCache.keys()) {
+    if (key.startsWith(prefix)) {
+      notificationsListCache.delete(key);
+    }
+  }
+}
+
 function normalizeNotificationMessage(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -93,6 +180,11 @@ notificationsRouter.get("/", requireAuth, async (c) => {
   const query = c.req.query();
   const parsed = NotificationsQuerySchema.safeParse(query);
   const includeDismissed = parsed.success ? parsed.data.includeDismissed : false;
+  const listCacheKey = `${user.id}:${includeDismissed ? "all" : "active"}`;
+  const cachedNotifications = readNotificationsListCache(listCacheKey);
+  if (cachedNotifications) {
+    return c.json({ data: cachedNotifications });
+  }
 
   const whereClause: { userId: string; dismissed?: boolean } = { userId: user.id };
 
@@ -191,6 +283,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
     }
   }
 
+  writeNotificationsListCache(listCacheKey, notifications);
   return c.json({ data: notifications });
 });
 
@@ -199,6 +292,11 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
   const user = c.get("user");
   if (!user) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const cachedUnreadCount = readNotificationsUnreadCountCache(user.id);
+  if (cachedUnreadCount !== null) {
+    return c.json({ data: { count: cachedUnreadCount } });
   }
 
   let unreadNotifications: Array<{
@@ -282,7 +380,7 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
   const groupKeys = new Set(
     unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
   );
-
+  writeNotificationsUnreadCountCache(user.id, groupKeys.size);
   return c.json({ data: { count: groupKeys.size } });
 });
 
@@ -311,6 +409,7 @@ notificationsRouter.patch("/:id/read", requireAuth, async (c) => {
     where: { id: notificationId },
     data: { read: true },
   });
+  invalidateNotificationsCache(user.id);
 
   return c.json({ data: updated });
 });
@@ -343,6 +442,7 @@ notificationsRouter.patch("/read-all", requireAuth, async (c) => {
       data: { read: true },
     });
   }
+  invalidateNotificationsCache(user.id);
 
   return c.json({ data: { success: true } });
 });
@@ -444,6 +544,7 @@ notificationsRouter.patch("/:id/click", requireAuth, async (c) => {
   }
 
   // Return the notification data for frontend navigation (no redirect URL)
+  invalidateNotificationsCache(user.id);
   return c.json({ data: updated });
 });
 
@@ -474,6 +575,7 @@ notificationsRouter.patch("/:id/dismiss", requireAuth, async (c) => {
       where: { id: notificationId },
       data: { dismissed: true },
     });
+    invalidateNotificationsCache(user.id);
     return c.json({ data: updated });
   } catch (error) {
     if (!isPrismaMissingColumnError(error, "dismissed")) {
@@ -482,6 +584,7 @@ notificationsRouter.patch("/:id/dismiss", requireAuth, async (c) => {
     await prisma.notification.delete({
       where: { id: notificationId },
     });
+    invalidateNotificationsCache(user.id);
     return c.json({ data: { deleted: true } });
   }
 });
@@ -510,6 +613,7 @@ notificationsRouter.delete("/:id", requireAuth, async (c) => {
   await prisma.notification.delete({
     where: { id: notificationId },
   });
+  invalidateNotificationsCache(user.id);
 
   return c.json({ data: { deleted: true } });
 });

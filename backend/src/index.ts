@@ -465,7 +465,7 @@ const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
   const raw = process.env.ME_DB_LOOKUP_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 2500 : 3000;
+  return process.env.NODE_ENV === "production" ? 4000 : 4500;
 })();
 const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
 const ME_RESPONSE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
@@ -547,7 +547,7 @@ const AUTH_DB_LOOKUP_TIMEOUT_MS = (() => {
   const raw = process.env.AUTH_DB_LOOKUP_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 3500 : 5000;
+  return process.env.NODE_ENV === "production" ? 6000 : 6500;
 })();
 
 class AuthDbTimeoutError extends Error {
@@ -565,7 +565,7 @@ const PRIVY_API_TIMEOUT_MS = (() => {
   const raw = process.env.PRIVY_API_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 2500 : 4000;
+  return process.env.NODE_ENV === "production" ? 5000 : 6000;
 })();
 
 class PrivyApiTimeoutError extends Error {

@@ -7,17 +7,17 @@ import { Zap } from "lucide-react";
 // Keeping it as a redirect for backwards compatibility
 export default function VerifyOtp() {
   const navigate = useNavigate();
-  const { isAuthenticated, isReady } = useAuth();
+  const { isAuthenticated, hasLiveSession, isReady } = useAuth();
 
   useEffect(() => {
     if (isReady) {
-      if (isAuthenticated) {
+      if (hasLiveSession) {
         navigate("/", { replace: true });
-      } else {
+      } else if (!isAuthenticated) {
         navigate("/login", { replace: true });
       }
     }
-  }, [isReady, isAuthenticated, navigate]);
+  }, [hasLiveSession, isReady, isAuthenticated, navigate]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">

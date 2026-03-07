@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
-import { getExplicitLogoutAt, readCachedAuthUserSnapshot, usePrivySyncFailureSnapshot, useSession } from "@/lib/auth-client";
+import {
+  isExplicitLogoutCoolingDown,
+  readCachedAuthUserSnapshot,
+  usePrivySyncFailureSnapshot,
+  useSession,
+} from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 
@@ -17,8 +22,7 @@ function RouteLoading({ label }: { label: string }) {
 }
 
 function useStoredAuthHint(): boolean {
-  const logoutAt = getExplicitLogoutAt();
-  if (logoutAt > 0 && Date.now() - logoutAt < 10_000) {
+  if (isExplicitLogoutCoolingDown()) {
     return false;
   }
   try {
@@ -105,10 +109,12 @@ function ProtectedRouteWithPrivy({
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
+  const logoutCooldownActive = isExplicitLogoutCoolingDown();
   const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
-  const activeLoginIntent = !effectiveUser ? readPrivyLoginIntent() : null;
+  const activeLoginIntent =
+    !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
-  const hasPrivySyncHint = ready && authenticated && !effectiveUser;
+  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
 
   useEffect(() => {
     if (
