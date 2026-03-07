@@ -118,6 +118,9 @@ const LEADERBOARD_DEDUPED_POSTS_SUBQUERY = Prisma.sql`
     p."createdAt" ASC,
     p.id ASC
 `;
+const LEADERBOARD_POSTS_CTE = Prisma.sql`
+  WITH leaderboard_posts AS MATERIALIZED (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
+`;
 
 const EMPTY_LEADERBOARD_STATS_PAYLOAD: LeaderboardStatsPayload = {
   volume: {
@@ -315,6 +318,30 @@ async function executeLeaderboardRawQuery<T>(
   }
 }
 
+async function resolveLeaderboardTotalCount(
+  trace: LeaderboardTraceContext,
+  rows: Array<{ totalCount?: number | bigint | null }>,
+  skip: number,
+  fallbackLabel: string,
+  fallbackQuery: Prisma.Sql
+): Promise<number> {
+  if (rows.length > 0) {
+    return Math.max(0, Math.round(toSafeNumber(rows[0]?.totalCount ?? 0)));
+  }
+
+  if (skip <= 0) {
+    return 0;
+  }
+
+  const totalRows = await executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
+    trace,
+    fallbackLabel,
+    fallbackQuery
+  );
+
+  return Math.max(0, Math.round(toSafeNumber(totalRows[0]?.count ?? 0)));
+}
+
 async function getLeaderboardCacheVersion(): Promise<number> {
   const cached = leaderboardCacheVersionReadCache;
   if (cached && cached.expiresAtMs > Date.now()) {
@@ -471,7 +498,7 @@ async function computeLeaderboardStatsPayload(
       trace,
       "leaderboard.stats.summary",
       Prisma.sql`
-        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
+        ${LEADERBOARD_POSTS_CTE}
         SELECT
           COALESCE(SUM(p."entryMcap") FILTER (WHERE p."createdAt" >= ${oneDayAgo} AND p."entryMcap" IS NOT NULL), 0) AS "volumeDay",
           COALESCE(SUM(p."entryMcap") FILTER (WHERE p."createdAt" >= ${oneWeekAgo} AND p."entryMcap" IS NOT NULL), 0) AS "volumeWeek",
@@ -512,7 +539,7 @@ async function computeLeaderboardStatsPayload(
       trace,
       "leaderboard.stats.top-users-week",
       Prisma.sql`
-        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
+        ${LEADERBOARD_POSTS_CTE}
         SELECT
           u.id,
           u.name,
@@ -659,7 +686,7 @@ async function getDailyGainersRaw(trace: LeaderboardTraceContext): Promise<Array
     trace,
     "leaderboard.daily-gainers.raw",
     Prisma.sql`
-      WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
+      ${LEADERBOARD_POSTS_CTE}
       SELECT
         p.id,
         p."tokenName",
@@ -764,80 +791,80 @@ async function getTopUsersResponseRaw(
   const MIN_POSTS_FOR_WINRATE = 5;
 
   if (sortBy === "activity") {
-    const [rows, totalRows] = await Promise.all([
-      executeLeaderboardRawQuery<Array<{
-          id: string;
-          username: string | null;
-          name: string | null;
-          image: string | null;
-          level: number | null;
-          xp: number | null;
-          totalAlphas: number | bigint | null;
-          recentAlphas: number | bigint | null;
-          wins: number | bigint | null;
-          losses: number | bigint | null;
-        }>>(
-        trace,
-        "leaderboard.top-users.activity.raw",
-        Prisma.sql`
-          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
-          recent_posts AS (
-            SELECT p."authorId", COUNT(*)::bigint AS "recentAlphas"
-            FROM leaderboard_posts p
-            WHERE p."createdAt" >= ${sevenDaysAgo}
-            GROUP BY p."authorId"
-          ),
-          total_posts AS (
-            SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
-            FROM leaderboard_posts p
-            GROUP BY p."authorId"
-          ),
-          win_stats AS (
-            SELECT
-              p."authorId",
-              COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
-              COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses
-            FROM leaderboard_posts p
-            WHERE p.settled = true AND p."isWin" IS NOT NULL
-            GROUP BY p."authorId"
-          )
+    const rows = await executeLeaderboardRawQuery<Array<{
+      id: string;
+      username: string | null;
+      name: string | null;
+      image: string | null;
+      level: number | null;
+      xp: number | null;
+      totalAlphas: number | bigint | null;
+      recentAlphas: number | bigint | null;
+      wins: number | bigint | null;
+      losses: number | bigint | null;
+      totalCount: number | bigint | null;
+    }>>(
+      trace,
+      "leaderboard.top-users.activity.raw",
+      Prisma.sql`
+        ${LEADERBOARD_POSTS_CTE},
+        recent_posts AS (
+          SELECT p."authorId", COUNT(*)::bigint AS "recentAlphas"
+          FROM leaderboard_posts p
+          WHERE p."createdAt" >= ${sevenDaysAgo}
+          GROUP BY p."authorId"
+        ),
+        total_posts AS (
+          SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
+          FROM leaderboard_posts p
+          GROUP BY p."authorId"
+        ),
+        win_stats AS (
           SELECT
-            u.id,
-            u.username,
-            u.name,
-            u.image,
-            u.level,
-            u.xp,
-            COALESCE(tp."totalAlphas", 0) AS "totalAlphas",
-            rp."recentAlphas",
-            COALESCE(ws.wins, 0) AS wins,
-            COALESCE(ws.losses, 0) AS losses
-          FROM recent_posts rp
-          JOIN "User" u ON u.id = rp."authorId"
-          LEFT JOIN total_posts tp ON tp."authorId" = u.id
-          LEFT JOIN win_stats ws ON ws."authorId" = u.id
-          ORDER BY rp."recentAlphas" DESC, u.level DESC, u.xp DESC
-          OFFSET ${skip}
-          LIMIT ${limit}
-        `
-      ),
-      executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
-        trace,
-        "leaderboard.top-users.activity.raw-total",
-        Prisma.sql`
-          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
-          SELECT COUNT(*)::bigint AS count
-          FROM (
-            SELECT p."authorId"
-            FROM leaderboard_posts p
-            WHERE p."createdAt" >= ${sevenDaysAgo}
-            GROUP BY p."authorId"
-          ) activity_users
-        `
-      ),
-    ]);
-
-    const total = Math.max(0, Math.round(toSafeNumber(totalRows[0]?.count ?? 0)));
+            p."authorId",
+            COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
+            COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses
+          FROM leaderboard_posts p
+          WHERE p.settled = true AND p."isWin" IS NOT NULL
+          GROUP BY p."authorId"
+        )
+        SELECT
+          u.id,
+          u.username,
+          u.name,
+          u.image,
+          u.level,
+          u.xp,
+          COALESCE(tp."totalAlphas", 0) AS "totalAlphas",
+          rp."recentAlphas",
+          COALESCE(ws.wins, 0) AS wins,
+          COALESCE(ws.losses, 0) AS losses,
+          COUNT(*) OVER ()::bigint AS "totalCount"
+        FROM recent_posts rp
+        JOIN "User" u ON u.id = rp."authorId"
+        LEFT JOIN total_posts tp ON tp."authorId" = u.id
+        LEFT JOIN win_stats ws ON ws."authorId" = u.id
+        ORDER BY rp."recentAlphas" DESC, u.level DESC, u.xp DESC, u.id ASC
+        OFFSET ${skip}
+        LIMIT ${limit}
+      `
+    );
+    const total = await resolveLeaderboardTotalCount(
+      trace,
+      rows,
+      skip,
+      "leaderboard.top-users.activity.raw-total",
+      Prisma.sql`
+        ${LEADERBOARD_POSTS_CTE}
+        SELECT COUNT(*)::bigint AS count
+        FROM (
+          SELECT p."authorId"
+          FROM leaderboard_posts p
+          WHERE p."createdAt" >= ${sevenDaysAgo}
+          GROUP BY p."authorId"
+        ) activity_users
+      `
+    );
     return {
       data: rows.map((row, index) => {
         const wins = Math.max(0, Math.round(toSafeNumber(row.wins)));
@@ -872,82 +899,82 @@ async function getTopUsersResponseRaw(
   }
 
   if (sortBy === "winrate") {
-    const [rows, totalRows] = await Promise.all([
-      executeLeaderboardRawQuery<Array<{
-          id: string;
-          username: string | null;
-          name: string | null;
-          image: string | null;
-          level: number | null;
-          xp: number | null;
-          totalAlphas: number | bigint | null;
-          wins: number | bigint | null;
-          losses: number | bigint | null;
-          totalSettled: number | bigint | null;
-          winRate: number | null;
-        }>>(
-        trace,
-        "leaderboard.top-users.winrate.raw",
-        Prisma.sql`
-          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
-          total_posts AS (
-            SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
-            FROM leaderboard_posts p
-            GROUP BY p."authorId"
-          ),
-          qualified AS (
-            SELECT
-              p."authorId",
-              COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
-              COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses,
-              COUNT(*)::bigint AS "totalSettled",
-              ROUND(
-                (COUNT(*) FILTER (WHERE p."isWin" = true)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
-                2
-              ) AS "winRate"
-            FROM leaderboard_posts p
-            WHERE p.settled = true AND p."isWin" IS NOT NULL
-            GROUP BY p."authorId"
-            HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
-          )
+    const rows = await executeLeaderboardRawQuery<Array<{
+      id: string;
+      username: string | null;
+      name: string | null;
+      image: string | null;
+      level: number | null;
+      xp: number | null;
+      totalAlphas: number | bigint | null;
+      wins: number | bigint | null;
+      losses: number | bigint | null;
+      totalSettled: number | bigint | null;
+      winRate: number | null;
+      totalCount: number | bigint | null;
+    }>>(
+      trace,
+      "leaderboard.top-users.winrate.raw",
+      Prisma.sql`
+        ${LEADERBOARD_POSTS_CTE},
+        total_posts AS (
+          SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
+          FROM leaderboard_posts p
+          GROUP BY p."authorId"
+        ),
+        qualified AS (
           SELECT
-            u.id,
-            u.username,
-            u.name,
-            u.image,
-            u.level,
-            u.xp,
-            COALESCE(tp."totalAlphas", 0) AS "totalAlphas",
-            q.wins,
-            q.losses,
-            q."totalSettled",
-            q."winRate"
-          FROM qualified q
-          JOIN "User" u ON u.id = q."authorId"
-          LEFT JOIN total_posts tp ON tp."authorId" = u.id
-          ORDER BY q."winRate" DESC, q."totalSettled" DESC
-          OFFSET ${skip}
-          LIMIT ${limit}
-        `
-      ),
-      executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
-        trace,
-        "leaderboard.top-users.winrate.raw-total",
-        Prisma.sql`
-          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
-          SELECT COUNT(*)::bigint AS count
-          FROM (
-            SELECT p."authorId"
-            FROM leaderboard_posts p
-            WHERE p.settled = true AND p."isWin" IS NOT NULL
-            GROUP BY p."authorId"
-            HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
-          ) qualified_users
-        `
-      ),
-    ]);
-
-    const total = Math.max(0, Math.round(toSafeNumber(totalRows[0]?.count ?? 0)));
+            p."authorId",
+            COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
+            COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses,
+            COUNT(*)::bigint AS "totalSettled",
+            ROUND(
+              (COUNT(*) FILTER (WHERE p."isWin" = true)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+              2
+            ) AS "winRate"
+          FROM leaderboard_posts p
+          WHERE p.settled = true AND p."isWin" IS NOT NULL
+          GROUP BY p."authorId"
+          HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
+        )
+        SELECT
+          u.id,
+          u.username,
+          u.name,
+          u.image,
+          u.level,
+          u.xp,
+          COALESCE(tp."totalAlphas", 0) AS "totalAlphas",
+          q.wins,
+          q.losses,
+          q."totalSettled",
+          q."winRate",
+          COUNT(*) OVER ()::bigint AS "totalCount"
+        FROM qualified q
+        JOIN "User" u ON u.id = q."authorId"
+        LEFT JOIN total_posts tp ON tp."authorId" = u.id
+        ORDER BY q."winRate" DESC, q."totalSettled" DESC, u.id ASC
+        OFFSET ${skip}
+        LIMIT ${limit}
+      `
+    );
+    const total = await resolveLeaderboardTotalCount(
+      trace,
+      rows,
+      skip,
+      "leaderboard.top-users.winrate.raw-total",
+      Prisma.sql`
+        ${LEADERBOARD_POSTS_CTE}
+        SELECT COUNT(*)::bigint AS count
+        FROM (
+          SELECT p."authorId"
+          FROM leaderboard_posts p
+          WHERE p.settled = true AND p."isWin" IS NOT NULL
+          GROUP BY p."authorId"
+          HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
+        ) qualified_users
+      `
+    );
     return {
       data: rows.map((row, index) => ({
         rank: skip + index + 1,
@@ -975,70 +1002,70 @@ async function getTopUsersResponseRaw(
     };
   }
 
-  const [rows, totalRows] = await Promise.all([
-    executeLeaderboardRawQuery<Array<{
-        id: string;
-        username: string | null;
-        name: string | null;
-        image: string | null;
-        level: number | null;
-        xp: number | null;
-        totalAlphas: number | bigint | null;
-        wins: number | bigint | null;
-        losses: number | bigint | null;
-      }>>(
-      trace,
-      "leaderboard.top-users.level.raw",
-      Prisma.sql`
-        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
-        post_counts AS (
-          SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
-          FROM leaderboard_posts p
-          GROUP BY p."authorId"
-        ),
-        win_stats AS (
-          SELECT
-            p."authorId",
-            COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
-            COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses
-          FROM leaderboard_posts p
-          WHERE p.settled = true AND p."isWin" IS NOT NULL
-          GROUP BY p."authorId"
-        )
+  const rows = await executeLeaderboardRawQuery<Array<{
+    id: string;
+    username: string | null;
+    name: string | null;
+    image: string | null;
+    level: number | null;
+    xp: number | null;
+    totalAlphas: number | bigint | null;
+    wins: number | bigint | null;
+    losses: number | bigint | null;
+    totalCount: number | bigint | null;
+  }>>(
+    trace,
+    "leaderboard.top-users.level.raw",
+    Prisma.sql`
+      ${LEADERBOARD_POSTS_CTE},
+      post_counts AS (
+        SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
+        FROM leaderboard_posts p
+        GROUP BY p."authorId"
+      ),
+      win_stats AS (
         SELECT
-          u.id,
-          u.username,
-          u.name,
-          u.image,
-          u.level,
-          u.xp,
-          pc."totalAlphas",
-          COALESCE(ws.wins, 0) AS wins,
-          COALESCE(ws.losses, 0) AS losses
-        FROM post_counts pc
-        JOIN "User" u ON u.id = pc."authorId"
-        LEFT JOIN win_stats ws ON ws."authorId" = u.id
-        ORDER BY u.level DESC, u.xp DESC
-        OFFSET ${skip}
-        LIMIT ${limit}
-      `
-    ),
-    executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
-      trace,
-      "leaderboard.top-users.level.raw-total",
-      Prisma.sql`
-        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
-        SELECT COUNT(*)::bigint AS count
-        FROM (
-          SELECT p."authorId"
-          FROM leaderboard_posts p
-          GROUP BY p."authorId"
-        ) ranked_users
-      `
-    ),
-  ]);
-
-  const total = Math.max(0, Math.round(toSafeNumber(totalRows[0]?.count ?? 0)));
+          p."authorId",
+          COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
+          COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses
+        FROM leaderboard_posts p
+        WHERE p.settled = true AND p."isWin" IS NOT NULL
+        GROUP BY p."authorId"
+      )
+      SELECT
+        u.id,
+        u.username,
+        u.name,
+        u.image,
+        u.level,
+        u.xp,
+        pc."totalAlphas",
+        COALESCE(ws.wins, 0) AS wins,
+        COALESCE(ws.losses, 0) AS losses,
+        COUNT(*) OVER ()::bigint AS "totalCount"
+      FROM post_counts pc
+      JOIN "User" u ON u.id = pc."authorId"
+      LEFT JOIN win_stats ws ON ws."authorId" = u.id
+      ORDER BY u.level DESC, u.xp DESC, u.id ASC
+      OFFSET ${skip}
+      LIMIT ${limit}
+    `
+  );
+  const total = await resolveLeaderboardTotalCount(
+    trace,
+    rows,
+    skip,
+    "leaderboard.top-users.level.raw-total",
+    Prisma.sql`
+      ${LEADERBOARD_POSTS_CTE}
+      SELECT COUNT(*)::bigint AS count
+      FROM (
+        SELECT p."authorId"
+        FROM leaderboard_posts p
+        GROUP BY p."authorId"
+      ) ranked_users
+    `
+  );
   return {
     data: rows.map((row, index) => {
       const wins = Math.max(0, Math.round(toSafeNumber(row.wins)));

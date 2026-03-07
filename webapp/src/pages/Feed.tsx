@@ -29,6 +29,11 @@ interface FeedPage {
   nextCursor: string | null;
 }
 
+type CachedFeedPageEntry = {
+  cachedAt: number;
+  page: FeedPage;
+};
+
 const FEED_PAGE_SIZE = 10;
 const FEED_MAX_PAGES = 5;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
@@ -68,16 +73,17 @@ function getFeedFirstPageCacheKey(viewerScope: string, tab: FeedTab, search: str
   return `${FEED_FIRST_PAGE_CACHE_PREFIX}:${viewerScope}:${tab}:${search}`;
 }
 
-function readCachedFirstFeedPage(viewerScope: string, tab: FeedTab, search: string): FeedPage | null {
+function readCachedFirstFeedPageEntry(
+  viewerScope: string,
+  tab: FeedTab,
+  search: string
+): CachedFeedPageEntry | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.sessionStorage.getItem(getFeedFirstPageCacheKey(viewerScope, tab, search));
     if (!raw) return null;
 
-    const parsed = JSON.parse(raw) as {
-      cachedAt?: number;
-      page?: FeedPage;
-    };
+    const parsed = JSON.parse(raw) as Partial<CachedFeedPageEntry>;
 
     if (
       typeof parsed?.cachedAt !== "number" ||
@@ -89,10 +95,17 @@ function readCachedFirstFeedPage(viewerScope: string, tab: FeedTab, search: stri
       return null;
     }
 
-    return parsed.page;
+    return {
+      cachedAt: parsed.cachedAt,
+      page: parsed.page,
+    };
   } catch {
     return null;
   }
+}
+
+function readCachedFirstFeedPage(viewerScope: string, tab: FeedTab, search: string): FeedPage | null {
+  return readCachedFirstFeedPageEntry(viewerScope, tab, search)?.page ?? null;
 }
 
 function writeCachedFirstFeedPage(
@@ -124,20 +137,28 @@ function shouldUseSharedPublicFeedCache(tab: FeedTab, search: string): boolean {
   return tab !== "following" && search.trim().length === 0;
 }
 
+function readPreferredCachedFirstFeedPageEntry(
+  viewerScope: string,
+  tab: FeedTab,
+  search: string
+): CachedFeedPageEntry | null {
+  const scopedEntry = readCachedFirstFeedPageEntry(viewerScope, tab, search);
+  if (scopedEntry?.page.items.length) {
+    return scopedEntry;
+  }
+  if (!shouldUseSharedPublicFeedCache(tab, search) || viewerScope === FEED_PUBLIC_CACHE_SCOPE) {
+    return scopedEntry;
+  }
+  const sharedEntry = readCachedFirstFeedPageEntry(FEED_PUBLIC_CACHE_SCOPE, tab, search);
+  return sharedEntry?.page.items.length ? sharedEntry : scopedEntry;
+}
+
 function readPreferredCachedFirstFeedPage(
   viewerScope: string,
   tab: FeedTab,
   search: string
 ): FeedPage | null {
-  const scopedPage = readCachedFirstFeedPage(viewerScope, tab, search);
-  if (scopedPage?.items.length) {
-    return scopedPage;
-  }
-  if (!shouldUseSharedPublicFeedCache(tab, search) || viewerScope === FEED_PUBLIC_CACHE_SCOPE) {
-    return scopedPage;
-  }
-  const sharedPage = readCachedFirstFeedPage(FEED_PUBLIC_CACHE_SCOPE, tab, search);
-  return sharedPage?.items.length ? sharedPage : scopedPage;
+  return readPreferredCachedFirstFeedPageEntry(viewerScope, tab, search)?.page ?? null;
 }
 
 function writeCachedFirstFeedPageForScopes(
@@ -217,10 +238,11 @@ export default function Feed() {
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const feedViewerScope = hasLiveSession && session?.user?.id ? session.user.id : "anonymous";
-  const cachedFirstPage = useMemo(
-    () => readPreferredCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery),
+  const cachedFirstPageEntry = useMemo(
+    () => readPreferredCachedFirstFeedPageEntry(feedViewerScope, activeTab, effectiveSearchQuery),
     [activeTab, effectiveSearchQuery, feedViewerScope]
   );
+  const cachedFirstPage = cachedFirstPageEntry?.page ?? null;
   const feedCurrentUserCacheKey = useMemo(
     () => (session?.user?.id ? `${FEED_CURRENT_USER_CACHE_KEY}:${session.user.id}` : null),
     [session?.user?.id]
@@ -477,6 +499,7 @@ export default function Feed() {
           pageParams: [undefined],
         }
       : undefined,
+    initialDataUpdatedAt: cachedFirstPageEntry?.cachedAt,
     enabled: activeTab !== "following" || hasLiveSession,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 429) {
@@ -487,7 +510,6 @@ export default function Feed() {
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchOnMount: "always",
     refetchInterval: false,
   });
 
