@@ -34,8 +34,9 @@ const FEED_MAX_PAGES = 5;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
 const FEED_PUBLIC_CACHE_SCOPE = "public";
-const FEED_NEW_POSTS_POLL_MS = 25_000;
-const FEED_ACTIVE_TAB_POLL_MS = 35_000;
+const FEED_NEW_POSTS_POLL_MS = 60_000;
+const FEED_ACTIVE_TAB_POLL_MS = 90_000;
+const FEED_TAB_PREFETCH_ENABLED = false;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -606,6 +607,7 @@ export default function Feed() {
   }, []);
 
   useEffect(() => {
+    if (!FEED_TAB_PREFETCH_ENABLED) return;
     if (!hasLiveSession) return;
     if (activeTab !== "latest") return;
     if (searchQuery.trim().length >= 3) return;

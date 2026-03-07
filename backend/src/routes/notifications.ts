@@ -262,6 +262,63 @@ function getErrorMessage(error: unknown): string {
   return "";
 }
 
+function getPrismaErrorDetails(error: unknown): {
+  message: string;
+  code: string | null;
+  meta: unknown;
+} {
+  if (typeof error !== "object" || error === null) {
+    return {
+      message: getErrorMessage(error),
+      code: null,
+      meta: null,
+    };
+  }
+
+  const candidate = error as {
+    message?: unknown;
+    code?: unknown;
+    meta?: unknown;
+  };
+
+  return {
+    message:
+      typeof candidate.message === "string"
+        ? candidate.message
+        : getErrorMessage(error),
+    code: typeof candidate.code === "string" ? candidate.code : null,
+    meta: candidate.meta ?? null,
+  };
+}
+
+function isPrismaPoolPressureError(error: unknown): boolean {
+  const details = getPrismaErrorDetails(error);
+  const normalizedMessage = details.message.toLowerCase();
+  return (
+    details.code === "P2024" ||
+    normalizedMessage.includes("connection pool") ||
+    normalizedMessage.includes("too many clients already") ||
+    normalizedMessage.includes("too many connections") ||
+    normalizedMessage.includes("remaining connection slots are reserved")
+  );
+}
+
+function logNotificationsQueryFailure(
+  queryPath: string,
+  error: unknown,
+  extra?: Record<string, unknown>
+): void {
+  const details = getPrismaErrorDetails(error);
+  console.warn("[notifications] query failure", {
+    endpoint: "/api/notifications/unread-count",
+    queryPath,
+    message: details.message,
+    code: details.code,
+    meta: details.meta,
+    ...extra,
+  });
+}
+
 function isPrismaSchemaDriftError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
@@ -424,6 +481,29 @@ async function queryUnreadNotificationsRaw(userId: string): Promise<Array<{
     postId: row.postId ?? null,
     message: row.message,
   }));
+}
+
+async function countUnreadNotifications(userId: string): Promise<number> {
+  try {
+    return await prisma.notification.count({
+      where: {
+        userId,
+        read: false,
+        dismissed: false,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "dismissed")) {
+      throw error;
+    }
+  }
+
+  return prisma.notification.count({
+    where: {
+      userId,
+      read: false,
+    },
+  });
 }
 
 async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnType<typeof mapRawNotificationRow> | null> {
@@ -762,63 +842,26 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     return c.json({ data: { count: cachedUnreadCount } });
   }
 
-  // Use a lightweight COUNT query instead of fetching up to 200 rows
-  let unreadCount = 0;
+  let count = staleUnreadCount ?? 0;
   try {
-    const countResult = await withPrismaRetry(
-      () => prisma.$queryRaw<Array<{ count: bigint | number }>>(Prisma.sql`
-        SELECT COUNT(*)::bigint AS count
-        FROM "Notification"
-        WHERE "userId" = ${user.id}
-          AND read = false
-          AND dismissed = false
-      `),
+    count = await withPrismaRetry(
+      () => countUnreadNotifications(user.id),
       { label: "notifications:unread-count" }
     );
-    unreadCount = Number(countResult[0]?.count ?? 0);
   } catch (error) {
     if (isPrismaClientError(error) || isPrismaSchemaDriftError(error)) {
-      console.warn("[notifications/unread-count] database unavailable; returning cached or zero", {
-        message: getErrorMessage(error),
+      logNotificationsQueryFailure("notification.count", error, {
+        userId: user.id,
+        isPoolPressure: isPrismaPoolPressureError(error),
       });
-      // Try without dismissed filter (schema drift fallback)
-      if (isPrismaSchemaDriftError(error)) {
-        try {
-          const fallbackResult = await prisma.$queryRaw<Array<{ count: bigint | number }>>(Prisma.sql`
-            SELECT COUNT(*)::bigint AS count
-            FROM "Notification"
-            WHERE "userId" = ${user.id}
-              AND read = false
-          `);
-          unreadCount = Number(fallbackResult[0]?.count ?? 0);
-        } catch (fallbackError) {
-          console.warn("[notifications/unread-count] schema drift fallback failed", {
-            message: getErrorMessage(fallbackError),
-          });
-          if (staleUnreadCount !== null) {
-            return c.json({ data: { count: staleUnreadCount } });
-          }
-          return c.json(
-            { error: { message: "Notification count is temporarily unavailable. Please retry shortly.", code: "NOTIFICATIONS_UNREAD_UNAVAILABLE" } },
-            503
-          );
-        }
-      } else {
-        if (staleUnreadCount !== null) {
-          return c.json({ data: { count: staleUnreadCount } });
-        }
-        return c.json(
-          { error: { message: "Notification count is temporarily unavailable. Please retry shortly.", code: "NOTIFICATIONS_UNREAD_UNAVAILABLE" } },
-          503
-        );
-      }
-    } else {
-      throw error;
+      writeNotificationsUnreadCountCache(user.id, count);
+      return c.json({ data: { count } });
     }
+    throw error;
   }
 
-  writeNotificationsUnreadCountCache(user.id, unreadCount);
-  return c.json({ data: { count: unreadCount } });
+  writeNotificationsUnreadCountCache(user.id, count);
+  return c.json({ data: { count } });
 });
 
 // Mark notification as read

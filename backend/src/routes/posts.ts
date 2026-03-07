@@ -1168,6 +1168,63 @@ function getErrorMessage(error: unknown): string {
   return "";
 }
 
+function getPrismaErrorDetails(error: unknown): {
+  message: string;
+  code: string | null;
+  meta: unknown;
+} {
+  if (typeof error !== "object" || error === null) {
+    return {
+      message: getErrorMessage(error),
+      code: null,
+      meta: null,
+    };
+  }
+
+  const candidate = error as {
+    message?: unknown;
+    code?: unknown;
+    meta?: unknown;
+  };
+
+  return {
+    message:
+      typeof candidate.message === "string"
+        ? candidate.message
+        : getErrorMessage(error),
+    code: typeof candidate.code === "string" ? candidate.code : null,
+    meta: candidate.meta ?? null,
+  };
+}
+
+function isPrismaPoolPressureError(error: unknown): boolean {
+  const details = getPrismaErrorDetails(error);
+  const normalizedMessage = details.message.toLowerCase();
+  return (
+    details.code === "P2024" ||
+    normalizedMessage.includes("connection pool") ||
+    normalizedMessage.includes("too many clients already") ||
+    normalizedMessage.includes("too many connections") ||
+    normalizedMessage.includes("remaining connection slots are reserved")
+  );
+}
+
+function logFeedQueryFailure(
+  queryPath: string,
+  error: unknown,
+  extra?: Record<string, unknown>
+): void {
+  const details = getPrismaErrorDetails(error);
+  console.error("[posts/feed] query failure", {
+    endpoint: "/api/posts",
+    queryPath,
+    message: details.message,
+    code: details.code,
+    meta: details.meta,
+    ...extra,
+  });
+}
+
 function logNonCriticalNotificationFailure(operation: string, error: unknown): void {
   console.warn(`[notifications] ${operation} failed; continuing without blocking the main action`, {
     message: getErrorMessage(error),
@@ -3024,76 +3081,22 @@ postsRouter.get("/", async (c) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchedPosts: any[] = [];
   try {
-    fetchedPosts = await withFeedTimeout(
-      prisma.post.findMany({
-        ...(feedFindManyBase as Record<string, unknown>),
-        include: {
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              walletAddress: true,
-              level: true,
-              xp: true,
-              isVerified: true,
-            },
-          },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              reposts: true,
-            },
-          },
-        },
-      } as any),
-      "primary_posts_query"
+    fetchedPosts = await loadEmergencyFeedPosts(
+      feedFindManyBase as Record<string, unknown>
     );
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
       if (isPrismaClientError(error) || isFeedTimeoutError(error)) {
-        console.error("[posts/feed] primary query failed", {
-          message: error instanceof Error ? error.message : String(error),
+        logFeedQueryFailure("emergency_minimal_posts_query", error, {
+          sort,
+          following,
+          cursor: cursor ?? null,
+          search: search ?? null,
+          userId: user?.id ?? null,
+          isPoolPressure:
+            isFeedTimeoutError(error) || isPrismaPoolPressureError(error),
         });
-        try {
-          fetchedPosts = await loadEmergencyFeedPosts(feedFindManyBase as Record<string, unknown>);
-          console.warn("[posts/feed] serving emergency minimal feed payload", {
-            message: error instanceof Error ? error.message : String(error),
-          });
-        } catch (minimalFallbackError) {
-          console.error("[posts/feed] emergency minimal query failed", {
-            message:
-              minimalFallbackError instanceof Error
-                ? minimalFallbackError.message
-                : String(minimalFallbackError),
-          });
-          try {
-            fetchedPosts = await loadEmergencyFeedPostsRaw({
-              sort,
-              following,
-              followedIds,
-              limit,
-              cursor,
-              search,
-            });
-            console.warn("[posts/feed] serving raw SQL emergency feed payload", {
-              message:
-                minimalFallbackError instanceof Error
-                  ? minimalFallbackError.message
-                  : String(minimalFallbackError),
-            });
-          } catch (rawFallbackError) {
-            console.error("[posts/feed] raw emergency query failed", {
-              message:
-                rawFallbackError instanceof Error
-                  ? rawFallbackError.message
-                  : String(rawFallbackError),
-            });
-            return await respondWithFeedCacheFallback(rawFallbackError);
-          }
-        }
+        return await respondWithFeedCacheFallback(error);
       } else {
         throw error;
       }
@@ -3152,8 +3155,12 @@ postsRouter.get("/", async (c) => {
       } catch (fallbackError) {
         if (!isPrismaSchemaDriftError(fallbackError)) {
           if (isPrismaClientError(fallbackError) || isFeedTimeoutError(fallbackError)) {
-            console.error("[posts/feed] compatibility query failed", {
-              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            logFeedQueryFailure("compat_posts_query", fallbackError, {
+              sort,
+              following,
+              cursor: cursor ?? null,
+              search: search ?? null,
+              userId: user?.id ?? null,
             });
             return await respondWithFeedCacheFallback(fallbackError);
           } else {
@@ -3218,21 +3225,14 @@ postsRouter.get("/", async (c) => {
           } catch (legacyError) {
             if (!isPrismaSchemaDriftError(legacyError)) {
               if (isPrismaClientError(legacyError) || isFeedTimeoutError(legacyError)) {
-                console.error("[posts/feed] legacy query failed", {
-                  message: legacyError instanceof Error ? legacyError.message : String(legacyError),
+                logFeedQueryFailure("legacy_posts_query", legacyError, {
+                  sort,
+                  following,
+                  cursor: cursor ?? null,
+                  search: search ?? null,
+                  userId: user?.id ?? null,
                 });
-                try {
-                  fetchedPosts = await loadEmergencyFeedPostsRaw({
-                    sort,
-                    following,
-                    followedIds,
-                    limit,
-                    cursor,
-                    search,
-                  });
-                } catch (rawFallbackError) {
-                  return await respondWithFeedCacheFallback(rawFallbackError);
-                }
+                return await respondWithFeedCacheFallback(legacyError);
               } else {
                 throw legacyError;
               }
@@ -3294,21 +3294,14 @@ postsRouter.get("/", async (c) => {
                 }));
               } catch (minimalError) {
                 if (isPrismaClientError(minimalError) || isFeedTimeoutError(minimalError)) {
-                  console.error("[posts/feed] ultra-legacy query failed", {
-                    message: minimalError instanceof Error ? minimalError.message : String(minimalError),
+                  logFeedQueryFailure("ultra_legacy_posts_query", minimalError, {
+                    sort,
+                    following,
+                    cursor: cursor ?? null,
+                    search: search ?? null,
+                    userId: user?.id ?? null,
                   });
-                  try {
-                    fetchedPosts = await loadEmergencyFeedPostsRaw({
-                      sort,
-                      following,
-                      followedIds,
-                      limit,
-                      cursor,
-                      search,
-                    });
-                  } catch (rawFallbackError) {
-                    return await respondWithFeedCacheFallback(rawFallbackError);
-                  }
+                  return await respondWithFeedCacheFallback(minimalError);
                 }
                 throw minimalError;
               }
@@ -3347,31 +3340,37 @@ postsRouter.get("/", async (c) => {
     const authorIds = [...new Set(posts.map((p) => p.authorId))];
 
     try {
-      const [likes, reposts, follows] = await withFeedTimeout(
-        Promise.all([
-          prisma.like.findMany({
-            where: {
-              userId: user.id,
-              postId: { in: postIds },
-            },
-            select: { postId: true },
-          }),
-          prisma.repost.findMany({
-            where: {
-              userId: user.id,
-              postId: { in: postIds },
-            },
-            select: { postId: true },
-          }),
-          prisma.follow.findMany({
-            where: {
-              followerId: user.id,
-              followingId: { in: authorIds },
-            },
-            select: { followingId: true },
-          }),
-        ]),
-        "social_flags_query",
+      const likes = await withFeedTimeout(
+        prisma.like.findMany({
+          where: {
+            userId: user.id,
+            postId: { in: postIds },
+          },
+          select: { postId: true },
+        }),
+        "social_likes_query",
+        FEED_SOCIAL_QUERY_TIMEOUT_MS
+      );
+      const reposts = await withFeedTimeout(
+        prisma.repost.findMany({
+          where: {
+            userId: user.id,
+            postId: { in: postIds },
+          },
+          select: { postId: true },
+        }),
+        "social_reposts_query",
+        FEED_SOCIAL_QUERY_TIMEOUT_MS
+      );
+      const follows = await withFeedTimeout(
+        prisma.follow.findMany({
+          where: {
+            followerId: user.id,
+            followingId: { in: authorIds },
+          },
+          select: { followingId: true },
+        }),
+        "social_follows_query",
         FEED_SOCIAL_QUERY_TIMEOUT_MS
       );
 
