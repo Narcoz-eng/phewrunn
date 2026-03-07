@@ -44,6 +44,44 @@ interface TopUsersResponse {
 }
 
 type SortOption = 'level' | 'activity' | 'winrate';
+const TOP_USERS_CACHE_PREFIX = "phew.leaderboard.top-users";
+const TOP_USERS_CACHE_TTL_MS = 30 * 60_000;
+
+function getTopUsersCacheKey(sortBy: SortOption, page: number, limit: number): string {
+  return `${TOP_USERS_CACHE_PREFIX}:${sortBy}:${page}:${limit}`;
+}
+
+function readCachedTopUsers(sortBy: SortOption, page: number, limit: number): TopUsersResponse | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(getTopUsersCacheKey(sortBy, page, limit));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { cachedAt?: number; data?: TopUsersResponse };
+    if (
+      typeof parsed?.cachedAt !== "number" ||
+      !parsed.data ||
+      !Array.isArray(parsed.data.data) ||
+      Date.now() - parsed.cachedAt > TOP_USERS_CACHE_TTL_MS
+    ) {
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedTopUsers(sortBy: SortOption, page: number, limit: number, data: TopUsersResponse): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      getTopUsersCacheKey(sortBy, page, limit),
+      JSON.stringify({ cachedAt: Date.now(), data })
+    );
+  } catch {
+    // ignore storage failures
+  }
+}
 
 function getRankDisplay(rank: number) {
   if (rank === 1) {
@@ -96,6 +134,7 @@ export function TopUsersTable() {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<SortOption>('level');
   const limit = 20;
+  const cachedTopUsers = readCachedTopUsers(sortBy, page, limit);
 
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ["leaderboard", "top-users", page, sortBy],
@@ -116,12 +155,24 @@ export function TopUsersTable() {
         }
         const json = await response.json();
         // Backend returns { data: users[], pagination: {...} }
-        return json as { data: TopUser[]; pagination: { page: number; limit: number; total: number; totalPages: number } };
+        const payload = json as TopUsersResponse;
+        if (Array.isArray(payload.data) && payload.data.length > 0) {
+          writeCachedTopUsers(sortBy, page, limit, payload);
+          return payload;
+        }
+        if (cachedTopUsers?.data.length) {
+          return cachedTopUsers;
+        }
+        return payload;
       } catch (err) {
         console.error("[TopUsersTable] Error fetching data:", err);
+        if (cachedTopUsers) {
+          return cachedTopUsers;
+        }
         throw err;
       }
     },
+    initialData: cachedTopUsers ?? undefined,
     refetchOnWindowFocus: false,
     retry: 1,
     staleTime: 2 * 60 * 1000, // Consider data stale after 2 minutes

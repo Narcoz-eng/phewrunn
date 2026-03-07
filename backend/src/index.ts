@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
+import { Prisma } from "@prisma/client";
 import "./env.js";
 import {
   betterAuthMiddleware,
@@ -468,7 +469,9 @@ const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return process.env.NODE_ENV === "production" ? 4000 : 4500;
 })();
-const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
+const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
+const ME_RESPONSE_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 60 * 60_000 : 10 * 60_000;
 const ME_RESPONSE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const ME_RESPONSE_REDIS_KEY_PREFIX = "me-response:v1";
 type MeResponseUser = {
@@ -603,6 +606,7 @@ const meResponseCache = new Map<
   {
     data: MeResponseUser;
     expiresAtMs: number;
+    staleUntilMs: number;
   }
 >();
 
@@ -625,6 +629,7 @@ function writeLocalMeResponseCache(userId: string, data: MeResponseUser): void {
   meResponseCache.set(userId, {
     data,
     expiresAtMs: Date.now() + ME_RESPONSE_CACHE_TTL_MS,
+    staleUntilMs: Date.now() + ME_RESPONSE_STALE_FALLBACK_MS,
   });
 }
 
@@ -673,20 +678,57 @@ function normalizeCachedMeResponse(data: unknown): MeResponseUser | null {
   };
 }
 
-async function readCachedMeResponse(userId: string): Promise<MeResponseUser | null> {
+function normalizeCachedMeResponseEnvelope(
+  data: unknown
+): { data: MeResponseUser; cachedAtMs: number } | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+
+  const candidate = data as {
+    data?: unknown;
+    cachedAt?: unknown;
+  };
+  const normalized = normalizeCachedMeResponse(candidate.data);
+  if (!normalized) {
+    return null;
+  }
+
+  const cachedAtMs =
+    typeof candidate.cachedAt === "number" && Number.isFinite(candidate.cachedAt)
+      ? candidate.cachedAt
+      : Date.now() - ME_RESPONSE_CACHE_TTL_MS;
+
+  return {
+    data: normalized,
+    cachedAtMs,
+  };
+}
+
+async function readCachedMeResponse(
+  userId: string,
+  opts?: { allowStale?: boolean }
+): Promise<MeResponseUser | null> {
+  const nowMs = Date.now();
   const cached = meResponseCache.get(userId);
   if (cached) {
-    if (cached.expiresAtMs <= Date.now()) {
-      meResponseCache.delete(userId);
-    } else {
+    if (cached.expiresAtMs > nowMs) {
       return cached.data;
+    }
+    if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+      return cached.data;
+    }
+    if (cached.staleUntilMs <= nowMs) {
+      meResponseCache.delete(userId);
     }
   }
 
-  const redisCached = normalizeCachedMeResponse(
-    await cacheGetJson<Record<string, unknown>>(buildMeResponseRedisKey(userId))
-  );
-  if (!redisCached) {
+  const redisRaw = await cacheGetJson<Record<string, unknown>>(buildMeResponseRedisKey(userId));
+  const redisEnvelope = normalizeCachedMeResponseEnvelope(redisRaw);
+  const redisCached =
+    redisEnvelope?.data ??
+    normalizeCachedMeResponse(redisRaw);
+  if (!redisCached || (!opts?.allowStale && redisEnvelope && nowMs - redisEnvelope.cachedAtMs > ME_RESPONSE_CACHE_TTL_MS)) {
     return null;
   }
 
@@ -696,7 +738,14 @@ async function readCachedMeResponse(userId: string): Promise<MeResponseUser | nu
 
 function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
   writeLocalMeResponseCache(userId, data);
-  void cacheSetJson(buildMeResponseRedisKey(userId), data, ME_RESPONSE_CACHE_TTL_MS);
+  void cacheSetJson(
+    buildMeResponseRedisKey(userId),
+    {
+      data,
+      cachedAt: Date.now(),
+    },
+    ME_RESPONSE_STALE_FALLBACK_MS
+  );
 }
 
 function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser {
@@ -716,6 +765,69 @@ function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser
     tradeFeeShareBps: user.tradeFeeShareBps,
     tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     createdAt: user.createdAt,
+  };
+}
+
+async function queryMeResponseUserRaw(userId: string): Promise<MeResponseUser | null> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+    walletAddress: string | null;
+    username: string | null;
+    level: number | null;
+    xp: number | null;
+    bio: string | null;
+    isAdmin: boolean | null;
+    isVerified: boolean | null;
+    tradeFeeRewardsEnabled: boolean | null;
+    tradeFeeShareBps: number | null;
+    tradeFeePayoutAddress: string | null;
+    createdAt: Date;
+  }>>(Prisma.sql`
+    SELECT
+      u.id,
+      u.name,
+      u.email,
+      u.image,
+      u."walletAddress",
+      u.username,
+      u.level,
+      u.xp,
+      u.bio,
+      u."isAdmin",
+      u."isVerified",
+      u."tradeFeeRewardsEnabled",
+      u."tradeFeeShareBps",
+      u."tradeFeePayoutAddress",
+      u."createdAt"
+    FROM "User" u
+    WHERE u.id = ${userId}
+    LIMIT 1
+  `);
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    image: row.image ?? null,
+    walletAddress: row.walletAddress ?? null,
+    username: row.username ?? null,
+    level: Number.isFinite(row.level) ? Number(row.level) : 0,
+    xp: Number.isFinite(row.xp) ? Number(row.xp) : 0,
+    bio: row.bio ?? null,
+    isAdmin: row.isAdmin === true,
+    isVerified: row.isVerified === true,
+    tradeFeeRewardsEnabled: row.tradeFeeRewardsEnabled !== false,
+    tradeFeeShareBps: Number.isFinite(row.tradeFeeShareBps) ? Number(row.tradeFeeShareBps) : 100,
+    tradeFeePayoutAddress: row.tradeFeePayoutAddress ?? null,
+    createdAt: row.createdAt,
   };
 }
 
@@ -2604,12 +2716,23 @@ app.get("/api/me", async (c) => {
       } catch (fallbackError) {
         console.error("[/api/me] Failed to fetch fallback user profile:", fallbackError);
       }
+    } else if (isPrismaClientError(error) || isPrismaConnectivityError(error)) {
+      try {
+        dbUser = await queryMeResponseUserRaw(user.id);
+      } catch (rawError) {
+        console.error("[/api/me] Raw fallback user profile lookup failed:", rawError);
+      }
     } else {
       console.error("[/api/me] Failed to fetch full user profile:", error);
     }
   }
 
   if (!dbUser) {
+    const staleCachedUser = await readCachedMeResponse(user.id, { allowStale: true });
+    if (staleCachedUser) {
+      console.warn("[/api/me] Serving stale cached profile while database lookup is degraded");
+      return c.json({ data: staleCachedUser });
+    }
     if (session?.user) {
       const sessionBackedUser: MeResponseUser = {
         id: session.user.id,

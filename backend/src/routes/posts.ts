@@ -136,7 +136,8 @@ let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
 const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 9_000 : 3_000;
-const FEED_RESPONSE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 180_000 : 30_000;
+const FEED_RESPONSE_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 4_800;
 const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
 const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
@@ -411,6 +412,195 @@ async function loadEmergencyFeedPosts(
       likes: 0,
       comments: 0,
       reposts: 0,
+    },
+  }));
+}
+
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+async function loadEmergencyFeedPostsRaw(params: {
+  sort: "latest" | "trending";
+  following: boolean;
+  followedIds: string[];
+  limit: number;
+  cursor?: string;
+  search?: string;
+}): Promise<any[]> {
+  const conditions: Prisma.Sql[] = [];
+
+  if (params.sort === "trending") {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    conditions.push(Prisma.sql`p."createdAt" >= ${sevenDaysAgo}`);
+  }
+
+  if (params.following) {
+    if (params.followedIds.length === 0) {
+      return [];
+    }
+    conditions.push(Prisma.sql`p."authorId" IN (${Prisma.join(params.followedIds)})`);
+  }
+
+  if (params.search && params.search.trim().length > 0) {
+    const likeTerm = `%${params.search.trim()}%`;
+    conditions.push(Prisma.sql`(
+      p."contractAddress" ILIKE ${likeTerm}
+      OR p."tokenName" ILIKE ${likeTerm}
+      OR p."tokenSymbol" ILIKE ${likeTerm}
+      OR p.content ILIKE ${likeTerm}
+      OR u.username ILIKE ${likeTerm}
+      OR u.name ILIKE ${likeTerm}
+    )`);
+  }
+
+  if (params.cursor) {
+    const cursorRows = await prisma.$queryRaw<Array<{ id: string; createdAt: Date }>>(Prisma.sql`
+      SELECT p.id, p."createdAt"
+      FROM "Post" p
+      WHERE p.id = ${params.cursor}
+      LIMIT 1
+    `);
+    const cursorRow = cursorRows[0];
+    if (cursorRow) {
+      conditions.push(
+        Prisma.sql`(p."createdAt" < ${cursorRow.createdAt} OR (p."createdAt" = ${cursorRow.createdAt} AND p.id < ${cursorRow.id}))`
+      );
+    }
+  }
+
+  const whereSql =
+    conditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
+      : Prisma.sql``;
+
+  const rows = await withFeedTimeout(
+    prisma.$queryRaw<Array<{
+      id: string;
+      content: string;
+      authorId: string;
+      contractAddress: string | null;
+      chainType: string | null;
+      tokenName: string | null;
+      tokenSymbol: string | null;
+      tokenImage: string | null;
+      entryMcap: number | null;
+      currentMcap: number | null;
+      mcap1h: number | null;
+      mcap6h: number | null;
+      settled: boolean | null;
+      settledAt: Date | null;
+      isWin: boolean | null;
+      isWin1h: boolean | null;
+      isWin6h: boolean | null;
+      percentChange1h: number | null;
+      percentChange6h: number | null;
+      createdAt: Date;
+      viewCount: number | null;
+      dexscreenerUrl: string | null;
+      authorName: string;
+      authorUsername: string | null;
+      authorImage: string | null;
+      authorWalletAddress: string | null;
+      authorLevel: number | null;
+      authorXp: number | null;
+      authorIsVerified: boolean | null;
+      likesCount: number | bigint | null;
+      commentsCount: number | bigint | null;
+      repostsCount: number | bigint | null;
+    }>>(Prisma.sql`
+      SELECT
+        p.id,
+        p.content,
+        p."authorId",
+        p."contractAddress",
+        p."chainType",
+        p."tokenName",
+        p."tokenSymbol",
+        p."tokenImage",
+        p."entryMcap",
+        p."currentMcap",
+        p."mcap1h",
+        p."mcap6h",
+        p.settled,
+        p."settledAt",
+        p."isWin",
+        p."isWin1h",
+        p."isWin6h",
+        p."percentChange1h",
+        p."percentChange6h",
+        p."createdAt",
+        p."viewCount",
+        p."dexscreenerUrl",
+        u.name AS "authorName",
+        u.username AS "authorUsername",
+        u.image AS "authorImage",
+        u."walletAddress" AS "authorWalletAddress",
+        u.level AS "authorLevel",
+        u.xp AS "authorXp",
+        u."isVerified" AS "authorIsVerified",
+        (SELECT COUNT(*)::int FROM "Like" l WHERE l."postId" = p.id) AS "likesCount",
+        (SELECT COUNT(*)::int FROM "Comment" c WHERE c."postId" = p.id) AS "commentsCount",
+        (SELECT COUNT(*)::int FROM "Repost" r WHERE r."postId" = p.id) AS "repostsCount"
+      FROM "Post" p
+      JOIN "User" u ON u.id = p."authorId"
+      ${whereSql}
+      ORDER BY p."createdAt" DESC, p.id DESC
+      LIMIT ${params.limit + 1}
+    `),
+    "raw_emergency_posts_query",
+    Math.min(FEED_DB_QUERY_TIMEOUT_MS + 1200, 5_500)
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    content: row.content,
+    authorId: row.authorId,
+    contractAddress: row.contractAddress ?? null,
+    chainType: row.chainType ?? null,
+    tokenName: row.tokenName ?? null,
+    tokenSymbol: row.tokenSymbol ?? null,
+    tokenImage: row.tokenImage ?? null,
+    entryMcap: row.entryMcap ?? null,
+    currentMcap: row.currentMcap ?? null,
+    mcap1h: row.mcap1h ?? null,
+    mcap6h: row.mcap6h ?? null,
+    settled: row.settled === true,
+    settledAt: row.settledAt,
+    isWin: row.isWin,
+    isWin1h: row.isWin1h,
+    isWin6h: row.isWin6h,
+    percentChange1h: row.percentChange1h ?? null,
+    percentChange6h: row.percentChange6h ?? null,
+    createdAt: row.createdAt,
+    viewCount: toFiniteNumber(row.viewCount, 0),
+    dexscreenerUrl: row.dexscreenerUrl ?? null,
+    author: {
+      id: row.authorId,
+      name: row.authorName,
+      username: row.authorUsername ?? null,
+      image: row.authorImage ?? null,
+      walletAddress: row.authorWalletAddress ?? null,
+      level: toFiniteNumber(row.authorLevel, 0),
+      xp: toFiniteNumber(row.authorXp, 0),
+      isVerified: row.authorIsVerified === true,
+    },
+    _count: {
+      likes: toFiniteNumber(row.likesCount, 0),
+      comments: toFiniteNumber(row.commentsCount, 0),
+      reposts: toFiniteNumber(row.repostsCount, 0),
     },
   }));
 }
@@ -2022,8 +2212,8 @@ postsRouter.get("/", async (c) => {
     );
   }
 
+  let followedIds: string[] = [];
   if (following && user) {
-    let followedIds: string[] = [];
     try {
       const followedUsers = await withFeedTimeout(
         prisma.follow.findMany({
@@ -2148,7 +2338,30 @@ postsRouter.get("/", async (c) => {
                 ? minimalFallbackError.message
                 : String(minimalFallbackError),
           });
-          return await respondWithFeedCacheFallback(minimalFallbackError);
+          try {
+            fetchedPosts = await loadEmergencyFeedPostsRaw({
+              sort,
+              following,
+              followedIds,
+              limit,
+              cursor,
+              search,
+            });
+            console.warn("[posts/feed] serving raw SQL emergency feed payload", {
+              message:
+                minimalFallbackError instanceof Error
+                  ? minimalFallbackError.message
+                  : String(minimalFallbackError),
+            });
+          } catch (rawFallbackError) {
+            console.error("[posts/feed] raw emergency query failed", {
+              message:
+                rawFallbackError instanceof Error
+                  ? rawFallbackError.message
+                  : String(rawFallbackError),
+            });
+            return await respondWithFeedCacheFallback(rawFallbackError);
+          }
         }
       } else {
         throw error;
@@ -2277,7 +2490,18 @@ postsRouter.get("/", async (c) => {
                 console.error("[posts/feed] legacy query failed", {
                   message: legacyError instanceof Error ? legacyError.message : String(legacyError),
                 });
-                return await respondWithFeedCacheFallback(legacyError);
+                try {
+                  fetchedPosts = await loadEmergencyFeedPostsRaw({
+                    sort,
+                    following,
+                    followedIds,
+                    limit,
+                    cursor,
+                    search,
+                  });
+                } catch (rawFallbackError) {
+                  return await respondWithFeedCacheFallback(rawFallbackError);
+                }
               } else {
                 throw legacyError;
               }
@@ -2342,7 +2566,18 @@ postsRouter.get("/", async (c) => {
                   console.error("[posts/feed] ultra-legacy query failed", {
                     message: minimalError instanceof Error ? minimalError.message : String(minimalError),
                   });
-                  return await respondWithFeedCacheFallback(minimalError);
+                  try {
+                    fetchedPosts = await loadEmergencyFeedPostsRaw({
+                      sort,
+                      following,
+                      followedIds,
+                      limit,
+                      cursor,
+                      search,
+                    });
+                  } catch (rawFallbackError) {
+                    return await respondWithFeedCacheFallback(rawFallbackError);
+                  }
                 }
                 throw minimalError;
               }

@@ -31,13 +31,13 @@ interface FeedPage {
 const FEED_PAGE_SIZE = 10;
 const FEED_MAX_PAGES = 5;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
-const FEED_FIRST_PAGE_CACHE_TTL_MS = 45_000;
+const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
 const FEED_NEW_POSTS_POLL_MS = 25_000;
 const FEED_ACTIVE_TAB_POLL_MS = 35_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
-const FEED_CURRENT_USER_CACHE_TTL_MS = 45_000;
+const FEED_CURRENT_USER_CACHE_TTL_MS = 30 * 60_000;
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -282,6 +282,8 @@ export default function Feed() {
     search: string,
     pageParam?: string
   ): Promise<FeedPage> => {
+    const shouldUseCachedFirstPageFallback =
+      !pageParam && !search && tab !== "following" && Boolean(cachedFirstPage?.items.length);
     let endpoint = "/api/posts";
     const params = new URLSearchParams();
 
@@ -307,6 +309,9 @@ export default function Feed() {
 
     const response = await api.raw(endpoint);
     if (!response.ok) {
+      if (shouldUseCachedFirstPageFallback && cachedFirstPage) {
+        return cachedFirstPage;
+      }
       const json = await response.json().catch(() => null);
       throw new ApiError(
         json?.error?.message || `Request failed with status ${response.status}`,
@@ -326,12 +331,16 @@ export default function Feed() {
     const items = json.data as Post[];
     const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
 
+    if (shouldUseCachedFirstPageFallback && cachedFirstPage && items.length === 0) {
+      return cachedFirstPage;
+    }
+
     return {
       items,
       nextCursor,
       hasMore: Boolean(json?.hasMore && nextCursor),
     } satisfies FeedPage;
-  }, []);
+  }, [cachedFirstPage]);
 
   // Update URL when search changes
   const handleSearchChange = useCallback((value: string) => {
