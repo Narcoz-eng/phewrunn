@@ -4014,36 +4014,92 @@ postsRouter.get("/trending", async (c) => {
 
   // Query posts with contract addresses from last 48 hours
   // Include percent change data for calculating average gain
-  const recentPosts = await prisma.post.findMany({
-    where: {
-      contractAddress: { not: null },
-      createdAt: { gte: fortyEightHoursAgo },
-    },
-    select: {
-      id: true,
-      contractAddress: true,
-      chainType: true,
-      tokenName: true,
-      tokenSymbol: true,
-      entryMcap: true,
-      currentMcap: true,
-      percentChange1h: true,
-      percentChange6h: true,
-      isWin: true,
-      isWin1h: true,
-      isWin6h: true,
-      authorId: true,
-      createdAt: true,
-      author: {
+  let recentPosts: any[];
+  try {
+    recentPosts = await withPrismaRetry(
+      () => prisma.post.findMany({
+        where: {
+          contractAddress: { not: null },
+          createdAt: { gte: fortyEightHoursAgo },
+        },
         select: {
           id: true,
-          username: true,
-          level: true,
+          contractAddress: true,
+          chainType: true,
+          tokenName: true,
+          tokenSymbol: true,
+          entryMcap: true,
+          currentMcap: true,
+          percentChange1h: true,
+          percentChange6h: true,
+          isWin: true,
+          isWin1h: true,
+          isWin6h: true,
+          authorId: true,
+          createdAt: true,
+          author: {
+            select: {
+              id: true,
+              username: true,
+              level: true,
+            },
+          },
         },
-      },
-    },
-    orderBy: { createdAt: "asc" },
-  });
+        orderBy: { createdAt: "asc" },
+      }),
+      { label: "posts:trending" }
+    );
+  } catch (error) {
+    if (isPrismaSchemaDriftError(error) || isPrismaClientError(error)) {
+      console.warn("[posts/trending] query failed, using fallback", {
+        message: getErrorMessage(error),
+      });
+      // Try minimal query without optional fields
+      try {
+        recentPosts = await prisma.post.findMany({
+          where: {
+            contractAddress: { not: null },
+            createdAt: { gte: fortyEightHoursAgo },
+          },
+          select: {
+            id: true,
+            contractAddress: true,
+            chainType: true,
+            entryMcap: true,
+            currentMcap: true,
+            isWin: true,
+            authorId: true,
+            createdAt: true,
+            author: {
+              select: {
+                id: true,
+                username: true,
+                level: true,
+              },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        });
+        // Fill in missing fields
+        recentPosts = recentPosts.map((p: any) => ({
+          ...p,
+          tokenName: p.tokenName ?? null,
+          tokenSymbol: p.tokenSymbol ?? null,
+          percentChange1h: p.percentChange1h ?? null,
+          percentChange6h: p.percentChange6h ?? null,
+          isWin1h: p.isWin1h ?? null,
+          isWin6h: p.isWin6h ?? null,
+        }));
+      } catch (fallbackError) {
+        console.warn("[posts/trending] fallback query also failed", {
+          message: getErrorMessage(fallbackError),
+        });
+        return [];
+      }
+    } else {
+      throw error;
+    }
+  }
 
   // Group by contract address and count unique users
   const addressMap = new Map<string, {

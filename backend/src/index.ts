@@ -97,12 +97,19 @@ app.use(
 );
 
 // 3.5. Prisma readiness gate - ensure DB is connected before serving API requests
+// Uses a short timeout so requests don't hang if guardrails are slow
+let prismaReady = false;
 app.use("/api/*", async (c, next) => {
-  try {
-    await ensurePrismaReady();
-  } catch {
-    // Non-fatal: allow request through even if guardrails failed;
-    // individual route handlers have their own fallbacks
+  if (!prismaReady) {
+    try {
+      await Promise.race([
+        ensurePrismaReady().then(() => { prismaReady = true; }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+      ]);
+    } catch {
+      // Non-fatal: allow request through even if guardrails timed out;
+      // individual route handlers have their own fallbacks
+    }
   }
   return next();
 });
