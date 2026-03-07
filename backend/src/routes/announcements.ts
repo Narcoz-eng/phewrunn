@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { prisma } from "../prisma.js";
+import { prisma, withPrismaRetry } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { type Announcement } from "../types.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
@@ -114,26 +114,29 @@ announcementsRouter.get("/", async (c) => {
   let announcements = await readAnnouncementsCache();
   if (!announcements) {
     try {
-      const rows = await prisma.announcement.findMany({
-        where: { isPinned: true },
-        orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
-        take: 10,
-        include: {
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
+      const rows = await withPrismaRetry(
+        () => prisma.announcement.findMany({
+          where: { isPinned: true },
+          orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+          take: 10,
+          include: {
+            author: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+              },
+            },
+            _count: {
+              select: {
+                views: true,
+              },
             },
           },
-          _count: {
-            select: {
-              views: true,
-            },
-          },
-        },
-      });
+        }),
+        { label: "announcements:list" }
+      );
       announcements = rows.map(toCachedAnnouncement);
       writeAnnouncementsCache(announcements);
     } catch (error) {

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
-import { prisma } from "../prisma.js";
+import { prisma, withPrismaRetry } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { NotificationsQuerySchema } from "../types.js";
@@ -569,29 +569,32 @@ notificationsRouter.get("/", requireAuth, async (c) => {
 
   let notifications: unknown[] = [];
   try {
-    notifications = await prisma.notification.findMany({
-      where: whereClause,
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: {
-        fromUser: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-            level: true,
+    notifications = await withPrismaRetry(
+      () => prisma.notification.findMany({
+        where: whereClause,
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          fromUser: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+            },
+          },
+          post: {
+            select: {
+              id: true,
+              content: true,
+              contractAddress: true,
+            },
           },
         },
-        post: {
-          select: {
-            id: true,
-            content: true,
-            contractAddress: true,
-          },
-        },
-      },
-    });
+      }),
+      { label: "notifications:list" }
+    );
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
       if (isPrismaClientError(error)) {

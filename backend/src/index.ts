@@ -9,7 +9,7 @@ import {
   startSessionMaintenance,
   type AuthVariables,
 } from "./auth.js";
-import { prisma } from "./prisma.js";
+import { prisma, withPrismaRetry } from "./prisma.js";
 import { postsRouter } from "./routes/posts.js";
 import { usersRouter } from "./routes/users.js";
 import { adminRouter } from "./routes/admin.js";
