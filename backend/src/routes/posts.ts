@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { prisma } from "../prisma.js";
+import { prisma, withPrismaRetry } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import {
   CreatePostSchema,
@@ -6264,23 +6264,26 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
   let posts: PriceRoutePostRecord[] = [];
   let databaseLookupError: unknown = null;
   try {
-    posts = await prisma.post.findMany({
-      where: { id: { in: uniqueIds } },
-      select: {
-        id: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        currentMcap: true,
-        mcap1h: true,
-        mcap6h: true,
-        settled: true,
-        settledAt: true,
-        createdAt: true,
-        lastMcapUpdate: true,
-        trackingMode: true,
-      },
-    });
+    posts = await withPrismaRetry(
+      () => prisma.post.findMany({
+        where: { id: { in: uniqueIds } },
+        select: {
+          id: true,
+          contractAddress: true,
+          chainType: true,
+          entryMcap: true,
+          currentMcap: true,
+          mcap1h: true,
+          mcap6h: true,
+          settled: true,
+          settledAt: true,
+          createdAt: true,
+          lastMcapUpdate: true,
+          trackingMode: true,
+        },
+      }),
+      { label: "posts:prices:batch" }
+    );
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;

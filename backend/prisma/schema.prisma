@@ -65,6 +65,8 @@ model User {
   @@index([level, xp])
   @@index([isBanned, createdAt])
   @@index([isVerified, createdAt])
+  @@index([walletAddress])
+  @@index([username])
 }
 
 // Better Auth Session model
@@ -200,6 +202,7 @@ model Post {
   @@index([trackingMode, lastMcapUpdate])
   @@index([lastMcapUpdate])
   @@index([chainType, contractAddress])
+  @@index([settled6h, createdAt])
 }
 
 model AggregateSnapshot {
@@ -342,6 +345,7 @@ model Notification {
   @@index([userId, createdAt])
   @@index([userId, dismissed, createdAt])
   @@index([userId, read, dismissed])
+  @@index([userId, type, createdAt])
   @@index([fromUserId, createdAt])
   @@index([postId, createdAt])
 }

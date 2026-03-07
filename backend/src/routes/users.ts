@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
-import { prisma } from "../prisma.js";
+import { prisma, withPrismaRetry } from "../prisma.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
@@ -2092,31 +2092,34 @@ usersRouter.get("/:identifier", async (c) => {
   let profileLookupUnavailable = false;
 
   try {
-    user = await prisma.user.findFirst({
-      where: buildUserIdentifierWhere(identifier),
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        walletAddress: true,
-        username: true,
-        level: true,
-        xp: true,
-        bio: true,
-        isVerified: true,
-        createdAt: true,
-        lastUsernameUpdate: true,
-        lastPhotoUpdate: true,
-        _count: {
-          select: {
-            posts: true,
-            followers: true,
-            following: true,
+    user = await withPrismaRetry(
+      () => prisma.user.findFirst({
+        where: buildUserIdentifierWhere(identifier),
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          walletAddress: true,
+          username: true,
+          level: true,
+          xp: true,
+          bio: true,
+          isVerified: true,
+          createdAt: true,
+          lastUsernameUpdate: true,
+          lastPhotoUpdate: true,
+          _count: {
+            select: {
+              posts: true,
+              followers: true,
+              following: true,
+            },
           },
         },
-      },
-    });
+      }),
+      { label: "users:profile" }
+    );
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;

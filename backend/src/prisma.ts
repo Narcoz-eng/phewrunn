@@ -51,12 +51,12 @@ function normalizeDatabaseUrl(
     const desiredConnectionLimit =
       configuredConnectionLimit ??
       (isServerlessRuntime
-        ? (isProduction ? 3 : 2)
-        : (isProduction ? 6 : 8));
+        ? (isProduction ? 5 : 3)
+        : (isProduction ? 15 : 10));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout =
       configuredPoolTimeout ??
-      (isProduction ? 15 : 10);
+      (isProduction ? 20 : 15);
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
@@ -145,7 +145,7 @@ const isPostgres = !isSqlite;
 
 const SLOW_QUERY_THRESHOLD_MS =
   getPositiveIntEnv("PRISMA_SLOW_QUERY_THRESHOLD_MS") ??
-  (isProduction ? 800 : 1000);
+  (isProduction ? 400 : 800);
 
 prisma.$on("query", (e: Prisma.QueryEvent) => {
   if (isProduction) {
@@ -209,6 +209,11 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
     );`,
     `CREATE INDEX IF NOT EXISTS "AggregateSnapshot_expiresAt_idx" ON "AggregateSnapshot"("expiresAt");`,
     `CREATE INDEX IF NOT EXISTS "AggregateSnapshot_capturedAt_idx" ON "AggregateSnapshot"("capturedAt");`,
+    // Performance indexes for frequently queried columns
+    `CREATE INDEX IF NOT EXISTS "User_walletAddress_idx" ON "User"("walletAddress");`,
+    `CREATE INDEX IF NOT EXISTS "User_username_idx" ON "User"("username");`,
+    `CREATE INDEX IF NOT EXISTS "Notification_userId_type_createdAt_idx" ON "Notification"("userId", "type", "createdAt");`,
+    `CREATE INDEX IF NOT EXISTS "Post_settled6h_createdAt_idx" ON "Post"("settled6h", "createdAt");`,
   ] as const;
 
   for (const statement of statements) {
@@ -262,4 +267,60 @@ void ensurePrismaReady().catch((error) => {
   console.warn("[Prisma] Startup initialization failed:", error);
 });
 
-export { prisma, ensurePrismaReady };
+/**
+ * Retry wrapper for transient Prisma connectivity errors (pool exhaustion, timeouts).
+ * Retries up to `maxRetries` times with exponential backoff.
+ */
+async function withPrismaRetry<T>(
+  fn: () => Promise<T>,
+  opts?: { maxRetries?: number; baseDelayMs?: number; label?: string }
+): Promise<T> {
+  const maxRetries = opts?.maxRetries ?? 2;
+  const baseDelayMs = opts?.baseDelayMs ?? 150;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const isTransient = isTransientPrismaError(error);
+      if (!isTransient || attempt >= maxRetries) {
+        throw error;
+      }
+      const delayMs = baseDelayMs * Math.pow(2, attempt);
+      if (opts?.label) {
+        console.warn(`[Prisma] Retrying ${opts.label} (attempt ${attempt + 1}/${maxRetries}) after ${delayMs}ms`, {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError;
+}
+
+function isTransientPrismaError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  // P1008 = timeout, P1017 = server closed connection, P2024 = pool timeout
+  if (code === "P1008" || code === "P1017" || code === "P2024") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+
+  return /timed out|connection pool|pool timeout|econnreset|etimedout|connection.*closed|server closed/i.test(
+    message
+  );
+}
+
+export { prisma, ensurePrismaReady, withPrismaRetry, isTransientPrismaError };
