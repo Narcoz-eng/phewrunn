@@ -308,7 +308,10 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
 }
 
 const compatGuardrailsSetting = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS?.trim().toLowerCase();
-const shouldRunCompatGuardrails = isPostgres && compatGuardrailsSetting !== "false";
+const shouldRunCompatGuardrails =
+  isPostgres &&
+  (compatGuardrailsSetting === "true" ||
+    (!isProduction && compatGuardrailsSetting !== "false"));
 let prismaReadyPromise: Promise<void> | null = null;
 
 async function initializePrismaRuntime(): Promise<void> {
@@ -324,7 +327,14 @@ async function initializePrismaRuntime(): Promise<void> {
   }
 
   if (!shouldRunCompatGuardrails) {
-    console.log("[Prisma] Postgres compatibility guardrails explicitly disabled");
+    console.log("[Prisma] Postgres compatibility guardrails disabled", {
+      reason:
+        compatGuardrailsSetting === "false"
+          ? "env_disabled"
+          : isProduction
+            ? "default_disabled_in_production"
+            : "not_enabled",
+    });
     return;
   }
 

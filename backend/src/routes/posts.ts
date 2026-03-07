@@ -3381,6 +3381,20 @@ postsRouter.get("/", async (c) => {
     if (stalePayload) {
       return c.json(stalePayload);
     }
+    if (isPrismaClientError(error) || isFeedTimeoutError(error)) {
+      console.warn("[posts/feed] no cached payload available; serving empty degraded feed", {
+        sort,
+        following,
+        cursor: cursor ?? null,
+        search: search ?? null,
+        userId: user?.id ?? null,
+      });
+      return c.json({
+        data: [],
+        hasMore: false,
+        nextCursor: null,
+      });
+    }
     return c.json(
       {
         error: {
