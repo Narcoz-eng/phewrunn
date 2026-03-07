@@ -830,25 +830,37 @@ export default function Feed() {
       return newPost;
     },
     onSuccess: (newPost) => {
-      // Add new post to the beginning of the first loaded page (if present)
-      queryClient.setQueryData<InfiniteData<FeedPage>>(activeFeedQueryKey, (oldData) => {
-        if (!oldData || oldData.pages.length === 0) {
-          return oldData;
-        }
-        const [firstPage, ...restPages] = oldData.pages;
-        if (!firstPage) return oldData;
+      const prependPostToFeed = (tab: FeedTab, search: string) => {
+        const queryKey = getFeedQueryKey(tab, search, feedViewerScope);
+        const updatedData = queryClient.setQueryData<InfiniteData<FeedPage>>(queryKey, (oldData) => {
+          if (!oldData || oldData.pages.length === 0) {
+            return oldData;
+          }
+          const [firstPage, ...restPages] = oldData.pages;
+          if (!firstPage) return oldData;
 
-        return {
-          ...oldData,
-          pages: [
-            {
-              ...firstPage,
-              items: [newPost, ...firstPage.items],
-            },
-            ...restPages,
-          ],
-        };
-      });
+          const dedupedItems = firstPage.items.filter((item) => item.id !== newPost.id);
+          const nextFirstPage: FeedPage = {
+            ...firstPage,
+            items: [newPost, ...dedupedItems],
+          };
+
+          return {
+            ...oldData,
+            pages: [nextFirstPage, ...restPages],
+          };
+        });
+
+        const nextFirstPage = updatedData?.pages?.[0];
+        if (nextFirstPage && nextFirstPage.items.length > 0) {
+          writeCachedFirstFeedPage(feedViewerScope, tab, search, nextFirstPage);
+        }
+      };
+
+      prependPostToFeed(activeTab, effectiveSearchQuery);
+      if (activeTab !== "latest" || effectiveSearchQuery) {
+        prependPostToFeed("latest", "");
+      }
       toast.success("Alpha posted!");
       // Refresh user data in case level changed
       refetchUser();

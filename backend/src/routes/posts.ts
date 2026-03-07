@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { prisma } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import {
@@ -151,6 +152,8 @@ const SETTLEMENT_1H_SCAN_MULTIPLIER = process.env.NODE_ENV === "production" ? 6 
 const SETTLEMENT_6H_TARGET_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 10;
 const SETTLEMENT_6H_SCAN_MULTIPLIER = process.env.NODE_ENV === "production" ? 5 : 3;
 const HOURLY_POST_LIMIT = 10;
+const CREATE_POST_MARKETCAP_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_500 : 2_200;
+const CREATE_POST_HELIUS_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_200 : 1_800;
 const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
 const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 6 : 3;
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
@@ -866,6 +869,354 @@ async function listFollowerIdsSafely(params: {
     });
     return [];
   }
+}
+
+type CreatePostAuthorSnapshot = {
+  id: string;
+  name: string;
+  username: string | null;
+  image: string | null;
+  level: number;
+  xp: number;
+  isVerified: boolean;
+};
+
+type CreatePostRateLimitSnapshot = {
+  postCountLastHour: number;
+  oldestPostLastHourAt: Date | null;
+  postCountLast24h: number;
+  oldestPostLast24hAt: Date | null;
+};
+
+function buildCreatePostAuthorSnapshot(params: {
+  userId: string;
+  sessionUser: unknown;
+  dbUser?: {
+    id: string;
+    name: string;
+    username: string | null;
+    level: number;
+    image?: string | null;
+    xp?: number;
+    isVerified?: boolean;
+  } | null;
+}): CreatePostAuthorSnapshot {
+  const sessionUserRecord = safeRecord(params.sessionUser);
+  const sessionName =
+    typeof sessionUserRecord?.name === "string" && sessionUserRecord.name.trim()
+      ? sessionUserRecord.name
+      : null;
+  const sessionUsername =
+    typeof sessionUserRecord?.username === "string" && sessionUserRecord.username.trim()
+      ? sessionUserRecord.username
+      : null;
+  const sessionImage =
+    typeof sessionUserRecord?.image === "string" && sessionUserRecord.image.trim()
+      ? sessionUserRecord.image
+      : null;
+  const sessionLevel = toFiniteNumber(sessionUserRecord?.level, 0);
+  const sessionXp = toFiniteNumber(sessionUserRecord?.xp, 0);
+  const sessionIsVerified =
+    typeof sessionUserRecord?.isVerified === "boolean" ? sessionUserRecord.isVerified : false;
+
+  return {
+    id: params.userId,
+    name: params.dbUser?.name ?? sessionName ?? "Trader",
+    username: params.dbUser?.username ?? sessionUsername,
+    image: params.dbUser?.image ?? sessionImage,
+    level: params.dbUser?.level ?? sessionLevel,
+    xp: params.dbUser?.xp ?? sessionXp,
+    isVerified: params.dbUser?.isVerified ?? sessionIsVerified,
+  };
+}
+
+async function resolveCreatePostUserSnapshot(params: {
+  userId: string;
+  sessionUser: unknown;
+}): Promise<CreatePostAuthorSnapshot | null> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: params.userId },
+      select: {
+        id: true,
+        level: true,
+        name: true,
+        username: true,
+        image: true,
+        xp: true,
+        isVerified: true,
+      },
+    });
+    return user ? buildCreatePostAuthorSnapshot({ userId: params.userId, sessionUser: params.sessionUser, dbUser: user }) : null;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    const rows = await prisma.$queryRaw<Array<{
+      id: string;
+      name: string;
+      username: string | null;
+      image: string | null;
+      level: number | null;
+      xp: number | null;
+      isVerified: boolean | null;
+    }>>(Prisma.sql`
+      SELECT
+        id,
+        name,
+        username,
+        image,
+        level,
+        xp,
+        "isVerified"
+      FROM "User"
+      WHERE id = ${params.userId}
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return buildCreatePostAuthorSnapshot({
+      userId: params.userId,
+      sessionUser: params.sessionUser,
+      dbUser: {
+        id: row.id,
+        name: row.name,
+        username: row.username,
+        image: row.image,
+        level: toFiniteNumber(row.level, 0),
+        xp: toFiniteNumber(row.xp, 0),
+        isVerified: row.isVerified === true,
+      },
+    });
+  } catch (error) {
+    console.warn("[posts/create] user lookup fallback failed; using session-backed author snapshot", {
+      message: getErrorMessage(error),
+    });
+    const sessionAuthor = buildCreatePostAuthorSnapshot({
+      userId: params.userId,
+      sessionUser: params.sessionUser,
+    });
+    return sessionAuthor.name ? sessionAuthor : null;
+  }
+}
+
+async function getCreatePostRateLimitSnapshot(userId: string): Promise<CreatePostRateLimitSnapshot> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const rows = await prisma.$queryRaw<Array<{
+    postCountLastHour: number | bigint | string | null;
+    oldestPostLastHourAt: Date | null;
+    postCountLast24h: number | bigint | string | null;
+    oldestPostLast24hAt: Date | null;
+  }>>(Prisma.sql`
+    SELECT
+      COUNT(*) FILTER (WHERE "createdAt" >= ${oneHourAgo}) AS "postCountLastHour",
+      MIN("createdAt") FILTER (WHERE "createdAt" >= ${oneHourAgo}) AS "oldestPostLastHourAt",
+      COUNT(*) FILTER (WHERE "createdAt" >= ${twentyFourHoursAgo}) AS "postCountLast24h",
+      MIN("createdAt") FILTER (WHERE "createdAt" >= ${twentyFourHoursAgo}) AS "oldestPostLast24hAt"
+    FROM "Post"
+    WHERE "authorId" = ${userId}
+  `);
+
+  const row = rows[0];
+  return {
+    postCountLastHour: toFiniteNumber(row?.postCountLastHour, 0),
+    oldestPostLastHourAt: row?.oldestPostLastHourAt ?? null,
+    postCountLast24h: toFiniteNumber(row?.postCountLast24h, 0),
+    oldestPostLast24hAt: row?.oldestPostLast24hAt ?? null,
+  };
+}
+
+async function resolveCreatePostMarketContext(params: {
+  address: string;
+  chainType: string;
+}): Promise<{
+  marketCapResult: MarketCapResult;
+  heliusTokenMetadata: Awaited<ReturnType<typeof getHeliusTokenMetadataForMint>> | null;
+}> {
+  const marketCapFallback: MarketCapResult = { mcap: null };
+
+  const [marketCapResult, heliusTokenMetadata] = await Promise.all([
+    withTimeoutFallback(
+      fetchMarketCapService(params.address, params.chainType).catch((error) => {
+        console.warn("[posts/create] market cap lookup failed; continuing without market context", {
+          message: getErrorMessage(error),
+        });
+        return marketCapFallback;
+      }),
+      CREATE_POST_MARKETCAP_TIMEOUT_MS,
+      marketCapFallback
+    ),
+    params.chainType === "solana" && isHeliusConfigured()
+      ? withTimeoutFallback(
+          getHeliusTokenMetadataForMint({ mint: params.address, chainType: params.chainType }).catch((error) => {
+            console.warn("[posts/create] helius token lookup failed; continuing without token metadata", {
+              message: getErrorMessage(error),
+            });
+            return null;
+          }),
+          CREATE_POST_HELIUS_TIMEOUT_MS,
+          null
+        )
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    marketCapResult,
+    heliusTokenMetadata,
+  };
+}
+
+function buildCreatePostResponse(params: {
+  id: string;
+  content: string;
+  authorId: string;
+  contractAddress: string | null;
+  chainType: string | null;
+  entryMcap: number | null;
+  currentMcap: number | null;
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  tokenImage: string | null;
+  dexscreenerUrl: string | null;
+  trackingMode: string | null;
+  lastMcapUpdate: Date | null;
+  createdAt: Date;
+  author: CreatePostAuthorSnapshot;
+  settled?: boolean;
+  settledAt?: Date | null;
+  isWin?: boolean | null;
+}) {
+  return {
+    id: params.id,
+    content: params.content,
+    authorId: params.authorId,
+    contractAddress: params.contractAddress,
+    chainType: params.chainType,
+    entryMcap: params.entryMcap,
+    currentMcap: params.currentMcap,
+    tokenName: params.tokenName,
+    tokenSymbol: params.tokenSymbol,
+    tokenImage: params.tokenImage,
+    dexscreenerUrl: params.dexscreenerUrl,
+    trackingMode: params.trackingMode,
+    lastMcapUpdate: params.lastMcapUpdate,
+    settled: params.settled ?? false,
+    settledAt: params.settledAt ?? null,
+    isWin: params.isWin ?? null,
+    createdAt: params.createdAt,
+    author: params.author,
+    _count: {
+      likes: 0,
+      comments: 0,
+      reposts: 0,
+    },
+  };
+}
+
+async function createPostRawFallback(params: {
+  content: string;
+  authorId: string;
+  contractAddress: string | null;
+  chainType: string | null;
+  entryMcap: number | null;
+  currentMcap: number | null;
+  author: CreatePostAuthorSnapshot;
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  tokenImage: string | null;
+  dexscreenerUrl: string | null;
+}): Promise<ReturnType<typeof buildCreatePostResponse>> {
+  const id = randomUUID();
+  const now = new Date();
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO "Post" (
+      id,
+      content,
+      "authorId",
+      "contractAddress",
+      "chainType",
+      "entryMcap",
+      "currentMcap",
+      "createdAt",
+      "updatedAt"
+    ) VALUES (
+      ${id},
+      ${params.content},
+      ${params.authorId},
+      ${params.contractAddress},
+      ${params.chainType},
+      ${params.entryMcap},
+      ${params.currentMcap},
+      ${now},
+      ${now}
+    )
+  `);
+
+  return buildCreatePostResponse({
+    id,
+    content: params.content,
+    authorId: params.authorId,
+    contractAddress: params.contractAddress,
+    chainType: params.chainType,
+    entryMcap: params.entryMcap,
+    currentMcap: params.currentMcap,
+    tokenName: params.tokenName,
+    tokenSymbol: params.tokenSymbol,
+    tokenImage: params.tokenImage,
+    dexscreenerUrl: params.dexscreenerUrl,
+    trackingMode: TRACKING_MODE_ACTIVE,
+    lastMcapUpdate: now,
+    createdAt: now,
+    author: params.author,
+  });
+}
+
+function triggerNewPostFollowerFanout(params: {
+  authorId: string;
+  authorName: string;
+  authorUsername: string | null;
+  postId: string;
+}): void {
+  setTimeout(() => {
+    void (async () => {
+      const followerIds = await listFollowerIdsSafely({
+        followingId: params.authorId,
+        operation: "new_post_follower_lookup",
+      });
+
+      if (followerIds.length === 0) {
+        return;
+      }
+
+      const displayName = params.authorUsername || params.authorName || "A trader";
+      await createManyNotificationsSafely({
+        operation: "new_post_follower_notification",
+        data: followerIds.map((followerId) => ({
+          userId: followerId,
+          type: "new_post",
+          message: `${displayName} just posted a new Alpha!`,
+          postId: params.postId,
+          fromUserId: params.authorId,
+        })),
+        fallbackData: followerIds.map((followerId) => ({
+          userId: followerId,
+          type: "new_post",
+          message: `${displayName} just posted a new Alpha!`,
+          postId: params.postId,
+        })),
+      });
+    })().catch((error) => {
+      console.warn("[posts/create] follower notification fanout failed", {
+        message: getErrorMessage(error),
+      });
+    });
+  }, 0);
 }
 
 function safeRecord(value: unknown): Record<string, unknown> | null {
@@ -2933,49 +3284,17 @@ postsRouter.get("/maintenance/run", async (c) => {
 // Create a new post
 postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (c) => {
   const user = c.get("user");
+  const session = c.get("session");
   if (!user) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  // Check if user is liquidated (level is -5)
-  let dbUser: {
-    id: string;
-    level: number;
-    name: string;
-    username: string | null;
-  } | null = null;
-  try {
-    dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        level: true,
-        name: true,
-        username: true,
-      },
-    });
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
-      throw error;
-    }
-
-    const fallbackUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-
-    dbUser = fallbackUser
-      ? {
-          ...fallbackUser,
-          level: 0,
-          username: null,
-        }
-      : null;
-  }
-  if (!dbUser || dbUser.level <= LIQUIDATION_LEVEL) {
+  const sessionUser = session?.user ?? null;
+  const authorSnapshot = await resolveCreatePostUserSnapshot({
+    userId: user.id,
+    sessionUser,
+  });
+  if (!authorSnapshot || authorSnapshot.level <= LIQUIDATION_LEVEL) {
     return c.json({
       error: {
         message: "You are at level -5 (liquidation). You cannot post new alphas until your level improves.",
@@ -2984,27 +3303,12 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     }, 403);
   }
 
-  // Rate limit check: max 10 posts per rolling hour
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-  const postCountLastHour = await prisma.post.count({
-    where: {
-      authorId: user.id,
-      createdAt: { gte: oneHourAgo },
-    },
-  });
+  const { postCountLastHour, oldestPostLastHourAt, postCountLast24h, oldestPostLast24hAt } =
+    await getCreatePostRateLimitSnapshot(user.id);
 
   if (postCountLastHour >= HOURLY_POST_LIMIT) {
-    const oldestPostThisHour = await prisma.post.findFirst({
-      where: {
-        authorId: user.id,
-        createdAt: { gte: oneHourAgo },
-      },
-      orderBy: { createdAt: "asc" },
-      select: { createdAt: true },
-    });
-
-    const resetTime = oldestPostThisHour
-      ? new Date(oldestPostThisHour.createdAt.getTime() + 60 * 60 * 1000)
+    const resetTime = oldestPostLastHourAt
+      ? new Date(oldestPostLastHourAt.getTime() + 60 * 60 * 1000)
       : new Date(Date.now() + 60 * 60 * 1000);
     const resetInMinutes = Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / (60 * 1000)));
 
@@ -3022,28 +3326,9 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     }, 429);
   }
 
-  // Rate limit check: max DAILY_POST_LIMIT posts per 24 hours
-  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const postCountLast24h = await prisma.post.count({
-    where: {
-      authorId: user.id,
-      createdAt: { gte: twentyFourHoursAgo },
-    },
-  });
-
   if (postCountLast24h >= DAILY_POST_LIMIT) {
-    // Calculate time until reset
-    const oldestPost = await prisma.post.findFirst({
-      where: {
-        authorId: user.id,
-        createdAt: { gte: twentyFourHoursAgo },
-      },
-      orderBy: { createdAt: "asc" },
-      select: { createdAt: true },
-    });
-
-    const resetTime = oldestPost
-      ? new Date(oldestPost.createdAt.getTime() + 24 * 60 * 60 * 1000)
+    const resetTime = oldestPostLast24hAt
+      ? new Date(oldestPostLast24hAt.getTime() + 24 * 60 * 60 * 1000)
       : new Date(Date.now() + 60 * 60 * 1000);
     const hoursUntilReset = Math.ceil((resetTime.getTime() - Date.now()) / (60 * 60 * 1000));
 
@@ -3074,13 +3359,10 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     }, 400);
   }
 
-  // Fetch market cap (Dex) and metadata (Helius-first for Solana) in parallel.
-  const [marketCapResult, heliusTokenMetadata] = await Promise.all([
-    fetchMarketCapService(detected.address, detected.chainType),
-    detected.chainType === "solana" && isHeliusConfigured()
-      ? getHeliusTokenMetadataForMint({ mint: detected.address, chainType: detected.chainType })
-      : Promise.resolve(null),
-  ]);
+  const { marketCapResult, heliusTokenMetadata } = await resolveCreatePostMarketContext({
+    address: detected.address,
+    chainType: detected.chainType,
+  });
   const entryMcap = marketCapResult.mcap;
 
   const createPostData = {
@@ -3099,39 +3381,7 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
     lastMcapUpdate: new Date(),
   };
 
-  let post: {
-    id: string;
-    content: string;
-    authorId: string;
-    contractAddress: string | null;
-    chainType: string | null;
-    entryMcap: number | null;
-    currentMcap: number | null;
-    tokenName: string | null;
-    tokenSymbol: string | null;
-    tokenImage: string | null;
-    dexscreenerUrl: string | null;
-    trackingMode: string | null;
-    lastMcapUpdate: Date | null;
-    settled: boolean;
-    settledAt: Date | null;
-    isWin: boolean | null;
-    createdAt: Date;
-    author: {
-      id: string;
-      name: string;
-      username: string | null;
-      image: string | null;
-      level: number;
-      xp: number;
-      isVerified: boolean;
-    };
-    _count: {
-      likes: number;
-      comments: number;
-      reposts: number;
-    };
-  };
+  let post: ReturnType<typeof buildCreatePostResponse>;
 
   try {
     post = await prisma.post.create({
@@ -3158,94 +3408,34 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
 
-    // Some deployments may lag on optional post columns. Retry with a legacy-safe payload/select.
-    const fallbackPost = await prisma.post.create({
-      data: {
-        content: createPostData.content,
-        authorId: createPostData.authorId,
-        contractAddress: createPostData.contractAddress,
-        chainType: createPostData.chainType,
-        entryMcap: createPostData.entryMcap,
-        currentMcap: createPostData.currentMcap,
-      },
-      select: {
-        id: true,
-        content: true,
-        authorId: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        currentMcap: true,
-        settled: true,
-        settledAt: true,
-        isWin: true,
-        createdAt: true,
-        author: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-            reposts: true,
-          },
-        },
-      },
+    console.warn("[posts/create] prisma create fallback triggered", {
+      message: getErrorMessage(error),
     });
-
-    post = {
-      ...fallbackPost,
-      author: {
-        id: fallbackPost.author.id,
-        name: fallbackPost.author.name,
-        username: null,
-        image: fallbackPost.author.image,
-        level: 0,
-        xp: 0,
-        isVerified: false,
-      },
+    post = await createPostRawFallback({
+      content: createPostData.content,
+      authorId: createPostData.authorId,
+      contractAddress: createPostData.contractAddress,
+      chainType: createPostData.chainType,
+      entryMcap: createPostData.entryMcap,
+      currentMcap: createPostData.currentMcap,
+      author: authorSnapshot,
       tokenName: marketCapResult.tokenName ?? heliusTokenMetadata?.tokenName ?? null,
       tokenSymbol: marketCapResult.tokenSymbol ?? heliusTokenMetadata?.tokenSymbol ?? null,
       tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
       dexscreenerUrl: marketCapResult.dexscreenerUrl ?? null,
-      trackingMode: TRACKING_MODE_ACTIVE,
-      lastMcapUpdate: new Date(),
-    };
-  }
-
-  // Create notifications for all followers
-  const followerIds = await listFollowerIdsSafely({
-    followingId: user.id,
-    operation: "new_post_follower_lookup",
-  });
-
-  if (followerIds.length > 0) {
-    const displayName = dbUser.username || dbUser.name || "A trader";
-    await createManyNotificationsSafely({
-      operation: "new_post_follower_notification",
-      data: followerIds.map((followerId) => ({
-        userId: followerId,
-        type: "new_post",
-        message: `${displayName} just posted a new Alpha!`,
-        postId: post.id,
-        fromUserId: user.id,
-      })),
-      fallbackData: followerIds.map((followerId) => ({
-        userId: followerId,
-        type: "new_post",
-        message: `${displayName} just posted a new Alpha!`,
-        postId: post.id,
-      })),
     });
   }
+
+  triggerNewPostFollowerFanout({
+    authorId: user.id,
+    authorName: authorSnapshot.name,
+    authorUsername: authorSnapshot.username,
+    postId: post.id,
+  });
 
   invalidatePostReadCaches({ leaderboard: true });
 
