@@ -1833,7 +1833,7 @@ function applySessionCookies(c: Context, sessionToken: string): void {
   const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
   const cookies: string[] = [];
 
-  cookies.push(...buildClearedSessionCookies(c.req.header("host")));
+  cookies.push(...buildClearedSessionCookies(c.req.header("host"), { includeLegacy: false }));
 
   // Set the canonical session cookie last so it wins within the response.
   cookies.push(
@@ -1858,7 +1858,7 @@ function logIssuedSessionCookie(
 ): void {
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
-  const clearedCookieNames = [SESSION_COOKIE_NAME, ...LEGACY_SESSION_COOKIE_NAMES];
+  const clearedCookieNames = [SESSION_COOKIE_NAME];
   console.info("[auth/session] Issued session cookie", {
     requestId: c.get("requestId") ?? null,
     host: c.req.header("host") ?? null,
@@ -1867,7 +1867,9 @@ function logIssuedSessionCookie(
     userId,
     cookieName: SESSION_COOKIE_NAME,
     clearedCookieNames,
-    setCookieCount: buildClearedSessionCookies(c.req.header("host")).length + 1,
+    clearedLegacyCookieNames: [],
+    setCookieCount:
+      buildClearedSessionCookies(c.req.header("host"), { includeLegacy: false }).length + 1,
     domain: cookieDomain ?? null,
     path: SESSION_COOKIE_PATH,
     httpOnly: true,
@@ -1968,49 +1970,57 @@ async function issueAuthSessionResponse(
   });
 }
 
-function buildClearedSessionCookies(hostHeader: string | undefined): string[] {
+function buildClearedSessionCookies(
+  hostHeader: string | undefined,
+  options?: { includeLegacy?: boolean }
+): string[] {
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = resolveSessionCookieDomain(hostHeader);
+  const includeLegacy = options?.includeLegacy ?? true;
   const cookies: string[] = [
     buildSessionCookie({
-      name: "phew.session_token",
+      name: SESSION_COOKIE_NAME,
       value: "",
       maxAgeSeconds: 0,
       secure: isProd,
     }),
   ];
 
-  for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
-    cookies.push(
-      buildSessionCookie({
-        name: cookieName,
-        value: "",
-        maxAgeSeconds: 0,
-        secure: isProd,
-      })
-    );
+  if (includeLegacy) {
+    for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
+      cookies.push(
+        buildSessionCookie({
+          name: cookieName,
+          value: "",
+          maxAgeSeconds: 0,
+          secure: isProd,
+        })
+      );
+    }
   }
 
   if (cookieDomain) {
     cookies.push(
       buildSessionCookie({
-        name: "phew.session_token",
+        name: SESSION_COOKIE_NAME,
         value: "",
         domain: cookieDomain,
         maxAgeSeconds: 0,
         secure: isProd,
       })
     );
-    for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
-      cookies.push(
-        buildSessionCookie({
-          name: cookieName,
-          value: "",
-          domain: cookieDomain,
-          maxAgeSeconds: 0,
-          secure: isProd,
-        })
-      );
+    if (includeLegacy) {
+      for (const cookieName of LEGACY_SESSION_COOKIE_NAMES) {
+        cookies.push(
+          buildSessionCookie({
+            name: cookieName,
+            value: "",
+            domain: cookieDomain,
+            maxAgeSeconds: 0,
+            secure: isProd,
+          })
+        );
+      }
     }
   }
 

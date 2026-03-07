@@ -81,6 +81,31 @@ export function getAuthCookieEntries(cookieHeader: string | null | undefined): A
   return entries;
 }
 
+export function getPreferredAuthCookieEntries(
+  cookieHeader: string | null | undefined
+): AuthCookieEntry[] {
+  const entries = getAuthCookieEntries(cookieHeader);
+  if (entries.length <= 1) {
+    return entries;
+  }
+
+  const canonicalEntries = entries.filter((entry) => entry.name === AUTH_COOKIE_NAMES[0]);
+  if (canonicalEntries.length === 0) {
+    return entries;
+  }
+
+  return [
+    ...canonicalEntries,
+    ...entries.filter((entry) => entry.name !== AUTH_COOKIE_NAMES[0]),
+  ];
+}
+
+export function getPreferredAuthCookieEntry(
+  cookieHeader: string | null | undefined
+): AuthCookieEntry | null {
+  return getPreferredAuthCookieEntries(cookieHeader)[0] ?? null;
+}
+
 export function createAuthTokenAttemptTrace(params: {
   source: "cookie" | "bearer";
   cookieNames?: string[];
@@ -109,13 +134,14 @@ export function buildApiMeAuthTrace(
 ): ApiMeAuthTrace {
   const cookieHeader = headers.get("cookie");
   const cookieEntries = getAuthCookieEntries(cookieHeader);
+  const preferredCookieEntry = getPreferredAuthCookieEntry(cookieHeader);
   return {
     requestId,
     host: headers.get("host"),
     origin: headers.get("origin"),
     userAgent: headers.get("user-agent"),
     cookieHeaderPresent: Boolean(cookieHeader && cookieHeader.trim().length > 0),
-    authCookieNameFound: cookieEntries[0]?.name ?? null,
+    authCookieNameFound: preferredCookieEntry?.name ?? null,
     authCookieNamesFound: [...new Set(cookieEntries.map((entry) => entry.name))],
     authLikeCookieCount: cookieEntries.length,
     signedTokenPresent: false,

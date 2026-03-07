@@ -12,7 +12,7 @@ import {
 import {
   appendAuthDecision,
   createAuthTokenAttemptTrace,
-  getAuthCookieEntries,
+  getPreferredAuthCookieEntries,
   type ApiMeAuthTrace,
   type AuthTokenAttemptTrace,
 } from "./auth-trace.js";
@@ -368,7 +368,7 @@ function toSessionUser(
 }
 
 function getSessionTokensFromHeaders(headers: Headers): string[] {
-  const tokens = getAuthCookieEntries(headers.get("cookie"))
+  const tokens = getPreferredAuthCookieEntries(headers.get("cookie"))
     .map((entry) => entry.value)
     .filter((token) => token.length > 0);
   return [...new Set(tokens)];
@@ -982,7 +982,7 @@ export const auth = {
       headers: Headers;
       trace?: ApiMeAuthTrace | null;
     }): Promise<SessionRecord | null> => {
-      const cookieEntries = getAuthCookieEntries(headers.get("cookie"));
+      const cookieEntries = getPreferredAuthCookieEntries(headers.get("cookie"));
       const tokens = [...new Set(cookieEntries.map((entry) => entry.value).filter((token) => token.length > 0))];
       appendAuthDecision(trace, `cookie_candidates:${cookieEntries.length}`);
       for (const token of tokens) {

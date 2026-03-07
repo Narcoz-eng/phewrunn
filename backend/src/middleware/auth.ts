@@ -4,6 +4,8 @@ import { prisma } from "../prisma.js";
 import {
   appendAuthDecision,
   buildApiMeAuthTrace,
+  getPreferredAuthCookieEntry,
+  getAuthCookieEntries,
   type ApiMeAuthTrace,
 } from "../lib/auth-trace.js";
 
@@ -51,9 +53,6 @@ export type AuthVariables = {
 };
 
 type AuthSession = Awaited<ReturnType<typeof auth.api.getSession>>;
-
-const SESSION_COOKIE_PATTERN =
-  /(?:^|;\s*)(?:phew\.session_token|better-auth\.session_token|auth\.session_token|session_token)=([^;]+)/i;
 const AUTH_ERROR_LOG_COOLDOWN_MS = 15_000;
 const authErrorLastLoggedAt = new Map<string, number>();
 const SESSION_CACHE_TTL_MS = 8_000;
@@ -67,8 +66,7 @@ function parseBearerToken(headerValue: string | undefined): string | null {
 }
 
 function hasSessionCookieHeader(cookieHeader: string | undefined): boolean {
-  if (!cookieHeader) return false;
-  return SESSION_COOKIE_PATTERN.test(cookieHeader);
+  return getAuthCookieEntries(cookieHeader).length > 0;
 }
 
 function shouldSkipAuthResolution(path: string): boolean {
@@ -99,15 +97,7 @@ function logAuthLookupError(kind: "cookie" | "bearer", error: unknown): void {
 }
 
 function readSessionTokenFromCookie(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) return null;
-  const match = cookieHeader.match(SESSION_COOKIE_PATTERN);
-  const token = match?.[1]?.trim();
-  if (!token) return null;
-  try {
-    return decodeURIComponent(token);
-  } catch {
-    return token;
-  }
+  return getPreferredAuthCookieEntry(cookieHeader)?.value ?? null;
 }
 
 function readCachedSession(cacheKey: string): AuthSession | null | undefined {

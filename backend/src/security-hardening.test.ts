@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createSignedSessionToken, verifySignedSessionToken } from "./lib/session-token.js";
+import { buildApiMeAuthTrace, getPreferredAuthCookieEntries } from "./lib/auth-trace.js";
 import { PublicUserProfileDTOSchema, UpdateProfileSchema } from "./types.js";
 
 const TEST_SESSION_SECRET = "0123456789abcdef0123456789abcdef";
@@ -78,5 +79,37 @@ describe("public and profile schemas", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("auth cookie compatibility", () => {
+  test("prefers canonical session cookies over legacy cookie names", () => {
+    const ordered = getPreferredAuthCookieEntries(
+      [
+        "better-auth.session_token=legacy-token",
+        "phew.session_token=canonical-token",
+        "session_token=older-token",
+      ].join("; ")
+    );
+
+    expect(ordered.map((entry) => `${entry.name}:${entry.value}`)).toEqual([
+      "phew.session_token:canonical-token",
+      "better-auth.session_token:legacy-token",
+      "session_token:older-token",
+    ]);
+  });
+
+  test("auth trace reports canonical cookie when legacy cookie appears first", () => {
+    const headers = new Headers({
+      cookie: [
+        "better-auth.session_token=legacy-token",
+        "phew.session_token=canonical-token",
+      ].join("; "),
+    });
+
+    const trace = buildApiMeAuthTrace(headers, "req_123");
+
+    expect(trace.authCookieNameFound).toBe("phew.session_token");
+    expect(trace.authLikeCookieCount).toBe(2);
   });
 });
