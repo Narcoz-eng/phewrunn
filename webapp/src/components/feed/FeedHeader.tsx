@@ -16,6 +16,7 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { User, getAvatarUrl } from "@/types";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-client";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { LevelBadge } from "./LevelBar";
 import { LogOut, Settings, User as UserIcon, Bell, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -34,20 +35,26 @@ const tabs: { id: FeedTab; label: string }[] = [
   { id: "trending", label: "Trending" },
   { id: "following", label: "Following" },
 ];
+const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
 
 export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeaderProps) {
   const navigate = useNavigate();
   const { hasLiveSession } = useAuth();
   const tabRefs = useRef<Map<FeedTab, HTMLButtonElement>>(new Map());
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
+  const unreadCacheKey = user ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${user.id}` : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
+  const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
 
   // Fetch unread notification count
   const { data: unreadData } = useQuery({
     queryKey: ["notifications", "unread-count"],
     queryFn: async () => {
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
+      writeSessionCache(unreadCacheKey, response.count);
       return response;
     },
+    initialData: cachedUnreadCount !== null ? { count: cachedUnreadCount } : undefined,
     enabled: !!user && hasLiveSession,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,

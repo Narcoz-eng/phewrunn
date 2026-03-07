@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
-const NOTIFICATIONS_CACHE_TTL_MS = 45_000;
+const NOTIFICATIONS_CACHE_TTL_MS = 30 * 60_000;
 const NOTIFICATION_MERGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function normalizeNotificationMessage(message: string): string {
@@ -160,7 +160,7 @@ export default function Notifications() {
     () => (session?.user?.id ? `${NOTIFICATIONS_CACHE_KEY}:${session.user.id}` : NOTIFICATIONS_CACHE_KEY),
     [session?.user?.id]
   );
-  const cachedNotifications = useMemo(
+  const initialCachedNotifications = useMemo(
     () => readSessionCache<Notification[]>(notificationsCacheKey, NOTIFICATIONS_CACHE_TTL_MS),
     [notificationsCacheKey]
   );
@@ -175,9 +175,22 @@ export default function Notifications() {
   } = useQuery({
     queryKey: notificationsQueryKey,
     queryFn: async () => {
+      const sessionCachedNotifications = readSessionCache<Notification[]>(
+        notificationsCacheKey,
+        NOTIFICATIONS_CACHE_TTL_MS
+      );
+      const currentQueryNotifications = queryClient.getQueryData<Notification[]>(notificationsQueryKey);
+      const fallbackNotifications =
+        sessionCachedNotifications && sessionCachedNotifications.length > 0
+          ? sessionCachedNotifications
+          : currentQueryNotifications && currentQueryNotifications.length > 0
+            ? currentQueryNotifications
+            : initialCachedNotifications && initialCachedNotifications.length > 0
+              ? initialCachedNotifications
+              : null;
       const response = await api.raw("/api/notifications");
       if (response.status === 401 || response.status === 403) {
-        return cachedNotifications ?? [];
+        return fallbackNotifications ?? [];
       }
       if (response.status === 429) {
         const retryAfterHeader = response.headers.get("retry-after");
@@ -196,17 +209,24 @@ export default function Notifications() {
           payload?.error?.message ||
           payload?.message ||
           `Request failed with status ${response.status}`;
-        if (cachedNotifications && cachedNotifications.length > 0) {
-          return cachedNotifications;
+        if (fallbackNotifications && fallbackNotifications.length > 0) {
+          return fallbackNotifications;
         }
         const requestError = new Error(message) as Error & { status?: number };
         requestError.status = response.status;
         throw requestError;
       }
       const payload = (await response.json().catch(() => null)) as { data?: Notification[] } | null;
-      return Array.isArray(payload?.data) ? payload.data : [];
+      const data = Array.isArray(payload?.data) ? payload.data : [];
+      if (data.length === 0 && fallbackNotifications && fallbackNotifications.length > 0) {
+        return fallbackNotifications;
+      }
+      return data;
     },
-    initialData: cachedNotifications && cachedNotifications.length > 0 ? cachedNotifications : undefined,
+    initialData:
+      initialCachedNotifications && initialCachedNotifications.length > 0
+        ? initialCachedNotifications
+        : undefined,
     enabled: isAuthenticated && hasLiveSession,
     staleTime: 20000,
     refetchOnMount: "always",
@@ -247,9 +267,7 @@ export default function Notifications() {
 
   useEffect(() => {
     if (!isFetched) return;
-    if (notifications.length > 0) {
-      writeSessionCache(notificationsCacheKey, notifications);
-    }
+    writeSessionCache(notificationsCacheKey, notifications);
   }, [isFetched, notifications, notificationsCacheKey]);
 
   // Mark notification as clicked (read)

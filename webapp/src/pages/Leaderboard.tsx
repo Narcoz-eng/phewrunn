@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl } from "@/types";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   ArrowLeft,
   Trophy,
@@ -34,6 +35,8 @@ import {
 import { cn } from "@/lib/utils";
 
 type LeaderboardSection = "gainers" | "users" | "stats";
+const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
 
 export default function Leaderboard() {
   const navigate = useNavigate();
@@ -42,6 +45,10 @@ export default function Leaderboard() {
   const { data: session } = useSession();
   const { signOut, hasLiveSession } = useAuth();
   const { logout: privyLogout } = usePrivy();
+  const unreadCacheKey = session?.user?.id
+    ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
+    : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
+  const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
   const sessionBackedUser = session?.user
     ? {
         id: session.user.id,
@@ -78,8 +85,10 @@ export default function Leaderboard() {
     queryKey: ["notifications", "unread-count"],
     queryFn: async () => {
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
+      writeSessionCache(unreadCacheKey, response.count);
       return response;
     },
+    initialData: cachedUnreadCount !== null ? { count: cachedUnreadCount } : undefined,
     enabled: !!user && hasLiveSession,
     refetchOnWindowFocus: false,
     refetchInterval: () => {
