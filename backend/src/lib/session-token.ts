@@ -73,6 +73,30 @@ export type VerifiedSignedSessionToken = {
   userClaims: SessionTokenUserClaims | null;
 };
 
+export type SignedSessionTokenInspection = {
+  formatValid: boolean;
+  versionValid: boolean;
+  signatureDecoded: boolean;
+  signatureVerified: boolean;
+  payloadDecoded: boolean;
+  payloadParsed: boolean;
+  payloadValid: boolean;
+  expired: boolean;
+  futureIat: boolean;
+  failureReason:
+    | "invalid_format"
+    | "invalid_version"
+    | "invalid_signature_encoding"
+    | "signature_mismatch"
+    | "invalid_payload_encoding"
+    | "invalid_payload_json"
+    | "invalid_payload_shape"
+    | "expired"
+    | "future_iat"
+    | null;
+  verified: VerifiedSignedSessionToken | null;
+};
+
 function toOptionalString(value: unknown): string | null | undefined {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -213,11 +237,23 @@ export function createSignedSessionToken(params: {
   return `${body}.${signature}`;
 }
 
-export function verifySignedSessionToken(
-  token: string
-): VerifiedSignedSessionToken | null {
+export function inspectSignedSessionToken(token: string): SignedSessionTokenInspection {
   const parts = token.split(".");
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3) {
+    return {
+      formatValid: false,
+      versionValid: false,
+      signatureDecoded: false,
+      signatureVerified: false,
+      payloadDecoded: false,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_format",
+      verified: null,
+    };
+  }
 
   const version = parts[0];
   const encodedPayload = parts[1];
@@ -227,12 +263,52 @@ export function verifySignedSessionToken(
     encodedPayload === undefined ||
     encodedSignature === undefined
   ) {
-    return null;
+    return {
+      formatValid: false,
+      versionValid: false,
+      signatureDecoded: false,
+      signatureVerified: false,
+      payloadDecoded: false,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_format",
+      verified: null,
+    };
   }
-  if (version !== SESSION_TOKEN_VERSION) return null;
+  if (version !== SESSION_TOKEN_VERSION) {
+    return {
+      formatValid: true,
+      versionValid: false,
+      signatureDecoded: false,
+      signatureVerified: false,
+      payloadDecoded: false,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_version",
+      verified: null,
+    };
+  }
 
   const signature = fromBase64Url(encodedSignature);
-  if (!signature) return null;
+  if (!signature) {
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: false,
+      signatureVerified: false,
+      payloadDecoded: false,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_signature_encoding",
+      verified: null,
+    };
+  }
 
   const body = `${version}.${encodedPayload}`;
   const expectedSignature = signTokenBody(body);
@@ -240,20 +316,72 @@ export function verifySignedSessionToken(
     signature.length !== expectedSignature.length ||
     !timingSafeEqual(signature, expectedSignature)
   ) {
-    return null;
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: false,
+      payloadDecoded: false,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "signature_mismatch",
+      verified: null,
+    };
   }
 
   const payloadBuffer = fromBase64Url(encodedPayload);
-  if (!payloadBuffer) return null;
+  if (!payloadBuffer) {
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: true,
+      payloadDecoded: false,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_payload_encoding",
+      verified: null,
+    };
+  }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(payloadBuffer.toString("utf8"));
   } catch {
-    return null;
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: true,
+      payloadDecoded: true,
+      payloadParsed: false,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_payload_json",
+      verified: null,
+    };
   }
 
-  if (!parsed || typeof parsed !== "object") return null;
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: true,
+      payloadDecoded: true,
+      payloadParsed: true,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_payload_shape",
+      verified: null,
+    };
+  }
   const payload = parsed as Partial<SessionTokenPayload>;
   if (
     payload.v !== 1 ||
@@ -264,18 +392,76 @@ export function verifySignedSessionToken(
     typeof payload.jti !== "string" ||
     payload.jti.length === 0
   ) {
-    return null;
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: true,
+      payloadDecoded: true,
+      payloadParsed: true,
+      payloadValid: false,
+      expired: false,
+      futureIat: false,
+      failureReason: "invalid_payload_shape",
+      verified: null,
+    };
   }
 
   const nowMs = Date.now();
-  if (payload.exp <= nowMs) return null;
-  if (payload.iat > nowMs + MAX_CLOCK_SKEW_MS) return null;
+  if (payload.exp <= nowMs) {
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: true,
+      payloadDecoded: true,
+      payloadParsed: true,
+      payloadValid: true,
+      expired: true,
+      futureIat: false,
+      failureReason: "expired",
+      verified: null,
+    };
+  }
+  if (payload.iat > nowMs + MAX_CLOCK_SKEW_MS) {
+    return {
+      formatValid: true,
+      versionValid: true,
+      signatureDecoded: true,
+      signatureVerified: true,
+      payloadDecoded: true,
+      payloadParsed: true,
+      payloadValid: true,
+      expired: false,
+      futureIat: true,
+      failureReason: "future_iat",
+      verified: null,
+    };
+  }
 
   return {
-    userId: payload.uid,
-    issuedAt: new Date(payload.iat),
-    expiresAt: new Date(payload.exp),
-    jti: payload.jti,
-    userClaims: parseUserClaims(payload.usr),
+    formatValid: true,
+    versionValid: true,
+    signatureDecoded: true,
+    signatureVerified: true,
+    payloadDecoded: true,
+    payloadParsed: true,
+    payloadValid: true,
+    expired: false,
+    futureIat: false,
+    failureReason: null,
+    verified: {
+      userId: payload.uid,
+      issuedAt: new Date(payload.iat),
+      expiresAt: new Date(payload.exp),
+      jti: payload.jti,
+      userClaims: parseUserClaims(payload.usr),
+    },
   };
+}
+
+export function verifySignedSessionToken(
+  token: string
+): VerifiedSignedSessionToken | null {
+  return inspectSignedSessionToken(token).verified;
 }

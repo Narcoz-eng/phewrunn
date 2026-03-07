@@ -28,18 +28,44 @@
     <script>
       (function () {
         var host = window.location.hostname.toLowerCase();
-        var isVercelPreviewHost =
-          host.endsWith(".vercel.app") &&
-          host !== "phew.run" &&
-          host !== "www.phew.run" &&
-          !host.endsWith(".phew.run");
-        if (isVercelPreviewHost) {
+        var redirectToCanonicalHost = function () {
+          try {
+            var sessionKeys = [];
+            for (var i = 0; i < window.sessionStorage.length; i += 1) {
+              var sessionKey = window.sessionStorage.key(i);
+              if (typeof sessionKey === "string" && sessionKey.indexOf("phew.") === 0) {
+                sessionKeys.push(sessionKey);
+              }
+            }
+            for (var j = 0; j < sessionKeys.length; j += 1) {
+              window.sessionStorage.removeItem(sessionKeys[j]);
+            }
+          } catch (_error) {}
+
+          try {
+            window.localStorage.removeItem("auth-token");
+          } catch (_error) {}
+
           var redirectUrl =
             "https://phew.run" +
             window.location.pathname +
             window.location.search +
             window.location.hash;
           window.location.replace(redirectUrl);
+        };
+
+        if (host === "www.phew.run") {
+          redirectToCanonicalHost();
+          return;
+        }
+
+        var isVercelPreviewHost =
+          host.endsWith(".vercel.app") &&
+          host !== "phew.run" &&
+          host !== "www.phew.run" &&
+          !host.endsWith(".phew.run");
+        if (isVercelPreviewHost) {
+          redirectToCanonicalHost();
         }
       })();
     </script>

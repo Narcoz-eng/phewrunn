@@ -247,6 +247,7 @@ import bs58 from "bs58";
 import { PrivyClient } from "@privy-io/server-auth";
 import {
   createSignedSessionToken,
+  inspectSignedSessionToken,
   verifySignedSessionToken,
   type SessionTokenUserClaims,
 } from "./lib/session-token.js";
@@ -2937,16 +2938,21 @@ app.post("/api/auth/logout", async (c) => {
 app.get("/api/me", async (c) => {
   let user = c.get("user");
   let session = c.get("session");
+  const requestId = c.get("requestId") ?? null;
   const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
   const bearerToken =
     authHeader && /^bearer\s+/i.test(authHeader)
       ? authHeader.replace(/^bearer\s+/i, "").trim()
       : "";
   const cookieHeader = c.req.header("cookie") ?? "";
+  const cookieToken = readSessionCookieToken(cookieHeader);
+  const signedTokenInspection = cookieToken ? inspectSignedSessionToken(cookieToken) : null;
   const hasSessionCookie = /(?:^|;\s*)(?:phew\.session_token|better-auth\.session_token|auth\.session_token|session_token)=/i.test(
     cookieHeader
   );
   const hasBearerToken = bearerToken.length > 0;
+  let dbFallbackTriggered = false;
+  let finalAuthReason = "middleware_session";
 
   if ((!user || !session?.user) && (hasSessionCookie || hasBearerToken)) {
     try {
@@ -2954,6 +2960,13 @@ app.get("/api/me", async (c) => {
         ? await auth.api.getSession({ headers: c.req.raw.headers })
         : null;
       if (recoveredSession?.user) {
+        dbFallbackTriggered = Boolean(
+          cookieToken &&
+          cookieToken.startsWith("v1.") &&
+          signedTokenInspection &&
+          !signedTokenInspection.verified
+        );
+        finalAuthReason = dbFallbackTriggered ? "db_fallback_recovered_session" : "cookie_recovered_session";
         session = recoveredSession;
         user = {
           id: recoveredSession.user.id,
@@ -2976,6 +2989,7 @@ app.get("/api/me", async (c) => {
       } else if (hasBearerToken) {
         const bearerSession = await auth.api.getSessionByToken(bearerToken);
         if (bearerSession?.user) {
+          finalAuthReason = "bearer_recovered_session";
           session = bearerSession;
           user = {
             id: bearerSession.user.id,
@@ -2998,6 +3012,7 @@ app.get("/api/me", async (c) => {
         }
       }
     } catch (recoverError) {
+      finalAuthReason = "session_recovery_exception";
       console.warn("[/api/me] Session recovery fallback failed", recoverError);
     }
   }
@@ -3011,10 +3026,38 @@ app.get("/api/me", async (c) => {
         hasSessionCookie,
       });
     }
+    console.warn("[/api/me][auth-trace]", {
+      requestId,
+      host: c.req.header("host") ?? null,
+      cookiePresent: Boolean(cookieToken),
+      signedTokenParseSuccess: signedTokenInspection?.payloadParsed ?? null,
+      signedTokenSignatureVerified: signedTokenInspection?.signatureVerified ?? null,
+      signedTokenFailureReason: signedTokenInspection?.failureReason ?? null,
+      dbFallbackTriggered,
+      finalStatus: 401,
+      finalReason: hasSessionCookie
+        ? signedTokenInspection?.failureReason ?? finalAuthReason
+        : hasBearerToken
+          ? "bearer_session_missing"
+          : "no_session_credentials",
+    });
     return c.body(null, 401);
   }
 
   maybeRefreshSessionCookieAfterFallback(c, session?.user);
+  if (dbFallbackTriggered || (cookieToken && cookieToken.startsWith("v1.") && !signedTokenInspection?.verified)) {
+    console.warn("[/api/me][auth-trace]", {
+      requestId,
+      host: c.req.header("host") ?? null,
+      cookiePresent: Boolean(cookieToken),
+      signedTokenParseSuccess: signedTokenInspection?.payloadParsed ?? null,
+      signedTokenSignatureVerified: signedTokenInspection?.signatureVerified ?? null,
+      signedTokenFailureReason: signedTokenInspection?.failureReason ?? null,
+      dbFallbackTriggered,
+      finalStatus: 200,
+      finalReason: finalAuthReason,
+    });
+  }
 
   const cachedUser = await readCachedMeResponse(user.id);
   if (cachedUser) {
