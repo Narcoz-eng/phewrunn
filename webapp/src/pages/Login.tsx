@@ -301,7 +301,16 @@ const stats = [
 
 function PrivyLoginButton() {
   const navigate = useNavigate();
-  const { login, ready: privyReady, isSyncing, syncError } = usePrivyLogin({
+  const {
+    login,
+    ready: privyReady,
+    isSyncing,
+    isRetryBlocked,
+    syncError,
+    authStatus,
+    authStatusMessage,
+    cooldownRemainingMs,
+  } = usePrivyLogin({
     onSuccess: (user) =>
       navigate(user.username ? "/" : "/welcome", { replace: true }),
   });
@@ -309,6 +318,11 @@ function PrivyLoginButton() {
   const privySyncFailure = usePrivySyncFailureSnapshot();
   const syncFailureMessage = privySyncFailure?.message ?? null;
   const visibleSyncError = syncError ?? syncFailureMessage;
+  const visibleStatus = authStatusMessage;
+  const cooldownSeconds =
+    authStatus === "rate_limited_cooldown" && cooldownRemainingMs > 0
+      ? Math.ceil(cooldownRemainingMs / 1000)
+      : null;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
   const xLabel = privyReady ? "Sign in with X" : "Start X";
   const emailSubLabel = "Fastest path. Verification code lands instantly.";
@@ -321,7 +335,7 @@ function PrivyLoginButton() {
           type="button"
           className="h-auto min-h-[76px] w-full justify-between rounded-[24px] border border-white/15 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] px-4 py-4 text-left text-slate-950 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.85)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_28px_70px_-28px_rgba(152,233,220,0.95)]"
           onClick={() => login({ loginMethods: ["email"] })}
-          disabled={isLoading}
+          disabled={isLoading || isRetryBlocked}
         >
           {isLoading ? (
             <>
@@ -351,7 +365,7 @@ function PrivyLoginButton() {
           variant="outline"
           className="h-auto min-h-[76px] w-full justify-between rounded-[24px] border border-white/15 bg-[linear-gradient(180deg,rgba(14,18,20,0.94),rgba(8,11,12,0.9))] px-4 py-4 text-left text-white shadow-[0_20px_60px_-34px_rgba(0,0,0,0.95)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-black/50"
           onClick={() => login({ loginMethods: ["twitter"] })}
-          disabled={isLoading}
+          disabled={isLoading || isRetryBlocked}
         >
           {isLoading ? (
             <>
@@ -376,6 +390,26 @@ function PrivyLoginButton() {
           )}
         </Button>
       </div>
+      {visibleStatus ? (
+        <div className="rounded-[18px] border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-white/80">
+          <span className="font-semibold text-white">
+            {authStatus === "awaiting_identity_token"
+              ? "Awaiting verification"
+              : authStatus === "syncing_backend"
+                ? "Finalizing session"
+                : authStatus === "rate_limited_cooldown"
+                  ? "Rate limited"
+                  : authStatus === "authenticated"
+                    ? "Signed in"
+                    : authStatus === "failed"
+                      ? "Sign-in failed"
+                      : "Status"}
+          </span>
+          {" "}
+          {visibleStatus}
+          {cooldownSeconds ? ` Retry available in about ${cooldownSeconds}s.` : ""}
+        </div>
+      ) : null}
       <p className="text-[11px] text-muted-foreground leading-relaxed">
         Wallet linking is handled separately in your profile after sign-in.
       </p>

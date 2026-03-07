@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   clearPrivySyncFailureState,
+  getPrivyAuthBootstrapCooldownRemainingMs,
   isExplicitLogoutCoolingDown,
+  isPrivyAuthBootstrapCooldownActive,
   isPrivyAuthBootstrapStatePending,
   setPrivyAuthBootstrapState,
   startPrivyAuthBootstrap,
@@ -22,6 +24,14 @@ const PRIVY_LOGOUT_SETTLE_MS = 250;
 type UsePrivyLoginOptions = {
   onSuccess?: (user: AuthUser) => void;
 };
+
+type VisibleAuthStatus =
+  | "idle"
+  | "awaiting_identity_token"
+  | "syncing_backend"
+  | "rate_limited_cooldown"
+  | "authenticated"
+  | "failed";
 
 type LoginMethodOverride = "email" | "twitter";
 
@@ -100,6 +110,22 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   }, [authenticated]);
 
   const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<AuthUser | null> => {
+    const cooldownActive =
+      bootstrapSnapshot?.state === "failed_rate_limited" &&
+      isPrivyAuthBootstrapCooldownActive(bootstrapSnapshot);
+    if (cooldownActive) {
+      const retryInMs = getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot);
+      const retryMessage =
+        bootstrapSnapshot.detail ??
+        "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
+      setLocalSyncError(retryMessage);
+      console.info("[AuthFlow] usePrivyLogin manual retry blocked by cooldown", {
+        userId: privyUser.id,
+        retryInMs,
+      });
+      return null;
+    }
+
     console.info("[AuthFlow] usePrivyLogin delegating sync to controller", {
       owner: "usePrivyLogin",
       mode: "manual",
@@ -157,6 +183,20 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
   const startLogin = useCallback((loginOptions?: StartLoginOptions) => {
     if (oauthLoading || isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state)) {
+      return;
+    }
+
+    const rateLimitedCooldownActive =
+      bootstrapSnapshot?.state === "failed_rate_limited" &&
+      isPrivyAuthBootstrapCooldownActive(bootstrapSnapshot);
+    if (rateLimitedCooldownActive) {
+      const retryMessage =
+        bootstrapSnapshot.detail ??
+        "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
+      setLocalSyncError(retryMessage);
+      console.info("[AuthFlow] usePrivyLogin start blocked by rate-limit cooldown", {
+        retryInMs: getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot),
+      });
       return;
     }
 
@@ -233,6 +273,8 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   }, [
     authenticated,
     bootstrapSnapshot?.state,
+    bootstrapSnapshot?.detail,
+    bootstrapSnapshot?.cooldownUntilMs,
     handlePrivyAuthError,
     initOAuth,
     login,
@@ -242,6 +284,34 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     runManualSync,
     user,
   ]);
+
+  const cooldownRemainingMs = getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot);
+  const authStatus: VisibleAuthStatus =
+    bootstrapSnapshot?.state === "awaiting_identity_token" || bootstrapSnapshot?.state === "cooldown"
+      ? "awaiting_identity_token"
+      : bootstrapSnapshot?.state === "syncing_backend"
+        ? "syncing_backend"
+        : bootstrapSnapshot?.state === "failed_rate_limited"
+          ? "rate_limited_cooldown"
+          : bootstrapSnapshot?.state === "authenticated"
+            ? "authenticated"
+            : bootstrapSnapshot?.state === "failed" || localSyncError
+              ? "failed"
+              : "idle";
+
+  const authStatusMessage =
+    authStatus === "awaiting_identity_token"
+      ? "Waiting for Privy to finish verification..."
+      : authStatus === "syncing_backend"
+        ? "Finalizing your Phew session..."
+        : authStatus === "rate_limited_cooldown"
+          ? bootstrapSnapshot?.detail ??
+            "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again."
+          : authStatus === "authenticated"
+            ? "Signed in. Loading your account..."
+            : authStatus === "failed"
+              ? localSyncError ?? bootstrapSnapshot?.detail ?? "Sign-in failed."
+              : null;
 
   const bootstrapError =
     bootstrapSnapshot?.state === "failed" || bootstrapSnapshot?.state === "failed_rate_limited"
@@ -255,6 +325,12 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     user,
     privyLogout,
     isSyncing: oauthLoading || isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state),
+    isRetryBlocked:
+      bootstrapSnapshot?.state === "failed_rate_limited" &&
+      isPrivyAuthBootstrapCooldownActive(bootstrapSnapshot),
+    cooldownRemainingMs,
     syncError: localSyncError ?? bootstrapError ?? null,
+    authStatus,
+    authStatusMessage,
   };
 }

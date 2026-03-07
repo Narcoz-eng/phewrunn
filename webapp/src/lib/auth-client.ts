@@ -60,7 +60,8 @@ const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
 const PRIVY_BOOTSTRAP_MAX_ATTEMPTS = 2;
 const PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS = 1_500;
-const PRIVY_RATE_LIMIT_FAILURE_MESSAGE = "Finishing sign-in, please wait a few seconds and retry.";
+const PRIVY_RATE_LIMIT_FAILURE_MESSAGE =
+  "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -631,6 +632,29 @@ export function isPrivyAuthBootstrapStatePending(
   );
 }
 
+export function isPrivyAuthBootstrapStateBlockingApiMe(
+  state: PrivyAuthBootstrapState | null | undefined
+): boolean {
+  return state === "failed_rate_limited" || isPrivyAuthBootstrapStatePending(state);
+}
+
+export function getPrivyAuthBootstrapCooldownRemainingMs(
+  snapshot: PrivyAuthBootstrapSnapshot | null | undefined,
+  referenceTime = Date.now()
+): number {
+  if (!snapshot?.cooldownUntilMs) {
+    return 0;
+  }
+  return Math.max(0, snapshot.cooldownUntilMs - referenceTime);
+}
+
+export function isPrivyAuthBootstrapCooldownActive(
+  snapshot: PrivyAuthBootstrapSnapshot | null | undefined,
+  referenceTime = Date.now()
+): boolean {
+  return getPrivyAuthBootstrapCooldownRemainingMs(snapshot, referenceTime) > 0;
+}
+
 export function isPrivyAuthBootstrapPending(referenceTime = Date.now()): boolean {
   const snapshot = readPrivyAuthBootstrapSnapshot();
   if (!snapshot) {
@@ -639,7 +663,7 @@ export function isPrivyAuthBootstrapPending(referenceTime = Date.now()): boolean
   if (referenceTime - snapshot.recordedAt > PRIVY_BOOTSTRAP_STATE_TTL_MS) {
     return false;
   }
-  return isPrivyAuthBootstrapStatePending(snapshot.state);
+  return isPrivyAuthBootstrapStateBlockingApiMe(snapshot.state);
 }
 
 export function usePrivySyncFailureSnapshot(): PrivySyncFailureSnapshot | null {
