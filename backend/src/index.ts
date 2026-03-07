@@ -747,6 +747,91 @@ function isUniqueConstraintError(error: unknown): error is { code: string } {
   );
 }
 
+type AuthAccountLink = {
+  id: string;
+  userId: string;
+};
+
+function isAuthAccountLinkCompatibilityError(error: unknown): boolean {
+  return isPrismaSchemaDriftError(error) || isPrismaClientError(error);
+}
+
+async function findAuthAccountLinkByProviderAccount(params: {
+  providerId: string;
+  accountId: string;
+  stage: string;
+}): Promise<AuthAccountLink | null> {
+  return await withAuthDbTimeout(
+    prisma.account.findFirst({
+      where: {
+        providerId: params.providerId,
+        accountId: params.accountId,
+      },
+      select: {
+        id: true,
+        userId: true,
+      },
+    }),
+    params.stage
+  );
+}
+
+async function ensureAuthAccountLink(params: {
+  providerId: string;
+  accountId: string;
+  userId: string;
+  now: Date;
+}): Promise<AuthAccountLink | null> {
+  const existing = await findAuthAccountLinkByProviderAccount({
+    providerId: params.providerId,
+    accountId: params.accountId,
+    stage: `account.findFirst(${params.providerId}LinkExisting)`,
+  });
+
+  if (existing) {
+    if (existing.userId === params.userId) {
+      await withAuthDbTimeout(
+        prisma.account.update({
+          where: { id: existing.id },
+          data: { updatedAt: params.now },
+          select: { id: true },
+        }),
+        `account.update(${params.providerId}LinkTouch)`
+      );
+    }
+    return existing;
+  }
+
+  try {
+    return await withAuthDbTimeout(
+      prisma.account.create({
+        data: {
+          id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+          accountId: params.accountId,
+          providerId: params.providerId,
+          userId: params.userId,
+          createdAt: params.now,
+          updatedAt: params.now,
+        },
+        select: {
+          id: true,
+          userId: true,
+        },
+      }),
+      `account.create(${params.providerId}Link)`
+    );
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) {
+      throw error;
+    }
+    return await findAuthAccountLinkByProviderAccount({
+      providerId: params.providerId,
+      accountId: params.accountId,
+      stage: `account.findFirst(${params.providerId}LinkAfterConflict)`,
+    });
+  }
+}
+
 function toAuthResponseUserFromSessionUser(
   sessionUser:
     | {
@@ -1781,22 +1866,15 @@ app.post("/api/auth/privy-sync", async (c) => {
     // If we already have a Privy account link + user in the DB, skip Privy API
     // entirely and issue a session immediately. This avoids Privy API rate limits.
     if (typeof privyUserId === "string" && privyUserId.length > 0) {
-      let fastPathAccount: { id: string; userId: string } | null = null;
+      let fastPathAccount: AuthAccountLink | null = null;
       try {
-        fastPathAccount = await withAuthDbTimeout(
-          prisma.account.findUnique({
-          where: {
-            providerId_accountId: {
-              providerId: "privy",
-              accountId: privyUserId,
-            },
-          },
-          select: { id: true, userId: true },
-          }),
-          "account.findUnique(privyFastPath)"
-        );
+        fastPathAccount = await findAuthAccountLinkByProviderAccount({
+          providerId: "privy",
+          accountId: privyUserId,
+          stage: "account.findFirst(privyFastPath)",
+        });
       } catch (error) {
-        if (isPrismaSchemaDriftError(error)) {
+        if (isAuthAccountLinkCompatibilityError(error)) {
           // Continue without the fast-path link table.
         } else if (isTransientAuthAvailabilityError(error)) {
           console.warn("[privy-sync] Fast path account lookup unavailable; continuing with verified sync", {
@@ -2007,22 +2085,15 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // Prefer the Privy account link first to support email changes in Privy.
     // We resolve the user in a second query so orphaned rows don't crash the route.
-    let existingPrivyAccount: { id: string; userId: string } | null = null;
+    let existingPrivyAccount: AuthAccountLink | null = null;
     try {
-      existingPrivyAccount = await withAuthDbTimeout(
-        prisma.account.findUnique({
-        where: {
-          providerId_accountId: {
-            providerId: "privy",
-            accountId: verifiedPrivyUserId,
-          },
-        },
-        select: { id: true, userId: true },
-        }),
-        "account.findUnique(privyExisting)"
-      );
+      existingPrivyAccount = await findAuthAccountLinkByProviderAccount({
+        providerId: "privy",
+        accountId: verifiedPrivyUserId,
+        stage: "account.findFirst(privyExisting)",
+      });
     } catch (error) {
-      if (isPrismaSchemaDriftError(error)) {
+      if (isAuthAccountLinkCompatibilityError(error)) {
         // Continue without the account link lookup.
       } else if (isTransientAuthAvailabilityError(error)) {
         console.warn("[privy-sync] Existing Privy account lookup unavailable; continuing with email mapping", {
@@ -2064,92 +2135,36 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     if (!hasValidPrivyAccountLink) {
       try {
-        const linkedAccount = await withAuthDbTimeout(
-          prisma.account.upsert({
-          where: {
-            providerId_accountId: {
-              providerId: "privy",
-              accountId: verifiedPrivyUserId,
-            },
-          },
-          update: { updatedAt: now },
-          create: {
-            id: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
-            accountId: verifiedPrivyUserId,
-            providerId: "privy",
-            userId: user.id,
-            createdAt: now,
-            updatedAt: now,
-          },
-          select: { userId: true },
-          }),
-          "account.upsert(privyLink)"
-        );
-        const linkedUser = await findAuthUserById(linkedAccount.userId);
+        const linkedAccount = await ensureAuthAccountLink({
+          providerId: "privy",
+          accountId: verifiedPrivyUserId,
+          userId: user.id,
+          now,
+        });
+        const linkedUser = linkedAccount ? await findAuthUserById(linkedAccount.userId) : null;
         if (linkedUser) {
           user = linkedUser;
           resolvedAuthUser = linkedUser;
+        } else if (linkedAccount) {
+          console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
+            accountId: linkedAccount.id,
+            userId: linkedAccount.userId,
+          });
+          await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
+            console.warn("[privy-sync] Failed to delete stale Privy link:", deleteError);
+          });
         }
       } catch (error) {
-        if (isPrismaSchemaDriftError(error)) {
-          console.warn("[privy-sync] Privy account link sync skipped (schema not ready)");
+        if (isAuthAccountLinkCompatibilityError(error)) {
+          console.warn("[privy-sync] Privy account link sync skipped (compatibility mode)");
           // If account table isn't ready yet, keep auth functional via email mapping.
         } else if (isTransientAuthAvailabilityError(error)) {
           console.warn("[privy-sync] Privy account link sync unavailable; continuing with resolved user", {
             message: error instanceof Error ? error.message : String(error),
             userId: user.id,
           });
-        } else if (!isUniqueConstraintError(error)) {
+        } else {
           throw error;
-        }
-
-        if (isUniqueConstraintError(error)) {
-          // Another concurrent sync may have created the account between our check and create.
-          let linkedAccount: { id: string; userId: string } | null = null;
-          try {
-            linkedAccount = await withAuthDbTimeout(
-              prisma.account.findUnique({
-              where: {
-                providerId_accountId: {
-                  providerId: "privy",
-                  accountId: verifiedPrivyUserId,
-                },
-              },
-              select: { id: true, userId: true },
-              }),
-              "account.findUnique(privyConcurrentLink)"
-            );
-          } catch (lookupError) {
-            if (isPrismaSchemaDriftError(lookupError)) {
-              // Keep the resolved email-mapped user and retry linking later.
-            } else if (isTransientAuthAvailabilityError(lookupError)) {
-              console.warn("[privy-sync] Concurrent Privy link lookup unavailable; continuing with resolved user", {
-                message: lookupError instanceof Error ? lookupError.message : String(lookupError),
-                userId: user.id,
-              });
-            } else {
-              throw lookupError;
-            }
-          }
-          if (!linkedAccount?.userId) {
-            console.warn("[privy-sync] Concurrent Privy link could not be confirmed; continuing with resolved user", {
-              userId: user.id,
-            });
-          } else {
-            const linkedUser = await findAuthUserById(linkedAccount.userId);
-            if (!linkedUser) {
-              console.warn("[privy-sync] Linked Privy account exists but user is missing; deleting stale link", {
-                accountId: linkedAccount.id,
-                userId: linkedAccount.userId,
-              });
-              await prisma.account.delete({ where: { id: linkedAccount.id } }).catch((deleteError) => {
-                console.warn("[privy-sync] Failed to delete stale concurrent Privy link:", deleteError);
-              });
-            } else {
-              user = linkedUser;
-              resolvedAuthUser = linkedUser;
-            }
-          }
         }
       }
     }
