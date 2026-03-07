@@ -358,19 +358,20 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
     withLeaderboardTimeout(
       prisma.$queryRaw<StatsSummaryRow[]>(Prisma.sql`
         SELECT
-          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneDayAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeDay",
-          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneWeekAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeWeek",
-          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneMonthAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeMonth",
-          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "entryMcap" IS NOT NULL), 0) AS "volumeAllTime",
-          (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneDayAgo}) AS "alphasToday",
-          (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneWeekAgo}) AS "alphasWeek",
-          (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneMonthAgo}) AS "alphasMonth",
-          (SELECT COUNT(*)::bigint FROM "Post") AS "alphasTotal",
-          (SELECT COUNT(*)::bigint FROM "Post" WHERE "settled" = true AND "isWin" = true) AS "totalWins",
-          (SELECT COUNT(*)::bigint FROM "Post" WHERE "settled" = true AND "isWin" = false) AS "totalLosses",
-          (SELECT COUNT(DISTINCT "authorId")::bigint FROM "Post" WHERE "createdAt" >= ${oneDayAgo}) AS "activeUsersToday",
-          (SELECT COUNT(DISTINCT "authorId")::bigint FROM "Post" WHERE "createdAt" >= ${oneWeekAgo}) AS "activeUsersWeek",
+          COALESCE(SUM("entryMcap") FILTER (WHERE "createdAt" >= ${oneDayAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeDay",
+          COALESCE(SUM("entryMcap") FILTER (WHERE "createdAt" >= ${oneWeekAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeWeek",
+          COALESCE(SUM("entryMcap") FILTER (WHERE "createdAt" >= ${oneMonthAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeMonth",
+          COALESCE(SUM("entryMcap") FILTER (WHERE "entryMcap" IS NOT NULL), 0) AS "volumeAllTime",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${oneDayAgo})::bigint AS "alphasToday",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${oneWeekAgo})::bigint AS "alphasWeek",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${oneMonthAgo})::bigint AS "alphasMonth",
+          COUNT(*)::bigint AS "alphasTotal",
+          COUNT(*) FILTER (WHERE "settled" = true AND "isWin" = true)::bigint AS "totalWins",
+          COUNT(*) FILTER (WHERE "settled" = true AND "isWin" = false)::bigint AS "totalLosses",
+          COUNT(DISTINCT "authorId") FILTER (WHERE "createdAt" >= ${oneDayAgo})::bigint AS "activeUsersToday",
+          COUNT(DISTINCT "authorId") FILTER (WHERE "createdAt" >= ${oneWeekAgo})::bigint AS "activeUsersWeek",
           (SELECT COUNT(*)::bigint FROM "User") AS "totalUsers"
+        FROM "Post"
       `),
       "leaderboard.stats.summary"
     ),

@@ -203,6 +203,8 @@ model Post {
   @@index([lastMcapUpdate])
   @@index([chainType, contractAddress])
   @@index([settled6h, createdAt])
+  @@index([settled, isWin])
+  @@index([createdAt, entryMcap])
 }
 
 model AggregateSnapshot {
@@ -345,6 +347,7 @@ model Notification {
   @@index([userId, createdAt])
   @@index([userId, dismissed, createdAt])
   @@index([userId, read, dismissed])
+  @@index([userId, read, dismissed, createdAt])
   @@index([userId, type, createdAt])
   @@index([fromUserId, createdAt])
   @@index([postId, createdAt])

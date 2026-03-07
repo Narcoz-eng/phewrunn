@@ -51,22 +51,23 @@ function normalizeDatabaseUrl(
     const desiredConnectionLimit =
       configuredConnectionLimit ??
       (isServerlessRuntime
-        ? (isProduction ? 5 : 3)
-        : (isProduction ? 15 : 10));
+        ? (isProduction ? 8 : 3)
+        : (isProduction ? 25 : 10));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout =
       configuredPoolTimeout ??
-      (isProduction ? 20 : 15);
+      (isProduction ? 10 : 8);
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
       const idleTimeoutMs = isProduction ? 45_000 : 30_000;
       const lockTimeoutMs = isProduction ? 9_000 : 7_000;
+      const statementTimeoutMs = isProduction ? 8_000 : 12_000;
       target.searchParams.set(
         "options",
-        `-c idle_in_transaction_session_timeout=${idleTimeoutMs} -c lock_timeout=${lockTimeoutMs}`
+        `-c idle_in_transaction_session_timeout=${idleTimeoutMs} -c lock_timeout=${lockTimeoutMs} -c statement_timeout=${statementTimeoutMs}`
       );
-      targetNotes.push("added postgres options (idle_in_transaction_session_timeout, lock_timeout)");
+      targetNotes.push("added postgres options (idle_in_transaction_session_timeout, lock_timeout, statement_timeout)");
     };
 
     if (isSupabaseHost && !parsed.searchParams.has("sslmode")) {
@@ -236,6 +237,9 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
     `CREATE INDEX IF NOT EXISTS "User_username_idx" ON "User"("username");`,
     `CREATE INDEX IF NOT EXISTS "Notification_userId_type_createdAt_idx" ON "Notification"("userId", "type", "createdAt");`,
     `CREATE INDEX IF NOT EXISTS "Post_settled6h_createdAt_idx" ON "Post"("settled6h", "createdAt");`,
+    `CREATE INDEX IF NOT EXISTS "Post_settled_isWin_idx" ON "Post"("settled", "isWin");`,
+    `CREATE INDEX IF NOT EXISTS "Post_createdAt_entryMcap_idx" ON "Post"("createdAt", "entryMcap");`,
+    `CREATE INDEX IF NOT EXISTS "Notification_userId_read_dismissed_createdAt_idx" ON "Notification"("userId", "read", "dismissed", "createdAt");`,
   ] as const;
 
   for (const statement of statements) {

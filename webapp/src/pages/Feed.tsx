@@ -21,6 +21,7 @@ import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 
 interface FeedPage {
   items: Post[];
@@ -1108,7 +1109,11 @@ export default function Feed() {
         <AnnouncementBanner />
 
         {/* 2. Trending Now Section */}
-        {showTrendingSection ? <TrendingSection /> : null}
+        {showTrendingSection ? (
+          <QueryErrorBoundary sectionName="Trending">
+            <TrendingSection />
+          </QueryErrorBoundary>
+        ) : null}
 
         {/* 3. Search Bar (prominent, always visible) */}
         <SearchBar

@@ -34,8 +34,9 @@ const API_BASE_URL = (() => {
   return "http://localhost:3000";
 })();
 
-// Default timeout for requests (12 seconds)
-const DEFAULT_TIMEOUT = 12000;
+// Default timeout for requests (8 seconds — backend has its own 4-5s query
+// timeouts, so 12s was letting stale connections hang too long)
+const DEFAULT_TIMEOUT = 8000;
 const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 const AUTH_MUTATION_401_RETRY_DELAY_MS = 450;
 

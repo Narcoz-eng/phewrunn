@@ -762,179 +762,63 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     return c.json({ data: { count: cachedUnreadCount } });
   }
 
-  let unreadNotifications: Array<{
-    id: string;
-    type: string;
-    fromUserId: string | null;
-    postId: string | null;
-    message: string;
-  }> = [];
+  // Use a lightweight COUNT query instead of fetching up to 200 rows
+  let unreadCount = 0;
   try {
-    unreadNotifications = await prisma.notification.findMany({
-      where: {
-        userId: user.id,
-        read: false,
-        dismissed: false,
-      },
-      select: {
-        id: true,
-        type: true,
-        fromUserId: true,
-        postId: true,
-        message: true,
-      },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    });
+    const countResult = await withPrismaRetry(
+      () => prisma.$queryRaw<Array<{ count: bigint | number }>>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS count
+        FROM "Notification"
+        WHERE "userId" = ${user.id}
+          AND read = false
+          AND dismissed = false
+      `),
+      { label: "notifications:unread-count" }
+    );
+    unreadCount = Number(countResult[0]?.count ?? 0);
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
-      if (isPrismaClientError(error)) {
-        console.warn("[notifications/unread-count] database unavailable; returning cached or zero unread count", {
-          message: getErrorMessage(error),
-        });
-        let count = staleUnreadCount ?? 0;
-        let recoveredFromRaw = false;
-        try {
-          unreadNotifications = await queryUnreadNotificationsRaw(user.id);
-          count = new Set(
-            unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
-          ).size;
-          recoveredFromRaw = true;
-        } catch (rawError) {
-          console.warn("[notifications/unread-count] raw fallback unavailable; returning stale or zero unread count", {
-            message: getErrorMessage(rawError),
-          });
-        }
-        if (recoveredFromRaw) {
-          writeNotificationsUnreadCountCache(user.id, count);
-          return c.json({ data: { count } });
-        }
-        if (staleUnreadCount !== null) {
-          return c.json({ data: { count: staleUnreadCount } });
-        }
-        return c.json(
-          {
-            error: {
-              message: "Notification count is temporarily unavailable. Please retry shortly.",
-              code: "NOTIFICATIONS_UNREAD_UNAVAILABLE",
-            },
-          },
-          503
-        );
-      }
-      throw error;
-    }
-    try {
-      unreadNotifications = await prisma.notification.findMany({
-        where: {
-          userId: user.id,
-          read: false,
-        },
-        select: {
-          id: true,
-          type: true,
-          fromUserId: true,
-          postId: true,
-          message: true,
-        },
-        orderBy: { createdAt: "desc" },
-        take: 200,
+    if (isPrismaClientError(error) || isPrismaSchemaDriftError(error)) {
+      console.warn("[notifications/unread-count] database unavailable; returning cached or zero", {
+        message: getErrorMessage(error),
       });
-    } catch (fallbackError) {
-      if (!isPrismaSchemaDriftError(fallbackError)) {
-        throw fallbackError;
-      }
-      try {
-        const minimalRows = await prisma.notification.findMany({
-          where: {
-            userId: user.id,
-          },
-          select: {
-            id: true,
-            type: true,
-          },
-          orderBy: { createdAt: "desc" },
-          take: 200,
-        });
-        unreadNotifications = minimalRows.map((row) => ({
-          ...row,
-          fromUserId: null,
-          postId: null,
-          message: "",
-        }));
-      } catch (minimalError) {
-        if (!isPrismaSchemaDriftError(minimalError)) {
-          if (isPrismaClientError(minimalError)) {
-            console.warn("[notifications/unread-count] minimal fallback unavailable; returning cached or zero unread count", {
-              message: getErrorMessage(minimalError),
-            });
-            let count = staleUnreadCount ?? 0;
-            let recoveredFromRaw = false;
-            try {
-              unreadNotifications = await queryUnreadNotificationsRaw(user.id);
-              count = new Set(
-                unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
-              ).size;
-              recoveredFromRaw = true;
-            } catch (rawError) {
-              console.warn("[notifications/unread-count] raw fallback after minimal failure unavailable", {
-                message: getErrorMessage(rawError),
-              });
-            }
-            if (recoveredFromRaw) {
-              writeNotificationsUnreadCountCache(user.id, count);
-              return c.json({ data: { count } });
-            }
-            if (staleUnreadCount !== null) {
-              return c.json({ data: { count: staleUnreadCount } });
-            }
-            return c.json(
-              {
-                error: {
-                  message: "Notification count is temporarily unavailable. Please retry shortly.",
-                  code: "NOTIFICATIONS_UNREAD_UNAVAILABLE",
-                },
-              },
-              503
-            );
-          }
-          throw minimalError;
-        }
-        console.warn("[notifications/unread-count] schema drift fallback exhausted; returning zero unread count", {
-          message: getErrorMessage(minimalError),
-        });
-        let recoveredFromRaw = false;
+      // Try without dismissed filter (schema drift fallback)
+      if (isPrismaSchemaDriftError(error)) {
         try {
-          unreadNotifications = await queryUnreadNotificationsRaw(user.id);
-          recoveredFromRaw = true;
-        } catch (rawError) {
-          console.warn("[notifications/unread-count] raw fallback after schema drift unavailable", {
-            message: getErrorMessage(rawError),
+          const fallbackResult = await prisma.$queryRaw<Array<{ count: bigint | number }>>(Prisma.sql`
+            SELECT COUNT(*)::bigint AS count
+            FROM "Notification"
+            WHERE "userId" = ${user.id}
+              AND read = false
+          `);
+          unreadCount = Number(fallbackResult[0]?.count ?? 0);
+        } catch (fallbackError) {
+          console.warn("[notifications/unread-count] schema drift fallback failed", {
+            message: getErrorMessage(fallbackError),
           });
-        }
-        if (!recoveredFromRaw) {
           if (staleUnreadCount !== null) {
             return c.json({ data: { count: staleUnreadCount } });
           }
           return c.json(
-            {
-              error: {
-                message: "Notification count is temporarily unavailable. Please retry shortly.",
-                code: "NOTIFICATIONS_UNREAD_UNAVAILABLE",
-              },
-            },
+            { error: { message: "Notification count is temporarily unavailable. Please retry shortly.", code: "NOTIFICATIONS_UNREAD_UNAVAILABLE" } },
             503
           );
         }
+      } else {
+        if (staleUnreadCount !== null) {
+          return c.json({ data: { count: staleUnreadCount } });
+        }
+        return c.json(
+          { error: { message: "Notification count is temporarily unavailable. Please retry shortly.", code: "NOTIFICATIONS_UNREAD_UNAVAILABLE" } },
+          503
+        );
       }
+    } else {
+      throw error;
     }
   }
 
-  const groupKeys = new Set(
-    unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
-  );
-  writeNotificationsUnreadCountCache(user.id, groupKeys.size);
-  return c.json({ data: { count: groupKeys.size } });
+  writeNotificationsUnreadCountCache(user.id, unreadCount);
+  return c.json({ data: { count: unreadCount } });
 });
 
 // Mark notification as read
