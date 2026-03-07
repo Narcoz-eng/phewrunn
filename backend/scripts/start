@@ -34,8 +34,8 @@ if [[ -f "prisma/schema.prisma" ]]; then
       echo "Applying Prisma migrations..."
       bunx prisma migrate deploy
     else
-      echo "No Prisma migrations found; pushing schema to database..."
-      bunx prisma db push
+      echo "No Prisma migrations found; refusing to run prisma db push in production."
+      exit 1
     fi
   else
     echo "Pushing schema to database..."

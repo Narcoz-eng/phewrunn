@@ -8,7 +8,7 @@
     },
     "backend": {
       "directory": "backend",
-      "buildCommand": "bun install && bunx prisma generate",
+      "buildCommand": "bun install && bunx prisma generate && bunx prisma migrate deploy",
       "startCommand": "bun start",
       "port": 3000
     }
