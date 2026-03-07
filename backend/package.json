@@ -6,14 +6,14 @@
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "bun run --hot src/index.ts",
-    "start": "bunx prisma generate && bunx prisma db push --accept-data-loss && bun run src/index.ts",
-    "build": "bunx prisma generate",
+    "start": "npx prisma@6 generate && npx prisma@6 db push --accept-data-loss && bun run src/index.ts",
+    "build": "npx prisma@6 generate",
     "studio:up": "cloud-studio --port 3001 --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "db:push": "bunx prisma db push",
-    "db:migrate": "bunx prisma migrate deploy",
-    "db:generate": "bunx prisma generate",
-    "studio": "bunx prisma studio"
+    "db:push": "npx prisma@6 db push",
+    "db:migrate": "npx prisma@6 migrate deploy",
+    "db:generate": "npx prisma@6 generate",
+    "studio": "npx prisma@6 studio"
   },
   "devDependencies": {
     "@types/bun": "latest",
