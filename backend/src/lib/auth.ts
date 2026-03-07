@@ -178,8 +178,51 @@ const SESSION_CACHE_MAX_ENTRIES = 10_000;
 const SESSION_STORE_CIRCUIT_OPEN_MS = 30_000;
 const SESSION_STORE_LOG_COOLDOWN_MS = 15_000;
 const SESSION_LOOKUP_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_200 : 2_000;
+type AuthLookupCompatibilityMode = "full" | "fallback" | "minimal";
+const AUTH_LOOKUP_COMPATIBILITY_ORDER: AuthLookupCompatibilityMode[] = [
+  "full",
+  "fallback",
+  "minimal",
+];
 let sessionStoreUnavailableUntilMs = 0;
 let sessionStoreLastWarningAtMs = 0;
+let sessionUserLookupCompatibilityMode: AuthLookupCompatibilityMode = "full";
+let sessionRecordLookupCompatibilityMode: AuthLookupCompatibilityMode = "full";
+
+function getAuthLookupModes(
+  startingMode: AuthLookupCompatibilityMode
+): AuthLookupCompatibilityMode[] {
+  const startIndex = AUTH_LOOKUP_COMPATIBILITY_ORDER.indexOf(startingMode);
+  return AUTH_LOOKUP_COMPATIBILITY_ORDER.slice(startIndex >= 0 ? startIndex : 0);
+}
+
+function getNextAuthLookupMode(
+  currentMode: AuthLookupCompatibilityMode
+): AuthLookupCompatibilityMode | null {
+  const currentIndex = AUTH_LOOKUP_COMPATIBILITY_ORDER.indexOf(currentMode);
+  if (currentIndex < 0 || currentIndex >= AUTH_LOOKUP_COMPATIBILITY_ORDER.length - 1) {
+    return null;
+  }
+  return AUTH_LOOKUP_COMPATIBILITY_ORDER[currentIndex + 1] ?? null;
+}
+
+function updateAuthLookupCompatibilityMode(
+  target: "session-user" | "session-record",
+  nextMode: AuthLookupCompatibilityMode,
+  error: unknown
+): void {
+  if (target === "session-user") {
+    if (sessionUserLookupCompatibilityMode === nextMode) return;
+    sessionUserLookupCompatibilityMode = nextMode;
+  } else {
+    if (sessionRecordLookupCompatibilityMode === nextMode) return;
+    sessionRecordLookupCompatibilityMode = nextMode;
+  }
+
+  console.warn(`[auth] ${target} compatibility downgraded to ${nextMode}`, {
+    message: getErrorMessage(error),
+  });
+}
 
 class SessionLookupTimeoutError extends Error {
   constructor(stage: string, timeoutMs: number) {
@@ -333,75 +376,58 @@ type SessionUserLookupResult =
 async function findSessionUserByIdWithFallback(
   userId: string
 ): Promise<SessionUserLookupResult> {
-  try {
-    const fullUser = await withSessionLookupTimeout(
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: SESSION_USER_SELECT,
-      }),
-      "user.findUnique"
-    );
-    if (!fullUser) return { status: "not_found" };
-    return { status: "found", user: toSessionUser(fullUser) };
-  } catch (error) {
-    if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
-      markSessionStoreUnavailable("user.findUnique", error);
-      return { status: "unavailable" };
-    }
-    if (!isSessionLookupUnavailableError(error)) {
-      throw error;
-    }
-    if (!isPrismaSchemaDriftError(error) || isSessionLookupTimeoutError(error)) {
+  for (const mode of getAuthLookupModes(sessionUserLookupCompatibilityMode)) {
+    const stage =
+      mode === "full"
+        ? "user.findUnique"
+        : mode === "fallback"
+          ? "user.findUnique(fallback)"
+          : "user.findUnique(minimal)";
+    const select =
+      mode === "full"
+        ? SESSION_USER_SELECT
+        : mode === "fallback"
+          ? SESSION_USER_FALLBACK_SELECT
+          : SESSION_USER_MINIMAL_SELECT;
+
+    try {
+      const candidateUser = await withSessionLookupTimeout(
+        prisma.user.findUnique({
+          where: { id: userId },
+          select,
+        }),
+        stage
+      );
+      if (!candidateUser) {
+        return { status: "not_found" };
+      }
+      return { status: "found", user: toSessionUser(candidateUser) };
+    } catch (error) {
+      if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
+        markSessionStoreUnavailable(stage, error);
+        return { status: "unavailable" };
+      }
+      if (!isSessionLookupUnavailableError(error)) {
+        throw error;
+      }
+      if (!isPrismaSchemaDriftError(error)) {
+        return { status: "unavailable" };
+      }
+
+      const nextMode = getNextAuthLookupMode(mode);
+      if (nextMode) {
+        updateAuthLookupCompatibilityMode("session-user", nextMode, error);
+        continue;
+      }
+
+      console.warn("[auth] User lookup unavailable for signed token fallback", {
+        message: getErrorMessage(error),
+      });
       return { status: "unavailable" };
     }
   }
 
-  try {
-    const fallbackUser = await withSessionLookupTimeout(
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: SESSION_USER_FALLBACK_SELECT,
-      }),
-      "user.findUnique(fallback)"
-    );
-    if (!fallbackUser) return { status: "not_found" };
-    return { status: "found", user: toSessionUser(fallbackUser) };
-  } catch (error) {
-    if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
-      markSessionStoreUnavailable("user.findUnique(fallback)", error);
-      return { status: "unavailable" };
-    }
-    if (!isSessionLookupUnavailableError(error)) {
-      throw error;
-    }
-    if (!isPrismaSchemaDriftError(error) || isSessionLookupTimeoutError(error)) {
-      return { status: "unavailable" };
-    }
-  }
-
-  try {
-    const minimalUser = await withSessionLookupTimeout(
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: SESSION_USER_MINIMAL_SELECT,
-      }),
-      "user.findUnique(minimal)"
-    );
-    if (!minimalUser) return { status: "not_found" };
-    return { status: "found", user: toSessionUser(minimalUser) };
-  } catch (error) {
-    if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
-      markSessionStoreUnavailable("user.findUnique(minimal)", error);
-      return { status: "unavailable" };
-    }
-    if (!isSessionLookupUnavailableError(error)) {
-      throw error;
-    }
-    console.warn("[auth] User lookup unavailable for signed token fallback", {
-      message: getErrorMessage(error),
-    });
-    return { status: "unavailable" };
-  }
+  return { status: "unavailable" };
 }
 
 function parseDateClaim(value: string | null | undefined): Date | null {
@@ -472,6 +498,152 @@ async function getSessionFromSignedToken(token: string): Promise<SessionRecord |
     },
     user: resolvedUser,
   };
+}
+
+type DbSessionLookupRecord = {
+  id: string;
+  userId: string;
+  token: string;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  user: SessionRecord["user"] | null;
+};
+
+type DbSessionLookupResult =
+  | { status: "found"; session: DbSessionLookupRecord }
+  | { status: "not_found" }
+  | { status: "unavailable" };
+
+async function findDbSessionByTokenWithCompatibility(
+  token: string
+): Promise<DbSessionLookupResult> {
+  for (const mode of getAuthLookupModes(sessionRecordLookupCompatibilityMode)) {
+    const stage =
+      mode === "full"
+        ? "session.findUnique"
+        : mode === "fallback"
+          ? "session.findUnique(fallback)"
+          : "session.findUnique(minimal)";
+
+    try {
+      if (mode === "full") {
+        const fullSession = await withSessionLookupTimeout(
+          prisma.session.findUnique({
+            where: { token },
+            select: {
+              id: true,
+              userId: true,
+              token: true,
+              expiresAt: true,
+              createdAt: true,
+              updatedAt: true,
+              user: {
+                select: SESSION_USER_SELECT,
+              },
+            },
+          }),
+          stage
+        );
+        markSessionStoreAvailable();
+        return fullSession
+          ? {
+              status: "found",
+              session: {
+                ...fullSession,
+                createdAt: fullSession.createdAt,
+                updatedAt: fullSession.updatedAt,
+                user: fullSession.user ? toSessionUser(fullSession.user) : null,
+              },
+            }
+          : { status: "not_found" };
+      }
+
+      if (mode === "fallback") {
+        const fallbackSession = await withSessionLookupTimeout(
+          prisma.session.findUnique({
+            where: { token },
+            select: {
+              id: true,
+              userId: true,
+              token: true,
+              expiresAt: true,
+              createdAt: true,
+              updatedAt: true,
+              user: {
+                select: SESSION_USER_FALLBACK_SELECT,
+              },
+            },
+          }),
+          stage
+        );
+        markSessionStoreAvailable();
+        return fallbackSession
+          ? {
+              status: "found",
+              session: {
+                ...fallbackSession,
+                createdAt: fallbackSession.createdAt,
+                updatedAt: fallbackSession.updatedAt,
+                user: fallbackSession.user ? toSessionUser(fallbackSession.user) : null,
+              },
+            }
+          : { status: "not_found" };
+      }
+
+      const minimalSession = await withSessionLookupTimeout(
+        prisma.session.findUnique({
+          where: { token },
+          select: {
+            id: true,
+            userId: true,
+            token: true,
+            expiresAt: true,
+            user: {
+              select: SESSION_USER_MINIMAL_SELECT,
+            },
+          },
+        }),
+        stage
+      );
+      markSessionStoreAvailable();
+      return minimalSession
+        ? {
+            status: "found",
+            session: {
+              ...minimalSession,
+              createdAt: minimalSession.expiresAt,
+              updatedAt: minimalSession.expiresAt,
+              user: minimalSession.user ? toSessionUser(minimalSession.user) : null,
+            },
+          }
+        : { status: "not_found" };
+    } catch (error) {
+      if (isPrismaConnectivityError(error) || isSessionLookupTimeoutError(error)) {
+        markSessionStoreUnavailable(stage, error);
+        return { status: "unavailable" };
+      }
+      if (!isSessionLookupUnavailableError(error)) {
+        throw error;
+      }
+      if (!isPrismaSchemaDriftError(error)) {
+        return { status: "unavailable" };
+      }
+
+      const nextMode = getNextAuthLookupMode(mode);
+      if (nextMode) {
+        updateAuthLookupCompatibilityMode("session-record", nextMode, error);
+        continue;
+      }
+
+      console.warn("[auth] Session lookup unavailable after compatibility fallbacks", {
+        message: getErrorMessage(error),
+      });
+      return { status: "unavailable" };
+    }
+  }
+
+  return { status: "unavailable" };
 }
 
 async function getSessionFromToken(token: string | null): Promise<SessionRecord | null> {
