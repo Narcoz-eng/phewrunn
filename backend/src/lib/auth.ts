@@ -40,6 +40,21 @@ const SESSION_USER_FALLBACK_SELECT = {
   image: true,
   createdAt: true,
   updatedAt: true,
+  walletAddress: true,
+  walletProvider: true,
+  walletConnectedAt: true,
+  username: true,
+  level: true,
+  xp: true,
+  bio: true,
+  isAdmin: true,
+  isBanned: true,
+  isVerified: true,
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: true,
+  tradeFeePayoutAddress: true,
+  lastUsernameUpdate: true,
+  lastPhotoUpdate: true,
 } as const;
 
 const SESSION_USER_MINIMAL_SELECT = {
@@ -699,137 +714,16 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
       return cacheAndReturn(fallback);
     }
 
-    let dbSession:
-      | {
-          id: string;
-          userId: string;
-          token: string;
-          expiresAt: Date;
-          createdAt?: Date;
-          updatedAt?: Date;
-          user: SessionRecord["user"] | null;
-        }
-      | null = null;
-
-    try {
-      const fullSession = await withSessionLookupTimeout(
-        prisma.session.findUnique({
-          where: { token },
-          select: {
-            id: true,
-            userId: true,
-            token: true,
-            expiresAt: true,
-            createdAt: true,
-            updatedAt: true,
-            user: {
-              select: SESSION_USER_SELECT,
-            },
-          },
-        }),
-        "session.findUnique"
-      );
-      dbSession = fullSession
-        ? {
-            ...fullSession,
-            user: fullSession.user ? toSessionUser(fullSession.user) : null,
-          }
-        : null;
-      markSessionStoreAvailable();
-    } catch (error) {
-      if (!isSessionLookupUnavailableError(error)) {
-        throw error;
-      }
-      if (!isPrismaSchemaDriftError(error) || isSessionLookupTimeoutError(error)) {
-        markSessionStoreUnavailable("session.findUnique", error);
-        const fallback = await resolveSignedFallback();
-        return cacheAndReturn(fallback);
-      }
-      console.warn("[auth] Session lookup failed; using fallback select", {
-        message: getErrorMessage(error),
-      });
-
-      try {
-        const fallbackSession = await withSessionLookupTimeout(
-          prisma.session.findUnique({
-            where: { token },
-            select: {
-              id: true,
-              userId: true,
-              token: true,
-              expiresAt: true,
-              createdAt: true,
-              updatedAt: true,
-              user: {
-                select: SESSION_USER_FALLBACK_SELECT,
-              },
-            },
-          }),
-          "session.findUnique(fallback)"
-        );
-
-        dbSession = fallbackSession
-          ? {
-              ...fallbackSession,
-              user: fallbackSession.user ? toSessionUser(fallbackSession.user) : null,
-            }
-          : null;
-        markSessionStoreAvailable();
-      } catch (fallbackError) {
-        if (!isSessionLookupUnavailableError(fallbackError)) {
-          throw fallbackError;
-        }
-        if (!isPrismaSchemaDriftError(fallbackError) || isSessionLookupTimeoutError(fallbackError)) {
-          markSessionStoreUnavailable("session.findUnique(fallback)", fallbackError);
-          const fallback = await resolveSignedFallback();
-          return cacheAndReturn(fallback);
-        }
-        console.warn("[auth] Session fallback select unavailable; trying minimal compatibility select", {
-          message: getErrorMessage(fallbackError),
-        });
-
-        try {
-          const minimalSession = await withSessionLookupTimeout(
-            prisma.session.findUnique({
-              where: { token },
-              select: {
-                id: true,
-                userId: true,
-                token: true,
-                expiresAt: true,
-                user: {
-                  select: SESSION_USER_MINIMAL_SELECT,
-                },
-              },
-            }),
-            "session.findUnique(minimal)"
-          );
-
-          dbSession = minimalSession
-            ? {
-                ...minimalSession,
-                createdAt: minimalSession.expiresAt,
-                updatedAt: minimalSession.expiresAt,
-                user: minimalSession.user ? toSessionUser(minimalSession.user) : null,
-              }
-            : null;
-          markSessionStoreAvailable();
-        } catch (minimalError) {
-          if (!isSessionLookupUnavailableError(minimalError)) {
-            throw minimalError;
-          }
-          if (isPrismaConnectivityError(minimalError) || isSessionLookupTimeoutError(minimalError)) {
-            markSessionStoreUnavailable("session.findUnique(minimal)", minimalError);
-          } else {
-            console.warn("[auth] Session lookup unavailable after fallback attempts", {
-              message: getErrorMessage(minimalError),
-            });
-          }
-          const fallback = await resolveSignedFallback();
-          return cacheAndReturn(fallback);
-        }
-      }
+    const dbSessionLookup = await findDbSessionByTokenWithCompatibility(token);
+    if (dbSessionLookup.status === "unavailable") {
+      const fallback = await resolveSignedFallback();
+      return cacheAndReturn(fallback);
     }
+    if (dbSessionLookup.status === "not_found") {
+      const fallback = await resolveSignedFallback();
+      return cacheAndReturn(fallback);
+    }
+    const dbSession = dbSessionLookup.session;
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
       const signedTokenSession = await resolveSignedFallback();

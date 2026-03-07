@@ -328,6 +328,18 @@ const AUTH_RESPONSE_USER_FALLBACK_SELECT = {
   name: true,
   email: true,
   image: true,
+  walletAddress: true,
+  walletProvider: true,
+  username: true,
+  level: true,
+  xp: true,
+  bio: true,
+  isAdmin: true,
+  isVerified: true,
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: true,
+  tradeFeePayoutAddress: true,
+  createdAt: true,
 } as const;
 
 const AUTH_RESPONSE_USER_MINIMAL_SELECT = {
@@ -355,6 +367,50 @@ type AuthResponseUser = {
   tradeFeePayoutAddress: string | null;
   createdAt: Date;
 };
+
+type AuthResponseUserLookupMode = "full" | "fallback" | "minimal";
+const AUTH_RESPONSE_USER_LOOKUP_ORDER: AuthResponseUserLookupMode[] = [
+  "full",
+  "fallback",
+  "minimal",
+];
+let authResponseUserLookupMode: AuthResponseUserLookupMode = "full";
+
+function getAuthResponseUserLookupModes(
+  startingMode: AuthResponseUserLookupMode = authResponseUserLookupMode
+): AuthResponseUserLookupMode[] {
+  const startIndex = AUTH_RESPONSE_USER_LOOKUP_ORDER.indexOf(startingMode);
+  return AUTH_RESPONSE_USER_LOOKUP_ORDER.slice(startIndex >= 0 ? startIndex : 0);
+}
+
+function getNextAuthResponseUserLookupMode(
+  currentMode: AuthResponseUserLookupMode
+): AuthResponseUserLookupMode | null {
+  const currentIndex = AUTH_RESPONSE_USER_LOOKUP_ORDER.indexOf(currentMode);
+  if (currentIndex < 0 || currentIndex >= AUTH_RESPONSE_USER_LOOKUP_ORDER.length - 1) {
+    return null;
+  }
+  return AUTH_RESPONSE_USER_LOOKUP_ORDER[currentIndex + 1] ?? null;
+}
+
+function getAuthResponseUserSelect(mode: AuthResponseUserLookupMode) {
+  if (mode === "full") return AUTH_RESPONSE_USER_SELECT;
+  if (mode === "fallback") return AUTH_RESPONSE_USER_FALLBACK_SELECT;
+  return AUTH_RESPONSE_USER_MINIMAL_SELECT;
+}
+
+function updateAuthResponseUserLookupMode(
+  nextMode: AuthResponseUserLookupMode,
+  error: unknown
+): void {
+  if (authResponseUserLookupMode === nextMode) {
+    return;
+  }
+  authResponseUserLookupMode = nextMode;
+  console.warn(`[auth/db] User lookup compatibility downgraded to ${nextMode}`, {
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
 
 function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserClaims {
   const normalizedName = user.name.trim();
@@ -527,6 +583,56 @@ type MeResponseUser = {
   tradeFeePayoutAddress: string | null;
   createdAt: Date;
 };
+
+const ME_RESPONSE_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+  walletAddress: true,
+  username: true,
+  level: true,
+  xp: true,
+  bio: true,
+  role: true,
+  isAdmin: true,
+  isVerified: true,
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: true,
+  tradeFeePayoutAddress: true,
+  createdAt: true,
+} as const;
+
+const ME_RESPONSE_USER_FALLBACK_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+  walletAddress: true,
+  username: true,
+  level: true,
+  xp: true,
+  bio: true,
+  isAdmin: true,
+  isVerified: true,
+  tradeFeeRewardsEnabled: true,
+  tradeFeeShareBps: true,
+  tradeFeePayoutAddress: true,
+  createdAt: true,
+} as const;
+
+type MeResponseLookupMode = "full" | "fallback";
+let meResponseLookupMode: MeResponseLookupMode = "full";
+
+function updateMeResponseLookupMode(nextMode: MeResponseLookupMode, error: unknown): void {
+  if (meResponseLookupMode === nextMode) {
+    return;
+  }
+  meResponseLookupMode = nextMode;
+  console.warn(`[/api/me] Prisma compatibility downgraded to ${nextMode}`, {
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
 
 function buildPrivyAuthUserRedisKey(privyUserId: string): string {
   return `${PRIVY_AUTH_USER_REDIS_KEY_PREFIX}:${privyUserId}`;
@@ -803,6 +909,45 @@ function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser
     tradeFeeShareBps: user.tradeFeeShareBps,
     tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     createdAt: user.createdAt,
+  };
+}
+
+function buildMeResponseUserFromDbRecord(
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    image?: string | null;
+    walletAddress?: string | null;
+    username?: string | null;
+    level?: number | null;
+    xp?: number | null;
+    bio?: string | null;
+    role?: string | null;
+    isAdmin?: boolean | null;
+    isVerified?: boolean | null;
+    tradeFeeRewardsEnabled?: boolean | null;
+    tradeFeeShareBps?: number | null;
+    tradeFeePayoutAddress?: string | null;
+    createdAt?: Date | null;
+  }
+): MeResponseUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    image: user.image ?? null,
+    walletAddress: user.walletAddress ?? null,
+    username: user.username ?? null,
+    level: user.level ?? 0,
+    xp: user.xp ?? 0,
+    bio: user.bio ?? null,
+    isAdmin: user.role === "admin" || (user.isAdmin ?? false),
+    isVerified: user.isVerified ?? false,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
+    tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
+    createdAt: user.createdAt ?? new Date(),
   };
 }
 
@@ -1219,16 +1364,17 @@ async function reconcilePrivyLinkedUserProfile(params: {
   }
 
   try {
-    const updatedUser = await withAuthDbTimeout(
+    await withAuthDbTimeout(
       prisma.user.update({
         where: { id: params.user.id },
         data: updateData,
-        select: AUTH_RESPONSE_USER_SELECT,
+        select: { id: true },
       }),
       "user.update(reconcile)"
     );
     clearCachedMeResponse(params.user.id);
-    return normalizeAuthResponseUser(updatedUser);
+    const refreshedUser = await findAuthUserById(params.user.id);
+    return refreshedUser ?? normalizeAuthResponseUser({ ...params.user, ...updateData });
   } catch (error) {
     if (!isUniqueConstraintError(error) || !("email" in updateData)) {
       throw error;
@@ -1244,141 +1390,67 @@ async function reconcilePrivyLinkedUserProfile(params: {
       return params.user;
     }
 
-    const updatedNameOnlyUser = await withAuthDbTimeout(
+    await withAuthDbTimeout(
       prisma.user.update({
         where: { id: params.user.id },
         data: { name: nextResolvedName },
-        select: AUTH_RESPONSE_USER_SELECT,
+        select: { id: true },
       }),
       "user.update(reconcileNameOnly)"
     );
     clearCachedMeResponse(params.user.id);
-    return normalizeAuthResponseUser(updatedNameOnlyUser);
+    const refreshedUser = await findAuthUserById(params.user.id);
+    return refreshedUser ?? normalizeAuthResponseUser({ ...params.user, name: nextResolvedName });
   }
+}
+
+async function findAuthUserByUnique(
+  where: Prisma.UserWhereUniqueInput,
+  stageLabel: string
+): Promise<AuthResponseUser | null> {
+  for (const mode of getAuthResponseUserLookupModes()) {
+    const stage =
+      mode === "full"
+        ? `${stageLabel}`
+        : mode === "fallback"
+          ? `${stageLabel}:fallback`
+          : `${stageLabel}:minimal`;
+
+    try {
+      const user = await withAuthDbTimeout(
+        prisma.user.findUnique({
+          where,
+          select: getAuthResponseUserSelect(mode),
+        }),
+        stage
+      );
+      return user ? normalizeAuthResponseUser(user) : null;
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      const nextMode = getNextAuthResponseUserLookupMode(mode);
+      if (nextMode) {
+        updateAuthResponseUserLookupMode(nextMode, error);
+        continue;
+      }
+      return null;
+    }
+  }
+
+  return null;
 }
 
 async function findAuthUserByWallet(walletAddress: string): Promise<AuthResponseUser | null> {
-  try {
-    const user = await withAuthDbTimeout(
-      prisma.user.findUnique({
-        where: { walletAddress },
-        select: AUTH_RESPONSE_USER_SELECT,
-      }),
-      "user.findUnique(wallet)"
-    );
-    return user ? normalizeAuthResponseUser(user) : null;
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
-      throw error;
-    }
-    try {
-      const fallbackUser = await withAuthDbTimeout(
-        prisma.user.findUnique({
-          where: { walletAddress },
-          select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-        }),
-        "user.findUnique(wallet:fallback)"
-      );
-      return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
-    } catch (fallbackError) {
-      if (isPrismaSchemaDriftError(fallbackError)) {
-        return null;
-      }
-      throw fallbackError;
-    }
-  }
+  return await findAuthUserByUnique({ walletAddress }, "user.findUnique(wallet)");
 }
 
 async function findAuthUserByEmail(email: string): Promise<AuthResponseUser | null> {
-  try {
-    const user = await withAuthDbTimeout(
-      prisma.user.findUnique({
-        where: { email },
-        select: AUTH_RESPONSE_USER_SELECT,
-      }),
-      "user.findUnique(email)"
-    );
-    return user ? normalizeAuthResponseUser(user) : null;
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
-      throw error;
-    }
-    try {
-      const fallbackUser = await withAuthDbTimeout(
-        prisma.user.findUnique({
-          where: { email },
-          select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-        }),
-        "user.findUnique(email:fallback)"
-      );
-      return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
-    } catch (fallbackError) {
-      if (!isPrismaSchemaDriftError(fallbackError)) {
-        throw fallbackError;
-      }
-      try {
-        const minimalUser = await withAuthDbTimeout(
-          prisma.user.findUnique({
-            where: { email },
-            select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
-          }),
-          "user.findUnique(email:minimal)"
-        );
-        return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
-      } catch (minimalError) {
-        if (isPrismaSchemaDriftError(minimalError)) {
-          return null;
-        }
-        throw minimalError;
-      }
-    }
-  }
+  return await findAuthUserByUnique({ email }, "user.findUnique(email)");
 }
 
 async function findAuthUserById(id: string): Promise<AuthResponseUser | null> {
-  try {
-    const user = await withAuthDbTimeout(
-      prisma.user.findUnique({
-        where: { id },
-        select: AUTH_RESPONSE_USER_SELECT,
-      }),
-      "user.findUnique(id)"
-    );
-    return user ? normalizeAuthResponseUser(user) : null;
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
-      throw error;
-    }
-    try {
-      const fallbackUser = await withAuthDbTimeout(
-        prisma.user.findUnique({
-          where: { id },
-          select: AUTH_RESPONSE_USER_FALLBACK_SELECT,
-        }),
-        "user.findUnique(id:fallback)"
-      );
-      return fallbackUser ? normalizeAuthResponseUser(fallbackUser) : null;
-    } catch (fallbackError) {
-      if (!isPrismaSchemaDriftError(fallbackError)) {
-        throw fallbackError;
-      }
-      try {
-        const minimalUser = await withAuthDbTimeout(
-          prisma.user.findUnique({
-            where: { id },
-            select: AUTH_RESPONSE_USER_MINIMAL_SELECT,
-          }),
-          "user.findUnique(id:minimal)"
-        );
-        return minimalUser ? normalizeAuthResponseUser(minimalUser) : null;
-      } catch (minimalError) {
-        if (isPrismaSchemaDriftError(minimalError)) {
-          return null;
-        }
-        throw minimalError;
-      }
-    }
-  }
+  return await findAuthUserByUnique({ id }, "user.findUnique(id)");
 }
 
 async function createWalletAuthUser(params: {
@@ -1408,7 +1480,7 @@ async function createWalletAuthUser(params: {
         createdAt: now,
         updatedAt: now,
       },
-      select: AUTH_RESPONSE_USER_SELECT,
+      select: getAuthResponseUserSelect(authResponseUserLookupMode),
       }),
       "user.create(wallet)"
     );
@@ -1417,6 +1489,10 @@ async function createWalletAuthUser(params: {
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
+    const nextLookupMode =
+      getNextAuthResponseUserLookupMode(authResponseUserLookupMode) ??
+      authResponseUserLookupMode;
+    updateAuthResponseUserLookupMode(nextLookupMode, error);
 
     let fallbackCreated:
       | {
@@ -1515,7 +1591,7 @@ async function upsertAuthUserByEmail(params: {
         createdAt: params.now,
         updatedAt: params.now,
       },
-      select: AUTH_RESPONSE_USER_SELECT,
+      select: getAuthResponseUserSelect(authResponseUserLookupMode),
       }),
       "user.upsert(email)"
     );
@@ -1524,6 +1600,10 @@ async function upsertAuthUserByEmail(params: {
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
+    const nextLookupMode =
+      getNextAuthResponseUserLookupMode(authResponseUserLookupMode) ??
+      authResponseUserLookupMode;
+    updateAuthResponseUserLookupMode(nextLookupMode, error);
 
     const existing = await findAuthUserByEmail(params.email);
     if (existing) {
@@ -2840,59 +2920,24 @@ app.get("/api/me", async (c) => {
     const primaryLookupTimeoutMs = sessionIsStatelessFallback
       ? Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 700)
       : ME_DB_LOOKUP_TIMEOUT_MS;
+    const meLookupMode = meResponseLookupMode;
+    const runMeLookup = async (
+      mode: MeResponseLookupMode,
+      timeoutMs: number
+    ) =>
+      await withTimeoutResult(
+        prisma.user.findUnique({
+          where: { id: user.id },
+          select: mode === "full" ? ME_RESPONSE_USER_SELECT : ME_RESPONSE_USER_FALLBACK_SELECT,
+        }),
+        timeoutMs
+      );
 
-    // Fetch full user data from database
-    let fullLookup = await withTimeoutResult(
-      prisma.user.findUnique({
-        where: { id: user.id },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-          walletAddress: true,
-          username: true,
-          level: true,
-          xp: true,
-          bio: true,
-          role: true,
-          isAdmin: true,
-          isVerified: true,
-          tradeFeeRewardsEnabled: true,
-          tradeFeeShareBps: true,
-          tradeFeePayoutAddress: true,
-          createdAt: true,
-        },
-      }),
-      primaryLookupTimeoutMs
-    );
+    let fullLookup = await runMeLookup(meLookupMode, primaryLookupTimeoutMs);
 
     if (fullLookup.timedOut && !sessionIsStatelessFallback) {
       const retryTimeoutMs = Math.min(ME_DB_LOOKUP_TIMEOUT_MS + 1200, 5000);
-      fullLookup = await withTimeoutResult(
-        prisma.user.findUnique({
-          where: { id: user.id },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-            walletAddress: true,
-            username: true,
-            level: true,
-            xp: true,
-            bio: true,
-            role: true,
-            isAdmin: true,
-            isVerified: true,
-            tradeFeeRewardsEnabled: true,
-            tradeFeeShareBps: true,
-            tradeFeePayoutAddress: true,
-            createdAt: true,
-          },
-        }),
-        retryTimeoutMs
-      );
+      fullLookup = await runMeLookup(meLookupMode, retryTimeoutMs);
       if (fullLookup.timedOut) {
         console.warn(
           `[/api/me] User lookup exceeded ${ME_DB_LOOKUP_TIMEOUT_MS}ms (+retry ${retryTimeoutMs}ms); serving fallback`
@@ -2905,48 +2950,52 @@ app.get("/api/me", async (c) => {
     }
 
     if (!fullLookup.timedOut) {
-      dbUser = fullLookup.value;
+      dbUser = fullLookup.value ? buildMeResponseUserFromDbRecord(fullLookup.value) : null;
     } else {
-      const minimalLookup = await withTimeoutResult(
-        prisma.user.findUnique({
-          where: { id: user.id },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-            walletAddress: true,
-            username: true,
-            level: true,
-            xp: true,
-            bio: true,
-            role: true,
-            isAdmin: true,
-            isVerified: true,
-            createdAt: true,
-          },
-        }),
-        Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500)
-      );
-      if (!minimalLookup.timedOut && minimalLookup.value) {
-        dbUser = {
-          ...minimalLookup.value,
-          ...defaultFeeSettings,
-        };
+      const fallbackLookup = await runMeLookup("fallback", Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500));
+      if (!fallbackLookup.timedOut && fallbackLookup.value) {
+        dbUser = buildMeResponseUserFromDbRecord(fallbackLookup.value);
       }
     }
   } catch (error) {
-    if (isPrismaSchemaDriftError(error) || isPrismaClientError(error) || isPrismaConnectivityError(error)) {
+    if (isPrismaSchemaDriftError(error) || isPrismaClientError(error)) {
+      updateMeResponseLookupMode("fallback", error);
+      try {
+        const fallbackLookup = await withTimeoutResult(
+          prisma.user.findUnique({
+            where: { id: user.id },
+            select: ME_RESPONSE_USER_FALLBACK_SELECT,
+          }),
+          Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500)
+        );
+        if (!fallbackLookup.timedOut) {
+          dbUser = fallbackLookup.value
+            ? buildMeResponseUserFromDbRecord(fallbackLookup.value)
+            : null;
+        }
+      } catch (fallbackError) {
+        if (
+          !isPrismaSchemaDriftError(fallbackError) &&
+          !isPrismaClientError(fallbackError) &&
+          !isPrismaConnectivityError(fallbackError)
+        ) {
+          console.error("[/api/me] Failed to fetch compatible user profile:", fallbackError);
+        }
+      }
+    } else if (isPrismaConnectivityError(error)) {
       console.warn("[/api/me] Primary query failed, using raw SQL fallback", {
         message: error instanceof Error ? error.message : String(error),
       });
+    } else {
+      console.error("[/api/me] Failed to fetch full user profile:", error);
+    }
+
+    if (!dbUser) {
       try {
         dbUser = await queryMeResponseUserRaw(user.id);
       } catch (rawError) {
         console.error("[/api/me] Raw fallback user profile lookup failed:", rawError);
       }
-    } else {
-      console.error("[/api/me] Failed to fetch full user profile:", error);
     }
   }
 
