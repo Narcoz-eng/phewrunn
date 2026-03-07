@@ -10,7 +10,7 @@ import {
   MAX_LEVEL,
 } from "../types.js";
 
-export const leaderboardRouter = new Hono<{ Variables: AuthVariables }>();
+export const leaderboardRouter = new Hono<{ Variables: AuthVariables & { requestId?: string } }>();
 
 type CacheEntry<T> = {
   data: T;
@@ -69,6 +69,7 @@ const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_0
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
 const LEADERBOARD_STATS_SNAPSHOT_KEY = "leaderboard:stats";
 const ALPHA_SCORE_BUCKET_SECONDS = 6 * 60 * 60;
+const LEADERBOARD_BUCKET_SECONDS_SQL = Prisma.raw(String(ALPHA_SCORE_BUCKET_SECONDS));
 let leaderboardCacheVersionMemory = 1;
 let leaderboardCacheVersionReadCache: { value: number; expiresAtMs: number } | null = null;
 
@@ -80,12 +81,18 @@ let statsCache: CacheEntry<LeaderboardStatsPayload> | null = null;
 let statsInFlight: Promise<LeaderboardStatsPayload> | null = null;
 const LEADERBOARD_DEGRADED_CACHE_TTL_MS =
   process.env.NODE_ENV === "production" ? 20_000 : 5_000;
+const LEADERBOARD_CONTRACT_KEY_EXPR = Prisma.sql`
+  COALESCE(p."contractAddress", CONCAT('__post__:', p.id))
+`;
+const LEADERBOARD_TIME_BUCKET_EXPR = Prisma.sql`
+  FLOOR(EXTRACT(EPOCH FROM p."createdAt") / ${LEADERBOARD_BUCKET_SECONDS_SQL})
+`;
 
 const LEADERBOARD_DEDUPED_POSTS_SUBQUERY = Prisma.sql`
   SELECT DISTINCT ON (
     p."authorId",
-    COALESCE(p."contractAddress", CONCAT('__post__:', p.id)),
-    FLOOR(EXTRACT(EPOCH FROM p."createdAt") / ${ALPHA_SCORE_BUCKET_SECONDS})
+    ${LEADERBOARD_CONTRACT_KEY_EXPR},
+    ${LEADERBOARD_TIME_BUCKET_EXPR}
   )
     p.id,
     p."authorId",
@@ -106,8 +113,8 @@ const LEADERBOARD_DEDUPED_POSTS_SUBQUERY = Prisma.sql`
   FROM "Post" p
   ORDER BY
     p."authorId",
-    COALESCE(p."contractAddress", CONCAT('__post__:', p.id)),
-    FLOOR(EXTRACT(EPOCH FROM p."createdAt") / ${ALPHA_SCORE_BUCKET_SECONDS}),
+    ${LEADERBOARD_CONTRACT_KEY_EXPR},
+    ${LEADERBOARD_TIME_BUCKET_EXPR},
     p."createdAt" ASC,
     p.id ASC
 `;
@@ -237,6 +244,77 @@ function logLeaderboardFallback(kind: string, error: unknown, hasFallback: boole
   });
 }
 
+type LeaderboardTraceContext = {
+  endpoint: string;
+  requestId?: string | null;
+};
+
+function serializeLeaderboardQueryParam(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (value instanceof Prisma.Decimal) {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => serializeLeaderboardQueryParam(entry));
+  }
+  if (value === undefined) {
+    return "__undefined__";
+  }
+  return value;
+}
+
+function getLeaderboardErrorCode(error: unknown): string | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+  return null;
+}
+
+function getLeaderboardErrorMeta(error: unknown): unknown {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "meta" in error
+  ) {
+    return (error as { meta?: unknown }).meta ?? null;
+  }
+  return null;
+}
+
+async function executeLeaderboardRawQuery<T>(
+  trace: LeaderboardTraceContext,
+  label: string,
+  query: Prisma.Sql
+): Promise<T> {
+  try {
+    return await withLeaderboardTimeout(prisma.$queryRaw<T>(query), label);
+  } catch (error) {
+    console.warn("[leaderboard/raw] query failed", {
+      endpoint: trace.endpoint,
+      requestId: trace.requestId ?? null,
+      label,
+      sqlTemplate: typeof query.text === "string" ? query.text : query.sql,
+      params: Array.isArray(query.values)
+        ? query.values.map((value) => serializeLeaderboardQueryParam(value))
+        : [],
+      message: getErrorMessage(error),
+      code: getLeaderboardErrorCode(error),
+      meta: getLeaderboardErrorMeta(error),
+    });
+    throw error;
+  }
+}
+
 async function getLeaderboardCacheVersion(): Promise<number> {
   const cached = leaderboardCacheVersionReadCache;
   if (cached && cached.expiresAtMs > Date.now()) {
@@ -359,7 +437,9 @@ async function readLeaderboardStatsSnapshot(
   }
 }
 
-async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload> {
+async function computeLeaderboardStatsPayload(
+  trace: LeaderboardTraceContext
+): Promise<LeaderboardStatsPayload> {
   const now = Date.now();
   const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
   const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
@@ -387,8 +467,10 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
   };
 
   const [summaryRows, levelDistribution, topUsersThisWeek] = await Promise.all([
-    withLeaderboardTimeout(
-      prisma.$queryRaw<StatsSummaryRow[]>(Prisma.sql`
+    executeLeaderboardRawQuery<StatsSummaryRow[]>(
+      trace,
+      "leaderboard.stats.summary",
+      Prisma.sql`
         WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
         SELECT
           COALESCE(SUM(p."entryMcap") FILTER (WHERE p."createdAt" >= ${oneDayAgo} AND p."entryMcap" IS NOT NULL), 0) AS "volumeDay",
@@ -405,29 +487,31 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
           COUNT(DISTINCT p."authorId") FILTER (WHERE p."createdAt" >= ${oneWeekAgo})::bigint AS "activeUsersWeek",
           (SELECT COUNT(*)::bigint FROM "User") AS "totalUsers"
         FROM leaderboard_posts p
-      `),
-      "leaderboard.stats.summary"
+      `
     ),
-    withLeaderboardTimeout(
-      prisma.$queryRaw<LevelDistributionRow[]>(Prisma.sql`
+    executeLeaderboardRawQuery<LevelDistributionRow[]>(
+      trace,
+      "leaderboard.stats.level-distribution",
+      Prisma.sql`
         SELECT
           u.level,
           COUNT(*)::bigint AS count
         FROM "User" u
         GROUP BY u.level
         ORDER BY u.level ASC
-      `),
-      "leaderboard.stats.level-distribution"
+      `
     ),
-    withLeaderboardTimeout(
-      prisma.$queryRaw<Array<{
+    executeLeaderboardRawQuery<Array<{
         id: string;
         name: string | null;
         username: string | null;
         image: string | null;
         level: number | null;
         postsThisWeek: bigint | number | string | Prisma.Decimal | null;
-      }>>(Prisma.sql`
+      }>>(
+      trace,
+      "leaderboard.stats.top-users-week",
+      Prisma.sql`
         WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
         SELECT
           u.id,
@@ -442,8 +526,7 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
         GROUP BY u.id, u.name, u.username, u.image, u.level
         ORDER BY COUNT(*) DESC
         LIMIT 5
-      `),
-      "leaderboard.stats.top-users-week"
+      `
     ),
   ]);
 
@@ -502,11 +585,12 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
 
 function queueLeaderboardStatsRefresh(
   cacheVersion: number,
-  redisKey: string
+  redisKey: string,
+  trace: LeaderboardTraceContext
 ): Promise<LeaderboardStatsPayload> {
   if (!statsInFlight) {
     const refreshPromise = (async () => {
-      const data = await computeLeaderboardStatsPayload();
+      const data = await computeLeaderboardStatsPayload(trace);
       await persistLeaderboardStats(cacheVersion, redisKey, data);
       return data;
     })();
@@ -551,10 +635,9 @@ async function getWinLossStatsByAuthorIds(authorIds: string[]) {
   return statsMap;
 }
 
-async function getDailyGainersRaw(): Promise<Array<unknown>> {
+async function getDailyGainersRaw(trace: LeaderboardTraceContext): Promise<Array<unknown>> {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const rows = await withLeaderboardTimeout(
-    prisma.$queryRaw<Array<{
+  const rows = await executeLeaderboardRawQuery<Array<{
       id: string;
       tokenName: string | null;
       tokenSymbol: string | null;
@@ -572,7 +655,10 @@ async function getDailyGainersRaw(): Promise<Array<unknown>> {
       authorUsername: string | null;
       authorImage: string | null;
       authorLevel: number | null;
-    }>>(Prisma.sql`
+    }>>(
+    trace,
+    "leaderboard.daily-gainers.raw",
+    Prisma.sql`
       WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
       SELECT
         p.id,
@@ -600,8 +686,7 @@ async function getDailyGainersRaw(): Promise<Array<unknown>> {
         AND p."entryMcap" IS NOT NULL
         AND p."currentMcap" IS NOT NULL
         AND p."settledAt" IS NOT NULL
-    `),
-    "leaderboard.daily-gainers.raw"
+    `
   );
 
   return rows
@@ -669,6 +754,7 @@ async function getDailyGainersRaw(): Promise<Array<unknown>> {
 }
 
 async function getTopUsersResponseRaw(
+  trace: LeaderboardTraceContext,
   sortBy: "level" | "activity" | "winrate",
   page: number,
   limit: number
@@ -679,8 +765,7 @@ async function getTopUsersResponseRaw(
 
   if (sortBy === "activity") {
     const [rows, totalRows] = await Promise.all([
-      withLeaderboardTimeout(
-        prisma.$queryRaw<Array<{
+      executeLeaderboardRawQuery<Array<{
           id: string;
           username: string | null;
           name: string | null;
@@ -691,7 +776,10 @@ async function getTopUsersResponseRaw(
           recentAlphas: number | bigint | null;
           wins: number | bigint | null;
           losses: number | bigint | null;
-        }>>(Prisma.sql`
+        }>>(
+        trace,
+        "leaderboard.top-users.activity.raw",
+        Prisma.sql`
           WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
           recent_posts AS (
             SELECT p."authorId", COUNT(*)::bigint AS "recentAlphas"
@@ -731,11 +819,12 @@ async function getTopUsersResponseRaw(
           ORDER BY rp."recentAlphas" DESC, u.level DESC, u.xp DESC
           OFFSET ${skip}
           LIMIT ${limit}
-        `),
-        "leaderboard.top-users.activity.raw"
+        `
       ),
-      withLeaderboardTimeout(
-        prisma.$queryRaw<Array<{ count: number | bigint | null }>>(Prisma.sql`
+      executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
+        trace,
+        "leaderboard.top-users.activity.raw-total",
+        Prisma.sql`
           WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
           SELECT COUNT(*)::bigint AS count
           FROM (
@@ -744,8 +833,7 @@ async function getTopUsersResponseRaw(
             WHERE p."createdAt" >= ${sevenDaysAgo}
             GROUP BY p."authorId"
           ) activity_users
-        `),
-        "leaderboard.top-users.activity.raw-total"
+        `
       ),
     ]);
 
@@ -785,8 +873,7 @@ async function getTopUsersResponseRaw(
 
   if (sortBy === "winrate") {
     const [rows, totalRows] = await Promise.all([
-      withLeaderboardTimeout(
-        prisma.$queryRaw<Array<{
+      executeLeaderboardRawQuery<Array<{
           id: string;
           username: string | null;
           name: string | null;
@@ -798,7 +885,10 @@ async function getTopUsersResponseRaw(
           losses: number | bigint | null;
           totalSettled: number | bigint | null;
           winRate: number | null;
-        }>>(Prisma.sql`
+        }>>(
+        trace,
+        "leaderboard.top-users.winrate.raw",
+        Prisma.sql`
           WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
           total_posts AS (
             SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
@@ -838,11 +928,12 @@ async function getTopUsersResponseRaw(
           ORDER BY q."winRate" DESC, q."totalSettled" DESC
           OFFSET ${skip}
           LIMIT ${limit}
-        `),
-        "leaderboard.top-users.winrate.raw"
+        `
       ),
-      withLeaderboardTimeout(
-        prisma.$queryRaw<Array<{ count: number | bigint | null }>>(Prisma.sql`
+      executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
+        trace,
+        "leaderboard.top-users.winrate.raw-total",
+        Prisma.sql`
           WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
           SELECT COUNT(*)::bigint AS count
           FROM (
@@ -852,8 +943,7 @@ async function getTopUsersResponseRaw(
             GROUP BY p."authorId"
             HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
           ) qualified_users
-        `),
-        "leaderboard.top-users.winrate.raw-total"
+        `
       ),
     ]);
 
@@ -886,8 +976,7 @@ async function getTopUsersResponseRaw(
   }
 
   const [rows, totalRows] = await Promise.all([
-    withLeaderboardTimeout(
-      prisma.$queryRaw<Array<{
+    executeLeaderboardRawQuery<Array<{
         id: string;
         username: string | null;
         name: string | null;
@@ -897,7 +986,10 @@ async function getTopUsersResponseRaw(
         totalAlphas: number | bigint | null;
         wins: number | bigint | null;
         losses: number | bigint | null;
-      }>>(Prisma.sql`
+      }>>(
+      trace,
+      "leaderboard.top-users.level.raw",
+      Prisma.sql`
         WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
         post_counts AS (
           SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
@@ -929,11 +1021,12 @@ async function getTopUsersResponseRaw(
         ORDER BY u.level DESC, u.xp DESC
         OFFSET ${skip}
         LIMIT ${limit}
-      `),
-      "leaderboard.top-users.level.raw"
+      `
     ),
-    withLeaderboardTimeout(
-      prisma.$queryRaw<Array<{ count: number | bigint | null }>>(Prisma.sql`
+    executeLeaderboardRawQuery<Array<{ count: number | bigint | null }>>(
+      trace,
+      "leaderboard.top-users.level.raw-total",
+      Prisma.sql`
         WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
         SELECT COUNT(*)::bigint AS count
         FROM (
@@ -941,8 +1034,7 @@ async function getTopUsersResponseRaw(
           FROM leaderboard_posts p
           GROUP BY p."authorId"
         ) ranked_users
-      `),
-      "leaderboard.top-users.level.raw-total"
+      `
     ),
   ]);
 
@@ -985,6 +1077,10 @@ async function getTopUsersResponseRaw(
  * Filter: Only settled posts with positive percent change
  */
 leaderboardRouter.get("/daily-gainers", async (c) => {
+  const trace = {
+    endpoint: "/api/leaderboard/daily-gainers",
+    requestId: c.get("requestId") ?? null,
+  };
   const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(dailyGainersCache);
   if (cached) {
@@ -1018,7 +1114,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
   }
 
   dailyGainersInFlight = (async () => {
-    const dailyGainers = await getDailyGainersRaw();
+    const dailyGainers = await getDailyGainersRaw(trace);
 
     dailyGainersCache = {
       data: dailyGainers,
@@ -1037,7 +1133,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
       return c.json({ data: staleCached });
     }
     try {
-      const rawData = await getDailyGainersRaw();
+      const rawData = await getDailyGainersRaw(trace);
       dailyGainersCache = {
         data: rawData,
         expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
@@ -1068,6 +1164,10 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
  */
 leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema), async (c) => {
   const { page, limit, sortBy } = c.req.valid("query");
+  const trace = {
+    endpoint: `/api/leaderboard/top-users?sortBy=${sortBy}`,
+    requestId: c.get("requestId") ?? null,
+  };
   const cacheVersion = await getLeaderboardCacheVersion();
   const topUsersCacheKey = `${sortBy}:${page}:${limit}`;
   const cached = topUsersCache.get(topUsersCacheKey);
@@ -1094,20 +1194,17 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       if (staleCached) {
         return c.json(staleCached);
       }
-      return c.json(
-        {
-          error: {
-            message: "Leaderboard is temporarily unavailable. Please retry shortly.",
-            code: "TOP_USERS_UNAVAILABLE",
-          },
-        },
-        503
-      );
+      const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
+      topUsersCache.set(topUsersCacheKey, {
+        data: fallbackPayload,
+        expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+      });
+      return c.json(fallbackPayload);
     }
   }
   try {
     const responsePromise = withLeaderboardTimeout(
-      getTopUsersResponseRaw(sortBy, page, limit),
+      getTopUsersResponseRaw(trace, sortBy, page, limit),
       "leaderboard.top-users"
     );
     topUsersInFlight.set(topUsersCacheKey, responsePromise);
@@ -1124,15 +1221,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     if (staleCached) {
       return c.json(staleCached);
     }
-    return c.json(
-      {
-        error: {
-          message: "Leaderboard is temporarily unavailable. Please retry shortly.",
-          code: "TOP_USERS_UNAVAILABLE",
-        },
-      },
-      503
-    );
+    const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
+    topUsersCache.set(topUsersCacheKey, {
+      data: fallbackPayload,
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    });
+    return c.json(fallbackPayload);
   } finally {
     topUsersInFlight.delete(topUsersCacheKey);
   }
@@ -1143,6 +1237,10 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
  * Platform-wide statistics
  */
 leaderboardRouter.get("/stats", async (c) => {
+  const trace = {
+    endpoint: "/api/leaderboard/stats",
+    requestId: c.get("requestId") ?? null,
+  };
   const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(statsCache);
   if (cached) {
@@ -1163,14 +1261,14 @@ leaderboardRouter.get("/stats", async (c) => {
 
   const snapshotFallback = snapshotCached.stale;
   if (snapshotFallback) {
-    void queueLeaderboardStatsRefresh(cacheVersion, redisKey).catch((error) => {
+    void queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace).catch((error) => {
       logLeaderboardFallback("stats/background-refresh", error, true);
     });
     return c.json({ data: snapshotFallback });
   }
 
   if (!statsInFlight) {
-    queueLeaderboardStatsRefresh(cacheVersion, redisKey);
+    queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace);
   }
 
   try {
@@ -1181,14 +1279,10 @@ leaderboardRouter.get("/stats", async (c) => {
     if (staleCached) {
       return c.json({ data: staleCached });
     }
-    return c.json(
-      {
-        error: {
-          message: "Leaderboard stats are temporarily unavailable. Please retry shortly.",
-          code: "LEADERBOARD_STATS_UNAVAILABLE",
-        },
-      },
-      503
-    );
+    statsCache = {
+      data: EMPTY_LEADERBOARD_STATS_PAYLOAD,
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    };
+    return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
 });
