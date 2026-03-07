@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
+  ensureBackendSessionReady,
   useAuth,
   syncPrivySession,
   registerPreLogoutHook,
@@ -24,7 +25,7 @@ const AUTO_SYNC_MAX_ATTEMPTS = 6;
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
-  const { isAuthenticated, refetch } = useAuth();
+  const { isAuthenticated, hasLiveSession, refetch } = useAuth();
   const syncInFlightRef = useRef(false);
   const attemptsRef = useRef(0);
   const lastAttemptAtRef = useRef(0);
@@ -76,7 +77,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       return;
     }
     const shouldRepairMissingFallbackToken = isAuthenticated && !hasStoredAuthTokenHint();
-    if (isAuthenticated && !shouldRepairMissingFallbackToken) {
+    if (hasLiveSession && !shouldRepairMissingFallbackToken) {
       attemptsRef.current = 0;
       lastSyncedPrivyUserRef.current = user.id;
       return;
@@ -98,6 +99,15 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
     void (async () => {
       try {
+        if (isAuthenticated || hasStoredAuthTokenHint()) {
+          const recoveredUser = await ensureBackendSessionReady(user.id, 1800);
+          if (recoveredUser) {
+            await refetch();
+            attemptsRef.current = 0;
+            return;
+          }
+        }
+
         const resolvedPayload = await resolvePrivyAuthPayload({
           user: user as PrivyUserLike,
           getLatestUser: () => latestPrivyUserRef.current,
@@ -117,7 +127,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         syncInFlightRef.current = false;
       }
     })();
-  }, [authenticated, isAuthenticated, privySyncFailure, ready, refetch, user]);
+  }, [authenticated, hasLiveSession, isAuthenticated, privySyncFailure, ready, refetch, user]);
 
   return <>{children}</>;
 }

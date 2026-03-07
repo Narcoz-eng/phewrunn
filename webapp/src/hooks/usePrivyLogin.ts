@@ -24,7 +24,7 @@ const AUTO_RESYNC_MAX_ATTEMPTS = 5;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
 const PRIVY_LOGOUT_SETTLE_MS = 250;
 const RETRYABLE_SYNC_ERROR_PATTERN =
-  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests/i;
+  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests|finalizing/i;
 const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
 
 type UsePrivyLoginOptions = {
@@ -61,13 +61,13 @@ function getPrivyErrorMessage(error: unknown): string {
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
-  const { refetch, isAuthenticated: appSessionAuthenticated } = useAuth();
+  const { refetch, hasLiveSession } = useAuth();
   const { onSuccess } = options;
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncGuardRef = useRef(false);
   const activeSyncPromiseRef = useRef<Promise<AuthUser | null> | null>(null);
-  const appSessionAuthenticatedRef = useRef(appSessionAuthenticated);
+  const hasLiveSessionRef = useRef(hasLiveSession);
   const syncTimeoutRef = useRef<number | null>(null);
   const loginRequestedRef = useRef(false);
   const successfulLoginHandledRef = useRef(false);
@@ -148,7 +148,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       } catch (err) {
         console.error("[usePrivyLogin] sync error:", err);
         const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
-        if (source === "auto" && appSessionAuthenticatedRef.current) {
+        if (source === "auto" && hasLiveSessionRef.current) {
           setSyncError(null);
           clearPrivyLoginIntent();
           return readCachedAuthUserSnapshot();
@@ -217,14 +217,14 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   }, [clearSyncTimeout]);
 
   useEffect(() => {
-    appSessionAuthenticatedRef.current = appSessionAuthenticated;
-    if (!appSessionAuthenticated) return;
+    hasLiveSessionRef.current = hasLiveSession;
+    if (!hasLiveSession) return;
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;
     lastSyncFailureRef.current = null;
     clearPrivyLoginIntent();
     setSyncError(null);
-  }, [appSessionAuthenticated]);
+  }, [hasLiveSession]);
 
   useEffect(() => {
     latestPrivyUserRef.current = user ? (user as PrivyUserLike) : null;

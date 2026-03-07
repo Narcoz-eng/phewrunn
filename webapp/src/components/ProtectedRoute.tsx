@@ -49,7 +49,7 @@ function ProtectedRouteFallback({
   children: React.ReactNode;
   allowMissingUsername: boolean;
 }) {
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, hasLiveSession } = useSession();
   const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
@@ -73,6 +73,13 @@ function ProtectedRouteFallback({
   if (!effectiveUser) {
     if (hadTokenHint.current && !graceExpired) {
       return <RouteLoading label="Signing in..." />;
+    }
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!hasLiveSession) {
+    if (!graceExpired) {
+      return <RouteLoading label="Finalizing sign-in..." />;
     }
     return <Navigate to="/login" replace />;
   }
@@ -101,7 +108,7 @@ function ProtectedRouteWithPrivy({
   children: React.ReactNode;
   allowMissingUsername: boolean;
 }) {
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, hasLiveSession } = useSession();
   const { ready, authenticated } = usePrivy();
   const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
@@ -115,22 +122,26 @@ function ProtectedRouteWithPrivy({
     !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
+  const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
 
   useEffect(() => {
     if (
-      effectiveUser ||
+      (effectiveUser && hasLiveSession) ||
       isPending ||
       privySyncFailure ||
-      (!hadTokenHint.current && !hasPrivySyncHint && !hasOAuthReturnHint)
+      (!hadTokenHint.current && !hasPrivySyncHint && !hasOAuthReturnHint && !shouldHoldForConfirmedSession)
     ) {
+      if (!isPending) {
+        setGraceExpired(false);
+      }
       return;
     }
     const timer = window.setTimeout(
       () => setGraceExpired(true),
-      hasPrivySyncHint || hasOAuthReturnHint ? 12_000 : 4_000
+      hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession ? 12_000 : 4_000
     );
     return () => window.clearTimeout(timer);
-  }, [effectiveUser, hasOAuthReturnHint, hasPrivySyncHint, isPending, privySyncFailure]);
+  }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivySyncHint, isPending, privySyncFailure, shouldHoldForConfirmedSession]);
 
   if (effectiveUser) {
     hadTokenHint.current = false;
@@ -171,6 +182,30 @@ function ProtectedRouteWithPrivy({
       return <RouteLoading label="Signing in..." />;
     }
     return <Navigate to="/login" replace />;
+  }
+
+  if (!hasLiveSession) {
+    if (privySyncFailure && graceExpired) {
+      return (
+        <Navigate
+          to="/login"
+          replace
+          state={{
+            from: location.pathname + location.search + location.hash,
+            syncError: privySyncFailure.message,
+          }}
+        />
+      );
+    }
+    return (
+      <RouteLoading
+        label={
+          privySyncFailure
+            ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
+            : (graceExpired ? "Still finalizing sign-in..." : "Finalizing sign-in...")
+        }
+      />
+    );
   }
 
   if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {

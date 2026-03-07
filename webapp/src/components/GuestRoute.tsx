@@ -26,7 +26,7 @@ function getSignedInDestination(username: string | null | undefined): string {
 }
 
 function GuestRouteFallback({ children }: { children: React.ReactNode }) {
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, hasLiveSession } = useSession();
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
 
@@ -34,15 +34,19 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
     return <RouteLoading label="Loading..." />;
   }
 
-  if (effectiveUser) {
+  if (effectiveUser && hasLiveSession) {
     return <Navigate to={getSignedInDestination(effectiveUser.username)} replace />;
+  }
+
+  if (effectiveUser && !hasLiveSession) {
+    return <RouteLoading label="Finalizing sign-in..." />;
   }
 
   return <>{children}</>;
 }
 
 function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, hasLiveSession } = useSession();
   const { ready, authenticated } = usePrivy();
   const [graceExpired, setGraceExpired] = useState(false);
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
@@ -56,23 +60,39 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForOAuthReturn =
     hasOAuthReturnHint && !ready && !effectiveUser && !logoutCooldownActive;
+  const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
 
   useEffect(() => {
-    if (!hasPrivySyncHint && !shouldHoldForOAuthReturn) {
+    if (!hasPrivySyncHint && !shouldHoldForOAuthReturn && !shouldHoldForConfirmedSession) {
       setGraceExpired(false);
       return;
     }
 
     const timer = window.setTimeout(() => setGraceExpired(true), 12_000);
     return () => window.clearTimeout(timer);
-  }, [hasPrivySyncHint, shouldHoldForOAuthReturn]);
+  }, [hasPrivySyncHint, shouldHoldForConfirmedSession, shouldHoldForOAuthReturn]);
 
   if (isPending) {
     return <RouteLoading label="Loading..." />;
   }
 
-  if (effectiveUser) {
+  if (effectiveUser && hasLiveSession) {
     return <Navigate to={getSignedInDestination(effectiveUser.username)} replace />;
+  }
+
+  if (effectiveUser && !hasLiveSession) {
+    if (privySyncFailure && graceExpired) {
+      return <>{children}</>;
+    }
+    return (
+      <RouteLoading
+        label={
+          privySyncFailure
+            ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
+            : (graceExpired ? "Still finalizing sign-in..." : "Finalizing sign-in...")
+        }
+      />
+    );
   }
 
   if (shouldHoldForOAuthReturn && !graceExpired && !privySyncFailure) {

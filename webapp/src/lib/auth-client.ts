@@ -42,6 +42,8 @@ const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
+const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
+const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
 const SESSION_FETCH_TIMEOUT_MS = 4500;
@@ -89,11 +91,21 @@ export function isExplicitLogoutCoolingDown(referenceTime = Date.now()): boolean
   return explicitLogoutAt > 0 && referenceTime - explicitLogoutAt < EXPLICIT_LOGOUT_COOLDOWN_MS;
 }
 
+export function hasRecentPrivySyncGrace(referenceTime = Date.now()): boolean {
+  if (isExplicitLogoutCoolingDown(referenceTime)) {
+    return false;
+  }
+  return (
+    lastPrivySyncAt > 0 &&
+    referenceTime - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS
+  );
+}
+
 export function hasValidatedAuthSession(referenceTime = Date.now()): boolean {
   if (isExplicitLogoutCoolingDown(referenceTime)) {
     return false;
   }
-  return lastSuccessfulSessionAt > 0 || lastPrivySyncAt > 0;
+  return lastSuccessfulSessionAt > 0;
 }
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
@@ -498,6 +510,135 @@ function toAuthUser(
   };
 }
 
+function markValidatedAuthSession(user: AuthUser): AuthUser {
+  sessionRateLimitedUntil = 0;
+  unauthorizedSessionFailures = 0;
+  lastSuccessfulSessionAt = Date.now();
+  writeCachedAuthUser(user);
+  clearPrivySyncFailureSnapshot();
+  return user;
+}
+
+type ServerSessionResult =
+  | { status: "authenticated"; user: AuthUser }
+  | { status: "unauthorized" }
+  | { status: "rate_limited"; retryAfterMs: number }
+  | { status: "empty" }
+  | { status: "unavailable" };
+
+async function fetchSessionFromServer(
+  timeoutMs = SESSION_FETCH_TIMEOUT_MS
+): Promise<ServerSessionResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const token = getStoredAuthToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${baseURL}/api/me`, {
+      credentials: "include",
+      headers,
+      signal: controller.signal,
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      return { status: "unauthorized" };
+    }
+
+    if (response.status === 429) {
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
+      const retryAfterMs =
+        Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1000
+          : 1200;
+      return { status: "rate_limited", retryAfterMs };
+    }
+
+    if (!response.ok) {
+      return { status: "unavailable" };
+    }
+
+    const text = await response.text();
+    if (!text || text === "null" || text === "undefined") {
+      return { status: "empty" };
+    }
+
+    try {
+      const data = JSON.parse(text) as { data?: unknown };
+      const candidate = data?.data ?? data;
+      if (
+        typeof candidate === "object" &&
+        candidate !== null &&
+        "id" in candidate &&
+        typeof (candidate as { id?: unknown }).id === "string"
+      ) {
+        return {
+          status: "authenticated",
+          user: toAuthUser(candidate as Partial<AuthUser> & {
+            id: string;
+            email?: string | null;
+            name?: string | null;
+          }),
+        };
+      }
+      return { status: "empty" };
+    } catch {
+      return { status: "empty" };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { status: "unavailable" };
+    }
+    console.warn("[Auth] Failed to confirm server session:", error);
+    return { status: "unavailable" };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export async function ensureBackendSessionReady(
+  expectedUserId?: string,
+  timeoutMs = AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+): Promise<AuthUser | null> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (let attempt = 0; Date.now() < deadline; attempt += 1) {
+    const remainingMs = Math.max(350, deadline - Date.now());
+    const result = await fetchSessionFromServer(Math.min(SESSION_FETCH_TIMEOUT_MS, remainingMs));
+
+    if (result.status === "authenticated") {
+      if (!expectedUserId || result.user.id === expectedUserId) {
+        return markValidatedAuthSession(result.user);
+      }
+    } else if (result.status === "unauthorized" && !hasRecentPrivySyncGrace()) {
+      return null;
+    }
+
+    const delayMs =
+      result.status === "rate_limited"
+        ? Math.min(result.retryAfterMs, Math.max(200, deadline - Date.now()))
+        : AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS[
+            Math.min(attempt, AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS.length - 1)
+          ];
+
+    if (Date.now() + delayMs >= deadline) {
+      break;
+    }
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, delayMs);
+    });
+  }
+
+  return null;
+}
+
 function emitAuthSessionSynced(user: AuthUser): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
@@ -577,8 +718,7 @@ async function fetchSession(): Promise<AuthUser | null> {
         }
 
         unauthorizedSessionFailures += 1;
-        const recentlySynced =
-          lastPrivySyncAt > 0 && Date.now() - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS;
+        const recentlySynced = hasRecentPrivySyncGrace();
         const recentlyHealthySession =
           lastSuccessfulSessionAt > 0 &&
           Date.now() - lastSuccessfulSessionAt < AUTH_TRANSIENT_401_RECOVERY_MS;
@@ -616,7 +756,6 @@ async function fetchSession(): Promise<AuthUser | null> {
 
     sessionRateLimitedUntil = 0;
     unauthorizedSessionFailures = 0;
-    lastSuccessfulSessionAt = Date.now();
     const text = await response.text();
 
     // Handle null or empty responses
@@ -630,10 +769,7 @@ async function fetchSession(): Promise<AuthUser | null> {
       // /api/me returns user data directly wrapped in { data: user }
       const user = data.data || data;
       if (user && user.id) {
-        const authUser = toAuthUser(user);
-        writeCachedAuthUser(authUser);
-        clearPrivySyncFailureSnapshot();
-        return authUser;
+        return markValidatedAuthSession(toAuthUser(user));
       }
 
       const explicitNoSessionResponse =
@@ -675,9 +811,10 @@ async function fetchSession(): Promise<AuthUser | null> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>(() => {
     const cachedUser = readCachedAuthUser();
+    const hasConfirmedSession = cachedUser ? hasValidatedAuthSession() : false;
     return {
       user: cachedUser,
-      isLoading: !cachedUser,
+      isLoading: !cachedUser || !hasConfirmedSession,
       isAuthenticated: !!cachedUser,
     };
   });
@@ -701,8 +838,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Retry when we have either bearer token/session hints, or immediately after a Privy sync.
     const hasStoredToken = Boolean(getStoredAuthToken());
     const hasCookieSessionHint = hasSessionCookieHint();
-    const recentlySynced =
-      lastPrivySyncAt > 0 && Date.now() - lastPrivySyncAt < AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS;
+    const recentlySynced = hasRecentPrivySyncGrace();
     if (!hasStoredToken && !hasCookieSessionHint && !recentlySynced) {
       return null;
     }
@@ -1118,23 +1254,29 @@ export async function syncPrivySession(
         // Mark sync first so any in-flight pre-login /api/me response cannot wipe the fresh session.
         explicitLogoutAt = 0;
         lastPrivySyncAt = Date.now();
-        lastSuccessfulSessionAt = Date.now();
         sessionRateLimitedUntil = 0;
         sessionFetchInFlight = null;
         unauthorizedSessionFailures = 0;
 
         // Store the session token for Bearer auth fallback
         setStoredAuthToken(data.token);
-        writeCachedAuthUser(syncedUser);
-        clearPrivySyncFailureSnapshot();
-        emitAuthSessionSynced(syncedUser);
-        return { token: data.token, user: syncedUser };
+
+        const confirmedUser = await ensureBackendSessionReady(
+          syncedUser.id,
+          AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+        );
+        if (!confirmedUser) {
+          throw new Error("Backend session is still finalizing");
+        }
+
+        emitAuthSessionSynced(confirmedUser);
+        return { token: data.token, user: confirmedUser };
       } catch (error) {
         const isAbort = error instanceof Error && error.name === "AbortError";
         const message = error instanceof Error ? error.message : String(error);
         const retryable =
           isAbort ||
-          /network|failed to fetch|timeout|temporarily|server|rate limit|too many requests/i.test(message);
+          /network|failed to fetch|timeout|temporarily|server|rate limit|too many requests|finalizing/i.test(message);
 
         if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
           await new Promise<void>((resolve) => {
