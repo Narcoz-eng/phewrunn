@@ -223,6 +223,10 @@ const PRIVY_CLIENT =
 const PRIVY_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const PRIVY_IDENTITY_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const privyIdentityCache = new Map<string, { userId: string; email: string | null; cachedAt: number }>();
+const PRIVY_AUTH_USER_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30 * 60 * 1000 : 5 * 60 * 1000;
+const PRIVY_AUTH_USER_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+const PRIVY_AUTH_USER_REDIS_KEY_PREFIX = "privy-auth-user:v1";
+const privyAuthUserCache = new Map<string, { user: AuthResponseUser; expiresAtMs: number }>();
 
 function readCachedPrivyIdentity(cacheKey: string | null) {
   if (!cacheKey) return null;
@@ -484,6 +488,116 @@ type MeResponseUser = {
   tradeFeePayoutAddress: string | null;
   createdAt: Date;
 };
+
+function buildPrivyAuthUserRedisKey(privyUserId: string): string {
+  return `${PRIVY_AUTH_USER_REDIS_KEY_PREFIX}:${privyUserId}`;
+}
+
+function normalizeCachedPrivyAuthUser(data: unknown): AuthResponseUser | null {
+  if (!data || typeof data !== "object") return null;
+  const candidate = data as Record<string, unknown>;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.name !== "string" ||
+    typeof candidate.email !== "string"
+  ) {
+    return null;
+  }
+
+  const createdAt =
+    candidate.createdAt instanceof Date
+      ? candidate.createdAt
+      : new Date(typeof candidate.createdAt === "string" ? candidate.createdAt : "");
+  if (Number.isNaN(createdAt.getTime())) {
+    return null;
+  }
+
+  return normalizeAuthResponseUser({
+    id: candidate.id,
+    name: candidate.name,
+    email: candidate.email,
+    image: typeof candidate.image === "string" ? candidate.image : null,
+    walletAddress: typeof candidate.walletAddress === "string" ? candidate.walletAddress : null,
+    walletProvider: typeof candidate.walletProvider === "string" ? candidate.walletProvider : null,
+    username: typeof candidate.username === "string" ? candidate.username : null,
+    level: typeof candidate.level === "number" ? candidate.level : 0,
+    xp: typeof candidate.xp === "number" ? candidate.xp : 0,
+    bio: typeof candidate.bio === "string" ? candidate.bio : null,
+    isAdmin: typeof candidate.isAdmin === "boolean" ? candidate.isAdmin : false,
+    isVerified: typeof candidate.isVerified === "boolean" ? candidate.isVerified : false,
+    tradeFeeRewardsEnabled:
+      typeof candidate.tradeFeeRewardsEnabled === "boolean" ? candidate.tradeFeeRewardsEnabled : true,
+    tradeFeeShareBps:
+      typeof candidate.tradeFeeShareBps === "number" ? candidate.tradeFeeShareBps : 100,
+    tradeFeePayoutAddress:
+      typeof candidate.tradeFeePayoutAddress === "string" ? candidate.tradeFeePayoutAddress : null,
+    createdAt,
+  });
+}
+
+function readLocalCachedPrivyAuthUser(privyUserId: string): AuthResponseUser | null {
+  const cached = privyAuthUserCache.get(privyUserId);
+  if (!cached) return null;
+  if (cached.expiresAtMs <= Date.now()) {
+    privyAuthUserCache.delete(privyUserId);
+    return null;
+  }
+  return cached.user;
+}
+
+async function readCachedPrivyAuthUser(privyUserId: string): Promise<AuthResponseUser | null> {
+  const localCached = readLocalCachedPrivyAuthUser(privyUserId);
+  if (localCached) {
+    return localCached;
+  }
+
+  const redisCached = normalizeCachedPrivyAuthUser(
+    await cacheGetJson<Record<string, unknown>>(buildPrivyAuthUserRedisKey(privyUserId))
+  );
+  if (!redisCached) {
+    return null;
+  }
+
+  writeCachedPrivyAuthUser(privyUserId, redisCached);
+  return redisCached;
+}
+
+function writeCachedPrivyAuthUser(privyUserId: string, user: AuthResponseUser): void {
+  if (privyAuthUserCache.has(privyUserId)) {
+    privyAuthUserCache.delete(privyUserId);
+  }
+
+  if (privyAuthUserCache.size >= PRIVY_AUTH_USER_CACHE_MAX_ENTRIES) {
+    const oldestKey = privyAuthUserCache.keys().next().value;
+    if (typeof oldestKey === "string") {
+      privyAuthUserCache.delete(oldestKey);
+    }
+  }
+
+  privyAuthUserCache.set(privyUserId, {
+    user,
+    expiresAtMs: Date.now() + PRIVY_AUTH_USER_CACHE_TTL_MS,
+  });
+
+  void cacheSetJson(buildPrivyAuthUserRedisKey(privyUserId), {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    image: user.image,
+    walletAddress: user.walletAddress,
+    walletProvider: user.walletProvider,
+    username: user.username,
+    level: user.level,
+    xp: user.xp,
+    bio: user.bio,
+    isAdmin: user.isAdmin,
+    isVerified: user.isVerified,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: user.tradeFeeShareBps,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress,
+    createdAt: user.createdAt.toISOString(),
+  }, PRIVY_AUTH_USER_CACHE_TTL_MS);
+}
 const meResponseCache = new Map<
   string,
   {
@@ -1787,6 +1901,7 @@ app.post("/api/auth/privy-sync", async (c) => {
   const existingSession = c.get("session");
   let hasPrivyIdentityInput = false;
   let resolvedAuthUser: AuthResponseUser | null = null;
+  let cachedPrivyAuthUser: AuthResponseUser | null = null;
   try {
     const body = (await c.req
       .json()
@@ -1878,6 +1993,44 @@ app.post("/api/auth/privy-sync", async (c) => {
       return c.json({ error: { message: "privyUserId or privyIdToken is required", code: "INVALID_INPUT" } }, 400);
     }
 
+    if (typeof privyUserId === "string" && privyUserId.length > 0) {
+      cachedPrivyAuthUser = await readCachedPrivyAuthUser(privyUserId);
+      if (cachedPrivyAuthUser) {
+        resolvedAuthUser = cachedPrivyAuthUser;
+        writeCachedPrivyIdentity(privyCacheKey, {
+          userId: privyUserId,
+          email: cachedPrivyAuthUser.email,
+        });
+
+        const issuedAt = new Date();
+        const sessionToken = createSignedSessionToken({
+          userId: cachedPrivyAuthUser.id,
+          now: issuedAt,
+          user: buildSessionTokenUserClaims(cachedPrivyAuthUser),
+        });
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+        const userAgent = c.req.header("user-agent") ?? "unknown";
+
+        queueSessionRecordBestEffort({
+          sessionToken,
+          userId: cachedPrivyAuthUser.id,
+          expiresAt,
+          now: issuedAt,
+          ipAddress,
+          userAgent,
+        });
+
+        applySessionCookies(c, sessionToken);
+        primeMeResponseCacheFromAuthUser(cachedPrivyAuthUser);
+
+        return c.json({
+          token: sessionToken,
+          user: buildClientAuthUser(cachedPrivyAuthUser),
+        });
+      }
+    }
+
     // ── Fast path for returning users ──
     // Resolve by the deterministic synthetic Privy email first, then the verified
     // email if we have one. This keeps auth working even when older deployments
@@ -1924,6 +2077,7 @@ app.post("/api/auth/privy-sync", async (c) => {
           userId: privyUserId,
           email: reconciledFastPathUser.email,
         });
+        writeCachedPrivyAuthUser(privyUserId, reconciledFastPathUser);
 
         const issuedAt = new Date();
         const sessionToken = createSignedSessionToken({
@@ -2147,6 +2301,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     // Set canonical session cookie and clear stale legacy cookies.
     applySessionCookies(c, sessionToken);
     primeMeResponseCacheFromAuthUser(user);
+    writeCachedPrivyAuthUser(verifiedPrivyUserId, user);
 
     return c.json({
       token: sessionToken,
@@ -2154,7 +2309,10 @@ app.post("/api/auth/privy-sync", async (c) => {
     });
   } catch (error) {
     if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
-      const fallbackUser = resolvedAuthUser ?? (!hasPrivyIdentityInput ? toAuthResponseUserFromSessionUser(existingSession?.user) : null);
+      const fallbackUser =
+        resolvedAuthUser ??
+        cachedPrivyAuthUser ??
+        (!hasPrivyIdentityInput ? toAuthResponseUserFromSessionUser(existingSession?.user) : null);
       if (fallbackUser) {
         console.warn("[privy-sync] Database unavailable; reissuing signed session from existing auth state");
         const issuedAt = new Date();
