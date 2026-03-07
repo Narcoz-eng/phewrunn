@@ -522,6 +522,30 @@ function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
   });
 }
 
+function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    image: user.image,
+    walletAddress: user.walletAddress,
+    username: user.username,
+    level: user.level,
+    xp: user.xp,
+    bio: user.bio,
+    isAdmin: user.isAdmin,
+    isVerified: user.isVerified,
+    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: user.tradeFeeShareBps,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress,
+    createdAt: user.createdAt,
+  };
+}
+
+function primeMeResponseCacheFromAuthUser(user: AuthResponseUser): void {
+  writeCachedMeResponse(user.id, buildMeResponseUserFromAuthUser(user));
+}
+
 async function withTimeoutResult<T>(
   promise: Promise<T>,
   timeoutMs: number
@@ -1188,7 +1212,7 @@ const SESSION_RECORD_WRITE_TIMEOUT_MS = (() => {
   const raw = process.env.SESSION_RECORD_WRITE_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 1200 : 2500;
+  return process.env.NODE_ENV === "production" ? 450 : 1200;
 })();
 
 async function createSessionRecordBestEffort(params: {
@@ -1231,6 +1255,19 @@ async function createSessionRecordBestEffort(params: {
       `[auth/session] Session write exceeded ${SESSION_RECORD_WRITE_TIMEOUT_MS}ms; continuing without blocking sign-in`
     );
   }
+}
+
+function queueSessionRecordBestEffort(params: {
+  sessionToken: string;
+  userId: string;
+  expiresAt: Date;
+  now: Date;
+  ipAddress: string;
+  userAgent: string;
+}): void {
+  void createSessionRecordBestEffort(params).catch((error) => {
+    console.warn("[auth/session] Background session write scheduling failed", error);
+  });
 }
 
 const LEGACY_SESSION_COOKIE_NAMES = [
@@ -1546,7 +1583,7 @@ app.post("/api/auth/wallet", async (c) => {
     });
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-    await createSessionRecordBestEffort({
+    queueSessionRecordBestEffort({
       sessionToken,
       userId: user.id,
       expiresAt,
@@ -1557,6 +1594,7 @@ app.post("/api/auth/wallet", async (c) => {
 
     // Set canonical session cookie and clear stale legacy cookies.
     applySessionCookies(c, sessionToken);
+    primeMeResponseCacheFromAuthUser(user);
 
     return c.json({
       token: sessionToken,
@@ -1638,7 +1676,7 @@ app.post("/api/auth/privy-sync", async (c) => {
       const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
       const userAgent = c.req.header("user-agent") ?? "unknown";
 
-      await createSessionRecordBestEffort({
+      queueSessionRecordBestEffort({
         sessionToken,
         userId: sessionBackfillUser.id,
         expiresAt,
@@ -1648,7 +1686,7 @@ app.post("/api/auth/privy-sync", async (c) => {
       });
 
       applySessionCookies(c, sessionToken);
-      clearCachedMeResponse(sessionBackfillUser.id);
+      primeMeResponseCacheFromAuthUser(sessionBackfillUser);
 
       return c.json({
         token: sessionToken,
@@ -1754,7 +1792,7 @@ app.post("/api/auth/privy-sync", async (c) => {
             const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
             const userAgent = c.req.header("user-agent") ?? "unknown";
 
-            await createSessionRecordBestEffort({
+            queueSessionRecordBestEffort({
               sessionToken,
               userId: reconciledFastPathUser.id,
               expiresAt,
@@ -1764,7 +1802,7 @@ app.post("/api/auth/privy-sync", async (c) => {
             });
 
             applySessionCookies(c, sessionToken);
-            clearCachedMeResponse(reconciledFastPathUser.id);
+            primeMeResponseCacheFromAuthUser(reconciledFastPathUser);
 
             return c.json({
               token: sessionToken,
@@ -2076,7 +2114,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "unknown";
 
-    await createSessionRecordBestEffort({
+    queueSessionRecordBestEffort({
       sessionToken,
       userId: user.id,
       expiresAt,
@@ -2087,7 +2125,7 @@ app.post("/api/auth/privy-sync", async (c) => {
 
     // Set canonical session cookie and clear stale legacy cookies.
     applySessionCookies(c, sessionToken);
-    clearCachedMeResponse(user.id);
+    primeMeResponseCacheFromAuthUser(user);
 
     return c.json({
       token: sessionToken,
@@ -2108,7 +2146,7 @@ app.post("/api/auth/privy-sync", async (c) => {
         const ipAddress = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
         const userAgent = c.req.header("user-agent") ?? "unknown";
 
-        await createSessionRecordBestEffort({
+        queueSessionRecordBestEffort({
           sessionToken,
           userId: fallbackUser.id,
           expiresAt,
@@ -2118,7 +2156,7 @@ app.post("/api/auth/privy-sync", async (c) => {
         });
 
         applySessionCookies(c, sessionToken);
-        clearCachedMeResponse(fallbackUser.id);
+        primeMeResponseCacheFromAuthUser(fallbackUser);
 
         return c.json({
           token: sessionToken,
@@ -2262,6 +2300,10 @@ app.get("/api/me", async (c) => {
     session.session.id.startsWith("stateless:");
 
   try {
+    const primaryLookupTimeoutMs = sessionIsStatelessFallback
+      ? Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 700)
+      : ME_DB_LOOKUP_TIMEOUT_MS;
+
     // Fetch full user data from database
     let fullLookup = await withTimeoutResult(
       prisma.user.findUnique({
@@ -2284,10 +2326,10 @@ app.get("/api/me", async (c) => {
           createdAt: true,
         },
       }),
-      ME_DB_LOOKUP_TIMEOUT_MS
+      primaryLookupTimeoutMs
     );
 
-    if (fullLookup.timedOut) {
+    if (fullLookup.timedOut && !sessionIsStatelessFallback) {
       const retryTimeoutMs = Math.min(ME_DB_LOOKUP_TIMEOUT_MS + 1200, 5000);
       fullLookup = await withTimeoutResult(
         prisma.user.findUnique({
@@ -2317,6 +2359,10 @@ app.get("/api/me", async (c) => {
           `[/api/me] User lookup exceeded ${ME_DB_LOOKUP_TIMEOUT_MS}ms (+retry ${retryTimeoutMs}ms); serving fallback`
         );
       }
+    } else if (fullLookup.timedOut) {
+      console.warn(
+        `[/api/me] Stateless session lookup exceeded ${primaryLookupTimeoutMs}ms; serving session-backed fallback`
+      );
     }
 
     if (!fullLookup.timedOut) {

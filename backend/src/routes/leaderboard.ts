@@ -30,7 +30,7 @@ type TopUsersResponsePayload = {
 const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 10_000;
 const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 15_000;
 const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
-const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_500 : 6_000;
+const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 6_000;
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
 let leaderboardCacheVersionMemory = 1;
 let leaderboardCacheVersionReadCache: { value: number; expiresAtMs: number } | null = null;
@@ -38,6 +38,7 @@ let leaderboardCacheVersionReadCache: { value: number; expiresAtMs: number } | n
 let dailyGainersCache: CacheEntry<Array<unknown>> | null = null;
 let dailyGainersInFlight: Promise<Array<unknown>> | null = null;
 const topUsersCache = new Map<string, CacheEntry<TopUsersResponsePayload>>();
+const topUsersInFlight = new Map<string, Promise<TopUsersResponsePayload>>();
 let statsCache: CacheEntry<unknown> | null = null;
 let statsInFlight: Promise<unknown> | null = null;
 
@@ -380,13 +381,29 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     return c.json(redisCached);
   }
   const staleCached = cached?.data ?? null;
+  const inFlight = topUsersInFlight.get(topUsersCacheKey);
+  if (inFlight) {
+    try {
+      const data = await inFlight;
+      return c.json(data);
+    } catch (error) {
+      logLeaderboardFallback(`top-users/in-flight:${sortBy}`, error, Boolean(staleCached));
+      if (staleCached) {
+        return c.json(staleCached);
+      }
+      return c.json(
+        { error: { message: "Leaderboard is temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
+        503
+      );
+    }
+  }
   const skip = (page - 1) * limit;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   // Minimum posts required for win rate ranking
   const MIN_POSTS_FOR_WINRATE = 5;
   try {
-    const responsePayload = await withLeaderboardTimeout((async (): Promise<TopUsersResponsePayload> => {
+    const responsePromise = withLeaderboardTimeout((async (): Promise<TopUsersResponsePayload> => {
       if (sortBy === "activity") {
         const recentPostsByUser = await withLeaderboardTimeout(
           prisma.post.groupBy({
@@ -679,6 +696,8 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
         },
       };
     })(), "leaderboard.top-users");
+    topUsersInFlight.set(topUsersCacheKey, responsePromise);
+    const responsePayload = await responsePromise;
 
     topUsersCache.set(topUsersCacheKey, {
       data: responsePayload,
@@ -695,6 +714,8 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       { error: { message: "Leaderboard is temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
       503
     );
+  } finally {
+    topUsersInFlight.delete(topUsersCacheKey);
   }
 });
 

@@ -44,14 +44,14 @@ const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
-const SESSION_FETCH_TIMEOUT_MS = 8000;
-const SIGN_OUT_TIMEOUT_MS = 2500;
+const SESSION_FETCH_TIMEOUT_MS = 4500;
+const SIGN_OUT_TIMEOUT_MS = 1500;
 const AUTH_SESSION_RETRY_DELAY_MS = 300;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
-const PRIVY_SYNC_TIMEOUT_MS = 18_000;
-const PRIVY_SYNC_RETRY_DELAYS_MS = [300, 900, 1800] as const;
+const PRIVY_SYNC_TIMEOUT_MS = 9_000;
+const PRIVY_SYNC_RETRY_DELAYS_MS = [200, 500, 1200] as const;
 const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
@@ -63,7 +63,7 @@ const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
 const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
 const AUTH_PRIVY_SYNC_FAILURE_EVENT = "phew:auth-privy-sync-failure";
-const EXPLICIT_LOGOUT_COOLDOWN_MS = 12_000;
+const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
 
 type PrivySyncFailureSnapshot = {
   message: string;

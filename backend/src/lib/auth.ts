@@ -439,13 +439,17 @@ async function getSessionFromSignedToken(token: string): Promise<SessionRecord |
   if (!verified) return null;
   if (await isSignedSessionTokenRevoked(verified)) return null;
 
-  const userLookup = await findSessionUserByIdWithFallback(verified.userId);
-  let resolvedUser: SessionRecord["user"] | null = null;
+  let resolvedUser: SessionRecord["user"] | null = verified.userClaims
+    ? buildSessionUserFromTokenClaims(verified.userId, verified.userClaims)
+    : null;
 
-  if (userLookup.status === "found") {
-    resolvedUser = userLookup.user;
-  } else if (userLookup.status === "unavailable" && verified.userClaims) {
-    resolvedUser = buildSessionUserFromTokenClaims(verified.userId, verified.userClaims);
+  if (!resolvedUser) {
+    const userLookup = await findSessionUserByIdWithFallback(verified.userId);
+    if (userLookup.status === "found") {
+      resolvedUser = userLookup.user;
+    } else if (userLookup.status === "unavailable" && verified.userClaims) {
+      resolvedUser = buildSessionUserFromTokenClaims(verified.userId, verified.userClaims);
+    }
   }
 
   if (!resolvedUser) return null;
@@ -506,6 +510,11 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
       }
       return await getSessionFromSignedToken(token);
     };
+
+    if (verifiedSignedToken) {
+      const signedSession = await getSessionFromSignedToken(token);
+      return cacheAndReturn(signedSession);
+    }
 
     if (sessionStoreUnavailableUntilMs > Date.now()) {
       const fallback = await resolveSignedFallback();

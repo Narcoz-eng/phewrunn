@@ -18,7 +18,7 @@ import {
 } from "@/lib/privy-login-intent";
 import { toast } from "sonner";
 
-const LOGIN_SYNC_TIMEOUT_MS = 12_000;
+const LOGIN_SYNC_TIMEOUT_MS = 5_000;
 const AUTO_RESYNC_COOLDOWN_MS = 2_000;
 const AUTO_RESYNC_MAX_ATTEMPTS = 5;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
