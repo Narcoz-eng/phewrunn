@@ -9,7 +9,7 @@ import {
   startSessionMaintenance,
   type AuthVariables,
 } from "./auth.js";
-import { prisma, withPrismaRetry } from "./prisma.js";
+import { prisma, withPrismaRetry, ensurePrismaReady } from "./prisma.js";
 import { postsRouter } from "./routes/posts.js";
 import { usersRouter } from "./routes/users.js";
 import { adminRouter } from "./routes/admin.js";
@@ -95,6 +95,17 @@ app.use(
     credentials: true,
   })
 );
+
+// 3.5. Prisma readiness gate - ensure DB is connected before serving API requests
+app.use("/api/*", async (c, next) => {
+  try {
+    await ensurePrismaReady();
+  } catch {
+    // Non-fatal: allow request through even if guardrails failed;
+    // individual route handlers have their own fallbacks
+  }
+  return next();
+});
 
 // 4. Input Sanitization - sanitize request bodies and query params
 app.use("/api/*", sanitizeBody());
@@ -418,7 +429,8 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
     normalizedMessage.includes("unknown field") ||
     (normalizedMessage.includes("column") && normalizedMessage.includes("does not exist")) ||
     (normalizedMessage.includes("table") && normalizedMessage.includes("does not exist")) ||
-    (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist"))
+    (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist")) ||
+    (normalizedMessage.includes("invalid") && normalizedMessage.includes("invocation"))
   );
 }
 
