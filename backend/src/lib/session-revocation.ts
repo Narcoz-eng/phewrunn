@@ -1,5 +1,5 @@
 import { prisma } from "../prisma.js";
-import { redisGetString, redisSetString } from "./redis.js";
+import { isRedisFastForHotPath, redisGetString, redisSetString } from "./redis.js";
 import type { VerifiedSignedSessionToken } from "./session-token.js";
 import { verifySignedSessionToken } from "./session-token.js";
 
@@ -12,6 +12,8 @@ const SESSION_REVOCATION_DB_ENABLED = (() => {
   return process.env.NODE_ENV === "production";
 })();
 const SESSION_REVOCATION_LOG_COOLDOWN_MS = 15_000;
+const SHOULD_READ_REVOCATIONS_FROM_REDIS =
+  !SESSION_REVOCATION_DB_ENABLED || isRedisFastForHotPath();
 
 const localRevokedSessionTokens = new Map<string, number>();
 let lastSessionRevocationDbWarningAt = 0;
@@ -128,10 +130,12 @@ export async function isSignedSessionTokenRevoked(
     return true;
   }
 
-  const redisHit = await redisGetString(getRevokedSessionKey(verified.jti)).catch(() => null);
-  if (redisHit) {
-    rememberRevokedSessionJti(verified.jti, verified.expiresAt.getTime());
-    return true;
+  if (SHOULD_READ_REVOCATIONS_FROM_REDIS) {
+    const redisHit = await redisGetString(getRevokedSessionKey(verified.jti)).catch(() => null);
+    if (redisHit) {
+      rememberRevokedSessionJti(verified.jti, verified.expiresAt.getTime());
+      return true;
+    }
   }
 
   const dbHit = await readSessionRevocationFromDatabase(verified.jti).catch((error) => {

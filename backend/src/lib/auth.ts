@@ -192,6 +192,7 @@ const SESSION_CACHE_MISS_TTL_MS = 300;
 const SESSION_CACHE_MAX_ENTRIES = 10_000;
 const SESSION_STORE_CIRCUIT_OPEN_MS = 30_000;
 const SESSION_STORE_LOG_COOLDOWN_MS = 15_000;
+const SESSION_DB_FALLBACK_LOG_COOLDOWN_MS = 15_000;
 const SESSION_LOOKUP_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_200 : 2_000;
 type AuthLookupCompatibilityMode = "full" | "fallback" | "minimal";
 const AUTH_LOOKUP_COMPATIBILITY_ORDER: AuthLookupCompatibilityMode[] = [
@@ -201,6 +202,7 @@ const AUTH_LOOKUP_COMPATIBILITY_ORDER: AuthLookupCompatibilityMode[] = [
 ];
 let sessionStoreUnavailableUntilMs = 0;
 let sessionStoreLastWarningAtMs = 0;
+let signedTokenDbFallbackLastWarningAtMs = 0;
 let sessionUserLookupCompatibilityMode: AuthLookupCompatibilityMode = "full";
 let sessionRecordLookupCompatibilityMode: AuthLookupCompatibilityMode = "full";
 
@@ -451,6 +453,31 @@ function parseDateClaim(value: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function looksLikeSignedSessionToken(token: string): boolean {
+  if (!token.startsWith("v1.")) return false;
+  return token.split(".").length === 3;
+}
+
+function shouldCacheNullSessionResult(token: string): boolean {
+  // Fresh signed-cookie sessions can briefly race DB persistence or land on an
+  // instance with an old secret. Avoid sticky negative caching for those tokens.
+  return !looksLikeSignedSessionToken(token);
+}
+
+function logSignedTokenDbFallback(token: string): void {
+  if (!looksLikeSignedSessionToken(token)) {
+    return;
+  }
+  const now = Date.now();
+  if (now - signedTokenDbFallbackLastWarningAtMs < SESSION_DB_FALLBACK_LOG_COOLDOWN_MS) {
+    return;
+  }
+  signedTokenDbFallbackLastWarningAtMs = now;
+  console.warn(
+    "[auth] Signed session token required DB fallback; check AUTH_SESSION_TOKEN_SECRET consistency across instances"
+  );
+}
+
 function buildSessionUserFromTokenClaims(
   userId: string,
   claims: SessionTokenUserClaims | null
@@ -682,18 +709,26 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
   const lookupPromise = (async () => {
     const cacheAndReturn = (value: SessionRecord | null): SessionRecord | null => {
       // Evict oldest entry when cache is full
-      if (sessionCache.size >= SESSION_CACHE_MAX_ENTRIES && !sessionCache.has(token)) {
+      if (
+        value &&
+        sessionCache.size >= SESSION_CACHE_MAX_ENTRIES &&
+        !sessionCache.has(token)
+      ) {
         const oldestKey = sessionCache.keys().next().value;
         if (typeof oldestKey === "string") {
           sessionCache.delete(oldestKey);
         }
       }
-      sessionCache.set(token, {
-        value,
-        expiresAtMs: value
-          ? Math.min(Date.now() + SESSION_CACHE_TTL_MS, value.session.expiresAt.getTime())
-          : now + SESSION_CACHE_MISS_TTL_MS,
-      });
+      if (value || shouldCacheNullSessionResult(token)) {
+        sessionCache.set(token, {
+          value,
+          expiresAtMs: value
+            ? Math.min(Date.now() + SESSION_CACHE_TTL_MS, value.session.expiresAt.getTime())
+            : now + SESSION_CACHE_MISS_TTL_MS,
+        });
+      } else {
+        sessionCache.delete(token);
+      }
       return value;
     };
 
@@ -724,6 +759,9 @@ async function getSessionFromToken(token: string | null): Promise<SessionRecord 
       return cacheAndReturn(fallback);
     }
     const dbSession = dbSessionLookup.session;
+    if (!verifiedSignedToken) {
+      logSignedTokenDbFallback(token);
+    }
 
     if (!dbSession?.user || dbSession.expiresAt.getTime() <= Date.now()) {
       const signedTokenSession = await resolveSignedFallback();

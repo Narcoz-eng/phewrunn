@@ -51,7 +51,6 @@ const SESSION_COOKIE_PATTERN =
 const AUTH_ERROR_LOG_COOLDOWN_MS = 15_000;
 const authErrorLastLoggedAt = new Map<string, number>();
 const SESSION_CACHE_TTL_MS = 8_000;
-const SESSION_CACHE_MISS_TTL_MS = 300;
 const SESSION_CACHE_MAX_ENTRIES = 5_000;
 const sessionLookupCache = new Map<string, { expiresAt: number; session: AuthSession | null }>();
 
@@ -200,11 +199,11 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
       }
 
       if (cacheKey) {
-        writeCachedSession(
-          cacheKey,
-          session?.user ? session : null,
-          session?.user ? SESSION_CACHE_TTL_MS : SESSION_CACHE_MISS_TTL_MS
-        );
+        if (session?.user) {
+          writeCachedSession(cacheKey, session, SESSION_CACHE_TTL_MS);
+        } else {
+          sessionLookupCache.delete(cacheKey);
+        }
       }
     }
 

@@ -1701,11 +1701,13 @@ async function createSessionRecord(params: {
   console.warn("[auth/session] Session store unavailable; continuing with signed stateless token fallback");
 }
 
+type SessionRecordWriteOutcome = "written" | "timed_out" | "failed";
+
 const SESSION_RECORD_WRITE_TIMEOUT_MS = (() => {
   const raw = process.env.SESSION_RECORD_WRITE_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 450 : 1200;
+  return process.env.NODE_ENV === "production" ? 1500 : 1200;
 })();
 
 async function createSessionRecordBestEffort(params: {
@@ -1715,7 +1717,7 @@ async function createSessionRecordBestEffort(params: {
   now: Date;
   ipAddress: string;
   userAgent: string;
-}): Promise<void> {
+}): Promise<SessionRecordWriteOutcome> {
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -1730,10 +1732,10 @@ async function createSessionRecordBestEffort(params: {
       return "failed" as const;
     });
 
-  const timeoutPromise = new Promise<"timeout">((resolve) => {
+  const timeoutPromise = new Promise<"timed_out">((resolve) => {
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      resolve("timeout");
+      resolve("timed_out");
     }, SESSION_RECORD_WRITE_TIMEOUT_MS);
   });
 
@@ -1743,11 +1745,12 @@ async function createSessionRecordBestEffort(params: {
     clearTimeout(timeoutHandle);
   }
 
-  if (outcome === "timeout") {
+  if (outcome === "timed_out") {
     console.warn(
       `[auth/session] Session write exceeded ${SESSION_RECORD_WRITE_TIMEOUT_MS}ms; continuing without blocking sign-in`
     );
   }
+  return outcome;
 }
 
 function queueSessionRecordBestEffort(params: {
@@ -1768,6 +1771,10 @@ const LEGACY_SESSION_COOKIE_NAMES = [
   "auth.session_token",
   "session_token",
 ] as const;
+const SESSION_COOKIE_NAME = "phew.session_token";
+const SESSION_COOKIE_PATH = "/";
+const SESSION_COOKIE_SAME_SITE = "Lax";
+const SESSION_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 function buildSessionCookie(params: {
   name: string;
@@ -1778,9 +1785,9 @@ function buildSessionCookie(params: {
 }): string {
   return [
     `${params.name}=${params.value}`,
-    "Path=/",
+    `Path=${SESSION_COOKIE_PATH}`,
     "HttpOnly",
-    "SameSite=Lax",
+    `SameSite=${SESSION_COOKIE_SAME_SITE}`,
     `Max-Age=${params.maxAgeSeconds}`,
     params.domain ? `Domain=${params.domain}` : "",
     params.secure ? "Secure" : "",
@@ -1799,10 +1806,10 @@ function applySessionCookies(c: Context, sessionToken: string): void {
   // Set the canonical session cookie last so it wins within the response.
   cookies.push(
     buildSessionCookie({
-      name: "phew.session_token",
+      name: SESSION_COOKIE_NAME,
       value: sessionToken,
       domain: cookieDomain ?? undefined,
-      maxAgeSeconds: 7 * 24 * 60 * 60,
+      maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
       secure: isProd,
     })
   );
@@ -1812,7 +1819,28 @@ function applySessionCookies(c: Context, sessionToken: string): void {
   });
 }
 
-function issueAuthSessionResponse(
+function logIssuedSessionCookie(
+  c: Context,
+  userId: string,
+  sessionRecordWriteOutcome: SessionRecordWriteOutcome
+): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
+  console.info("[auth/session] Issued session cookie", {
+    host: c.req.header("host") ?? null,
+    userId,
+    cookieName: SESSION_COOKIE_NAME,
+    domain: cookieDomain ?? null,
+    path: SESSION_COOKIE_PATH,
+    httpOnly: true,
+    secure: isProd,
+    sameSite: SESSION_COOKIE_SAME_SITE,
+    maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
+    sessionRecordWriteOutcome,
+  });
+}
+
+async function issueAuthSessionResponse(
   c: Context,
   user: AuthResponseUser,
   now = new Date()
@@ -1824,7 +1852,7 @@ function issueAuthSessionResponse(
   });
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  queueSessionRecordBestEffort({
+  const sessionRecordWriteOutcome = await createSessionRecordBestEffort({
     sessionToken,
     userId: user.id,
     expiresAt,
@@ -1834,6 +1862,7 @@ function issueAuthSessionResponse(
   });
 
   applySessionCookies(c, sessionToken);
+  logIssuedSessionCookie(c, user.id, sessionRecordWriteOutcome);
   primeMeResponseCacheFromAuthUser(user);
 
   return c.json({

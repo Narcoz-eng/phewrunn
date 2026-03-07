@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 function normalizeBooleanEnv(value: unknown): unknown {
@@ -130,6 +131,10 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
         : "External database",
     PRIVY_APP_ID: `${parsed.PRIVY_APP_ID.substring(0, 8)}...`,
     AUTH_SESSION_TOKEN_SECRET: "configured",
+    AUTH_SESSION_TOKEN_SECRET_FINGERPRINT: createHash("sha256")
+      .update(parsed.AUTH_SESSION_TOKEN_SECRET)
+      .digest("hex")
+      .slice(0, 12),
     DEBUG: parsed.DEBUG,
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",

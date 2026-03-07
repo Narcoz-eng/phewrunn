@@ -371,6 +371,12 @@ export function isRedisFastForRateLimiting(): boolean {
   return hasUpstashConfig();
 }
 
+// Per-request auth/session checks should avoid opening a fresh TCP socket on every
+// request. Treat Upstash REST as the only fast-enough distributed backend here.
+export function isRedisFastForHotPath(): boolean {
+  return hasUpstashConfig();
+}
+
 export async function redisGetString(key: string): Promise<string | null> {
   const result = await redisCommand<unknown>(["GET", key]);
   if (result == null) return null;
