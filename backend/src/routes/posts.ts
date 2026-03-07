@@ -155,12 +155,27 @@ const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 :
 const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
 const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
 const FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX = "posts:feed:shared:v1";
+const FEED_CARD_SNAPSHOT_TTL_MS = process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
+const FEED_CARD_SNAPSHOT_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 16_000 : 2_000;
+const FEED_DEGRADED_CIRCUIT_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 15_000;
 const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
 const POST_PRICE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 20 * 60_000 : 5 * 60_000;
 const POST_PRICE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 40_000 : 4_000;
 const POST_PRICE_REDIS_KEY_PREFIX = "posts:price:v1";
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
+const FEED_ENABLE_LIVE_SHARED_ALPHA = (() => {
+  const raw = process.env.FEED_ENABLE_LIVE_SHARED_ALPHA?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return process.env.NODE_ENV !== "production";
+})();
+const FEED_ENABLE_LIVE_WALLET_ENRICHMENT = (() => {
+  const raw = process.env.FEED_ENABLE_LIVE_WALLET_ENRICHMENT?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return process.env.NODE_ENV !== "production";
+})();
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
 const MARKET_REFRESH_MAX_CONTRACTS_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 8;
@@ -176,6 +191,14 @@ const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "produ
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
+const sharedAlphaWarmInFlight = new Map<string, Promise<void>>();
+const feedCardSnapshotCache = new Map<
+  string,
+  {
+    snapshot: Record<string, unknown>;
+    expiresAtMs: number;
+  }
+>();
 const feedResponseCache = new Map<
   string,
   {
@@ -201,6 +224,11 @@ const postPriceResponseCache = new Map<
   }
 >();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
+let feedDegradedCircuitState: {
+  openUntilMs: number;
+  openedAtMs: number;
+  reason: string;
+} | null = null;
 const opportunisticMaintenanceEnabled = (() => {
   const raw = process.env.POSTS_ENABLE_OPPORTUNISTIC_MAINTENANCE?.trim().toLowerCase();
   if (raw === "true") return true;
@@ -283,6 +311,81 @@ function buildFeedSharedResponseCacheKey(params: {
   ].join(":");
 }
 
+function isFeedDegradedCircuitOpen(): boolean {
+  if (!feedDegradedCircuitState) return false;
+  if (feedDegradedCircuitState.openUntilMs > Date.now()) {
+    return true;
+  }
+  feedDegradedCircuitState = null;
+  return false;
+}
+
+function openFeedDegradedCircuit(reason: string, error?: unknown): void {
+  const now = Date.now();
+  feedDegradedCircuitState = {
+    openUntilMs: now + FEED_DEGRADED_CIRCUIT_TTL_MS,
+    openedAtMs: now,
+    reason,
+  };
+  console.warn("[posts/feed] degraded-mode circuit opened", {
+    reason,
+    untilMs: feedDegradedCircuitState.openUntilMs,
+    message: getErrorMessage(error),
+  });
+}
+
+function clearFeedDegradedCircuit(): void {
+  if (!feedDegradedCircuitState) return;
+  feedDegradedCircuitState = null;
+}
+
+function sanitizeFeedCardSnapshot(item: unknown): Record<string, unknown> | null {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return null;
+  }
+
+  const record = { ...(item as Record<string, unknown>) };
+  if (typeof record.id !== "string" || record.id.length === 0) {
+    return null;
+  }
+
+  if ("isLiked" in record) record.isLiked = false;
+  if ("isReposted" in record) record.isReposted = false;
+  if ("isFollowingAuthor" in record) record.isFollowingAuthor = false;
+  if ("walletTradeSnapshot" in record) {
+    delete record.walletTradeSnapshot;
+  }
+
+  return record;
+}
+
+function writeFeedCardSnapshots(items: unknown[]): void {
+  const nowMs = Date.now();
+  for (const item of items) {
+    const snapshot = sanitizeFeedCardSnapshot(item);
+    if (!snapshot) continue;
+    trimFeedCardSnapshotCache();
+    feedCardSnapshotCache.set(String(snapshot.id), {
+      snapshot,
+      expiresAtMs: nowMs + FEED_CARD_SNAPSHOT_TTL_MS,
+    });
+  }
+}
+
+function readFeedCardSnapshot(postId: string): Record<string, unknown> | null {
+  const cached = feedCardSnapshotCache.get(postId);
+  if (!cached) return null;
+  if (cached.expiresAtMs > Date.now()) {
+    return { ...cached.snapshot };
+  }
+  feedCardSnapshotCache.delete(postId);
+  return null;
+}
+
+function hydrateFeedPostsFromSnapshots<T extends { id: string }>(posts: T[]): Array<T | Record<string, unknown>> {
+  return posts.map((post) => readFeedCardSnapshot(post.id) ?? post);
+}
+
 function readFeedResponseFromCache(
   cacheMap: Map<
     string,
@@ -306,6 +409,16 @@ function readFeedResponseFromCache(
 
 function buildFeedSharedRedisKey(key: string): string {
   return `${FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX}:${key}`;
+}
+
+function trimFeedCardSnapshotCache(): void {
+  while (feedCardSnapshotCache.size >= FEED_CARD_SNAPSHOT_MAX_ENTRIES) {
+    const oldestKey = feedCardSnapshotCache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    feedCardSnapshotCache.delete(oldestKey);
+  }
 }
 
 function trimPostPriceCache(): void {
@@ -501,6 +614,7 @@ function writeFeedResponseToCache(
   payload: FeedResponsePayload
 ): void {
   const nowMs = Date.now();
+  writeFeedCardSnapshots(payload.data);
   cacheMap.set(key, {
     payload,
     expiresAtMs: nowMs + FEED_RESPONSE_CACHE_TTL_MS,
@@ -668,6 +782,259 @@ async function loadEmergencyFeedPosts(
       reposts: 0,
     },
   }));
+}
+
+async function loadPrimaryFeedPosts(
+  feedFindManyBase: Record<string, unknown>
+): Promise<any[]> {
+  try {
+    return await withFeedTimeout(
+      withPrismaRetry(
+        () =>
+          prisma.post.findMany({
+            ...(feedFindManyBase as Record<string, unknown>),
+            select: {
+              id: true,
+              content: true,
+              authorId: true,
+              contractAddress: true,
+              chainType: true,
+              tokenName: true,
+              tokenSymbol: true,
+              tokenImage: true,
+              entryMcap: true,
+              currentMcap: true,
+              mcap1h: true,
+              mcap6h: true,
+              settled: true,
+              settledAt: true,
+              isWin: true,
+              isWin1h: true,
+              isWin6h: true,
+              percentChange1h: true,
+              percentChange6h: true,
+              createdAt: true,
+              viewCount: true,
+              dexscreenerUrl: true,
+              lastMcapUpdate: true,
+              trackingMode: true,
+              author: {
+                select: {
+                  id: true,
+                  name: true,
+                  username: true,
+                  image: true,
+                  walletAddress: true,
+                  level: true,
+                  xp: true,
+                  isVerified: true,
+                },
+              },
+              _count: {
+                select: {
+                  likes: true,
+                  comments: true,
+                  reposts: true,
+                },
+              },
+            },
+          } as any),
+        {
+          label: "posts:feed-primary",
+          maxRetries: 0,
+        }
+      ),
+      "primary_posts_query"
+    );
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+
+    console.warn("[posts/feed] schema drift detected; using compatibility select");
+    try {
+      return await withFeedTimeout(
+        prisma.post.findMany({
+          ...(feedFindManyBase as Record<string, unknown>),
+          select: {
+            id: true,
+            content: true,
+            authorId: true,
+            contractAddress: true,
+            chainType: true,
+            tokenName: true,
+            tokenSymbol: true,
+            tokenImage: true,
+            entryMcap: true,
+            currentMcap: true,
+            mcap1h: true,
+            mcap6h: true,
+            settled: true,
+            settledAt: true,
+            isWin: true,
+            isWin1h: true,
+            isWin6h: true,
+            percentChange1h: true,
+            percentChange6h: true,
+            createdAt: true,
+            viewCount: true,
+            dexscreenerUrl: true,
+            author: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                walletAddress: true,
+                level: true,
+                xp: true,
+                isVerified: true,
+              },
+            },
+            _count: {
+              select: {
+                likes: true,
+                comments: true,
+                reposts: true,
+              },
+            },
+          },
+        } as any),
+        "compat_posts_query"
+      );
+    } catch (fallbackError) {
+      if (!isPrismaSchemaDriftError(fallbackError)) {
+        throw fallbackError;
+      }
+
+      console.warn("[posts/feed] legacy compatibility select engaged");
+      try {
+        const legacyPosts = (await withFeedTimeout(
+          prisma.post.findMany({
+            ...(feedFindManyBase as Record<string, unknown>),
+            select: {
+              id: true,
+              content: true,
+              authorId: true,
+              contractAddress: true,
+              chainType: true,
+              entryMcap: true,
+              currentMcap: true,
+              settled: true,
+              settledAt: true,
+              isWin: true,
+              createdAt: true,
+              author: {
+                select: {
+                  id: true,
+                  name: true,
+                  username: true,
+                  image: true,
+                  level: true,
+                  xp: true,
+                },
+              },
+            },
+          } as any),
+          "legacy_posts_query"
+        )) as any[];
+        return legacyPosts.map((post) => ({
+          ...post,
+          tokenName: null,
+          tokenSymbol: null,
+          tokenImage: null,
+          mcap1h: null,
+          mcap6h: null,
+          isWin1h: null,
+          isWin6h: null,
+          percentChange1h: null,
+          percentChange6h: null,
+          viewCount: 0,
+          dexscreenerUrl: null,
+          lastMcapUpdate: null,
+          trackingMode: null,
+          author: {
+            ...post.author,
+            walletAddress: null,
+            isVerified: false,
+          },
+          _count: {
+            likes: 0,
+            comments: 0,
+            reposts: 0,
+          },
+        }));
+      } catch (legacyError) {
+        if (!isPrismaSchemaDriftError(legacyError)) {
+          throw legacyError;
+        }
+
+        console.warn("[posts/feed] ultra-legacy compatibility select engaged");
+        const minimalPosts = (await withFeedTimeout(
+          prisma.post.findMany({
+            ...(feedFindManyBase as Record<string, unknown>),
+            select: {
+              id: true,
+              content: true,
+              authorId: true,
+              createdAt: true,
+              author: {
+                select: {
+                  id: true,
+                  name: true,
+                  image: true,
+                },
+              },
+            },
+          } as any),
+          "ultra_legacy_posts_query"
+        )) as any[];
+        return minimalPosts.map((post) => ({
+          ...post,
+          contractAddress: null,
+          chainType: null,
+          entryMcap: null,
+          currentMcap: null,
+          settled: false,
+          settledAt: null,
+          isWin: null,
+          tokenName: null,
+          tokenSymbol: null,
+          tokenImage: null,
+          mcap1h: null,
+          mcap6h: null,
+          isWin1h: null,
+          isWin6h: null,
+          percentChange1h: null,
+          percentChange6h: null,
+          viewCount: 0,
+          dexscreenerUrl: null,
+          lastMcapUpdate: null,
+          trackingMode: null,
+          author: {
+            ...post.author,
+            username: null,
+            walletAddress: null,
+            level: 0,
+            xp: 0,
+            isVerified: false,
+          },
+          _count: {
+            likes: 0,
+            comments: 0,
+            reposts: 0,
+          },
+        }));
+      }
+    }
+  }
+}
+
+async function loadDegradedFeedPosts(
+  feedFindManyBase: Record<string, unknown>
+): Promise<any[]> {
+  const minimalPosts = await loadEmergencyFeedPosts(feedFindManyBase);
+  return hydrateFeedPostsFromSnapshots(minimalPosts) as any[];
 }
 
 function toFiniteNumber(value: unknown, fallback = 0): number {
@@ -987,11 +1354,70 @@ function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedSharedResponseCache.clear();
   feedMcapCache.clear();
   sharedAlphaAuthorCache.clear();
+  sharedAlphaWarmInFlight.clear();
+  feedCardSnapshotCache.clear();
   trendingCache = null;
   trendingInFlight = null;
 
   if (options?.leaderboard) {
     invalidateLeaderboardCaches();
+  }
+}
+
+function queueSharedAlphaAuthorWarmup(contractAddresses: string[], fromDate: Date): void {
+  const addressesToWarm = [...new Set(contractAddresses.filter((value) => value.length > 0))];
+  if (addressesToWarm.length === 0) return;
+
+  const pendingAddresses = addressesToWarm.filter((contractAddress) => {
+    const cached = sharedAlphaAuthorCache.get(contractAddress);
+    if (cached && cached.expiresAtMs > Date.now()) {
+      return false;
+    }
+    return !sharedAlphaWarmInFlight.has(contractAddress);
+  });
+
+  if (pendingAddresses.length === 0) return;
+
+  const warmPromise = (async () => {
+    try {
+      const rows = await prisma.post.findMany({
+        where: {
+          contractAddress: { in: pendingAddresses },
+          createdAt: { gte: fromDate },
+        },
+        select: {
+          contractAddress: true,
+          authorId: true,
+        },
+      });
+
+      const nextMap = new Map<string, Set<string>>();
+      for (const contractAddress of pendingAddresses) {
+        nextMap.set(contractAddress, new Set<string>());
+      }
+      for (const row of rows) {
+        if (!row.contractAddress) continue;
+        nextMap.get(row.contractAddress)?.add(row.authorId);
+      }
+
+      const expiresAtMs = Date.now() + SHARED_ALPHA_CACHE_TTL_MS;
+      for (const [contractAddress, authorIds] of nextMap) {
+        sharedAlphaAuthorCache.set(contractAddress, { authorIds, expiresAtMs });
+      }
+    } catch (error) {
+      console.warn("[posts/feed] shared alpha warmup skipped after query failure", {
+        contractAddresses: pendingAddresses,
+        message: getErrorMessage(error),
+      });
+    } finally {
+      for (const contractAddress of pendingAddresses) {
+        sharedAlphaWarmInFlight.delete(contractAddress);
+      }
+    }
+  })();
+
+  for (const contractAddress of pendingAddresses) {
+    sharedAlphaWarmInFlight.set(contractAddress, warmPromise);
   }
 }
 const JUPITER_QUOTE_URLS = [
@@ -1207,6 +1633,10 @@ function isPrismaPoolPressureError(error: unknown): boolean {
     normalizedMessage.includes("too many connections") ||
     normalizedMessage.includes("remaining connection slots are reserved")
   );
+}
+
+function isFeedCircuitBreakerError(error: unknown): boolean {
+  return isFeedTimeoutError(error) || isPrismaPoolPressureError(error);
 }
 
 function logFeedQueryFailure(
@@ -2922,18 +3352,23 @@ postsRouter.get("/", async (c) => {
     cursor,
     search,
   });
-  const respondWithFeedCacheFallback = async (error: unknown) => {
+  let feedDegradedMode = isFeedDegradedCircuitOpen();
+  const readStaleFeedPayload = async (): Promise<FeedResponsePayload | null> => {
     const nowMs = Date.now();
     const redisSharedFallback =
       !following ? await readSharedFeedResponseFromRedis(sharedFeedCacheKey) : null;
-    const stalePayload =
+    return (
       readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs, { allowStale: true }) ??
       ((!following)
         ? readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs, {
             allowStale: true,
           }) ??
           redisSharedFallback
-        : null);
+        : null)
+    );
+  };
+  const respondWithFeedCacheFallback = async (error: unknown) => {
+    const stalePayload = await readStaleFeedPayload();
     console.warn("[posts/feed] falling back to cached payload after database error", {
       sort,
       following,
@@ -2972,9 +3407,16 @@ postsRouter.get("/", async (c) => {
     }
   }
 
+  if (feedDegradedMode && !cursor) {
+    const stalePayload = await readStaleFeedPayload();
+    if (stalePayload) {
+      return c.json(stalePayload);
+    }
+  }
+
   // Keep settlement/snapshot state progressing from organic traffic without running the full
   // market-refresh job on the feed path. Cron/manual maintenance handles the heavier updates.
-  if (!cursor && shouldRunOpportunisticMaintenance()) {
+  if (!feedDegradedMode && !cursor && shouldRunOpportunisticMaintenance()) {
     const reason = search
       ? `feed:${sort}:search`
       : following
@@ -3022,6 +3464,10 @@ postsRouter.get("/", async (c) => {
       console.warn("[posts/feed] follow query unavailable; using feed cache fallback", {
         message: error instanceof Error ? error.message : String(error),
       });
+      if (isFeedCircuitBreakerError(error)) {
+        feedDegradedMode = true;
+        openFeedDegradedCircuit("following_lookup", error);
+      }
       return await respondWithFeedCacheFallback(error);
     }
 
@@ -3080,14 +3526,14 @@ postsRouter.get("/", async (c) => {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchedPosts: any[] = [];
-  try {
-    fetchedPosts = await loadEmergencyFeedPosts(
-      feedFindManyBase as Record<string, unknown>
-    );
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+  if (feedDegradedMode) {
+    try {
+      fetchedPosts = await loadDegradedFeedPosts(
+        feedFindManyBase as Record<string, unknown>
+      );
+    } catch (error) {
       if (isPrismaClientError(error) || isFeedTimeoutError(error)) {
-        logFeedQueryFailure("emergency_minimal_posts_query", error, {
+        logFeedQueryFailure("degraded_snapshot_posts_query", error, {
           sort,
           following,
           cursor: cursor ?? null,
@@ -3097,217 +3543,61 @@ postsRouter.get("/", async (c) => {
             isFeedTimeoutError(error) || isPrismaPoolPressureError(error),
         });
         return await respondWithFeedCacheFallback(error);
-      } else {
+      }
+      throw error;
+    }
+  } else {
+    try {
+      fetchedPosts = await loadPrimaryFeedPosts(
+        feedFindManyBase as Record<string, unknown>
+      );
+      clearFeedDegradedCircuit();
+    } catch (error) {
+      if (!isPrismaClientError(error) && !isFeedTimeoutError(error)) {
         throw error;
       }
-    } else {
-      console.warn("[posts/feed] schema drift detected; using compatibility select");
+
+      logFeedQueryFailure("primary_posts_query", error, {
+        sort,
+        following,
+        cursor: cursor ?? null,
+        search: search ?? null,
+        userId: user?.id ?? null,
+        isPoolPressure:
+          isFeedTimeoutError(error) || isPrismaPoolPressureError(error),
+      });
+
+      if (!isFeedCircuitBreakerError(error)) {
+        return await respondWithFeedCacheFallback(error);
+      }
+
+      feedDegradedMode = true;
+      openFeedDegradedCircuit("primary_posts_query", error);
+
+      const stalePayload = !cursor ? await readStaleFeedPayload() : null;
+      if (stalePayload) {
+        return c.json(stalePayload);
+      }
+
       try {
-        fetchedPosts = await withFeedTimeout(
-          prisma.post.findMany({
-            ...(feedFindManyBase as Record<string, unknown>),
-            select: {
-              id: true,
-              content: true,
-              authorId: true,
-              contractAddress: true,
-              chainType: true,
-              tokenName: true,
-              tokenSymbol: true,
-              tokenImage: true,
-              entryMcap: true,
-              currentMcap: true,
-              mcap1h: true,
-              mcap6h: true,
-              settled: true,
-              settledAt: true,
-              isWin: true,
-              isWin1h: true,
-              isWin6h: true,
-              percentChange1h: true,
-              percentChange6h: true,
-              createdAt: true,
-              viewCount: true,
-              dexscreenerUrl: true,
-              author: {
-                select: {
-                  id: true,
-                  name: true,
-                  username: true,
-                  image: true,
-                  walletAddress: true,
-                  level: true,
-                  xp: true,
-                  isVerified: true,
-                },
-              },
-              _count: {
-                select: {
-                  likes: true,
-                  comments: true,
-                  reposts: true,
-                },
-              },
-            },
-          } as any),
-          "compat_posts_query"
+        fetchedPosts = await loadDegradedFeedPosts(
+          feedFindManyBase as Record<string, unknown>
         );
-      } catch (fallbackError) {
-        if (!isPrismaSchemaDriftError(fallbackError)) {
-          if (isPrismaClientError(fallbackError) || isFeedTimeoutError(fallbackError)) {
-            logFeedQueryFailure("compat_posts_query", fallbackError, {
-              sort,
-              following,
-              cursor: cursor ?? null,
-              search: search ?? null,
-              userId: user?.id ?? null,
-            });
-            return await respondWithFeedCacheFallback(fallbackError);
-          } else {
-            throw fallbackError;
-          }
-        } else {
-          console.warn("[posts/feed] legacy compatibility select engaged");
-          try {
-            const legacyPosts = (await withFeedTimeout(
-              prisma.post.findMany({
-                ...(feedFindManyBase as Record<string, unknown>),
-                select: {
-                  id: true,
-                  content: true,
-                  authorId: true,
-                  contractAddress: true,
-                  chainType: true,
-                  entryMcap: true,
-                  currentMcap: true,
-                  settled: true,
-                  settledAt: true,
-                  isWin: true,
-                  createdAt: true,
-                  author: {
-                    select: {
-                      id: true,
-                      name: true,
-                      username: true,
-                      image: true,
-                      level: true,
-                      xp: true,
-                    },
-                  },
-                },
-              } as any),
-              "legacy_posts_query"
-            )) as any[];
-            fetchedPosts = legacyPosts.map((post) => ({
-              ...post,
-              tokenName: null,
-              tokenSymbol: null,
-              tokenImage: null,
-              mcap1h: null,
-              mcap6h: null,
-              isWin1h: null,
-              isWin6h: null,
-              percentChange1h: null,
-              percentChange6h: null,
-              viewCount: 0,
-              dexscreenerUrl: null,
-              author: {
-                ...post.author,
-                walletAddress: null,
-                isVerified: false,
-              },
-              _count: {
-                likes: 0,
-                comments: 0,
-                reposts: 0,
-              },
-            }));
-          } catch (legacyError) {
-            if (!isPrismaSchemaDriftError(legacyError)) {
-              if (isPrismaClientError(legacyError) || isFeedTimeoutError(legacyError)) {
-                logFeedQueryFailure("legacy_posts_query", legacyError, {
-                  sort,
-                  following,
-                  cursor: cursor ?? null,
-                  search: search ?? null,
-                  userId: user?.id ?? null,
-                });
-                return await respondWithFeedCacheFallback(legacyError);
-              } else {
-                throw legacyError;
-              }
-            } else {
-              console.warn("[posts/feed] ultra-legacy compatibility select engaged");
-              try {
-                const minimalPosts = (await withFeedTimeout(
-                  prisma.post.findMany({
-                    ...(feedFindManyBase as Record<string, unknown>),
-                    select: {
-                      id: true,
-                      content: true,
-                      authorId: true,
-                      createdAt: true,
-                      author: {
-                        select: {
-                          id: true,
-                          name: true,
-                          image: true,
-                        },
-                      },
-                    },
-                  } as any),
-                  "ultra_legacy_posts_query"
-                )) as any[];
-                fetchedPosts = minimalPosts.map((post) => ({
-                  ...post,
-                  contractAddress: null,
-                  chainType: null,
-                  entryMcap: null,
-                  currentMcap: null,
-                  settled: false,
-                  settledAt: null,
-                  isWin: null,
-                  tokenName: null,
-                  tokenSymbol: null,
-                  tokenImage: null,
-                  mcap1h: null,
-                  mcap6h: null,
-                  isWin1h: null,
-                  isWin6h: null,
-                  percentChange1h: null,
-                  percentChange6h: null,
-                  viewCount: 0,
-                  dexscreenerUrl: null,
-                  author: {
-                    ...post.author,
-                    username: null,
-                    walletAddress: null,
-                    level: 0,
-                    xp: 0,
-                    isVerified: false,
-                  },
-                  _count: {
-                    likes: 0,
-                    comments: 0,
-                    reposts: 0,
-                  },
-                }));
-              } catch (minimalError) {
-                if (isPrismaClientError(minimalError) || isFeedTimeoutError(minimalError)) {
-                  logFeedQueryFailure("ultra_legacy_posts_query", minimalError, {
-                    sort,
-                    following,
-                    cursor: cursor ?? null,
-                    search: search ?? null,
-                    userId: user?.id ?? null,
-                  });
-                  return await respondWithFeedCacheFallback(minimalError);
-                }
-                throw minimalError;
-              }
-            }
-          }
+      } catch (degradedError) {
+        if (isPrismaClientError(degradedError) || isFeedTimeoutError(degradedError)) {
+          logFeedQueryFailure("degraded_snapshot_posts_query", degradedError, {
+            sort,
+            following,
+            cursor: cursor ?? null,
+            search: search ?? null,
+            userId: user?.id ?? null,
+            isPoolPressure:
+              isFeedTimeoutError(degradedError) ||
+              isPrismaPoolPressureError(degradedError),
+          });
+          return await respondWithFeedCacheFallback(degradedError);
         }
+        throw degradedError;
       }
     }
   }
@@ -3325,17 +3615,19 @@ postsRouter.get("/", async (c) => {
     return pagePosts;
   })();
 
-  triggerMaintenanceForStaleCandidates(
-    `feed:${sort}:${following ? "following" : "all"}`,
-    posts
-  );
+  if (!feedDegradedMode) {
+    triggerMaintenanceForStaleCandidates(
+      `feed:${sort}:${following ? "following" : "all"}`,
+      posts
+    );
+  }
 
   // Get user's likes and reposts for these posts
   let userLikes: Set<string> = new Set();
   let userReposts: Set<string> = new Set();
   let userFollowing: Set<string> = new Set();
 
-  if (user && posts.length > 0) {
+  if (!feedDegradedMode && user && posts.length > 0) {
     const postIds = posts.map((p) => p.id);
     const authorIds = [...new Set(posts.map((p) => p.authorId))];
 
@@ -3388,6 +3680,10 @@ postsRouter.get("/", async (c) => {
       console.warn("[posts/feed] social relation lookup unavailable; continuing without personalized flags", {
         message: error instanceof Error ? error.message : String(error),
       });
+      if (isFeedCircuitBreakerError(error)) {
+        feedDegradedMode = true;
+        openFeedDegradedCircuit("social_flags_query", error);
+      }
     }
   }
 
@@ -3467,7 +3763,7 @@ postsRouter.get("/", async (c) => {
   )];
 
   const sharedAlphaAuthorsByContract = new Map<string, Set<string>>();
-  if (contractAddresses.length > 0) {
+  if (!feedDegradedMode && contractAddresses.length > 0) {
     const nowMs = Date.now();
     const missingContracts: string[] = [];
 
@@ -3483,32 +3779,40 @@ postsRouter.get("/", async (c) => {
 
     if (missingContracts.length > 0) {
       let sharedAlphaCandidates: Array<{ contractAddress: string | null; authorId: string }> = [];
-      try {
-        sharedAlphaCandidates = await withFeedTimeout(
-          prisma.post.findMany({
-            where: {
-              contractAddress: { in: missingContracts },
-              createdAt: { gte: fortyEightHoursAgo },
-            },
-            select: {
-              contractAddress: true,
-              authorId: true,
-            },
-          }),
-          "shared_alpha_query",
-          FEED_SOCIAL_QUERY_TIMEOUT_MS
-        );
-      } catch (error) {
-        if (
-          !isPrismaSchemaDriftError(error) &&
-          !isPrismaClientError(error) &&
-          !isFeedTimeoutError(error)
-        ) {
-          throw error;
+      if (FEED_ENABLE_LIVE_SHARED_ALPHA) {
+        try {
+          sharedAlphaCandidates = await withFeedTimeout(
+            prisma.post.findMany({
+              where: {
+                contractAddress: { in: missingContracts },
+                createdAt: { gte: fortyEightHoursAgo },
+              },
+              select: {
+                contractAddress: true,
+                authorId: true,
+              },
+            }),
+            "shared_alpha_query",
+            FEED_SOCIAL_QUERY_TIMEOUT_MS
+          );
+        } catch (error) {
+          if (
+            !isPrismaSchemaDriftError(error) &&
+            !isPrismaClientError(error) &&
+            !isFeedTimeoutError(error)
+          ) {
+            throw error;
+          }
+          console.warn("[posts/feed] shared alpha enrichment unavailable; continuing without sharedAlphaCount", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          if (isFeedCircuitBreakerError(error)) {
+            feedDegradedMode = true;
+            openFeedDegradedCircuit("shared_alpha_query", error);
+          }
         }
-        console.warn("[posts/feed] shared alpha enrichment unavailable; continuing without sharedAlphaCount", {
-          message: error instanceof Error ? error.message : String(error),
-        });
+      } else {
+        queueSharedAlphaAuthorWarmup(missingContracts, fortyEightHoursAgo);
       }
 
       const fetchedAuthorsByContract = new Map<string, Set<string>>();
@@ -3537,7 +3841,11 @@ postsRouter.get("/", async (c) => {
   // Feed is intentionally read-only for market data/settlement updates.
   // Maintenance work is handled by a cron endpoint to keep request latency stable.
   const postsWithUpdatedMcap = postsWithSocial.map((post) => {
-    const postWithSharedAlpha = { ...post, sharedAlphaCount: 0 };
+    const existingSharedAlphaCount =
+      typeof (post as { sharedAlphaCount?: unknown }).sharedAlphaCount === "number"
+        ? Number((post as { sharedAlphaCount?: unknown }).sharedAlphaCount)
+        : 0;
+    const postWithSharedAlpha = { ...post, sharedAlphaCount: existingSharedAlphaCount };
 
     if (post.contractAddress) {
       const authorIds = sharedAlphaAuthorsByContract.get(post.contractAddress);
@@ -3552,16 +3860,23 @@ postsRouter.get("/", async (c) => {
     return postWithSharedAlpha;
   });
 
-  const postsWithWalletTrade = await withFeedTimeout(
-    attachWalletTradeSnapshots(postsWithUpdatedMcap),
-    "wallet_snapshot_enrichment",
-    FEED_ENRICH_TIMEOUT_MS
-  ).catch((error) => {
-    console.warn("[posts/feed] wallet trade enrichment unavailable; continuing with base feed payload", {
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return postsWithUpdatedMcap;
-  });
+  const postsWithWalletTrade =
+    !feedDegradedMode && FEED_ENABLE_LIVE_WALLET_ENRICHMENT
+      ? await withFeedTimeout(
+          attachWalletTradeSnapshots(postsWithUpdatedMcap),
+          "wallet_snapshot_enrichment",
+          FEED_ENRICH_TIMEOUT_MS
+        ).catch((error) => {
+          console.warn("[posts/feed] wallet trade enrichment unavailable; continuing with base feed payload", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          if (isFeedCircuitBreakerError(error)) {
+            feedDegradedMode = true;
+            openFeedDegradedCircuit("wallet_snapshot_enrichment", error);
+          }
+          return postsWithUpdatedMcap;
+        })
+      : postsWithUpdatedMcap;
   const responsePosts = postsWithWalletTrade.map((post) => {
     const { walletAddress: _walletAddress, ...publicAuthor } = post.author;
     return {

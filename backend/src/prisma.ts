@@ -128,9 +128,50 @@ function normalizeDatabaseUrl(
   }
 }
 
+function describeDatasourceRuntime(url: string | undefined): {
+  provider: "sqlite" | "postgresql";
+  host: string | null;
+  mode: "file" | "pooler" | "direct";
+  runtime: "serverless" | "long_lived";
+} | null {
+  if (!url) return null;
+  if (url.startsWith("file:")) {
+    return {
+      provider: "sqlite",
+      host: null,
+      mode: "file",
+      runtime: isServerlessRuntime ? "serverless" : "long_lived",
+    };
+  }
+
+  try {
+    const parsed = new URL(url);
+    return {
+      provider: "postgresql",
+      host: parsed.hostname || null,
+      mode: parsed.hostname.toLowerCase().includes(".pooler.") ? "pooler" : "direct",
+      runtime: isServerlessRuntime ? "serverless" : "long_lived",
+    };
+  } catch {
+    return {
+      provider: "postgresql",
+      host: null,
+      mode: "direct",
+      runtime: isServerlessRuntime ? "serverless" : "long_lived",
+    };
+  }
+}
+
 const normalizedDb = normalizeDatabaseUrl(process.env.DATABASE_URL, process.env.DIRECT_URL);
 if (normalizedDb.notes.length > 0) {
   console.warn(`[Prisma] Normalized DATABASE_URL for Supabase connection (${normalizedDb.notes.join(", ")})`);
+}
+const datasourceRuntime = describeDatasourceRuntime(normalizedDb.url ?? process.env.DATABASE_URL);
+if (datasourceRuntime) {
+  console.warn("[Prisma] Active datasource runtime", {
+    ...datasourceRuntime,
+    usedDirectUrlFallback: normalizedDb.notes.includes("using DIRECT_URL in non-serverless runtime"),
+  });
 }
 
 const prisma = new PrismaClient({
@@ -147,6 +188,9 @@ const isPostgres = !isSqlite;
 const SLOW_QUERY_THRESHOLD_MS =
   getPositiveIntEnv("PRISMA_SLOW_QUERY_THRESHOLD_MS") ??
   (isProduction ? 400 : 800);
+const PRISMA_OPERATION_WARN_MS =
+  getPositiveIntEnv("PRISMA_OPERATION_WARN_MS") ??
+  (isProduction ? 700 : 1_200);
 
 prisma.$on("query", (e: Prisma.QueryEvent) => {
   if (isProduction) {
@@ -193,6 +237,7 @@ async function initSqlitePragmas(prisma: PrismaClient) {
 // Keeps critical read/write paths alive until migrations are applied.
 async function initPostgresCompatColumns(prisma: PrismaClient) {
   const statements = [
+    `CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeRewardsEnabled" BOOLEAN NOT NULL DEFAULT true;`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeeShareBps" INTEGER NOT NULL DEFAULT 100;`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tradeFeePayoutAddress" TEXT;`,
@@ -239,6 +284,13 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
     `CREATE INDEX IF NOT EXISTS "Post_settled6h_createdAt_idx" ON "Post"("settled6h", "createdAt");`,
     `CREATE INDEX IF NOT EXISTS "Post_settled_isWin_idx" ON "Post"("settled", "isWin");`,
     `CREATE INDEX IF NOT EXISTS "Post_createdAt_entryMcap_idx" ON "Post"("createdAt", "entryMcap");`,
+    `CREATE INDEX IF NOT EXISTS "Post_createdAt_id_idx" ON "Post"("createdAt" DESC, "id" DESC);`,
+    `CREATE INDEX IF NOT EXISTS "Post_content_trgm_idx" ON "Post" USING GIN ("content" gin_trgm_ops);`,
+    `CREATE INDEX IF NOT EXISTS "Post_tokenName_trgm_idx" ON "Post" USING GIN ("tokenName" gin_trgm_ops);`,
+    `CREATE INDEX IF NOT EXISTS "Post_tokenSymbol_trgm_idx" ON "Post" USING GIN ("tokenSymbol" gin_trgm_ops);`,
+    `CREATE INDEX IF NOT EXISTS "Post_contractAddress_trgm_idx" ON "Post" USING GIN ("contractAddress" gin_trgm_ops);`,
+    `CREATE INDEX IF NOT EXISTS "User_name_trgm_idx" ON "User" USING GIN ("name" gin_trgm_ops);`,
+    `CREATE INDEX IF NOT EXISTS "User_username_trgm_idx" ON "User" USING GIN ("username" gin_trgm_ops);`,
     `CREATE INDEX IF NOT EXISTS "Notification_userId_read_dismissed_createdAt_idx" ON "Notification"("userId", "read", "dismissed", "createdAt");`,
   ] as const;
 
@@ -312,20 +364,46 @@ async function withPrismaRetry<T>(
   const maxRetries = opts?.maxRetries ?? 2;
   const baseDelayMs = opts?.baseDelayMs ?? 150;
   let lastError: unknown;
+  const startedAtMs = Date.now();
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptStartedAtMs = Date.now();
     try {
-      return await fn();
+      const result = await fn();
+      const totalDurationMs = Date.now() - startedAtMs;
+      if (opts?.label && totalDurationMs >= PRISMA_OPERATION_WARN_MS) {
+        console.warn("[Prisma] Slow operation", {
+          label: opts.label,
+          durationMs: totalDurationMs,
+          attempts: attempt + 1,
+          attemptDurationMs: Date.now() - attemptStartedAtMs,
+        });
+      }
+      return result;
     } catch (error) {
       lastError = error;
       const isTransient = isTransientPrismaError(error);
+      const attemptDurationMs = Date.now() - attemptStartedAtMs;
+      const totalDurationMs = Date.now() - startedAtMs;
       if (!isTransient || attempt >= maxRetries) {
+        if (opts?.label && totalDurationMs >= PRISMA_OPERATION_WARN_MS) {
+          console.warn("[Prisma] Slow failed operation", {
+            label: opts.label,
+            durationMs: totalDurationMs,
+            attempts: attempt + 1,
+            attemptDurationMs,
+            transient: isTransient,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         throw error;
       }
       const delayMs = baseDelayMs * Math.pow(2, attempt);
       if (opts?.label) {
         console.warn(`[Prisma] Retrying ${opts.label} (attempt ${attempt + 1}/${maxRetries}) after ${delayMs}ms`, {
           message: error instanceof Error ? error.message : String(error),
+          attemptDurationMs,
+          totalDurationMs,
         });
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs));

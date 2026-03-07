@@ -194,6 +194,7 @@ model Post {
   @@index([authorId, settledAt]) // For time-based stats queries
   @@index([settled, settledAt]) // For settlement batch queries
   @@index([createdAt])
+  @@index([createdAt, id])
   @@index([createdAt, authorId])
   @@index([authorId, createdAt])
   @@index([contractAddress, createdAt])
