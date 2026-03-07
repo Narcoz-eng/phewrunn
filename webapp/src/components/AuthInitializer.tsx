@@ -1,42 +1,25 @@
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
-  clearPrivyAuthBootstrapState,
-  useAuth,
-  syncPrivySession,
   registerPreLogoutHook,
-  isExplicitLogoutCoolingDown,
-  usePrivySyncFailureSnapshot,
-  isPrivyAuthBootstrapPending,
-  readPrivyAuthBootstrapSnapshot,
+  setPrivyAuthAnonymousState,
   setPrivyAuthBootstrapState,
+  startPrivyAuthBootstrap,
+  useAuth,
+  readPrivyAuthBootstrapSnapshot,
 } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
-import {
-  resolvePrivyAuthPayload,
-  type PrivyUserLike,
-} from "@/lib/privy-user";
+import type { PrivyUserLike } from "@/lib/privy-user";
 import { clearPrivyLoginIntent } from "@/lib/privy-login-intent";
 
 interface AuthInitializerProps {
   children: React.ReactNode;
 }
 
-const AUTO_SYNC_COOLDOWN_MS = 8000;
-const AUTO_SYNC_RETRYABLE_FAILURE_COOLDOWN_MS = 6000;
-const AUTO_SYNC_MAX_ATTEMPTS = 2;
-const RETRYABLE_AUTO_SYNC_FAILURE_PATTERN =
-  /finalizing|identity verification|identity token|rate limit|too many requests|429/i;
-
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
   const { isAuthenticated, hasLiveSession } = useAuth();
-  const syncInFlightRef = useRef(false);
-  const attemptsRef = useRef(0);
-  const lastAttemptAtRef = useRef(0);
-  const lastSyncedPrivyUserRef = useRef<string | null>(null);
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
-  const privySyncFailure = usePrivySyncFailureSnapshot();
 
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
@@ -63,138 +46,73 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!authenticated) {
-      attemptsRef.current = 0;
-      lastAttemptAtRef.current = 0;
-      syncInFlightRef.current = false;
-      lastSyncedPrivyUserRef.current = null;
-      latestPrivyUserRef.current = null;
-      clearPrivyAuthBootstrapState();
+    if (authenticated) {
+      return;
     }
+
+    latestPrivyUserRef.current = null;
+    setPrivyAuthAnonymousState("AuthInitializer");
   }, [authenticated]);
 
-  useLayoutEffect(() => {
-    if (!ready || !authenticated || !user || hasLiveSession) {
-      return;
-    }
-    if (isExplicitLogoutCoolingDown()) {
+  useEffect(() => {
+    if (!ready || !authenticated || !user) {
       return;
     }
 
-    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
+    const snapshot = readPrivyAuthBootstrapSnapshot();
+    const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
+    const currentState = sameUserSnapshot?.state ?? "idle";
+
+    if (hasLiveSession) {
+      if (currentState !== "authenticated") {
+        setPrivyAuthBootstrapState("authenticated", {
+          owner: "AuthInitializer",
+          mode: "system",
+          userId: user.id,
+          detail: "existing backend session available",
+        });
+      }
+      return;
+    }
+
     if (
-      bootstrapSnapshot?.userId === user.id &&
-      (bootstrapSnapshot.phase === "awaiting_identity_token" ||
-        bootstrapSnapshot.phase === "sync_started")
+      sameUserSnapshot &&
+      (currentState === "privy_pending" ||
+        currentState === "awaiting_identity_token" ||
+        currentState === "cooldown" ||
+        currentState === "syncing_backend")
     ) {
+      console.info("[AuthFlow] AuthInitializer found controller-owned pending state", {
+        userId: user.id,
+        state: currentState,
+      });
       return;
     }
 
-    setPrivyAuthBootstrapState("awaiting_identity_token", {
-      source: "auto",
+    if (
+      sameUserSnapshot &&
+      (currentState === "failed" ||
+        currentState === "failed_rate_limited" ||
+        currentState === "authenticated")
+    ) {
+      console.info("[AuthFlow] AuthInitializer leaving terminal auth state untouched", {
+        userId: user.id,
+        state: currentState,
+      });
+      return;
+    }
+
+    console.info("[AuthFlow] AuthInitializer delegating bootstrap to controller", {
       userId: user.id,
-      detail: "privy user detected before backend session",
+      state: currentState,
+    });
+    void startPrivyAuthBootstrap({
+      owner: "AuthInitializer",
+      mode: "auto",
+      user: user as PrivyUserLike,
+      getLatestUser: () => latestPrivyUserRef.current,
     });
   }, [authenticated, hasLiveSession, ready, user]);
-
-  useEffect(() => {
-    if (!ready || !authenticated || !user) return;
-    if (isExplicitLogoutCoolingDown()) return;
-    if (
-      privySyncFailure &&
-      Date.now() - privySyncFailure.recordedAt < AUTO_SYNC_COOLDOWN_MS
-    ) {
-      console.info("[AuthFlow] AuthInitializer skipped auto-sync due to recent failure", {
-        userId: user.id,
-      });
-      return;
-    }
-    if (hasLiveSession) {
-      attemptsRef.current = 0;
-      lastSyncedPrivyUserRef.current = user.id;
-      return;
-    }
-    if (isPrivyAuthBootstrapPending()) {
-      console.info("[AuthFlow] AuthInitializer found pending bootstrap; skipping duplicate sync", {
-        userId: user.id,
-      });
-      return;
-    }
-    if (syncInFlightRef.current) {
-      console.info("[AuthFlow] AuthInitializer sync already in progress", {
-        userId: user.id,
-      });
-      return;
-    }
-
-    if (lastSyncedPrivyUserRef.current !== user.id) {
-      attemptsRef.current = 0;
-      lastAttemptAtRef.current = 0;
-      lastSyncedPrivyUserRef.current = user.id;
-    }
-
-    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
-    const lastFailureWasRetryable =
-      bootstrapSnapshot?.phase === "sync_failed" &&
-      RETRYABLE_AUTO_SYNC_FAILURE_PATTERN.test(bootstrapSnapshot.detail ?? "");
-    const cooldownMs = lastFailureWasRetryable
-      ? AUTO_SYNC_RETRYABLE_FAILURE_COOLDOWN_MS
-      : AUTO_SYNC_COOLDOWN_MS;
-
-    if (attemptsRef.current >= AUTO_SYNC_MAX_ATTEMPTS) return;
-    if (Date.now() - lastAttemptAtRef.current < cooldownMs) {
-      console.info("[AuthFlow] AuthInitializer cooldown active", {
-        userId: user.id,
-        attempts: attemptsRef.current,
-        retryInMs: cooldownMs - (Date.now() - lastAttemptAtRef.current),
-      });
-      return;
-    }
-
-    attemptsRef.current += 1;
-    lastAttemptAtRef.current = Date.now();
-    syncInFlightRef.current = true;
-    console.info("[AuthFlow] AuthInitializer starting sync", {
-      userId: user.id,
-      attempt: attemptsRef.current,
-    });
-
-    void (async () => {
-      try {
-        setPrivyAuthBootstrapState("awaiting_identity_token", {
-          source: "auto",
-          userId: user.id,
-          detail: "privy user ready",
-        });
-
-        const resolvedPayload = await resolvePrivyAuthPayload({
-          user: user as PrivyUserLike,
-          getLatestUser: () => latestPrivyUserRef.current,
-        });
-
-        if (!resolvedPayload.privyIdToken) {
-          throw new Error("Privy identity verification is still finalizing");
-        }
-
-        await syncPrivySession(
-          resolvedPayload.user.id,
-          resolvedPayload.email,
-          resolvedPayload.name,
-          resolvedPayload.privyIdToken ?? undefined
-        );
-        attemptsRef.current = 0;
-      } catch (error) {
-        console.warn("[AuthInitializer] Privy session auto-sync failed", error);
-        setPrivyAuthBootstrapState("sync_failed", {
-          source: "auto",
-          userId: user.id,
-          detail: error instanceof Error ? error.message : String(error),
-        });
-      } finally {
-        syncInFlightRef.current = false;
-      }
-    })();
-  }, [authenticated, hasLiveSession, isAuthenticated, privySyncFailure, ready, user]);
 
   return <>{children}</>;
 }

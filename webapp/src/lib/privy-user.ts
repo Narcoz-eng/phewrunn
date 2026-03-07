@@ -68,6 +68,10 @@ function getPrivyRateLimitRemainingMs(referenceTime = Date.now()): number {
   return Math.max(0, privyIdentityRateLimitedUntilMs - referenceTime);
 }
 
+export function getPrivyIdentityRateLimitRemainingMs(referenceTime = Date.now()): number {
+  return getPrivyRateLimitRemainingMs(referenceTime);
+}
+
 async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenAttemptResult> {
   const rateLimitRemainingMs = getPrivyRateLimitRemainingMs();
   if (rateLimitRemainingMs > 0) {
