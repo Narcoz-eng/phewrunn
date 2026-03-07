@@ -54,6 +54,7 @@ const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [200, 500, 1200] as const;
+const PRIVY_FINALIZATION_RETRY_DELAY_MS = 1_500;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -65,11 +66,29 @@ const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
 const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
 const AUTH_PRIVY_SYNC_FAILURE_EVENT = "phew:auth-privy-sync-failure";
+const PRIVY_BOOTSTRAP_STATE_STORAGE_KEY = "phew.auth.privy-bootstrap.v1";
+const PRIVY_BOOTSTRAP_STATE_TTL_MS = 30_000;
+const AUTH_PRIVY_BOOTSTRAP_EVENT = "phew:auth-privy-bootstrap";
 const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
 const AUTH_BOOTSTRAPPED_SESSION_GRACE_MS = 20_000;
 
 type PrivySyncFailureSnapshot = {
   message: string;
+  recordedAt: number;
+};
+
+type PrivyAuthBootstrapPhase =
+  | "idle"
+  | "awaiting_identity_token"
+  | "sync_started"
+  | "sync_succeeded"
+  | "sync_failed";
+
+type PrivyAuthBootstrapSnapshot = {
+  phase: PrivyAuthBootstrapPhase;
+  source: "manual" | "auto" | "system";
+  userId: string | null;
+  detail: string | null;
   recordedAt: number;
 };
 
@@ -186,6 +205,7 @@ let lastBootstrappedSessionAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
 let inMemoryPrivySyncFailure: PrivySyncFailureSnapshot | null = null;
+let inMemoryPrivyBootstrapSnapshot: PrivyAuthBootstrapSnapshot | null = null;
 
 function getInMemoryCachedAuthUser(): AuthUser | null {
   if (!inMemoryCachedAuthUser) return null;
@@ -387,6 +407,122 @@ export function readPrivySyncFailureSnapshot(): PrivySyncFailureSnapshot | null 
   }
 }
 
+function writePrivyBootstrapSnapshot(snapshot: PrivyAuthBootstrapSnapshot | null): void {
+  inMemoryPrivyBootstrapSnapshot = snapshot;
+
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (!snapshot || snapshot.phase === "idle") {
+      window.localStorage.removeItem(PRIVY_BOOTSTRAP_STATE_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(
+        PRIVY_BOOTSTRAP_STATE_STORAGE_KEY,
+        JSON.stringify(snapshot)
+      );
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  window.dispatchEvent(new CustomEvent(AUTH_PRIVY_BOOTSTRAP_EVENT));
+}
+
+export function readPrivyAuthBootstrapSnapshot(): PrivyAuthBootstrapSnapshot | null {
+  const now = Date.now();
+
+  if (inMemoryPrivyBootstrapSnapshot) {
+    if (now - inMemoryPrivyBootstrapSnapshot.recordedAt <= PRIVY_BOOTSTRAP_STATE_TTL_MS) {
+      return inMemoryPrivyBootstrapSnapshot;
+    }
+    inMemoryPrivyBootstrapSnapshot = null;
+  }
+
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PRIVY_BOOTSTRAP_STATE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PrivyAuthBootstrapSnapshot>;
+    if (
+      typeof parsed.phase !== "string" ||
+      typeof parsed.source !== "string" ||
+      typeof parsed.recordedAt !== "number" ||
+      !Number.isFinite(parsed.recordedAt)
+    ) {
+      writePrivyBootstrapSnapshot(null);
+      return null;
+    }
+
+    if (now - parsed.recordedAt > PRIVY_BOOTSTRAP_STATE_TTL_MS) {
+      writePrivyBootstrapSnapshot(null);
+      return null;
+    }
+
+    const snapshot: PrivyAuthBootstrapSnapshot = {
+      phase: parsed.phase as PrivyAuthBootstrapPhase,
+      source:
+        parsed.source === "manual" || parsed.source === "auto" || parsed.source === "system"
+          ? parsed.source
+          : "system",
+      userId: typeof parsed.userId === "string" && parsed.userId.length > 0 ? parsed.userId : null,
+      detail: typeof parsed.detail === "string" && parsed.detail.trim().length > 0 ? parsed.detail.trim() : null,
+      recordedAt: parsed.recordedAt,
+    };
+
+    inMemoryPrivyBootstrapSnapshot = snapshot;
+    return snapshot;
+  } catch {
+    writePrivyBootstrapSnapshot(null);
+    return null;
+  }
+}
+
+export function setPrivyAuthBootstrapState(
+  phase: PrivyAuthBootstrapPhase,
+  params: {
+    source?: "manual" | "auto" | "system";
+    userId?: string | null;
+    detail?: string | null;
+  } = {}
+): void {
+  const snapshot: PrivyAuthBootstrapSnapshot = {
+    phase,
+    source: params.source ?? "system",
+    userId: params.userId ?? null,
+    detail: params.detail?.trim() || null,
+    recordedAt: Date.now(),
+  };
+
+  console.info("[AuthFlow] transition", snapshot);
+  writePrivyBootstrapSnapshot(snapshot);
+}
+
+export function clearPrivyAuthBootstrapState(): void {
+  writePrivyBootstrapSnapshot(null);
+}
+
+export function isPrivyAuthBootstrapPending(referenceTime = Date.now()): boolean {
+  const snapshot = readPrivyAuthBootstrapSnapshot();
+  if (!snapshot) {
+    return false;
+  }
+  if (referenceTime - snapshot.recordedAt > PRIVY_BOOTSTRAP_STATE_TTL_MS) {
+    return false;
+  }
+  return (
+    snapshot.phase === "awaiting_identity_token" ||
+    snapshot.phase === "sync_started"
+  );
+}
+
 export function usePrivySyncFailureSnapshot(): PrivySyncFailureSnapshot | null {
   const [snapshot, setSnapshot] = useState<PrivySyncFailureSnapshot | null>(() =>
     readPrivySyncFailureSnapshot()
@@ -508,11 +644,17 @@ type ServerSessionResult =
   | { status: "unavailable" };
 
 async function fetchSessionFromServer(
-  timeoutMs = SESSION_FETCH_TIMEOUT_MS
+  timeoutMs = SESSION_FETCH_TIMEOUT_MS,
+  reason = "confirmation"
 ): Promise<ServerSessionResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    console.info("[AuthFlow] /api/me request started", {
+      reason,
+      timeoutMs,
+      bootstrapPending: isPrivyAuthBootstrapPending(),
+    });
     const response = await fetch(`${baseURL}/api/me`, {
       credentials: "include",
       headers: {
@@ -585,7 +727,10 @@ export async function ensureBackendSessionReady(
 
   for (let attempt = 0; Date.now() < deadline; attempt += 1) {
     const remainingMs = Math.max(350, deadline - Date.now());
-    const result = await fetchSessionFromServer(Math.min(SESSION_FETCH_TIMEOUT_MS, remainingMs));
+    const result = await fetchSessionFromServer(
+      Math.min(SESSION_FETCH_TIMEOUT_MS, remainingMs),
+      "sync_confirmation"
+    );
 
     if (result.status === "authenticated") {
       if (!expectedUserId || result.user.id === expectedUserId) {
@@ -635,6 +780,18 @@ const AuthContext = createContext<AuthContextType | null>(null);
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
+  const pendingBootstrap = readPrivyAuthBootstrapSnapshot();
+
+  if (pendingBootstrap && isPrivyAuthBootstrapPending(now)) {
+    console.info("[AuthFlow] /api/me gated until Privy sync settles", {
+      phase: pendingBootstrap.phase,
+      source: pendingBootstrap.source,
+      userId: pendingBootstrap.userId,
+      detail: pendingBootstrap.detail,
+      cachedUserPresent: Boolean(cachedUser),
+    });
+    return cachedUser;
+  }
 
   if (
     cachedUser &&
@@ -656,6 +813,11 @@ async function fetchSession(): Promise<AuthUser | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SESSION_FETCH_TIMEOUT_MS);
   try {
+    console.info("[AuthFlow] /api/me request started", {
+      hasCachedUser: Boolean(cachedUser),
+      lastPrivySyncAt,
+      lastSuccessfulSessionAt,
+    });
     const response = await fetch(`${baseURL}/api/me`, {
       credentials: "include",
       headers: {
@@ -860,6 +1022,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearStoredAuthToken();
     clearCachedAuthUser();
     clearPrivySyncFailureSnapshot();
+    clearPrivyAuthBootstrapState();
     clearSessionCacheByPrefix("phew.");
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
@@ -1151,29 +1314,41 @@ export async function syncPrivySession(
   name?: string,
   privyIdToken?: string
 ): Promise<{ user: AuthUser }> {
-  void privyUserId;
+  const normalizedUserId = privyUserId.trim();
   void email;
   if (privySyncInFlight) {
     return privySyncInFlight;
+  }
+
+  const normalizedPrivyIdToken =
+    typeof privyIdToken === "string" && privyIdToken.trim().length > 0
+      ? privyIdToken.trim()
+      : null;
+  if (!normalizedPrivyIdToken) {
+    setPrivyAuthBootstrapState("sync_failed", {
+      source: "system",
+      userId: normalizedUserId || null,
+      detail: "identity token unavailable",
+    });
+    const finalizingError = new Error("Privy identity verification is still finalizing");
+    writePrivySyncFailureSnapshot(finalizingError.message);
+    throw finalizingError;
   }
 
   const maxAttempts = PRIVY_SYNC_RETRY_DELAYS_MS.length + 1;
   const syncStartedAt = Date.now();
 
   privySyncInFlight = (async () => {
+    setPrivyAuthBootstrapState("sync_started", {
+      source: "system",
+      userId: normalizedUserId || null,
+      detail: "backend sync request started",
+    });
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), PRIVY_SYNC_TIMEOUT_MS);
 
       try {
-        const normalizedPrivyIdToken =
-          typeof privyIdToken === "string" && privyIdToken.trim().length > 0
-            ? privyIdToken.trim()
-            : null;
-        if (!normalizedPrivyIdToken) {
-          throw new Error("Privy identity verification is still finalizing");
-        }
-
         const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
           method: "POST",
           headers: {
@@ -1235,6 +1410,11 @@ export async function syncPrivySession(
         unauthorizedSessionFailures = 0;
 
         const bootstrappedUser = markBootstrappedAuthSession(syncedUser);
+        setPrivyAuthBootstrapState("sync_succeeded", {
+          source: "system",
+          userId: syncedUser.id,
+          detail: "backend sync response accepted",
+        });
         emitAuthSessionSynced(bootstrappedUser);
 
         const confirmedUser = await ensureBackendSessionReady(
@@ -1264,9 +1444,10 @@ export async function syncPrivySession(
       } catch (error) {
         const isAbort = error instanceof Error && error.name === "AbortError";
         const message = error instanceof Error ? error.message : String(error);
+        const isFinalizing = /finalizing|identity verification|identity token/i.test(message);
         const retryable =
           isAbort ||
-          /network|failed to fetch|timeout|temporarily|server|rate limit|too many requests|finalizing/i.test(message);
+          /network|failed to fetch|timeout|temporarily|server|rate limit|too many requests/i.test(message);
 
         if (retryable && attempt < PRIVY_SYNC_RETRY_DELAYS_MS.length) {
           await new Promise<void>((resolve) => {
@@ -1280,6 +1461,11 @@ export async function syncPrivySession(
           : error instanceof Error
             ? error.message
             : "Failed to sync Privy session";
+        setPrivyAuthBootstrapState("sync_failed", {
+          source: "system",
+          userId: normalizedUserId || null,
+          detail: isFinalizing ? "identity finalization pending" : finalMessage,
+        });
         writePrivySyncFailureSnapshot(finalMessage);
         console.error("[Auth] syncPrivySession error:", error);
         if (isAbort) {

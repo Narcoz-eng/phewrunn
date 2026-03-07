@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
+  clearPrivyAuthBootstrapState,
   clearPrivySyncFailureState,
   isExplicitLogoutCoolingDown,
+  setPrivyAuthBootstrapState,
   type AuthUser,
   readCachedAuthUserSnapshot,
   useAuth,
@@ -61,7 +63,7 @@ function getPrivyErrorMessage(error: unknown): string {
 // This hook MUST only be called inside a component rendered within PrivyProvider
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
-  const { refetch, hasLiveSession } = useAuth();
+  const { hasLiveSession } = useAuth();
   const { onSuccess } = options;
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -118,6 +120,11 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       startSyncTimeout();
 
       try {
+        setPrivyAuthBootstrapState("awaiting_identity_token", {
+          source,
+          userId: privyUser.id,
+          detail: "privy user ready",
+        });
         const resolvedPayload = await resolvePrivyAuthPayload({
           user: privyUser,
           getLatestUser: () => latestPrivyUserRef.current,
@@ -126,7 +133,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         const email = resolvedPayload.email ?? "";
 
         if (!privyIdToken) {
-          console.warn("[usePrivyLogin] Privy identity token is not ready yet; retrying secure sync");
+          throw new Error("Privy identity verification is still finalizing");
         }
 
         const name = resolvedPayload.name ?? "";
@@ -138,16 +145,22 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
           privyIdToken ?? undefined
         );
 
-        void refetch().catch((error) => {
-          console.warn("[usePrivyLogin] background refetch after sync failed", error);
-        });
-
         autoResyncAttemptsRef.current = 0;
         lastSyncFailureRef.current = null;
+        setPrivyAuthBootstrapState("sync_succeeded", {
+          source,
+          userId: syncResult.user.id,
+          detail: "session synced",
+        });
         return syncResult.user;
       } catch (err) {
         console.error("[usePrivyLogin] sync error:", err);
         const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
+        setPrivyAuthBootstrapState("sync_failed", {
+          source,
+          userId: privyUser.id,
+          detail: rawMessage,
+        });
         if (source === "auto" && hasLiveSessionRef.current) {
           setSyncError(null);
           clearPrivyLoginIntent();
@@ -208,7 +221,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
     activeSyncPromiseRef.current = syncPromise;
     return syncPromise;
-  }, [clearSyncTimeout, refetch, startSyncTimeout]);
+  }, [clearSyncTimeout, startSyncTimeout]);
 
   useEffect(() => {
     return () => {
@@ -241,6 +254,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       lastSyncFailureRef.current = null;
       latestPrivyUserRef.current = null;
       setSyncError(null);
+      clearPrivyAuthBootstrapState();
     }
   }, [authenticated]);
 
@@ -302,6 +316,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     const isXLogin = requestedMethod === "twitter";
     rateLimitedUntilRef.current = 0;
     clearPrivySyncFailureState();
+    clearPrivyAuthBootstrapState();
     setSyncError(null);
     autoResyncAttemptsRef.current = 0;
     lastAutoResyncAtRef.current = 0;

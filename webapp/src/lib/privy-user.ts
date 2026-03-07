@@ -1,11 +1,13 @@
 import { getIdentityToken } from "@privy-io/react-auth";
 
-const IDENTITY_TOKEN_ATTEMPTS = 4;
-const IDENTITY_TOKEN_RETRY_DELAYS_MS = [70, 120, 180] as const;
-const AUTH_PAYLOAD_READY_DELAYS_MS = [120, 220, 360] as const;
+const IDENTITY_TOKEN_ATTEMPTS = 2;
+const IDENTITY_TOKEN_RETRY_DELAYS_MS = [180] as const;
+const AUTH_PAYLOAD_READY_DELAYS_MS = [1200] as const;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
 const QUICK_IDENTITY_TOKEN_TIMEOUT_MS = 120;
+let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAuthPayload> } | null =
+  null;
 
 type LinkedAccountLike = {
   type: string;
@@ -37,7 +39,9 @@ async function waitFor(delayMs: number): Promise<void> {
 
 async function getIdentityTokenWithin(timeoutMs: number): Promise<string | undefined> {
   return Promise.race<string | undefined>([
-    getIdentityToken().catch(() => undefined),
+    getIdentityToken()
+      .then((token) => (typeof token === "string" && token.length > 0 ? token : undefined))
+      .catch(() => undefined),
     waitFor(timeoutMs).then(() => undefined),
   ]);
 }
@@ -130,46 +134,60 @@ export async function resolvePrivyAuthPayload({
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
 }): Promise<ResolvedPrivyAuthPayload> {
-  let latestUser = getLatestUser?.() ?? user;
-  let email = getPrivyPrimaryEmail(latestUser);
-  let name = getPrivyDisplayName(latestUser, email);
-
-  const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
-    ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS
-    : QUICK_IDENTITY_TOKEN_TIMEOUT_MS;
-
-  let privyIdToken = await getIdentityTokenWithin(initialTokenTimeoutMs);
-  if (!privyIdToken) {
-    privyIdToken = await getPrivyIdentityTokenFast();
+  const userId = user.id;
+  if (privyAuthPayloadInFlight?.userId === userId) {
+    return privyAuthPayloadInFlight.promise;
   }
-  if (privyIdToken) {
+
+  const resolutionPromise = (async (): Promise<ResolvedPrivyAuthPayload> => {
+    let latestUser = getLatestUser?.() ?? user;
+    let email = getPrivyPrimaryEmail(latestUser);
+    let name = getPrivyDisplayName(latestUser, email);
+
+    const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
+      ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS
+      : QUICK_IDENTITY_TOKEN_TIMEOUT_MS;
+
+    let privyIdToken = await getIdentityTokenWithin(initialTokenTimeoutMs);
+    if (!privyIdToken) {
+      privyIdToken = await getPrivyIdentityTokenFast();
+    }
+    if (privyIdToken) {
+      return {
+        user: latestUser,
+        email,
+        name,
+        privyIdToken,
+      };
+    }
+
+    for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
+      await waitFor(delayMs);
+      latestUser = getLatestUser?.() ?? latestUser;
+      email = getPrivyPrimaryEmail(latestUser);
+      name = getPrivyDisplayName(latestUser, email);
+      privyIdToken = await getPrivyIdentityTokenFast();
+
+      if (privyIdToken) {
+        break;
+      }
+    }
+
     return {
       user: latestUser,
       email,
       name,
       privyIdToken,
     };
-  }
+  })();
 
-  for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
-    await waitFor(delayMs);
-    latestUser = getLatestUser?.() ?? latestUser;
-    email = getPrivyPrimaryEmail(latestUser);
-    name = getPrivyDisplayName(latestUser, email);
+  privyAuthPayloadInFlight = { userId, promise: resolutionPromise };
 
-    if (!privyIdToken) {
-      privyIdToken = await getPrivyIdentityTokenFast();
-    }
-
-    if (privyIdToken) {
-      break;
+  try {
+    return await resolutionPromise;
+  } finally {
+    if (privyAuthPayloadInFlight?.promise === resolutionPromise) {
+      privyAuthPayloadInFlight = null;
     }
   }
-
-  return {
-    user: latestUser,
-    email,
-    name,
-    privyIdToken,
-  };
 }
