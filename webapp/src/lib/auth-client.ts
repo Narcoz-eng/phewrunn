@@ -1,6 +1,5 @@
 ﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
-import { setAuthTokenGetter } from "./api";
 import { clearSessionCacheByPrefix } from "./session-cache";
 
 // Get the backend URL
@@ -55,13 +54,13 @@ const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
 const PRIVY_SYNC_RETRY_DELAYS_MS = [200, 500, 1200] as const;
-const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
   "auth.session_token",
   "session_token",
 ] as const;
+const LEGACY_AUTH_TOKEN_STORAGE_KEY = "auth-token";
 const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
 const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
@@ -126,7 +125,7 @@ export async function signUp() {
 }
 
 export async function signOut(options?: { token?: string | null }) {
-  const token = normalizeAuthToken(options?.token) ?? getStoredAuthToken();
+  void options;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -137,7 +136,6 @@ export async function signOut(options?: { token?: string | null }) {
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
   } catch (error) {
@@ -180,26 +178,14 @@ interface SessionState {
 }
 
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
-let privySyncInFlight: Promise<{ token: string; user: AuthUser }> | null = null;
+let privySyncInFlight: Promise<{ user: AuthUser }> | null = null;
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
 let lastSuccessfulSessionAt = 0;
 let lastBootstrappedSessionAt = 0;
 let unauthorizedSessionFailures = 0;
-let inMemoryAuthToken: string | null = null;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
 let inMemoryPrivySyncFailure: PrivySyncFailureSnapshot | null = null;
-
-function normalizeAuthToken(token: string | null | undefined): string | null {
-  if (typeof token !== "string") return null;
-  const trimmed = token.trim();
-  if (!trimmed) return null;
-  if (trimmed.length > AUTH_BEARER_TOKEN_MAX_LENGTH) {
-    console.warn(`[Auth] Ignoring oversized auth token (${trimmed.length} chars)`);
-    return null;
-  }
-  return trimmed;
-}
 
 function getInMemoryCachedAuthUser(): AuthUser | null {
   if (!inMemoryCachedAuthUser) return null;
@@ -210,60 +196,36 @@ function getInMemoryCachedAuthUser(): AuthUser | null {
   return inMemoryCachedAuthUser.user;
 }
 
-function getStoredAuthToken(): string | null {
-  const normalizedInMemoryToken = normalizeAuthToken(inMemoryAuthToken);
-  if (normalizedInMemoryToken) {
-    return normalizedInMemoryToken;
-  }
-  if (inMemoryAuthToken) {
-    inMemoryAuthToken = null;
-  }
+function clearLegacyStoredAuthTokenArtifacts(): void {
+  if (typeof window === "undefined") return;
   try {
-    const stored = localStorage.getItem("auth-token");
-    const normalizedStoredToken = normalizeAuthToken(stored);
-    if (normalizedStoredToken) {
-      inMemoryAuthToken = normalizedStoredToken;
-      return normalizedStoredToken;
-    }
-    if (stored) {
-      localStorage.removeItem("auth-token");
-    }
-    return null;
+    localStorage.removeItem(LEGACY_AUTH_TOKEN_STORAGE_KEY);
   } catch (error) {
-    console.warn("[Auth] Failed to read auth token from localStorage; using cookie auth only", error);
-    return null;
+    console.warn("[Auth] Failed to clear legacy auth token from localStorage", error);
   }
 }
 
-function setStoredAuthToken(token: string): void {
-  const normalizedToken = normalizeAuthToken(token);
-  if (!normalizedToken) {
-    clearStoredAuthToken();
-    return;
-  }
-  inMemoryAuthToken = normalizedToken;
-  try {
-    localStorage.setItem("auth-token", normalizedToken);
-  } catch (error) {
-    // Cookie-based auth is primary. localStorage token is only a fallback.
-    console.warn("[Auth] Failed to persist auth token to localStorage; continuing with cookie auth", error);
-  }
+function getStoredAuthToken(): string | null {
+  clearLegacyStoredAuthTokenArtifacts();
+  return null;
+}
+
+function setStoredAuthToken(_token: string): void {
+  clearLegacyStoredAuthTokenArtifacts();
 }
 
 function clearStoredAuthToken(): void {
-  inMemoryAuthToken = null;
-  try {
-    localStorage.removeItem("auth-token");
-  } catch (error) {
-    console.warn("[Auth] Failed to clear auth token from localStorage", error);
-  }
+  clearLegacyStoredAuthTokenArtifacts();
 }
-
-setAuthTokenGetter(async () => getStoredAuthToken());
 
 export function hasStoredAuthTokenHint(): boolean {
-  return Boolean(getStoredAuthToken());
+  if (isExplicitLogoutCoolingDown()) {
+    return false;
+  }
+  return Boolean(readCachedAuthUser()) || hasSessionCookieHint();
 }
+
+clearLegacyStoredAuthTokenArtifacts();
 
 function hasSessionCookieHint(): boolean {
   // Session cookies are HttpOnly and not readable from JS in modern browsers.
@@ -551,17 +513,11 @@ async function fetchSessionFromServer(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const token = getStoredAuthToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
     const response = await fetch(`${baseURL}/api/me`, {
       credentials: "include",
-      headers,
+      headers: {
+        "Content-Type": "application/json",
+      },
       signal: controller.signal,
     });
 
@@ -675,12 +631,10 @@ interface AuthContextType extends SessionState {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Fetch session from backend using /api/me endpoint
-// This endpoint uses our custom middleware that supports Bearer tokens
+// Fetch session from backend using the server-issued HttpOnly session cookie.
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
-  const token = getStoredAuthToken();
 
   if (
     cachedUser &&
@@ -702,18 +656,11 @@ async function fetchSession(): Promise<AuthUser | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SESSION_FETCH_TIMEOUT_MS);
   try {
-    // Get token from localStorage as fallback for cross-origin issues
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    // Use /api/me which supports Bearer token auth via our middleware
     const response = await fetch(`${baseURL}/api/me`, {
       credentials: "include",
-      headers,
+      headers: {
+        "Content-Type": "application/json",
+      },
       signal: controller.signal,
     });
 
@@ -729,7 +676,7 @@ async function fetchSession(): Promise<AuthUser | null> {
         sessionRateLimitedUntil = Date.now() + backoffMs;
         console.warn(`[Auth] /api/me rate limited. Backing off for ${Math.ceil(backoffMs / 1000)}s`);
       }
-      // Clear invalid token
+      // Clear local session hints after a confirmed unauthorized response.
       if (response.status === 401) {
         if (lastPrivySyncAt > requestStartedAt) {
           console.warn("[Auth] Ignoring stale 401 from /api/me after newer Privy sync");
@@ -741,11 +688,11 @@ async function fetchSession(): Promise<AuthUser | null> {
         const recentlyHealthySession =
           lastSuccessfulSessionAt > 0 &&
           Date.now() - lastSuccessfulSessionAt < AUTH_TRANSIENT_401_RECOVERY_MS;
-        const hasToken = Boolean(token || getStoredAuthToken());
+        const hasSessionHint = Boolean(cachedUser) || hasSessionCookieHint() || recentlySynced;
         const shouldTreatAsTransient =
           recentlySynced ||
-          (hasToken && recentlyHealthySession) ||
-          (hasToken && unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT);
+          (hasSessionHint && recentlyHealthySession) ||
+          (hasSessionHint && unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT);
 
         if (
           cachedUser &&
@@ -760,7 +707,7 @@ async function fetchSession(): Promise<AuthUser | null> {
 
         if (shouldTreatAsTransient) {
           console.warn(
-            `[Auth] Temporary 401 from /api/me; preserving auth token (${unauthorizedSessionFailures})`
+            `[Auth] Temporary 401 from /api/me; preserving cached session hint (${unauthorizedSessionFailures})`
           );
           return cachedUser;
         }
@@ -801,9 +748,7 @@ async function fetchSession(): Promise<AuthUser | null> {
           (data as { data?: unknown }).data === null);
 
       if (explicitNoSessionResponse) {
-        if (token) {
-          clearStoredAuthToken();
-        }
+        clearStoredAuthToken();
         clearCachedAuthUser();
         lastBootstrappedSessionAt = 0;
         lastSuccessfulSessionAt = 0;
@@ -858,18 +803,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     // Fresh tabs can momentarily race cookie/session propagation right after sign-in.
-    // Retry when we have either bearer token/session hints, or immediately after a Privy sync.
-    const hasStoredToken = Boolean(getStoredAuthToken());
+    // Retry when we have session hints, or immediately after a Privy sync.
     const hasCookieSessionHint = hasSessionCookieHint();
     const recentlySynced = hasRecentPrivySyncGrace();
-    if (!hasStoredToken && !hasCookieSessionHint && !recentlySynced) {
+    const hasCachedSessionHint = Boolean(optimisticCachedUser);
+    if (!hasCachedSessionHint && !hasCookieSessionHint && !recentlySynced) {
       return null;
     }
 
-    const retryAttempts = hasStoredToken
-      ? AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN
-      : AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE;
-    const retryDelayMs = hasStoredToken
+    const retryAttempts = AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE;
+    const retryDelayMs = recentlySynced
       ? AUTH_SESSION_RETRY_DELAY_MS
       : AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS;
 
@@ -905,8 +848,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
-    const logoutToken = getStoredAuthToken();
-
     for (const hook of preLogoutHooks) {
       try {
         await hook();
@@ -934,7 +875,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     try {
-      await signOut({ token: logoutToken });
+      await signOut();
     } catch (error) {
       console.error("[Auth] Logout error:", error);
     }
@@ -1075,7 +1016,7 @@ export async function signUpWithEmail(email: string, password: string, name: str
       return { error: { message: data?.message || data?.code || "Failed to create account" } };
     }
 
-    // Store token in localStorage for cross-origin auth
+    // Ignore legacy token fields; browser auth is cookie-backed.
     if (data?.token) {
       setStoredAuthToken(data.token);
     }
@@ -1114,7 +1055,7 @@ export async function signInWithEmail(email: string, password: string) {
       return { error: { message: data?.message || data?.code || "Invalid email or password" } };
     }
 
-    // Store token in localStorage for cross-origin auth
+    // Ignore legacy token fields; browser auth is cookie-backed.
     if (data?.token) {
       setStoredAuthToken(data.token);
     }
@@ -1203,13 +1144,15 @@ export async function resetPassword(newPassword: string, token: string) {
   }
 }
 
-// Sync a Privy-authenticated user to our backend, getting back a Better Auth session token
+// Sync a Privy-authenticated user to our backend using a verified Privy identity token.
 export async function syncPrivySession(
   privyUserId: string,
   email?: string,
   name?: string,
   privyIdToken?: string
-): Promise<{ token: string; user: AuthUser }> {
+): Promise<{ user: AuthUser }> {
+  void privyUserId;
+  void email;
   if (privySyncInFlight) {
     return privySyncInFlight;
   }
@@ -1223,16 +1166,25 @@ export async function syncPrivySession(
       const timeoutId = setTimeout(() => controller.abort(), PRIVY_SYNC_TIMEOUT_MS);
 
       try {
-        const token = getStoredAuthToken();
+        const normalizedPrivyIdToken =
+          typeof privyIdToken === "string" && privyIdToken.trim().length > 0
+            ? privyIdToken.trim()
+            : null;
+        if (!normalizedPrivyIdToken) {
+          throw new Error("Privy identity verification is still finalizing");
+        }
+
         const response = await fetch(`${baseURL}/api/auth/privy-sync`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           credentials: "include",
           signal: controller.signal,
-          body: JSON.stringify({ privyUserId, email, name, privyIdToken }),
+          body: JSON.stringify({
+            privyIdToken: normalizedPrivyIdToken,
+            ...(name ? { name } : {}),
+          }),
         });
 
         const text = await response.text();
@@ -1240,7 +1192,7 @@ export async function syncPrivySession(
           throw new Error("Empty response from auth server");
         }
 
-        let data: { token?: string; user?: AuthUser; error?: { message?: string } } | null = null;
+        let data: { user?: AuthUser; error?: { message?: string } } | null = null;
         try {
           data = JSON.parse(text);
         } catch {
@@ -1248,7 +1200,7 @@ export async function syncPrivySession(
           throw new Error("Invalid response from auth server");
         }
 
-        if (!response.ok || !data?.token || !data?.user) {
+        if (!response.ok || !data?.user) {
           const retryAfterHeader = response.headers.get("retry-after");
           const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
           const message =
@@ -1282,8 +1234,6 @@ export async function syncPrivySession(
         sessionFetchInFlight = null;
         unauthorizedSessionFailures = 0;
 
-        // Store the session token for Bearer auth fallback
-        setStoredAuthToken(data.token);
         const bootstrappedUser = markBootstrappedAuthSession(syncedUser);
         emitAuthSessionSynced(bootstrappedUser);
 
@@ -1293,7 +1243,7 @@ export async function syncPrivySession(
         );
         if (confirmedUser) {
           emitAuthSessionSynced(confirmedUser);
-          return { token: data.token, user: confirmedUser };
+          return { user: confirmedUser };
         }
 
         void ensureBackendSessionReady(
@@ -1310,7 +1260,7 @@ export async function syncPrivySession(
             console.warn("[Auth] Background session confirmation failed:", backgroundError);
           });
 
-        return { token: data.token, user: bootstrappedUser };
+        return { user: bootstrappedUser };
       } catch (error) {
         const isAbort = error instanceof Error && error.name === "AbortError";
         const message = error instanceof Error ? error.message : String(error);

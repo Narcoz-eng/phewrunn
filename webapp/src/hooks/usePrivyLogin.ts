@@ -24,7 +24,7 @@ const AUTO_RESYNC_MAX_ATTEMPTS = 5;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
 const PRIVY_LOGOUT_SETTLE_MS = 250;
 const RETRYABLE_SYNC_ERROR_PATTERN =
-  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests|finalizing/i;
+  /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests|finalizing|identity verification|identity token/i;
 const TOO_MANY_REQUESTS_ERROR_PATTERN = /too many requests|rate limit|429/i;
 
 type UsePrivyLoginOptions = {
@@ -125,8 +125,8 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         const privyIdToken = resolvedPayload.privyIdToken;
         const email = resolvedPayload.email ?? "";
 
-        if (!email && !privyIdToken) {
-          console.warn("[usePrivyLogin] Privy returned no email/idToken; falling back to privyUserId sync");
+        if (!privyIdToken) {
+          console.warn("[usePrivyLogin] Privy identity token is not ready yet; retrying secure sync");
         }
 
         const name = resolvedPayload.name ?? "";

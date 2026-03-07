@@ -23,24 +23,25 @@ export const UserSchema = z.object({
 
 export type User = z.infer<typeof UserSchema>;
 
-export const UpdateProfileSchema = z.object({
-  username: z
-    .string()
-    .trim()
-    .min(3)
-    .max(20)
-    .regex(/^[a-zA-Z0-9_]+$/, "Handle can only contain letters, numbers, and underscores")
-    .optional(),
-  walletAddress: z.string().optional(),
-  bio: z.string().max(200).optional(),
-  image: z.string().url().optional(),
-  tradeFeeRewardsEnabled: z.boolean().optional(),
-  tradeFeeShareBps: z.number().int().min(0).max(100).optional(),
-  tradeFeePayoutAddress: z.union([
-    z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "Payout wallet must be a valid Solana address"),
-    z.literal(""),
-  ]).optional(),
-});
+export const UpdateProfileSchema = z
+  .object({
+    username: z
+      .string()
+      .trim()
+      .min(3)
+      .max(20)
+      .regex(/^[a-zA-Z0-9_]+$/, "Handle can only contain letters, numbers, and underscores")
+      .optional(),
+    bio: z.string().max(200).optional(),
+    image: z.string().url().optional(),
+    tradeFeeRewardsEnabled: z.boolean().optional(),
+    tradeFeeShareBps: z.number().int().min(0).max(100).optional(),
+    tradeFeePayoutAddress: z.union([
+      z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "Payout wallet must be a valid Solana address"),
+      z.literal(""),
+    ]).optional(),
+  })
+  .strict();
 
 // Update frequency constants
 export const USERNAME_UPDATE_COOLDOWN_DAYS = 7;
@@ -50,6 +51,34 @@ export const PHOTO_UPDATE_COOLDOWN_HOURS = 24;
 export const WALLET_CONNECT_LIMIT_PER_HOUR = 5;
 
 export type UpdateProfile = z.infer<typeof UpdateProfileSchema>;
+
+export const PublicUserStatsDTOSchema = z
+  .object({
+    posts: z.number().int().min(0),
+    followers: z.number().int().min(0),
+    following: z.number().int().min(0),
+    totalCalls: z.number().int().min(0),
+    wins: z.number().int().min(0),
+    losses: z.number().int().min(0),
+    winRate: z.number(),
+    totalProfitPercent: z.number(),
+  })
+  .strict();
+
+export const PublicUserProfileDTOSchema = z
+  .object({
+    username: z.string().nullable(),
+    image: z.string().nullable(),
+    level: z.number().int(),
+    xp: z.number().int(),
+    isVerified: z.boolean().default(false),
+    createdAt: z.string(),
+    isFollowing: z.boolean(),
+    stats: PublicUserStatsDTOSchema,
+  })
+  .strict();
+
+export type PublicUserProfileDTO = z.infer<typeof PublicUserProfileDTOSchema>;
 
 // =====================================================
 // Wallet Types

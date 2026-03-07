@@ -26,11 +26,6 @@ function useStoredAuthHint(): boolean {
     return false;
   }
   try {
-    if (localStorage.getItem("auth-token")) return true;
-  } catch {
-    // ignore
-  }
-  try {
     if (sessionStorage.getItem("phew.auth.session.v1")) return true;
   } catch {
     // ignore

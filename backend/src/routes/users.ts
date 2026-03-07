@@ -7,9 +7,18 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { prisma, withPrismaRetry } from "../prisma.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
-import { type AuthVariables, requireAuth } from "../auth.js";
+import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
-import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
+import {
+  UpdateProfileSchema,
+  USERNAME_UPDATE_COOLDOWN_DAYS,
+  PHOTO_UPDATE_COOLDOWN_HOURS,
+  ConnectWalletSchema,
+  WALLET_CONNECT_LIMIT_PER_HOUR,
+  type PublicUserProfileDTO,
+  type UserStats,
+  type WeeklyStat,
+} from "../types.js";
 import {
   getWalletPortfolioOverviewForPostedTokens,
   getWalletTradeSnapshotsForSolanaTokens,
@@ -53,21 +62,12 @@ const USERS_ROUTE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const USERS_ROUTE_CACHE_MAX_ENTRIES =
   process.env.NODE_ENV === "production" ? 20_000 : 2_000;
-const USERS_PROFILE_REDIS_KEY_PREFIX = "users:profile:v1";
-const USERS_POSTS_REDIS_KEY_PREFIX = "users:posts:v1";
+const USERS_PROFILE_REDIS_KEY_PREFIX = "users:profile:v2";
+const USERS_POSTS_REDIS_KEY_PREFIX = "users:posts:v2";
 const USERS_REPOSTS_REDIS_KEY_PREFIX = "users:reposts:v1";
 
 type UserProfileRoutePayload = {
-  data: RawResolvedUserProfile & {
-    isFollowing: boolean;
-    stats: {
-      totalCalls: number;
-      wins: number;
-      losses: number;
-      winRate: number;
-      totalProfitPercent: number;
-    };
-  };
+  data: PublicUserProfileDTO;
 };
 
 type UserPostsRoutePayload = {
@@ -294,18 +294,12 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
 
 type RawResolvedUserProfile = {
   id: string;
-  name: string;
-  email: string;
   image: string | null;
-  walletAddress: string | null;
   username: string | null;
   level: number;
   xp: number;
-  bio: string | null;
   isVerified: boolean;
   createdAt: Date;
-  lastUsernameUpdate: Date | null;
-  lastPhotoUpdate: Date | null;
   _count: {
     posts: number;
     followers: number;
@@ -384,36 +378,24 @@ async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawRe
   const normalizedIdentifier = normalizeUsernameHandle(identifier);
   const rows = await prisma.$queryRaw<Array<{
     id: string;
-    name: string;
-    email: string;
     image: string | null;
-    walletAddress: string | null;
     username: string | null;
     level: number | null;
     xp: number | null;
-    bio: string | null;
     isVerified: boolean | null;
     createdAt: Date;
-    lastUsernameUpdate: Date | null;
-    lastPhotoUpdate: Date | null;
     postsCount: number | bigint | string | null;
     followersCount: number | bigint | string | null;
     followingCount: number | bigint | string | null;
   }>>(Prisma.sql`
     SELECT
       u.id,
-      u.name,
-      u.email,
       u.image,
-      u."walletAddress",
       u.username,
       u.level,
       u.xp,
-      u.bio,
       u."isVerified",
       u."createdAt",
-      u."lastUsernameUpdate",
-      u."lastPhotoUpdate",
       (SELECT COUNT(*) FROM "Post" p WHERE p."authorId" = u.id) AS "postsCount",
       (SELECT COUNT(*) FROM "Follow" f WHERE f."followingId" = u.id) AS "followersCount",
       (SELECT COUNT(*) FROM "Follow" f WHERE f."followerId" = u.id) AS "followingCount"
@@ -430,22 +412,48 @@ async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawRe
 
   return {
     id: row.id,
-    name: row.name,
-    email: row.email,
     image: row.image ?? null,
-    walletAddress: row.walletAddress ?? null,
     username: row.username ?? null,
     level: toSafeNumber(row.level),
     xp: toSafeNumber(row.xp),
-    bio: row.bio ?? null,
     isVerified: row.isVerified === true,
     createdAt: row.createdAt,
-    lastUsernameUpdate: row.lastUsernameUpdate ?? null,
-    lastPhotoUpdate: row.lastPhotoUpdate ?? null,
     _count: {
       posts: toSafeNumber(row.postsCount),
       followers: toSafeNumber(row.followersCount),
       following: toSafeNumber(row.followingCount),
+    },
+  };
+}
+
+function buildPublicUserProfileDto(params: {
+  user: RawResolvedUserProfile;
+  isFollowing: boolean;
+  stats: {
+    totalCalls: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    totalProfitPercent: number;
+  };
+}): PublicUserProfileDTO {
+  return {
+    username: params.user.username,
+    image: params.user.image,
+    level: params.user.level,
+    xp: params.user.xp,
+    isVerified: params.user.isVerified,
+    createdAt: params.user.createdAt.toISOString(),
+    isFollowing: params.isFollowing,
+    stats: {
+      posts: params.user._count.posts,
+      followers: params.user._count.followers,
+      following: params.user._count.following,
+      totalCalls: params.stats.totalCalls,
+      wins: params.stats.wins,
+      losses: params.stats.losses,
+      winRate: params.stats.winRate,
+      totalProfitPercent: params.stats.totalProfitPercent,
     },
   };
 }
@@ -1600,8 +1608,12 @@ usersRouter.get("/:userId/stats", async (c) => {
 
 // Get wallet overview for a user (balances + posted-token position summaries)
 // Must be defined before /:identifier to avoid route conflicts
-usersRouter.get("/:identifier/wallet/overview", async (c) => {
+usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
   const identifier = c.req.param("identifier");
+  const sessionUser = c.get("user");
+  if (!sessionUser) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
 
   const user = await prisma.user.findFirst({
     where: buildUserIdentifierWhere(identifier),
@@ -1613,6 +1625,13 @@ usersRouter.get("/:identifier/wallet/overview", async (c) => {
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  if (user.id !== sessionUser.id) {
+    return c.json(
+      { error: { message: "Wallet analytics are only available to the wallet owner", code: "FORBIDDEN" } },
+      403
+    );
   }
 
   if (!user.walletAddress || !isLikelySolanaWalletAddress(user.walletAddress) || !isHeliusConfigured()) {
@@ -1975,7 +1994,7 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
     events = await prisma.tradeFeeEvent.findMany({
       where: {
         posterUserId: sessionUser.id,
-        txSignature: { not: null },
+        status: "confirmed",
       },
       orderBy: { createdAt: "desc" },
       select: {
@@ -2071,18 +2090,12 @@ usersRouter.get("/:identifier", async (c) => {
   let user:
     | {
         id: string;
-        name: string;
-        email: string;
         image: string | null;
-        walletAddress: string | null;
         username: string | null;
         level: number;
         xp: number;
-        bio: string | null;
         isVerified: boolean;
         createdAt: Date;
-        lastUsernameUpdate: Date | null;
-        lastPhotoUpdate: Date | null;
         _count: {
           posts: number;
           followers: number;
@@ -2098,18 +2111,12 @@ usersRouter.get("/:identifier", async (c) => {
         where: buildUserIdentifierWhere(identifier),
         select: {
           id: true,
-          name: true,
-          email: true,
           image: true,
-          walletAddress: true,
           username: true,
           level: true,
           xp: true,
-          bio: true,
           isVerified: true,
           createdAt: true,
-          lastUsernameUpdate: true,
-          lastPhotoUpdate: true,
           _count: {
             select: {
               posts: true,
@@ -2159,11 +2166,7 @@ usersRouter.get("/:identifier", async (c) => {
   const isFollowing = await getIsFollowingSafely(currentUser?.id, user.id);
   const stats = await getUserStatsSafely(user.id);
   const responsePayload: UserProfileRoutePayload = {
-    data: {
-      ...user,
-      isFollowing,
-      stats,
-    },
+    data: buildPublicUserProfileDto({ user, isFollowing, stats }),
   };
   writeUserRouteCache(
     userProfileRouteCache,
@@ -2176,7 +2179,7 @@ usersRouter.get("/:identifier", async (c) => {
 });
 
 // Update current user's profile
-usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), async (c) => {
+usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchema), async (c) => {
   const sessionUser = c.get("user");
   if (!sessionUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
@@ -2184,7 +2187,6 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
 
   const {
     username,
-    walletAddress,
     bio,
     image,
     tradeFeeRewardsEnabled,
@@ -2302,9 +2304,6 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
   }
 
   // Add other fields if provided
-  if (walletAddress !== undefined) {
-    updateData.walletAddress = walletAddress || null;
-  }
   if (bio !== undefined) {
     updateData.bio = bio || null;
   }
@@ -2482,19 +2481,13 @@ usersRouter.get("/:identifier/posts", async (c) => {
     return c.json(cachedPostsResponse);
   }
 
-  let user:
-    | {
-        id: string;
-        walletAddress: string | null;
-      }
-    | null = null;
+  let user: { id: string } | null = null;
   let userLookupUnavailable = false;
   try {
     user = await prisma.user.findFirst({
       where: buildUserIdentifierWhere(identifier),
       select: {
         id: true,
-        walletAddress: true,
       },
     });
   } catch (error) {
@@ -2503,12 +2496,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
     }
     try {
       const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-      user = fallbackUser
-        ? {
-            id: fallbackUser.id,
-            walletAddress: fallbackUser.walletAddress,
-          }
-        : null;
+      user = fallbackUser ? { id: fallbackUser.id } : null;
     } catch (rawError) {
       userLookupUnavailable = true;
       console.warn("[users/profile-posts] raw user lookup degraded", {
@@ -2608,15 +2596,13 @@ usersRouter.get("/:identifier/posts", async (c) => {
     }
   }
 
-  const postsWithWalletTrade = await attachWalletTradeSnapshotsForUserPosts(posts, user.walletAddress);
-
   const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
     currentUserId: currentUser?.id,
     targetUserId: user.id,
-    postIds: postsWithWalletTrade.map((p) => p.id),
+    postIds: posts.map((p) => p.id),
   });
 
-  const postsWithSocial = postsWithWalletTrade.map((post) => ({
+  const postsWithSocial = posts.map((post) => ({
     ...post,
     isLiked: userLikes.has(post.id),
     isReposted: userReposts.has(post.id),
@@ -2813,7 +2799,7 @@ async function resolveUserIdFromIdentifier(identifier: string): Promise<string |
 }
 
 // Follow a user
-usersRouter.post("/:id/follow", requireAuth, async (c) => {
+usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
   const currentUser = c.get("user");
   const targetIdentifier = c.req.param("id");
 
@@ -2861,7 +2847,7 @@ usersRouter.post("/:id/follow", requireAuth, async (c) => {
 });
 
 // Unfollow a user
-usersRouter.delete("/:id/follow", requireAuth, async (c) => {
+usersRouter.delete("/:id/follow", requireNotBanned, async (c) => {
   const currentUser = c.get("user");
   const targetIdentifier = c.req.param("id");
 

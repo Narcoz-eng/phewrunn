@@ -134,32 +134,14 @@ export async function resolvePrivyAuthPayload({
   let email = getPrivyPrimaryEmail(latestUser);
   let name = getPrivyDisplayName(latestUser, email);
 
-  // If Privy has already surfaced a verified email, do not hold up sign-in waiting
-  // for an identity token. The backend can verify from privyUserId/email if needed.
-  if (email) {
-    const quickPrivyIdToken = await getIdentityTokenWithin(QUICK_IDENTITY_TOKEN_TIMEOUT_MS);
-    return {
-      user: latestUser,
-      email,
-      name,
-      privyIdToken: quickPrivyIdToken,
-    };
-  }
+  const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
+    ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS
+    : QUICK_IDENTITY_TOKEN_TIMEOUT_MS;
 
-  // X / OAuth-only logins often return before the identity token is ready.
-  // The backend can safely resolve the Privy user by id, so avoid holding the
-  // UI open through the full retry budget when we already know the provider identity.
-  if (hasOAuthIdentity(latestUser)) {
-    const quickPrivyIdToken = await getIdentityTokenWithin(OAUTH_IDENTITY_TOKEN_TIMEOUT_MS);
-    return {
-      user: latestUser,
-      email,
-      name,
-      privyIdToken: quickPrivyIdToken,
-    };
+  let privyIdToken = await getIdentityTokenWithin(initialTokenTimeoutMs);
+  if (!privyIdToken) {
+    privyIdToken = await getPrivyIdentityTokenFast();
   }
-
-  let privyIdToken = await getPrivyIdentityTokenFast();
   if (privyIdToken) {
     return {
       user: latestUser,
@@ -174,10 +156,6 @@ export async function resolvePrivyAuthPayload({
     latestUser = getLatestUser?.() ?? latestUser;
     email = getPrivyPrimaryEmail(latestUser);
     name = getPrivyDisplayName(latestUser, email);
-
-    if (email) {
-      break;
-    }
 
     if (!privyIdToken) {
       privyIdToken = await getPrivyIdentityTokenFast();

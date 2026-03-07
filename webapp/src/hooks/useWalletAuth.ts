@@ -66,8 +66,7 @@ export function useWalletAuth() {
       });
 
       if (response.ok) {
-        const data = await response.json() as { token?: string };
-        if (data.token) localStorage.setItem("auth-token", data.token);
+        await response.json().catch(() => null);
         return { success: true };
       } else {
         const data = await response.json() as { error?: { message?: string } };

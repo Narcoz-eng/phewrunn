@@ -37,7 +37,6 @@ const API_BASE_URL = (() => {
 // Default timeout for requests (8 seconds — backend has its own 4-5s query
 // timeouts, so 12s was letting stale connections hang too long)
 const DEFAULT_TIMEOUT = 8000;
-const AUTH_BEARER_TOKEN_MAX_LENGTH = 3500;
 const AUTH_MUTATION_401_RETRY_DELAY_MS = 450;
 
 export class ApiError extends Error {
@@ -71,52 +70,6 @@ interface RequestOptions extends RequestInit {
   timeout?: number;
 }
 
-// Token getter - will be set by the auth provider
-let getAuthToken: (() => Promise<string | null>) | null = null;
-
-export function setAuthTokenGetter(getter: () => Promise<string | null>) {
-  getAuthToken = getter;
-}
-
-function clearStoredAuthTokenFallback(): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem("auth-token");
-  } catch {
-    // ignore localStorage clear failures
-  }
-}
-
-function normalizeAuthTokenForHeader(
-  token: string | null | undefined,
-  source: "getter" | "fallback"
-): string | null {
-  if (typeof token !== "string") return null;
-  const trimmed = token.trim();
-  if (!trimmed) return null;
-  if (trimmed.length > AUTH_BEARER_TOKEN_MAX_LENGTH) {
-    console.warn(`[API] Ignoring oversized auth token from ${source} (${trimmed.length} chars)`);
-    clearStoredAuthTokenFallback();
-    return null;
-  }
-  return trimmed;
-}
-
-function getStoredAuthTokenFallback(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = localStorage.getItem("auth-token");
-    const normalized = normalizeAuthTokenForHeader(stored, "fallback");
-    if (!normalized && stored) {
-      localStorage.removeItem("auth-token");
-    }
-    return normalized;
-  } catch (error) {
-    console.warn("[API] localStorage auth token unavailable; using cookie auth only", error);
-    return null;
-  }
-}
-
 function shouldRetryUnauthorizedMutation(
   method: string | null | undefined,
   status: number,
@@ -144,21 +97,8 @@ async function request<T>(
   const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options;
   const method = (fetchOptions.method ?? "GET").toUpperCase();
 
-  // Get auth token - try getter first, then localStorage fallback
-  let token = getAuthToken ? await getAuthToken() : null;
-  if (!token) {
-    token = getStoredAuthTokenFallback();
-  }
-  token = normalizeAuthTokenForHeader(token, "getter");
-
   const headers = new Headers(fetchOptions.headers);
   headers.set("Content-Type", "application/json");
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  } else {
-    headers.delete("Authorization");
-    headers.delete("authorization");
-  }
 
   const config: RequestInit = {
     ...fetchOptions,
@@ -173,13 +113,6 @@ async function request<T>(
   let response: Response;
   try {
     response = await fetch(url, { ...config, signal: controller.signal });
-    if (response.status === 494 && token) {
-      console.warn(`[API] ${endpoint} returned 494 with bearer token; retrying without Authorization`);
-      clearStoredAuthTokenFallback();
-      headers.delete("Authorization");
-      headers.delete("authorization");
-      response = await fetch(url, { ...config, headers, signal: controller.signal });
-    }
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error) {
@@ -231,20 +164,7 @@ async function rawRequest(endpoint: string, options: RequestOptions = {}): Promi
   const url = `${API_BASE_URL}${endpoint}`;
   const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options;
 
-  // Get auth token - try getter first, then localStorage fallback
-  let token = getAuthToken ? await getAuthToken() : null;
-  if (!token) {
-    token = getStoredAuthTokenFallback();
-  }
-  token = normalizeAuthTokenForHeader(token, "getter");
-
   const headers = new Headers(fetchOptions.headers);
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  } else {
-    headers.delete("Authorization");
-    headers.delete("authorization");
-  }
 
   const config: RequestInit = {
     ...fetchOptions,
@@ -257,15 +177,7 @@ async function rawRequest(endpoint: string, options: RequestOptions = {}): Promi
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    let response = await fetch(url, { ...config, signal: controller.signal });
-    if (response.status === 494 && token) {
-      console.warn(`[API] ${endpoint} returned 494 with bearer token; retrying without Authorization`);
-      clearStoredAuthTokenFallback();
-      headers.delete("Authorization");
-      headers.delete("authorization");
-      response = await fetch(url, { ...config, headers, signal: controller.signal });
-    }
-    return response;
+    return await fetch(url, { ...config, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error) {
       if (error.name === "AbortError") {

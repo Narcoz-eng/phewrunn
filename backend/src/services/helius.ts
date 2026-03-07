@@ -118,6 +118,37 @@ type HeliusEnhancedTx = {
   };
 };
 
+export type ParsedSolanaInstruction = {
+  program?: string;
+  programId?: string;
+  parsed?: unknown;
+  accounts?: string[];
+  data?: string;
+};
+
+export type ParsedSolanaTransaction = {
+  blockTime?: number | null;
+  meta?: {
+    err?: unknown;
+    innerInstructions?: Array<{
+      instructions?: ParsedSolanaInstruction[] | null;
+    } | null> | null;
+  } | null;
+  transaction?: {
+    message?: {
+      accountKeys?: Array<
+        | string
+        | {
+            pubkey?: string;
+            signer?: boolean;
+            writable?: boolean;
+          }
+      > | null;
+      instructions?: ParsedSolanaInstruction[] | null;
+    } | null;
+  } | null;
+};
+
 const HELIUS_RPC_URL =
   process.env.HELIUS_RPC_URL?.trim() ||
   process.env.HELIUS_RPC_ENDPOINT?.trim() ||
@@ -212,6 +243,26 @@ async function heliusRpcCall<T>(method: string, params: unknown[], id: string): 
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function getParsedSolanaTransaction(
+  signature: string
+): Promise<ParsedSolanaTransaction | null> {
+  const normalizedSignature = signature.trim();
+  if (!normalizedSignature) return null;
+
+  return await heliusRpcCall<ParsedSolanaTransaction>(
+    "getTransaction",
+    [
+      normalizedSignature,
+      {
+        encoding: "jsonParsed",
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      },
+    ],
+    `tx-${normalizedSignature.slice(0, 12)}`
+  );
 }
 
 function readNonEmptyString(value: unknown): string | null {

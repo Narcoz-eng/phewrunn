@@ -14,7 +14,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
-import { ProfileDashboard, UserStats, RecentTrade, WalletData } from "@/components/profile/ProfileDashboard";
+import { ProfileDashboard, UserStats, RecentTrade } from "@/components/profile/ProfileDashboard";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowLeft,
   Calendar,
-  Wallet,
-  Mail,
   TrendingUp,
   TrendingDown,
   UserPlus,
@@ -33,8 +31,6 @@ import {
   Sparkles,
   AlertCircle,
   Repeat2,
-  Copy,
-  Check,
   AlertTriangle,
   Skull,
 } from "lucide-react";
@@ -43,27 +39,21 @@ import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
-import { buildProfilePath } from "@/lib/profile-path";
 
 interface UserProfileData {
-  id: string;
-  name: string;
-  email: string | null;
+  id?: string | null;
+  name?: string | null;
   image: string | null;
-  walletAddress: string | null;
   username: string | null;
   level: number;
   xp: number;
-  bio: string | null;
   isVerified?: boolean;
   createdAt: string;
   isFollowing?: boolean;
-  _count: {
+  stats: {
     posts: number;
     followers: number;
     following: number;
-  };
-  stats?: {
     totalCalls: number;
     wins: number;
     losses: number;
@@ -77,8 +67,6 @@ type MainTab = "posts" | "reposts";
 type FollowMutationResponse = { following: boolean; followerCount: number };
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_PROFILE_POSTS_CACHE_TTL_MS = 45_000;
-const USER_PROFILE_WALLET_CACHE_TTL_MS = 60_000;
-
 type CachedFeedPage = {
   items: Post[];
   nextCursor: string | null;
@@ -143,22 +131,17 @@ function buildUserProfileFallbackFromFeed(
   return {
     id: latestPost.author.id,
     name: latestPost.author.name,
-    email: null,
     image: latestPost.author.image ?? null,
-    walletAddress: null,
     username: latestPost.author.username ?? null,
     level: latestPost.author.level ?? 0,
     xp: latestPost.author.xp ?? 0,
-    bio: null,
     isVerified: latestPost.author.isVerified,
     createdAt: latestPost.createdAt,
     isFollowing: Boolean(latestPost.isFollowingAuthor),
-    _count: {
+    stats: {
       posts: matchingPosts.length,
       followers: 0,
       following: 0,
-    },
-    stats: {
       totalCalls,
       wins,
       losses,
@@ -176,8 +159,6 @@ export default function UserProfile() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
-  const [walletCopied, setWalletCopied] = useState(false);
-  const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
   const viewerCacheScope = session?.user?.id ?? "anonymous";
   const userProfileQueryKey = useMemo(
     () => ["userProfile", userId, viewerCacheScope] as const,
@@ -192,7 +173,7 @@ export default function UserProfile() {
     [userId, viewerCacheScope]
   );
   const userProfileCacheKey = useMemo(
-    () => (userId ? `phew.user-profile:${viewerCacheScope}:${userId}` : null),
+    () => (userId ? `phew.user-profile:v2:${viewerCacheScope}:${userId}` : null),
     [userId, viewerCacheScope]
   );
   const userPostsCacheKey = useMemo(
@@ -223,13 +204,6 @@ export default function UserProfile() {
         ? readSessionCache<Post[]>(userRepostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
         : null,
     [userRepostsCacheKey]
-  );
-  const cachedUserWalletOverview = useMemo(
-    () =>
-      userId
-        ? readSessionCache<WalletData>(`phew.user-wallet:${userId}`, USER_PROFILE_WALLET_CACHE_TTL_MS)
-        : null,
-    [userId]
   );
 
   // Fetch user profile
@@ -367,35 +341,10 @@ export default function UserProfile() {
     retry: 1,
   });
 
-  const {
-    data: walletOverview,
-    isFetched: isWalletOverviewFetched,
-  } = useQuery({
-    queryKey: ["userWalletOverview", userId],
-    queryFn: async () => {
-      if (!userId) return null;
-      return await api.get<WalletData>(`/api/users/${userId}/wallet/overview`);
-    },
-    initialData: cachedUserWalletOverview ?? undefined,
-    enabled: !!userId && !!user?.walletAddress && enableWalletOverviewQuery,
-    staleTime: 60_000,
-    gcTime: 300_000,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 1,
-  });
-
   useEffect(() => {
     if (!user || !isUserFetched || !userProfileCacheKey) return;
     writeSessionCache(userProfileCacheKey, user);
   }, [isUserFetched, user, userProfileCacheKey]);
-
-  useEffect(() => {
-    setEnableWalletOverviewQuery(false);
-    if (!user?.walletAddress) return;
-    const timer = window.setTimeout(() => setEnableWalletOverviewQuery(true), 350);
-    return () => window.clearTimeout(timer);
-  }, [user?.walletAddress]);
 
   useEffect(() => {
     if (!isPostsFetched || !userPostsCacheKey) return;
@@ -408,14 +357,10 @@ export default function UserProfile() {
   }, [isRepostsFetched, reposts, userRepostsCacheKey]);
 
   useEffect(() => {
-    if (!userId || !isWalletOverviewFetched || !walletOverview) return;
-    writeSessionCache(`phew.user-wallet:${userId}`, walletOverview);
-  }, [isWalletOverviewFetched, userId, walletOverview]);
+    const canonicalUsername = user?.username?.trim().toLowerCase();
+    if (!canonicalUsername || !userId) return;
 
-  useEffect(() => {
-    if (!user || !userId) return;
-
-    const canonicalPath = buildProfilePath(user.id, user.username);
+    const canonicalPath = `/${canonicalUsername}`;
     if (location.pathname === canonicalPath) {
       return;
     }
@@ -454,17 +399,20 @@ export default function UserProfile() {
         return {
           ...prev,
           isFollowing: nextFollowing,
-          _count: {
-            ...prev._count,
+          stats: {
+            ...prev.stats,
             followers: result.followerCount,
           },
         };
       });
 
       const syncPostFollowState = (prev?: Post[]) =>
-        prev?.map((post) =>
-          post.author.id === user?.id ? { ...post, isFollowingAuthor: nextFollowing } : post
-        ) ?? prev;
+        prev?.map((post) => {
+          const matchesProfile =
+            post.author.id === user?.id ||
+            (Boolean(user?.username) && post.author.username === user?.username);
+          return matchesProfile ? { ...post, isFollowingAuthor: nextFollowing } : post;
+        }) ?? prev;
 
       queryClient.setQueryData<Post[] | undefined>(userPostsQueryKey, syncPostFollowState);
       queryClient.setQueryData<Post[] | undefined>(userRepostsQueryKey, syncPostFollowState);
@@ -650,13 +598,16 @@ export default function UserProfile() {
     });
   };
 
-  // Truncate wallet address
-  const truncateAddress = (address: string) => {
-    return `${address.slice(0, 6)}...${address.slice(-4)}`;
-  };
-
   // Check if this is current user's profile
-  const isOwnProfile = session?.user?.id === user?.id;
+  const normalizedProfileIdentifier = userId?.trim().toLowerCase() ?? "";
+  const isOwnProfile =
+    Boolean(session?.user?.id) &&
+    (session?.user?.id === userId ||
+      session?.user?.username?.trim().toLowerCase() === normalizedProfileIdentifier);
+  const profileDisplayName =
+    user?.username?.trim() || user?.name?.trim() || normalizedProfileIdentifier || "Trader";
+  const profileAvatarSeed =
+    user?.username ?? user?.id ?? (normalizedProfileIdentifier || "trader");
 
   return (
     <div className="min-h-screen bg-background">
@@ -673,7 +624,7 @@ export default function UserProfile() {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <h1 className="font-heading font-semibold text-lg">
-              {user?.username || user?.name || "Profile"}
+              {profileDisplayName || "Profile"}
             </h1>
           </div>
 
@@ -682,8 +633,8 @@ export default function UserProfile() {
               {hasLiveSession ? (
                 <ReportDialog
                   targetType="user"
-                  targetId={user.id}
-                  targetLabel={user.username || user.name}
+                  targetId={user.username ?? userId ?? ""}
+                  targetLabel={user.username ? `@${user.username}` : "this user"}
                   buttonVariant="outline"
                   buttonSize="sm"
                   buttonClassName="h-8 px-3 gap-1.5"
@@ -789,9 +740,9 @@ export default function UserProfile() {
               {/* Avatar */}
               <div className="relative">
                 <Avatar className="h-28 w-28 border-4 border-background ring-4 ring-primary/20">
-                  <AvatarImage src={getAvatarUrl(user.id, user.image)} />
+                  <AvatarImage src={getAvatarUrl(profileAvatarSeed, user.image)} />
                   <AvatarFallback className="bg-muted text-muted-foreground text-3xl">
-                    {user.name?.charAt(0) || "?"}
+                    {profileDisplayName.charAt(0).toUpperCase() || "?"}
                   </AvatarFallback>
                 </Avatar>
 
@@ -803,7 +754,7 @@ export default function UserProfile() {
 
               {/* Username */}
               <h2 className="mt-4 font-heading font-bold text-2xl flex items-center gap-1.5">
-                {user.username || user.name}
+                {user.username ? `@${user.username}` : profileDisplayName}
                 {user.isVerified ? <VerifiedBadge size="md" /> : null}
               </h2>
               {/* Level label under username */}
@@ -818,40 +769,8 @@ export default function UserProfile() {
                 {getLevelLabel(user.level)} Trader
               </span>
 
-              {/* Bio */}
-              {user.bio && (
-                <p className="mt-2 text-muted-foreground max-w-sm">{user.bio}</p>
-              )}
-
               {/* Info badges */}
               <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                {user.walletAddress && (
-                  <button
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(user.walletAddress!);
-                        setWalletCopied(true);
-                        toast.success("Address copied to clipboard");
-                        setTimeout(() => setWalletCopied(false), 2000);
-                      } catch {
-                        toast.error("Failed to copy address");
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 rounded-full text-xs text-muted-foreground transition-colors cursor-pointer group"
-                    title="Click to copy address"
-                  >
-                    <Wallet className="h-3.5 w-3.5" />
-                    <span className="font-mono">
-                      {truncateAddress(user.walletAddress)}
-                    </span>
-                    {walletCopied ? (
-                      <Check className="h-3 w-3 text-gain" />
-                    ) : (
-                      <Copy className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    )}
-                  </button>
-                )}
-
                 <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary rounded-full text-xs text-muted-foreground">
                   <Calendar className="h-3.5 w-3.5" />
                   <span>Joined {formatJoinDate(user.createdAt)}</span>
@@ -865,25 +784,18 @@ export default function UserProfile() {
               xp={user.xp ?? 0}
               stats={userStats}
               recentTrades={recentTrades}
-              walletData={
-                walletOverview
-                  ? { ...walletOverview, address: user.walletAddress ?? walletOverview.address }
-                  : user.walletAddress
-                    ? { connected: true, address: user.walletAddress }
-                    : undefined
-              }
               isLoading={isLoadingUser}
             />
 
             {/* Followers/Following */}
             <div className="flex items-center justify-center gap-6 py-3">
               <div className="flex items-center gap-2">
-                <span className="font-bold">{user._count?.followers ?? 0}</span>
+                <span className="font-bold">{user.stats.followers ?? 0}</span>
                 <span className="text-muted-foreground">Followers</span>
               </div>
               <div className="h-4 w-px bg-border" />
               <div className="flex items-center gap-2">
-                <span className="font-bold">{user._count?.following ?? 0}</span>
+                <span className="font-bold">{user.stats.following ?? 0}</span>
                 <span className="text-muted-foreground">Following</span>
               </div>
             </div>

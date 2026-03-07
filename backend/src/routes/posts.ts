@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { prisma, withPrismaRetry } from "../prisma.js";
-import { type AuthVariables, requireAuth } from "../auth.js";
+import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import {
   CreatePostSchema,
   CreateCommentSchema,
@@ -37,7 +37,10 @@ import {
 import {
   getWalletTradeSnapshotsForSolanaTokens,
   getHeliusTokenMetadataForMint,
+  getParsedSolanaTransaction,
   isHeliusConfigured,
+  type ParsedSolanaInstruction,
+  type ParsedSolanaTransaction,
 } from "../services/helius.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
@@ -263,6 +266,7 @@ const SETTLEMENT_1H_TARGET_PER_RUN = process.env.NODE_ENV === "production" ? 28 
 const SETTLEMENT_1H_SCAN_MULTIPLIER = process.env.NODE_ENV === "production" ? 6 : 4;
 const SETTLEMENT_6H_TARGET_PER_RUN = process.env.NODE_ENV === "production" ? 20 : 10;
 const SETTLEMENT_6H_SCAN_MULTIPLIER = process.env.NODE_ENV === "production" ? 5 : 3;
+const ALPHA_SCORE_WINDOW_MS = 6 * 60 * 60 * 1000;
 const HOURLY_POST_LIMIT = 10;
 const CREATE_POST_MARKETCAP_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_500 : 2_200;
 const CREATE_POST_HELIUS_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_200 : 1_800;
@@ -904,7 +908,6 @@ async function loadPrimaryFeedPosts(
                   name: true,
                   username: true,
                   image: true,
-                  walletAddress: true,
                   level: true,
                   xp: true,
                   isVerified: true,
@@ -965,7 +968,6 @@ async function loadPrimaryFeedPosts(
                 name: true,
                 username: true,
                 image: true,
-                walletAddress: true,
                 level: true,
                 xp: true,
                 isVerified: true,
@@ -2293,6 +2295,200 @@ function deriveTradeSideFromQuote(quote: Record<string, unknown>): "buy" | "sell
   return inputMint === SOL_MINT ? "buy" : "sell";
 }
 
+function getAlphaScoreBucketStart(value: Date): Date {
+  const bucketStartMs = Math.floor(value.getTime() / ALPHA_SCORE_WINDOW_MS) * ALPHA_SCORE_WINDOW_MS;
+  return new Date(bucketStartMs);
+}
+
+async function findEarliestAlphaInBucket(params: {
+  authorId: string;
+  contractAddress: string;
+  createdAt: Date;
+}) {
+  const bucketStart = getAlphaScoreBucketStart(params.createdAt);
+  const bucketEnd = new Date(bucketStart.getTime() + ALPHA_SCORE_WINDOW_MS);
+
+  return await prisma.post.findFirst({
+    where: {
+      authorId: params.authorId,
+      contractAddress: params.contractAddress,
+      createdAt: {
+        gte: bucketStart,
+        lt: bucketEnd,
+      },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      createdAt: true,
+    },
+  });
+}
+
+async function isPrimaryAlphaInBucket(params: {
+  postId: string;
+  authorId: string;
+  contractAddress: string | null;
+  createdAt: Date;
+}): Promise<boolean> {
+  if (!params.contractAddress) {
+    return true;
+  }
+
+  const earliest = await findEarliestAlphaInBucket({
+    authorId: params.authorId,
+    contractAddress: params.contractAddress,
+    createdAt: params.createdAt,
+  });
+  return earliest?.id === params.postId;
+}
+
+function buildTradeVerificationMemo(params: {
+  tradeFeeEventId: string;
+  postId: string;
+}): string {
+  return `phew:trade-fee:${params.tradeFeeEventId}:post:${params.postId}`;
+}
+
+function normalizeParsedAccountKey(value: unknown): string | null {
+  if (typeof value === "string") {
+    return safeString(value);
+  }
+
+  const record = safeRecord(value);
+  return safeString(record?.pubkey);
+}
+
+function getParsedTransactionInstructions(
+  transaction: ParsedSolanaTransaction | null
+): ParsedSolanaInstruction[] {
+  if (!transaction) return [];
+
+  const topLevel = Array.isArray(transaction.transaction?.message?.instructions)
+    ? transaction.transaction.message.instructions
+    : [];
+  const inner = Array.isArray(transaction.meta?.innerInstructions)
+    ? transaction.meta.innerInstructions.flatMap((entry) =>
+        Array.isArray(entry?.instructions) ? entry.instructions : []
+      )
+    : [];
+  return [...topLevel, ...inner];
+}
+
+function readInstructionInfo(instruction: ParsedSolanaInstruction): Record<string, unknown> | null {
+  const parsed = instruction.parsed;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const parsedRecord = parsed as Record<string, unknown>;
+  if ("info" in parsedRecord) {
+    return safeRecord(parsedRecord.info);
+  }
+  return parsedRecord;
+}
+
+function readInstructionAmountAtomic(instruction: ParsedSolanaInstruction): bigint | null {
+  const info = readInstructionInfo(instruction);
+  const directAmount = safeNumericString(info?.amount);
+  if (directAmount) {
+    return BigInt(directAmount);
+  }
+
+  const tokenAmount = safeRecord(info?.tokenAmount);
+  const rawTokenAmount = safeNumericString(tokenAmount?.amount);
+  if (rawTokenAmount) {
+    return BigInt(rawTokenAmount);
+  }
+
+  const directTokenAmount = safeNumericString(info?.tokenAmount);
+  if (directTokenAmount) {
+    return BigInt(directTokenAmount);
+  }
+
+  const lamports = safeNumericString(info?.lamports);
+  return lamports ? BigInt(lamports) : null;
+}
+
+function transactionHasExpectedSigner(
+  transaction: ParsedSolanaTransaction | null,
+  walletAddress: string
+): boolean {
+  const normalizedWallet = walletAddress.trim();
+  const accountKeys = Array.isArray(transaction?.transaction?.message?.accountKeys)
+    ? transaction.transaction.message.accountKeys
+    : [];
+
+  return accountKeys.some((entry) => {
+    const account = normalizeParsedAccountKey(entry);
+    if (account !== normalizedWallet) {
+      return false;
+    }
+    if (typeof entry === "string") {
+      return true;
+    }
+    return safeRecord(entry)?.signer === true;
+  });
+}
+
+function transactionHasExpectedMemo(
+  transaction: ParsedSolanaTransaction | null,
+  expectedMemo: string
+): boolean {
+  const normalizedMemo = expectedMemo.trim();
+  if (!normalizedMemo) return false;
+
+  return getParsedTransactionInstructions(transaction).some((instruction) => {
+    const programId = safeString(instruction.programId);
+    const program = safeString(instruction.program)?.toLowerCase();
+    if (
+      programId !== "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" &&
+      program !== "spl-memo"
+    ) {
+      return false;
+    }
+
+    if (typeof instruction.parsed === "string") {
+      return instruction.parsed.trim() === normalizedMemo;
+    }
+
+    const parsedRecord = safeRecord(instruction.parsed);
+    return (
+      safeString(parsedRecord?.memo) === normalizedMemo ||
+      safeString(parsedRecord?.parsed) === normalizedMemo
+    );
+  });
+}
+
+function transactionHasExpectedFeeTransfer(params: {
+  transaction: ParsedSolanaTransaction | null;
+  destinationAddress: string;
+  minimumAmountAtomic: bigint;
+}): boolean {
+  if (params.minimumAmountAtomic <= 0n) {
+    return true;
+  }
+
+  const normalizedDestination = params.destinationAddress.trim();
+  return getParsedTransactionInstructions(params.transaction).some((instruction) => {
+    const info = readInstructionInfo(instruction);
+    if (!info) {
+      return false;
+    }
+
+    const destination =
+      safeString(info.destination) ??
+      safeString(info.dest) ??
+      safeString(info.feeAccount);
+    if (destination !== normalizedDestination) {
+      return false;
+    }
+
+    const amountAtomic = readInstructionAmountAtomic(instruction);
+    return amountAtomic !== null && amountAtomic >= params.minimumAmountAtomic;
+  });
+}
+
 function withTimeoutFallback<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let settled = false;
@@ -2537,6 +2733,7 @@ type OneHourSettlementCandidate = {
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
+  createdAt: Date;
   entryMcap: number | null;
   currentMcap: number | null;
   isWin: boolean | null;
@@ -2553,6 +2750,7 @@ type SixHourSnapshotCandidate = {
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
+  createdAt: Date;
   entryMcap: number | null;
   currentMcap: number | null;
   mcap1h: number | null;
@@ -2580,6 +2778,7 @@ async function findPostsToSettle1h(
         authorId: true,
         contractAddress: true,
         chainType: true,
+        createdAt: true,
         entryMcap: true,
         currentMcap: true,
         isWin: true,
@@ -2620,6 +2819,7 @@ async function findPostsToSettle1h(
         authorId: row.authorId as string,
         contractAddress: row.contractAddress as string,
         chainType: (row.chainType as string) ?? null,
+        createdAt: row.createdAt as Date,
         entryMcap: row.entryMcap as number | null,
         currentMcap: row.currentMcap as number | null,
         isWin: row.isWin as boolean | null,
@@ -2657,6 +2857,7 @@ async function findPostsToSnapshot6h(
         authorId: true,
         contractAddress: true,
         chainType: true,
+        createdAt: true,
         entryMcap: true,
         currentMcap: true,
         mcap1h: true,
@@ -2688,6 +2889,7 @@ async function findPostsToSnapshot6h(
       authorId: true,
       contractAddress: true,
       chainType: true,
+      createdAt: true,
       entryMcap: true,
       currentMcap: true,
       mcap1h: true,
@@ -2762,8 +2964,17 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           errorCount++;
           continue;
         }
-        const newLevel = calculateFinalLevel(currentUser.level, levelChange);
-        const newXp = Math.max(0, currentUser.xp + xpChange);
+        const scoreEligible = await isPrimaryAlphaInBucket({
+          postId: post.id,
+          authorId: post.authorId,
+          contractAddress: post.contractAddress,
+          createdAt: post.createdAt,
+        });
+        const effectiveLevelChange = scoreEligible ? levelChange : 0;
+        const effectiveXpChange = scoreEligible ? xpChange : 0;
+        const effectiveRecoveryEligible = scoreEligible ? recoveryEligible : false;
+        const newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange);
+        const newXp = Math.max(0, currentUser.xp + effectiveXpChange);
         const settledAt = new Date();
 
         // Keep settlement + user rewards/penalties atomic to avoid "settled but no level/xp" failures.
@@ -2779,8 +2990,8 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 currentMcap: mcap1h,
                 mcap1h: mcap1h,
                 percentChange1h: percentChange1h,
-                recoveryEligible: recoveryEligible,
-                levelChange1h: levelChange,
+                recoveryEligible: effectiveRecoveryEligible,
+                levelChange1h: effectiveLevelChange,
                 trackingMode: TRACKING_MODE_SETTLED,
                 lastMcapUpdate: settledAt,
               },
@@ -2813,47 +3024,50 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         }
 
         // Create notification for the author about 1H settlement
-        const levelDiff = newLevel - currentUser.level;
-        const xpDisplay = xpChange >= 0 ? `+${xpChange}` : xpChange;
-        const levelDisplay = levelDiff >= 0 ? `+${levelDiff}` : levelDiff;
+        if (scoreEligible) {
+          const levelDiff = newLevel - currentUser.level;
+          const xpDisplay =
+            effectiveXpChange >= 0 ? `+${effectiveXpChange}` : effectiveXpChange;
+          const levelDisplay = levelDiff >= 0 ? `+${levelDiff}` : levelDiff;
 
-        let settlementMsg: string;
-        if (isWin1h) {
-          settlementMsg =
-            levelDiff !== 0
-              ? `1H WIN! +${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`
-              : `1H WIN! +${percentChange1h.toFixed(1)}% | XP ${xpDisplay}`;
-        } else if (recoveryEligible) {
-          settlementMsg = `1H: ${percentChange1h.toFixed(1)}% | Recovery chance at 6H!`;
-        } else {
-          settlementMsg = `1H LOSS: ${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
+          let settlementMsg: string;
+          if (isWin1h) {
+            settlementMsg =
+              levelDiff !== 0
+                ? `1H WIN! +${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`
+                : `1H WIN! +${percentChange1h.toFixed(1)}% | XP ${xpDisplay}`;
+          } else if (effectiveRecoveryEligible) {
+            settlementMsg = `1H: ${percentChange1h.toFixed(1)}% | Recovery chance at 6H!`;
+          } else {
+            settlementMsg = `1H LOSS: ${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
+          }
+
+          await createNotificationSafely({
+            operation: "settlement_1h_author_notification",
+            data: {
+              userId: post.authorId,
+              type: "settlement",
+              message: settlementMsg,
+              dedupeKey: buildNotificationDedupeKey({
+                type: "settlement",
+                scope: "1h",
+                userId: post.authorId,
+                postId: post.id,
+              }),
+              postId: post.id,
+            },
+          });
+          await notifyFollowersOfBigGain({
+            postId: post.id,
+            authorId: post.authorId,
+            authorName: post.author.name,
+            authorUsername: post.author.username,
+            percentChange1h,
+          });
         }
 
-        await createNotificationSafely({
-          operation: "settlement_1h_author_notification",
-          data: {
-            userId: post.authorId,
-            type: "settlement",
-            message: settlementMsg,
-            dedupeKey: buildNotificationDedupeKey({
-              type: "settlement",
-              scope: "1h",
-              userId: post.authorId,
-              postId: post.id,
-            }),
-            postId: post.id,
-          },
-        });
-        await notifyFollowersOfBigGain({
-          postId: post.id,
-          authorId: post.authorId,
-          authorName: post.author.name,
-          authorUsername: post.author.username,
-          percentChange1h,
-        });
-
         settled1hCount++;
-        console.log(`[Settlement 1H] Post ${post.id}: ${isWin1h ? 'WIN' : 'LOSS'} (${percentChange1h.toFixed(2)}%), recoveryEligible=${recoveryEligible}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
+        console.log(`[Settlement 1H] Post ${post.id}: ${isWin1h ? 'WIN' : 'LOSS'} (${percentChange1h.toFixed(2)}%), scoreEligible=${scoreEligible}, recoveryEligible=${effectiveRecoveryEligible}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
       } catch (err) {
         console.error(`[Settlement 1H] Error settling post ${post.id}:`, err);
         errorCount++;
@@ -2892,10 +3106,18 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         const recoveryEligible = post.recoveryEligible ?? false;
         const levelChange6h = calculate6HSettlement(isWin1h, percentChange6h, recoveryEligible);
         const xpChange6h = calculate6HXpChange(percentChange6h, levelChange6h);
+        const scoreEligible = await isPrimaryAlphaInBucket({
+          postId: post.id,
+          authorId: post.authorId,
+          contractAddress: post.contractAddress,
+          createdAt: post.createdAt,
+        });
+        const effectiveLevelChange6h = scoreEligible ? levelChange6h : 0;
+        const effectiveXpChange6h = scoreEligible ? xpChange6h : 0;
         const snapshotUpdatedAt = new Date();
 
         // Keep 6H snapshot + user rewards atomic when XP and/or level changes apply.
-        if (levelChange6h !== 0 || xpChange6h !== 0) {
+        if (effectiveLevelChange6h !== 0 || effectiveXpChange6h !== 0) {
           const currentUser = await prisma.user.findUnique({
             where: { id: post.authorId },
             select: { id: true, level: true, xp: true },
@@ -2904,8 +3126,8 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             errorCount++;
             continue;
           }
-          const newLevel = calculateFinalLevel(currentUser.level, levelChange6h);
-          const newXp = Math.max(0, currentUser.xp + xpChange6h);
+          const newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange6h);
+          const newXp = Math.max(0, currentUser.xp + effectiveXpChange6h);
           try {
             await prisma.$transaction([
               prisma.post.updateMany({
@@ -2916,7 +3138,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                   isWin6h: isWin6h,
                   percentChange6h: percentChange6h,
                   settled6h: true,
-                  levelChange6h: levelChange6h,
+                  levelChange6h: effectiveLevelChange6h,
                   lastMcapUpdate: snapshotUpdatedAt,
                 },
               }),
@@ -2956,14 +3178,15 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           // Create notification for the user about level change
           const levelDiff = newLevel - currentUser.level;
           const levelDisplay = levelDiff >= 0 ? `+${levelDiff}` : levelDiff;
-          const xpDisplay = xpChange6h >= 0 ? `+${xpChange6h}` : xpChange6h;
+          const xpDisplay =
+            effectiveXpChange6h >= 0 ? `+${effectiveXpChange6h}` : effectiveXpChange6h;
 
           let msg6h: string;
-          if (levelChange6h > 0 && recoveryEligible) {
+          if (effectiveLevelChange6h > 0 && recoveryEligible) {
             msg6h = `6H RECOVERY! +${percentChange6h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
-          } else if (levelChange6h > 0) {
+          } else if (effectiveLevelChange6h > 0) {
             msg6h = `6H BONUS! +${percentChange6h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
-          } else if (levelChange6h < 0) {
+          } else if (effectiveLevelChange6h < 0) {
             msg6h = `6H: ${percentChange6h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
           } else {
             msg6h = `6H SNAPSHOT WIN! +${percentChange6h.toFixed(1)}% | XP ${xpDisplay}`;
@@ -2985,9 +3208,9 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             },
           });
 
-          if (levelChange6h !== 0) {
+          if (effectiveLevelChange6h !== 0) {
             levelChanges6hCount++;
-            console.log(`[Settlement 6H Level] Post ${post.id}: levelChange6h=${levelChange6h}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
+            console.log(`[Settlement 6H Level] Post ${post.id}: levelChange6h=${effectiveLevelChange6h}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
           } else {
             console.log(`[Settlement 6H XP] Post ${post.id}: +${percentChange6h.toFixed(2)}%, XP ${xpDisplay}, User ${post.authorId}`);
           }
@@ -4165,30 +4388,7 @@ postsRouter.get("/", async (c) => {
     return postWithSharedAlpha;
   });
 
-  const postsWithWalletTrade =
-    !feedDegradedMode && FEED_ENABLE_LIVE_WALLET_ENRICHMENT
-      ? await withFeedTimeout(
-          attachWalletTradeSnapshots(postsWithUpdatedMcap),
-          "wallet_snapshot_enrichment",
-          FEED_ENRICH_TIMEOUT_MS
-        ).catch((error) => {
-          console.warn("[posts/feed] wallet trade enrichment unavailable; continuing with base feed payload", {
-            message: error instanceof Error ? error.message : String(error),
-          });
-          if (isFeedCircuitBreakerError(error)) {
-            feedDegradedMode = true;
-            openFeedDegradedCircuit("wallet_snapshot_enrichment", error);
-          }
-          return postsWithUpdatedMcap;
-        })
-      : postsWithUpdatedMcap;
-  const responsePosts = postsWithWalletTrade.map((post) => {
-    const { walletAddress: _walletAddress, ...publicAuthor } = post.author;
-    return {
-      ...post,
-      author: publicAuthor,
-    };
-  });
+  const responsePosts = postsWithUpdatedMcap;
   const responsePayload: FeedResponsePayload = {
     data: responsePosts,
     hasMore,
@@ -4304,7 +4504,7 @@ postsRouter.get("/maintenance/run", async (c) => {
 });
 
 // Create a new post
-postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (c) => {
+postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), async (c) => {
   const user = c.get("user");
   const session = c.get("session");
   if (!user) {
@@ -4379,6 +4579,36 @@ postsRouter.post("/", requireAuth, zValidator("json", CreatePostSchema), async (
         code: "CA_REQUIRED"
       }
     }, 400);
+  }
+
+  const alphaCreatedAt = new Date();
+  const existingAlphaInBucket = await findEarliestAlphaInBucket({
+    authorId: user.id,
+    contractAddress: detected.address,
+    createdAt: alphaCreatedAt,
+  });
+  if (existingAlphaInBucket) {
+    const bucketStart = getAlphaScoreBucketStart(alphaCreatedAt);
+    const resetAt = new Date(bucketStart.getTime() + ALPHA_SCORE_WINDOW_MS);
+    const resetInMinutes = Math.max(
+      1,
+      Math.ceil((resetAt.getTime() - Date.now()) / (60 * 1000))
+    );
+    return c.json(
+      {
+        error: {
+          message:
+            "You already posted this contract in the current scoring window. Wait before posting it again.",
+          code: "ALPHA_COOLDOWN_ACTIVE",
+          data: {
+            contractAddress: detected.address,
+            resetAt: resetAt.toISOString(),
+            resetInMinutes,
+          },
+        },
+      },
+      429
+    );
   }
 
   const { marketCapResult, heliusTokenMetadata } = await resolveCreatePostMarketContext({
@@ -4580,8 +4810,17 @@ postsRouter.post("/settle", async (c) => {
       select: { id: true, level: true, xp: true },
     });
     if (!currentUser) continue;
-    const newLevel = calculateFinalLevel(currentUser.level, levelChange);
-    const newXp = Math.max(0, currentUser.xp + xpChange);
+    const scoreEligible = await isPrimaryAlphaInBucket({
+      postId: post.id,
+      authorId: post.authorId,
+      contractAddress: post.contractAddress,
+      createdAt: post.createdAt,
+    });
+    const effectiveLevelChange = scoreEligible ? levelChange : 0;
+    const effectiveXpChange = scoreEligible ? xpChange : 0;
+    const effectiveRecoveryEligible = scoreEligible ? recoveryEligible : false;
+    const newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange);
+    const newXp = Math.max(0, currentUser.xp + effectiveXpChange);
     const settledAt = new Date();
 
     try {
@@ -4596,8 +4835,8 @@ postsRouter.post("/settle", async (c) => {
             currentMcap: mcap1h,
             mcap1h: mcap1h,
             percentChange1h: percentChange1h,
-            recoveryEligible: recoveryEligible,
-            levelChange1h: levelChange,
+            recoveryEligible: effectiveRecoveryEligible,
+            levelChange1h: effectiveLevelChange,
             trackingMode: TRACKING_MODE_SETTLED,
             lastMcapUpdate: settledAt,
           },
@@ -4635,13 +4874,15 @@ postsRouter.post("/settle", async (c) => {
       ]);
     }
 
-    await notifyFollowersOfBigGain({
-      postId: post.id,
-      authorId: post.authorId,
-      authorName: post.author.name,
-      authorUsername: post.author.username,
-      percentChange1h,
-    });
+    if (scoreEligible) {
+      await notifyFollowersOfBigGain({
+        postId: post.id,
+        authorId: post.authorId,
+        authorName: post.author.name,
+        authorUsername: post.author.username,
+        percentChange1h,
+      });
+    }
 
     results1h.push({
       postId: post.id,
@@ -4652,10 +4893,10 @@ postsRouter.post("/settle", async (c) => {
       newLevel,
       oldXp: currentUser.xp,
       newXp,
-      xpChange,
+      xpChange: effectiveXpChange,
       entryMcap: post.entryMcap,
       finalMcap: mcap1h,
-      recoveryEligible,
+      recoveryEligible: effectiveRecoveryEligible,
     });
   }
 
@@ -4682,6 +4923,14 @@ postsRouter.post("/settle", async (c) => {
     const recoveryEligible = post.recoveryEligible ?? false;
     const levelChange6h = calculate6HSettlement(isWin1h, percentChange6h, recoveryEligible);
     let xpChange = calculate6HXpChange(percentChange6h, levelChange6h);
+    const scoreEligible = await isPrimaryAlphaInBucket({
+      postId: post.id,
+      authorId: post.authorId,
+      contractAddress: post.contractAddress,
+      createdAt: post.createdAt,
+    });
+    const effectiveLevelChange6h = scoreEligible ? levelChange6h : 0;
+    xpChange = scoreEligible ? xpChange : 0;
     const currentUser = await prisma.user.findUnique({
       where: { id: post.authorId },
       select: { level: true, xp: true },
@@ -4692,9 +4941,9 @@ postsRouter.post("/settle", async (c) => {
     let newLevel = oldLevel;
 
     const snapshotUpdatedAt = new Date();
-    if (levelChange6h !== 0 || xpChange !== 0) {
+    if (effectiveLevelChange6h !== 0 || xpChange !== 0) {
       oldLevel = currentUser.level;
-      newLevel = calculateFinalLevel(currentUser.level, levelChange6h);
+      newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange6h);
       const newXp = Math.max(0, currentUser.xp + xpChange);
 
       try {
@@ -4707,7 +4956,7 @@ postsRouter.post("/settle", async (c) => {
               isWin6h: isWin6h,
               percentChange6h: percentChange6h,
               settled6h: true,
-              levelChange6h: levelChange6h,
+              levelChange6h: effectiveLevelChange6h,
               lastMcapUpdate: snapshotUpdatedAt,
             },
           }),
@@ -4751,7 +5000,7 @@ postsRouter.post("/settle", async (c) => {
             isWin6h: isWin6h,
             percentChange6h: percentChange6h,
             settled6h: true,
-            levelChange6h: levelChange6h,
+            levelChange6h: effectiveLevelChange6h,
             lastMcapUpdate: snapshotUpdatedAt,
           },
         });
@@ -4777,9 +5026,9 @@ postsRouter.post("/settle", async (c) => {
       oldLevel,
       newLevel,
       xpChange,
-      levelChange6h,
+      levelChange6h: effectiveLevelChange6h,
       recoveryEligible,
-      hadLevelChange: levelChange6h !== 0,
+      hadLevelChange: effectiveLevelChange6h !== 0,
     });
   }
 
@@ -5098,7 +5347,6 @@ postsRouter.get("/:id", async (c) => {
             name: true,
             username: true,
             image: true,
-            walletAddress: true,
             level: true,
             xp: true,
             isVerified: true,
@@ -5158,23 +5406,17 @@ postsRouter.get("/:id", async (c) => {
     isReposted = !!repost;
   }
 
-  const [postWithWalletTrade] = await attachWalletTradeSnapshots(
-    [{ ...post, isLiked, isReposted }],
-    1
-  );
-  const safePostWithWalletTrade = postWithWalletTrade ?? { ...post, isLiked, isReposted };
-  const { walletAddress: _walletAddress, ...publicAuthor } = safePostWithWalletTrade.author;
-
   return c.json({
     data: {
-      ...safePostWithWalletTrade,
-      author: publicAuthor,
+      ...post,
+      isLiked,
+      isReposted,
     }
   });
 });
 
 // Like a post
-postsRouter.post("/:id/like", requireAuth, async (c) => {
+postsRouter.post("/:id/like", requireNotBanned, async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
 
@@ -5253,7 +5495,7 @@ postsRouter.post("/:id/like", requireAuth, async (c) => {
 });
 
 // Unlike a post
-postsRouter.delete("/:id/like", requireAuth, async (c) => {
+postsRouter.delete("/:id/like", requireNotBanned, async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
 
@@ -5279,7 +5521,7 @@ postsRouter.delete("/:id/like", requireAuth, async (c) => {
 });
 
 // Repost a post
-postsRouter.post("/:id/repost", requireAuth, async (c) => {
+postsRouter.post("/:id/repost", requireNotBanned, async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
 
@@ -5401,7 +5643,7 @@ postsRouter.post("/:id/repost", requireAuth, async (c) => {
 });
 
 // Unrepost a post
-postsRouter.delete("/:id/repost", requireAuth, async (c) => {
+postsRouter.delete("/:id/repost", requireNotBanned, async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
 
@@ -5458,7 +5700,7 @@ postsRouter.get("/:id/comments", async (c) => {
 });
 
 // Add a comment to a post
-postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentSchema), async (c) => {
+postsRouter.post("/:id/comments", requireNotBanned, zValidator("json", CreateCommentSchema), async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
   const { content } = c.req.valid("json");
@@ -5565,7 +5807,7 @@ postsRouter.post("/:id/comments", requireAuth, zValidator("json", CreateCommentS
 });
 
 // Delete a comment
-postsRouter.delete("/:id/comments/:commentId", requireAuth, async (c) => {
+postsRouter.delete("/:id/comments/:commentId", requireNotBanned, async (c) => {
   const user = c.get("user");
   const postId = c.req.param("id");
   const commentId = c.req.param("commentId");
@@ -5716,41 +5958,50 @@ const BatchPostPricesSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(50),
 });
 
-const JupiterQuoteProxySchema = z.object({
-  inputMint: z.string().min(32).max(64),
-  outputMint: z.string().min(32).max(64),
-  amount: z.number().int().positive(),
-  slippageBps: z.number().int().min(1).max(5000),
-  swapMode: z.enum(["ExactIn", "ExactOut"]).optional().default("ExactIn"),
-  postId: z.string().min(1).optional(),
-});
+const JupiterQuoteProxySchema = z
+  .object({
+    inputMint: z.string().min(32).max(64),
+    outputMint: z.string().min(32).max(64),
+    amount: z.number().int().positive(),
+    slippageBps: z.number().int().min(1).max(5000),
+    swapMode: z.enum(["ExactIn", "ExactOut"]).optional().default("ExactIn"),
+    postId: z.string().min(1).optional(),
+  })
+  .strict();
 
-const JupiterSwapProxySchema = z.object({
-  quoteResponse: z.record(z.string(), z.any()),
-  userPublicKey: z.string().min(32).max(64),
-  postId: z.string().min(1).optional(),
-  tradeSide: z.enum(["buy", "sell"]).optional(),
-  wrapAndUnwrapSol: z.boolean().optional(),
-  dynamicComputeUnitLimit: z.boolean().optional(),
-});
+const JupiterSwapProxySchema = z
+  .object({
+    quoteResponse: z.record(z.string(), z.any()),
+    userPublicKey: z.string().min(32).max(64),
+    postId: z.string().min(1).optional(),
+    tradeSide: z.enum(["buy", "sell"]).optional(),
+    wrapAndUnwrapSol: z.boolean().optional(),
+    dynamicComputeUnitLimit: z.boolean().optional(),
+  })
+  .strict();
 
-const JupiterFeeConfirmSchema = z.object({
-  tradeFeeEventId: z.string().min(1),
-  txSignature: z.string().min(40).max(128),
-  walletAddress: z.string().min(32).max(64),
-});
+const JupiterFeeConfirmSchema = z
+  .object({
+    tradeFeeEventId: z.string().min(1),
+    txSignature: z.string().min(40).max(128),
+    walletAddress: z.string().min(32).max(64),
+  })
+  .strict();
 
-const ChartCandlesProxySchema = z.object({
-  poolAddress: z.string().min(10).max(128).optional(),
-  tokenAddress: z.string().min(10).max(128).optional(),
-  chainType: z.enum(["solana", "evm", "ethereum"]).optional(),
-  timeframe: z.enum(["minute", "hour", "day"]).optional().default("minute"),
-  aggregate: z.number().int().min(1).max(240).optional().default(5),
-  limit: z.number().int().min(20).max(720).optional().default(260),
-}).refine((value) => Boolean(value.poolAddress || value.tokenAddress), {
-  message: "poolAddress or tokenAddress is required",
-  path: ["poolAddress"],
-});
+const ChartCandlesProxySchema = z
+  .object({
+    poolAddress: z.string().min(10).max(128).optional(),
+    tokenAddress: z.string().min(10).max(128).optional(),
+    chainType: z.enum(["solana", "evm", "ethereum"]).optional(),
+    timeframe: z.enum(["minute", "hour", "day"]).optional().default("minute"),
+    aggregate: z.number().int().min(1).max(240).optional().default(5),
+    limit: z.number().int().min(20).max(720).optional().default(260),
+  })
+  .strict()
+  .refine((value) => Boolean(value.poolAddress || value.tokenAddress), {
+    message: "poolAddress or tokenAddress is required",
+    path: ["poolAddress"],
+  });
 
 type ChartCandlesPayload = z.infer<typeof ChartCandlesProxySchema>;
 
@@ -5992,9 +6243,31 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
   });
 });
 
-postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), async (c) => {
+postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSwapProxySchema), async (c) => {
   const payload = c.req.valid("json");
   const currentUser = c.get("user");
+  if (!currentUser) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const traderUser = await prisma.user.findUnique({
+    where: { id: currentUser.id },
+    select: { walletAddress: true },
+  });
+  const linkedWalletAddress = safeString(traderUser?.walletAddress);
+  if (!linkedWalletAddress) {
+    return c.json(
+      { error: { message: "Link a wallet before building trades", code: "WALLET_NOT_LINKED" } },
+      403
+    );
+  }
+  if (linkedWalletAddress !== payload.userPublicKey) {
+    return c.json(
+      { error: { message: "Trade wallet does not match the authenticated wallet", code: "WALLET_MISMATCH" } },
+      403
+    );
+  }
+
   const platformFeeBps = getActivePlatformFeeBps();
   const quote = safeRecord(payload.quoteResponse) ?? {};
 
@@ -6134,6 +6407,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
   }
 
   let tradeFeeEventId: string | null = null;
+  let tradeVerificationMemo: string | null = null;
   let posterShareBpsApplied = 0;
   const platformFeeInfo = safeRecord(quote.platformFee);
   const platformFeeAmountAtomic = safeNumericString(platformFeeInfo?.amount);
@@ -6183,6 +6457,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
         posterShareBps,
         posterShareAmountAtomic,
         posterPayoutAddress: postContext.author.tradeFeePayoutAddress ?? postContext.author.walletAddress,
+        status: "pending",
       },
       select: { id: true },
     })
@@ -6215,6 +6490,10 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     );
     if (createdEvent?.id) {
       tradeFeeEventId = createdEvent.id;
+      tradeVerificationMemo = buildTradeVerificationMemo({
+        tradeFeeEventId: createdEvent.id,
+        postId: postContext.id,
+      });
     }
   }
 
@@ -6222,6 +6501,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
     JSON.stringify({
       ...parsedSwapBody,
       tradeFeeEventId,
+      tradeVerificationMemo,
       platformFeeBpsApplied,
       posterShareBpsApplied,
     }),
@@ -6237,7 +6517,7 @@ postsRouter.post("/jupiter/swap", zValidator("json", JupiterSwapProxySchema), as
 
 postsRouter.post(
   "/jupiter/fee-confirm",
-  requireAuth,
+  requireNotBanned,
   zValidator("json", JupiterFeeConfirmSchema),
   async (c) => {
     const user = c.get("user");
@@ -6249,9 +6529,13 @@ postsRouter.post(
     let existing:
       | {
           id: string;
+          postId: string;
+          status: string;
           traderUserId: string | null;
           traderWalletAddress: string;
+          platformFeeAmountAtomic: string;
           txSignature: string | null;
+          verificationError: string | null;
         }
       | null = null;
     try {
@@ -6259,9 +6543,13 @@ postsRouter.post(
         where: { id: payload.tradeFeeEventId },
         select: {
           id: true,
+          postId: true,
+          status: true,
           traderUserId: true,
           traderWalletAddress: true,
+          platformFeeAmountAtomic: true,
           txSignature: true,
+          verificationError: true,
         },
       });
     } catch (error) {
@@ -6300,18 +6588,138 @@ postsRouter.post(
       return c.json({ error: { message: "Wallet mismatch for fee event", code: "WALLET_MISMATCH" } }, 403);
     }
 
+    if (existing.status === "rejected") {
+      return c.json(
+        {
+          error: {
+            message: existing.verificationError ?? "Fee event was rejected during verification",
+            code: "TRADE_VERIFICATION_REJECTED",
+          },
+        },
+        409
+      );
+    }
+
     if (existing.txSignature && existing.txSignature !== payload.txSignature) {
       return c.json({ error: { message: "Fee event already confirmed", code: "ALREADY_CONFIRMED" } }, 409);
     }
 
-    let updated: { id: string; txSignature: string | null };
+    if (user.walletAddress && user.walletAddress !== payload.walletAddress) {
+      return c.json({ error: { message: "Authenticated wallet mismatch", code: "WALLET_MISMATCH" } }, 403);
+    }
+
+    const parsedTransaction = await getParsedSolanaTransaction(payload.txSignature);
+    if (!parsedTransaction || parsedTransaction.meta?.err) {
+      await prisma.tradeFeeEvent.update({
+        where: { id: existing.id },
+        data: {
+          verificationError: parsedTransaction?.meta?.err
+            ? "Transaction failed on-chain"
+            : "Transaction not yet confirmed on-chain",
+        },
+      }).catch(() => undefined);
+
+      return c.json(
+        {
+          error: {
+            message: "Transaction is not yet confirmed on-chain",
+            code: "TX_NOT_CONFIRMED",
+          },
+        },
+        409
+      );
+    }
+
+    const expectedMemo = buildTradeVerificationMemo({
+      tradeFeeEventId: existing.id,
+      postId: existing.postId,
+    });
+    if (!transactionHasExpectedSigner(parsedTransaction, existing.traderWalletAddress)) {
+      await prisma.tradeFeeEvent.update({
+        where: { id: existing.id },
+        data: {
+          status: "rejected",
+          txSignature: payload.txSignature,
+          verificationError: "Transaction signer does not match the authenticated trader wallet",
+        },
+      }).catch(() => undefined);
+      return c.json(
+        {
+          error: {
+            message: "Transaction signer does not match the authenticated wallet",
+            code: "TRADE_VERIFICATION_FAILED",
+          },
+        },
+        400
+      );
+    }
+
+    if (!transactionHasExpectedMemo(parsedTransaction, expectedMemo)) {
+      await prisma.tradeFeeEvent.update({
+        where: { id: existing.id },
+        data: {
+          status: "rejected",
+          txSignature: payload.txSignature,
+          verificationError: "Transaction memo does not match the expected post metadata",
+        },
+      }).catch(() => undefined);
+      return c.json(
+        {
+          error: {
+            message: "Transaction memo does not match the expected post",
+            code: "TRADE_VERIFICATION_FAILED",
+          },
+        },
+        400
+      );
+    }
+
+    if (
+      !transactionHasExpectedFeeTransfer({
+        transaction: parsedTransaction,
+        destinationAddress: JUPITER_PLATFORM_FEE_ACCOUNT,
+        minimumAmountAtomic: BigInt(existing.platformFeeAmountAtomic),
+      })
+    ) {
+      await prisma.tradeFeeEvent.update({
+        where: { id: existing.id },
+        data: {
+          status: "rejected",
+          txSignature: payload.txSignature,
+          verificationError: "Expected platform fee transfer was not found on-chain",
+        },
+      }).catch(() => undefined);
+      return c.json(
+        {
+          error: {
+            message: "Expected platform fee transfer was not found on-chain",
+            code: "TRADE_VERIFICATION_FAILED",
+          },
+        },
+        400
+      );
+    }
+
+    let updated: {
+      id: string;
+      txSignature: string | null;
+      status: string;
+      confirmedAt: Date | null;
+    };
     try {
       updated = await prisma.tradeFeeEvent.update({
         where: { id: existing.id },
-        data: { txSignature: payload.txSignature },
+        data: {
+          txSignature: payload.txSignature,
+          status: "confirmed",
+          confirmedAt: new Date(),
+          verificationError: null,
+        },
         select: {
           id: true,
           txSignature: true,
+          status: true,
+          confirmedAt: true,
         },
       });
     } catch (error) {
@@ -6332,7 +6740,12 @@ postsRouter.post(
       });
     }
 
-    return c.json({ data: updated });
+    return c.json({
+      data: {
+        ...updated,
+        confirmedAt: updated.confirmedAt?.toISOString() ?? null,
+      },
+    });
   }
 );
 
@@ -6939,6 +7352,7 @@ async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<Char
 
 postsRouter.post(
   "/portfolio",
+  requireNotBanned,
   zValidator(
     "json",
     z.object({
@@ -6947,7 +7361,29 @@ postsRouter.post(
     })
   ),
   async (c) => {
+    const currentUser = c.get("user");
+    if (!currentUser) {
+      return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+    }
+
     const { walletAddress, tokenMints } = c.req.valid("json");
+    const linkedWallet = await prisma.user.findUnique({
+      where: { id: currentUser.id },
+      select: { walletAddress: true },
+    });
+    if (!linkedWallet?.walletAddress) {
+      return c.json(
+        { error: { message: "Link a wallet before requesting portfolio data", code: "WALLET_NOT_LINKED" } },
+        403
+      );
+    }
+    if (linkedWallet.walletAddress !== walletAddress) {
+      return c.json(
+        { error: { message: "Portfolio access is restricted to the linked wallet owner", code: "FORBIDDEN" } },
+        403
+      );
+    }
+
     const hasExplicitMints = Array.isArray(tokenMints) && tokenMints.length > 0;
 
     // Get trade snapshots (holdings + prices) for all mints

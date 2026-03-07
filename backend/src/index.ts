@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import "./env.js";
 import {
   betterAuthMiddleware,
@@ -27,12 +28,17 @@ import {
   createErrorHandler,
   apiRateLimit,
   authRateLimit,
+  privySyncRateLimit,
   sessionRateLimit,
   feedRateLimit,
+  jupiterQuoteRateLimit,
+  chartCandlesRateLimit,
+  tradeWriteRateLimit,
   adminRateLimit,
   leaderboardRateLimit,
   commentRateLimit,
   startRateLimitCleanup,
+  bodySizeLimit,
   sanitizeBody,
   sanitizeQuery,
   csrfProtection,
@@ -151,13 +157,14 @@ app.use("/api/*", async (c, next) => {
 // 7. Endpoint-specific rate limits (more restrictive, applied before general limit)
 // Auth endpoints - 10 req/5min (brute force protection)
 app.use("/api/auth/*", async (c, next) => {
-  // Privy identity tokens are already validated server-side.
-  // Keep this endpoint responsive during reconnect/retry loops.
-  if (c.req.path === "/api/auth/privy-sync") {
-    return next();
-  }
   return authRateLimit(c, next);
 });
+app.use("/api/auth/privy-sync", privySyncRateLimit);
+app.use("/api/posts/jupiter/quote", jupiterQuoteRateLimit);
+app.use("/api/posts/chart/candles", chartCandlesRateLimit);
+app.use("/api/posts/jupiter/swap", tradeWriteRateLimit);
+app.use("/api/posts/jupiter/fee-confirm", tradeWriteRateLimit);
+app.use("/api/posts/portfolio", tradeWriteRateLimit);
 app.use("/api/me", sessionRateLimit);
 app.use("/api/me/stats", sessionRateLimit);
 app.use("/api/posts", async (c, next) => {
@@ -170,6 +177,13 @@ app.use("/api/posts", async (c, next) => {
 app.use("/api/admin/*", adminRateLimit);
 // Leaderboard endpoints - 60 req/min (expensive queries)
 app.use("/api/leaderboard/*", leaderboardRateLimit);
+app.use("/api/auth/privy-sync", bodySizeLimit(8 * 1024, "Privy sync payload is too large"));
+app.use("/api/auth/wallet", bodySizeLimit(16 * 1024, "Wallet auth payload is too large"));
+app.use("/api/posts/jupiter/quote", bodySizeLimit(12 * 1024, "Quote payload is too large"));
+app.use("/api/posts/jupiter/swap", bodySizeLimit(128 * 1024, "Swap payload is too large"));
+app.use("/api/posts/jupiter/fee-confirm", bodySizeLimit(8 * 1024, "Trade confirmation payload is too large"));
+app.use("/api/posts/chart/candles", bodySizeLimit(8 * 1024, "Chart payload is too large"));
+app.use("/api/posts/portfolio", bodySizeLimit(12 * 1024, "Portfolio payload is too large"));
 
 // 8. Structured Logging
 app.use("*", structuredLogger({
@@ -300,6 +314,7 @@ const AUTH_RESPONSE_USER_SELECT = {
   level: true,
   xp: true,
   bio: true,
+  role: true,
   isAdmin: true,
   isVerified: true,
   tradeFeeRewardsEnabled: true,
@@ -332,6 +347,7 @@ type AuthResponseUser = {
   level: number;
   xp: number;
   bio: string | null;
+  role: string;
   isAdmin: boolean;
   isVerified: boolean;
   tradeFeeRewardsEnabled: boolean;
@@ -372,6 +388,7 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
     username: normalizedUsername,
     level: user.level,
     xp: user.xp,
+    role: user.role,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
     createdAt: createdAtIso,
@@ -390,7 +407,7 @@ function buildClientAuthUser(user: AuthResponseUser) {
     level: user.level,
     xp: user.xp,
     bio: user.bio,
-    isAdmin: user.isAdmin,
+    isAdmin: user.role === "admin",
     isVerified: user.isVerified,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
     tradeFeeShareBps: user.tradeFeeShareBps,
@@ -545,6 +562,7 @@ function normalizeCachedPrivyAuthUser(data: unknown): AuthResponseUser | null {
     level: typeof candidate.level === "number" ? candidate.level : 0,
     xp: typeof candidate.xp === "number" ? candidate.xp : 0,
     bio: typeof candidate.bio === "string" ? candidate.bio : null,
+    role: typeof candidate.role === "string" ? candidate.role : "user",
     isAdmin: typeof candidate.isAdmin === "boolean" ? candidate.isAdmin : false,
     isVerified: typeof candidate.isVerified === "boolean" ? candidate.isVerified : false,
     tradeFeeRewardsEnabled:
@@ -612,6 +630,7 @@ function writeCachedPrivyAuthUser(privyUserId: string, user: AuthResponseUser): 
     level: user.level,
     xp: user.xp,
     bio: user.bio,
+    role: user.role,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
@@ -814,7 +833,7 @@ async function queryMeResponseUserRaw(userId: string): Promise<MeResponseUser | 
     level: toNum(row.level, 0),
     xp: toNum(row.xp, 0),
     bio: (row.bio as string) ?? null,
-    isAdmin: row.isAdmin === true,
+    isAdmin: row.role === "admin" || row.isAdmin === true,
     isVerified: row.isVerified === true,
     tradeFeeRewardsEnabled: row.tradeFeeRewardsEnabled !== false,
     tradeFeeShareBps: toNum(row.tradeFeeShareBps, 100),
@@ -924,6 +943,7 @@ function normalizeAuthResponseUser(
     level?: number | null;
     xp?: number | null;
     bio?: string | null;
+    role?: string | null;
     isAdmin?: boolean | null;
     isVerified?: boolean | null;
     tradeFeeRewardsEnabled?: boolean | null;
@@ -932,6 +952,7 @@ function normalizeAuthResponseUser(
     createdAt?: Date | null;
   }
 ): AuthResponseUser {
+  const normalizedRole = user.role?.trim().toLowerCase() === "admin" ? "admin" : "user";
   return {
     id: user.id,
     name: user.name,
@@ -943,7 +964,8 @@ function normalizeAuthResponseUser(
     level: user.level ?? 0,
     xp: user.xp ?? 0,
     bio: user.bio ?? null,
-    isAdmin: user.isAdmin ?? false,
+    role: normalizedRole,
+    isAdmin: normalizedRole === "admin" || (user.isAdmin ?? false),
     isVerified: user.isVerified ?? false,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
     tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
@@ -1079,6 +1101,7 @@ function toAuthResponseUserFromSessionUser(
         level: number;
         xp: number;
         bio?: string | null;
+        role?: string | null;
         isAdmin?: boolean;
         isVerified: boolean;
         tradeFeeRewardsEnabled?: boolean;
@@ -1103,6 +1126,7 @@ function toAuthResponseUserFromSessionUser(
     level: sessionUser.level,
     xp: sessionUser.xp,
     bio: sessionUser.bio,
+    role: sessionUser.role,
     isAdmin: sessionUser.isAdmin,
     isVerified: sessionUser.isVerified,
     tradeFeeRewardsEnabled: sessionUser.tradeFeeRewardsEnabled,
@@ -1378,6 +1402,7 @@ async function createWalletAuthUser(params: {
         emailVerified: false,
         level: 0,
         xp: 0,
+        role: "user",
         isAdmin: false,
         isBanned: false,
         createdAt: now,
@@ -1484,6 +1509,7 @@ async function upsertAuthUserByEmail(params: {
         emailVerified: true,
         level: 0,
         xp: 0,
+        role: "user",
         isAdmin: false,
         isBanned: false,
         createdAt: params.now,
@@ -1706,6 +1732,35 @@ function applySessionCookies(c: Context, sessionToken: string): void {
   });
 }
 
+function issueAuthSessionResponse(
+  c: Context,
+  user: AuthResponseUser,
+  now = new Date()
+) {
+  const sessionToken = createSignedSessionToken({
+    userId: user.id,
+    now,
+    user: buildSessionTokenUserClaims(user),
+  });
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  queueSessionRecordBestEffort({
+    sessionToken,
+    userId: user.id,
+    expiresAt,
+    now,
+    ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown",
+    userAgent: c.req.header("user-agent") || "unknown",
+  });
+
+  applySessionCookies(c, sessionToken);
+  primeMeResponseCacheFromAuthUser(user);
+
+  return c.json({
+    user: buildClientAuthUser(user),
+  });
+}
+
 function buildClearedSessionCookies(hostHeader: string | undefined): string[] {
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = resolveSessionCookieDomain(hostHeader);
@@ -1839,6 +1894,22 @@ function validateWalletAuthMessage(
   return { ok: true, nonce };
 }
 
+const WalletAuthRequestSchema = z
+  .object({
+    walletAddress: z.string().trim().min(32).max(64),
+    walletProvider: z.string().trim().min(1).max(64).optional(),
+    signature: z.string().trim().min(1).max(1024),
+    message: z.string().trim().min(1).max(4096),
+  })
+  .strict();
+
+const PrivySyncRequestSchema = z
+  .object({
+    privyIdToken: z.string().trim().min(1).max(4096),
+    name: z.string().trim().max(120).optional(),
+  })
+  .strict();
+
 function consumeWalletAuthNonce(walletAddress: string, nonce: string): boolean {
   const now = Date.now();
   for (const [key, expiresAtMs] of walletAuthNonceReplayCache) {
@@ -1859,15 +1930,14 @@ function consumeWalletAuthNonce(walletAddress: string, nonce: string): boolean {
 // This creates a user account using wallet address as identifier
 app.post("/api/auth/wallet", async (c) => {
   try {
-    const body = await c.req.json();
-    const { walletAddress, walletProvider, signature, message } = body;
-
-    if (!walletAddress || typeof walletAddress !== "string") {
+    const parsedBody = WalletAuthRequestSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsedBody.success) {
       return c.json(
-        { error: { message: "Wallet address is required", code: "INVALID_INPUT" } },
+        { error: { message: "Invalid wallet authentication payload", code: "INVALID_INPUT" } },
         400
       );
     }
+    const { walletAddress, walletProvider, signature, message } = parsedBody.data;
 
     const normalizedWalletAddress = walletAddress.trim();
 
@@ -1897,13 +1967,6 @@ app.post("/api/auth/wallet", async (c) => {
 
     // For Solana wallets, verify the signature
     if (solanaRegex.test(normalizedWalletAddress)) {
-      if (typeof signature !== "string" || typeof message !== "string" || !signature || !message) {
-        return c.json(
-          { error: { message: "Signature and message are required for wallet authentication", code: "INVALID_INPUT" } },
-          400
-        );
-      }
-
       const challenge = validateWalletAuthMessage(message, normalizedWalletAddress);
       if (!challenge.ok) {
         return c.json(
@@ -1962,31 +2025,7 @@ app.post("/api/auth/wallet", async (c) => {
         });
     }
 
-    // Create signed session token (stateless fallback works even if session table drifts).
-    const sessionToken = createSignedSessionToken({
-      userId: user.id,
-      now,
-      user: buildSessionTokenUserClaims(user),
-    });
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-
-    queueSessionRecordBestEffort({
-      sessionToken,
-      userId: user.id,
-      expiresAt,
-      now,
-      ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown",
-      userAgent: c.req.header("user-agent") || "unknown",
-    });
-
-    // Set canonical session cookie and clear stale legacy cookies.
-    applySessionCookies(c, sessionToken);
-    primeMeResponseCacheFromAuthUser(user);
-
-    return c.json({
-      token: sessionToken,
-      user: buildClientAuthUser(user),
-    });
+    return issueAuthSessionResponse(c, user, now);
   } catch (error) {
     console.error("Wallet auth error:", error);
     return c.json(
@@ -1996,12 +2035,204 @@ app.post("/api/auth/wallet", async (c) => {
   }
 });
 
+async function handleVerifiedPrivySyncRequest(c: Context) {
+  const body = await c.req.json().catch(() => null);
+  const parsed = PrivySyncRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json(
+      { error: { message: "A valid privyIdToken is required", code: "INVALID_INPUT" } },
+      400
+    );
+  }
+
+  if (!PRIVY_CLIENT) {
+    console.error("[privy-sync] Missing PRIVY_APP_ID or PRIVY_APP_SECRET env vars");
+    return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
+  }
+
+  type PrivyUserLike = {
+    id?: unknown;
+    email?: { address?: unknown } | null;
+    linkedAccounts?: Array<{ type?: unknown; address?: unknown }> | null;
+  };
+
+  const getPrivyEmail = (user: PrivyUserLike): string | null => {
+    const directEmail = user.email?.address;
+    if (typeof directEmail === "string" && directEmail.includes("@")) {
+      return directEmail.trim().toLowerCase();
+    }
+
+    const linkedEmail = user.linkedAccounts?.find(
+      (account) =>
+        account?.type === "email" &&
+        typeof account.address === "string" &&
+        account.address.includes("@")
+    );
+    return typeof linkedEmail?.address === "string"
+      ? linkedEmail.address.trim().toLowerCase()
+      : null;
+  };
+
+  try {
+    const { privyIdToken, name } = parsed.data;
+    const verifiedTokenUser = (await withPrivyApiTimeout(
+      PRIVY_CLIENT.getUser({ idToken: privyIdToken }) as Promise<PrivyUserLike>,
+      "privy.getUser(idToken)"
+    )) as PrivyUserLike;
+
+    const verifiedPrivyUserId =
+      typeof verifiedTokenUser.id === "string" && verifiedTokenUser.id.trim().length > 0
+        ? verifiedTokenUser.id.trim()
+        : null;
+    if (!verifiedPrivyUserId) {
+      return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    const fullPrivyUser = (await withPrivyApiTimeout(
+      PRIVY_CLIENT.getUserById(verifiedPrivyUserId) as Promise<PrivyUserLike>,
+      "privy.getUserById(verifiedPrivyUserId)"
+    )) as PrivyUserLike;
+
+    const verifiedEmail =
+      getPrivyEmail(fullPrivyUser) ||
+      getPrivyEmail(verifiedTokenUser) ||
+      buildPrivySyntheticEmail(verifiedPrivyUserId);
+    const privyCacheKey =
+      privyIdToken.length > 32 ? `token:${privyIdToken.slice(-32)}` : null;
+
+    writeCachedPrivyIdentity(privyCacheKey, {
+      userId: verifiedPrivyUserId,
+      email: verifiedEmail,
+    });
+
+    const now = new Date();
+    const existingLink = await findAuthUserLinkByPrivyUserId(verifiedPrivyUserId);
+
+    let user: AuthResponseUser | null = null;
+    if (existingLink?.userId) {
+      user = await findAuthUserById(existingLink.userId);
+      if (!user) {
+        console.error("[privy-sync] Privy user link points to missing user", {
+          privyUserId: verifiedPrivyUserId,
+          linkedUserId: existingLink.userId,
+        });
+        return c.json(
+          {
+            error: {
+              message: "Account link is inconsistent. Please contact support.",
+              code: "ACCOUNT_LINK_CONFLICT",
+            },
+          },
+          409
+        );
+      }
+    }
+
+    if (!user) {
+      user = await findAuthUserByPrivyIdentity({
+        privyUserId: verifiedPrivyUserId,
+        verifiedEmail,
+      });
+    }
+
+    if (!user && verifiedEmail !== buildPrivySyntheticEmail(verifiedPrivyUserId)) {
+      user = await findAuthUserByEmail(verifiedEmail);
+    }
+
+    if (!user) {
+      user = await upsertAuthUserByEmail({
+        email: verifiedEmail,
+        displayName:
+          normalizeOptionalDisplayName(name) ??
+          verifiedEmail.split("@")[0] ??
+          "User",
+        now,
+      });
+    }
+
+    user = await reconcilePrivyLinkedUserProfile({
+      user,
+      verifiedEmail,
+      preferredName: name,
+      privyUserId: verifiedPrivyUserId,
+    });
+
+    if (existingLink && existingLink.userId !== user.id) {
+      console.error("[privy-sync] Refusing to remap linked Privy user", {
+        privyUserId: verifiedPrivyUserId,
+        linkedUserId: existingLink.userId,
+        resolvedUserId: user.id,
+      });
+      return c.json(
+        {
+          error: {
+            message: "Privy account is already linked to a different user.",
+            code: "ACCOUNT_LINK_CONFLICT",
+          },
+        },
+        409
+      );
+    }
+
+    await writeAuthUserLinkForPrivyUserId({
+      privyUserId: verifiedPrivyUserId,
+      userId: user.id,
+      now,
+    });
+
+    writeCachedPrivyAuthUser(verifiedPrivyUserId, user);
+    return issueAuthSessionResponse(c, user, now);
+  } catch (error) {
+    if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
+      c.header("Retry-After", "2");
+      return c.json(
+        {
+          error: {
+            message: "Auth is temporarily reconnecting. Please retry.",
+            code: "AUTH_TEMPORARILY_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
+    if (isPrivyApiTimeoutError(error)) {
+      c.header("Retry-After", "2");
+      return c.json(
+        {
+          error: {
+            message: "Auth provider timed out. Please retry.",
+            code: "AUTH_PROVIDER_TIMEOUT",
+          },
+        },
+        503
+      );
+    }
+    console.error("[privy-sync] Error:", error);
+    return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
+  }
+}
+
 // =====================================================
 // Privy Session Sync Route
 // =====================================================
 // Verifies the Privy user via the Privy API, then finds/creates
 // a local user and issues a Better Auth session token.
-app.post("/api/auth/privy-sync", async (c) => {
+app.post("/api/auth/privy-sync", handleVerifiedPrivySyncRequest);
+
+// Legacy handler retained temporarily under an internal path until the old code
+// is deleted after the production rollout.
+app.post("/api/internal/_legacy-privy-sync", async (c) => {
+  return c.json(
+    {
+      error: {
+        message: "Legacy Privy sync has been disabled",
+        code: "ENDPOINT_DISABLED",
+      },
+    },
+    410
+  );
+
+  /*
   const existingSession = c.get("session");
   let hasPrivyIdentityInput = false;
   let resolvedAuthUser: AuthResponseUser | null = null;
@@ -2472,6 +2703,7 @@ app.post("/api/auth/privy-sync", async (c) => {
     console.error("[privy-sync] Error:", error);
     return c.json({ error: { message: "Failed to sync Privy session", code: "INTERNAL_ERROR" } }, 500);
   }
+  */
 });
 
 // =====================================================
@@ -2532,6 +2764,17 @@ app.get("/api/me", async (c) => {
           id: recoveredSession.user.id,
           email: recoveredSession.user.email || null,
           walletAddress: recoveredSession.user.walletAddress || null,
+          role:
+            typeof recoveredSession.user.role === "string" &&
+            recoveredSession.user.role.trim().length > 0
+              ? recoveredSession.user.role.trim().toLowerCase()
+              : recoveredSession.user.isAdmin
+                ? "admin"
+                : "user",
+          isAdmin:
+            recoveredSession.user.role === "admin" ||
+            recoveredSession.user.isAdmin === true,
+          isBanned: recoveredSession.user.isBanned === true,
         };
         c.set("session", recoveredSession);
         c.set("user", user);
@@ -2543,6 +2786,17 @@ app.get("/api/me", async (c) => {
             id: bearerSession.user.id,
             email: bearerSession.user.email || null,
             walletAddress: bearerSession.user.walletAddress || null,
+            role:
+              typeof bearerSession.user.role === "string" &&
+              bearerSession.user.role.trim().length > 0
+                ? bearerSession.user.role.trim().toLowerCase()
+                : bearerSession.user.isAdmin
+                  ? "admin"
+                  : "user",
+            isAdmin:
+              bearerSession.user.role === "admin" ||
+              bearerSession.user.isAdmin === true,
+            isBanned: bearerSession.user.isBanned === true,
           };
           c.set("session", bearerSession);
           c.set("user", user);
@@ -2601,6 +2855,7 @@ app.get("/api/me", async (c) => {
           level: true,
           xp: true,
           bio: true,
+          role: true,
           isAdmin: true,
           isVerified: true,
           tradeFeeRewardsEnabled: true,
@@ -2627,6 +2882,7 @@ app.get("/api/me", async (c) => {
             level: true,
             xp: true,
             bio: true,
+            role: true,
             isAdmin: true,
             isVerified: true,
             tradeFeeRewardsEnabled: true,
@@ -2664,6 +2920,7 @@ app.get("/api/me", async (c) => {
             level: true,
             xp: true,
             bio: true,
+            role: true,
             isAdmin: true,
             isVerified: true,
             createdAt: true,
@@ -2700,7 +2957,7 @@ app.get("/api/me", async (c) => {
       return c.json({ data: staleCachedUser });
     }
     if (session?.user) {
-      const sessionBackedUser: MeResponseUser = {
+        const sessionBackedUser: MeResponseUser = {
         id: session.user.id,
         name: session.user.name,
         email: session.user.email,
@@ -2710,7 +2967,7 @@ app.get("/api/me", async (c) => {
         level: session.user.level,
         xp: session.user.xp,
         bio: session.user.bio,
-        isAdmin: session.user.isAdmin,
+        isAdmin: session.user.role === "admin" || session.user.isAdmin,
         isVerified: session.user.isVerified,
         tradeFeeRewardsEnabled:
           session.user.tradeFeeRewardsEnabled ?? defaultFeeSettings.tradeFeeRewardsEnabled,

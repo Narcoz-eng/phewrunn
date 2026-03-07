@@ -5,8 +5,12 @@ import { verifySignedSessionToken } from "./session-token.js";
 
 const LOCAL_REVOKED_SESSION_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const SESSION_REVOCATION_IDENTIFIER = "session-revocation";
-const SESSION_REVOCATION_DB_ENABLED =
-  process.env.AUTH_SESSION_REVOCATION_DB_ENABLED?.trim().toLowerCase() === "true";
+const SESSION_REVOCATION_DB_ENABLED = (() => {
+  const configured = process.env.AUTH_SESSION_REVOCATION_DB_ENABLED?.trim().toLowerCase();
+  if (configured === "true") return true;
+  if (configured === "false") return false;
+  return process.env.NODE_ENV === "production";
+})();
 const SESSION_REVOCATION_LOG_COOLDOWN_MS = 15_000;
 
 const localRevokedSessionTokens = new Map<string, number>();

@@ -322,6 +322,12 @@ export const authRateLimit = rateLimit({
   message: "Too many authentication attempts, please wait before trying again",
 });
 
+export const privySyncRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 12,
+  message: "Too many Privy sync attempts, please wait before trying again",
+});
+
 /**
  * Session/profile endpoints rate limit
  * 180 requests per minute per authenticated user
@@ -342,6 +348,24 @@ export const feedRateLimit = userAwareRateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 120,
   message: "Feed rate limit reached, please retry shortly",
+});
+
+export const jupiterQuoteRateLimit = userAwareRateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 45,
+  message: "Quote rate limit reached, please retry shortly",
+});
+
+export const chartCandlesRateLimit = userAwareRateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  message: "Chart rate limit reached, please retry shortly",
+});
+
+export const tradeWriteRateLimit = userAwareRateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20,
+  message: "Trade rate limit reached, please retry shortly",
 });
 
 /**

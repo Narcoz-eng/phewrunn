@@ -27,6 +27,7 @@ model User {
   level         Int       @default(0)  // -5 to 10
   xp            Int       @default(0)  // numerical XP for leveling
   bio           String?                // user bio
+  role          String    @default("user") // "user" | "admin"
   isAdmin       Boolean   @default(false) // for admin dashboard access
   isBanned      Boolean   @default(false) // banned users cannot post/comment
   isVerified    Boolean   @default(false) // blue checkmark verification
@@ -63,6 +64,7 @@ model User {
 
   @@index([createdAt])
   @@index([level, xp])
+  @@index([role])
   @@index([isBanned, createdAt])
   @@index([isVerified, createdAt])
   @@index([walletAddress])
@@ -226,6 +228,7 @@ model TradeFeeEvent {
   posterUserId           String
   traderUserId           String?
   traderWalletAddress    String
+  status                 String   @default("pending") // "pending" | "confirmed" | "rejected"
   tradeSide              String   // "buy" | "sell"
   inputMint              String
   outputMint             String
@@ -238,6 +241,8 @@ model TradeFeeEvent {
   posterShareAmountAtomic String
   posterPayoutAddress    String?
   txSignature            String?
+  confirmedAt            DateTime?
+  verificationError      String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
@@ -247,6 +252,7 @@ model TradeFeeEvent {
 
   @@index([posterUserId, createdAt])
   @@index([postId, createdAt])
+  @@index([status, createdAt])
   @@index([txSignature])
   @@index([traderUserId, createdAt])
 }

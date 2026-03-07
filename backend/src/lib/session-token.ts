@@ -15,6 +15,7 @@ export type SessionTokenUserClaims = {
   level?: number | null;
   xp?: number | null;
   bio?: string | null;
+  role?: string | null;
   isAdmin?: boolean | null;
   isBanned?: boolean | null;
   isVerified?: boolean | null;
@@ -26,12 +27,11 @@ export type SessionTokenUserClaims = {
 };
 
 function getSessionTokenSecret(): string {
-  return (
-    process.env.AUTH_SESSION_TOKEN_SECRET?.trim() ||
-    process.env.PRIVY_APP_SECRET?.trim() ||
-    process.env.PRIVY_APP_ID?.trim() ||
-    "development-session-token-secret"
-  );
+  const secret = process.env.AUTH_SESSION_TOKEN_SECRET?.trim();
+  if (!secret) {
+    throw new Error("AUTH_SESSION_TOKEN_SECRET is required");
+  }
+  return secret;
 }
 
 function toBase64Url(buffer: Buffer): string {
@@ -94,6 +94,15 @@ function toOptionalFiniteNumber(value: unknown): number | null | undefined {
   return undefined;
 }
 
+function toOptionalRole(value: unknown): string | null | undefined {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized.slice(0, 32) : null;
+  }
+  if (value === null) return null;
+  return undefined;
+}
+
 function toOptionalIsoDateString(value: unknown): string | null | undefined {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString();
@@ -136,6 +145,7 @@ function sanitizeUserClaims(
   assign("level", toOptionalFiniteNumber(claims.level));
   assign("xp", toOptionalFiniteNumber(claims.xp));
   assign("bio", toOptionalString(claims.bio));
+  assign("role", toOptionalRole(claims.role));
   assign("isAdmin", toOptionalBoolean(claims.isAdmin));
   assign("isBanned", toOptionalBoolean(claims.isBanned));
   assign("isVerified", toOptionalBoolean(claims.isVerified));
@@ -165,6 +175,7 @@ function parseUserClaims(value: unknown): SessionTokenUserClaims | null {
     level: toOptionalFiniteNumber(claims.level),
     xp: toOptionalFiniteNumber(claims.xp),
     bio: toOptionalString(claims.bio),
+    role: toOptionalRole(claims.role),
     isAdmin: toOptionalBoolean(claims.isAdmin),
     isBanned: toOptionalBoolean(claims.isBanned),
     isVerified: toOptionalBoolean(claims.isVerified),

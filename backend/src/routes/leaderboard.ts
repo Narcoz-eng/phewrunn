@@ -68,6 +68,7 @@ const LEADERBOARD_STATS_STALE_REVALIDATE_MS =
 const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 6_000;
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
 const LEADERBOARD_STATS_SNAPSHOT_KEY = "leaderboard:stats";
+const ALPHA_SCORE_BUCKET_SECONDS = 6 * 60 * 60;
 let leaderboardCacheVersionMemory = 1;
 let leaderboardCacheVersionReadCache: { value: number; expiresAtMs: number } | null = null;
 
@@ -79,6 +80,37 @@ let statsCache: CacheEntry<LeaderboardStatsPayload> | null = null;
 let statsInFlight: Promise<LeaderboardStatsPayload> | null = null;
 const LEADERBOARD_DEGRADED_CACHE_TTL_MS =
   process.env.NODE_ENV === "production" ? 20_000 : 5_000;
+
+const LEADERBOARD_DEDUPED_POSTS_SUBQUERY = Prisma.sql`
+  SELECT DISTINCT ON (
+    p."authorId",
+    COALESCE(p."contractAddress", CONCAT('__post__:', p.id)),
+    FLOOR(EXTRACT(EPOCH FROM p."createdAt") / ${ALPHA_SCORE_BUCKET_SECONDS})
+  )
+    p.id,
+    p."authorId",
+    p."contractAddress",
+    p."tokenName",
+    p."tokenSymbol",
+    p."tokenImage",
+    p."entryMcap",
+    p."currentMcap",
+    p."mcap1h",
+    p."mcap6h",
+    p."percentChange1h",
+    p."percentChange6h",
+    p."settledAt",
+    p."createdAt",
+    p.settled,
+    p."isWin"
+  FROM "Post" p
+  ORDER BY
+    p."authorId",
+    COALESCE(p."contractAddress", CONCAT('__post__:', p.id)),
+    FLOOR(EXTRACT(EPOCH FROM p."createdAt") / ${ALPHA_SCORE_BUCKET_SECONDS}),
+    p."createdAt" ASC,
+    p.id ASC
+`;
 
 const EMPTY_LEADERBOARD_STATS_PAYLOAD: LeaderboardStatsPayload = {
   volume: {
@@ -357,21 +389,22 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
   const [summaryRows, levelDistribution, topUsersThisWeek] = await Promise.all([
     withLeaderboardTimeout(
       prisma.$queryRaw<StatsSummaryRow[]>(Prisma.sql`
+        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
         SELECT
-          COALESCE(SUM("entryMcap") FILTER (WHERE "createdAt" >= ${oneDayAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeDay",
-          COALESCE(SUM("entryMcap") FILTER (WHERE "createdAt" >= ${oneWeekAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeWeek",
-          COALESCE(SUM("entryMcap") FILTER (WHERE "createdAt" >= ${oneMonthAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeMonth",
-          COALESCE(SUM("entryMcap") FILTER (WHERE "entryMcap" IS NOT NULL), 0) AS "volumeAllTime",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${oneDayAgo})::bigint AS "alphasToday",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${oneWeekAgo})::bigint AS "alphasWeek",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${oneMonthAgo})::bigint AS "alphasMonth",
+          COALESCE(SUM(p."entryMcap") FILTER (WHERE p."createdAt" >= ${oneDayAgo} AND p."entryMcap" IS NOT NULL), 0) AS "volumeDay",
+          COALESCE(SUM(p."entryMcap") FILTER (WHERE p."createdAt" >= ${oneWeekAgo} AND p."entryMcap" IS NOT NULL), 0) AS "volumeWeek",
+          COALESCE(SUM(p."entryMcap") FILTER (WHERE p."createdAt" >= ${oneMonthAgo} AND p."entryMcap" IS NOT NULL), 0) AS "volumeMonth",
+          COALESCE(SUM(p."entryMcap") FILTER (WHERE p."entryMcap" IS NOT NULL), 0) AS "volumeAllTime",
+          COUNT(*) FILTER (WHERE p."createdAt" >= ${oneDayAgo})::bigint AS "alphasToday",
+          COUNT(*) FILTER (WHERE p."createdAt" >= ${oneWeekAgo})::bigint AS "alphasWeek",
+          COUNT(*) FILTER (WHERE p."createdAt" >= ${oneMonthAgo})::bigint AS "alphasMonth",
           COUNT(*)::bigint AS "alphasTotal",
-          COUNT(*) FILTER (WHERE "settled" = true AND "isWin" = true)::bigint AS "totalWins",
-          COUNT(*) FILTER (WHERE "settled" = true AND "isWin" = false)::bigint AS "totalLosses",
-          COUNT(DISTINCT "authorId") FILTER (WHERE "createdAt" >= ${oneDayAgo})::bigint AS "activeUsersToday",
-          COUNT(DISTINCT "authorId") FILTER (WHERE "createdAt" >= ${oneWeekAgo})::bigint AS "activeUsersWeek",
+          COUNT(*) FILTER (WHERE p.settled = true AND p."isWin" = true)::bigint AS "totalWins",
+          COUNT(*) FILTER (WHERE p.settled = true AND p."isWin" = false)::bigint AS "totalLosses",
+          COUNT(DISTINCT p."authorId") FILTER (WHERE p."createdAt" >= ${oneDayAgo})::bigint AS "activeUsersToday",
+          COUNT(DISTINCT p."authorId") FILTER (WHERE p."createdAt" >= ${oneWeekAgo})::bigint AS "activeUsersWeek",
           (SELECT COUNT(*)::bigint FROM "User") AS "totalUsers"
-        FROM "Post"
+        FROM leaderboard_posts p
       `),
       "leaderboard.stats.summary"
     ),
@@ -395,6 +428,7 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
         level: number | null;
         postsThisWeek: bigint | number | string | Prisma.Decimal | null;
       }>>(Prisma.sql`
+        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
         SELECT
           u.id,
           u.name,
@@ -402,7 +436,7 @@ async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload
           u.image,
           u.level,
           COUNT(*)::bigint AS "postsThisWeek"
-        FROM "Post" p
+        FROM leaderboard_posts p
         JOIN "User" u ON u.id = p."authorId"
         WHERE p."createdAt" >= ${oneWeekAgo}
         GROUP BY u.id, u.name, u.username, u.image, u.level
@@ -528,14 +562,18 @@ async function getDailyGainersRaw(): Promise<Array<unknown>> {
       contractAddress: string | null;
       entryMcap: number | null;
       currentMcap: number | null;
+      mcap1h: number | null;
+      mcap6h: number | null;
+      percentChange1h: number | null;
+      percentChange6h: number | null;
       settledAt: Date | null;
       authorId: string;
       authorName: string | null;
       authorUsername: string | null;
       authorImage: string | null;
       authorLevel: number | null;
-      gainPercent: number | null;
     }>>(Prisma.sql`
+      WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
       SELECT
         p.id,
         p."tokenName",
@@ -544,50 +582,89 @@ async function getDailyGainersRaw(): Promise<Array<unknown>> {
         p."contractAddress",
         p."entryMcap",
         p."currentMcap",
+        p."mcap1h",
+        p."mcap6h",
+        p."percentChange1h",
+        p."percentChange6h",
         p."settledAt",
         u.id AS "authorId",
         u.name AS "authorName",
         u.username AS "authorUsername",
         u.image AS "authorImage",
-        u.level AS "authorLevel",
-        CASE
-          WHEN p."entryMcap" IS NOT NULL AND p."entryMcap" > 0 AND p."currentMcap" IS NOT NULL
-            THEN ((p."currentMcap" - p."entryMcap") / p."entryMcap") * 100
-          ELSE NULL
-        END AS "gainPercent"
-      FROM "Post" p
+        u.level AS "authorLevel"
+      FROM leaderboard_posts p
       JOIN "User" u ON u.id = p."authorId"
       WHERE p.settled = true
         AND p."createdAt" >= ${twentyFourHoursAgo}
         AND p."contractAddress" IS NOT NULL
         AND p."entryMcap" IS NOT NULL
         AND p."currentMcap" IS NOT NULL
-      ORDER BY "gainPercent" DESC NULLS LAST
-      LIMIT 10
+        AND p."settledAt" IS NOT NULL
     `),
     "leaderboard.daily-gainers.raw"
   );
 
   return rows
-    .filter((row) => row.contractAddress && toSafeNumber(row.gainPercent) > 0)
+    .map((row) => {
+      if (!row.contractAddress || !row.entryMcap || !row.currentMcap) {
+        return null;
+      }
+
+      const candidates: Array<{ gainPercent: number; displayMcap: number }> = [];
+
+      if (row.mcap1h !== null && row.percentChange1h !== null) {
+        candidates.push({
+          gainPercent: row.percentChange1h,
+          displayMcap: row.mcap1h,
+        });
+      }
+
+      if (row.mcap6h !== null && row.percentChange6h !== null) {
+        candidates.push({
+          gainPercent: row.percentChange6h,
+          displayMcap: row.mcap6h,
+        });
+      }
+
+      const currentGainPercent = ((row.currentMcap - row.entryMcap) / row.entryMcap) * 100;
+      candidates.push({
+        gainPercent: currentGainPercent,
+        displayMcap: row.currentMcap,
+      });
+
+      const bestCandidate = candidates.reduce((best, candidate) =>
+        candidate.gainPercent > best.gainPercent ? candidate : best
+      );
+
+      if (!(bestCandidate.gainPercent > 0)) {
+        return null;
+      }
+
+      return {
+        postId: row.id,
+        tokenName: row.tokenName ?? null,
+        tokenSymbol: row.tokenSymbol ?? null,
+        tokenImage: row.tokenImage ?? null,
+        contractAddress: row.contractAddress,
+        user: {
+          id: row.authorId,
+          name: row.authorName ?? null,
+          username: row.authorUsername ?? null,
+          image: row.authorImage ?? null,
+          level: Math.max(0, Math.round(toSafeNumber(row.authorLevel))),
+        },
+        gainPercent: Math.round(bestCandidate.gainPercent * 100) / 100,
+        entryMcap: toSafeNumber(row.entryMcap),
+        currentMcap: toSafeNumber(bestCandidate.displayMcap),
+        settledAt: row.settledAt?.toISOString() ?? new Date(0).toISOString(),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null)
+    .sort((a, b) => b.gainPercent - a.gainPercent)
+    .slice(0, 10)
     .map((row, index) => ({
       rank: index + 1,
-      postId: row.id,
-      tokenName: row.tokenName ?? null,
-      tokenSymbol: row.tokenSymbol ?? null,
-      tokenImage: row.tokenImage ?? null,
-      contractAddress: row.contractAddress!,
-      user: {
-        id: row.authorId,
-        name: row.authorName ?? null,
-        username: row.authorUsername ?? null,
-        image: row.authorImage ?? null,
-        level: Math.max(0, Math.round(toSafeNumber(row.authorLevel))),
-      },
-      gainPercent: Math.round(toSafeNumber(row.gainPercent) * 100) / 100,
-      entryMcap: toSafeNumber(row.entryMcap),
-      currentMcap: toSafeNumber(row.currentMcap),
-      settledAt: row.settledAt?.toISOString() ?? new Date(0).toISOString(),
+      ...row,
     }));
 }
 
@@ -615,15 +692,16 @@ async function getTopUsersResponseRaw(
           wins: number | bigint | null;
           losses: number | bigint | null;
         }>>(Prisma.sql`
-          WITH recent_posts AS (
+          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
+          recent_posts AS (
             SELECT p."authorId", COUNT(*)::bigint AS "recentAlphas"
-            FROM "Post" p
+            FROM leaderboard_posts p
             WHERE p."createdAt" >= ${sevenDaysAgo}
             GROUP BY p."authorId"
           ),
           total_posts AS (
             SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
-            FROM "Post" p
+            FROM leaderboard_posts p
             GROUP BY p."authorId"
           ),
           win_stats AS (
@@ -631,7 +709,7 @@ async function getTopUsersResponseRaw(
               p."authorId",
               COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
               COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses
-            FROM "Post" p
+            FROM leaderboard_posts p
             WHERE p.settled = true AND p."isWin" IS NOT NULL
             GROUP BY p."authorId"
           )
@@ -658,10 +736,11 @@ async function getTopUsersResponseRaw(
       ),
       withLeaderboardTimeout(
         prisma.$queryRaw<Array<{ count: number | bigint | null }>>(Prisma.sql`
+          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
           SELECT COUNT(*)::bigint AS count
           FROM (
             SELECT p."authorId"
-            FROM "Post" p
+            FROM leaderboard_posts p
             WHERE p."createdAt" >= ${sevenDaysAgo}
             GROUP BY p."authorId"
           ) activity_users
@@ -720,9 +799,10 @@ async function getTopUsersResponseRaw(
           totalSettled: number | bigint | null;
           winRate: number | null;
         }>>(Prisma.sql`
-          WITH total_posts AS (
+          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
+          total_posts AS (
             SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
-            FROM "Post" p
+            FROM leaderboard_posts p
             GROUP BY p."authorId"
           ),
           qualified AS (
@@ -735,7 +815,7 @@ async function getTopUsersResponseRaw(
                 (COUNT(*) FILTER (WHERE p."isWin" = true)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
                 2
               ) AS "winRate"
-            FROM "Post" p
+            FROM leaderboard_posts p
             WHERE p.settled = true AND p."isWin" IS NOT NULL
             GROUP BY p."authorId"
             HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
@@ -763,10 +843,11 @@ async function getTopUsersResponseRaw(
       ),
       withLeaderboardTimeout(
         prisma.$queryRaw<Array<{ count: number | bigint | null }>>(Prisma.sql`
+          WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
           SELECT COUNT(*)::bigint AS count
           FROM (
             SELECT p."authorId"
-            FROM "Post" p
+            FROM leaderboard_posts p
             WHERE p.settled = true AND p."isWin" IS NOT NULL
             GROUP BY p."authorId"
             HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
@@ -817,9 +898,10 @@ async function getTopUsersResponseRaw(
         wins: number | bigint | null;
         losses: number | bigint | null;
       }>>(Prisma.sql`
-        WITH post_counts AS (
+        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY}),
+        post_counts AS (
           SELECT p."authorId", COUNT(*)::bigint AS "totalAlphas"
-          FROM "Post" p
+          FROM leaderboard_posts p
           GROUP BY p."authorId"
         ),
         win_stats AS (
@@ -827,7 +909,7 @@ async function getTopUsersResponseRaw(
             p."authorId",
             COUNT(*) FILTER (WHERE p."isWin" = true)::bigint AS wins,
             COUNT(*) FILTER (WHERE p."isWin" = false)::bigint AS losses
-          FROM "Post" p
+          FROM leaderboard_posts p
           WHERE p.settled = true AND p."isWin" IS NOT NULL
           GROUP BY p."authorId"
         )
@@ -852,10 +934,11 @@ async function getTopUsersResponseRaw(
     ),
     withLeaderboardTimeout(
       prisma.$queryRaw<Array<{ count: number | bigint | null }>>(Prisma.sql`
+        WITH leaderboard_posts AS (${LEADERBOARD_DEDUPED_POSTS_SUBQUERY})
         SELECT COUNT(*)::bigint AS count
         FROM (
           SELECT p."authorId"
-          FROM "Post" p
+          FROM leaderboard_posts p
           GROUP BY p."authorId"
         ) ranked_users
       `),
@@ -935,111 +1018,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
   }
 
   dailyGainersInFlight = (async () => {
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    const posts = await withLeaderboardTimeout(
-      prisma.post.findMany({
-        where: {
-          settled: true,
-          createdAt: { gte: twentyFourHoursAgo },
-          contractAddress: { not: null },
-          entryMcap: { not: null },
-          currentMcap: { not: null },
-          settledAt: { not: null },
-        },
-        select: {
-          id: true,
-          tokenName: true,
-          tokenSymbol: true,
-          tokenImage: true,
-          contractAddress: true,
-          entryMcap: true,
-          currentMcap: true,
-          mcap1h: true,
-          mcap6h: true,
-          percentChange1h: true,
-          percentChange6h: true,
-          settledAt: true,
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-            },
-          },
-        },
-      }),
-      "leaderboard.daily-gainers.posts"
-    );
-
-    // Calculate best displayed gain after settlement:
-    // use the highest gain reached across 1H snapshot, 6H snapshot, and current mcap.
-    const postsWithGains = posts
-      .map((post) => {
-        if (!post.entryMcap || !post.currentMcap) return null;
-
-        const candidates: Array<{ gainPercent: number; displayMcap: number; source: "1h" | "6h" | "current" }> = [];
-
-        if (post.mcap1h !== null && post.percentChange1h !== null) {
-          candidates.push({
-            gainPercent: post.percentChange1h,
-            displayMcap: post.mcap1h,
-            source: "1h",
-          });
-        }
-        if (post.mcap6h !== null && post.percentChange6h !== null) {
-          candidates.push({
-            gainPercent: post.percentChange6h,
-            displayMcap: post.mcap6h,
-            source: "6h",
-          });
-        }
-
-        const currentPercent = ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
-        candidates.push({
-          gainPercent: currentPercent,
-          displayMcap: post.currentMcap,
-          source: "current",
-        });
-
-        const best = candidates.reduce((max, item) =>
-          item.gainPercent > max.gainPercent ? item : max
-        );
-
-        return {
-          post,
-          gainPercent: best.gainPercent,
-          displayMcap: best.displayMcap,
-          gainSource: best.source,
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> =>
-        item !== null && item.gainPercent > 0
-      )
-      .sort((a, b) => b.gainPercent - a.gainPercent)
-      .slice(0, 10);
-
-    const dailyGainers = postsWithGains.map((item, index) => ({
-      rank: index + 1,
-      postId: item.post.id,
-      tokenName: item.post.tokenName,
-      tokenSymbol: item.post.tokenSymbol,
-      tokenImage: item.post.tokenImage,
-      contractAddress: item.post.contractAddress!,
-      user: {
-        id: item.post.author.id,
-        name: item.post.author.name,
-        username: item.post.author.username,
-        image: item.post.author.image,
-        level: item.post.author.level,
-      },
-      gainPercent: Math.round(item.gainPercent * 100) / 100,
-      entryMcap: item.post.entryMcap!,
-      currentMcap: item.displayMcap,
-      settledAt: item.post.settledAt!.toISOString(),
-    }));
+    const dailyGainers = await getDailyGainersRaw();
 
     dailyGainersCache = {
       data: dailyGainers,
@@ -1126,305 +1105,11 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       );
     }
   }
-  const skip = (page - 1) * limit;
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-  // Minimum posts required for win rate ranking
-  const MIN_POSTS_FOR_WINRATE = 5;
   try {
-    const responsePromise = withLeaderboardTimeout((async (): Promise<TopUsersResponsePayload> => {
-      if (sortBy === "activity") {
-        const recentPostsByUser = await withLeaderboardTimeout(
-          prisma.post.groupBy({
-            by: ["authorId"],
-            where: {
-              createdAt: { gte: sevenDaysAgo },
-            },
-            _count: { id: true },
-            orderBy: { _count: { id: "desc" } },
-            skip,
-            take: limit,
-          }),
-          "leaderboard.top-users.activity.rows"
-        );
-
-        const userIds = recentPostsByUser.map((p) => p.authorId);
-        const [winLossStats, usersDetails, totalActiveUsersRows] = await Promise.all([
-          withLeaderboardTimeout(
-            getWinLossStatsByAuthorIds(userIds),
-            "leaderboard.top-users.activity.stats"
-          ),
-          withLeaderboardTimeout(
-            prisma.user.findMany({
-              where: { id: { in: userIds } },
-              select: {
-                id: true,
-                username: true,
-                name: true,
-                image: true,
-                level: true,
-                xp: true,
-                _count: {
-                  select: { posts: true },
-                },
-              },
-            }),
-            "leaderboard.top-users.activity.users"
-          ),
-          withLeaderboardTimeout(
-            prisma.$queryRaw<Array<{ count: bigint | number | string | Prisma.Decimal | null }>>(Prisma.sql`
-              SELECT COUNT(DISTINCT "authorId")::bigint AS count
-              FROM "Post"
-              WHERE "createdAt" >= ${sevenDaysAgo}
-            `),
-            "leaderboard.top-users.activity.total"
-          ),
-        ]);
-        const usersById = new Map(usersDetails.map((u) => [u.id, u]));
-
-        const usersWithStats = recentPostsByUser
-          .map((recentPost, index) => {
-            const user = usersById.get(recentPost.authorId);
-            if (!user) return null;
-            const stats = winLossStats.get(user.id) ?? { wins: 0, losses: 0 };
-            const wins = stats.wins;
-            const losses = stats.losses;
-            const totalSettled = wins + losses;
-            const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
-
-            return {
-              rank: skip + index + 1,
-              user: {
-                id: user.id,
-                username: user.username,
-                name: user.name,
-                image: user.image,
-                level: user.level,
-                xp: user.xp,
-              },
-              stats: {
-                totalAlphas: user._count.posts,
-                recentAlphas: recentPost._count.id,
-                wins,
-                losses,
-                winRate: Math.round(winRate * 100) / 100,
-              },
-            };
-          })
-          .filter((user): user is NonNullable<typeof user> => user !== null);
-
-        const totalActiveUsers = Math.max(0, Math.round(toSafeNumber(totalActiveUsersRows[0]?.count ?? 0)));
-
-        return {
-          data: usersWithStats,
-          pagination: {
-            page,
-            limit,
-            total: totalActiveUsers,
-            totalPages: Math.ceil(totalActiveUsers / limit),
-          },
-        };
-      }
-
-      if (sortBy === "winrate") {
-        type WinrateRow = {
-          authorId: string;
-          wins: bigint | number | string | Prisma.Decimal | null;
-          losses: bigint | number | string | Prisma.Decimal | null;
-          totalSettled: bigint | number | string | Prisma.Decimal | null;
-          winRate: bigint | number | string | Prisma.Decimal | null;
-        };
-
-        const [winrateRows, totalQualifiedRows] = await Promise.all([
-          withLeaderboardTimeout(
-            prisma.$queryRaw<WinrateRow[]>(Prisma.sql`
-              SELECT
-                p."authorId",
-                COUNT(*) FILTER (WHERE p."isWin" = true) AS wins,
-                COUNT(*) FILTER (WHERE p."isWin" = false) AS losses,
-                COUNT(*) AS "totalSettled",
-                ROUND(
-                  (COUNT(*) FILTER (WHERE p."isWin" = true)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
-                  2
-                ) AS "winRate"
-              FROM "Post" p
-              WHERE p."settled" = true
-                AND p."isWin" IS NOT NULL
-              GROUP BY p."authorId"
-              HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
-              ORDER BY "winRate" DESC, COUNT(*) DESC
-              OFFSET ${skip}
-              LIMIT ${limit}
-            `),
-            "leaderboard.top-users.winrate.rows"
-          ),
-          withLeaderboardTimeout(
-            prisma.$queryRaw<Array<{ count: bigint | number | string | Prisma.Decimal | null }>>(Prisma.sql`
-              SELECT COUNT(*)::bigint AS count
-              FROM (
-                SELECT p."authorId"
-                FROM "Post" p
-                WHERE p."settled" = true
-                  AND p."isWin" IS NOT NULL
-                GROUP BY p."authorId"
-                HAVING COUNT(*) >= ${MIN_POSTS_FOR_WINRATE}
-              ) qualified
-            `),
-            "leaderboard.top-users.winrate.total"
-          ),
-        ]);
-
-        const userIds = winrateRows.map((row) => row.authorId);
-        const usersDetails = await withLeaderboardTimeout(
-          prisma.user.findMany({
-            where: { id: { in: userIds } },
-            select: {
-              id: true,
-              username: true,
-              name: true,
-              image: true,
-              level: true,
-              xp: true,
-              _count: {
-                select: { posts: true },
-              },
-            },
-          }),
-          "leaderboard.top-users.winrate.users"
-        );
-        const usersById = new Map(usersDetails.map((user) => [user.id, user]));
-
-        const data = winrateRows
-          .map((row, index) => {
-            const user = usersById.get(row.authorId);
-            if (!user) return null;
-            return {
-              rank: skip + index + 1,
-              user: {
-                id: user.id,
-                username: user.username,
-                name: user.name,
-                image: user.image,
-                level: user.level,
-                xp: user.xp,
-              },
-              stats: {
-                totalAlphas: user._count.posts,
-                wins: Math.max(0, Math.round(toSafeNumber(row.wins))),
-                losses: Math.max(0, Math.round(toSafeNumber(row.losses))),
-                winRate: Math.round(toSafeNumber(row.winRate) * 100) / 100,
-              },
-            };
-          })
-          .filter((user): user is NonNullable<typeof user> => user !== null);
-
-        const totalQualified = Math.max(0, Math.round(toSafeNumber(totalQualifiedRows[0]?.count ?? 0)));
-
-        return {
-          data,
-          pagination: {
-            page,
-            limit,
-            total: totalQualified,
-            totalPages: Math.ceil(totalQualified / limit),
-          },
-        };
-      }
-
-      const [totalCount, users] = await Promise.all([
-        withLeaderboardTimeout(
-          prisma.user.count({
-            where: {
-              posts: {
-                some: {},
-              },
-            },
-          }),
-          "leaderboard.top-users.level.total"
-        ),
-        withLeaderboardTimeout(
-          prisma.user.findMany({
-            where: {
-              posts: {
-                some: {},
-              },
-            },
-            select: {
-              id: true,
-              username: true,
-              name: true,
-              image: true,
-              level: true,
-              xp: true,
-              _count: {
-                select: {
-                  posts: true,
-                },
-              },
-            },
-            orderBy: [
-              { level: "desc" },
-              { xp: "desc" },
-            ],
-            skip,
-            take: limit,
-          }),
-          "leaderboard.top-users.level.users"
-        ),
-      ]);
-
-      const winLossStats = await withLeaderboardTimeout(
-        getWinLossStatsByAuthorIds(users.map((user) => user.id)),
-        "leaderboard.top-users.level.stats"
-      );
-
-      const usersWithStats = users.map((user, index) => {
-        const stats = winLossStats.get(user.id) ?? { wins: 0, losses: 0 };
-        const wins = stats.wins;
-        const losses = stats.losses;
-        const totalSettled = wins + losses;
-        const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
-
-        return {
-          rank: skip + index + 1,
-          user: {
-            id: user.id,
-            username: user.username,
-            name: user.name,
-            image: user.image,
-            level: user.level,
-            xp: user.xp,
-          },
-          stats: {
-            totalAlphas: user._count.posts,
-            wins,
-            losses,
-            winRate: Math.round(winRate * 100) / 100,
-          },
-        };
-      });
-
-      usersWithStats.sort((a, b) => {
-        if (b.user.level !== a.user.level) {
-          return b.user.level - a.user.level;
-        }
-        return b.stats.winRate - a.stats.winRate;
-      });
-
-      usersWithStats.forEach((user, index) => {
-        user.rank = skip + index + 1;
-      });
-
-      return {
-        data: usersWithStats,
-        pagination: {
-          page,
-          limit,
-          total: totalCount,
-          totalPages: Math.ceil(totalCount / limit),
-        },
-      };
-    })(), "leaderboard.top-users");
+    const responsePromise = withLeaderboardTimeout(
+      getTopUsersResponseRaw(sortBy, page, limit),
+      "leaderboard.top-users"
+    );
     topUsersInFlight.set(topUsersCacheKey, responsePromise);
     const responsePayload = await responsePromise;
 
@@ -1438,17 +1123,6 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     logLeaderboardFallback(`top-users:${sortBy}`, error, Boolean(staleCached));
     if (staleCached) {
       return c.json(staleCached);
-    }
-    try {
-      const rawPayload = await getTopUsersResponseRaw(sortBy, page, limit);
-      topUsersCache.set(topUsersCacheKey, {
-        data: rawPayload,
-        expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
-      });
-      void cacheSetJson(redisKey, rawPayload, TOP_USERS_CACHE_TTL_MS);
-      return c.json(rawPayload);
-    } catch (rawError) {
-      logLeaderboardFallback(`top-users:${sortBy}:raw`, rawError, false);
     }
     return c.json(
       {

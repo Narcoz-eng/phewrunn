@@ -8,6 +8,7 @@
 export {
   betterAuthMiddleware,
   requireAuth,
+  requireNotBanned,
   auth,
   type AuthUser,
   type SimpleUser,
@@ -20,8 +21,12 @@ export {
   userAwareRateLimit,
   apiRateLimit,
   authRateLimit,
+  privySyncRateLimit,
   sessionRateLimit,
   feedRateLimit,
+  jupiterQuoteRateLimit,
+  chartCandlesRateLimit,
+  tradeWriteRateLimit,
   postRateLimit,
   strictRateLimit,
   settlementRateLimit,
@@ -34,6 +39,8 @@ export {
   clearRateLimitStore,
   type RateLimitConfig,
 } from "./rateLimit.js";
+
+export { bodySizeLimit } from "./requestSize.js";
 
 // Input sanitization
 export {

@@ -146,6 +146,10 @@ export function validateProductionEnvironment(): {
     errors.push("PRIVY_APP_ID is not set");
   }
 
+  if (!process.env.AUTH_SESSION_TOKEN_SECRET) {
+    errors.push("AUTH_SESSION_TOKEN_SECRET is not set");
+  }
+
   // Check for production-specific concerns
   if (isProduction) {
     // Check if database URL looks like a production URL
@@ -166,6 +170,17 @@ export function validateProductionEnvironment(): {
     if (backendUrl.startsWith("http://") && !backendUrl.includes("localhost")) {
       warnings.push(
         "BACKEND_URL is using HTTP instead of HTTPS in production"
+      );
+    }
+
+    const revocationDbEnabled =
+      process.env.AUTH_SESSION_REVOCATION_DB_ENABLED?.trim().toLowerCase() === "true";
+    const hasRedis =
+      Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim()) ||
+      Boolean(process.env.REDIS_URL?.trim());
+    if (!revocationDbEnabled && !hasRedis) {
+      warnings.push(
+        "Shared session revocation is not configured; enable Redis or AUTH_SESSION_REVOCATION_DB_ENABLED=true"
       );
     }
   }

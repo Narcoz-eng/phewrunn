@@ -21,6 +21,7 @@ const SESSION_USER_SELECT = {
   level: true,
   xp: true,
   bio: true,
+  role: true,
   isAdmin: true,
   isBanned: true,
   isVerified: true,
@@ -152,6 +153,7 @@ type SessionRecord = {
     level: number;
     xp: number;
     bio: string | null;
+    role: string;
     isAdmin: boolean;
     isBanned: boolean;
     isVerified: boolean;
@@ -254,6 +256,7 @@ function toSessionUser(
     level?: number | null;
     xp?: number | null;
     bio?: string | null;
+    role?: string | null;
     isAdmin?: boolean | null;
     isBanned?: boolean | null;
     isVerified?: boolean | null;
@@ -281,7 +284,8 @@ function toSessionUser(
     level: user.level ?? 0,
     xp: user.xp ?? 0,
     bio: user.bio ?? null,
-    isAdmin: user.isAdmin ?? false,
+    role: user.role?.trim().toLowerCase() || "user",
+    isAdmin: user.role?.trim().toLowerCase() === "admin" || (user.isAdmin ?? false),
     isBanned: user.isBanned ?? false,
     isVerified: user.isVerified ?? false,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
@@ -424,7 +428,8 @@ function buildSessionUserFromTokenClaims(
     level: claims?.level ?? 0,
     xp: claims?.xp ?? 0,
     bio: claims?.bio ?? null,
-    isAdmin: claims?.isAdmin ?? false,
+    role: claims?.role?.trim().toLowerCase() || "user",
+    isAdmin: claims?.role?.trim().toLowerCase() === "admin" || (claims?.isAdmin ?? false),
     isBanned: claims?.isBanned ?? false,
     isVerified: claims?.isVerified ?? false,
     tradeFeeRewardsEnabled: claims?.tradeFeeRewardsEnabled ?? true,

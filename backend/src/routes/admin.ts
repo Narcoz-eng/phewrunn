@@ -27,7 +27,6 @@ import {
 } from "../types.js";
 
 const adminRouter = new Hono<{ Variables: AuthVariables }>();
-const ADMIN_EMAIL_ALLOWLIST = new Set(["rengarro@gmail.com"]);
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const ACTIVE_REPORT_STATUSES = ["open", "reviewing"] as const;
 
@@ -113,7 +112,7 @@ async function getTradeSummary() {
         ), 0) AS "volumeLamports",
         COUNT(*) AS "tradeCount"
       FROM "TradeFeeEvent"
-      WHERE "txSignature" IS NOT NULL
+      WHERE "status" = 'confirmed'
     `);
 
     const row = rows[0];
@@ -156,7 +155,7 @@ async function getUserVolumeMaps(userIds: string[]) {
             END
           ), 0) AS "volumeLamports"
         FROM "TradeFeeEvent"
-        WHERE "txSignature" IS NOT NULL
+        WHERE "status" = 'confirmed'
           AND "traderUserId" IN (${Prisma.join(userIds)})
         GROUP BY "traderUserId"
       `),
@@ -174,7 +173,7 @@ async function getUserVolumeMaps(userIds: string[]) {
             END
           ), 0) AS "volumeLamports"
         FROM "TradeFeeEvent"
-        WHERE "txSignature" IS NOT NULL
+        WHERE "status" = 'confirmed'
           AND "posterUserId" IN (${Prisma.join(userIds)})
         GROUP BY "posterUserId"
       `),
@@ -329,14 +328,12 @@ const requireAdmin = createMiddleware<{ Variables: AuthVariables }>(
       );
     }
 
-    // Check if user is admin in database
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { email: true, isAdmin: true },
+      select: { role: true },
     });
 
-    const email = dbUser?.email?.trim().toLowerCase();
-    if (!email || !ADMIN_EMAIL_ALLOWLIST.has(email)) {
+    if (dbUser?.role !== "admin") {
       return c.json(
         { error: { message: "Forbidden - Admin access is restricted", code: "FORBIDDEN" } },
         403
@@ -488,6 +485,7 @@ adminRouter.get(
           walletAddress: true,
           level: true,
           xp: true,
+          role: true,
           isAdmin: true,
           isBanned: true,
           isVerified: true,
@@ -526,7 +524,7 @@ adminRouter.get(
           walletAddress: user.walletAddress,
           level: user.level,
           xp: user.xp,
-          isAdmin: user.isAdmin,
+          isAdmin: user.role === "admin",
           isBanned: user.isBanned,
           isVerified: user.isVerified,
           createdAt: user.createdAt.toISOString(),
@@ -593,6 +591,7 @@ adminRouter.patch(
           walletAddress: true,
           level: true,
           xp: true,
+          role: true,
           isAdmin: true,
           isBanned: true,
           isVerified: true,

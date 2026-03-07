@@ -5,7 +5,15 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
-import { Connection, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
+import {
+  AddressLookupTableAccount,
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +94,7 @@ const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
+const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -164,6 +173,7 @@ type JupiterSwapResponse = {
   swapTransaction?: string;
   lastValidBlockHeight?: number;
   tradeFeeEventId?: string | null;
+  tradeVerificationMemo?: string | null;
   platformFeeBpsApplied?: number;
   posterShareBpsApplied?: number;
 };
@@ -210,6 +220,59 @@ function createAbortSignalWithTimeout(timeoutMs: number, externalSignal?: AbortS
       }
     },
   };
+}
+
+async function loadAddressLookupTablesForTransaction(
+  connection: Connection,
+  transaction: VersionedTransaction
+): Promise<AddressLookupTableAccount[]> {
+  if (!("addressTableLookups" in transaction.message)) {
+    return [];
+  }
+
+  const addressTableLookups = transaction.message.addressTableLookups ?? [];
+  if (addressTableLookups.length === 0) {
+    return [];
+  }
+
+  const lookupTableResponses = await Promise.all(
+    addressTableLookups.map((lookup) => connection.getAddressLookupTable(lookup.accountKey))
+  );
+
+  return lookupTableResponses
+    .map((response) => response.value)
+    .filter((table): table is AddressLookupTableAccount => table !== null);
+}
+
+async function appendTradeVerificationMemoToTransaction(
+  connection: Connection,
+  transaction: VersionedTransaction,
+  memo: string
+): Promise<VersionedTransaction> {
+  const addressLookupTableAccounts = await loadAddressLookupTablesForTransaction(
+    connection,
+    transaction
+  );
+  const decompiledMessage = TransactionMessage.decompile(
+    transaction.message,
+    addressLookupTableAccounts.length > 0
+      ? { addressLookupTableAccounts }
+      : undefined
+  );
+  decompiledMessage.instructions.push(
+    new TransactionInstruction({
+      programId: MEMO_PROGRAM_ID,
+      keys: [],
+      data: new TextEncoder().encode(memo),
+    })
+  );
+
+  const compiledMessage =
+    "addressTableLookups" in transaction.message
+      ? decompiledMessage.compileToV0Message(addressLookupTableAccounts)
+      : decompiledMessage.compileToLegacyMessage();
+
+  return new VersionedTransaction(compiledMessage);
 }
 
 function isRetryableJupiterQuoteError(error: unknown): boolean {
@@ -2695,7 +2758,14 @@ export function PostCard({
       }
       const txBytes = Uint8Array.from(atob(swapTransaction), (c) => c.charCodeAt(0));
       const tx = VersionedTransaction.deserialize(txBytes);
-      const signedTx = await walletSignTransaction(tx);
+      const transactionForSigning = swapPayload.tradeVerificationMemo
+        ? await appendTradeVerificationMemoToTransaction(
+            tradeReadConnection,
+            tx,
+            swapPayload.tradeVerificationMemo
+          )
+        : tx;
+      const signedTx = await walletSignTransaction(transactionForSigning);
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
         maxRetries: 1,
         skipPreflight: true,
@@ -2708,7 +2778,7 @@ export function PostCard({
           .confirmTransaction(
             {
               signature,
-              blockhash: tx.message.recentBlockhash,
+              blockhash: transactionForSigning.message.recentBlockhash,
               lastValidBlockHeight: swapPayload.lastValidBlockHeight,
             },
             "processed"

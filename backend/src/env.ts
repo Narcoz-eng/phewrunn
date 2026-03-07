@@ -29,6 +29,15 @@ const envSchema = z.object({
   // Privy Auth
   PRIVY_APP_ID: z.string().min(1, "PRIVY_APP_ID is required"),
   PRIVY_APP_SECRET: z.string().min(1, "PRIVY_APP_SECRET is required"),
+  AUTH_SESSION_TOKEN_SECRET: z
+    .string()
+    .min(32, "AUTH_SESSION_TOKEN_SECRET must be at least 32 characters"),
+
+  // Shared session revocation persistence
+  AUTH_SESSION_REVOCATION_DB_ENABLED: z
+    .preprocess(normalizeBooleanEnv, z.enum(["true", "false"]))
+    .optional()
+    .default("false"),
 
   // Optional: Debug mode
   DEBUG: z.preprocess(normalizeBooleanEnv, z.enum(["true", "false"])).optional().default("false"),
@@ -82,6 +91,16 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
     if (!parsed.CRON_SECRET) {
       warnings.push("CRON_SECRET is not configured; scheduled maintenance endpoint will be disabled");
     }
+
+    const hasSharedRevocationBackend =
+      parsed.AUTH_SESSION_REVOCATION_DB_ENABLED === "true" ||
+      Boolean(parsed.UPSTASH_REDIS_REST_URL && parsed.UPSTASH_REDIS_REST_TOKEN) ||
+      Boolean(parsed.REDIS_URL);
+    if (!hasSharedRevocationBackend) {
+      warnings.push(
+        "Shared session revocation is not configured; enable Redis or AUTH_SESSION_REVOCATION_DB_ENABLED=true"
+      );
+    }
   }
 
   return warnings;
@@ -110,12 +129,14 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
         ? "PostgreSQL (external)"
         : "External database",
     PRIVY_APP_ID: `${parsed.PRIVY_APP_ID.substring(0, 8)}...`,
+    AUTH_SESSION_TOKEN_SECRET: "configured",
     DEBUG: parsed.DEBUG,
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
     HELIUS_RPC_URL: parsed.HELIUS_RPC_URL ? "configured" : "not set",
     JUPITER_PLATFORM_FEE_BPS: parsed.JUPITER_PLATFORM_FEE_BPS ?? "0",
     JUPITER_PLATFORM_FEE_ACCOUNT: parsed.JUPITER_PLATFORM_FEE_ACCOUNT ? "configured" : "not set",
+    AUTH_SESSION_REVOCATION_DB_ENABLED: parsed.AUTH_SESSION_REVOCATION_DB_ENABLED,
     UPSTASH_REDIS_REST_URL: parsed.UPSTASH_REDIS_REST_URL ? "configured" : "not set",
     UPSTASH_REDIS_REST_TOKEN: parsed.UPSTASH_REDIS_REST_TOKEN ? "configured" : "not set",
     REDIS_URL: parsed.REDIS_URL ? "configured" : "not set",

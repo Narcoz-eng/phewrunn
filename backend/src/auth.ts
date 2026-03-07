@@ -9,6 +9,7 @@ export {
   betterAuthMiddleware,
   invalidateResolvedSessionCache,
   requireAuth,
+  requireNotBanned,
   type AuthUser,
   type SimpleUser,
   type AuthVariables,

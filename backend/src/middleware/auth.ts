@@ -1,5 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { auth } from "../lib/auth.js";
+import { prisma } from "../prisma.js";
 
 // Define the user type that will be available in context
 // This matches the Better Auth user structure
@@ -19,6 +20,7 @@ export interface AuthUser {
   level: number;
   xp: number;
   bio: string | null;
+  role: string;
   isAdmin: boolean;
   isBanned: boolean;
   isVerified: boolean;
@@ -31,6 +33,9 @@ export interface SimpleUser {
   id: string;
   email: string | null;
   walletAddress: string | null;
+  role: string | null;
+  isAdmin: boolean;
+  isBanned: boolean;
 }
 
 // Type for the Hono context variables
@@ -209,6 +214,9 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
         id: session.user.id,
         email: session.user.email || null,
         walletAddress: (session.user as AuthUser).walletAddress || null,
+        role: (session.user as AuthUser).role || null,
+        isAdmin: (session.user as AuthUser).isAdmin || false,
+        isBanned: (session.user as AuthUser).isBanned || false,
       };
 
       c.set("user", user);
@@ -234,6 +242,44 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(
       return c.json(
         { error: { message: "Unauthorized", code: "UNAUTHORIZED" } },
         401
+      );
+    }
+
+    return next();
+  }
+);
+
+/**
+ * Middleware that blocks banned users from state-changing endpoints.
+ * Always re-checks the database so admin ban changes take effect immediately.
+ */
+export const requireNotBanned = createMiddleware<{ Variables: AuthVariables }>(
+  async (c, next) => {
+    const user = c.get("user");
+
+    if (!user) {
+      return c.json(
+        { error: { message: "Unauthorized", code: "UNAUTHORIZED" } },
+        401
+      );
+    }
+
+    if (user.isBanned) {
+      return c.json(
+        { error: { message: "Your account is banned", code: "ACCOUNT_BANNED" } },
+        403
+      );
+    }
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { isBanned: true },
+    });
+
+    if (dbUser?.isBanned) {
+      return c.json(
+        { error: { message: "Your account is banned", code: "ACCOUNT_BANNED" } },
+        403
       );
     }
 

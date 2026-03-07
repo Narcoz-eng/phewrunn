@@ -5,7 +5,6 @@ import {
   useAuth,
   syncPrivySession,
   registerPreLogoutHook,
-  hasStoredAuthTokenHint,
   isExplicitLogoutCoolingDown,
   usePrivySyncFailureSnapshot,
 } from "@/lib/auth-client";
@@ -76,8 +75,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     ) {
       return;
     }
-    const shouldRepairMissingFallbackToken = isAuthenticated && !hasStoredAuthTokenHint();
-    if (hasLiveSession && !shouldRepairMissingFallbackToken) {
+    if (hasLiveSession) {
       attemptsRef.current = 0;
       lastSyncedPrivyUserRef.current = user.id;
       return;
@@ -99,7 +97,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
     void (async () => {
       try {
-        if (isAuthenticated || hasStoredAuthTokenHint()) {
+        if (isAuthenticated) {
           const recoveredUser = await ensureBackendSessionReady(user.id, 1800);
           if (recoveredUser) {
             await refetch();
