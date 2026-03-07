@@ -598,16 +598,31 @@ notificationsRouter.get("/", requireAuth, async (c) => {
         console.warn("[notifications/list] database unavailable; returning cached or empty notifications", {
           message: getErrorMessage(error),
         });
+        let recoveredFromRaw = false;
         try {
           notifications = await queryNotificationsRaw(user.id, includeDismissed);
+          recoveredFromRaw = true;
         } catch (rawError) {
           console.warn("[notifications/list] raw fallback unavailable; returning stale cached or empty notifications", {
             message: getErrorMessage(rawError),
           });
-          notifications = staleCachedNotifications ?? [];
         }
-        writeNotificationsListCache(listCacheKey, notifications);
-        return c.json({ data: notifications });
+        if (recoveredFromRaw) {
+          writeNotificationsListCache(listCacheKey, notifications);
+          return c.json({ data: notifications });
+        }
+        if (staleCachedNotifications) {
+          return c.json({ data: staleCachedNotifications });
+        }
+        return c.json(
+          {
+            error: {
+              message: "Notifications are temporarily unavailable. Please retry shortly.",
+              code: "NOTIFICATIONS_UNAVAILABLE",
+            },
+          },
+          503
+        );
       }
       throw error;
     }
@@ -667,29 +682,59 @@ notificationsRouter.get("/", requireAuth, async (c) => {
             console.warn("[notifications/list] minimal fallback unavailable; returning cached or empty notifications", {
               message: getErrorMessage(minimalError),
             });
+            let recoveredFromRaw = false;
             try {
               notifications = await queryNotificationsRaw(user.id, includeDismissed);
+              recoveredFromRaw = true;
             } catch (rawError) {
-              notifications = staleCachedNotifications ?? [];
               console.warn("[notifications/list] raw fallback after minimal failure unavailable", {
                 message: getErrorMessage(rawError),
               });
             }
-            writeNotificationsListCache(listCacheKey, notifications);
-            return c.json({ data: notifications });
+            if (recoveredFromRaw) {
+              writeNotificationsListCache(listCacheKey, notifications);
+              return c.json({ data: notifications });
+            }
+            if (staleCachedNotifications) {
+              return c.json({ data: staleCachedNotifications });
+            }
+            return c.json(
+              {
+                error: {
+                  message: "Notifications are temporarily unavailable. Please retry shortly.",
+                  code: "NOTIFICATIONS_UNAVAILABLE",
+                },
+              },
+              503
+            );
           }
           throw minimalError;
         }
         console.warn("[notifications/list] schema drift fallback exhausted; returning empty notifications list", {
           message: getErrorMessage(minimalError),
         });
+        let recoveredFromRaw = false;
         try {
           notifications = await queryNotificationsRaw(user.id, includeDismissed);
+          recoveredFromRaw = true;
         } catch (rawError) {
-          notifications = staleCachedNotifications ?? [];
           console.warn("[notifications/list] raw fallback after schema drift unavailable", {
             message: getErrorMessage(rawError),
           });
+        }
+        if (!recoveredFromRaw) {
+          if (staleCachedNotifications) {
+            return c.json({ data: staleCachedNotifications });
+          }
+          return c.json(
+            {
+              error: {
+                message: "Notifications are temporarily unavailable. Please retry shortly.",
+                code: "NOTIFICATIONS_UNAVAILABLE",
+              },
+            },
+            503
+          );
         }
       }
     }
@@ -744,18 +789,34 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
           message: getErrorMessage(error),
         });
         let count = staleUnreadCount ?? 0;
+        let recoveredFromRaw = false;
         try {
           unreadNotifications = await queryUnreadNotificationsRaw(user.id);
           count = new Set(
             unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
           ).size;
+          recoveredFromRaw = true;
         } catch (rawError) {
           console.warn("[notifications/unread-count] raw fallback unavailable; returning stale or zero unread count", {
             message: getErrorMessage(rawError),
           });
         }
-        writeNotificationsUnreadCountCache(user.id, count);
-        return c.json({ data: { count } });
+        if (recoveredFromRaw) {
+          writeNotificationsUnreadCountCache(user.id, count);
+          return c.json({ data: { count } });
+        }
+        if (staleUnreadCount !== null) {
+          return c.json({ data: { count: staleUnreadCount } });
+        }
+        return c.json(
+          {
+            error: {
+              message: "Notification count is temporarily unavailable. Please retry shortly.",
+              code: "NOTIFICATIONS_UNREAD_UNAVAILABLE",
+            },
+          },
+          503
+        );
       }
       throw error;
     }
@@ -804,31 +865,62 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
               message: getErrorMessage(minimalError),
             });
             let count = staleUnreadCount ?? 0;
+            let recoveredFromRaw = false;
             try {
               unreadNotifications = await queryUnreadNotificationsRaw(user.id);
               count = new Set(
                 unreadNotifications.map((notification) => buildNotificationGroupKey(notification))
               ).size;
+              recoveredFromRaw = true;
             } catch (rawError) {
               console.warn("[notifications/unread-count] raw fallback after minimal failure unavailable", {
                 message: getErrorMessage(rawError),
               });
             }
-            writeNotificationsUnreadCountCache(user.id, count);
-            return c.json({ data: { count } });
+            if (recoveredFromRaw) {
+              writeNotificationsUnreadCountCache(user.id, count);
+              return c.json({ data: { count } });
+            }
+            if (staleUnreadCount !== null) {
+              return c.json({ data: { count: staleUnreadCount } });
+            }
+            return c.json(
+              {
+                error: {
+                  message: "Notification count is temporarily unavailable. Please retry shortly.",
+                  code: "NOTIFICATIONS_UNREAD_UNAVAILABLE",
+                },
+              },
+              503
+            );
           }
           throw minimalError;
         }
         console.warn("[notifications/unread-count] schema drift fallback exhausted; returning zero unread count", {
           message: getErrorMessage(minimalError),
         });
+        let recoveredFromRaw = false;
         try {
           unreadNotifications = await queryUnreadNotificationsRaw(user.id);
+          recoveredFromRaw = true;
         } catch (rawError) {
-          unreadNotifications = [];
           console.warn("[notifications/unread-count] raw fallback after schema drift unavailable", {
             message: getErrorMessage(rawError),
           });
+        }
+        if (!recoveredFromRaw) {
+          if (staleUnreadCount !== null) {
+            return c.json({ data: { count: staleUnreadCount } });
+          }
+          return c.json(
+            {
+              error: {
+                message: "Notification count is temporarily unavailable. Please retry shortly.",
+                code: "NOTIFICATIONS_UNREAD_UNAVAILABLE",
+              },
+            },
+            503
+          );
         }
       }
     }

@@ -1067,11 +1067,15 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     } catch (rawError) {
       logLeaderboardFallback("daily-gainers/raw", rawError, false);
     }
-    dailyGainersCache = {
-      data: [],
-      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-    };
-    return c.json({ data: [] });
+    return c.json(
+      {
+        error: {
+          message: "Daily gainers are temporarily unavailable. Please retry shortly.",
+          code: "DAILY_GAINERS_UNAVAILABLE",
+        },
+      },
+      503
+    );
   } finally {
     dailyGainersInFlight = null;
   }
@@ -1110,12 +1114,15 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       if (staleCached) {
         return c.json(staleCached);
       }
-      const emptyPayload = buildEmptyTopUsersResponse(page, limit);
-      topUsersCache.set(topUsersCacheKey, {
-        data: emptyPayload,
-        expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-      });
-      return c.json(emptyPayload);
+      return c.json(
+        {
+          error: {
+            message: "Leaderboard is temporarily unavailable. Please retry shortly.",
+            code: "TOP_USERS_UNAVAILABLE",
+          },
+        },
+        503
+      );
     }
   }
   const skip = (page - 1) * limit;
@@ -1442,12 +1449,15 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     } catch (rawError) {
       logLeaderboardFallback(`top-users:${sortBy}:raw`, rawError, false);
     }
-    const emptyPayload = buildEmptyTopUsersResponse(page, limit);
-    topUsersCache.set(topUsersCacheKey, {
-      data: emptyPayload,
-      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-    });
-    return c.json(emptyPayload);
+    return c.json(
+      {
+        error: {
+          message: "Leaderboard is temporarily unavailable. Please retry shortly.",
+          code: "TOP_USERS_UNAVAILABLE",
+        },
+      },
+      503
+    );
   } finally {
     topUsersInFlight.delete(topUsersCacheKey);
   }
@@ -1496,7 +1506,14 @@ leaderboardRouter.get("/stats", async (c) => {
     if (staleCached) {
       return c.json({ data: staleCached });
     }
-    writeLeaderboardStatsLocalCache(EMPTY_LEADERBOARD_STATS_PAYLOAD);
-    return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
+    return c.json(
+      {
+        error: {
+          message: "Leaderboard stats are temporarily unavailable. Please retry shortly.",
+          code: "LEADERBOARD_STATS_UNAVAILABLE",
+        },
+      },
+      503
+    );
   }
 });

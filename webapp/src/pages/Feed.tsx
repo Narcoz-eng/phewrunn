@@ -32,6 +32,7 @@ const FEED_PAGE_SIZE = 10;
 const FEED_MAX_PAGES = 5;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
+const FEED_PUBLIC_CACHE_SCOPE = "public";
 const FEED_NEW_POSTS_POLL_MS = 25_000;
 const FEED_ACTIVE_TAB_POLL_MS = 35_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
@@ -117,6 +118,38 @@ function writeCachedFirstFeedPage(
   }
 }
 
+function shouldUseSharedPublicFeedCache(tab: FeedTab, search: string): boolean {
+  return tab !== "following" && search.trim().length === 0;
+}
+
+function readPreferredCachedFirstFeedPage(
+  viewerScope: string,
+  tab: FeedTab,
+  search: string
+): FeedPage | null {
+  const scopedPage = readCachedFirstFeedPage(viewerScope, tab, search);
+  if (scopedPage?.items.length) {
+    return scopedPage;
+  }
+  if (!shouldUseSharedPublicFeedCache(tab, search) || viewerScope === FEED_PUBLIC_CACHE_SCOPE) {
+    return scopedPage;
+  }
+  const sharedPage = readCachedFirstFeedPage(FEED_PUBLIC_CACHE_SCOPE, tab, search);
+  return sharedPage?.items.length ? sharedPage : scopedPage;
+}
+
+function writeCachedFirstFeedPageForScopes(
+  viewerScope: string,
+  tab: FeedTab,
+  search: string,
+  page: FeedPage
+): void {
+  writeCachedFirstFeedPage(viewerScope, tab, search, page);
+  if (viewerScope !== FEED_PUBLIC_CACHE_SCOPE && shouldUseSharedPublicFeedCache(tab, search)) {
+    writeCachedFirstFeedPage(FEED_PUBLIC_CACHE_SCOPE, tab, search, page);
+  }
+}
+
 function buildRealtimePageFingerprint(page: FeedPage): string {
   return page.items
     .slice(0, FEED_REALTIME_STATE_FIELDS_COUNT)
@@ -173,7 +206,7 @@ export default function Feed() {
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const feedViewerScope = hasLiveSession && session?.user?.id ? session.user.id : "anonymous";
   const cachedFirstPage = useMemo(
-    () => readCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery),
+    () => readPreferredCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery),
     [activeTab, effectiveSearchQuery, feedViewerScope]
   );
   const feedCurrentUserCacheKey = useMemo(
@@ -284,7 +317,7 @@ export default function Feed() {
   ): Promise<FeedPage> => {
     const liveCachedFirstPage =
       !pageParam && !search && tab !== "following"
-        ? readCachedFirstFeedPage(feedViewerScope, tab, search)
+        ? readPreferredCachedFirstFeedPage(feedViewerScope, tab, search)
         : null;
     const currentQueryFirstPage =
       !pageParam
@@ -472,7 +505,7 @@ export default function Feed() {
   useEffect(() => {
     const firstPage = postsPages?.pages?.[0];
     if (!firstPage) return;
-    writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, firstPage);
+    writeCachedFirstFeedPageForScopes(feedViewerScope, activeTab, effectiveSearchQuery, firstPage);
   }, [activeTab, effectiveSearchQuery, feedViewerScope, postsPages?.pages]);
 
   const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
@@ -553,7 +586,7 @@ export default function Feed() {
   const applyPendingLatestPosts = useCallback(() => {
     if (!pendingLatestFirstPage) return;
     applyFirstPageToCache("latest", "", pendingLatestFirstPage);
-    writeCachedFirstFeedPage(feedViewerScope, "latest", "", pendingLatestFirstPage);
+    writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", pendingLatestFirstPage);
     setPendingLatestFirstPage(null);
     setPendingLatestCount(0);
   }, [applyFirstPageToCache, feedViewerScope, pendingLatestFirstPage]);
@@ -691,7 +724,7 @@ export default function Feed() {
 
           if (currentFingerprint !== freshFingerprint) {
             applyFirstPageToCache("latest", "", freshFirstPage);
-            writeCachedFirstFeedPage(feedViewerScope, "latest", "", freshFirstPage);
+            writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", freshFirstPage);
             setPendingLatestFirstPage(null);
             setPendingLatestCount(0);
             void refetchUser();
@@ -716,7 +749,7 @@ export default function Feed() {
         // If user is near the top, apply instantly for a seamless "live" feel.
         if (window.scrollY < FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) {
           applyFirstPageToCache("latest", "", freshFirstPage);
-          writeCachedFirstFeedPage(feedViewerScope, "latest", "", freshFirstPage);
+          writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", freshFirstPage);
           setPendingLatestFirstPage(null);
           setPendingLatestCount(0);
           return;
@@ -800,7 +833,12 @@ export default function Feed() {
         }
 
         applyFirstPageToCache(activeTab, effectiveSearchQuery, freshFirstPage);
-        writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, freshFirstPage);
+        writeCachedFirstFeedPageForScopes(
+          feedViewerScope,
+          activeTab,
+          effectiveSearchQuery,
+          freshFirstPage
+        );
       } catch {
         // Keep current feed visible; next interval will retry.
       } finally {
@@ -868,7 +906,7 @@ export default function Feed() {
 
         const nextFirstPage = updatedData?.pages?.[0];
         if (nextFirstPage && nextFirstPage.items.length > 0) {
-          writeCachedFirstFeedPage(feedViewerScope, tab, search, nextFirstPage);
+          writeCachedFirstFeedPageForScopes(feedViewerScope, tab, search, nextFirstPage);
         }
       };
 
@@ -1025,7 +1063,12 @@ export default function Feed() {
       try {
         const freshFirstPage = await fetchFeedPage(activeTab, effectiveSearchQuery);
         applyFirstPageToCache(activeTab, effectiveSearchQuery, freshFirstPage);
-        writeCachedFirstFeedPage(feedViewerScope, activeTab, effectiveSearchQuery, freshFirstPage);
+        writeCachedFirstFeedPageForScopes(
+          feedViewerScope,
+          activeTab,
+          effectiveSearchQuery,
+          freshFirstPage
+        );
       } catch {
         // Fallback to react-query refetch if manual refresh fails
         queryClient.setQueryData<InfiniteData<FeedPage>>(

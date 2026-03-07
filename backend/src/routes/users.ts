@@ -8,6 +8,7 @@ import bs58 from "bs58";
 import { prisma } from "../prisma.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
+import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 import { UpdateProfileSchema, USERNAME_UPDATE_COOLDOWN_DAYS, PHOTO_UPDATE_COOLDOWN_HOURS, ConnectWalletSchema, WALLET_CONNECT_LIMIT_PER_HOUR, type UserStats, type WeeklyStat } from "../types.js";
 import {
   getWalletPortfolioOverviewForPostedTokens,
@@ -47,6 +48,139 @@ const RESERVED_USERNAME_HANDLES = new Set([
   "terms",
   "welcome",
 ]);
+const USERS_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 10_000;
+const USERS_ROUTE_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
+const USERS_ROUTE_CACHE_MAX_ENTRIES =
+  process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+const USERS_PROFILE_REDIS_KEY_PREFIX = "users:profile:v1";
+const USERS_POSTS_REDIS_KEY_PREFIX = "users:posts:v1";
+const USERS_REPOSTS_REDIS_KEY_PREFIX = "users:reposts:v1";
+
+type UserProfileRoutePayload = {
+  data: RawResolvedUserProfile & {
+    isFollowing: boolean;
+    stats: {
+      totalCalls: number;
+      wins: number;
+      losses: number;
+      winRate: number;
+      totalProfitPercent: number;
+    };
+  };
+};
+
+type UserPostsRoutePayload = {
+  data: unknown[];
+};
+
+type TimedUserRouteCacheEntry<T> = {
+  data: T;
+  expiresAtMs: number;
+  staleUntilMs: number;
+};
+
+const userProfileRouteCache = new Map<string, TimedUserRouteCacheEntry<UserProfileRoutePayload>>();
+const userPostsRouteCache = new Map<string, TimedUserRouteCacheEntry<UserPostsRoutePayload>>();
+const userRepostsRouteCache = new Map<string, TimedUserRouteCacheEntry<UserPostsRoutePayload>>();
+
+function trimUserRouteCache<T>(cache: Map<string, TimedUserRouteCacheEntry<T>>): void {
+  while (cache.size >= USERS_ROUTE_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+}
+
+function buildUserRouteCacheKey(identifier: string, viewerId: string | null | undefined): string {
+  return `${viewerId ?? "anon"}:${normalizeUsernameHandle(identifier)}`;
+}
+
+function buildUserRouteRedisKey(prefix: string, cacheKey: string): string {
+  return `${prefix}:${cacheKey}`;
+}
+
+function normalizeUserRouteCacheEnvelope<T>(
+  value: unknown
+): { data: T; cachedAtMs: number } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("data" in value)) {
+    return null;
+  }
+
+  const candidate = value as { data?: T; cachedAt?: unknown };
+  if (candidate.data === undefined) {
+    return null;
+  }
+
+  return {
+    data: candidate.data,
+    cachedAtMs:
+      typeof candidate.cachedAt === "number" && Number.isFinite(candidate.cachedAt)
+        ? candidate.cachedAt
+        : Date.now() - USERS_ROUTE_CACHE_TTL_MS,
+  };
+}
+
+async function readUserRouteCache<T>(
+  cache: Map<string, TimedUserRouteCacheEntry<T>>,
+  cacheKey: string,
+  redisKey: string,
+  opts?: { allowStale?: boolean }
+): Promise<T | null> {
+  const nowMs = Date.now();
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    if (cached.expiresAtMs > nowMs) {
+      return cached.data;
+    }
+    if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+      return cached.data;
+    }
+    if (cached.staleUntilMs <= nowMs) {
+      cache.delete(cacheKey);
+    }
+  }
+
+  const redisRaw = await cacheGetJson<unknown>(redisKey);
+  const redisEnvelope = normalizeUserRouteCacheEnvelope<T>(redisRaw);
+  if (!redisEnvelope) {
+    return null;
+  }
+  if (!opts?.allowStale && nowMs - redisEnvelope.cachedAtMs > USERS_ROUTE_CACHE_TTL_MS) {
+    return null;
+  }
+
+  writeUserRouteCache(cache, cacheKey, redisKey, redisEnvelope.data);
+  return redisEnvelope.data;
+}
+
+function writeUserRouteCache<T>(
+  cache: Map<string, TimedUserRouteCacheEntry<T>>,
+  cacheKey: string,
+  redisKey: string,
+  data: T
+): void {
+  if (cache.has(cacheKey)) {
+    cache.delete(cacheKey);
+  }
+  trimUserRouteCache(cache);
+  const nowMs = Date.now();
+  cache.set(cacheKey, {
+    data,
+    expiresAtMs: nowMs + USERS_ROUTE_CACHE_TTL_MS,
+    staleUntilMs: nowMs + USERS_ROUTE_STALE_FALLBACK_MS,
+  });
+  void cacheSetJson(
+    redisKey,
+    {
+      data,
+      cachedAt: nowMs,
+    },
+    USERS_ROUTE_STALE_FALLBACK_MS
+  );
+}
 
 function normalizeUsernameHandle(value: string): string {
   return value.trim().toLowerCase();
@@ -400,43 +534,56 @@ async function getUserStatsSafely(userId: string): Promise<{
     }
   }
 
-  const rows = await prisma.$queryRaw<Array<{
-    totalCalls: number | bigint | string | null;
-    wins: number | bigint | string | null;
-    losses: number | bigint | string | null;
-    totalProfitPercent: number | null;
-  }>>(Prisma.sql`
-    SELECT
-      COUNT(*) AS "totalCalls",
-      COUNT(*) FILTER (WHERE "isWin" = true) AS wins,
-      COUNT(*) FILTER (WHERE "isWin" = false) AS losses,
-      COALESCE(
-        SUM(
-          CASE
-            WHEN "entryMcap" IS NOT NULL AND "entryMcap" > 0 AND "currentMcap" IS NOT NULL
-              THEN (("currentMcap" - "entryMcap") / "entryMcap") * 100
-            ELSE 0
-          END
-        ),
-        0
-      ) AS "totalProfitPercent"
-    FROM "Post"
-    WHERE "authorId" = ${userId}
-      AND settled = true
-  `);
+  try {
+    const rows = await prisma.$queryRaw<Array<{
+      totalCalls: number | bigint | string | null;
+      wins: number | bigint | string | null;
+      losses: number | bigint | string | null;
+      totalProfitPercent: number | null;
+    }>>(Prisma.sql`
+      SELECT
+        COUNT(*) AS "totalCalls",
+        COUNT(*) FILTER (WHERE "isWin" = true) AS wins,
+        COUNT(*) FILTER (WHERE "isWin" = false) AS losses,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN "entryMcap" IS NOT NULL AND "entryMcap" > 0 AND "currentMcap" IS NOT NULL
+                THEN (("currentMcap" - "entryMcap") / "entryMcap") * 100
+              ELSE 0
+            END
+          ),
+          0
+        ) AS "totalProfitPercent"
+      FROM "Post"
+      WHERE "authorId" = ${userId}
+        AND settled = true
+    `);
 
-  const row = rows[0];
-  const totalCalls = toSafeNumber(row?.totalCalls);
-  const wins = toSafeNumber(row?.wins);
-  const losses = toSafeNumber(row?.losses);
-  const rawProfit = typeof row?.totalProfitPercent === "number" ? row.totalProfitPercent : 0;
-  return {
-    totalCalls,
-    wins,
-    losses,
-    winRate: totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0,
-    totalProfitPercent: Math.round(rawProfit * 100) / 100,
-  };
+    const row = rows[0];
+    const totalCalls = toSafeNumber(row?.totalCalls);
+    const wins = toSafeNumber(row?.wins);
+    const losses = toSafeNumber(row?.losses);
+    const rawProfit = typeof row?.totalProfitPercent === "number" ? row.totalProfitPercent : 0;
+    return {
+      totalCalls,
+      wins,
+      losses,
+      winRate: totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0,
+      totalProfitPercent: Math.round(rawProfit * 100) / 100,
+    };
+  } catch (error) {
+    console.warn("[users/profile] stats lookup degraded; defaulting to empty stats", {
+      message: getErrorMessage(error),
+    });
+    return {
+      totalCalls: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 0,
+      totalProfitPercent: 0,
+    };
+  }
 }
 
 async function findUserPostsRaw(authorId: string): Promise<any[]> {
@@ -1904,6 +2051,21 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
 usersRouter.get("/:identifier", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
+  const profileCacheKey = buildUserRouteCacheKey(identifier, currentUser?.id);
+  const profileRedisKey = buildUserRouteRedisKey(USERS_PROFILE_REDIS_KEY_PREFIX, profileCacheKey);
+  const cachedProfileResponse = await readUserRouteCache(
+    userProfileRouteCache,
+    profileCacheKey,
+    profileRedisKey
+  );
+  const staleCachedProfileResponse =
+    cachedProfileResponse ??
+    (await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey, {
+      allowStale: true,
+    }));
+  if (cachedProfileResponse) {
+    return c.json(cachedProfileResponse);
+  }
 
   let user:
     | {
@@ -1927,6 +2089,7 @@ usersRouter.get("/:identifier", async (c) => {
         };
       }
     | null = null;
+  let profileLookupUnavailable = false;
 
   try {
     user = await prisma.user.findFirst({
@@ -1961,23 +2124,51 @@ usersRouter.get("/:identifier", async (c) => {
     console.warn("[users/profile] prisma user lookup degraded; using raw fallback", {
       message: getErrorMessage(error),
     });
-    user = await findUserProfileByIdentifierRaw(identifier);
+    try {
+      user = await findUserProfileByIdentifierRaw(identifier);
+    } catch (rawError) {
+      profileLookupUnavailable = true;
+      console.warn("[users/profile] raw user lookup degraded", {
+        message: getErrorMessage(rawError),
+      });
+    }
   }
 
   if (!user) {
+    if (profileLookupUnavailable) {
+      if (staleCachedProfileResponse) {
+        return c.json(staleCachedProfileResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile is temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
   const isFollowing = await getIsFollowingSafely(currentUser?.id, user.id);
   const stats = await getUserStatsSafely(user.id);
-
-  return c.json({
+  const responsePayload: UserProfileRoutePayload = {
     data: {
       ...user,
       isFollowing,
       stats,
-    }
-  });
+    },
+  };
+  writeUserRouteCache(
+    userProfileRouteCache,
+    profileCacheKey,
+    profileRedisKey,
+    responsePayload
+  );
+
+  return c.json(responsePayload);
 });
 
 // Update current user's profile
@@ -2271,6 +2462,21 @@ usersRouter.patch("/me", requireAuth, zValidator("json", UpdateProfileSchema), a
 usersRouter.get("/:identifier/posts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
+  const postsCacheKey = buildUserRouteCacheKey(identifier, currentUser?.id);
+  const postsRedisKey = buildUserRouteRedisKey(USERS_POSTS_REDIS_KEY_PREFIX, postsCacheKey);
+  const cachedPostsResponse = await readUserRouteCache(
+    userPostsRouteCache,
+    postsCacheKey,
+    postsRedisKey
+  );
+  const staleCachedPostsResponse =
+    cachedPostsResponse ??
+    (await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, {
+      allowStale: true,
+    }));
+  if (cachedPostsResponse) {
+    return c.json(cachedPostsResponse);
+  }
 
   let user:
     | {
@@ -2278,6 +2484,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
         walletAddress: string | null;
       }
     | null = null;
+  let userLookupUnavailable = false;
   try {
     user = await prisma.user.findFirst({
       where: buildUserIdentifierWhere(identifier),
@@ -2290,16 +2497,37 @@ usersRouter.get("/:identifier/posts", async (c) => {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
-    const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-    user = fallbackUser
-      ? {
-          id: fallbackUser.id,
-          walletAddress: fallbackUser.walletAddress,
-        }
-      : null;
+    try {
+      const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+      user = fallbackUser
+        ? {
+            id: fallbackUser.id,
+            walletAddress: fallbackUser.walletAddress,
+          }
+        : null;
+    } catch (rawError) {
+      userLookupUnavailable = true;
+      console.warn("[users/profile-posts] raw user lookup degraded", {
+        message: getErrorMessage(rawError),
+      });
+    }
   }
 
   if (!user) {
+    if (userLookupUnavailable) {
+      if (staleCachedPostsResponse) {
+        return c.json(staleCachedPostsResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile posts are temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_POSTS_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
@@ -2355,7 +2583,25 @@ usersRouter.get("/:identifier/posts", async (c) => {
     console.warn("[users/profile-posts] prisma post lookup degraded; using raw fallback", {
       message: getErrorMessage(error),
     });
-    posts = await findUserPostsRaw(user.id);
+    try {
+      posts = await findUserPostsRaw(user.id);
+    } catch (rawError) {
+      console.warn("[users/profile-posts] raw post lookup degraded", {
+        message: getErrorMessage(rawError),
+      });
+      if (staleCachedPostsResponse) {
+        return c.json(staleCachedPostsResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile posts are temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_POSTS_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
   }
 
   const postsWithWalletTrade = await attachWalletTradeSnapshotsForUserPosts(posts, user.walletAddress);
@@ -2372,16 +2618,34 @@ usersRouter.get("/:identifier/posts", async (c) => {
     isReposted: userReposts.has(post.id),
     isFollowingAuthor,
   }));
+  const responsePayload: UserPostsRoutePayload = { data: postsWithSocial };
+  writeUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, responsePayload);
 
-  return c.json({ data: postsWithSocial });
+  return c.json(responsePayload);
 });
 
 // Get user's reposts (saved alpha) - only visible on profile page
 usersRouter.get("/:identifier/reposts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
+  const repostsCacheKey = buildUserRouteCacheKey(identifier, currentUser?.id);
+  const repostsRedisKey = buildUserRouteRedisKey(USERS_REPOSTS_REDIS_KEY_PREFIX, repostsCacheKey);
+  const cachedRepostsResponse = await readUserRouteCache(
+    userRepostsRouteCache,
+    repostsCacheKey,
+    repostsRedisKey
+  );
+  const staleCachedRepostsResponse =
+    cachedRepostsResponse ??
+    (await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey, {
+      allowStale: true,
+    }));
+  if (cachedRepostsResponse) {
+    return c.json(cachedRepostsResponse);
+  }
 
   let user: { id: string } | null = null;
+  let userLookupUnavailable = false;
   try {
     user = await prisma.user.findFirst({
       where: buildUserIdentifierWhere(identifier),
@@ -2393,11 +2657,32 @@ usersRouter.get("/:identifier/reposts", async (c) => {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
-    const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-    user = fallbackUser ? { id: fallbackUser.id } : null;
+    try {
+      const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+      user = fallbackUser ? { id: fallbackUser.id } : null;
+    } catch (rawError) {
+      userLookupUnavailable = true;
+      console.warn("[users/profile-reposts] raw user lookup degraded", {
+        message: getErrorMessage(rawError),
+      });
+    }
   }
 
   if (!user) {
+    if (userLookupUnavailable) {
+      if (staleCachedRepostsResponse) {
+        return c.json(staleCachedRepostsResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile reposts are temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_REPOSTS_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
@@ -2458,7 +2743,25 @@ usersRouter.get("/:identifier/reposts", async (c) => {
     console.warn("[users/profile-reposts] prisma repost lookup degraded; using raw fallback", {
       message: getErrorMessage(error),
     });
-    reposts = (await findUserRepostsRaw(user.id)).map((post) => ({ post }));
+    try {
+      reposts = (await findUserRepostsRaw(user.id)).map((post) => ({ post }));
+    } catch (rawError) {
+      console.warn("[users/profile-reposts] raw repost lookup degraded", {
+        message: getErrorMessage(rawError),
+      });
+      if (staleCachedRepostsResponse) {
+        return c.json(staleCachedRepostsResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile reposts are temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_REPOSTS_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
   }
 
   // Get current user's interactions with these posts
@@ -2476,8 +2779,15 @@ usersRouter.get("/:identifier/reposts", async (c) => {
     isReposted: userReposts.has(post.id),
     isFollowingAuthor: currentUser ? followingAuthorIds.has(post.authorId) : false,
   }));
+  const responsePayload: UserPostsRoutePayload = { data: postsWithSocial };
+  writeUserRouteCache(
+    userRepostsRouteCache,
+    repostsCacheKey,
+    repostsRedisKey,
+    responsePayload
+  );
 
-  return c.json({ data: postsWithSocial });
+  return c.json(responsePayload);
 });
 
 async function resolveUserIdFromIdentifier(identifier: string): Promise<string | null> {

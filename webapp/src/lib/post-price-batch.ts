@@ -16,7 +16,7 @@ type PendingResolver = (value: BatchedPostPriceSnapshot | null) => void;
 
 const BATCH_WINDOW_MS = 24;
 const MAX_BATCH_SIZE = 40;
-const PRICE_CACHE_TTL_MS = 4_000;
+const PRICE_CACHE_TTL_MS = 12_000;
 
 const pendingById = new Map<string, PendingResolver[]>();
 const cacheById = new Map<string, { data: BatchedPostPriceSnapshot | null; expiresAtMs: number }>();
@@ -84,4 +84,3 @@ export function getPostPriceSnapshotBatched(postId: string): Promise<BatchedPost
     scheduleFlush();
   });
 }
-

@@ -115,6 +115,18 @@ type FeedResponsePayload = {
   nextCursor: string | null;
 };
 
+type PostPriceResponsePayload = {
+  currentMcap: number | null;
+  entryMcap: number | null;
+  mcap1h: number | null;
+  mcap6h: number | null;
+  percentChange: number | null;
+  trackingMode: string | null;
+  lastMcapUpdate: string | null;
+  settled: boolean;
+  settledAt: string | null;
+};
+
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let settlementRunInFlight: Promise<SettlementRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
@@ -143,6 +155,11 @@ const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 :
 const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
 const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
 const FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX = "posts:feed:shared:v1";
+const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
+const POST_PRICE_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 20 * 60_000 : 5 * 60_000;
+const POST_PRICE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 40_000 : 4_000;
+const POST_PRICE_REDIS_KEY_PREFIX = "posts:price:v1";
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
@@ -171,6 +188,14 @@ const feedSharedResponseCache = new Map<
   string,
   {
     payload: FeedResponsePayload;
+    expiresAtMs: number;
+    staleUntilMs: number;
+  }
+>();
+const postPriceResponseCache = new Map<
+  string,
+  {
+    data: PostPriceResponsePayload;
     expiresAtMs: number;
     staleUntilMs: number;
   }
@@ -283,6 +308,130 @@ function buildFeedSharedRedisKey(key: string): string {
   return `${FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX}:${key}`;
 }
 
+function trimPostPriceCache(): void {
+  while (postPriceResponseCache.size >= POST_PRICE_CACHE_MAX_ENTRIES) {
+    const oldestKey = postPriceResponseCache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    postPriceResponseCache.delete(oldestKey);
+  }
+}
+
+function buildPostPriceRedisKey(postId: string): string {
+  return `${POST_PRICE_REDIS_KEY_PREFIX}:${postId}`;
+}
+
+function normalizePostPricePayload(value: unknown): PostPriceResponsePayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const currentMcap = typeof candidate.currentMcap === "number" ? candidate.currentMcap : null;
+  const entryMcap = typeof candidate.entryMcap === "number" ? candidate.entryMcap : null;
+  const mcap1h = typeof candidate.mcap1h === "number" ? candidate.mcap1h : null;
+  const mcap6h = typeof candidate.mcap6h === "number" ? candidate.mcap6h : null;
+  const percentChange =
+    typeof candidate.percentChange === "number" ? candidate.percentChange : null;
+  const trackingMode =
+    typeof candidate.trackingMode === "string" ? candidate.trackingMode : null;
+  const lastMcapUpdate =
+    typeof candidate.lastMcapUpdate === "string" ? candidate.lastMcapUpdate : null;
+  const settledAt = typeof candidate.settledAt === "string" ? candidate.settledAt : null;
+
+  return {
+    currentMcap,
+    entryMcap,
+    mcap1h,
+    mcap6h,
+    percentChange,
+    trackingMode,
+    lastMcapUpdate,
+    settled: candidate.settled === true,
+    settledAt,
+  };
+}
+
+function normalizePostPriceCacheEnvelope(
+  value: unknown
+): { data: PostPriceResponsePayload; cachedAtMs: number } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const candidate = value as { data?: unknown; cachedAt?: unknown };
+  const normalized = normalizePostPricePayload(candidate.data);
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    data: normalized,
+    cachedAtMs:
+      typeof candidate.cachedAt === "number" && Number.isFinite(candidate.cachedAt)
+        ? candidate.cachedAt
+        : Date.now() - POST_PRICE_CACHE_TTL_MS,
+  };
+}
+
+async function readPostPriceCache(
+  postId: string,
+  opts?: { allowStale?: boolean }
+): Promise<PostPriceResponsePayload | null> {
+  const nowMs = Date.now();
+  const cached = postPriceResponseCache.get(postId);
+  if (cached) {
+    if (cached.expiresAtMs > nowMs) {
+      return cached.data;
+    }
+    if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+      return cached.data;
+    }
+    if (cached.staleUntilMs <= nowMs) {
+      postPriceResponseCache.delete(postId);
+    }
+  }
+
+  const redisRaw = await cacheGetJson<unknown>(buildPostPriceRedisKey(postId));
+  const redisEnvelope = normalizePostPriceCacheEnvelope(redisRaw);
+  const redisCached = redisEnvelope?.data ?? normalizePostPricePayload(redisRaw);
+  if (!redisCached) {
+    return null;
+  }
+  if (
+    !opts?.allowStale &&
+    redisEnvelope &&
+    nowMs - redisEnvelope.cachedAtMs > POST_PRICE_CACHE_TTL_MS
+  ) {
+    return null;
+  }
+
+  writePostPriceCache(postId, redisCached);
+  return redisCached;
+}
+
+function writePostPriceCache(postId: string, data: PostPriceResponsePayload): void {
+  if (postPriceResponseCache.has(postId)) {
+    postPriceResponseCache.delete(postId);
+  }
+  trimPostPriceCache();
+  const nowMs = Date.now();
+  postPriceResponseCache.set(postId, {
+    data,
+    expiresAtMs: nowMs + POST_PRICE_CACHE_TTL_MS,
+    staleUntilMs: nowMs + POST_PRICE_STALE_FALLBACK_MS,
+  });
+  void cacheSetJson(
+    buildPostPriceRedisKey(postId),
+    {
+      data,
+      cachedAt: nowMs,
+    },
+    POST_PRICE_STALE_FALLBACK_MS
+  );
+}
+
 function normalizeFeedResponsePayload(value: unknown): FeedResponsePayload | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -357,6 +506,97 @@ function writeFeedResponseToCache(
     expiresAtMs: nowMs + FEED_RESPONSE_CACHE_TTL_MS,
     staleUntilMs: nowMs + FEED_RESPONSE_STALE_FALLBACK_MS,
   });
+}
+
+function parseCachedDate(value: unknown): Date | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function buildPostPricePayloadFromRecord(post: PriceRoutePostRecord): PostPriceResponsePayload {
+  const effectiveCurrentMcap = post.currentMcap;
+  const percentChange =
+    post.entryMcap && effectiveCurrentMcap
+      ? ((effectiveCurrentMcap - post.entryMcap) / post.entryMcap) * 100
+      : null;
+
+  return {
+    currentMcap: effectiveCurrentMcap,
+    entryMcap: post.entryMcap,
+    mcap1h: post.mcap1h,
+    mcap6h: post.mcap6h,
+    percentChange: percentChange !== null ? Math.round(percentChange * 100) / 100 : null,
+    trackingMode: post.trackingMode ?? determineTrackingMode(post.createdAt),
+    lastMcapUpdate: post.lastMcapUpdate?.toISOString() ?? null,
+    settled: post.settled,
+    settledAt: post.settledAt?.toISOString() ?? null,
+  };
+}
+
+function findCachedFeedPostPriceRecord(postId: string): PriceRoutePostRecord | null {
+  const cachedPost = [...feedResponseCache.values(), ...feedSharedResponseCache.values()]
+    .flatMap((entry) => entry.payload.data)
+    .find((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      return (item as { id?: unknown }).id === postId;
+    });
+
+  if (!cachedPost || typeof cachedPost !== "object" || Array.isArray(cachedPost)) {
+    return null;
+  }
+
+  const candidate = cachedPost as Record<string, unknown>;
+  const createdAt = parseCachedDate(candidate.createdAt);
+  if (!createdAt) {
+    return null;
+  }
+
+  return {
+    id: postId,
+    contractAddress:
+      typeof candidate.contractAddress === "string" ? candidate.contractAddress : null,
+    chainType: typeof candidate.chainType === "string" ? candidate.chainType : null,
+    entryMcap: toNullableNumber(candidate.entryMcap),
+    currentMcap: toNullableNumber(candidate.currentMcap),
+    mcap1h: toNullableNumber(candidate.mcap1h),
+    mcap6h: toNullableNumber(candidate.mcap6h),
+    settled: candidate.settled === true,
+    settledAt: parseCachedDate(candidate.settledAt),
+    createdAt,
+    lastMcapUpdate: parseCachedDate(candidate.lastMcapUpdate),
+    trackingMode: typeof candidate.trackingMode === "string" ? candidate.trackingMode : null,
+  };
+}
+
+async function resolveCachedPostPricePayload(
+  postId: string,
+  opts?: { allowStale?: boolean }
+): Promise<PostPriceResponsePayload | null> {
+  const cachedPayload = await readPostPriceCache(postId, opts);
+  if (cachedPayload) {
+    return cachedPayload;
+  }
+
+  const cachedPost = findCachedFeedPostPriceRecord(postId);
+  if (!cachedPost) {
+    return null;
+  }
+
+  const payload = buildPostPricePayloadFromRecord(cachedPost);
+  writePostPriceCache(postId, payload);
+  return payload;
 }
 
 async function loadEmergencyFeedPosts(
@@ -2513,11 +2753,15 @@ postsRouter.get("/", async (c) => {
     if (stalePayload) {
       return c.json(stalePayload);
     }
-    return c.json({
-      data: [],
-      hasMore: false,
-      nextCursor: null,
-    });
+    return c.json(
+      {
+        error: {
+          message: "Feed is temporarily unavailable. Please retry in a moment.",
+          code: "FEED_UNAVAILABLE",
+        },
+      },
+      503
+    );
   };
 
   if (!cursor) {
@@ -6007,61 +6251,148 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
   const { ids } = c.req.valid("json");
   const uniqueIds = [...new Set(ids)].slice(0, 50);
-
-  const posts = await prisma.post.findMany({
-    where: { id: { in: uniqueIds } },
-    select: {
-      id: true,
-      contractAddress: true,
-      chainType: true,
-      entryMcap: true,
-      currentMcap: true,
-      mcap1h: true,
-      mcap6h: true,
-      settled: true,
-      settledAt: true,
-      createdAt: true,
-      lastMcapUpdate: true,
-      trackingMode: true,
-    },
-  });
-
-  triggerMaintenanceForStaleCandidates("prices:batch", posts);
-
-  const results = await Promise.all(
-    posts.map(async (post) => [post.id, await resolvePostPricePayload(post)] as const)
+  const freshCachedEntries = await Promise.all(
+    uniqueIds.map(async (id) => [id, await readPostPriceCache(id)] as const)
   );
+  const payloadById = new Map<string, PostPriceResponsePayload>();
+  for (const [id, cached] of freshCachedEntries) {
+    if (cached) {
+      payloadById.set(id, cached);
+    }
+  }
+
+  let posts: PriceRoutePostRecord[] = [];
+  let databaseLookupError: unknown = null;
+  try {
+    posts = await prisma.post.findMany({
+      where: { id: { in: uniqueIds } },
+      select: {
+        id: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        currentMcap: true,
+        mcap1h: true,
+        mcap6h: true,
+        settled: true,
+        settledAt: true,
+        createdAt: true,
+        lastMcapUpdate: true,
+        trackingMode: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    databaseLookupError = error;
+    console.warn("[posts/prices] post lookup degraded; serving cached price payloads when possible", {
+      message: getErrorMessage(error),
+    });
+  }
+
+  if (posts.length > 0) {
+    triggerMaintenanceForStaleCandidates("prices:batch", posts);
+    const resolved = await Promise.all(
+      posts.map(async (post) => {
+        const payload = await resolvePostPricePayload(post);
+        writePostPriceCache(post.id, payload);
+        return [post.id, payload] as const;
+      })
+    );
+    for (const [id, payload] of resolved) {
+      payloadById.set(id, payload);
+    }
+  }
+
+  if (payloadById.size === 0) {
+    const staleCachedEntries = await Promise.all(
+      uniqueIds.map(async (id) => [id, await resolveCachedPostPricePayload(id, { allowStale: true })] as const)
+    );
+    for (const [id, cached] of staleCachedEntries) {
+      if (cached) {
+        payloadById.set(id, cached);
+      }
+    }
+  }
+
+  if (payloadById.size === 0 && databaseLookupError) {
+    return c.json(
+      {
+        error: {
+          message: "Post prices are temporarily unavailable. Please retry shortly.",
+          code: "POST_PRICES_UNAVAILABLE",
+        },
+      },
+      503
+    );
+  }
 
   return c.json({
-    data: Object.fromEntries(results),
+    data: Object.fromEntries(
+      uniqueIds.flatMap((id) => {
+        const payload = payloadById.get(id);
+        return payload ? [[id, payload] as const] : [];
+      })
+    ),
   });
 });
 
 postsRouter.get("/:id/price", async (c) => {
   const postId = c.req.param("id");
 
-  const post = await prisma.post.findUnique({
-    where: { id: postId },
-    select: {
-      id: true,
-      contractAddress: true,
-      chainType: true,
-      entryMcap: true,
-      currentMcap: true,
-      mcap1h: true,
-      mcap6h: true,
-      settled: true,
-      settledAt: true,
-      createdAt: true,
-      lastMcapUpdate: true,
-      trackingMode: true,
-    },
-  });
+  let post: PriceRoutePostRecord | null = null;
+  let lookupError: unknown = null;
+  try {
+    post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: {
+        id: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        currentMcap: true,
+        mcap1h: true,
+        mcap6h: true,
+        settled: true,
+        settledAt: true,
+        createdAt: true,
+        lastMcapUpdate: true,
+        trackingMode: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    lookupError = error;
+    console.warn("[posts/price] price lookup degraded; serving cached snapshot when possible", {
+      postId,
+      message: getErrorMessage(error),
+    });
+  }
+
+  if (!post && lookupError) {
+    const cachedPayload = await resolveCachedPostPricePayload(postId, { allowStale: true });
+    if (cachedPayload) {
+      return c.json({ data: cachedPayload });
+    }
+    return c.json(
+      {
+        error: {
+          message: "Post price is temporarily unavailable. Please retry shortly.",
+          code: "POST_PRICE_UNAVAILABLE",
+        },
+      },
+      503
+    );
+  }
 
   if (!post) {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
   const data = await resolvePostPricePayload(post);
+  writePostPriceCache(post.id, data);
   return c.json({ data });
 });

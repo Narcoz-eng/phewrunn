@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
 import { Post, calculatePercentChange, getAvatarUrl, LIQUIDATION_LEVEL } from "@/types";
@@ -72,6 +78,95 @@ type FollowMutationResponse = { following: boolean; followerCount: number };
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_PROFILE_POSTS_CACHE_TTL_MS = 45_000;
 const USER_PROFILE_WALLET_CACHE_TTL_MS = 60_000;
+
+type CachedFeedPage = {
+  items: Post[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+function collectCachedFeedPosts(queryClient: QueryClient): Post[] {
+  const queryEntries = queryClient.getQueriesData<InfiniteData<CachedFeedPage>>({
+    queryKey: ["posts"],
+  });
+  const seenIds = new Set<string>();
+  const posts: Post[] = [];
+
+  for (const [, data] of queryEntries) {
+    for (const page of data?.pages ?? []) {
+      for (const post of page.items ?? []) {
+        if (!post?.id || seenIds.has(post.id)) continue;
+        seenIds.add(post.id);
+        posts.push(post);
+      }
+    }
+  }
+
+  posts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return posts;
+}
+
+function getCachedFeedPostsForProfile(queryClient: QueryClient, identifier: string | undefined): Post[] {
+  if (!identifier) return [];
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+  return collectCachedFeedPosts(queryClient).filter((post) => {
+    const username = post.author.username?.trim().toLowerCase();
+    return (
+      post.authorId === identifier ||
+      post.author.id === identifier ||
+      username === normalizedIdentifier
+    );
+  });
+}
+
+function buildUserProfileFallbackFromFeed(
+  queryClient: QueryClient,
+  identifier: string | undefined
+): UserProfileData | null {
+  const matchingPosts = getCachedFeedPostsForProfile(queryClient, identifier);
+  const latestPost = matchingPosts[0];
+  if (!latestPost) {
+    return null;
+  }
+
+  const settledPosts = matchingPosts.filter(
+    (post) => post.settled && post.isWin !== null && post.entryMcap !== null && post.currentMcap !== null
+  );
+  const wins = settledPosts.filter((post) => post.isWin === true).length;
+  const losses = settledPosts.filter((post) => post.isWin === false).length;
+  const totalCalls = settledPosts.length;
+  const totalProfitPercent = settledPosts.reduce((sum, post) => {
+    if (!post.entryMcap || !post.currentMcap) return sum;
+    return sum + ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
+  }, 0);
+
+  return {
+    id: latestPost.author.id,
+    name: latestPost.author.name,
+    email: null,
+    image: latestPost.author.image ?? null,
+    walletAddress: null,
+    username: latestPost.author.username ?? null,
+    level: latestPost.author.level ?? 0,
+    xp: latestPost.author.xp ?? 0,
+    bio: null,
+    isVerified: latestPost.author.isVerified,
+    createdAt: latestPost.createdAt,
+    isFollowing: Boolean(latestPost.isFollowingAuthor),
+    _count: {
+      posts: matchingPosts.length,
+      followers: 0,
+      following: 0,
+    },
+    stats: {
+      totalCalls,
+      wins,
+      losses,
+      winRate: totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0,
+      totalProfitPercent: Math.round(totalProfitPercent * 100) / 100,
+    },
+  };
+}
 
 export default function UserProfile() {
   const navigate = useNavigate();
@@ -151,7 +246,9 @@ export default function UserProfile() {
           ? readSessionCache<UserProfileData>(userProfileCacheKey, USER_PROFILE_CACHE_TTL_MS)
           : null;
       const currentProfile = queryClient.getQueryData<UserProfileData>(userProfileQueryKey);
-      const fallbackProfile = sessionCachedProfile ?? currentProfile ?? cachedUserProfile ?? null;
+      const feedFallbackProfile = buildUserProfileFallbackFromFeed(queryClient, userId);
+      const fallbackProfile =
+        sessionCachedProfile ?? currentProfile ?? cachedUserProfile ?? feedFallbackProfile ?? null;
       try {
         const data = await api.get<UserProfileData>(`/api/users/${userId}`);
         return data;
@@ -162,7 +259,7 @@ export default function UserProfile() {
         throw error;
       }
     },
-    initialData: cachedUserProfile ?? undefined,
+    initialData: cachedUserProfile ?? buildUserProfileFallbackFromFeed(queryClient, userId) ?? undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
@@ -186,6 +283,7 @@ export default function UserProfile() {
           ? readSessionCache<Post[]>(userPostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
           : null;
       const currentPosts = queryClient.getQueryData<Post[]>(userPostsQueryKey);
+      const feedFallbackPosts = getCachedFeedPostsForProfile(queryClient, userId);
       const fallbackPosts =
         sessionCachedPosts && sessionCachedPosts.length > 0
           ? sessionCachedPosts
@@ -193,7 +291,9 @@ export default function UserProfile() {
             ? currentPosts
             : cachedUserPosts && cachedUserPosts.length > 0
               ? cachedUserPosts
-              : null;
+              : feedFallbackPosts.length > 0
+                ? feedFallbackPosts
+                : null;
       try {
         const data = await api.get<Post[]>(`/api/users/${userId}/posts`);
         if (data.length === 0 && fallbackPosts) {
@@ -207,7 +307,11 @@ export default function UserProfile() {
         throw error;
       }
     },
-    initialData: cachedUserPosts ?? undefined,
+    initialData:
+      cachedUserPosts ?? (() => {
+        const fallbackPosts = getCachedFeedPostsForProfile(queryClient, userId);
+        return fallbackPosts.length > 0 ? fallbackPosts : undefined;
+      })(),
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
