@@ -43,6 +43,7 @@ const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
+const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 1_400;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
@@ -66,6 +67,7 @@ const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
 const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
 const AUTH_PRIVY_SYNC_FAILURE_EVENT = "phew:auth-privy-sync-failure";
 const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
+const AUTH_BOOTSTRAPPED_SESSION_GRACE_MS = 20_000;
 
 type PrivySyncFailureSnapshot = {
   message: string;
@@ -105,7 +107,13 @@ export function hasValidatedAuthSession(referenceTime = Date.now()): boolean {
   if (isExplicitLogoutCoolingDown(referenceTime)) {
     return false;
   }
-  return lastSuccessfulSessionAt > 0;
+  if (lastSuccessfulSessionAt > 0) {
+    return true;
+  }
+  return (
+    lastBootstrappedSessionAt > 0 &&
+    referenceTime - lastBootstrappedSessionAt < AUTH_BOOTSTRAPPED_SESSION_GRACE_MS
+  );
 }
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
@@ -176,6 +184,7 @@ let privySyncInFlight: Promise<{ token: string; user: AuthUser }> | null = null;
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
 let lastSuccessfulSessionAt = 0;
+let lastBootstrappedSessionAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryAuthToken: string | null = null;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
@@ -514,6 +523,16 @@ function markValidatedAuthSession(user: AuthUser): AuthUser {
   sessionRateLimitedUntil = 0;
   unauthorizedSessionFailures = 0;
   lastSuccessfulSessionAt = Date.now();
+  lastBootstrappedSessionAt = 0;
+  writeCachedAuthUser(user);
+  clearPrivySyncFailureSnapshot();
+  return user;
+}
+
+function markBootstrappedAuthSession(user: AuthUser): AuthUser {
+  sessionRateLimitedUntil = 0;
+  unauthorizedSessionFailures = 0;
+  lastBootstrappedSessionAt = Date.now();
   writeCachedAuthUser(user);
   clearPrivySyncFailureSnapshot();
   return user;
@@ -748,6 +767,8 @@ async function fetchSession(): Promise<AuthUser | null> {
 
         clearStoredAuthToken();
         clearCachedAuthUser();
+        lastBootstrappedSessionAt = 0;
+        lastSuccessfulSessionAt = 0;
         sessionRateLimitedUntil = Date.now() + 5000;
         return null;
       }
@@ -784,6 +805,8 @@ async function fetchSession(): Promise<AuthUser | null> {
           clearStoredAuthToken();
         }
         clearCachedAuthUser();
+        lastBootstrappedSessionAt = 0;
+        lastSuccessfulSessionAt = 0;
         return null;
       }
     } catch (parseError) {
@@ -902,6 +925,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     privySyncInFlight = null;
     lastPrivySyncAt = 0;
     lastSuccessfulSessionAt = 0;
+    lastBootstrappedSessionAt = 0;
     unauthorizedSessionFailures = 0;
     setState({
       user: null,
@@ -1260,17 +1284,33 @@ export async function syncPrivySession(
 
         // Store the session token for Bearer auth fallback
         setStoredAuthToken(data.token);
+        const bootstrappedUser = markBootstrappedAuthSession(syncedUser);
+        emitAuthSessionSynced(bootstrappedUser);
 
         const confirmedUser = await ensureBackendSessionReady(
           syncedUser.id,
-          AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+          AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS
         );
-        if (!confirmedUser) {
-          throw new Error("Backend session is still finalizing");
+        if (confirmedUser) {
+          emitAuthSessionSynced(confirmedUser);
+          return { token: data.token, user: confirmedUser };
         }
 
-        emitAuthSessionSynced(confirmedUser);
-        return { token: data.token, user: confirmedUser };
+        void ensureBackendSessionReady(
+          syncedUser.id,
+          AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+        )
+          .then((backgroundConfirmedUser) => {
+            if (!backgroundConfirmedUser) {
+              return;
+            }
+            emitAuthSessionSynced(backgroundConfirmedUser);
+          })
+          .catch((backgroundError) => {
+            console.warn("[Auth] Background session confirmation failed:", backgroundError);
+          });
+
+        return { token: data.token, user: bootstrappedUser };
       } catch (error) {
         const isAbort = error instanceof Error && error.name === "AbortError";
         const message = error instanceof Error ? error.message : String(error);

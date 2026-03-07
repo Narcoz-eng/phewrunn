@@ -349,12 +349,8 @@ function buildSessionTokenUserClaims(user: AuthResponseUser): SessionTokenUserCl
     username: normalizedUsername,
     level: user.level,
     xp: user.xp,
-    bio: user.bio,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
-    tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
-    tradeFeeShareBps: user.tradeFeeShareBps,
-    tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     createdAt: createdAtIso,
   };
 }
