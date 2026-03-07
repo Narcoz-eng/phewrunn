@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -38,8 +38,14 @@ interface TradingPanelProps {
   canExecute: boolean;
   walletConnected: boolean;
   walletBalance: number | null;
+  walletBalanceUsd: number | null;
   walletTokenBalance: number | null;
   walletTokenBalanceFormatted: string;
+  payAmountUsd: number | null;
+  receiveAmountUsd: number | null;
+  slippageInputPercent: string;
+  onSlippageInputChange: (value: string) => void;
+  onSlippageInputCommit: () => void;
   onExecute: () => void;
   onConnectWallet: () => void;
   txSignature: string | null;
@@ -52,6 +58,16 @@ interface TradingPanelProps {
 }
 
 const SLIPPAGE_QUICK = [50, 100, 200, 500];
+
+function formatUsdEstimate(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    notation: Math.abs(value) >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: Math.abs(value) >= 1 ? 2 : 4,
+  }).format(value);
+}
 
 export function TradingPanel({
   tradeSide,
@@ -75,8 +91,14 @@ export function TradingPanel({
   canExecute,
   walletConnected,
   walletBalance,
+  walletBalanceUsd,
   walletTokenBalance,
   walletTokenBalanceFormatted,
+  payAmountUsd,
+  receiveAmountUsd,
+  slippageInputPercent,
+  onSlippageInputChange,
+  onSlippageInputCommit,
   onExecute,
   onConnectWallet,
   txSignature,
@@ -89,22 +111,34 @@ export function TradingPanel({
 }: TradingPanelProps) {
   const isBuy = tradeSide === "buy";
   const [showDetails, setShowDetails] = useState(false);
-  const [showSlippage, setShowSlippage] = useState(false);
+  const detailsRef = useRef<HTMLDivElement>(null);
 
   const inputValue = isBuy ? buyAmountSol : sellAmountToken;
   const onInputChange = isBuy ? onBuyAmountChange : onSellAmountChange;
 
-  const availableBalance = isBuy
+  const availableBalanceLabel = isBuy
     ? walletBalance !== null
       ? `${walletBalance.toFixed(4)} SOL`
       : "--"
     : walletTokenBalance !== null
       ? `${walletTokenBalanceFormatted} ${tokenSymbol}`
       : "--";
+  const availableBalanceUsdLabel =
+    isBuy && walletBalanceUsd !== null ? formatUsdEstimate(walletBalanceUsd) : null;
+  const payAmountUsdLabel = formatUsdEstimate(payAmountUsd);
+  const receiveAmountUsdLabel = formatUsdEstimate(receiveAmountUsd);
 
   const priceImpactNum = parseFloat(jupiterPriceImpactDisplay);
   const priceImpactSeverity =
     priceImpactNum > 5 ? "critical" : priceImpactNum > 2 ? "warning" : "safe";
+
+  useEffect(() => {
+    if (!showDetails || typeof window === "undefined") return;
+    const frame = window.requestAnimationFrame(() => {
+      detailsRef.current?.scrollIntoView({ block: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [showDetails]);
 
   return (
     <div className="flex flex-col rounded-2xl bg-[#0a0c12] border border-white/[0.07] overflow-hidden">
@@ -170,7 +204,10 @@ export function TradingPanel({
                 }}
                 className="text-[11px] text-white/40 hover:text-white/70 transition-colors"
               >
-                Balance: <span className="text-white/60 font-medium">{availableBalance}</span>
+                Balance: <span className="text-white/60 font-medium">{availableBalanceLabel}</span>
+                {availableBalanceUsdLabel ? (
+                  <span className="text-white/30"> ({availableBalanceUsdLabel})</span>
+                ) : null}
               </button>
             )}
           </div>
@@ -209,6 +246,10 @@ export function TradingPanel({
                 </div>
               )}
             </div>
+          </div>
+          <div className="flex items-center justify-between text-[10px] text-white/32">
+            <span>{isBuy ? "Spend value" : "Token value"}</span>
+            <span>{payAmountUsdLabel ? `~${payAmountUsdLabel}` : "--"}</span>
           </div>
         </div>
 
@@ -295,6 +336,10 @@ export function TradingPanel({
               )}
             </div>
           </div>
+          <div className="flex items-center justify-between text-[10px] text-white/32">
+            <span>{isBuy ? "Quoted receive value" : "Estimated SOL proceeds"}</span>
+            <span>{receiveAmountUsdLabel ? `~${receiveAmountUsdLabel}` : "--"}</span>
+          </div>
         </div>
 
         {/* Expandable Order Details */}
@@ -326,10 +371,13 @@ export function TradingPanel({
         </button>
 
         {showDetails && (
-          <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div ref={detailsRef} className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
             {/* Slippage Quick Adjust */}
             <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3 space-y-2">
-              <span className="text-[10px] font-medium uppercase tracking-widest text-white/35">Slippage Tolerance</span>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] font-medium uppercase tracking-widest text-white/35">Slippage Tolerance</span>
+                <span className="text-[10px] text-white/25">0.01% - 50.00%</span>
+              </div>
               <div className="grid grid-cols-4 gap-1.5">
                 {SLIPPAGE_QUICK.map((bps) => (
                   <button
@@ -347,6 +395,24 @@ export function TradingPanel({
                     {(bps / 100).toFixed(1)}%
                   </button>
                 ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={slippageInputPercent}
+                  onChange={(event) => onSlippageInputChange(event.target.value)}
+                  onBlur={onSlippageInputCommit}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onSlippageInputCommit();
+                    }
+                  }}
+                  className="h-9 border-white/[0.08] bg-white/[0.03] text-sm text-white placeholder:text-white/25"
+                  placeholder="1.00"
+                />
+                <span className="text-xs font-medium text-white/45">%</span>
               </div>
             </div>
 

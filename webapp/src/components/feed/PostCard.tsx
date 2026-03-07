@@ -104,11 +104,12 @@ const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "1D", label: "1D" },
 ] as const;
 type DexChartIntervalValue = (typeof DEX_CHART_INTERVAL_OPTIONS)[number]["value"];
-const CHART_DEFAULT_VISIBLE_POINTS = 96;
+const CHART_DEFAULT_VISIBLE_POINTS = 72;
 const CHART_MIN_VISIBLE_POINTS = 18;
 const CHART_MAX_VISIBLE_POINTS = 320;
 const CHART_ZOOM_STEP_POINTS = 16;
 const CHART_PAN_STEP_POINTS = 6;
+const CHART_FUTURE_PADDING_SLOTS = 6;
 const CHART_TOUCH_PAN_THRESHOLD_PX = 12;
 const CHART_TOUCH_PAN_STEP_PX = 14;
 const CHART_TOUCH_PINCH_THRESHOLD_PX = 18;
@@ -610,7 +611,7 @@ export function PostCard({
   onLike,
   onRepost,
   onComment,
-  enableRealtimePricePolling = false,
+  enableRealtimePricePolling = true,
 }: PostCardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -1162,7 +1163,7 @@ export function PostCard({
     soldAmount !== null ||
     holdingUsd !== null ||
     holdingAmount !== null;
-  const formatUsdCompact = (value: number) =>
+  const formatUsdStat = (value: number) =>
     new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: "USD",
@@ -1187,7 +1188,7 @@ export function PostCard({
         ? "Wallet Profit"
         : "Wallet Loss";
   const winCardVerifiedPnlText =
-    verifiedTotalPnlUsd === null ? null : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdCompact(Math.abs(verifiedTotalPnlUsd))}`;
+    verifiedTotalPnlUsd === null ? null : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdStat(Math.abs(verifiedTotalPnlUsd))}`;
   const winCardMarketMoveLabel =
     winCardProfitLossValue === null
       ? "MCAP Delta"
@@ -1526,7 +1527,7 @@ export function PostCard({
     const verifiedPnlText =
       verifiedTotalPnlUsd === null
         ? null
-        : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdCompact(Math.abs(verifiedTotalPnlUsd))}`;
+        : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdStat(Math.abs(verifiedTotalPnlUsd))}`;
     const verifiedPnlLabel =
       verifiedTotalPnlUsd === null
         ? null
@@ -1986,11 +1987,11 @@ export function PostCard({
       if (hasWalletTradeInfo) {
         const parts: string[] = [];
         if (verifiedPnlText && verifiedPnlLabel) parts.push(`Wallet P/L ${verifiedPnlText}`);
-        if (boughtUsd !== null) parts.push(`Bought ${formatUsdCompact(boughtUsd)}`);
-        if (soldUsd !== null) parts.push(`Sold ${formatUsdCompact(soldUsd)}`);
+        if (boughtUsd !== null) parts.push(`Bought ${formatUsdStat(boughtUsd)}`);
+        if (soldUsd !== null) parts.push(`Sold ${formatUsdStat(soldUsd)}`);
         if (boughtAmount !== null) parts.push(`Bought Qty ${boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
         if (soldAmount !== null) parts.push(`Sold Qty ${soldAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
-        if (holdingUsd !== null) parts.push(`Held ${formatUsdCompact(holdingUsd)}`);
+        if (holdingUsd !== null) parts.push(`Held ${formatUsdStat(holdingUsd)}`);
         if (holdingAmount !== null) parts.push(`Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
 
         if (parts.length > 0) {
@@ -2154,6 +2155,19 @@ export function PostCard({
       });
     },
   });
+  const solSpotPriceQuery = useQuery({
+    queryKey: ["dexTokenData", "solana", SOL_MINT, "spot"],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported,
+    staleTime: 60_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+    refetchInterval: isBuyDialogOpen ? 60_000 : false,
+    queryFn: async () =>
+      fetchDexscreenerTokenData({
+        contractAddress: SOL_MINT,
+        chainType: "solana",
+      }),
+  });
   const resolvedTokenImage = post.tokenImage ?? dexTokenDataQuery.data?.tokenImage ?? null;
   const resolvedTokenName = post.tokenName ?? dexTokenDataQuery.data?.tokenName ?? null;
   const resolvedTokenSymbol = post.tokenSymbol ?? dexTokenDataQuery.data?.tokenSymbol ?? null;
@@ -2167,6 +2181,7 @@ export function PostCard({
   const resolvedSells24h = dexTokenDataQuery.data?.sells24h ?? null;
   const resolvedDexId = dexTokenDataQuery.data?.dexId ?? null;
   const resolvedPairAddress = dexTokenDataQuery.data?.pairAddress ?? null;
+  const solPriceUsd = solSpotPriceQuery.data?.priceUsd ?? null;
   const displayTokenSymbol = resolvedTokenSymbol || resolvedTokenName || "TOKEN";
   const displayTokenLabel = resolvedTokenSymbol || resolvedTokenName || "Token";
   const displayTokenSubtitle =
@@ -2278,6 +2293,33 @@ export function PostCard({
   const outputTokenDecimals =
     typeof outputTokenDecimalsQuery.data === "number" ? outputTokenDecimalsQuery.data : 6;
   const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data === "number";
+
+  const walletNativeBalanceQuery = useQuery({
+    queryKey: ["walletNativeBalance", tradeWalletPublicKey?.toBase58()],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
+    staleTime: 8_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+    refetchInterval: isBuyDialogOpen ? 15_000 : false,
+    queryFn: async () => {
+      if (!tradeWalletPublicKey) return null;
+      try {
+        const lamports = await tradeReadConnection.getBalance(tradeWalletPublicKey);
+        return lamports / LAMPORTS_PER_SOL;
+      } catch {
+        return null;
+      }
+    },
+  });
+  const walletNativeBalance =
+    typeof walletNativeBalanceQuery.data === "number" &&
+    Number.isFinite(walletNativeBalanceQuery.data)
+      ? walletNativeBalanceQuery.data
+      : null;
+  const walletNativeBalanceUsd =
+    walletNativeBalance !== null && solPriceUsd !== null
+      ? walletNativeBalance * solPriceUsd
+      : null;
 
   const parsedSellAmountToken = Number(sellAmountToken);
   const sellAmountAtomic =
@@ -2670,7 +2712,6 @@ export function PostCard({
           tradeSide,
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
-          dynamicSlippage: true,
         });
 
         const swapRes = await api.raw("/api/posts/jupiter/swap", {
@@ -2766,10 +2807,11 @@ export function PostCard({
           )
         : tx;
       const signedTx = await walletSignTransaction(transactionForSigning);
+      const sendCommitment = autoConfirmEnabled ? "processed" : "confirmed";
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
-        maxRetries: 1,
-        skipPreflight: true,
-        preflightCommitment: "processed",
+        maxRetries: autoConfirmEnabled ? 0 : 2,
+        skipPreflight: autoConfirmEnabled,
+        preflightCommitment: sendCommitment,
       });
 
       preparedSwapRef.current = null;
@@ -2781,13 +2823,13 @@ export function PostCard({
               blockhash: transactionForSigning.message.recentBlockhash,
               lastValidBlockHeight: swapPayload.lastValidBlockHeight,
             },
-            "processed"
+            sendCommitment
           )
           .catch((error) => {
             console.warn("[jupiter-trade] Confirmation warning", error);
           });
       } else {
-        void tradeReadConnection.confirmTransaction(signature, "processed").catch((error) => {
+        void tradeReadConnection.confirmTransaction(signature, sendCommitment).catch((error) => {
           console.warn("[jupiter-trade] Confirmation warning", error);
         });
       }
@@ -2827,6 +2869,7 @@ export function PostCard({
     tradeAmountAtomic,
     tradeReadConnection,
     tradeSide,
+    autoConfirmEnabled,
     walletPublicKey,
     walletSignTransaction,
   ]);
@@ -2889,6 +2932,43 @@ export function PostCard({
         ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
         : jupiterPlatformFeeAmountDisplay;
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
+  const tradeInputAmountNumeric = useMemo(() => {
+    if (jupiterQuote) {
+      const raw = Number(jupiterQuote.inAmount);
+      if (!Number.isFinite(raw)) return null;
+      return tradeSide === "buy" ? raw / LAMPORTS_PER_SOL : raw / Math.pow(10, outputTokenDecimals);
+    }
+    if (tradeSide === "buy") {
+      return Number.isFinite(parsedBuyAmountSol) && parsedBuyAmountSol > 0 ? parsedBuyAmountSol : null;
+    }
+    return Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0 ? parsedSellAmountToken : null;
+  }, [jupiterQuote, outputTokenDecimals, parsedBuyAmountSol, parsedSellAmountToken, tradeSide]);
+  const tradeOutputAmountNumeric = useMemo(() => {
+    if (!jupiterQuote) return null;
+    const raw = Number(jupiterQuote.outAmount);
+    if (!Number.isFinite(raw)) return null;
+    return tradeSide === "buy" ? raw / Math.pow(10, outputTokenDecimals) : raw / LAMPORTS_PER_SOL;
+  }, [jupiterQuote, outputTokenDecimals, tradeSide]);
+  const tradePayUsdEstimate =
+    tradeInputAmountNumeric !== null
+      ? tradeSide === "buy"
+        ? solPriceUsd !== null
+          ? tradeInputAmountNumeric * solPriceUsd
+          : null
+        : resolvedPriceUsd !== null
+          ? tradeInputAmountNumeric * resolvedPriceUsd
+          : null
+      : null;
+  const tradeReceiveUsdEstimate =
+    tradeOutputAmountNumeric !== null
+      ? tradeSide === "buy"
+        ? resolvedPriceUsd !== null
+          ? tradeOutputAmountNumeric * resolvedPriceUsd
+          : null
+        : solPriceUsd !== null
+          ? tradeOutputAmountNumeric * solPriceUsd
+          : null
+      : null;
   const hasWalletSignerForTrade = !!(walletPublicKey && wallet.signTransaction);
   const isWalletConnectedForTrade = Boolean(wallet.connected || hasWalletSignerForTrade);
   const walletShortAddress = walletPublicKey
@@ -4065,7 +4145,7 @@ export function PostCard({
                             )}
                           </div>
                           <p className="mt-1 text-sm font-semibold text-foreground">
-                            {holdingUsd !== null ? formatUsdCompact(holdingUsd) : "N/A"}
+                            {holdingUsd !== null ? formatUsdStat(holdingUsd) : "N/A"}
                           </p>
                         </div>
                       )}
@@ -4083,7 +4163,7 @@ export function PostCard({
                         <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Bought</p>
                           <p className="mt-1 text-sm font-semibold text-foreground">
-                            {boughtUsd !== null ? formatUsdCompact(boughtUsd) : "N/A"}
+                            {boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A"}
                           </p>
                           {boughtAmount !== null && (
                             <p className="mt-0.5 text-[10px] text-muted-foreground">
@@ -4097,7 +4177,7 @@ export function PostCard({
                         <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sold</p>
                           <p className="mt-1 text-sm font-semibold text-foreground">
-                            {soldUsd !== null ? formatUsdCompact(soldUsd) : "N/A"}
+                            {soldUsd !== null ? formatUsdStat(soldUsd) : "N/A"}
                           </p>
                           {soldAmount !== null && (
                             <p className="mt-0.5 text-[10px] text-muted-foreground">
@@ -4706,6 +4786,7 @@ export function PostCard({
                             data={professionalChartData}
                             visibleStartIndex={chartWindowBounds.startIndex}
                             visibleEndIndex={chartWindowBounds.endIndex}
+                            futureSlotCount={CHART_FUTURE_PADDING_SLOTS}
                             showVolume={isChartInfoVisible}
                             showCandles={isChartTradesVisible}
                             stroke={professionalChartStroke}
@@ -4815,9 +4896,15 @@ export function PostCard({
                       isExecuting={isExecutingBuy}
                       canExecute={canExecuteJupiterBuy}
                       walletConnected={isWalletConnectedForTrade}
-                      walletBalance={null}
+                      walletBalance={walletNativeBalance}
+                      walletBalanceUsd={walletNativeBalanceUsd}
                       walletTokenBalance={walletTokenBalance}
                       walletTokenBalanceFormatted={walletTokenBalanceFormatted}
+                      payAmountUsd={tradePayUsdEstimate}
+                      receiveAmountUsd={tradeReceiveUsdEstimate}
+                      slippageInputPercent={slippageInputPercent}
+                      onSlippageInputChange={setSlippageInputPercent}
+                      onSlippageInputCommit={applySlippagePercentInput}
                       onExecute={handleExecuteJupiterBuy}
                       onConnectWallet={() => {
                         setPendingBuyAfterWalletConnect(true);
@@ -5138,7 +5225,7 @@ export function PostCard({
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Bought</div>
                             <div className="mt-1 text-sm font-semibold text-white">
-                              {boughtUsd !== null ? formatUsdCompact(boughtUsd) : "N/A"}
+                              {boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A"}
                             </div>
                             {boughtAmount !== null ? (
                               <div className="mt-0.5 text-[11px] text-slate-300/75">
@@ -5151,7 +5238,7 @@ export function PostCard({
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Sold</div>
                             <div className="mt-1 text-sm font-semibold text-white">
-                              {soldUsd !== null ? formatUsdCompact(soldUsd) : "N/A"}
+                              {soldUsd !== null ? formatUsdStat(soldUsd) : "N/A"}
                             </div>
                             {soldAmount !== null ? (
                               <div className="mt-0.5 text-[11px] text-slate-300/75">
@@ -5164,7 +5251,7 @@ export function PostCard({
                           <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                             <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Holding</div>
                             <div className="mt-1 text-sm font-semibold text-white">
-                              {holdingUsd !== null ? formatUsdCompact(holdingUsd) : "N/A"}
+                              {holdingUsd !== null ? formatUsdStat(holdingUsd) : "N/A"}
                             </div>
                             {holdingAmount !== null ? (
                               <div className="mt-0.5 text-[11px] text-slate-300/75">

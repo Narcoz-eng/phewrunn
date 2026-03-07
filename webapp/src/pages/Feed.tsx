@@ -168,6 +168,16 @@ function buildRealtimePageFingerprint(page: FeedPage): string {
     .join("|");
 }
 
+function sortPostsNewestFirst(items: Post[]): Post[] {
+  return [...items].sort((a, b) => {
+    const createdAtDelta = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    if (createdAtDelta !== 0) {
+      return createdAtDelta;
+    }
+    return b.id.localeCompare(a.id);
+  });
+}
+
 // Error Boundary Component for Feed
 function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
   return (
@@ -481,10 +491,13 @@ export default function Feed() {
     refetchInterval: false,
   });
 
-  const posts = useMemo(
-    () => postsPages?.pages.flatMap((page) => page.items) ?? [],
-    [postsPages?.pages]
-  );
+  const posts = useMemo(() => {
+    const mergedPosts = postsPages?.pages.flatMap((page) => page.items) ?? [];
+    if (activeTab === "trending") {
+      return mergedPosts;
+    }
+    return sortPostsNewestFirst(mergedPosts);
+  }, [activeTab, postsPages?.pages]);
   const hasLiveOverlay = useCallback(
     () => isOverlayOpen || hasActiveTradeDialogMarker(),
     [isOverlayOpen]
@@ -1296,14 +1309,14 @@ export default function Feed() {
                       className="animate-fade-in-up"
                       style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
                     >
-                      <PostCard
-                        post={post}
-                        currentUserId={user?.id}
-                        onLike={handleLike}
-                        onRepost={handleRepost}
-                        onComment={handleComment}
-                        enableRealtimePricePolling={index < 4}
-                      />
+                          <PostCard
+                            post={post}
+                            currentUserId={user?.id}
+                            onLike={handleLike}
+                            onRepost={handleRepost}
+                            onComment={handleComment}
+                            enableRealtimePricePolling
+                          />
                     </div>
                   </div>
                 )}

@@ -17,6 +17,7 @@ type CandlestickChartProps = {
   data: CandlestickChartPoint[];
   visibleStartIndex: number;
   visibleEndIndex: number;
+  futureSlotCount?: number;
   showVolume: boolean;
   showCandles: boolean;
   stroke: string;
@@ -59,6 +60,7 @@ export function CandlestickChart({
   data,
   visibleStartIndex,
   visibleEndIndex,
+  futureSlotCount = 0,
   showVolume,
   showCandles,
   stroke,
@@ -201,9 +203,10 @@ export function CandlestickChart({
   }, [data]);
 
   const xForVisibleIndex = useCallback((index: number) => {
-    if (visibleData.length <= 1) return MAIN_PADDING_LEFT + chartWidth / 2;
-    return MAIN_PADDING_LEFT + (index / (visibleData.length - 1)) * chartWidth;
-  }, [chartWidth, visibleData.length]);
+    const visibleSlotCount = Math.max(1, visibleData.length + Math.max(0, futureSlotCount));
+    if (visibleSlotCount <= 1) return MAIN_PADDING_LEFT + chartWidth / 2;
+    return MAIN_PADDING_LEFT + (index / (visibleSlotCount - 1)) * chartWidth;
+  }, [chartWidth, futureSlotCount, visibleData.length]);
 
   const xForGlobalIndex = useCallback((index: number) => {
     if (data.length <= 1) return MAIN_PADDING_LEFT + chartWidth / 2;
