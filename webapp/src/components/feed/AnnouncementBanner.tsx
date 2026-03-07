@@ -12,7 +12,7 @@ interface Announcement {
   content: string;
   isPinned: boolean;
   createdAt: string;
-  viewedByUser?: boolean;
+  isViewed?: boolean;
 }
 
 export function AnnouncementBanner() {
@@ -42,7 +42,7 @@ export function AnnouncementBanner() {
         ["announcements", "pinned"],
         (old) =>
           old?.map((a) =>
-            a.id === id ? { ...a, viewedByUser: true } : a
+            a.id === id ? { ...a, isViewed: true } : a
           )
       );
     },
@@ -61,7 +61,7 @@ export function AnnouncementBanner() {
   // Auto-mark as viewed when announcements load (with ref to prevent infinite loops)
   useEffect(() => {
     visibleAnnouncements.forEach((a) => {
-      if (!a.viewedByUser && !viewedIdsRef.current.has(a.id)) {
+      if (!a.isViewed && !viewedIdsRef.current.has(a.id)) {
         viewedIdsRef.current.add(a.id);
         viewMutation.mutate(a.id);
       }
@@ -112,7 +112,7 @@ export function AnnouncementBanner() {
                     {announcement.title}
                   </h3>
                   {/* NEW badge if not viewed */}
-                  {!announcement.viewedByUser && (
+                  {!announcement.isViewed && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white">
                       <Sparkles className="h-2.5 w-2.5" />
                       NEW

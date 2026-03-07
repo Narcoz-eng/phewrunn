@@ -39,6 +39,7 @@ import {
   isHeliusConfigured,
 } from "../services/helius.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
+import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -139,6 +140,7 @@ const FEED_RESPONSE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 
 const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 4_800;
 const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
 const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
+const FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX = "posts:feed:shared:v1";
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const MARKET_REFRESH_LOOKBACK_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
 const MARKET_REFRESH_SCAN_LIMIT = process.env.NODE_ENV === "production" ? 160 : 60;
@@ -271,6 +273,66 @@ function readFeedResponseFromCache(
   if (opts?.allowStale && cached.staleUntilMs > nowMs) return cached.payload;
   cacheMap.delete(key);
   return null;
+}
+
+function buildFeedSharedRedisKey(key: string): string {
+  return `${FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX}:${key}`;
+}
+
+function normalizeFeedResponsePayload(value: unknown): FeedResponsePayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const payload = value as {
+    data?: unknown;
+    hasMore?: unknown;
+    nextCursor?: unknown;
+  };
+
+  if (!Array.isArray(payload.data) || typeof payload.hasMore !== "boolean") {
+    return null;
+  }
+
+  const nextCursor =
+    typeof payload.nextCursor === "string" || payload.nextCursor === null
+      ? payload.nextCursor
+      : null;
+
+  return {
+    data: payload.data,
+    hasMore: payload.hasMore,
+    nextCursor,
+  };
+}
+
+async function readSharedFeedResponseFromRedis(key: string): Promise<FeedResponsePayload | null> {
+  const cached = await cacheGetJson<unknown>(buildFeedSharedRedisKey(key));
+  const normalized = normalizeFeedResponsePayload(cached);
+  if (!normalized) {
+    return null;
+  }
+  writeFeedResponseToCache(feedSharedResponseCache, key, normalized);
+  return normalized;
+}
+
+function createSharedFeedPayload(payload: FeedResponsePayload): FeedResponsePayload {
+  return {
+    ...payload,
+    data: payload.data.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return item;
+      }
+      const record = { ...(item as Record<string, unknown>) };
+      if ("isLiked" in record) {
+        record.isLiked = false;
+      }
+      if ("isReposted" in record) {
+        record.isReposted = false;
+      }
+      return record;
+    }),
+  };
 }
 
 function writeFeedResponseToCache(
@@ -1826,14 +1888,17 @@ postsRouter.get("/", async (c) => {
     cursor,
     search,
   });
-  const respondWithFeedCacheFallback = (error: unknown) => {
+  const respondWithFeedCacheFallback = async (error: unknown) => {
     const nowMs = Date.now();
+    const redisSharedFallback =
+      !following ? await readSharedFeedResponseFromRedis(sharedFeedCacheKey) : null;
     const stalePayload =
       readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs, { allowStale: true }) ??
-      (!user
+      ((!following)
         ? readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs, {
             allowStale: true,
-          })
+          }) ??
+          redisSharedFallback
         : null);
     console.warn("[posts/feed] falling back to cached payload after database error", {
       sort,
@@ -1847,22 +1912,23 @@ postsRouter.get("/", async (c) => {
     if (stalePayload) {
       return c.json(stalePayload);
     }
-    return c.json(
-      {
-        error: {
-          message: "Feed is temporarily unavailable. Please retry.",
-          code: "FEED_TEMPORARILY_UNAVAILABLE",
-        },
-      },
-      503
-    );
+    return c.json({
+      data: [],
+      hasMore: false,
+      nextCursor: null,
+    });
   };
 
   if (!cursor) {
     const nowMs = Date.now();
+    const redisSharedPayload =
+      !following ? await readSharedFeedResponseFromRedis(sharedFeedCacheKey) : null;
     const freshPayload =
       readFeedResponseFromCache(feedResponseCache, feedCacheKey, nowMs) ??
-      (!user ? readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs) : null);
+      ((!following)
+        ? readFeedResponseFromCache(feedSharedResponseCache, sharedFeedCacheKey, nowMs) ??
+          redisSharedPayload
+        : null);
     if (freshPayload) {
       return c.json(freshPayload);
     }
@@ -1918,7 +1984,7 @@ postsRouter.get("/", async (c) => {
       console.warn("[posts/feed] follow query unavailable; using feed cache fallback", {
         message: error instanceof Error ? error.message : String(error),
       });
-      return respondWithFeedCacheFallback(error);
+      return await respondWithFeedCacheFallback(error);
     }
 
     if (followedIds.length === 0) {
@@ -2010,7 +2076,7 @@ postsRouter.get("/", async (c) => {
         console.error("[posts/feed] primary query failed", {
           message: error instanceof Error ? error.message : String(error),
         });
-        return respondWithFeedCacheFallback(error);
+        return await respondWithFeedCacheFallback(error);
       } else {
         throw error;
       }
@@ -2072,7 +2138,7 @@ postsRouter.get("/", async (c) => {
             console.error("[posts/feed] compatibility query failed", {
               message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
             });
-            return respondWithFeedCacheFallback(fallbackError);
+            return await respondWithFeedCacheFallback(fallbackError);
           } else {
             throw fallbackError;
           }
@@ -2138,7 +2204,7 @@ postsRouter.get("/", async (c) => {
                 console.error("[posts/feed] legacy query failed", {
                   message: legacyError instanceof Error ? legacyError.message : String(legacyError),
                 });
-                return respondWithFeedCacheFallback(legacyError);
+                return await respondWithFeedCacheFallback(legacyError);
               } else {
                 throw legacyError;
               }
@@ -2203,7 +2269,7 @@ postsRouter.get("/", async (c) => {
                   console.error("[posts/feed] ultra-legacy query failed", {
                     message: minimalError instanceof Error ? minimalError.message : String(minimalError),
                   });
-                  return respondWithFeedCacheFallback(minimalError);
+                  return await respondWithFeedCacheFallback(minimalError);
                 }
                 throw minimalError;
               }
@@ -2471,8 +2537,14 @@ postsRouter.get("/", async (c) => {
     nextCursor,
   };
   writeFeedResponseToCache(feedResponseCache, feedCacheKey, responsePayload);
-  if (!user) {
-    writeFeedResponseToCache(feedSharedResponseCache, sharedFeedCacheKey, responsePayload);
+  if (!following) {
+    const sharedPayload = createSharedFeedPayload(responsePayload);
+    writeFeedResponseToCache(feedSharedResponseCache, sharedFeedCacheKey, sharedPayload);
+    void cacheSetJson(
+      buildFeedSharedRedisKey(sharedFeedCacheKey),
+      sharedPayload,
+      FEED_RESPONSE_STALE_FALLBACK_MS
+    );
   }
   return c.json(responsePayload);
 });
@@ -3183,8 +3255,15 @@ postsRouter.get("/trending", async (c) => {
     return c.json({ data: trendingCache.data });
   }
   if (trendingInFlight) {
-    const data = await trendingInFlight;
-    return c.json({ data });
+    try {
+      const data = await trendingInFlight;
+      return c.json({ data });
+    } catch (error) {
+      console.warn("[posts/trending] using stale-or-empty fallback", {
+        message: getErrorMessage(error),
+      });
+      return c.json({ data: trendingCache?.data ?? [] });
+    }
   }
 
   trendingInFlight = (async () => {
@@ -3378,6 +3457,17 @@ postsRouter.get("/trending", async (c) => {
   try {
     const data = await trendingInFlight;
     return c.json({ data });
+  } catch (error) {
+    console.warn("[posts/trending] primary query failed; returning stale-or-empty payload", {
+      message: getErrorMessage(error),
+    });
+    if (!trendingCache) {
+      trendingCache = {
+        data: [],
+        expiresAtMs: Date.now() + TRENDING_CACHE_TTL_MS,
+      };
+    }
+    return c.json({ data: trendingCache.data });
   } finally {
     trendingInFlight = null;
   }
@@ -3388,30 +3478,54 @@ postsRouter.get("/:id", async (c) => {
   const id = c.req.param("id");
   const user = c.get("user");
 
-  const post = await prisma.post.findUnique({
-    where: { id },
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          walletAddress: true,
-          level: true,
-          xp: true,
-          isVerified: true,
+  let post: any = null;
+  try {
+    post = await prisma.post.findUnique({
+      where: { id },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            walletAddress: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+          },
+        },
+        _count: {
+          select: {
+            likes: true,
+            comments: true,
+            reposts: true,
+          },
         },
       },
-      _count: {
-        select: {
-          likes: true,
-          comments: true,
-          reposts: true,
-        },
-      },
-    },
-  });
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    console.warn("[posts/detail] detail lookup unavailable", {
+      postId: id,
+      message: getErrorMessage(error),
+    });
+    const cachedPost = [...feedResponseCache.values(), ...feedSharedResponseCache.values()]
+      .flatMap((entry) => entry.payload.data)
+      .find((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+        return (item as { id?: unknown }).id === id;
+      });
+    if (cachedPost) {
+      return c.json({ data: cachedPost });
+    }
+    return c.json(
+      { error: { message: "Post is temporarily unavailable", code: "POST_UNAVAILABLE" } },
+      503
+    );
+  }
 
   if (!post) {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);

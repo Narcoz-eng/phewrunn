@@ -77,6 +77,43 @@ const topUsersCache = new Map<string, CacheEntry<TopUsersResponsePayload>>();
 const topUsersInFlight = new Map<string, Promise<TopUsersResponsePayload>>();
 let statsCache: CacheEntry<LeaderboardStatsPayload> | null = null;
 let statsInFlight: Promise<LeaderboardStatsPayload> | null = null;
+const LEADERBOARD_DEGRADED_CACHE_TTL_MS =
+  process.env.NODE_ENV === "production" ? 20_000 : 5_000;
+
+const EMPTY_LEADERBOARD_STATS_PAYLOAD: LeaderboardStatsPayload = {
+  volume: {
+    day: 0,
+    week: 0,
+    month: 0,
+    allTime: 0,
+  },
+  alphas: {
+    today: 0,
+    week: 0,
+    month: 0,
+    total: 0,
+  },
+  avgWinRate: 0,
+  activeUsers: {
+    today: 0,
+    week: 0,
+  },
+  totalUsers: 0,
+  levelDistribution: [],
+  topUsersThisWeek: [],
+};
+
+function buildEmptyTopUsersResponse(page: number, limit: number): TopUsersResponsePayload {
+  return {
+    data: [],
+    pagination: {
+      page,
+      limit,
+      total: 0,
+      totalPages: 0,
+    },
+  };
+}
 
 export function invalidateLeaderboardCaches() {
   dailyGainersCache = null;
@@ -498,10 +535,11 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
       if (staleCached) {
         return c.json({ data: staleCached });
       }
-      return c.json(
-        { error: { message: "Leaderboard is temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
-        503
-      );
+      dailyGainersCache = {
+        data: [],
+        expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+      };
+      return c.json({ data: [] });
     }
   }
 
@@ -628,10 +666,11 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     if (staleCached) {
       return c.json({ data: staleCached });
     }
-    return c.json(
-      { error: { message: "Leaderboard is temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
-      503
-    );
+    dailyGainersCache = {
+      data: [],
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    };
+    return c.json({ data: [] });
   } finally {
     dailyGainersInFlight = null;
   }
@@ -670,10 +709,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       if (staleCached) {
         return c.json(staleCached);
       }
-      return c.json(
-        { error: { message: "Leaderboard is temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
-        503
-      );
+      const emptyPayload = buildEmptyTopUsersResponse(page, limit);
+      topUsersCache.set(topUsersCacheKey, {
+        data: emptyPayload,
+        expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+      });
+      return c.json(emptyPayload);
     }
   }
   const skip = (page - 1) * limit;
@@ -989,10 +1030,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     if (staleCached) {
       return c.json(staleCached);
     }
-    return c.json(
-      { error: { message: "Leaderboard is temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
-      503
-    );
+    const emptyPayload = buildEmptyTopUsersResponse(page, limit);
+    topUsersCache.set(topUsersCacheKey, {
+      data: emptyPayload,
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    });
+    return c.json(emptyPayload);
   } finally {
     topUsersInFlight.delete(topUsersCacheKey);
   }
@@ -1041,9 +1084,7 @@ leaderboardRouter.get("/stats", async (c) => {
     if (staleCached) {
       return c.json({ data: staleCached });
     }
-    return c.json(
-      { error: { message: "Leaderboard stats are temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
-      503
-    );
+    writeLeaderboardStatsLocalCache(EMPTY_LEADERBOARD_STATS_PAYLOAD);
+    return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
 });

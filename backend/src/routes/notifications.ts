@@ -213,6 +213,17 @@ function isPrismaMissingColumnError(error: unknown, columnName: string): boolean
   return message.toLowerCase().includes(columnName.toLowerCase());
 }
 
+function isPrismaClientError(error: unknown): boolean {
+  const name =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : "";
+  return name.startsWith("PrismaClient");
+}
+
 // Get all notifications for current user
 // Query param: includeDismissed (default false)
 notificationsRouter.get("/", requireAuth, async (c) => {
@@ -264,6 +275,14 @@ notificationsRouter.get("/", requireAuth, async (c) => {
     });
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
+      if (isPrismaClientError(error)) {
+        console.warn("[notifications/list] database unavailable; returning cached or empty notifications", {
+          message: getErrorMessage(error),
+        });
+        notifications = cachedNotifications ?? [];
+        writeNotificationsListCache(listCacheKey, notifications);
+        return c.json({ data: notifications });
+      }
       throw error;
     }
     try {
@@ -318,6 +337,14 @@ notificationsRouter.get("/", requireAuth, async (c) => {
         }));
       } catch (minimalError) {
         if (!isPrismaSchemaDriftError(minimalError)) {
+          if (isPrismaClientError(minimalError)) {
+            console.warn("[notifications/list] minimal fallback unavailable; returning cached or empty notifications", {
+              message: getErrorMessage(minimalError),
+            });
+            notifications = cachedNotifications ?? [];
+            writeNotificationsListCache(listCacheKey, notifications);
+            return c.json({ data: notifications });
+          }
           throw minimalError;
         }
         console.warn("[notifications/list] schema drift fallback exhausted; returning empty notifications list", {
@@ -370,6 +397,14 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     });
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
+      if (isPrismaClientError(error)) {
+        console.warn("[notifications/unread-count] database unavailable; returning cached or zero unread count", {
+          message: getErrorMessage(error),
+        });
+        const count = cachedUnreadCount ?? 0;
+        writeNotificationsUnreadCountCache(user.id, count);
+        return c.json({ data: { count } });
+      }
       throw error;
     }
     try {
@@ -412,6 +447,14 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
         }));
       } catch (minimalError) {
         if (!isPrismaSchemaDriftError(minimalError)) {
+          if (isPrismaClientError(minimalError)) {
+            console.warn("[notifications/unread-count] minimal fallback unavailable; returning cached or zero unread count", {
+              message: getErrorMessage(minimalError),
+            });
+            const count = cachedUnreadCount ?? 0;
+            writeNotificationsUnreadCountCache(user.id, count);
+            return c.json({ data: { count } });
+          }
           throw minimalError;
         }
         console.warn("[notifications/unread-count] schema drift fallback exhausted; returning zero unread count", {
