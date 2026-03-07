@@ -730,6 +730,7 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
   if (params.search && params.search.trim().length > 0) {
     const likeTerm = `%${params.search.trim()}%`;
     conditions.push(Prisma.sql`(p.content ILIKE ${likeTerm} OR u.name ILIKE ${likeTerm})`);
+
   }
 
   if (params.cursor) {
