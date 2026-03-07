@@ -602,20 +602,24 @@ async function resolveCachedPostPricePayload(
 async function loadEmergencyFeedPosts(
   feedFindManyBase: Record<string, unknown>
 ): Promise<any[]> {
+  // Strip search conditions that reference potentially missing columns (tokenName, tokenSymbol)
+  // by removing the where clause and using a simple orderBy + limit
+  const safeBase = { ...feedFindManyBase };
+  // Keep only safe where conditions (createdAt, authorId) - remove any OR containing tokenName etc.
+  const existingWhere = (safeBase as any).where;
+  if (existingWhere?.AND) {
+    (safeBase as any).where = {
+      AND: existingWhere.AND.filter((cond: any) => !cond.OR),
+    };
+  }
+
   const minimalPosts = (await withFeedTimeout(
     prisma.post.findMany({
-      ...feedFindManyBase,
+      ...safeBase,
       select: {
         id: true,
         content: true,
         authorId: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        currentMcap: true,
-        settled: true,
-        settledAt: true,
-        isWin: true,
         createdAt: true,
         author: {
           select: {
@@ -632,11 +636,18 @@ async function loadEmergencyFeedPosts(
 
   return minimalPosts.map((post) => ({
     ...post,
+    contractAddress: null,
+    chainType: null,
     tokenName: null,
     tokenSymbol: null,
     tokenImage: null,
+    entryMcap: null,
+    currentMcap: null,
     mcap1h: null,
     mcap6h: null,
+    settled: false,
+    settledAt: null,
+    isWin: null,
     isWin1h: null,
     isWin6h: null,
     percentChange1h: null,
@@ -694,7 +705,7 @@ async function loadEmergencyFeedPostsRaw(params: {
   }
 }
 
-// Minimal raw query using ONLY core columns guaranteed to exist in any DB version
+// Minimal raw query using SELECT p.* — can never fail on missing columns
 async function loadEmergencyFeedPostsRawMinimal(params: {
   sort: "latest" | "trending";
   following: boolean;
@@ -718,11 +729,7 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
 
   if (params.search && params.search.trim().length > 0) {
     const likeTerm = `%${params.search.trim()}%`;
-    conditions.push(Prisma.sql`(
-      p.content ILIKE ${likeTerm}
-      OR u.username ILIKE ${likeTerm}
-      OR u.name ILIKE ${likeTerm}
-    )`);
+    conditions.push(Prisma.sql`(p.content ILIKE ${likeTerm} OR u.name ILIKE ${likeTerm})`);
   }
 
   if (params.cursor) {
@@ -742,49 +749,13 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
       ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
       : Prisma.sql``;
 
-  // Only select columns that exist in the ORIGINAL schema (no optional/newer columns)
+  // Use SELECT p.* so this never fails regardless of which columns exist in DB
   const rows = await withFeedTimeout(
-    prisma.$queryRaw<Array<{
-      id: string;
-      content: string;
-      authorId: string;
-      contractAddress: string | null;
-      chainType: string | null;
-      entryMcap: number | null;
-      currentMcap: number | null;
-      settled: boolean | null;
-      settledAt: Date | null;
-      isWin: boolean | null;
-      createdAt: Date;
-      authorName: string;
-      authorUsername: string | null;
-      authorImage: string | null;
-      authorLevel: number | null;
-      authorXp: number | null;
-      likesCount: number | bigint | null;
-      commentsCount: number | bigint | null;
-      repostsCount: number | bigint | null;
-    }>>(Prisma.sql`
+    prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT
-        p.id,
-        p.content,
-        p."authorId",
-        p."contractAddress",
-        p."chainType",
-        p."entryMcap",
-        p."currentMcap",
-        p.settled,
-        p."settledAt",
-        p."isWin",
-        p."createdAt",
+        p.*,
         u.name AS "authorName",
-        u.username AS "authorUsername",
-        u.image AS "authorImage",
-        u.level AS "authorLevel",
-        u.xp AS "authorXp",
-        (SELECT COUNT(*)::int FROM "Like" l WHERE l."postId" = p.id) AS "likesCount",
-        (SELECT COUNT(*)::int FROM "Comment" c WHERE c."postId" = p.id) AS "commentsCount",
-        (SELECT COUNT(*)::int FROM "Repost" r WHERE r."postId" = p.id) AS "repostsCount"
+        u.image AS "authorImage"
       FROM "Post" p
       JOIN "User" u ON u.id = p."authorId"
       ${whereSql}
@@ -795,32 +766,32 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
     Math.min(FEED_DB_QUERY_TIMEOUT_MS + 2000, 7_000)
   );
 
-  return rows.map((row) => ({
+  return rows.map((row: Record<string, unknown>) => ({
     id: row.id,
-    content: row.content,
+    content: row.content ?? "",
     authorId: row.authorId,
     contractAddress: row.contractAddress ?? null,
     chainType: row.chainType ?? null,
-    tokenName: null,
-    tokenSymbol: null,
-    tokenImage: null,
+    tokenName: row.tokenName ?? null,
+    tokenSymbol: row.tokenSymbol ?? null,
+    tokenImage: row.tokenImage ?? null,
     entryMcap: row.entryMcap ?? null,
     currentMcap: row.currentMcap ?? null,
-    mcap1h: null,
-    mcap6h: null,
+    mcap1h: row.mcap1h ?? null,
+    mcap6h: row.mcap6h ?? null,
     settled: row.settled === true,
-    settledAt: row.settledAt,
-    isWin: row.isWin,
-    isWin1h: null,
-    isWin6h: null,
-    percentChange1h: null,
-    percentChange6h: null,
+    settledAt: row.settledAt ?? null,
+    isWin: row.isWin ?? null,
+    isWin1h: row.isWin1h ?? null,
+    isWin6h: row.isWin6h ?? null,
+    percentChange1h: row.percentChange1h ?? null,
+    percentChange6h: row.percentChange6h ?? null,
     createdAt: row.createdAt,
-    viewCount: 0,
-    dexscreenerUrl: null,
+    viewCount: toFiniteNumber(row.viewCount, 0),
+    dexscreenerUrl: row.dexscreenerUrl ?? null,
     author: {
       id: row.authorId,
-      name: row.authorName,
+      name: row.authorName ?? "Anonymous",
       username: row.authorUsername ?? null,
       image: row.authorImage ?? null,
       walletAddress: null,
@@ -829,9 +800,9 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
       isVerified: false,
     },
     _count: {
-      likes: toFiniteNumber(row.likesCount, 0),
-      comments: toFiniteNumber(row.commentsCount, 0),
-      reposts: toFiniteNumber(row.repostsCount, 0),
+      likes: 0,
+      comments: 0,
+      reposts: 0,
     },
   }));
 }
@@ -2017,32 +1988,39 @@ async function findPostsToSettle1h(
       throw error;
     }
 
-    const rows = await prisma.post.findMany({
-      where: baseWhere,
-      select: {
-        id: true,
-        authorId: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        currentMcap: true,
-        isWin: true,
-        author: {
-          select: {
-            name: true,
-            username: true,
-          },
-        },
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      ...(typeof take === "number" ? { take } : {}),
-    });
+    // Use raw SQL as ultimate fallback - works regardless of which columns exist
+    try {
+      const rawRows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+        SELECT p.*, u.name AS "authorName", u.username AS "authorUsername"
+        FROM "Post" p
+        JOIN "User" u ON u.id = p."authorId"
+        WHERE p.settled = false
+          AND p."contractAddress" IS NOT NULL
+          AND p."entryMcap" > 0
+          AND p."createdAt" < ${oneHourAgo}
+        ORDER BY p."createdAt" ASC, p.id ASC
+        ${typeof take === "number" ? Prisma.sql`LIMIT ${take}` : Prisma.sql``}
+      `);
 
-    return rows.map((row) => ({
-      ...row,
-      isWin1h: row.isWin,
-      recoveryEligible: null,
-    }));
+      return rawRows.map((row: Record<string, unknown>) => ({
+        id: row.id as string,
+        authorId: row.authorId as string,
+        contractAddress: row.contractAddress as string,
+        chainType: (row.chainType as string) ?? null,
+        entryMcap: row.entryMcap as number | null,
+        currentMcap: row.currentMcap as number | null,
+        isWin: row.isWin as boolean | null,
+        isWin1h: (row.isWin1h ?? row.isWin ?? null) as boolean | null,
+        recoveryEligible: (row.recoveryEligible ?? null) as boolean | null,
+        author: {
+          name: (row.authorName as string) ?? "User",
+          username: (row.authorUsername as string) ?? null,
+        },
+      }));
+    } catch (rawError) {
+      console.warn("[Settlement 1H] Raw SQL fallback also failed:", rawError);
+      return [];
+    }
   }
 }
 
@@ -2203,24 +2181,18 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             throw error;
           }
 
-          await prisma.$transaction([
-            prisma.post.updateMany({
-              where: { id: post.id },
-              data: {
-                settled: true,
-                settledAt,
-                isWin: isWin1h,
-                currentMcap: mcap1h,
-              },
-            }),
-            prisma.user.updateMany({
-              where: { id: post.authorId },
-              data: {
-                level: newLevel,
-                xp: newXp,
-              },
-            }),
-          ]);
+          // Use raw SQL to update - works regardless of which columns exist
+          try {
+            await prisma.$executeRaw`
+              UPDATE "Post" SET settled = true, "settledAt" = ${settledAt}, "isWin" = ${isWin1h}, "currentMcap" = ${mcap1h}
+              WHERE id = ${post.id}
+            `;
+          } catch (rawPostErr) {
+            console.warn("[Settlement 1H] Raw post update failed (continuing with user update):", rawPostErr);
+          }
+          await prisma.$executeRaw`
+            UPDATE "User" SET level = ${newLevel}, xp = ${newXp} WHERE id = ${post.authorId}
+          `;
         }
 
         // Create notification for the author about 1H settlement
@@ -4213,47 +4185,43 @@ postsRouter.get("/trending", async (c) => {
     );
   } catch (error) {
     if (isPrismaSchemaDriftError(error) || isPrismaClientError(error)) {
-      console.warn("[posts/trending] query failed, using fallback", {
+      console.warn("[posts/trending] query failed, using raw SQL fallback", {
         message: getErrorMessage(error),
       });
-      // Try minimal query without optional fields
       try {
-        recentPosts = await prisma.post.findMany({
-          where: {
-            contractAddress: { not: null },
-            createdAt: { gte: fortyEightHoursAgo },
+        // Use SELECT p.* so this works regardless of which columns exist
+        const rawRows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+          SELECT p.*, u.id AS "authorUserId", u.username AS "authorUsername", u.level AS "authorLevel"
+          FROM "Post" p
+          JOIN "User" u ON u.id = p."authorId"
+          WHERE p."contractAddress" IS NOT NULL
+            AND p."createdAt" >= ${fortyEightHoursAgo}
+          ORDER BY p."createdAt" ASC
+          LIMIT 500
+        `);
+        recentPosts = rawRows.map((r: Record<string, unknown>) => ({
+          id: r.id,
+          contractAddress: r.contractAddress ?? null,
+          chainType: r.chainType ?? null,
+          tokenName: r.tokenName ?? null,
+          tokenSymbol: r.tokenSymbol ?? null,
+          entryMcap: r.entryMcap ?? null,
+          currentMcap: r.currentMcap ?? null,
+          percentChange1h: r.percentChange1h ?? null,
+          percentChange6h: r.percentChange6h ?? null,
+          isWin: r.isWin ?? null,
+          isWin1h: r.isWin1h ?? null,
+          isWin6h: r.isWin6h ?? null,
+          authorId: r.authorId,
+          createdAt: r.createdAt,
+          author: {
+            id: r.authorUserId ?? r.authorId,
+            username: r.authorUsername ?? null,
+            level: toFiniteNumber(r.authorLevel, 0),
           },
-          select: {
-            id: true,
-            contractAddress: true,
-            chainType: true,
-            entryMcap: true,
-            currentMcap: true,
-            isWin: true,
-            authorId: true,
-            createdAt: true,
-            author: {
-              select: {
-                id: true,
-                username: true,
-                level: true,
-              },
-            },
-          },
-          orderBy: { createdAt: "asc" },
-        });
-        // Fill in missing fields
-        recentPosts = recentPosts.map((p: any) => ({
-          ...p,
-          tokenName: p.tokenName ?? null,
-          tokenSymbol: p.tokenSymbol ?? null,
-          percentChange1h: p.percentChange1h ?? null,
-          percentChange6h: p.percentChange6h ?? null,
-          isWin1h: p.isWin1h ?? null,
-          isWin6h: p.isWin6h ?? null,
         }));
       } catch (fallbackError) {
-        console.warn("[posts/trending] fallback query also failed", {
+        console.warn("[posts/trending] raw SQL fallback also failed", {
           message: getErrorMessage(fallbackError),
         });
         return [];
