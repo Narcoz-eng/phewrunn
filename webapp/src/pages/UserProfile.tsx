@@ -146,8 +146,21 @@ export default function UserProfile() {
   } = useQuery({
     queryKey: userProfileQueryKey,
     queryFn: async () => {
-      const data = await api.get<UserProfileData>(`/api/users/${userId}`);
-      return data;
+      const sessionCachedProfile =
+        userProfileCacheKey
+          ? readSessionCache<UserProfileData>(userProfileCacheKey, USER_PROFILE_CACHE_TTL_MS)
+          : null;
+      const currentProfile = queryClient.getQueryData<UserProfileData>(userProfileQueryKey);
+      const fallbackProfile = sessionCachedProfile ?? currentProfile ?? cachedUserProfile ?? null;
+      try {
+        const data = await api.get<UserProfileData>(`/api/users/${userId}`);
+        return data;
+      } catch (error) {
+        if (fallbackProfile) {
+          return fallbackProfile;
+        }
+        throw error;
+      }
     },
     initialData: cachedUserProfile ?? undefined,
     enabled: !!userId,
@@ -168,8 +181,31 @@ export default function UserProfile() {
   } = useQuery({
     queryKey: userPostsQueryKey,
     queryFn: async () => {
-      const data = await api.get<Post[]>(`/api/users/${userId}/posts`);
-      return data;
+      const sessionCachedPosts =
+        userPostsCacheKey
+          ? readSessionCache<Post[]>(userPostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
+          : null;
+      const currentPosts = queryClient.getQueryData<Post[]>(userPostsQueryKey);
+      const fallbackPosts =
+        sessionCachedPosts && sessionCachedPosts.length > 0
+          ? sessionCachedPosts
+          : currentPosts && currentPosts.length > 0
+            ? currentPosts
+            : cachedUserPosts && cachedUserPosts.length > 0
+              ? cachedUserPosts
+              : null;
+      try {
+        const data = await api.get<Post[]>(`/api/users/${userId}/posts`);
+        if (data.length === 0 && fallbackPosts) {
+          return fallbackPosts;
+        }
+        return data;
+      } catch (error) {
+        if (fallbackPosts) {
+          return fallbackPosts;
+        }
+        throw error;
+      }
     },
     initialData: cachedUserPosts ?? undefined,
     enabled: !!userId,
@@ -190,8 +226,31 @@ export default function UserProfile() {
   } = useQuery({
     queryKey: userRepostsQueryKey,
     queryFn: async () => {
-      const data = await api.get<Post[]>(`/api/users/${userId}/reposts`);
-      return data;
+      const sessionCachedReposts =
+        userRepostsCacheKey
+          ? readSessionCache<Post[]>(userRepostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
+          : null;
+      const currentReposts = queryClient.getQueryData<Post[]>(userRepostsQueryKey);
+      const fallbackReposts =
+        sessionCachedReposts && sessionCachedReposts.length > 0
+          ? sessionCachedReposts
+          : currentReposts && currentReposts.length > 0
+            ? currentReposts
+            : cachedUserReposts && cachedUserReposts.length > 0
+              ? cachedUserReposts
+              : null;
+      try {
+        const data = await api.get<Post[]>(`/api/users/${userId}/reposts`);
+        if (data.length === 0 && fallbackReposts) {
+          return fallbackReposts;
+        }
+        return data;
+      } catch (error) {
+        if (fallbackReposts) {
+          return fallbackReposts;
+        }
+        throw error;
+      }
     },
     initialData: cachedUserReposts ?? undefined,
     enabled: !!userId && (mainTab === "reposts" || !!cachedUserReposts),

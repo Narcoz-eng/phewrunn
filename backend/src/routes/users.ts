@@ -78,6 +78,44 @@ function buildFeeSettingsResponse(user: {
   };
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return "";
+}
+
+function isPrismaClientError(error: unknown): boolean {
+  const name =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : "";
+  return name.startsWith("PrismaClient");
+}
+
+function toSafeNumber(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value instanceof Prisma.Decimal) {
+    return value.toNumber();
+  }
+  return 0;
+}
+
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
     typeof error === "object" &&
@@ -117,6 +155,490 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
     (normalizedMessage.includes("table") && normalizedMessage.includes("does not exist")) ||
     (normalizedMessage.includes("relation") && normalizedMessage.includes("does not exist"))
   );
+}
+
+type RawResolvedUserProfile = {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  walletAddress: string | null;
+  username: string | null;
+  level: number;
+  xp: number;
+  bio: string | null;
+  isVerified: boolean;
+  createdAt: Date;
+  lastUsernameUpdate: Date | null;
+  lastPhotoUpdate: Date | null;
+  _count: {
+    posts: number;
+    followers: number;
+    following: number;
+  };
+};
+
+type RawUserPostRow = {
+  id: string;
+  content: string;
+  authorId: string;
+  contractAddress: string | null;
+  chainType: string | null;
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  tokenImage: string | null;
+  entryMcap: number | null;
+  currentMcap: number | null;
+  mcap1h: number | null;
+  mcap6h: number | null;
+  settled: boolean | null;
+  settledAt: Date | null;
+  isWin: boolean | null;
+  createdAt: Date;
+  viewCount: number | null;
+  dexscreenerUrl: string | null;
+  authorName: string;
+  authorUsername: string | null;
+  authorImage: string | null;
+  authorLevel: number | null;
+  authorXp: number | null;
+  authorIsVerified: boolean | null;
+  likesCount: number | bigint | string | null;
+  commentsCount: number | bigint | string | null;
+  repostsCount: number | bigint | string | null;
+};
+
+function mapRawUserPostRow(row: RawUserPostRow) {
+  return {
+    id: row.id,
+    content: row.content,
+    authorId: row.authorId,
+    contractAddress: row.contractAddress ?? null,
+    chainType: row.chainType ?? null,
+    tokenName: row.tokenName ?? null,
+    tokenSymbol: row.tokenSymbol ?? null,
+    tokenImage: row.tokenImage ?? null,
+    entryMcap: row.entryMcap ?? null,
+    currentMcap: row.currentMcap ?? null,
+    mcap1h: row.mcap1h ?? null,
+    mcap6h: row.mcap6h ?? null,
+    settled: row.settled === true,
+    settledAt: row.settledAt ?? null,
+    isWin: row.isWin ?? null,
+    createdAt: row.createdAt,
+    viewCount: toSafeNumber(row.viewCount),
+    dexscreenerUrl: row.dexscreenerUrl ?? null,
+    author: {
+      id: row.authorId,
+      name: row.authorName,
+      username: row.authorUsername ?? null,
+      image: row.authorImage ?? null,
+      level: toSafeNumber(row.authorLevel),
+      xp: toSafeNumber(row.authorXp),
+      isVerified: row.authorIsVerified === true,
+    },
+    _count: {
+      likes: toSafeNumber(row.likesCount),
+      comments: toSafeNumber(row.commentsCount),
+      reposts: toSafeNumber(row.repostsCount),
+    },
+  };
+}
+
+async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawResolvedUserProfile | null> {
+  const normalizedIdentifier = normalizeUsernameHandle(identifier);
+  const rows = await prisma.$queryRaw<Array<{
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+    walletAddress: string | null;
+    username: string | null;
+    level: number | null;
+    xp: number | null;
+    bio: string | null;
+    isVerified: boolean | null;
+    createdAt: Date;
+    lastUsernameUpdate: Date | null;
+    lastPhotoUpdate: Date | null;
+    postsCount: number | bigint | string | null;
+    followersCount: number | bigint | string | null;
+    followingCount: number | bigint | string | null;
+  }>>(Prisma.sql`
+    SELECT
+      u.id,
+      u.name,
+      u.email,
+      u.image,
+      u."walletAddress",
+      u.username,
+      u.level,
+      u.xp,
+      u.bio,
+      u."isVerified",
+      u."createdAt",
+      u."lastUsernameUpdate",
+      u."lastPhotoUpdate",
+      (SELECT COUNT(*) FROM "Post" p WHERE p."authorId" = u.id) AS "postsCount",
+      (SELECT COUNT(*) FROM "Follow" f WHERE f."followingId" = u.id) AS "followersCount",
+      (SELECT COUNT(*) FROM "Follow" f WHERE f."followerId" = u.id) AS "followingCount"
+    FROM "User" u
+    WHERE u.id = ${identifier}
+       OR LOWER(COALESCE(u.username, '')) = ${normalizedIdentifier}
+    LIMIT 1
+  `);
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    image: row.image ?? null,
+    walletAddress: row.walletAddress ?? null,
+    username: row.username ?? null,
+    level: toSafeNumber(row.level),
+    xp: toSafeNumber(row.xp),
+    bio: row.bio ?? null,
+    isVerified: row.isVerified === true,
+    createdAt: row.createdAt,
+    lastUsernameUpdate: row.lastUsernameUpdate ?? null,
+    lastPhotoUpdate: row.lastPhotoUpdate ?? null,
+    _count: {
+      posts: toSafeNumber(row.postsCount),
+      followers: toSafeNumber(row.followersCount),
+      following: toSafeNumber(row.followingCount),
+    },
+  };
+}
+
+async function getIsFollowingSafely(currentUserId: string | null | undefined, targetUserId: string): Promise<boolean> {
+  if (!currentUserId || currentUserId === targetUserId) {
+    return false;
+  }
+
+  try {
+    const follow = await prisma.follow.findUnique({
+      where: {
+        followerId_followingId: {
+          followerId: currentUserId,
+          followingId: targetUserId,
+        },
+      },
+    });
+    return !!follow;
+  } catch (error) {
+    if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    const rows = await prisma.$queryRaw<Array<{ following: boolean | null }>>(Prisma.sql`
+      SELECT EXISTS(
+        SELECT 1
+        FROM "Follow"
+        WHERE "followerId" = ${currentUserId}
+          AND "followingId" = ${targetUserId}
+      ) AS following
+    `);
+    return rows[0]?.following === true;
+  } catch (error) {
+    console.warn("[users/profile] follow lookup degraded; defaulting to not-following", {
+      message: getErrorMessage(error),
+    });
+    return false;
+  }
+}
+
+async function getUserStatsSafely(userId: string): Promise<{
+  totalCalls: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalProfitPercent: number;
+}> {
+  try {
+    const settledPosts = await prisma.post.findMany({
+      where: {
+        authorId: userId,
+        settled: true,
+      },
+      select: {
+        isWin: true,
+        entryMcap: true,
+        currentMcap: true,
+      },
+    });
+
+    const totalCalls = settledPosts.length;
+    const wins = settledPosts.filter((p) => p.isWin === true).length;
+    const losses = settledPosts.filter((p) => p.isWin === false).length;
+    const winRate = totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0;
+
+    let totalProfitPercent = 0;
+    for (const post of settledPosts) {
+      if (post.entryMcap && post.currentMcap) {
+        const changePercent = ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
+        totalProfitPercent += changePercent;
+      }
+    }
+
+    return {
+      totalCalls,
+      wins,
+      losses,
+      winRate,
+      totalProfitPercent: Math.round(totalProfitPercent * 100) / 100,
+    };
+  } catch (error) {
+    if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
+      throw error;
+    }
+  }
+
+  const rows = await prisma.$queryRaw<Array<{
+    totalCalls: number | bigint | string | null;
+    wins: number | bigint | string | null;
+    losses: number | bigint | string | null;
+    totalProfitPercent: number | null;
+  }>>(Prisma.sql`
+    SELECT
+      COUNT(*) AS "totalCalls",
+      COUNT(*) FILTER (WHERE "isWin" = true) AS wins,
+      COUNT(*) FILTER (WHERE "isWin" = false) AS losses,
+      COALESCE(
+        SUM(
+          CASE
+            WHEN "entryMcap" IS NOT NULL AND "entryMcap" > 0 AND "currentMcap" IS NOT NULL
+              THEN (("currentMcap" - "entryMcap") / "entryMcap") * 100
+            ELSE 0
+          END
+        ),
+        0
+      ) AS "totalProfitPercent"
+    FROM "Post"
+    WHERE "authorId" = ${userId}
+      AND settled = true
+  `);
+
+  const row = rows[0];
+  const totalCalls = toSafeNumber(row?.totalCalls);
+  const wins = toSafeNumber(row?.wins);
+  const losses = toSafeNumber(row?.losses);
+  const rawProfit = typeof row?.totalProfitPercent === "number" ? row.totalProfitPercent : 0;
+  return {
+    totalCalls,
+    wins,
+    losses,
+    winRate: totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0,
+    totalProfitPercent: Math.round(rawProfit * 100) / 100,
+  };
+}
+
+async function findUserPostsRaw(authorId: string): Promise<any[]> {
+  const rows = await prisma.$queryRaw<RawUserPostRow[]>(Prisma.sql`
+    SELECT
+      p.id,
+      p.content,
+      p."authorId",
+      p."contractAddress",
+      p."chainType",
+      p."tokenName",
+      p."tokenSymbol",
+      p."tokenImage",
+      p."entryMcap",
+      p."currentMcap",
+      p."mcap1h",
+      p."mcap6h",
+      p.settled,
+      p."settledAt",
+      p."isWin",
+      p."createdAt",
+      p."viewCount",
+      p."dexscreenerUrl",
+      u.name AS "authorName",
+      u.username AS "authorUsername",
+      u.image AS "authorImage",
+      u.level AS "authorLevel",
+      u.xp AS "authorXp",
+      u."isVerified" AS "authorIsVerified",
+      (SELECT COUNT(*) FROM "Like" l WHERE l."postId" = p.id) AS "likesCount",
+      (SELECT COUNT(*) FROM "Comment" c WHERE c."postId" = p.id) AS "commentsCount",
+      (SELECT COUNT(*) FROM "Repost" r WHERE r."postId" = p.id) AS "repostsCount"
+    FROM "Post" p
+    INNER JOIN "User" u ON u.id = p."authorId"
+    WHERE p."authorId" = ${authorId}
+    ORDER BY p."createdAt" DESC
+  `);
+
+  return rows.map(mapRawUserPostRow);
+}
+
+async function findUserRepostsRaw(userId: string): Promise<any[]> {
+  const rows = await prisma.$queryRaw<RawUserPostRow[]>(Prisma.sql`
+    SELECT
+      p.id,
+      p.content,
+      p."authorId",
+      p."contractAddress",
+      p."chainType",
+      p."tokenName",
+      p."tokenSymbol",
+      p."tokenImage",
+      p."entryMcap",
+      p."currentMcap",
+      p."mcap1h",
+      p."mcap6h",
+      p.settled,
+      p."settledAt",
+      p."isWin",
+      p."createdAt",
+      p."viewCount",
+      p."dexscreenerUrl",
+      u.name AS "authorName",
+      u.username AS "authorUsername",
+      u.image AS "authorImage",
+      u.level AS "authorLevel",
+      u.xp AS "authorXp",
+      u."isVerified" AS "authorIsVerified",
+      (SELECT COUNT(*) FROM "Like" l WHERE l."postId" = p.id) AS "likesCount",
+      (SELECT COUNT(*) FROM "Comment" c WHERE c."postId" = p.id) AS "commentsCount",
+      (SELECT COUNT(*) FROM "Repost" r2 WHERE r2."postId" = p.id) AS "repostsCount"
+    FROM "Repost" r
+    INNER JOIN "Post" p ON p.id = r."postId"
+    INNER JOIN "User" u ON u.id = p."authorId"
+    WHERE r."userId" = ${userId}
+    ORDER BY r."createdAt" DESC
+  `);
+
+  return rows.map(mapRawUserPostRow);
+}
+
+async function getPostInteractionSetsSafely(params: {
+  currentUserId: string | null | undefined;
+  targetUserId: string;
+  postIds: string[];
+}): Promise<{
+  userLikes: Set<string>;
+  userReposts: Set<string>;
+  isFollowingAuthor: boolean;
+}> {
+  if (!params.currentUserId || params.postIds.length === 0) {
+    return {
+      userLikes: new Set(),
+      userReposts: new Set(),
+      isFollowingAuthor: false,
+    };
+  }
+
+  try {
+    const [likes, reposts, follow] = await Promise.all([
+      prisma.like.findMany({
+        where: {
+          userId: params.currentUserId,
+          postId: { in: params.postIds },
+        },
+        select: { postId: true },
+      }),
+      prisma.repost.findMany({
+        where: {
+          userId: params.currentUserId,
+          postId: { in: params.postIds },
+        },
+        select: { postId: true },
+      }),
+      params.currentUserId !== params.targetUserId
+        ? prisma.follow.findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: params.currentUserId,
+                followingId: params.targetUserId,
+              },
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    return {
+      userLikes: new Set(likes.map((like) => like.postId)),
+      userReposts: new Set(reposts.map((repost) => repost.postId)),
+      isFollowingAuthor: !!follow,
+    };
+  } catch (error) {
+    console.warn("[users/profile-posts] social lookup degraded; continuing with public post state", {
+      message: getErrorMessage(error),
+    });
+    return {
+      userLikes: new Set(),
+      userReposts: new Set(),
+      isFollowingAuthor: await getIsFollowingSafely(params.currentUserId, params.targetUserId),
+    };
+  }
+}
+
+async function getMixedAuthorPostInteractionsSafely(params: {
+  currentUserId: string | null | undefined;
+  postIds: string[];
+  authorIds: string[];
+}): Promise<{
+  userLikes: Set<string>;
+  userReposts: Set<string>;
+  followingAuthorIds: Set<string>;
+}> {
+  if (!params.currentUserId || params.postIds.length === 0) {
+    return {
+      userLikes: new Set(),
+      userReposts: new Set(),
+      followingAuthorIds: new Set(),
+    };
+  }
+
+  try {
+    const [likes, reposts, follows] = await Promise.all([
+      prisma.like.findMany({
+        where: {
+          userId: params.currentUserId,
+          postId: { in: params.postIds },
+        },
+        select: { postId: true },
+      }),
+      prisma.repost.findMany({
+        where: {
+          userId: params.currentUserId,
+          postId: { in: params.postIds },
+        },
+        select: { postId: true },
+      }),
+      params.authorIds.length > 0
+        ? prisma.follow.findMany({
+            where: {
+              followerId: params.currentUserId,
+              followingId: { in: params.authorIds },
+            },
+            select: { followingId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    return {
+      userLikes: new Set(likes.map((like) => like.postId)),
+      userReposts: new Set(reposts.map((repost) => repost.postId)),
+      followingAuthorIds: new Set(follows.map((follow) => follow.followingId)),
+    };
+  } catch (error) {
+    console.warn("[users/profile-reposts] mixed-author social lookup degraded; continuing with public post state", {
+      message: getErrorMessage(error),
+    });
+    return {
+      userLikes: new Set(),
+      userReposts: new Set(),
+      followingAuthorIds: new Set(),
+    };
+  }
 }
 
 const UpdateFeeSettingsSchema = z.object({
@@ -1433,98 +1955,27 @@ usersRouter.get("/:identifier", async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
-    const fallbackUser = await prisma.user.findFirst({
-      where: buildUserIdentifierWhere(identifier),
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        walletAddress: true,
-        username: true,
-        level: true,
-        xp: true,
-        bio: true,
-        createdAt: true,
-        _count: {
-          select: {
-            posts: true,
-            followers: true,
-            following: true,
-          },
-        },
-      },
+    console.warn("[users/profile] prisma user lookup degraded; using raw fallback", {
+      message: getErrorMessage(error),
     });
-
-    user = fallbackUser
-      ? {
-          ...fallbackUser,
-          isVerified: false,
-          lastUsernameUpdate: null,
-          lastPhotoUpdate: null,
-        }
-      : null;
+    user = await findUserProfileByIdentifierRaw(identifier);
   }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  // Check if current user follows this user
-  let isFollowing = false;
-  if (currentUser && currentUser.id !== user.id) {
-    const follow = await prisma.follow.findUnique({
-      where: {
-        followerId_followingId: {
-          followerId: currentUser.id,
-          followingId: user.id,
-        },
-      },
-    });
-    isFollowing = !!follow;
-  }
-
-  // Get user stats (settled posts, win rate, total profit)
-  const settledPosts = await prisma.post.findMany({
-    where: {
-      authorId: user.id,
-      settled: true,
-    },
-    select: {
-      isWin: true,
-      entryMcap: true,
-      currentMcap: true,
-    },
-  });
-
-  const totalCalls = settledPosts.length;
-  const wins = settledPosts.filter(p => p.isWin === true).length;
-  const losses = settledPosts.filter(p => p.isWin === false).length;
-  const winRate = totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0;
-
-  // Calculate total profit/loss percentage
-  let totalProfitPercent = 0;
-  for (const post of settledPosts) {
-    if (post.entryMcap && post.currentMcap) {
-      const changePercent = ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
-      totalProfitPercent += changePercent;
-    }
-  }
+  const isFollowing = await getIsFollowingSafely(currentUser?.id, user.id);
+  const stats = await getUserStatsSafely(user.id);
 
   return c.json({
     data: {
       ...user,
       isFollowing,
-      stats: {
-        totalCalls,
-        wins,
-        losses,
-        winRate,
-        totalProfitPercent: Math.round(totalProfitPercent * 100) / 100,
-      },
+      stats,
     }
   });
 });
@@ -1821,13 +2272,32 @@ usersRouter.get("/:identifier/posts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
 
-  const user = await prisma.user.findFirst({
-    where: buildUserIdentifierWhere(identifier),
-    select: {
-      id: true,
-      walletAddress: true,
-    },
-  });
+  let user:
+    | {
+        id: string;
+        walletAddress: string | null;
+      }
+    | null = null;
+  try {
+    user = await prisma.user.findFirst({
+      where: buildUserIdentifierWhere(identifier),
+      select: {
+        id: true,
+        walletAddress: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+    user = fallbackUser
+      ? {
+          id: fallbackUser.id,
+          walletAddress: fallbackUser.walletAddress,
+        }
+      : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -1879,101 +2349,22 @@ usersRouter.get("/:identifier/posts", async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
-    const fallbackPosts = await prisma.post.findMany({
-      where: { authorId: user.id },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        content: true,
-        authorId: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        currentMcap: true,
-        settled: true,
-        settledAt: true,
-        isWin: true,
-        createdAt: true,
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-            level: true,
-            xp: true,
-          },
-        },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-            reposts: true,
-          },
-        },
-      },
+    console.warn("[users/profile-posts] prisma post lookup degraded; using raw fallback", {
+      message: getErrorMessage(error),
     });
-
-    posts = fallbackPosts.map((post) => ({
-      ...post,
-      tokenName: null,
-      tokenSymbol: null,
-      tokenImage: null,
-      mcap1h: null,
-      mcap6h: null,
-      viewCount: 0,
-      dexscreenerUrl: null,
-      author: {
-        ...post.author,
-        isVerified: false,
-      },
-    }));
+    posts = await findUserPostsRaw(user.id);
   }
 
   const postsWithWalletTrade = await attachWalletTradeSnapshotsForUserPosts(posts, user.walletAddress);
 
-  // Get current user's interactions with these posts
-  let userLikes: Set<string> = new Set();
-  let userReposts: Set<string> = new Set();
-  let isFollowingAuthor = false;
-
-  if (currentUser) {
-    const postIds = postsWithWalletTrade.map((p) => p.id);
-
-    const [likes, reposts, follow] = await Promise.all([
-      prisma.like.findMany({
-        where: {
-          userId: currentUser.id,
-          postId: { in: postIds },
-        },
-        select: { postId: true },
-      }),
-      prisma.repost.findMany({
-        where: {
-          userId: currentUser.id,
-          postId: { in: postIds },
-        },
-        select: { postId: true },
-      }),
-      currentUser.id !== user.id
-        ? prisma.follow.findUnique({
-            where: {
-              followerId_followingId: {
-                followerId: currentUser.id,
-                followingId: user.id,
-              },
-            },
-          })
-        : Promise.resolve(null),
-    ]);
-
-    userLikes = new Set(likes.map((l) => l.postId));
-    userReposts = new Set(reposts.map((r) => r.postId));
-    isFollowingAuthor = !!follow;
-  }
+  const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
+    currentUserId: currentUser?.id,
+    targetUserId: user.id,
+    postIds: postsWithWalletTrade.map((p) => p.id),
+  });
 
   const postsWithSocial = postsWithWalletTrade.map((post) => ({
     ...post,
@@ -1990,12 +2381,21 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
 
-  const user = await prisma.user.findFirst({
-    where: buildUserIdentifierWhere(identifier),
-    select: {
-      id: true,
-    },
-  });
+  let user: { id: string } | null = null;
+  try {
+    user = await prisma.user.findFirst({
+      where: buildUserIdentifierWhere(identifier),
+      select: {
+        id: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+    user = fallbackUser ? { id: fallbackUser.id } : null;
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -2052,110 +2452,28 @@ usersRouter.get("/:identifier/reposts", async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
-    const fallbackReposts = await prisma.repost.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      select: {
-        post: {
-          select: {
-            id: true,
-            content: true,
-            authorId: true,
-            contractAddress: true,
-            chainType: true,
-            entryMcap: true,
-            currentMcap: true,
-            settled: true,
-            settledAt: true,
-            isWin: true,
-            createdAt: true,
-            author: {
-              select: {
-                id: true,
-                name: true,
-                username: true,
-                image: true,
-                level: true,
-                xp: true,
-              },
-            },
-            _count: {
-              select: {
-                likes: true,
-                comments: true,
-                reposts: true,
-              },
-            },
-          },
-        },
-      },
+    console.warn("[users/profile-reposts] prisma repost lookup degraded; using raw fallback", {
+      message: getErrorMessage(error),
     });
-    reposts = fallbackReposts.map((repost) => ({
-      post: {
-        ...repost.post,
-        tokenName: null,
-        tokenSymbol: null,
-        tokenImage: null,
-        mcap1h: null,
-        mcap6h: null,
-        viewCount: 0,
-        dexscreenerUrl: null,
-        author: {
-          ...repost.post.author,
-          isVerified: false,
-        },
-      },
-    }));
+    reposts = (await findUserRepostsRaw(user.id)).map((post) => ({ post }));
   }
 
   // Get current user's interactions with these posts
-  let userLikes: Set<string> = new Set();
-  let userRepostsSet: Set<string> = new Set();
-  let followingAuthorIds: Set<string> = new Set();
-
   const posts = reposts.map((r) => r.post);
-  const postIds = posts.map((p) => p.id);
-
-  if (currentUser) {
-    const authorIds = [...new Set(posts.map((p) => p.authorId).filter((id) => id !== currentUser.id))];
-    const [likes, repostInteractions, follows] = await Promise.all([
-      prisma.like.findMany({
-        where: {
-          userId: currentUser.id,
-          postId: { in: postIds },
-        },
-        select: { postId: true },
-      }),
-      prisma.repost.findMany({
-        where: {
-          userId: currentUser.id,
-          postId: { in: postIds },
-        },
-        select: { postId: true },
-      }),
-      authorIds.length > 0
-        ? prisma.follow.findMany({
-            where: {
-              followerId: currentUser.id,
-              followingId: { in: authorIds },
-            },
-            select: { followingId: true },
-          })
-        : Promise.resolve([]),
-    ]);
-
-    userLikes = new Set(likes.map((l) => l.postId));
-    userRepostsSet = new Set(repostInteractions.map((r) => r.postId));
-    followingAuthorIds = new Set(follows.map((f) => f.followingId));
-  }
+  const authorIds = [...new Set(posts.map((post) => post.authorId).filter((authorId) => authorId !== currentUser?.id))];
+  const { userLikes, userReposts, followingAuthorIds } = await getMixedAuthorPostInteractionsSafely({
+    currentUserId: currentUser?.id,
+    postIds: posts.map((p) => p.id),
+    authorIds,
+  });
 
   const postsWithSocial = posts.map((post) => ({
     ...post,
     isLiked: userLikes.has(post.id),
-    isReposted: userRepostsSet.has(post.id),
+    isReposted: userReposts.has(post.id),
     isFollowingAuthor: currentUser ? followingAuthorIds.has(post.authorId) : false,
   }));
 

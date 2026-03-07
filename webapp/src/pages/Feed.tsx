@@ -282,8 +282,23 @@ export default function Feed() {
     search: string,
     pageParam?: string
   ): Promise<FeedPage> => {
-    const shouldUseCachedFirstPageFallback =
-      !pageParam && !search && tab !== "following" && Boolean(cachedFirstPage?.items.length);
+    const liveCachedFirstPage =
+      !pageParam && !search && tab !== "following"
+        ? readCachedFirstFeedPage(feedViewerScope, tab, search)
+        : null;
+    const currentQueryFirstPage =
+      !pageParam
+        ? queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey(tab, search, feedViewerScope))?.pages?.[0] ?? null
+        : null;
+    const fallbackFirstPage =
+      liveCachedFirstPage && liveCachedFirstPage.items.length > 0
+        ? liveCachedFirstPage
+        : currentQueryFirstPage && currentQueryFirstPage.items.length > 0
+          ? currentQueryFirstPage
+          : cachedFirstPage && cachedFirstPage.items.length > 0
+            ? cachedFirstPage
+            : null;
+    const shouldUseCachedFirstPageFallback = !pageParam && !search && tab !== "following" && Boolean(fallbackFirstPage?.items.length);
     let endpoint = "/api/posts";
     const params = new URLSearchParams();
 
@@ -309,8 +324,8 @@ export default function Feed() {
 
     const response = await api.raw(endpoint);
     if (!response.ok) {
-      if (shouldUseCachedFirstPageFallback && cachedFirstPage) {
-        return cachedFirstPage;
+      if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
+        return fallbackFirstPage;
       }
       const json = await response.json().catch(() => null);
       throw new ApiError(
@@ -331,8 +346,8 @@ export default function Feed() {
     const items = json.data as Post[];
     const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
 
-    if (shouldUseCachedFirstPageFallback && cachedFirstPage && items.length === 0) {
-      return cachedFirstPage;
+    if (shouldUseCachedFirstPageFallback && fallbackFirstPage && items.length === 0) {
+      return fallbackFirstPage;
     }
 
     return {
@@ -340,7 +355,7 @@ export default function Feed() {
       nextCursor,
       hasMore: Boolean(json?.hasMore && nextCursor),
     } satisfies FeedPage;
-  }, [cachedFirstPage]);
+  }, [cachedFirstPage, feedViewerScope, getFeedQueryKey, queryClient]);
 
   // Update URL when search changes
   const handleSearchChange = useCallback((value: string) => {
