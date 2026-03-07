@@ -118,13 +118,14 @@ function ProtectedRouteWithPrivy({
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
+  const shouldHoldForRecovery =
+    hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession || hadTokenHint.current;
 
   useEffect(() => {
     if (
       (effectiveUser && hasLiveSession) ||
       isPending ||
-      privySyncFailure ||
-      (!hadTokenHint.current && !hasPrivySyncHint && !hasOAuthReturnHint && !shouldHoldForConfirmedSession)
+      !shouldHoldForRecovery
     ) {
       if (!isPending) {
         setGraceExpired(false);
@@ -136,7 +137,7 @@ function ProtectedRouteWithPrivy({
       hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession ? 12_000 : 4_000
     );
     return () => window.clearTimeout(timer);
-  }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivySyncHint, isPending, privySyncFailure, shouldHoldForConfirmedSession]);
+  }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivySyncHint, isPending, shouldHoldForConfirmedSession, shouldHoldForRecovery]);
 
   if (effectiveUser) {
     hadTokenHint.current = false;
@@ -147,6 +148,18 @@ function ProtectedRouteWithPrivy({
   }
 
   if (!effectiveUser) {
+    if (privySyncFailure && graceExpired) {
+      return (
+        <Navigate
+          to="/login"
+          replace
+          state={{
+            from: location.pathname + location.search + location.hash,
+            syncError: privySyncFailure.message,
+          }}
+        />
+      );
+    }
     if (hasOAuthReturnHint && !ready && !privySyncFailure) {
       return <RouteLoading label={graceExpired ? "Still returning from X..." : "Returning from X..."} />;
     }

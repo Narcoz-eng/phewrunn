@@ -61,16 +61,18 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const shouldHoldForOAuthReturn =
     hasOAuthReturnHint && !ready && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
+  const shouldHoldForRecovery =
+    hasPrivySyncHint || shouldHoldForOAuthReturn || shouldHoldForConfirmedSession;
 
   useEffect(() => {
-    if (!hasPrivySyncHint && !shouldHoldForOAuthReturn && !shouldHoldForConfirmedSession) {
+    if (!shouldHoldForRecovery) {
       setGraceExpired(false);
       return;
     }
 
     const timer = window.setTimeout(() => setGraceExpired(true), 12_000);
     return () => window.clearTimeout(timer);
-  }, [hasPrivySyncHint, shouldHoldForConfirmedSession, shouldHoldForOAuthReturn]);
+  }, [shouldHoldForRecovery]);
 
   if (isPending) {
     return <RouteLoading label="Loading..." />;
@@ -100,6 +102,9 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   }
 
   if (hasPrivySyncHint) {
+    if (privySyncFailure && graceExpired) {
+      return <>{children}</>;
+    }
     return (
       <RouteLoading
         label={
