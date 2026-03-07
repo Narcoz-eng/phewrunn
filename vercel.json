@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "installCommand": "npm --prefix backend install && npm --prefix webapp install && npm --prefix backend run db:generate",
   "builds": [
     {
       "src": "webapp/package.json",

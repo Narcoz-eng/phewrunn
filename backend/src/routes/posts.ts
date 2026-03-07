@@ -355,6 +355,66 @@ function writeFeedResponseToCache(
   });
 }
 
+async function loadEmergencyFeedPosts(
+  feedFindManyBase: Record<string, unknown>
+): Promise<any[]> {
+  const minimalPosts = (await withFeedTimeout(
+    prisma.post.findMany({
+      ...feedFindManyBase,
+      select: {
+        id: true,
+        content: true,
+        authorId: true,
+        contractAddress: true,
+        chainType: true,
+        entryMcap: true,
+        currentMcap: true,
+        settled: true,
+        settledAt: true,
+        isWin: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+          },
+        },
+      },
+    } as any),
+    "emergency_minimal_posts_query",
+    Math.min(FEED_DB_QUERY_TIMEOUT_MS, 1600)
+  )) as any[];
+
+  return minimalPosts.map((post) => ({
+    ...post,
+    tokenName: null,
+    tokenSymbol: null,
+    tokenImage: null,
+    mcap1h: null,
+    mcap6h: null,
+    isWin1h: null,
+    isWin6h: null,
+    percentChange1h: null,
+    percentChange6h: null,
+    viewCount: 0,
+    dexscreenerUrl: null,
+    author: {
+      ...post.author,
+      username: null,
+      walletAddress: null,
+      level: 0,
+      xp: 0,
+      isVerified: false,
+    },
+    _count: {
+      likes: 0,
+      comments: 0,
+      reposts: 0,
+    },
+  }));
+}
+
 function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedResponseCache.clear();
   feedSharedResponseCache.clear();
@@ -2076,7 +2136,20 @@ postsRouter.get("/", async (c) => {
         console.error("[posts/feed] primary query failed", {
           message: error instanceof Error ? error.message : String(error),
         });
-        return await respondWithFeedCacheFallback(error);
+        try {
+          fetchedPosts = await loadEmergencyFeedPosts(feedFindManyBase as Record<string, unknown>);
+          console.warn("[posts/feed] serving emergency minimal feed payload", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } catch (minimalFallbackError) {
+          console.error("[posts/feed] emergency minimal query failed", {
+            message:
+              minimalFallbackError instanceof Error
+                ? minimalFallbackError.message
+                : String(minimalFallbackError),
+          });
+          return await respondWithFeedCacheFallback(minimalFallbackError);
+        }
       } else {
         throw error;
       }

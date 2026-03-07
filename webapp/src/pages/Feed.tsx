@@ -193,7 +193,7 @@ export default function Feed() {
       id: session.user.id,
       name: session.user.name,
       email: session.user.email,
-      image: session.user.image ?? null,
+      image: session.user.image ?? cachedFeedUser?.image ?? null,
       walletAddress: session.user.walletAddress ?? cachedFeedUser?.walletAddress ?? null,
       username: session.user.username ?? cachedFeedUser?.username ?? null,
       level: session.user.level ?? cachedFeedUser?.level ?? 0,

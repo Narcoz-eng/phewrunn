@@ -2546,6 +2546,33 @@ app.get("/api/me", async (c) => {
 
     if (!fullLookup.timedOut) {
       dbUser = fullLookup.value;
+    } else {
+      const minimalLookup = await withTimeoutResult(
+        prisma.user.findUnique({
+          where: { id: user.id },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            walletAddress: true,
+            username: true,
+            level: true,
+            xp: true,
+            bio: true,
+            isAdmin: true,
+            isVerified: true,
+            createdAt: true,
+          },
+        }),
+        Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500)
+      );
+      if (!minimalLookup.timedOut && minimalLookup.value) {
+        dbUser = {
+          ...minimalLookup.value,
+          ...defaultFeeSettings,
+        };
+      }
     }
   } catch (error) {
     if (isPrismaSchemaDriftError(error)) {
@@ -2603,7 +2630,6 @@ app.get("/api/me", async (c) => {
           session.user.tradeFeePayoutAddress ?? defaultFeeSettings.tradeFeePayoutAddress,
         createdAt: session.user.createdAt,
       };
-      writeCachedMeResponse(user.id, sessionBackedUser);
       if (sessionIsStatelessFallback) {
         console.warn("[/api/me] Serving session-backed fallback profile while database is unavailable");
       }
