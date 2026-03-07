@@ -22,6 +22,7 @@ import {
 import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl } from "@/types";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import {
   ArrowLeft,
   Trophy,
@@ -245,7 +246,9 @@ export default function Leaderboard() {
               </div>
               <h2 className="text-xl font-semibold">Daily Top Gainers</h2>
             </div>
-            <DailyGainersTable />
+            <QueryErrorBoundary sectionName="Daily Gainers">
+              <DailyGainersTable />
+            </QueryErrorBoundary>
           </section>
 
           {/* Top Users Section */}
@@ -256,11 +259,13 @@ export default function Leaderboard() {
               </div>
               <h2 className="text-xl font-semibold">Top Users (All Time)</h2>
             </div>
-            {topUsersReady ? (
-              <TopUsersTable />
-            ) : (
-              <div className="rounded-xl border border-border bg-card/40 h-48 animate-pulse" />
-            )}
+            <QueryErrorBoundary sectionName="Top Users">
+              {topUsersReady ? (
+                <TopUsersTable />
+              ) : (
+                <div className="rounded-xl border border-border bg-card/40 h-48 animate-pulse" />
+              )}
+            </QueryErrorBoundary>
           </section>
 
           {/* Platform Statistics Section */}
@@ -271,11 +276,13 @@ export default function Leaderboard() {
               </div>
               <h2 className="text-xl font-semibold">Platform Stats</h2>
             </div>
-            {statsReady ? (
-              <StatsOverview />
-            ) : (
-              <div className="rounded-xl border border-border bg-card/40 h-64 animate-pulse" />
-            )}
+            <QueryErrorBoundary sectionName="Platform Stats">
+              {statsReady ? (
+                <StatsOverview />
+              ) : (
+                <div className="rounded-xl border border-border bg-card/40 h-64 animate-pulse" />
+              )}
+            </QueryErrorBoundary>
           </section>
         </div>
       </main>
