@@ -111,6 +111,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       mode: "auto",
       user: user as PrivyUserLike,
       getLatestUser: () => latestPrivyUserRef.current,
+      tryExistingBackendSession: true,
     });
   }, [authenticated, hasLiveSession, ready, user]);
 

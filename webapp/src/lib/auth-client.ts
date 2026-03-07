@@ -117,6 +117,7 @@ type StartPrivyAuthBootstrapOptions = {
   mode?: PrivyAuthBootstrapMode;
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
+  tryExistingBackendSession?: boolean;
 };
 
 let preLogoutHooks: Array<() => Promise<void>> = [];
@@ -838,6 +839,7 @@ export async function startPrivyAuthBootstrap({
   mode = "system",
   user,
   getLatestUser,
+  tryExistingBackendSession = false,
 }: StartPrivyAuthBootstrapOptions): Promise<AuthUser | null> {
   const now = Date.now();
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
@@ -882,6 +884,33 @@ export async function startPrivyAuthBootstrap({
   privyAuthBootstrapInFlight = (async () => {
     let attempt = 0;
     let totalAttempts = sameUserSnapshot?.totalAttempts ?? 0;
+
+    if (tryExistingBackendSession) {
+      console.info("[AuthFlow] bootstrap checking existing backend session before Privy sync", {
+        owner,
+        mode,
+        userId: user.id,
+      });
+      const recoveredUser = await ensureBackendSessionReady(user.id, 1800).catch((error) => {
+        console.warn("[AuthFlow] existing backend session check failed", {
+          owner,
+          mode,
+          userId: user.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+      if (recoveredUser) {
+        setPrivyAuthBootstrapState("authenticated", {
+          owner,
+          mode,
+          userId: recoveredUser.id,
+          detail: "existing backend session recovered",
+          totalAttempts,
+        });
+        return recoveredUser;
+      }
+    }
 
     while (attempt < PRIVY_BOOTSTRAP_MAX_ATTEMPTS) {
       attempt += 1;
