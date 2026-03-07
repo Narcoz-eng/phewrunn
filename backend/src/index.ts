@@ -788,42 +788,9 @@ function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser
 }
 
 async function queryMeResponseUserRaw(userId: string): Promise<MeResponseUser | null> {
-  const rows = await prisma.$queryRaw<Array<{
-    id: string;
-    name: string;
-    email: string;
-    image: string | null;
-    walletAddress: string | null;
-    username: string | null;
-    level: number | null;
-    xp: number | null;
-    bio: string | null;
-    isAdmin: boolean | null;
-    isVerified: boolean | null;
-    tradeFeeRewardsEnabled: boolean | null;
-    tradeFeeShareBps: number | null;
-    tradeFeePayoutAddress: string | null;
-    createdAt: Date;
-  }>>(Prisma.sql`
-    SELECT
-      u.id,
-      u.name,
-      u.email,
-      u.image,
-      u."walletAddress",
-      u.username,
-      u.level,
-      u.xp,
-      u.bio,
-      u."isAdmin",
-      u."isVerified",
-      u."tradeFeeRewardsEnabled",
-      u."tradeFeeShareBps",
-      u."tradeFeePayoutAddress",
-      u."createdAt"
-    FROM "User" u
-    WHERE u.id = ${userId}
-    LIMIT 1
+  // Use SELECT * so this works regardless of which columns exist in DB
+  const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+    SELECT * FROM "User" WHERE id = ${userId} LIMIT 1
   `);
 
   const row = rows[0];
@@ -831,22 +798,28 @@ async function queryMeResponseUserRaw(userId: string): Promise<MeResponseUser | 
     return null;
   }
 
+  const toNum = (v: unknown, def: number) => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "bigint") return Number(v);
+    return def;
+  };
+
   return {
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    image: row.image ?? null,
-    walletAddress: row.walletAddress ?? null,
-    username: row.username ?? null,
-    level: Number.isFinite(row.level) ? Number(row.level) : 0,
-    xp: Number.isFinite(row.xp) ? Number(row.xp) : 0,
-    bio: row.bio ?? null,
+    id: row.id as string,
+    name: (row.name as string) ?? "User",
+    email: (row.email as string) ?? "",
+    image: (row.image as string) ?? null,
+    walletAddress: (row.walletAddress as string) ?? null,
+    username: (row.username as string) ?? null,
+    level: toNum(row.level, 0),
+    xp: toNum(row.xp, 0),
+    bio: (row.bio as string) ?? null,
     isAdmin: row.isAdmin === true,
     isVerified: row.isVerified === true,
     tradeFeeRewardsEnabled: row.tradeFeeRewardsEnabled !== false,
-    tradeFeeShareBps: Number.isFinite(row.tradeFeeShareBps) ? Number(row.tradeFeeShareBps) : 100,
-    tradeFeePayoutAddress: row.tradeFeePayoutAddress ?? null,
-    createdAt: row.createdAt,
+    tradeFeeShareBps: toNum(row.tradeFeeShareBps, 100),
+    tradeFeePayoutAddress: (row.tradeFeePayoutAddress as string) ?? null,
+    createdAt: row.createdAt as Date,
   };
 }
 
@@ -2706,36 +2679,10 @@ app.get("/api/me", async (c) => {
       }
     }
   } catch (error) {
-    if (isPrismaSchemaDriftError(error)) {
-      try {
-        const fallbackUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-            walletAddress: true,
-            username: true,
-            level: true,
-            xp: true,
-            bio: true,
-            isAdmin: true,
-            isVerified: true,
-            createdAt: true,
-          },
-        });
-
-        if (fallbackUser) {
-          dbUser = {
-            ...fallbackUser,
-            ...defaultFeeSettings,
-          };
-        }
-      } catch (fallbackError) {
-        console.error("[/api/me] Failed to fetch fallback user profile:", fallbackError);
-      }
-    } else if (isPrismaClientError(error) || isPrismaConnectivityError(error)) {
+    if (isPrismaSchemaDriftError(error) || isPrismaClientError(error) || isPrismaConnectivityError(error)) {
+      console.warn("[/api/me] Primary query failed, using raw SQL fallback", {
+        message: error instanceof Error ? error.message : String(error),
+      });
       try {
         dbUser = await queryMeResponseUserRaw(user.id);
       } catch (rawError) {
