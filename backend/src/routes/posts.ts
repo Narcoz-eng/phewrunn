@@ -49,6 +49,8 @@ type SettlementRunResult = {
   snapshot6h: number;
   levelChanges6h: number;
   errors: number;
+  skipped?: boolean;
+  reason?: string;
 };
 
 type MarketRefreshRunResult = {
@@ -127,6 +129,54 @@ type PostPriceResponsePayload = {
   settledAt: string | null;
 };
 
+type EndpointConcurrencyLease = {
+  release: () => void;
+};
+
+type EndpointConcurrencyLimiter = {
+  label: string;
+  limit: number;
+  tryAcquire: () => EndpointConcurrencyLease | null;
+  current: () => number;
+};
+
+function readPositiveIntEnv(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function createEndpointConcurrencyLimiter(label: string, configuredLimit: number): EndpointConcurrencyLimiter {
+  let inFlight = 0;
+  const limit = configuredLimit > 0 ? configuredLimit : Number.MAX_SAFE_INTEGER;
+
+  return {
+    label,
+    limit,
+    tryAcquire() {
+      if (inFlight >= limit) {
+        return null;
+      }
+
+      inFlight += 1;
+      let released = false;
+
+      return {
+        release() {
+          if (released) return;
+          released = true;
+          inFlight = Math.max(0, inFlight - 1);
+        },
+      };
+    },
+    current() {
+      return inFlight;
+    },
+  };
+}
+
 let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
 let settlementRunInFlight: Promise<SettlementRunResult> | null = null;
 let lastMaintenanceRunStartedAt = 0;
@@ -170,6 +220,36 @@ const FEED_ENABLE_LIVE_SHARED_ALPHA = (() => {
   if (raw === "false") return false;
   return process.env.NODE_ENV !== "production";
 })();
+const FEED_MAX_CONCURRENT_REQUESTS =
+  readPositiveIntEnv("FEED_MAX_CONCURRENT_REQUESTS") ??
+  (process.env.NODE_ENV === "production" ? 8 : 4);
+const MAINTENANCE_MAX_CONCURRENT_REQUESTS =
+  readPositiveIntEnv("MAINTENANCE_MAX_CONCURRENT_REQUESTS") ??
+  1;
+const SETTLEMENT_MAX_CONCURRENT_REQUESTS =
+  readPositiveIntEnv("SETTLEMENT_MAX_CONCURRENT_REQUESTS") ??
+  1;
+const SETTLEMENT_RUN_LOCK_TTL_MS =
+  readPositiveIntEnv("SETTLEMENT_RUN_LOCK_TTL_MS") ??
+  (process.env.NODE_ENV === "production" ? 120_000 : 45_000);
+const SETTLEMENT_RUN_LOCK_REFRESH_INTERVAL_MS = Math.max(
+  5_000,
+  Math.floor(SETTLEMENT_RUN_LOCK_TTL_MS / 3)
+);
+const SETTLEMENT_RUN_LOCK_KEY = "runtime-lock:settlement:v1";
+const runtimeInstanceId = `${process.pid}:${randomUUID().slice(0, 8)}`;
+const feedRequestLimiter = createEndpointConcurrencyLimiter(
+  "posts/feed",
+  FEED_MAX_CONCURRENT_REQUESTS
+);
+const maintenanceRequestLimiter = createEndpointConcurrencyLimiter(
+  "posts/maintenance",
+  MAINTENANCE_MAX_CONCURRENT_REQUESTS
+);
+const settlementRequestLimiter = createEndpointConcurrencyLimiter(
+  "posts/settle",
+  SETTLEMENT_MAX_CONCURRENT_REQUESTS
+);
 const FEED_ENABLE_LIVE_WALLET_ENRICHMENT = (() => {
   const raw = process.env.FEED_ENABLE_LIVE_WALLET_ENRICHMENT?.trim().toLowerCase();
   if (raw === "true") return true;
@@ -2635,21 +2715,25 @@ async function findPostsToSnapshot6h(
  * a proper background job system (see services/marketcap.ts for details).
  */
 async function checkAndSettlePosts(): Promise<SettlementRunResult> {
-  const now = Date.now();
-  const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
-  const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);
+  return await withSettlementRunLock(
+    "background_settlement",
+    () => createSkippedSettlementResult("database_lock_held"),
+    async () => {
+      const now = Date.now();
+      const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
+      const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);
 
-  let settled1hCount = 0;
-  let snapshot6hCount = 0;
-  let levelChanges6hCount = 0;
-  let errorCount = 0;
+      let settled1hCount = 0;
+      let snapshot6hCount = 0;
+      let levelChanges6hCount = 0;
+      let errorCount = 0;
 
-  try {
-    // ============================================
-    // 1H SETTLEMENT - Official settlement for XP/Level
-    // ============================================
-    const oneHourScanLimit = SETTLEMENT_1H_TARGET_PER_RUN * SETTLEMENT_1H_SCAN_MULTIPLIER;
-    const postsToSettle1h = await findPostsToSettle1h(oneHourAgo, oneHourScanLimit);
+      try {
+        // ============================================
+        // 1H SETTLEMENT - Official settlement for XP/Level
+        // ============================================
+        const oneHourScanLimit = SETTLEMENT_1H_TARGET_PER_RUN * SETTLEMENT_1H_SCAN_MULTIPLIER;
+        const postsToSettle1h = await findPostsToSettle1h(oneHourAgo, oneHourScanLimit);
 
     for (const post of postsToSettle1h) {
       if (settled1hCount >= SETTLEMENT_1H_TARGET_PER_RUN) break;
@@ -2940,15 +3024,22 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
         errorCount++;
       }
     }
-  } catch (err) {
-    console.error("[Settlement] Background check error:", err);
-  }
+      } catch (err) {
+        console.error("[Settlement] Background check error:", err);
+      }
 
-  if (settled1hCount > 0 || snapshot6hCount > 0 || levelChanges6hCount > 0) {
-    invalidatePostReadCaches({ leaderboard: true });
-  }
+      if (settled1hCount > 0 || snapshot6hCount > 0 || levelChanges6hCount > 0) {
+        invalidatePostReadCaches({ leaderboard: true });
+      }
 
-  return { settled1h: settled1hCount, snapshot6h: snapshot6hCount, levelChanges6h: levelChanges6hCount, errors: errorCount };
+      return {
+        settled1h: settled1hCount,
+        snapshot6h: snapshot6hCount,
+        levelChanges6h: levelChanges6hCount,
+        errors: errorCount,
+      };
+    }
+  );
 }
 
 async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
@@ -3179,6 +3270,126 @@ function isAuthorizedMaintenanceRequest(c: { req: { header: (name: string) => st
 
   const rawSecret = c.req.header("x-cron-secret")?.trim();
   return !!rawSecret && rawSecret === cronSecret;
+}
+
+function createSkippedSettlementResult(reason: string): SettlementRunResult {
+  return {
+    settled1h: 0,
+    snapshot6h: 0,
+    levelChanges6h: 0,
+    errors: 0,
+    skipped: true,
+    reason,
+  };
+}
+
+async function tryAcquireSettlementRunLock(reason: string): Promise<{
+  acquired: boolean;
+  ownerToken: string;
+}> {
+  const ownerToken = `${runtimeInstanceId}:${Date.now()}:${randomUUID().slice(0, 8)}`;
+  const acquiredAt = new Date();
+  const expiresAt = new Date(acquiredAt.getTime() + SETTLEMENT_RUN_LOCK_TTL_MS);
+  const payload = JSON.stringify({
+    ownerToken,
+    reason,
+    instanceId: runtimeInstanceId,
+    acquiredAt: acquiredAt.toISOString(),
+  });
+
+  const rows = await prisma.$queryRaw<Array<{ key: string }>>(Prisma.sql`
+    INSERT INTO "AggregateSnapshot" ("key", "version", "payload", "capturedAt", "expiresAt", "updatedAt")
+    VALUES (
+      ${SETTLEMENT_RUN_LOCK_KEY},
+      1,
+      CAST(${payload} AS jsonb),
+      ${acquiredAt},
+      ${expiresAt},
+      ${acquiredAt}
+    )
+    ON CONFLICT ("key") DO UPDATE
+    SET
+      "payload" = EXCLUDED."payload",
+      "capturedAt" = EXCLUDED."capturedAt",
+      "expiresAt" = EXCLUDED."expiresAt",
+      "updatedAt" = EXCLUDED."updatedAt"
+    WHERE "AggregateSnapshot"."expiresAt" <= NOW()
+    RETURNING "key"
+  `);
+
+  return {
+    acquired: rows.length > 0,
+    ownerToken,
+  };
+}
+
+async function refreshSettlementRunLock(ownerToken: string): Promise<boolean> {
+  const refreshedUntil = new Date(Date.now() + SETTLEMENT_RUN_LOCK_TTL_MS);
+  const updatedAt = new Date();
+  const refreshed = await prisma.$executeRaw(Prisma.sql`
+    UPDATE "AggregateSnapshot"
+    SET "expiresAt" = ${refreshedUntil},
+        "updatedAt" = ${updatedAt}
+    WHERE "key" = ${SETTLEMENT_RUN_LOCK_KEY}
+      AND "payload"->>'ownerToken' = ${ownerToken}
+  `);
+  return refreshed > 0;
+}
+
+async function releaseSettlementRunLock(ownerToken: string): Promise<void> {
+  await prisma.$executeRaw(Prisma.sql`
+    DELETE FROM "AggregateSnapshot"
+    WHERE "key" = ${SETTLEMENT_RUN_LOCK_KEY}
+      AND "payload"->>'ownerToken' = ${ownerToken}
+  `);
+}
+
+async function withSettlementRunLock<T>(
+  reason: string,
+  onLocked: () => Promise<T> | T,
+  run: () => Promise<T>
+): Promise<T> {
+  const lockState = await tryAcquireSettlementRunLock(reason);
+  if (!lockState.acquired) {
+    console.warn("[Settlement] Run lock unavailable; skipping overlapping execution", {
+      reason,
+      lockKey: SETTLEMENT_RUN_LOCK_KEY,
+    });
+    return await onLocked();
+  }
+
+  const heartbeat = setInterval(() => {
+    void refreshSettlementRunLock(lockState.ownerToken)
+      .then((refreshed) => {
+        if (!refreshed) {
+          console.warn("[Settlement] Run lock heartbeat lost ownership", {
+            reason,
+            lockKey: SETTLEMENT_RUN_LOCK_KEY,
+          });
+        }
+      })
+      .catch((error) => {
+        console.warn("[Settlement] Failed to refresh run lock", {
+          reason,
+          message: getErrorMessage(error),
+        });
+      });
+  }, SETTLEMENT_RUN_LOCK_REFRESH_INTERVAL_MS);
+  heartbeat.unref?.();
+
+  try {
+    return await run();
+  } finally {
+    clearInterval(heartbeat);
+    try {
+      await releaseSettlementRunLock(lockState.ownerToken);
+    } catch (error) {
+      console.warn("[Settlement] Failed to release run lock", {
+        reason,
+        message: getErrorMessage(error),
+      });
+    }
+  }
 }
 
 async function prewarmLeaderboardSnapshots(): Promise<{
@@ -3484,6 +3695,29 @@ postsRouter.get("/", async (c) => {
       return c.json(stalePayload);
     }
   }
+
+  const feedRequestLease = feedRequestLimiter.tryAcquire();
+  if (!feedRequestLease) {
+    console.warn("[posts/feed] request concurrency cap reached", {
+      sort,
+      following,
+      cursor: cursor ?? null,
+      search: search ?? null,
+      inFlight: feedRequestLimiter.current(),
+      limit: feedRequestLimiter.limit,
+    });
+    const stalePayload = await readStaleFeedPayload();
+    if (stalePayload) {
+      return c.json(stalePayload);
+    }
+    return c.json({
+      data: [],
+      hasMore: false,
+      nextCursor: null,
+    });
+  }
+
+  try {
 
   // Keep settlement/snapshot state progressing from organic traffic without running the full
   // market-refresh job on the feed path. Cron/manual maintenance handles the heavier updates.
@@ -3971,6 +4205,9 @@ postsRouter.get("/", async (c) => {
     );
   }
   return c.json(responsePayload);
+  } finally {
+    feedRequestLease.release();
+  }
 });
 
 // Protected cron/maintenance runner for settlement + market refresh.
@@ -3995,54 +4232,74 @@ postsRouter.get("/maintenance/run", async (c) => {
     }, 401);
   }
 
-  const now = Date.now();
-  if (maintenanceRunInFlight) {
-    const result = await maintenanceRunInFlight;
-    lastCronMaintenanceCompletedAt = Date.now();
-    return c.json({
-      data: {
-        ...result,
-        reusedInFlight: true,
-      },
+  const maintenanceRequestLease = maintenanceRequestLimiter.tryAcquire();
+  if (!maintenanceRequestLease) {
+    console.warn("[Maintenance] Request concurrency cap reached", {
+      inFlight: maintenanceRequestLimiter.current(),
+      limit: maintenanceRequestLimiter.limit,
     });
-  }
-
-  const cooldownRemainingMs = Math.max(
-    0,
-    MAINTENANCE_RUN_MIN_INTERVAL_MS - (now - lastMaintenanceRunStartedAt)
-  );
-
-  if (cooldownRemainingMs > 0) {
     return c.json({
       data: {
         skipped: true,
-        reason: "cooldown",
-        retryAfterMs: cooldownRemainingMs,
+        reason: "concurrency_cap",
+        inFlight: maintenanceRequestLimiter.current(),
+        limit: maintenanceRequestLimiter.limit,
       },
     }, 202);
   }
 
-  lastMaintenanceRunStartedAt = now;
-  maintenanceRunInFlight = runMaintenanceCycle({ prewarmSnapshots: true })
-    .catch((error) => {
-      console.error("[Maintenance] Run failed:", error);
-      throw error;
-    })
-    .finally(() => {
-      maintenanceRunInFlight = null;
-    });
-
   try {
-    const result = await maintenanceRunInFlight;
-    lastCronMaintenanceCompletedAt = Date.now();
-    return c.json({ data: result });
-  } catch {
-    return c.json({
-      error: {
-        message: "Maintenance run failed",
-        code: "INTERNAL_ERROR",
-      },
-    }, 500);
+    const now = Date.now();
+    if (maintenanceRunInFlight) {
+      return c.json({
+        data: {
+          skipped: true,
+          reason: "already_running",
+          inFlight: maintenanceRequestLimiter.current(),
+          limit: maintenanceRequestLimiter.limit,
+        },
+      }, 202);
+    }
+
+    const cooldownRemainingMs = Math.max(
+      0,
+      MAINTENANCE_RUN_MIN_INTERVAL_MS - (now - lastMaintenanceRunStartedAt)
+    );
+
+    if (cooldownRemainingMs > 0) {
+      return c.json({
+        data: {
+          skipped: true,
+          reason: "cooldown",
+          retryAfterMs: cooldownRemainingMs,
+        },
+      }, 202);
+    }
+
+    lastMaintenanceRunStartedAt = now;
+    maintenanceRunInFlight = runMaintenanceCycle({ prewarmSnapshots: true })
+      .catch((error) => {
+        console.error("[Maintenance] Run failed:", error);
+        throw error;
+      })
+      .finally(() => {
+        maintenanceRunInFlight = null;
+      });
+
+    try {
+      const result = await maintenanceRunInFlight;
+      lastCronMaintenanceCompletedAt = Date.now();
+      return c.json({ data: result });
+    } catch {
+      return c.json({
+        error: {
+          message: "Maintenance run failed",
+          code: "INTERNAL_ERROR",
+        },
+      }, 500);
+    }
+  } finally {
+    maintenanceRequestLease.release();
   }
 });
 
@@ -4235,38 +4492,70 @@ postsRouter.post("/settle", async (c) => {
     }, 401);
   }
 
-  const now = Date.now();
-  const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
-  const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);
+  const settlementRequestLease = settlementRequestLimiter.tryAcquire();
+  if (!settlementRequestLease) {
+    console.warn("[Settlement] Request concurrency cap reached", {
+      inFlight: settlementRequestLimiter.current(),
+      limit: settlementRequestLimiter.limit,
+    });
+    return c.json({
+      data: {
+        skipped: true,
+        reason: "concurrency_cap",
+        inFlight: settlementRequestLimiter.current(),
+        limit: settlementRequestLimiter.limit,
+      },
+    }, 202);
+  }
 
-  const results1h: Array<{
-    postId: string;
-    userId: string;
-    isWin: boolean;
-    percentChange: number;
-    oldLevel: number;
-    newLevel: number;
-    oldXp: number;
-    newXp: number;
-    xpChange: number;
-    entryMcap: number;
-    finalMcap: number;
-    recoveryEligible: boolean;
-  }> = [];
+  try {
+    return await withSettlementRunLock(
+      "manual_settlement_endpoint",
+      () =>
+        c.json({
+          data: {
+            settled1h: 0,
+            snapshot6h: 0,
+            levelChanges6h: 0,
+            results1h: [],
+            results6h: [],
+            skipped: true,
+            reason: "database_lock_held",
+          },
+        }, 202),
+      async () => {
+        const now = Date.now();
+        const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
+        const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);
 
-  const results6h: Array<{
-    postId: string;
-    userId: string;
-    isWin6h: boolean;
-    percentChange6h: number;
-    mcap6h: number;
-    oldLevel: number;
-    newLevel: number;
-    xpChange: number;
-    levelChange6h: number;
-    recoveryEligible: boolean;
-    hadLevelChange: boolean;
-  }> = [];
+        const results1h: Array<{
+          postId: string;
+          userId: string;
+          isWin: boolean;
+          percentChange: number;
+          oldLevel: number;
+          newLevel: number;
+          oldXp: number;
+          newXp: number;
+          xpChange: number;
+          entryMcap: number;
+          finalMcap: number;
+          recoveryEligible: boolean;
+        }> = [];
+
+        const results6h: Array<{
+          postId: string;
+          userId: string;
+          isWin6h: boolean;
+          percentChange6h: number;
+          mcap6h: number;
+          oldLevel: number;
+          newLevel: number;
+          xpChange: number;
+          levelChange6h: number;
+          recoveryEligible: boolean;
+          hadLevelChange: boolean;
+        }> = [];
 
   // ============================================
   // 1H SETTLEMENT
@@ -4494,19 +4783,24 @@ postsRouter.post("/settle", async (c) => {
     });
   }
 
-  if (results1h.length > 0 || results6h.length > 0) {
-    invalidatePostReadCaches({ leaderboard: true });
-  }
+        if (results1h.length > 0 || results6h.length > 0) {
+          invalidatePostReadCaches({ leaderboard: true });
+        }
 
-  return c.json({
-    data: {
-      settled1h: results1h.length,
-      snapshot6h: results6h.length,
-      levelChanges6h: results6h.filter(r => r.hadLevelChange).length,
-      results1h,
-      results6h,
-    }
-  });
+        return c.json({
+          data: {
+            settled1h: results1h.length,
+            snapshot6h: results6h.length,
+            levelChanges6h: results6h.filter(r => r.hadLevelChange).length,
+            results1h,
+            results6h,
+          }
+        });
+      }
+    );
+  } finally {
+    settlementRequestLease.release();
+  }
 });
 
 // Get trending tokens (contract addresses with 50+ unique callers in last 48 hours)

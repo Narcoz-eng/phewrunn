@@ -191,25 +191,131 @@ const SLOW_QUERY_THRESHOLD_MS =
 const PRISMA_OPERATION_WARN_MS =
   getPositiveIntEnv("PRISMA_OPERATION_WARN_MS") ??
   (isProduction ? 700 : 1_200);
+const PRISMA_QUERY_LATENCY_WARN_MS =
+  getPositiveIntEnv("PRISMA_QUERY_LATENCY_WARN_MS") ??
+  SLOW_QUERY_THRESHOLD_MS;
+const PRISMA_LATENCY_SUMMARY_INTERVAL_MS =
+  getPositiveIntEnv("PRISMA_LATENCY_SUMMARY_INTERVAL_MS") ??
+  (isProduction ? 60_000 : 15_000);
+const PRISMA_LATENCY_SUMMARY_TOP_N =
+  getPositiveIntEnv("PRISMA_LATENCY_SUMMARY_TOP_N") ??
+  6;
+
+type PrismaLatencyMetric = {
+  count: number;
+  totalDurationMs: number;
+  maxDurationMs: number;
+  slowCount: number;
+  lastDurationMs: number;
+  lastSeenAt: string;
+};
+
+const prismaLatencyMetrics = new Map<string, PrismaLatencyMetric>();
+let lastPrismaLatencySummaryAt = Date.now();
+
+function normalizeQuerySnippet(query: string): string {
+  return query.replace(/\s+/g, " ").trim();
+}
+
+function inferPrismaQueryLabel(query: string): string {
+  const snippet = normalizeQuerySnippet(query);
+  if (!snippet) return "unknown";
+
+  const commandMatch = snippet.match(/^[a-z]+/i);
+  const command = commandMatch?.[0]?.toLowerCase() ?? "raw";
+  const tableName =
+    snippet.match(/\bfrom\s+"([^"]+)"/i)?.[1] ??
+    snippet.match(/\bupdate\s+"([^"]+)"/i)?.[1] ??
+    snippet.match(/\binto\s+"([^"]+)"/i)?.[1] ??
+    snippet.match(/\bjoin\s+"([^"]+)"/i)?.[1] ??
+    null;
+
+  return tableName ? `${command}.${tableName}` : command;
+}
+
+function flushPrismaLatencySummaryIfDue(nowMs: number): void {
+  if (nowMs - lastPrismaLatencySummaryAt < PRISMA_LATENCY_SUMMARY_INTERVAL_MS) {
+    return;
+  }
+
+  const summaryWindowMs = nowMs - lastPrismaLatencySummaryAt;
+  lastPrismaLatencySummaryAt = nowMs;
+
+  if (prismaLatencyMetrics.size === 0) {
+    return;
+  }
+
+  const topOperations = Array.from(prismaLatencyMetrics.entries())
+    .map(([label, metric]) => ({
+      label,
+      count: metric.count,
+      avgDurationMs: Math.round(metric.totalDurationMs / Math.max(metric.count, 1)),
+      maxDurationMs: metric.maxDurationMs,
+      slowCount: metric.slowCount,
+      lastDurationMs: metric.lastDurationMs,
+      lastSeenAt: metric.lastSeenAt,
+    }))
+    .sort((a, b) => {
+      if (b.maxDurationMs !== a.maxDurationMs) {
+        return b.maxDurationMs - a.maxDurationMs;
+      }
+      if (b.avgDurationMs !== a.avgDurationMs) {
+        return b.avgDurationMs - a.avgDurationMs;
+      }
+      return b.count - a.count;
+    })
+    .slice(0, PRISMA_LATENCY_SUMMARY_TOP_N);
+
+  console.warn("[Prisma] Query latency summary", {
+    windowMs: summaryWindowMs,
+    trackedOperations: prismaLatencyMetrics.size,
+    datasourceMode: datasourceRuntime?.mode ?? null,
+    topOperations,
+  });
+
+  prismaLatencyMetrics.clear();
+}
 
 prisma.$on("query", (e: Prisma.QueryEvent) => {
+  const nowMs = Date.now();
+  const label = inferPrismaQueryLabel(e.query);
+  const metric = prismaLatencyMetrics.get(label) ?? {
+    count: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    slowCount: 0,
+    lastDurationMs: 0,
+    lastSeenAt: new Date(nowMs).toISOString(),
+  };
+
+  metric.count += 1;
+  metric.totalDurationMs += e.duration;
+  metric.maxDurationMs = Math.max(metric.maxDurationMs, e.duration);
+  metric.lastDurationMs = e.duration;
+  metric.lastSeenAt = new Date(nowMs).toISOString();
+  if (e.duration >= PRISMA_QUERY_LATENCY_WARN_MS) {
+    metric.slowCount += 1;
+  }
+  prismaLatencyMetrics.set(label, metric);
+
   if (isProduction) {
     // In production, only log slow queries
-    if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
-      console.warn(
-        JSON.stringify({
-          type: "slow_query",
-          timestamp: new Date().toISOString(),
-          duration: e.duration,
-          query: e.query.substring(0, 200), // Truncate long queries
-          // Don't log params in production (may contain sensitive data)
-        })
-      );
+    if (e.duration >= PRISMA_QUERY_LATENCY_WARN_MS) {
+      console.warn("[Prisma] Slow query", {
+        label,
+        timestamp: new Date(nowMs).toISOString(),
+        durationMs: e.duration,
+        target: e.target,
+        datasourceMode: datasourceRuntime?.mode ?? null,
+        query: normalizeQuerySnippet(e.query).substring(0, 200),
+      });
     }
   } else {
     // In development, log all queries
     console.log(`[Prisma Query] ${e.query} - ${e.duration}ms`);
   }
+
+  flushPrismaLatencySummaryIfDue(nowMs);
 });
 
 // Log warnings
