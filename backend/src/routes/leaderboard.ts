@@ -27,11 +27,47 @@ type TopUsersResponsePayload = {
   };
 };
 
+type LeaderboardStatsPayload = {
+  volume: {
+    day: number;
+    week: number;
+    month: number;
+    allTime: number;
+  };
+  alphas: {
+    today: number;
+    week: number;
+    month: number;
+    total: number;
+  };
+  avgWinRate: number;
+  activeUsers: {
+    today: number;
+    week: number;
+  };
+  totalUsers: number;
+  levelDistribution: Array<{
+    level: number;
+    count: number;
+  }>;
+  topUsersThisWeek: Array<{
+    id: string;
+    name: string | null;
+    username: string | null;
+    image: string | null;
+    level: number;
+    postsThisWeek: number;
+  }>;
+};
+
 const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 10_000;
 const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 15_000;
 const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
+const LEADERBOARD_STATS_STALE_REVALIDATE_MS =
+  process.env.NODE_ENV === "production" ? 20 * 60_000 : 3 * 60_000;
 const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 6_000;
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
+const LEADERBOARD_STATS_SNAPSHOT_KEY = "leaderboard:stats";
 let leaderboardCacheVersionMemory = 1;
 let leaderboardCacheVersionReadCache: { value: number; expiresAtMs: number } | null = null;
 
@@ -39,8 +75,8 @@ let dailyGainersCache: CacheEntry<Array<unknown>> | null = null;
 let dailyGainersInFlight: Promise<Array<unknown>> | null = null;
 const topUsersCache = new Map<string, CacheEntry<TopUsersResponsePayload>>();
 const topUsersInFlight = new Map<string, Promise<TopUsersResponsePayload>>();
-let statsCache: CacheEntry<unknown> | null = null;
-let statsInFlight: Promise<unknown> | null = null;
+let statsCache: CacheEntry<LeaderboardStatsPayload> | null = null;
+let statsInFlight: Promise<LeaderboardStatsPayload> | null = null;
 
 export function invalidateLeaderboardCaches() {
   dailyGainersCache = null;
@@ -156,6 +192,249 @@ async function getLeaderboardCacheVersion(): Promise<number> {
 
 function buildLeaderboardRedisKey(kind: string, version: number, suffix?: string): string {
   return `leaderboard:v${version}:${kind}${suffix ? `:${suffix}` : ""}`;
+}
+
+function asLeaderboardStatsPayload(value: Prisma.JsonValue | null): LeaderboardStatsPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as unknown as LeaderboardStatsPayload;
+}
+
+function writeLeaderboardStatsLocalCache(data: LeaderboardStatsPayload): void {
+  statsCache = {
+    data,
+    expiresAtMs: Date.now() + LEADERBOARD_STATS_CACHE_TTL_MS,
+  };
+}
+
+function hydrateLeaderboardStatsCaches(redisKey: string, data: LeaderboardStatsPayload): void {
+  writeLeaderboardStatsLocalCache(data);
+  void cacheSetJson(redisKey, data, LEADERBOARD_STATS_CACHE_TTL_MS);
+}
+
+async function persistLeaderboardStats(
+  cacheVersion: number,
+  redisKey: string,
+  data: LeaderboardStatsPayload
+): Promise<void> {
+  hydrateLeaderboardStatsCaches(redisKey, data);
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + LEADERBOARD_STATS_CACHE_TTL_MS);
+
+  try {
+    await prisma.aggregateSnapshot.upsert({
+      where: { key: LEADERBOARD_STATS_SNAPSHOT_KEY },
+      create: {
+        key: LEADERBOARD_STATS_SNAPSHOT_KEY,
+        version: cacheVersion,
+        payload: data as Prisma.InputJsonValue,
+        capturedAt: now,
+        expiresAt,
+      },
+      update: {
+        version: cacheVersion,
+        payload: data as Prisma.InputJsonValue,
+        capturedAt: now,
+        expiresAt,
+      },
+    });
+  } catch (error) {
+    console.warn("[leaderboard] stats snapshot persistence failed", {
+      message: getErrorMessage(error),
+    });
+  }
+}
+
+async function readLeaderboardStatsSnapshot(
+  cacheVersion: number
+): Promise<{ fresh: LeaderboardStatsPayload | null; stale: LeaderboardStatsPayload | null }> {
+  try {
+    const snapshot = await prisma.aggregateSnapshot.findUnique({
+      where: { key: LEADERBOARD_STATS_SNAPSHOT_KEY },
+      select: {
+        version: true,
+        payload: true,
+        capturedAt: true,
+        expiresAt: true,
+      },
+    });
+
+    if (!snapshot) {
+      return { fresh: null, stale: null };
+    }
+
+    const payload = asLeaderboardStatsPayload(snapshot.payload);
+    if (!payload) {
+      return { fresh: null, stale: null };
+    }
+
+    const now = Date.now();
+    const isFresh = snapshot.version === cacheVersion && snapshot.expiresAt.getTime() > now;
+    if (isFresh) {
+      return { fresh: payload, stale: payload };
+    }
+
+    const isUsableStale =
+      snapshot.capturedAt.getTime() + LEADERBOARD_STATS_STALE_REVALIDATE_MS > now;
+    return {
+      fresh: null,
+      stale: isUsableStale ? payload : null,
+    };
+  } catch (error) {
+    console.warn("[leaderboard] stats snapshot read failed", {
+      message: getErrorMessage(error),
+    });
+    return { fresh: null, stale: null };
+  }
+}
+
+async function computeLeaderboardStatsPayload(): Promise<LeaderboardStatsPayload> {
+  const now = Date.now();
+  const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+  const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+
+  type StatsSummaryRow = {
+    volumeDay: Prisma.Decimal | number | string | null;
+    volumeWeek: Prisma.Decimal | number | string | null;
+    volumeMonth: Prisma.Decimal | number | string | null;
+    volumeAllTime: Prisma.Decimal | number | string | null;
+    alphasToday: bigint | number | string | Prisma.Decimal | null;
+    alphasWeek: bigint | number | string | Prisma.Decimal | null;
+    alphasMonth: bigint | number | string | Prisma.Decimal | null;
+    alphasTotal: bigint | number | string | Prisma.Decimal | null;
+    totalWins: bigint | number | string | Prisma.Decimal | null;
+    totalLosses: bigint | number | string | Prisma.Decimal | null;
+    activeUsersToday: bigint | number | string | Prisma.Decimal | null;
+    activeUsersWeek: bigint | number | string | Prisma.Decimal | null;
+    totalUsers: bigint | number | string | Prisma.Decimal | null;
+  };
+
+  const [summaryRows, levelDistribution, topUsersThisWeek] = await Promise.all([
+    withLeaderboardTimeout(
+      prisma.$queryRaw<StatsSummaryRow[]>(Prisma.sql`
+        SELECT
+          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneDayAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeDay",
+          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneWeekAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeWeek",
+          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneMonthAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeMonth",
+          COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "entryMcap" IS NOT NULL), 0) AS "volumeAllTime",
+          (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneDayAgo}) AS "alphasToday",
+          (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneWeekAgo}) AS "alphasWeek",
+          (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneMonthAgo}) AS "alphasMonth",
+          (SELECT COUNT(*)::bigint FROM "Post") AS "alphasTotal",
+          (SELECT COUNT(*)::bigint FROM "Post" WHERE "settled" = true AND "isWin" = true) AS "totalWins",
+          (SELECT COUNT(*)::bigint FROM "Post" WHERE "settled" = true AND "isWin" = false) AS "totalLosses",
+          (SELECT COUNT(DISTINCT "authorId")::bigint FROM "Post" WHERE "createdAt" >= ${oneDayAgo}) AS "activeUsersToday",
+          (SELECT COUNT(DISTINCT "authorId")::bigint FROM "Post" WHERE "createdAt" >= ${oneWeekAgo}) AS "activeUsersWeek",
+          (SELECT COUNT(*)::bigint FROM "User") AS "totalUsers"
+      `),
+      "leaderboard.stats.summary"
+    ),
+    withLeaderboardTimeout(
+      prisma.user.groupBy({
+        by: ["level"],
+        _count: { level: true },
+        orderBy: { level: "asc" },
+      }),
+      "leaderboard.stats.level-distribution"
+    ),
+    withLeaderboardTimeout(
+      prisma.$queryRaw<Array<{
+        id: string;
+        name: string | null;
+        username: string | null;
+        image: string | null;
+        level: number | null;
+        postsThisWeek: bigint | number | string | Prisma.Decimal | null;
+      }>>(Prisma.sql`
+        SELECT
+          u.id,
+          u.name,
+          u.username,
+          u.image,
+          u.level,
+          COUNT(*)::bigint AS "postsThisWeek"
+        FROM "Post" p
+        JOIN "User" u ON u.id = p."authorId"
+        WHERE p."createdAt" >= ${oneWeekAgo}
+        GROUP BY u.id, u.name, u.username, u.image, u.level
+        ORDER BY COUNT(*) DESC
+        LIMIT 5
+      `),
+      "leaderboard.stats.top-users-week"
+    ),
+  ]);
+
+  const summary = summaryRows[0];
+  const totalWins = toSafeNumber(summary?.totalWins ?? 0);
+  const totalLosses = toSafeNumber(summary?.totalLosses ?? 0);
+  const totalSettled = totalWins + totalLosses;
+  const avgWinRate = totalSettled > 0 ? (totalWins / totalSettled) * 100 : 0;
+
+  const levelDistMap = new Map<number, number>();
+  levelDistribution.forEach((ld) => {
+    levelDistMap.set(ld.level, ld._count.level);
+  });
+
+  const formattedLevelDist = [];
+  for (let level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
+    formattedLevelDist.push({
+      level,
+      count: levelDistMap.get(level) ?? 0,
+    });
+  }
+
+  return {
+    volume: {
+      day: toSafeNumber(summary?.volumeDay ?? 0),
+      week: toSafeNumber(summary?.volumeWeek ?? 0),
+      month: toSafeNumber(summary?.volumeMonth ?? 0),
+      allTime: toSafeNumber(summary?.volumeAllTime ?? 0),
+    },
+    alphas: {
+      today: Math.max(0, Math.round(toSafeNumber(summary?.alphasToday ?? 0))),
+      week: Math.max(0, Math.round(toSafeNumber(summary?.alphasWeek ?? 0))),
+      month: Math.max(0, Math.round(toSafeNumber(summary?.alphasMonth ?? 0))),
+      total: Math.max(0, Math.round(toSafeNumber(summary?.alphasTotal ?? 0))),
+    },
+    avgWinRate: Math.round(avgWinRate * 100) / 100,
+    activeUsers: {
+      today: Math.max(0, Math.round(toSafeNumber(summary?.activeUsersToday ?? 0))),
+      week: Math.max(0, Math.round(toSafeNumber(summary?.activeUsersWeek ?? 0))),
+    },
+    totalUsers: Math.max(0, Math.round(toSafeNumber(summary?.totalUsers ?? 0))),
+    levelDistribution: formattedLevelDist,
+    topUsersThisWeek: topUsersThisWeek.map((user) => ({
+      id: user.id,
+      name: user.name ?? null,
+      username: user.username ?? null,
+      image: user.image ?? null,
+      level: Math.max(0, Math.round(toSafeNumber(user.level ?? 0))),
+      postsThisWeek: Math.max(0, Math.round(toSafeNumber(user.postsThisWeek ?? 0))),
+    })),
+  };
+}
+
+function queueLeaderboardStatsRefresh(
+  cacheVersion: number,
+  redisKey: string
+): Promise<LeaderboardStatsPayload> {
+  if (!statsInFlight) {
+    const refreshPromise = (async () => {
+      const data = await computeLeaderboardStatsPayload();
+      await persistLeaderboardStats(cacheVersion, redisKey, data);
+      return data;
+    })();
+    const trackedPromise = refreshPromise.finally(() => {
+      if (statsInFlight === trackedPromise) {
+        statsInFlight = null;
+      }
+    });
+    statsInFlight = trackedPromise;
+  }
+  return statsInFlight!;
 }
 
 async function getWinLossStatsByAuthorIds(authorIds: string[]) {
@@ -731,166 +1010,31 @@ leaderboardRouter.get("/stats", async (c) => {
   }
   const staleCached = readStaleCache(statsCache);
   const redisKey = buildLeaderboardRedisKey("stats", cacheVersion);
-  const redisCached = await cacheGetJson<unknown>(redisKey);
+  const redisCached = await cacheGetJson<LeaderboardStatsPayload>(redisKey);
   if (redisCached) {
-    statsCache = {
-      data: redisCached,
-      expiresAtMs: Date.now() + LEADERBOARD_STATS_CACHE_TTL_MS,
-    };
+    writeLeaderboardStatsLocalCache(redisCached);
     return c.json({ data: redisCached });
   }
-  if (statsInFlight) {
-    try {
-      const data = await statsInFlight;
-      return c.json({ data });
-    } catch (error) {
-      logLeaderboardFallback("stats/in-flight", error, Boolean(staleCached));
-      if (staleCached) {
-        return c.json({ data: staleCached });
-      }
-      return c.json(
-        { error: { message: "Leaderboard stats are temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
-        503
-      );
-    }
+  const snapshotCached = await readLeaderboardStatsSnapshot(cacheVersion);
+  if (snapshotCached.fresh) {
+    hydrateLeaderboardStatsCaches(redisKey, snapshotCached.fresh);
+    return c.json({ data: snapshotCached.fresh });
   }
 
-  statsInFlight = (async () => {
-    const now = Date.now();
-    const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
-    const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-    const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
-
-    type StatsSummaryRow = {
-      volumeDay: Prisma.Decimal | number | string | null;
-      volumeWeek: Prisma.Decimal | number | string | null;
-      volumeMonth: Prisma.Decimal | number | string | null;
-      volumeAllTime: Prisma.Decimal | number | string | null;
-      alphasToday: bigint | number | string | Prisma.Decimal | null;
-      alphasWeek: bigint | number | string | Prisma.Decimal | null;
-      alphasMonth: bigint | number | string | Prisma.Decimal | null;
-      alphasTotal: bigint | number | string | Prisma.Decimal | null;
-      totalWins: bigint | number | string | Prisma.Decimal | null;
-      totalLosses: bigint | number | string | Prisma.Decimal | null;
-      activeUsersToday: bigint | number | string | Prisma.Decimal | null;
-      activeUsersWeek: bigint | number | string | Prisma.Decimal | null;
-      totalUsers: bigint | number | string | Prisma.Decimal | null;
-    };
-
-    const [summaryRows, levelDistribution, topUsersThisWeek] = await Promise.all([
-      withLeaderboardTimeout(
-        prisma.$queryRaw<StatsSummaryRow[]>(Prisma.sql`
-          SELECT
-            COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneDayAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeDay",
-            COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneWeekAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeWeek",
-            COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "createdAt" >= ${oneMonthAgo} AND "entryMcap" IS NOT NULL), 0) AS "volumeMonth",
-            COALESCE((SELECT SUM("entryMcap") FROM "Post" WHERE "entryMcap" IS NOT NULL), 0) AS "volumeAllTime",
-            (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneDayAgo}) AS "alphasToday",
-            (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneWeekAgo}) AS "alphasWeek",
-            (SELECT COUNT(*)::bigint FROM "Post" WHERE "createdAt" >= ${oneMonthAgo}) AS "alphasMonth",
-            (SELECT COUNT(*)::bigint FROM "Post") AS "alphasTotal",
-            (SELECT COUNT(*)::bigint FROM "Post" WHERE "settled" = true AND "isWin" = true) AS "totalWins",
-            (SELECT COUNT(*)::bigint FROM "Post" WHERE "settled" = true AND "isWin" = false) AS "totalLosses",
-            (SELECT COUNT(DISTINCT "authorId")::bigint FROM "Post" WHERE "createdAt" >= ${oneDayAgo}) AS "activeUsersToday",
-            (SELECT COUNT(DISTINCT "authorId")::bigint FROM "Post" WHERE "createdAt" >= ${oneWeekAgo}) AS "activeUsersWeek",
-            (SELECT COUNT(*)::bigint FROM "User") AS "totalUsers"
-        `),
-        "leaderboard.stats.summary"
-      ),
-      withLeaderboardTimeout(
-        prisma.user.groupBy({
-          by: ["level"],
-          _count: { level: true },
-          orderBy: { level: "asc" },
-        }),
-        "leaderboard.stats.level-distribution"
-      ),
-      withLeaderboardTimeout(
-        prisma.$queryRaw<Array<{
-          id: string;
-          name: string | null;
-          username: string | null;
-          image: string | null;
-          level: number | null;
-          postsThisWeek: bigint | number | string | Prisma.Decimal | null;
-        }>>(Prisma.sql`
-          SELECT
-            u.id,
-            u.name,
-            u.username,
-            u.image,
-            u.level,
-            COUNT(*)::bigint AS "postsThisWeek"
-          FROM "Post" p
-          JOIN "User" u ON u.id = p."authorId"
-          WHERE p."createdAt" >= ${oneWeekAgo}
-          GROUP BY u.id, u.name, u.username, u.image, u.level
-          ORDER BY COUNT(*) DESC
-          LIMIT 5
-        `),
-        "leaderboard.stats.top-users-week"
-      ),
-    ]);
-
-    const summary = summaryRows[0];
-    const totalWins = toSafeNumber(summary?.totalWins ?? 0);
-    const totalLosses = toSafeNumber(summary?.totalLosses ?? 0);
-    const totalSettled = totalWins + totalLosses;
-    const avgWinRate = totalSettled > 0 ? (totalWins / totalSettled) * 100 : 0;
-
-    const levelDistMap = new Map<number, number>();
-    levelDistribution.forEach((ld) => {
-      levelDistMap.set(ld.level, ld._count.level);
+  const snapshotFallback = snapshotCached.stale;
+  if (snapshotFallback) {
+    void queueLeaderboardStatsRefresh(cacheVersion, redisKey).catch((error) => {
+      logLeaderboardFallback("stats/background-refresh", error, true);
     });
+    return c.json({ data: snapshotFallback });
+  }
 
-    const formattedLevelDist = [];
-    for (let level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
-      formattedLevelDist.push({
-        level,
-        count: levelDistMap.get(level) ?? 0,
-      });
-    }
-
-    const data = {
-      volume: {
-        day: toSafeNumber(summary?.volumeDay ?? 0),
-        week: toSafeNumber(summary?.volumeWeek ?? 0),
-        month: toSafeNumber(summary?.volumeMonth ?? 0),
-        allTime: toSafeNumber(summary?.volumeAllTime ?? 0),
-      },
-      alphas: {
-        today: Math.max(0, Math.round(toSafeNumber(summary?.alphasToday ?? 0))),
-        week: Math.max(0, Math.round(toSafeNumber(summary?.alphasWeek ?? 0))),
-        month: Math.max(0, Math.round(toSafeNumber(summary?.alphasMonth ?? 0))),
-        total: Math.max(0, Math.round(toSafeNumber(summary?.alphasTotal ?? 0))),
-      },
-      avgWinRate: Math.round(avgWinRate * 100) / 100,
-      activeUsers: {
-        today: Math.max(0, Math.round(toSafeNumber(summary?.activeUsersToday ?? 0))),
-        week: Math.max(0, Math.round(toSafeNumber(summary?.activeUsersWeek ?? 0))),
-      },
-      totalUsers: Math.max(0, Math.round(toSafeNumber(summary?.totalUsers ?? 0))),
-      levelDistribution: formattedLevelDist,
-      topUsersThisWeek: topUsersThisWeek.map((user) => ({
-        id: user.id,
-        name: user.name ?? null,
-        username: user.username ?? null,
-        image: user.image ?? null,
-        level: Math.max(0, Math.round(toSafeNumber(user.level ?? 0))),
-        postsThisWeek: Math.max(0, Math.round(toSafeNumber(user.postsThisWeek ?? 0))),
-      })),
-    };
-
-    statsCache = {
-      data,
-      expiresAtMs: Date.now() + LEADERBOARD_STATS_CACHE_TTL_MS,
-    };
-    void cacheSetJson(redisKey, data, LEADERBOARD_STATS_CACHE_TTL_MS);
-    return data;
-  })();
+  if (!statsInFlight) {
+    queueLeaderboardStatsRefresh(cacheVersion, redisKey);
+  }
 
   try {
-    const data = await statsInFlight;
+    const data = await statsInFlight!;
     return c.json({ data });
   } catch (error) {
     logLeaderboardFallback("stats", error, Boolean(staleCached));
@@ -901,7 +1045,5 @@ leaderboardRouter.get("/stats", async (c) => {
       { error: { message: "Leaderboard stats are temporarily unavailable", code: "LEADERBOARD_UNAVAILABLE" } },
       503
     );
-  } finally {
-    statsInFlight = null;
   }
 });

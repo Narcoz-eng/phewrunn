@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
+import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { NotificationsQuerySchema } from "../types.js";
 
 export const notificationsRouter = new Hono<{ Variables: AuthVariables }>();
@@ -12,6 +13,8 @@ const NOTIFICATIONS_UNREAD_CACHE_TTL_MS =
   process.env.NODE_ENV === "production" ? 10_000 : 3_000;
 const NOTIFICATIONS_CACHE_MAX_ENTRIES =
   process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+const NOTIFICATIONS_LIST_REDIS_KEY_PREFIX = "notifications:list:v1";
+const NOTIFICATIONS_UNREAD_REDIS_KEY_PREFIX = "notifications:unread:v1";
 
 const notificationsListCache = new Map<
   string,
@@ -41,17 +44,15 @@ function trimNotificationCache<T>(
   }
 }
 
-function readNotificationsListCache(cacheKey: string): unknown[] | null {
-  const cached = notificationsListCache.get(cacheKey);
-  if (!cached) return null;
-  if (cached.expiresAtMs <= Date.now()) {
-    notificationsListCache.delete(cacheKey);
-    return null;
-  }
-  return cached.data;
+function buildNotificationsListRedisKey(cacheKey: string): string {
+  return `${NOTIFICATIONS_LIST_REDIS_KEY_PREFIX}:${cacheKey}`;
 }
 
-function writeNotificationsListCache(cacheKey: string, data: unknown[]): void {
+function buildNotificationsUnreadRedisKey(userId: string): string {
+  return `${NOTIFICATIONS_UNREAD_REDIS_KEY_PREFIX}:${userId}`;
+}
+
+function writeNotificationsListCacheLocal(cacheKey: string, data: unknown[]): void {
   if (notificationsListCache.has(cacheKey)) {
     notificationsListCache.delete(cacheKey);
   }
@@ -62,17 +63,30 @@ function writeNotificationsListCache(cacheKey: string, data: unknown[]): void {
   });
 }
 
-function readNotificationsUnreadCountCache(userId: string): number | null {
-  const cached = notificationsUnreadCountCache.get(userId);
-  if (!cached) return null;
-  if (cached.expiresAtMs <= Date.now()) {
-    notificationsUnreadCountCache.delete(userId);
+async function readNotificationsListCache(cacheKey: string): Promise<unknown[] | null> {
+  const cached = notificationsListCache.get(cacheKey);
+  if (cached) {
+    if (cached.expiresAtMs > Date.now()) {
+      return cached.data;
+    }
+    notificationsListCache.delete(cacheKey);
+  }
+
+  const redisCached = await cacheGetJson<unknown[]>(buildNotificationsListRedisKey(cacheKey));
+  if (!Array.isArray(redisCached)) {
     return null;
   }
-  return cached.count;
+
+  writeNotificationsListCacheLocal(cacheKey, redisCached);
+  return redisCached;
 }
 
-function writeNotificationsUnreadCountCache(userId: string, count: number): void {
+function writeNotificationsListCache(cacheKey: string, data: unknown[]): void {
+  writeNotificationsListCacheLocal(cacheKey, data);
+  void cacheSetJson(buildNotificationsListRedisKey(cacheKey), data, NOTIFICATIONS_LIST_CACHE_TTL_MS);
+}
+
+function writeNotificationsUnreadCountCacheLocal(userId: string, count: number): void {
   if (notificationsUnreadCountCache.has(userId)) {
     notificationsUnreadCountCache.delete(userId);
   }
@@ -83,6 +97,34 @@ function writeNotificationsUnreadCountCache(userId: string, count: number): void
   });
 }
 
+async function readNotificationsUnreadCountCache(userId: string): Promise<number | null> {
+  const cached = notificationsUnreadCountCache.get(userId);
+  if (cached) {
+    if (cached.expiresAtMs > Date.now()) {
+      return cached.count;
+    }
+    notificationsUnreadCountCache.delete(userId);
+  }
+
+  const redisCached = await cacheGetJson<{ count?: unknown }>(buildNotificationsUnreadRedisKey(userId));
+  const count = redisCached?.count;
+  if (typeof count !== "number" || !Number.isFinite(count)) {
+    return null;
+  }
+
+  writeNotificationsUnreadCountCacheLocal(userId, count);
+  return count;
+}
+
+function writeNotificationsUnreadCountCache(userId: string, count: number): void {
+  writeNotificationsUnreadCountCacheLocal(userId, count);
+  void cacheSetJson(
+    buildNotificationsUnreadRedisKey(userId),
+    { count },
+    NOTIFICATIONS_UNREAD_CACHE_TTL_MS
+  );
+}
+
 function invalidateNotificationsCache(userId: string): void {
   notificationsUnreadCountCache.delete(userId);
   const prefix = `${userId}:`;
@@ -91,6 +133,9 @@ function invalidateNotificationsCache(userId: string): void {
       notificationsListCache.delete(key);
     }
   }
+  void redisDelete(buildNotificationsUnreadRedisKey(userId));
+  void redisDelete(buildNotificationsListRedisKey(`${userId}:active`));
+  void redisDelete(buildNotificationsListRedisKey(`${userId}:all`));
 }
 
 function normalizeNotificationMessage(message: string): string {
@@ -181,7 +226,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
   const parsed = NotificationsQuerySchema.safeParse(query);
   const includeDismissed = parsed.success ? parsed.data.includeDismissed : false;
   const listCacheKey = `${user.id}:${includeDismissed ? "all" : "active"}`;
-  const cachedNotifications = readNotificationsListCache(listCacheKey);
+  const cachedNotifications = await readNotificationsListCache(listCacheKey);
   if (cachedNotifications) {
     return c.json({ data: cachedNotifications });
   }
@@ -294,7 +339,7 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const cachedUnreadCount = readNotificationsUnreadCountCache(user.id);
+  const cachedUnreadCount = await readNotificationsUnreadCountCache(user.id);
   if (cachedUnreadCount !== null) {
     return c.json({ data: { count: cachedUnreadCount } });
   }

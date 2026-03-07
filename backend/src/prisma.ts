@@ -47,14 +47,16 @@ function normalizeDatabaseUrl(
     const notes: string[] = [];
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
+    const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
     const desiredConnectionLimit =
-      getPositiveIntEnv("PRISMA_CONNECTION_LIMIT") ??
+      configuredConnectionLimit ??
       (isServerlessRuntime
         ? (isProduction ? 3 : 2)
-        : (isProduction ? 8 : 10));
+        : (isProduction ? 6 : 8));
+    const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout =
-      getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS") ??
-      (isProduction ? 20 : 10);
+      configuredPoolTimeout ??
+      (isProduction ? 15 : 10);
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
@@ -74,13 +76,19 @@ function normalizeDatabaseUrl(
 
     if (isSupabaseHost) {
       const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
-      if (!Number.isFinite(existingConnectionLimit) || existingConnectionLimit < desiredConnectionLimit) {
+      if (
+        !Number.isFinite(existingConnectionLimit) ||
+        existingConnectionLimit !== desiredConnectionLimit
+      ) {
         parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
         notes.push(`set connection_limit=${desiredConnectionLimit}`);
       }
 
       const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
-      if (!Number.isFinite(existingPoolTimeout) || existingPoolTimeout < desiredPoolTimeout) {
+      if (
+        !Number.isFinite(existingPoolTimeout) ||
+        existingPoolTimeout !== desiredPoolTimeout
+      ) {
         parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
         notes.push(`set pool_timeout=${desiredPoolTimeout}`);
       }
@@ -135,8 +143,9 @@ const prisma = new PrismaClient({
 const isSqlite = (normalizedDb.url || process.env.DATABASE_URL || "").startsWith("file:");
 const isPostgres = !isSqlite;
 
-// Log slow queries in production (queries taking > 1 second)
-const SLOW_QUERY_THRESHOLD_MS = 1000;
+const SLOW_QUERY_THRESHOLD_MS =
+  getPositiveIntEnv("PRISMA_SLOW_QUERY_THRESHOLD_MS") ??
+  (isProduction ? 800 : 1000);
 
 prisma.$on("query", (e: Prisma.QueryEvent) => {
   if (isProduction) {
@@ -189,6 +198,17 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
     `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "dexscreenerUrl" TEXT;`,
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "dismissed" BOOLEAN NOT NULL DEFAULT false;`,
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "clickedAt" TIMESTAMP(3);`,
+    `CREATE TABLE IF NOT EXISTS "AggregateSnapshot" (
+      "key" TEXT NOT NULL,
+      "version" INTEGER NOT NULL DEFAULT 1,
+      "payload" JSONB NOT NULL,
+      "capturedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "expiresAt" TIMESTAMP(3) NOT NULL,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "AggregateSnapshot_pkey" PRIMARY KEY ("key")
+    );`,
+    `CREATE INDEX IF NOT EXISTS "AggregateSnapshot_expiresAt_idx" ON "AggregateSnapshot"("expiresAt");`,
+    `CREATE INDEX IF NOT EXISTS "AggregateSnapshot_capturedAt_idx" ON "AggregateSnapshot"("capturedAt");`,
   ] as const;
 
   for (const statement of statements) {

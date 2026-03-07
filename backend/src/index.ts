@@ -16,6 +16,7 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { reportsRouter } from "./routes/reports.js";
 import { announcementsRouter } from "./routes/announcements.js";
 import { leaderboardRouter } from "./routes/leaderboard.js";
+import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
 
 // Security middleware imports
 import {
@@ -469,6 +470,7 @@ const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
 })();
 const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
 const ME_RESPONSE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+const ME_RESPONSE_REDIS_KEY_PREFIX = "me-response:v1";
 type MeResponseUser = {
   id: string;
   name: string;
@@ -494,17 +496,11 @@ const meResponseCache = new Map<
   }
 >();
 
-function readCachedMeResponse(userId: string): MeResponseUser | null {
-  const cached = meResponseCache.get(userId);
-  if (!cached) return null;
-  if (cached.expiresAtMs <= Date.now()) {
-    meResponseCache.delete(userId);
-    return null;
-  }
-  return cached.data;
+function buildMeResponseRedisKey(userId: string): string {
+  return `${ME_RESPONSE_REDIS_KEY_PREFIX}:${userId}`;
 }
 
-function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
+function writeLocalMeResponseCache(userId: string, data: MeResponseUser): void {
   if (meResponseCache.has(userId)) {
     meResponseCache.delete(userId);
   }
@@ -520,6 +516,77 @@ function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
     data,
     expiresAtMs: Date.now() + ME_RESPONSE_CACHE_TTL_MS,
   });
+}
+
+function normalizeCachedMeResponse(data: unknown): MeResponseUser | null {
+  if (!data || typeof data !== "object") return null;
+  const candidate = data as Record<string, unknown>;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.name !== "string" ||
+    typeof candidate.email !== "string" ||
+    typeof candidate.level !== "number" ||
+    typeof candidate.xp !== "number" ||
+    typeof candidate.isAdmin !== "boolean" ||
+    typeof candidate.isVerified !== "boolean" ||
+    typeof candidate.tradeFeeRewardsEnabled !== "boolean" ||
+    typeof candidate.tradeFeeShareBps !== "number"
+  ) {
+    return null;
+  }
+
+  const createdAt =
+    candidate.createdAt instanceof Date
+      ? candidate.createdAt
+      : new Date(typeof candidate.createdAt === "string" ? candidate.createdAt : "");
+  if (Number.isNaN(createdAt.getTime())) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    email: candidate.email,
+    image: typeof candidate.image === "string" ? candidate.image : null,
+    walletAddress: typeof candidate.walletAddress === "string" ? candidate.walletAddress : null,
+    username: typeof candidate.username === "string" ? candidate.username : null,
+    level: candidate.level,
+    xp: candidate.xp,
+    bio: typeof candidate.bio === "string" ? candidate.bio : null,
+    isAdmin: candidate.isAdmin,
+    isVerified: candidate.isVerified,
+    tradeFeeRewardsEnabled: candidate.tradeFeeRewardsEnabled,
+    tradeFeeShareBps: candidate.tradeFeeShareBps,
+    tradeFeePayoutAddress:
+      typeof candidate.tradeFeePayoutAddress === "string" ? candidate.tradeFeePayoutAddress : null,
+    createdAt,
+  };
+}
+
+async function readCachedMeResponse(userId: string): Promise<MeResponseUser | null> {
+  const cached = meResponseCache.get(userId);
+  if (cached) {
+    if (cached.expiresAtMs <= Date.now()) {
+      meResponseCache.delete(userId);
+    } else {
+      return cached.data;
+    }
+  }
+
+  const redisCached = normalizeCachedMeResponse(
+    await cacheGetJson<Record<string, unknown>>(buildMeResponseRedisKey(userId))
+  );
+  if (!redisCached) {
+    return null;
+  }
+
+  writeLocalMeResponseCache(userId, redisCached);
+  return redisCached;
+}
+
+function writeCachedMeResponse(userId: string, data: MeResponseUser): void {
+  writeLocalMeResponseCache(userId, data);
+  void cacheSetJson(buildMeResponseRedisKey(userId), data, ME_RESPONSE_CACHE_TTL_MS);
 }
 
 function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser {
@@ -728,6 +795,7 @@ function toAuthResponseUserFromSessionUser(
 
 function clearCachedMeResponse(userId: string): void {
   meResponseCache.delete(userId);
+  void redisDelete(buildMeResponseRedisKey(userId));
 }
 
 function normalizeOptionalDisplayName(value: unknown): string | null {
@@ -2282,7 +2350,7 @@ app.get("/api/me", async (c) => {
     return c.body(null, 401);
   }
 
-  const cachedUser = readCachedMeResponse(user.id);
+  const cachedUser = await readCachedMeResponse(user.id);
   if (cachedUser) {
     return c.json({ data: cachedUser });
   }

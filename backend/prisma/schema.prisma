@@ -6,6 +6,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // User model - Better Auth compatible with SocialFi extensions
@@ -191,12 +192,26 @@ model Post {
   @@index([authorId, settledAt]) // For time-based stats queries
   @@index([settled, settledAt]) // For settlement batch queries
   @@index([createdAt])
+  @@index([createdAt, authorId])
   @@index([authorId, createdAt])
   @@index([contractAddress, createdAt])
   @@index([settled, createdAt])
+  @@index([settled, isWin, authorId])
   @@index([trackingMode, lastMcapUpdate])
   @@index([lastMcapUpdate])
   @@index([chainType, contractAddress])
+}
+
+model AggregateSnapshot {
+  key        String   @id
+  version    Int      @default(1)
+  payload    Json
+  capturedAt DateTime @default(now())
+  expiresAt  DateTime
+  updatedAt  DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@index([capturedAt])
 }
 
 model TradeFeeEvent {

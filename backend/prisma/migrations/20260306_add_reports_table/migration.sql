@@ -1,3 +1,5 @@
+SET statement_timeout = 0;
+
 ALTER TABLE "User"
   ADD COLUMN IF NOT EXISTS "lastUsernameUpdate" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "lastPhotoUpdate" TIMESTAMP(3),
