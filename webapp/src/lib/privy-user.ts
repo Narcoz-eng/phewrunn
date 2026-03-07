@@ -6,8 +6,15 @@ const AUTH_PAYLOAD_READY_DELAYS_MS = [1200] as const;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
 const QUICK_IDENTITY_TOKEN_TIMEOUT_MS = 120;
+const PRIVY_IDENTITY_429_COOLDOWN_MS = 10_000;
 let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAuthPayload> } | null =
   null;
+let privyIdentityRateLimitedUntilMs = 0;
+const RATE_LIMITED_TOKEN = Symbol("privy_identity_rate_limited");
+type IdentityTokenAttemptResult = {
+  token?: string;
+  rateLimited: boolean;
+};
 
 type LinkedAccountLike = {
   type: string;
@@ -37,13 +44,64 @@ async function waitFor(delayMs: number): Promise<void> {
   });
 }
 
-async function getIdentityTokenWithin(timeoutMs: number): Promise<string | undefined> {
-  return Promise.race<string | undefined>([
+function getPrivyErrorMessage(error: unknown): string {
+  if (typeof error === "string") {
+    return error;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return "";
+}
+
+function isPrivyRateLimitError(error: unknown): boolean {
+  const message = getPrivyErrorMessage(error);
+  return /429|too many requests|rate limit/i.test(message);
+}
+
+function getPrivyRateLimitRemainingMs(referenceTime = Date.now()): number {
+  return Math.max(0, privyIdentityRateLimitedUntilMs - referenceTime);
+}
+
+async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenAttemptResult> {
+  const rateLimitRemainingMs = getPrivyRateLimitRemainingMs();
+  if (rateLimitRemainingMs > 0) {
+    console.warn("[AuthFlow] Privy identity token request skipped due to cooldown", {
+      retryInMs: rateLimitRemainingMs,
+    });
+    return { token: undefined, rateLimited: true };
+  }
+
+  const raced = await Promise.race<string | undefined | typeof RATE_LIMITED_TOKEN>([
     getIdentityToken()
       .then((token) => (typeof token === "string" && token.length > 0 ? token : undefined))
-      .catch(() => undefined),
+      .catch((error) => {
+        if (isPrivyRateLimitError(error)) {
+          privyIdentityRateLimitedUntilMs = Date.now() + PRIVY_IDENTITY_429_COOLDOWN_MS;
+          console.warn("[AuthFlow] Privy identity provider returned 429", {
+            cooldownMs: PRIVY_IDENTITY_429_COOLDOWN_MS,
+            message: getPrivyErrorMessage(error),
+          });
+          return RATE_LIMITED_TOKEN;
+        }
+        return undefined;
+      }),
     waitFor(timeoutMs).then(() => undefined),
   ]);
+
+  if (raced === RATE_LIMITED_TOKEN) {
+    return { token: undefined, rateLimited: true };
+  }
+
+  return {
+    token: raced,
+    rateLimited: false,
+  };
 }
 
 function hasOAuthIdentity(user: PrivyUserLike): boolean {
@@ -56,11 +114,11 @@ function hasOAuthIdentity(user: PrivyUserLike): boolean {
   );
 }
 
-export async function getPrivyIdentityTokenFast(): Promise<string | undefined> {
+export async function getPrivyIdentityTokenFast(): Promise<IdentityTokenAttemptResult> {
   for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    const token = await getIdentityTokenWithin(IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS);
-    if (token) {
-      return token;
+    const result = await getIdentityTokenWithin(IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS);
+    if (result.token || result.rateLimited) {
+      return result;
     }
 
     const delayMs = IDENTITY_TOKEN_RETRY_DELAYS_MS[attempt];
@@ -68,10 +126,14 @@ export async function getPrivyIdentityTokenFast(): Promise<string | undefined> {
       continue;
     }
 
+    console.info("[AuthFlow] Privy identity token retry scheduled", {
+      attempt: attempt + 1,
+      delayMs,
+    });
     await waitFor(delayMs);
   }
 
-  return undefined;
+  return { token: undefined, rateLimited: false };
 }
 
 export function getPrivyPrimaryEmail(user: PrivyUserLike): string | undefined {
@@ -143,14 +205,19 @@ export async function resolvePrivyAuthPayload({
     let latestUser = getLatestUser?.() ?? user;
     let email = getPrivyPrimaryEmail(latestUser);
     let name = getPrivyDisplayName(latestUser, email);
+    let sawRateLimit = false;
 
     const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
       ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS
       : QUICK_IDENTITY_TOKEN_TIMEOUT_MS;
 
-    let privyIdToken = await getIdentityTokenWithin(initialTokenTimeoutMs);
+    let initialTokenResult = await getIdentityTokenWithin(initialTokenTimeoutMs);
+    let privyIdToken = initialTokenResult.token;
+    sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
     if (!privyIdToken) {
-      privyIdToken = await getPrivyIdentityTokenFast();
+      const fastTokenResult = await getPrivyIdentityTokenFast();
+      privyIdToken = fastTokenResult.token;
+      sawRateLimit = sawRateLimit || fastTokenResult.rateLimited;
     }
     if (privyIdToken) {
       return {
@@ -162,15 +229,24 @@ export async function resolvePrivyAuthPayload({
     }
 
     for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
+      console.info("[AuthFlow] Privy identity still finalizing; retry scheduled", {
+        delayMs,
+      });
       await waitFor(delayMs);
       latestUser = getLatestUser?.() ?? latestUser;
       email = getPrivyPrimaryEmail(latestUser);
       name = getPrivyDisplayName(latestUser, email);
-      privyIdToken = await getPrivyIdentityTokenFast();
+      const delayedTokenResult = await getPrivyIdentityTokenFast();
+      privyIdToken = delayedTokenResult.token;
+      sawRateLimit = sawRateLimit || delayedTokenResult.rateLimited;
 
       if (privyIdToken) {
         break;
       }
+    }
+
+    if (sawRateLimit) {
+      throw new Error("Privy identity provider is rate limited");
     }
 
     return {

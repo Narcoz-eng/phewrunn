@@ -24,6 +24,7 @@ const LOGIN_SYNC_TIMEOUT_MS = 5_000;
 const AUTO_RESYNC_COOLDOWN_MS = 2_000;
 const AUTO_RESYNC_MAX_ATTEMPTS = 5;
 const TOO_MANY_REQUESTS_BACKOFF_MS = 3_000;
+const PRIVY_FINALIZATION_RETRY_DELAY_MS = 1_500;
 const PRIVY_LOGOUT_SETTLE_MS = 250;
 const RETRYABLE_SYNC_ERROR_PATTERN =
   /timed out|network|failed to fetch|failed to sign in \(5\d\d\)|failed to sign in \(429\)|server|rate limit|too many requests|finalizing|identity verification|identity token/i;
@@ -110,103 +111,160 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     source: "manual" | "auto" = "manual"
   ): Promise<AuthUser | null> => {
     if (activeSyncPromiseRef.current) {
+      console.info("[AuthFlow] usePrivyLogin reusing sync already in progress", {
+        source,
+        userId: privyUser.id,
+      });
       return activeSyncPromiseRef.current;
     }
 
     const syncPromise = (async (): Promise<AuthUser | null> => {
+      if (rateLimitedUntilRef.current > Date.now()) {
+        const retryInMs = rateLimitedUntilRef.current - Date.now();
+        console.info("[AuthFlow] usePrivyLogin blocked by local rate-limit cooldown", {
+          source,
+          userId: privyUser.id,
+          retryInMs,
+        });
+        setSyncError("Sign-in is temporarily rate limited. Please wait a few seconds.");
+        return null;
+      }
+
       syncGuardRef.current = true;
       setIsSyncing(true);
       setSyncError(null);
       startSyncTimeout();
 
       try {
-        setPrivyAuthBootstrapState("awaiting_identity_token", {
-          source,
-          userId: privyUser.id,
-          detail: "privy user ready",
-        });
-        const resolvedPayload = await resolvePrivyAuthPayload({
-          user: privyUser,
-          getLatestUser: () => latestPrivyUserRef.current,
-        });
-        const privyIdToken = resolvedPayload.privyIdToken;
-        const email = resolvedPayload.email ?? "";
+        const maxAttempts = source === "manual" ? 2 : 1;
 
-        if (!privyIdToken) {
-          throw new Error("Privy identity verification is still finalizing");
-        }
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          try {
+            setPrivyAuthBootstrapState("awaiting_identity_token", {
+              source,
+              userId: privyUser.id,
+              detail: "privy user ready",
+            });
+            console.info("[AuthFlow] usePrivyLogin sync attempt started", {
+              source,
+              userId: privyUser.id,
+              attempt: attempt + 1,
+              maxAttempts,
+            });
+            const resolvedPayload = await resolvePrivyAuthPayload({
+              user: privyUser,
+              getLatestUser: () => latestPrivyUserRef.current,
+            });
+            const privyIdToken = resolvedPayload.privyIdToken;
+            const email = resolvedPayload.email ?? "";
 
-        const name = resolvedPayload.name ?? "";
+            if (!privyIdToken) {
+              throw new Error("Privy identity verification is still finalizing");
+            }
 
-        const syncResult = await syncPrivySession(
-          resolvedPayload.user.id,
-          email || undefined,
-          name || undefined,
-          privyIdToken ?? undefined
-        );
+            const name = resolvedPayload.name ?? "";
 
-        autoResyncAttemptsRef.current = 0;
-        lastSyncFailureRef.current = null;
-        setPrivyAuthBootstrapState("sync_succeeded", {
-          source,
-          userId: syncResult.user.id,
-          detail: "session synced",
-        });
-        return syncResult.user;
-      } catch (err) {
-        console.error("[usePrivyLogin] sync error:", err);
-        const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
-        setPrivyAuthBootstrapState("sync_failed", {
-          source,
-          userId: privyUser.id,
-          detail: rawMessage,
-        });
-        if (source === "auto" && hasLiveSessionRef.current) {
-          setSyncError(null);
-          clearPrivyLoginIntent();
-          return readCachedAuthUserSnapshot();
-        }
+            const syncResult = await syncPrivySession(
+              resolvedPayload.user.id,
+              email || undefined,
+              name || undefined,
+              privyIdToken ?? undefined
+            );
 
-        const isTooManyRequests = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
-        const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(rawMessage);
-        lastSyncFailureRef.current = {
-          message: rawMessage,
-          retryable: isTooManyRequests || isRetryable,
-        };
-        const userMessage = isTooManyRequests ? "Sign-in is busy. Retrying..." : rawMessage;
-        const shouldShowInlineError =
-          source === "manual"
-            ? !isRetryable
-            : !isRetryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+            autoResyncAttemptsRef.current = 0;
+            lastSyncFailureRef.current = null;
+            rateLimitedUntilRef.current = 0;
+            setPrivyAuthBootstrapState("sync_succeeded", {
+              source,
+              userId: syncResult.user.id,
+              detail: "session synced",
+            });
+            return syncResult.user;
+          } catch (err) {
+            console.error("[usePrivyLogin] sync error:", err);
+            const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
+            setPrivyAuthBootstrapState("sync_failed", {
+              source,
+              userId: privyUser.id,
+              detail: rawMessage,
+            });
+            if (source === "auto" && hasLiveSessionRef.current) {
+              setSyncError(null);
+              clearPrivyLoginIntent();
+              return readCachedAuthUserSnapshot();
+            }
 
-        if (shouldShowInlineError || !isTooManyRequests) {
-          setSyncError(userMessage);
-        } else {
-          setSyncError(null);
-        }
+            const isTooManyRequests = TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage);
+            const isRetryable = RETRYABLE_SYNC_ERROR_PATTERN.test(rawMessage);
+            const retryable = isTooManyRequests || isRetryable;
 
-        if (source === "auto") {
-          autoResyncAttemptsRef.current += 1;
-        }
+            if (isTooManyRequests) {
+              rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
+              console.warn("[AuthFlow] usePrivyLogin entered 429 cooldown", {
+                source,
+                userId: privyUser.id,
+                cooldownMs: TOO_MANY_REQUESTS_BACKOFF_MS,
+              });
+            }
 
-        const exhaustedAutoRetries =
-          source === "auto" &&
-          (!isRetryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS);
-        if (source === "manual" || exhaustedAutoRetries) {
-          clearPrivyLoginIntent();
-        }
+            const shouldRetryThisAttempt =
+              source === "manual" && retryable && attempt < maxAttempts - 1;
+            if (shouldRetryThisAttempt) {
+              const retryDelayMs = isTooManyRequests
+                ? TOO_MANY_REQUESTS_BACKOFF_MS
+                : PRIVY_FINALIZATION_RETRY_DELAY_MS;
+              setSyncError(null);
+              console.info("[AuthFlow] usePrivyLogin retry scheduled", {
+                source,
+                userId: privyUser.id,
+                attempt: attempt + 1,
+                retryDelayMs,
+                reason: rawMessage,
+              });
+              await new Promise<void>((resolve) => {
+                window.setTimeout(resolve, retryDelayMs);
+              });
+              continue;
+            }
 
-        const shouldToast =
-          source === "manual"
-            ? !isRetryable
-            : !isRetryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+            lastSyncFailureRef.current = {
+              message: rawMessage,
+              retryable,
+            };
+            const userMessage = isTooManyRequests ? "Sign-in is busy. Retrying..." : rawMessage;
+            const shouldShowInlineError =
+              source === "manual"
+                ? !retryable
+                : !retryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
 
-        if (shouldToast) {
-          toast.error(userMessage);
-        }
+            if (shouldShowInlineError || !isTooManyRequests) {
+              setSyncError(userMessage);
+            } else {
+              setSyncError(null);
+            }
 
-        if (TOO_MANY_REQUESTS_ERROR_PATTERN.test(rawMessage) && source === "auto") {
-          rateLimitedUntilRef.current = Date.now() + TOO_MANY_REQUESTS_BACKOFF_MS;
+            if (source === "auto") {
+              autoResyncAttemptsRef.current += 1;
+            }
+
+            const exhaustedAutoRetries =
+              source === "auto" &&
+              (!retryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS);
+            if (source === "manual" || exhaustedAutoRetries) {
+              clearPrivyLoginIntent();
+            }
+
+            const shouldToast =
+              source === "manual"
+                ? !retryable
+                : !retryable || autoResyncAttemptsRef.current >= AUTO_RESYNC_MAX_ATTEMPTS;
+
+            if (shouldToast) {
+              toast.error(userMessage);
+            }
+
+            return null;
+          }
         }
 
         return null;
@@ -314,7 +372,14 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         ? loginOptions.loginMethods[0]
         : null;
     const isXLogin = requestedMethod === "twitter";
-    rateLimitedUntilRef.current = 0;
+    if (rateLimitedUntilRef.current > Date.now()) {
+      const retryInMs = rateLimitedUntilRef.current - Date.now();
+      setSyncError("Sign-in is temporarily rate limited. Please wait a few seconds.");
+      console.info("[AuthFlow] usePrivyLogin start blocked by cooldown", {
+        retryInMs,
+      });
+      return;
+    }
     clearPrivySyncFailureState();
     clearPrivyAuthBootstrapState();
     setSyncError(null);

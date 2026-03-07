@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   clearPrivyAuthBootstrapState,
@@ -73,6 +73,30 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     }
   }, [authenticated]);
 
+  useLayoutEffect(() => {
+    if (!ready || !authenticated || !user || hasLiveSession) {
+      return;
+    }
+    if (isExplicitLogoutCoolingDown()) {
+      return;
+    }
+
+    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
+    if (
+      bootstrapSnapshot?.userId === user.id &&
+      (bootstrapSnapshot.phase === "awaiting_identity_token" ||
+        bootstrapSnapshot.phase === "sync_started")
+    ) {
+      return;
+    }
+
+    setPrivyAuthBootstrapState("awaiting_identity_token", {
+      source: "auto",
+      userId: user.id,
+      detail: "privy user detected before backend session",
+    });
+  }, [authenticated, hasLiveSession, ready, user]);
+
   useEffect(() => {
     if (!ready || !authenticated || !user) return;
     if (isExplicitLogoutCoolingDown()) return;
@@ -80,6 +104,9 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       privySyncFailure &&
       Date.now() - privySyncFailure.recordedAt < AUTO_SYNC_COOLDOWN_MS
     ) {
+      console.info("[AuthFlow] AuthInitializer skipped auto-sync due to recent failure", {
+        userId: user.id,
+      });
       return;
     }
     if (hasLiveSession) {
@@ -87,8 +114,18 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       lastSyncedPrivyUserRef.current = user.id;
       return;
     }
-    if (isPrivyAuthBootstrapPending()) return;
-    if (syncInFlightRef.current) return;
+    if (isPrivyAuthBootstrapPending()) {
+      console.info("[AuthFlow] AuthInitializer found pending bootstrap; skipping duplicate sync", {
+        userId: user.id,
+      });
+      return;
+    }
+    if (syncInFlightRef.current) {
+      console.info("[AuthFlow] AuthInitializer sync already in progress", {
+        userId: user.id,
+      });
+      return;
+    }
 
     if (lastSyncedPrivyUserRef.current !== user.id) {
       attemptsRef.current = 0;
@@ -105,11 +142,22 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       : AUTO_SYNC_COOLDOWN_MS;
 
     if (attemptsRef.current >= AUTO_SYNC_MAX_ATTEMPTS) return;
-    if (Date.now() - lastAttemptAtRef.current < cooldownMs) return;
+    if (Date.now() - lastAttemptAtRef.current < cooldownMs) {
+      console.info("[AuthFlow] AuthInitializer cooldown active", {
+        userId: user.id,
+        attempts: attemptsRef.current,
+        retryInMs: cooldownMs - (Date.now() - lastAttemptAtRef.current),
+      });
+      return;
+    }
 
     attemptsRef.current += 1;
     lastAttemptAtRef.current = Date.now();
     syncInFlightRef.current = true;
+    console.info("[AuthFlow] AuthInitializer starting sync", {
+      userId: user.id,
+      attempt: attemptsRef.current,
+    });
 
     void (async () => {
       try {
