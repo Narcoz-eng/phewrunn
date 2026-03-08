@@ -58,6 +58,7 @@ class PrivyErrorBoundary extends Component<PrivyWalletProviderProps, ErrorBounda
 
 function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
   const appId = import.meta.env.VITE_PRIVY_APP_ID as string | undefined;
+  const clientId = import.meta.env.VITE_PRIVY_CLIENT_ID as string | undefined;
   const providerInstanceIdRef = useRef<string>(createPrivyProviderInstanceId());
   const providerInstanceId = providerInstanceIdRef.current;
 
@@ -94,6 +95,7 @@ function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
     <PrivyProviderInstanceContext.Provider value={providerInstanceId}>
       <PrivyProvider
         appId={appId}
+        clientId={clientId}
         config={{
           appearance: {
             theme: "dark",

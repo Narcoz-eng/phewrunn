@@ -1449,9 +1449,19 @@ export async function startPrivyAuthBootstrap({
             pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
           });
 
-          if (!resolvedPayload.privyIdToken) {
-            console.warn(
-              "[AuthFlow] backend sync aborted because no usable Privy identity token was available",
+          if (resolvedPayload.privyIdToken) {
+            console.info("[AuthFlow] identity token acquired; starting /api/auth/privy-sync", {
+              owner,
+              mode,
+              userId: resolvedPayload.user.id,
+              attemptId: privyBootstrapAttemptId,
+              attempt,
+              totalAttempts,
+              tokenLength: resolvedPayload.privyIdToken.length,
+            });
+          } else {
+            console.info(
+              "[AuthFlow] no client identity token available; backend sync will use server-visible Privy session token",
               {
                 owner,
                 mode,
@@ -1464,29 +1474,7 @@ export async function startPrivyAuthBootstrap({
                 tokenLocalCheck: resolvedPayload.tokenLocalCheck ?? null,
               }
             );
-            writePrivySyncFailureSnapshot(PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE);
-            setPrivyAuthBootstrapState("failed", {
-              owner,
-              mode,
-              userId: user.id,
-              detail: PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE,
-              debugCode: "privy_identity_token_unavailable",
-              backendSyncStarted: false,
-              attempt,
-              totalAttempts,
-            });
-            return null;
           }
-
-          console.info("[AuthFlow] identity token acquired; starting /api/auth/privy-sync", {
-            owner,
-            mode,
-            userId: resolvedPayload.user.id,
-            attemptId: privyBootstrapAttemptId,
-            attempt,
-            totalAttempts,
-            tokenLength: resolvedPayload.privyIdToken.length,
-          });
 
           setPrivyAuthBootstrapState("syncing_backend", {
             owner,
@@ -1615,7 +1603,7 @@ export async function startPrivyAuthBootstrap({
         mode,
         userId: user.id,
         detail: PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE,
-        debugCode: "privy_identity_token_unavailable",
+        debugCode: "backend_session_not_created",
         attempt: PRIVY_BOOTSTRAP_MAX_ATTEMPTS,
         totalAttempts,
       });
@@ -2452,7 +2440,7 @@ export async function syncPrivySession(
   privyUserId: string,
   email?: string,
   name?: string,
-  privyIdToken?: string
+  privyIdToken?: string | null
 ): Promise<{ user: AuthUser }> {
   const normalizedUserId = privyUserId.trim();
   void email;
@@ -2464,11 +2452,14 @@ export async function syncPrivySession(
     typeof privyIdToken === "string" && privyIdToken.trim().length > 0
       ? privyIdToken.trim()
       : null;
-  if (!normalizedPrivyIdToken) {
-    throw new Error("Privy identity verification is still finalizing");
-  }
 
   const syncStartedAt = Date.now();
+
+  if (!normalizedPrivyIdToken) {
+    console.info("[AuthFlow] /api/auth/privy-sync request will rely on server-visible Privy token", {
+      userId: normalizedUserId,
+    });
+  }
 
   privySyncInFlight = (async () => {
     const controller = new AbortController();
@@ -2483,8 +2474,8 @@ export async function syncPrivySession(
         credentials: "include",
         signal: controller.signal,
         body: JSON.stringify({
-          privyIdToken: normalizedPrivyIdToken,
           ...(name ? { name } : {}),
+          ...(normalizedPrivyIdToken ? { privyIdToken: normalizedPrivyIdToken } : {}),
         }),
       });
 

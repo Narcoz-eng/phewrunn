@@ -236,6 +236,7 @@ export default function Feed() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
+  const feedShownLoggedRef = useRef(false);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const feedViewerScope = hasLiveSession && session?.user?.id ? session.user.id : "anonymous";
   const cachedFirstPageEntry = useMemo(
@@ -277,6 +278,23 @@ export default function Feed() {
     };
   }, [cachedFeedUser, session?.user]);
   const isAuthWritePending = Boolean(isUsingCachedUser);
+
+  useEffect(() => {
+    if (!hasLiveSession || !session?.user?.id) {
+      feedShownLoggedRef.current = false;
+      return;
+    }
+
+    if (feedShownLoggedRef.current) {
+      return;
+    }
+
+    feedShownLoggedRef.current = true;
+    console.info("[AuthFlow] feed shown", {
+      userId: session.user.id,
+      pathname: typeof window !== "undefined" ? window.location.pathname : null,
+    });
+  }, [hasLiveSession, session?.user?.id]);
 
   const guardPendingAuthWrite = useCallback(() => {
     if (!isAuthWritePending) {

@@ -74,8 +74,8 @@ export type ResolvedPrivyAuthPayload = {
   name?: string;
   privyIdToken?: string;
   pendingPrivyIdTokenPromise?: Promise<string | undefined>;
-  tokenResolution?: "available" | "pending" | "empty";
-  tokenSource?: "hook" | "refreshed_hook";
+  tokenResolution?: "available" | "pending" | "empty" | "server_request";
+  tokenSource?: "hook" | "refreshed_hook" | "server_request";
   tokenLocalCheck?: {
     tokenLength: number;
     tokenExpired: boolean;
@@ -1202,7 +1202,7 @@ export async function requestPrivyIdentityTokenForBackendSync(
     }
 
     if (!options.refreshPrivyAuthState) {
-      console.warn("[AuthFlow] authenticated Privy session has no auth-store refresh hook", {
+      console.info("[AuthFlow] authenticated Privy session will use server-visible Privy request token for backend sync", {
         attemptId: options.debugContext?.attemptId ?? null,
         caller: options.debugContext?.initialCaller ?? "system",
         owner: options.debugContext?.owner ?? null,
@@ -1213,7 +1213,8 @@ export async function requestPrivyIdentityTokenForBackendSync(
         user: latestUser,
         email,
         name,
-        tokenResolution: "empty",
+        tokenResolution: "server_request",
+        tokenSource: "server_request",
         tokenLocalCheck: null,
       };
     }
@@ -1267,7 +1268,7 @@ export async function requestPrivyIdentityTokenForBackendSync(
     });
 
     if (!hookPrivyIdToken) {
-      console.warn("[AuthFlow] authenticated Privy session did not expose a usable identity token after refresh", {
+      console.info("[AuthFlow] authenticated Privy session will use server-visible Privy request token for backend sync", {
         attemptId: options.debugContext?.attemptId ?? null,
         caller: options.debugContext?.initialCaller ?? "system",
         owner: options.debugContext?.owner ?? null,
@@ -1278,7 +1279,8 @@ export async function requestPrivyIdentityTokenForBackendSync(
         user: latestUser,
         email,
         name,
-        tokenResolution: "empty",
+        tokenResolution: "server_request",
+        tokenSource: "server_request",
         tokenLocalCheck,
       };
     }

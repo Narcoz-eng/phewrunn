@@ -2122,10 +2122,239 @@ const WalletAuthRequestSchema = z
 
 const PrivySyncRequestSchema = z
   .object({
-    privyIdToken: z.string().trim().min(1).max(4096),
+    privyIdToken: z.string().trim().min(1).max(4096).optional(),
     name: z.string().trim().max(120).optional(),
   })
   .strict();
+
+const PRIVY_ID_TOKEN_COOKIE_NAME = "privy-id-token";
+const PRIVY_ID_TOKEN_HEADER_NAME = "privy-id-token";
+const PRIVY_AUTH_TOKEN_COOKIE_NAME = "privy-token";
+
+type VerifiedPrivyUserLike = {
+  id?: unknown;
+  email?: { address?: unknown } | null;
+  linkedAccounts?: Array<{ type?: unknown; address?: unknown }> | null;
+};
+
+type PrivyAuthTokenClaimsLike = {
+  userId?: unknown;
+};
+
+function normalizeRequestTokenCandidate(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readCookieValue(cookieHeader: string | undefined, cookieName: string): string | null {
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const segments = cookieHeader.split(";");
+  for (const segment of segments) {
+    const separatorIndex = segment.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const rawName = segment.slice(0, separatorIndex).trim();
+    if (rawName !== cookieName) {
+      continue;
+    }
+
+    const rawValue = segment.slice(separatorIndex + 1).trim();
+    if (!rawValue) {
+      return null;
+    }
+
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+
+  return null;
+}
+
+function readAuthorizationBearerToken(headerValue: string | undefined): string | null {
+  if (!headerValue) {
+    return null;
+  }
+
+  const normalizedHeader = headerValue.trim();
+  if (!normalizedHeader.toLowerCase().startsWith("bearer ")) {
+    return null;
+  }
+
+  const token = normalizedHeader.slice("bearer ".length).trim();
+  return token.length > 0 ? token : null;
+}
+
+function buildPrivyTokenCacheKey(prefix: "id_token" | "auth_token", token: string | null): string | null {
+  if (!token || token.length <= 32) {
+    return null;
+  }
+  return `${prefix}:${token.slice(-32)}`;
+}
+
+function getPrivyEmailFromVerifiedUser(user: VerifiedPrivyUserLike): string | null {
+  const directEmail = user.email?.address;
+  if (typeof directEmail === "string" && directEmail.includes("@")) {
+    return directEmail.trim().toLowerCase();
+  }
+
+  const linkedEmail = user.linkedAccounts?.find(
+    (account) =>
+      account?.type === "email" &&
+      typeof account.address === "string" &&
+      account.address.includes("@")
+  );
+
+  return typeof linkedEmail?.address === "string"
+    ? linkedEmail.address.trim().toLowerCase()
+    : null;
+}
+
+async function resolveVerifiedPrivyRequestIdentity(
+  c: Context,
+  bodyPrivyIdToken: string | null
+): Promise<{
+  verifiedPrivyUserId: string;
+  verifiedEmail: string;
+  verificationMethod: "id_token" | "auth_token";
+  verificationSource: "body" | "header" | "cookie" | "authorization";
+}> {
+  if (!PRIVY_CLIENT) {
+    throw new Error("Privy client is not configured");
+  }
+
+  const requestCookieHeader = c.req.header("cookie");
+  const idTokenCandidates = [
+    {
+      value: normalizeRequestTokenCandidate(bodyPrivyIdToken),
+      source: "body" as const,
+    },
+    {
+      value: normalizeRequestTokenCandidate(c.req.header(PRIVY_ID_TOKEN_HEADER_NAME)),
+      source: "header" as const,
+    },
+    {
+      value: normalizeRequestTokenCandidate(
+        readCookieValue(requestCookieHeader, PRIVY_ID_TOKEN_COOKIE_NAME)
+      ),
+      source: "cookie" as const,
+    },
+  ];
+  const idTokenCandidate = idTokenCandidates.find((candidate) => Boolean(candidate.value));
+
+  if (idTokenCandidate?.value) {
+    try {
+      const verifiedTokenUser = (await withPrivyApiTimeout(
+        PRIVY_CLIENT.getUser({ idToken: idTokenCandidate.value }) as Promise<VerifiedPrivyUserLike>,
+        `privy.getUser(idToken:${idTokenCandidate.source})`
+      )) as VerifiedPrivyUserLike;
+      const verifiedPrivyUserId =
+        typeof verifiedTokenUser.id === "string" && verifiedTokenUser.id.trim().length > 0
+          ? verifiedTokenUser.id.trim()
+          : null;
+
+      if (!verifiedPrivyUserId) {
+        throw new Error("Invalid Privy identity token");
+      }
+
+      const verifiedEmail =
+        getPrivyEmailFromVerifiedUser(verifiedTokenUser) ||
+        buildPrivySyntheticEmail(verifiedPrivyUserId);
+      const privyCacheKey = buildPrivyTokenCacheKey("id_token", idTokenCandidate.value);
+
+      writeCachedPrivyIdentity(privyCacheKey, {
+        userId: verifiedPrivyUserId,
+        email: verifiedEmail,
+      });
+
+      return {
+        verifiedPrivyUserId,
+        verifiedEmail,
+        verificationMethod: "id_token",
+        verificationSource: idTokenCandidate.source,
+      };
+    } catch (error) {
+      console.warn("[privy-sync] Privy ID token verification failed; falling back to auth token", {
+        requestId: c.get("requestId") ?? null,
+        source: idTokenCandidate.source,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const authTokenCandidates = [
+    {
+      value: normalizeRequestTokenCandidate(
+        readCookieValue(requestCookieHeader, PRIVY_AUTH_TOKEN_COOKIE_NAME)
+      ),
+      source: "cookie" as const,
+    },
+    {
+      value: normalizeRequestTokenCandidate(c.req.header(PRIVY_AUTH_TOKEN_COOKIE_NAME)),
+      source: "header" as const,
+    },
+    {
+      value: normalizeRequestTokenCandidate(
+        readAuthorizationBearerToken(c.req.header("authorization"))
+      ),
+      source: "authorization" as const,
+    },
+  ];
+  const authTokenCandidate = authTokenCandidates.find((candidate) => Boolean(candidate.value));
+
+  if (!authTokenCandidate?.value) {
+    throw new Error("Missing verified Privy session token");
+  }
+
+  const verifiedClaims = (await withPrivyApiTimeout(
+    PRIVY_CLIENT.verifyAuthToken(authTokenCandidate.value),
+    `privy.verifyAuthToken(${authTokenCandidate.source})`
+  )) as PrivyAuthTokenClaimsLike;
+  const verifiedPrivyUserId =
+    typeof verifiedClaims.userId === "string" && verifiedClaims.userId.trim().length > 0
+      ? verifiedClaims.userId.trim()
+      : null;
+
+  if (!verifiedPrivyUserId) {
+    throw new Error("Invalid Privy auth token");
+  }
+
+  const cachedAuthUser = await readCachedPrivyAuthUser(verifiedPrivyUserId);
+  let verifiedEmail =
+    typeof cachedAuthUser?.email === "string" && cachedAuthUser.email.includes("@")
+      ? cachedAuthUser.email.trim().toLowerCase()
+      : null;
+
+  if (!verifiedEmail) {
+    const verifiedPrivyUser = (await withPrivyApiTimeout(
+      PRIVY_CLIENT.getUserById(verifiedPrivyUserId) as Promise<VerifiedPrivyUserLike>,
+      "privy.getUserById(verifiedPrivyUserId)"
+    )) as VerifiedPrivyUserLike;
+    verifiedEmail = getPrivyEmailFromVerifiedUser(verifiedPrivyUser);
+  }
+
+  const normalizedVerifiedEmail =
+    verifiedEmail || buildPrivySyntheticEmail(verifiedPrivyUserId);
+  const privyCacheKey = buildPrivyTokenCacheKey("auth_token", authTokenCandidate.value);
+
+  writeCachedPrivyIdentity(privyCacheKey, {
+    userId: verifiedPrivyUserId,
+    email: normalizedVerifiedEmail,
+  });
+
+  return {
+    verifiedPrivyUserId,
+    verifiedEmail: normalizedVerifiedEmail,
+    verificationMethod: "auth_token",
+    verificationSource: authTokenCandidate.source,
+  };
+}
 
 function consumeWalletAuthNonce(walletAddress: string, nonce: string): boolean {
   const now = Date.now();
@@ -2257,7 +2486,7 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
   const parsed = PrivySyncRequestSchema.safeParse(body);
   if (!parsed.success) {
     return c.json(
-      { error: { message: "A valid privyIdToken is required", code: "INVALID_INPUT" } },
+      { error: { message: "A valid Privy sync payload is required", code: "INVALID_INPUT" } },
       400
     );
   }
@@ -2267,60 +2496,13 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
   }
 
-  type PrivyUserLike = {
-    id?: unknown;
-    email?: { address?: unknown } | null;
-    linkedAccounts?: Array<{ type?: unknown; address?: unknown }> | null;
-  };
-
-  const getPrivyEmail = (user: PrivyUserLike): string | null => {
-    const directEmail = user.email?.address;
-    if (typeof directEmail === "string" && directEmail.includes("@")) {
-      return directEmail.trim().toLowerCase();
-    }
-
-    const linkedEmail = user.linkedAccounts?.find(
-      (account) =>
-        account?.type === "email" &&
-        typeof account.address === "string" &&
-        account.address.includes("@")
-    );
-    return typeof linkedEmail?.address === "string"
-      ? linkedEmail.address.trim().toLowerCase()
-      : null;
-  };
-
   try {
     const { privyIdToken, name } = parsed.data;
-    const verifiedTokenUser = (await withPrivyApiTimeout(
-      PRIVY_CLIENT.getUser({ idToken: privyIdToken }) as Promise<PrivyUserLike>,
-      "privy.getUser(idToken)"
-    )) as PrivyUserLike;
-
-    const verifiedPrivyUserId =
-      typeof verifiedTokenUser.id === "string" && verifiedTokenUser.id.trim().length > 0
-        ? verifiedTokenUser.id.trim()
-        : null;
-    if (!verifiedPrivyUserId) {
-      return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
-    }
-
-    const fullPrivyUser = (await withPrivyApiTimeout(
-      PRIVY_CLIENT.getUserById(verifiedPrivyUserId) as Promise<PrivyUserLike>,
-      "privy.getUserById(verifiedPrivyUserId)"
-    )) as PrivyUserLike;
-
-    const verifiedEmail =
-      getPrivyEmail(fullPrivyUser) ||
-      getPrivyEmail(verifiedTokenUser) ||
-      buildPrivySyntheticEmail(verifiedPrivyUserId);
-    const privyCacheKey =
-      privyIdToken.length > 32 ? `token:${privyIdToken.slice(-32)}` : null;
-
-    writeCachedPrivyIdentity(privyCacheKey, {
-      userId: verifiedPrivyUserId,
-      email: verifiedEmail,
-    });
+    const verifiedIdentity = await resolveVerifiedPrivyRequestIdentity(
+      c,
+      normalizeRequestTokenCandidate(privyIdToken)
+    );
+    const { verifiedPrivyUserId, verifiedEmail } = verifiedIdentity;
 
     const now = new Date();
     const existingLink = await findAuthUserLinkByPrivyUserId(verifiedPrivyUserId);
@@ -2398,7 +2580,15 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     });
 
     writeCachedPrivyAuthUser(verifiedPrivyUserId, user);
-    return issueAuthSessionResponse(c, user, now);
+    const response = await issueAuthSessionResponse(c, user, now);
+    console.info("[AuthFlow] /api/auth/privy-sync 200", {
+      requestId: c.get("requestId") ?? null,
+      userId: user.id,
+      privyUserId: verifiedPrivyUserId,
+      verificationMethod: verifiedIdentity.verificationMethod,
+      verificationSource: verifiedIdentity.verificationSource,
+    });
+    return response;
   } catch (error) {
     if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
       c.header("Retry-After", "2");
@@ -2427,6 +2617,18 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     console.error("[privy-sync] Error:", error);
     return c.json({ error: { message: "Invalid Privy session", code: "UNAUTHORIZED" } }, 401);
   }
+}
+
+function logApiMe200(
+  c: Context,
+  userId: string,
+  source: "cache" | "database" | "session_fallback" | "stale_cache"
+): void {
+  console.info("[AuthFlow] /api/me 200", {
+    requestId: c.get("requestId") ?? null,
+    userId,
+    source,
+  });
 }
 
 // =====================================================
@@ -3079,6 +3281,7 @@ app.get("/api/me", async (c) => {
 
   const cachedUser = await readCachedMeResponse(user.id);
   if (cachedUser) {
+    logApiMe200(c, user.id, "cache");
     return c.json({ data: cachedUser });
   }
 
@@ -3181,6 +3384,7 @@ app.get("/api/me", async (c) => {
     const staleCachedUser = await readCachedMeResponse(user.id, { allowStale: true });
     if (staleCachedUser) {
       console.warn("[/api/me] Serving stale cached profile while database lookup is degraded");
+      logApiMe200(c, user.id, "stale_cache");
       return c.json({ data: staleCachedUser });
     }
     if (session?.user) {
@@ -3206,6 +3410,7 @@ app.get("/api/me", async (c) => {
       if (sessionIsStatelessFallback) {
         console.warn("[/api/me] Serving session-backed fallback profile while database is unavailable");
       }
+      logApiMe200(c, user.id, "session_fallback");
       return c.json({ data: sessionBackedUser });
     }
     return c.json(
@@ -3222,6 +3427,7 @@ app.get("/api/me", async (c) => {
   }
 
   writeCachedMeResponse(user.id, dbUser);
+  logApiMe200(c, user.id, "database");
   return c.json({ data: dbUser });
 });
 

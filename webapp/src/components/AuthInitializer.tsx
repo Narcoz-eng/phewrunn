@@ -28,6 +28,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
   const latestPrivyIdentityTokenRef = useRef<string | null>(null);
   const lastLoggedSdkSnapshotRef = useRef<string | null>(null);
+  const lastAuthenticatedUserIdRef = useRef<string | null>(null);
   const [initialHydrationTimedOut, setInitialHydrationTimedOut] = useState(false);
   const initialHydrationStartAtRef = useRef(Date.now());
 
@@ -58,6 +59,26 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         ? identityToken.trim()
         : null;
   }, [identityToken]);
+
+  useEffect(() => {
+    if (!ready || !authenticated || !user?.id) {
+      lastAuthenticatedUserIdRef.current = null;
+      return;
+    }
+
+    if (lastAuthenticatedUserIdRef.current === user.id) {
+      return;
+    }
+
+    lastAuthenticatedUserIdRef.current = user.id;
+    console.info("[AuthFlow] Privy authenticated", {
+      providerInstanceId,
+      ready,
+      authenticated,
+      userId: user.id,
+      hookIdentityTokenPresent: Boolean(latestPrivyIdentityTokenRef.current),
+    });
+  }, [authenticated, providerInstanceId, ready, user?.id]);
 
   useEffect(() => {
     const snapshotKey = JSON.stringify({
