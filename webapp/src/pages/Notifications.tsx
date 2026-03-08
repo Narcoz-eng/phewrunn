@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -152,6 +152,7 @@ function EmptyState({ mode }: { mode: "all" | "unread" }) {
 export default function Notifications() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const pageTopRef = useRef<HTMLDivElement>(null);
   const { data: session } = useSession();
   const { isAuthenticated, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
@@ -406,13 +407,37 @@ export default function Notifications() {
   const shouldShowSessionRecovery = isAuthenticated && isUsingCachedUser && filteredNotifications.length === 0;
   const shouldShowRecoveryBanner = isAuthenticated && isUsingCachedUser && filteredNotifications.length > 0;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof window === "undefined") return;
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    let rafId = 0;
+    let secondRafId = 0;
+    const timeoutId = window.setTimeout(() => {
+      pageTopRef.current?.scrollIntoView({ block: "start" });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }, 90);
+
+    const alignToTop = () => {
+      pageTopRef.current?.scrollIntoView({ block: "start" });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    };
+
+    alignToTop();
+    rafId = window.requestAnimationFrame(() => {
+      alignToTop();
+      secondRafId = window.requestAnimationFrame(() => {
+        alignToTop();
+      });
+    });
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (rafId) window.cancelAnimationFrame(rafId);
+      if (secondRafId) window.cancelAnimationFrame(secondRafId);
+    };
   }, []);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div ref={pageTopRef} className="min-h-screen bg-background">
       {/* Header */}
       <header className="app-topbar">
         <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
@@ -515,9 +540,14 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={104}
                 overscanPx={900}
-                className="pt-1"
+                className="pt-2"
                 renderItem={(notification, index) => (
-                  <div className={index < filteredNotifications.length - 1 ? "pb-3" : undefined}>
+                  <div
+                    className={cn(
+                      index === 0 && "pt-2",
+                      index < filteredNotifications.length - 1 && "pb-3"
+                    )}
+                  >
                     <NotificationItem
                       notification={notification}
                       onMarkClicked={handleMarkClicked}
@@ -564,9 +594,14 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={112}
                 overscanPx={900}
-                className="pt-1"
+                className="pt-2"
                 renderItem={(notification, index) => (
-                  <div className={index < filteredNotifications.length - 1 ? "pb-3" : undefined}>
+                  <div
+                    className={cn(
+                      index === 0 && "pt-2",
+                      index < filteredNotifications.length - 1 && "pb-3"
+                    )}
+                  >
                     <NotificationItem
                       notification={notification}
                       onMarkClicked={handleMarkClicked}
