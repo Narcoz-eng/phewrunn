@@ -21,6 +21,31 @@ function RouteLoading({ label }: { label: string }) {
   );
 }
 
+function LoggedNavigate({
+  to,
+  replace = false,
+  state,
+  reason,
+  context,
+}: {
+  to: string;
+  replace?: boolean;
+  state?: unknown;
+  reason: string;
+  context: Record<string, unknown>;
+}) {
+  useEffect(() => {
+    console.warn("[AuthFlow] ProtectedRoute redirect", {
+      to,
+      replace,
+      reason,
+      ...context,
+    });
+  }, [context, reason, replace, state, to]);
+
+  return <Navigate to={to} replace={replace} state={state} />;
+}
+
 function useStoredAuthHint(): boolean {
   if (isExplicitLogoutCoolingDown()) {
     return false;
@@ -69,14 +94,40 @@ function ProtectedRouteFallback({
     if (hadTokenHint.current && !graceExpired) {
       return <RouteLoading label="Signing in..." />;
     }
-    return <Navigate to="/login" replace />;
+    return (
+      <LoggedNavigate
+        to="/login"
+        replace
+        reason="fallback_no_effective_user"
+        context={{
+          pathname: location.pathname,
+          hasLiveSession,
+          isPending,
+          graceExpired,
+          hadTokenHint: hadTokenHint.current,
+        }}
+      />
+    );
   }
 
   if (!hasLiveSession) {
     if (!graceExpired) {
       return <RouteLoading label="Finalizing sign-in..." />;
     }
-    return <Navigate to="/login" replace />;
+    return (
+      <LoggedNavigate
+        to="/login"
+        replace
+        reason="fallback_effective_user_without_live_session"
+        context={{
+          pathname: location.pathname,
+          effectiveUserId: effectiveUser.id,
+          hasLiveSession,
+          isPending,
+          graceExpired,
+        }}
+      />
+    );
   }
 
   if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {
@@ -213,12 +264,24 @@ function ProtectedRouteWithPrivy({
   if (!effectiveUser) {
     if (privySyncFailure && graceExpired) {
       return (
-        <Navigate
+        <LoggedNavigate
           to="/login"
           replace
           state={{
             from: location.pathname + location.search + location.hash,
             syncError: privySyncFailure.message,
+          }}
+          reason="privy_no_effective_user_after_grace_with_sync_failure"
+          context={{
+            pathname: location.pathname,
+            ready,
+            authenticated,
+            hasLiveSession,
+            isPending,
+            hasPrivySyncHint,
+            hadTokenHint: hadTokenHint.current,
+            graceExpired,
+            privySyncFailure: privySyncFailure.message,
           }}
         />
       );
@@ -239,12 +302,23 @@ function ProtectedRouteWithPrivy({
     }
     if (privySyncFailure) {
       return (
-        <Navigate
+        <LoggedNavigate
           to="/login"
           replace
           state={{
             from: location.pathname + location.search + location.hash,
             syncError: privySyncFailure.message,
+          }}
+          reason="privy_no_effective_user_with_sync_failure"
+          context={{
+            pathname: location.pathname,
+            ready,
+            authenticated,
+            hasLiveSession,
+            isPending,
+            hasPrivySyncHint,
+            hadTokenHint: hadTokenHint.current,
+            privySyncFailure: privySyncFailure.message,
           }}
         />
       );
@@ -252,18 +326,45 @@ function ProtectedRouteWithPrivy({
     if (hadTokenHint.current && !graceExpired) {
       return <RouteLoading label="Signing in..." />;
     }
-    return <Navigate to="/login" replace />;
+    return (
+      <LoggedNavigate
+        to="/login"
+        replace
+        reason="privy_no_effective_user"
+        context={{
+          pathname: location.pathname,
+          ready,
+          authenticated,
+          hasLiveSession,
+          isPending,
+          hasPrivySyncHint,
+          hadTokenHint: hadTokenHint.current,
+          graceExpired,
+        }}
+      />
+    );
   }
 
   if (!hasLiveSession) {
     if (privySyncFailure && graceExpired) {
       return (
-        <Navigate
+        <LoggedNavigate
           to="/login"
           replace
           state={{
             from: location.pathname + location.search + location.hash,
             syncError: privySyncFailure.message,
+          }}
+          reason="privy_effective_user_without_live_session_after_grace"
+          context={{
+            pathname: location.pathname,
+            ready,
+            authenticated,
+            effectiveUserId: effectiveUser.id,
+            hasLiveSession,
+            isPending,
+            graceExpired,
+            privySyncFailure: privySyncFailure.message,
           }}
         />
       );

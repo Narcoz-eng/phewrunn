@@ -817,6 +817,10 @@ export function clearPrivyAuthBootstrapState(): void {
 export function setPrivyAuthAnonymousState(
   owner: PrivyAuthBootstrapOwner = "system"
 ): void {
+  console.info("[AuthFlow] applying anonymous bootstrap state", {
+    owner,
+    previousSnapshot: readPrivyAuthBootstrapSnapshot(),
+  });
   setPrivyAuthBootstrapState("anonymous", {
     owner,
     mode: "system",
@@ -1116,6 +1120,11 @@ export async function startPrivyAuthBootstrap({
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
   const sameUserSnapshot = existingSnapshot?.userId === user.id ? existingSnapshot : null;
   const currentState = sameUserSnapshot?.state ?? existingSnapshot?.state ?? "idle";
+  const delegatedAuthenticatedSdkState =
+    owner === "AuthInitializer" &&
+    triggerSource === "component_mount" &&
+    privyReady === true &&
+    privyAuthenticated === true;
   const hardCooldownRemainingMs = Math.max(
     getPrivyIdentityRateLimitRemainingMs(now),
     getPrivyAuthBootstrapCooldownRemainingMs(sameUserSnapshot, now)
@@ -1133,7 +1142,28 @@ export async function startPrivyAuthBootstrap({
       typeof privyIdentityToken === "string" && privyIdentityToken.trim().length > 0,
   });
 
+  if (delegatedAuthenticatedSdkState) {
+    console.info("[AuthFlow] controller received delegated bootstrap from AuthInitializer", {
+      owner,
+      mode,
+      userId: user.id,
+      currentState,
+      hasExistingSnapshot: Boolean(existingSnapshot),
+      sameUserSnapshotState: sameUserSnapshot?.state ?? null,
+      hookIdentityTokenPresent:
+        typeof privyIdentityToken === "string" && privyIdentityToken.trim().length > 0,
+    });
+  }
+
   if (privyAuthBootstrapInFlight) {
+    if (delegatedAuthenticatedSdkState) {
+      console.info("[AuthFlow] delegated authenticated SDK state ignored because controller is already in progress", {
+        owner,
+        mode,
+        userId: user.id,
+        currentState,
+      });
+    }
     console.info("[AuthFlow] bootstrap reusing active controller", {
       owner,
       mode,
@@ -1148,6 +1178,15 @@ export async function startPrivyAuthBootstrap({
     isPrivyAuthBootstrapStatePending(sameUserSnapshot.state) &&
     !canResumePrivyAuthBootstrapPendingState(sameUserSnapshot, owner, user.id)
   ) {
+    if (delegatedAuthenticatedSdkState) {
+      console.info("[AuthFlow] delegated authenticated SDK state ignored because pending state still owns the handoff", {
+        owner,
+        mode,
+        userId: user.id,
+        currentState: sameUserSnapshot.state,
+        debugCode: sameUserSnapshot.debugCode,
+      });
+    }
     console.info("[AuthFlow] bootstrap blocked by shared pending state", {
       owner,
       mode,
@@ -1159,6 +1198,15 @@ export async function startPrivyAuthBootstrap({
   }
 
   if (canResumePrivyAuthBootstrapPendingState(sameUserSnapshot, owner, user.id)) {
+    if (delegatedAuthenticatedSdkState) {
+      console.info("[AuthFlow] delegated authenticated SDK state accepted; resuming token handoff", {
+        owner,
+        mode,
+        userId: user.id,
+        currentState: sameUserSnapshot?.state,
+        debugCode: sameUserSnapshot?.debugCode,
+      });
+    }
     console.info("[AuthFlow] bootstrap resuming from deferred pending state", {
       owner,
       mode,
@@ -1169,6 +1217,15 @@ export async function startPrivyAuthBootstrap({
   }
 
   if (hardCooldownRemainingMs > 0) {
+    if (delegatedAuthenticatedSdkState) {
+      console.info("[AuthFlow] delegated authenticated SDK state ignored because cooldown is active", {
+        owner,
+        mode,
+        userId: user.id,
+        currentState,
+        retryInMs: hardCooldownRemainingMs,
+      });
+    }
     console.info("[AuthFlow] bootstrap blocked by cooldown", {
       owner,
       mode,
@@ -1183,6 +1240,14 @@ export async function startPrivyAuthBootstrap({
   }
 
   if (sameUserSnapshot?.state === "failed_rate_limited" && mode !== "manual") {
+    if (delegatedAuthenticatedSdkState) {
+      console.info("[AuthFlow] delegated authenticated SDK state ignored until explicit manual retry", {
+        owner,
+        mode,
+        userId: user.id,
+        currentState: sameUserSnapshot.state,
+      });
+    }
     console.info("[AuthFlow] bootstrap blocked until explicit manual retry", {
       owner,
       mode,
@@ -1196,6 +1261,15 @@ export async function startPrivyAuthBootstrap({
 
   const lockAttempt = acquirePrivyAuthBootstrapLock(user.id, now);
   if (!lockAttempt.acquired) {
+    if (delegatedAuthenticatedSdkState) {
+      console.info("[AuthFlow] delegated authenticated SDK state ignored because another tab owns the bootstrap lock", {
+        owner,
+        mode,
+        userId: user.id,
+        currentState,
+        lockOwnerTabId: lockAttempt.lock.ownerTabId,
+      });
+    }
     console.info("[AuthFlow] bootstrap blocked by active browser tab", {
       owner,
       mode,

@@ -89,8 +89,15 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     }
 
     latestPrivyUserRef.current = null;
+    console.info("[AuthFlow] AuthInitializer applying anonymous state because Privy SDK is not authenticated", {
+      providerInstanceId,
+      ready,
+      authenticated,
+      previousUserId: user?.id ?? null,
+      bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
+    });
     setPrivyAuthAnonymousState("AuthInitializer");
-  }, [authenticated]);
+  }, [authenticated, providerInstanceId, ready, user]);
 
   useEffect(() => {
     if (!ready || !authenticated || !user) {
