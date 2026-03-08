@@ -145,6 +145,39 @@ function writeCachedFirstFeedPage(
   }
 }
 
+function stripPersonalizedPostState(post: Post): Post {
+  if (!post.isLiked && !post.isReposted && !post.isFollowingAuthor) {
+    return post;
+  }
+
+  return {
+    ...post,
+    isLiked: false,
+    isReposted: false,
+    isFollowingAuthor: false,
+  };
+}
+
+function stripPersonalizedFeedPageState(page: FeedPage): FeedPage {
+  let didChange = false;
+  const nextItems = page.items.map((item) => {
+    const nextItem = stripPersonalizedPostState(item);
+    if (nextItem !== item) {
+      didChange = true;
+    }
+    return nextItem;
+  });
+
+  if (!didChange) {
+    return page;
+  }
+
+  return {
+    ...page,
+    items: nextItems,
+  };
+}
+
 function shouldUseSharedPublicFeedCache(tab: FeedTab, search: string): boolean {
   return tab !== "following" && search.trim().length === 0;
 }
@@ -181,7 +214,12 @@ function writeCachedFirstFeedPageForScopes(
 ): void {
   writeCachedFirstFeedPage(viewerScope, tab, search, page);
   if (viewerScope !== FEED_PUBLIC_CACHE_SCOPE && shouldUseSharedPublicFeedCache(tab, search)) {
-    writeCachedFirstFeedPage(FEED_PUBLIC_CACHE_SCOPE, tab, search, page);
+    writeCachedFirstFeedPage(
+      FEED_PUBLIC_CACHE_SCOPE,
+      tab,
+      search,
+      stripPersonalizedFeedPageState(page)
+    );
   }
 }
 
@@ -239,7 +277,11 @@ function shouldBypassCachedRealtimeMerge(post: Post, tab: FeedTab, search: strin
   return tab === "latest" && search.trim().length === 0 && isRecentFeedPost(post);
 }
 
-function mergePostWithCachedRealtimeState(post: Post, cachedPost: Post | null | undefined): Post {
+function mergePostWithCachedRealtimeState(
+  post: Post,
+  cachedPost: Post | null | undefined,
+  options?: { preserveEngagementState?: boolean }
+): Post {
   if (!cachedPost) {
     return post;
   }
@@ -251,6 +293,10 @@ function mergePostWithCachedRealtimeState(post: Post, cachedPost: Post | null | 
   let nextMcap1h = post.mcap1h;
   let nextMcap6h = post.mcap6h;
   let nextIsWin = post.isWin;
+  let nextIsLiked = post.isLiked;
+  let nextIsReposted = post.isReposted;
+  let nextIsFollowingAuthor = post.isFollowingAuthor;
+  let nextCounts = post._count;
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -286,6 +332,41 @@ function mergePostWithCachedRealtimeState(post: Post, cachedPost: Post | null | 
     didChange = true;
   }
 
+  if (options?.preserveEngagementState) {
+    if (cachedPost.isLiked && !post.isLiked) {
+      nextIsLiked = true;
+      didChange = true;
+
+      const fetchedLikes = post._count?.likes ?? 0;
+      const cachedLikes = cachedPost._count?.likes ?? fetchedLikes;
+      if (cachedLikes > fetchedLikes) {
+        nextCounts = {
+          ...nextCounts,
+          likes: cachedLikes,
+        };
+      }
+    }
+
+    if (cachedPost.isReposted && !post.isReposted) {
+      nextIsReposted = true;
+      didChange = true;
+
+      const fetchedReposts = post._count?.reposts ?? 0;
+      const cachedReposts = cachedPost._count?.reposts ?? fetchedReposts;
+      if (cachedReposts > fetchedReposts) {
+        nextCounts = {
+          ...nextCounts,
+          reposts: cachedReposts,
+        };
+      }
+    }
+
+    if (cachedPost.isFollowingAuthor && !post.isFollowingAuthor) {
+      nextIsFollowingAuthor = true;
+      didChange = true;
+    }
+  }
+
   if (!didChange) {
     return post;
   }
@@ -298,6 +379,10 @@ function mergePostWithCachedRealtimeState(post: Post, cachedPost: Post | null | 
     mcap1h: nextMcap1h,
     mcap6h: nextMcap6h,
     isWin: nextIsWin,
+    isLiked: nextIsLiked,
+    isReposted: nextIsReposted,
+    isFollowingAuthor: nextIsFollowingAuthor,
+    _count: nextCounts,
   };
 }
 
@@ -577,8 +662,13 @@ export default function Feed() {
       typeof json?.totalPosts === "number" && Number.isFinite(json.totalPosts)
         ? json.totalPosts
         : null;
+    const currentVisiblePostsById = new Map<string, Post>();
+    for (const item of currentQueryFirstPage?.items ?? []) {
+      currentVisiblePostsById.set(item.id, item);
+    }
+
     const cachedRealtimePostsById = new Map<string, Post>();
-    for (const page of [currentQueryFirstPage, liveCachedFirstPage, cachedFirstPage]) {
+    for (const page of [liveCachedFirstPage, cachedFirstPage]) {
       if (!page?.items?.length) {
         continue;
       }
@@ -588,11 +678,22 @@ export default function Feed() {
         }
       }
     }
-    const mergedItems = items.map((item) =>
-      shouldBypassCachedRealtimeMerge(item, tab, search)
-        ? item
-        : mergePostWithCachedRealtimeState(item, cachedRealtimePostsById.get(item.id))
-    );
+    const mergedItems = items.map((item) => {
+      const mergedWithCurrentView = mergePostWithCachedRealtimeState(
+        item,
+        currentVisiblePostsById.get(item.id),
+        { preserveEngagementState: true }
+      );
+
+      if (shouldBypassCachedRealtimeMerge(item, tab, search)) {
+        return mergedWithCurrentView;
+      }
+
+      return mergePostWithCachedRealtimeState(
+        mergedWithCurrentView,
+        cachedRealtimePostsById.get(item.id)
+      );
+    });
 
     if (shouldUseCachedFirstPageFallback && fallbackFirstPage && mergedItems.length === 0) {
       return fallbackFirstPage;
@@ -737,7 +838,7 @@ export default function Feed() {
   }, [activeTab, effectiveSearchQuery, feedViewerScope, postsPages?.pages]);
 
   const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
-    queryClient.setQueryData<InfiniteData<FeedPage>>(
+    const updatedData = queryClient.setQueryData<InfiniteData<FeedPage>>(
       activeFeedQueryKey,
       (oldData) => {
         if (!oldData) return oldData;
@@ -750,7 +851,16 @@ export default function Feed() {
         };
       }
     );
-  }, [activeFeedQueryKey, queryClient]);
+    const nextFirstPage = updatedData?.pages?.[0];
+    if (nextFirstPage?.items.length) {
+      writeCachedFirstFeedPageForScopes(
+        feedViewerScope,
+        activeTab,
+        effectiveSearchQuery,
+        nextFirstPage
+      );
+    }
+  }, [activeFeedQueryKey, activeTab, effectiveSearchQuery, feedViewerScope, queryClient]);
 
   const applyFirstPageToCache = useCallback(
     (tab: FeedTab, search: string, nextFirstPage: FeedPage) => {

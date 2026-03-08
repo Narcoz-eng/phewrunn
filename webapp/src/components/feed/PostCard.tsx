@@ -840,6 +840,21 @@ export function PostCard({
     setIsFollowing(post.isFollowingAuthor ?? false);
   }, [post.isFollowingAuthor]);
 
+  useEffect(() => {
+    setIsLiked(post.isLiked);
+    setIsReposted(post.isReposted);
+    setLikeCount(post._count?.likes ?? 0);
+    setRepostCount(post._count?.reposts ?? 0);
+    setCommentCount(post._count?.comments ?? 0);
+  }, [
+    post.id,
+    post.isLiked,
+    post.isReposted,
+    post._count?.comments,
+    post._count?.likes,
+    post._count?.reposts,
+  ]);
+
   // Complete the intended "connect then buy" flow without opening both popups at once.
   useEffect(() => {
     if (!tradeWalletPublicKey) return;
