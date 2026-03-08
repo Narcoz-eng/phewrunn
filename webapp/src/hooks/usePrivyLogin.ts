@@ -21,6 +21,7 @@ import {
 import { toast } from "sonner";
 
 const PRIVY_LOGOUT_SETTLE_MS = 250;
+const PRIVY_CALLBACK_READY_TIMEOUT_MS = 15_000;
 
 type UsePrivyLoginOptions = {
   onSuccess?: (user: AuthUser) => void;
@@ -42,6 +43,12 @@ type StartLoginOptions = {
     type: "email";
     value: string;
   };
+};
+
+type PendingPrivyCallbackHandoff = {
+  user: PrivyUserLike;
+  startedAt: number;
+  resumed: boolean;
 };
 
 function getPrivyErrorMessage(error: unknown): string {
@@ -78,6 +85,9 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const latestPrivyIdentityTokenRef = useRef<string | null>(null);
   const latestPrivyStateRef = useRef({ ready: false, authenticated: false });
   const successfulLoginHandledRef = useRef(false);
+  const pendingPrivyCallbackRef = useRef<PendingPrivyCallbackHandoff | null>(null);
+  const pendingPrivyCallbackTimeoutRef = useRef<number | null>(null);
+  const pendingPrivyCallbackResumeInFlightRef = useRef(false);
 
   const handleSuccessfulLogin = useCallback((syncedUser: AuthUser) => {
     if (successfulLoginHandledRef.current) {
@@ -89,6 +99,19 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     setLocalSyncError(null);
     onSuccess?.(syncedUser);
   }, [onSuccess]);
+
+  const clearPendingPrivyCallbackTimeout = useCallback(() => {
+    if (pendingPrivyCallbackTimeoutRef.current !== null) {
+      window.clearTimeout(pendingPrivyCallbackTimeoutRef.current);
+      pendingPrivyCallbackTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearPendingPrivyCallbackHandoff = useCallback(() => {
+    clearPendingPrivyCallbackTimeout();
+    pendingPrivyCallbackRef.current = null;
+    pendingPrivyCallbackResumeInFlightRef.current = false;
+  }, [clearPendingPrivyCallbackTimeout]);
 
   useEffect(() => {
     latestPrivyUserRef.current = user ? (user as PrivyUserLike) : null;
@@ -112,7 +135,8 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
     clearPrivyLoginIntent();
     setLocalSyncError(null);
-  }, [hasLiveSession]);
+    clearPendingPrivyCallbackHandoff();
+  }, [clearPendingPrivyCallbackHandoff, hasLiveSession]);
 
   useEffect(() => {
     if (authenticated) {
@@ -122,11 +146,28 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     latestPrivyUserRef.current = null;
     successfulLoginHandledRef.current = false;
     setLocalSyncError(null);
-  }, [authenticated]);
+    clearPendingPrivyCallbackHandoff();
+  }, [authenticated, clearPendingPrivyCallbackHandoff]);
+
+  useEffect(() => clearPendingPrivyCallbackHandoff, [clearPendingPrivyCallbackHandoff]);
+
+  const isResumablePendingSnapshot = useCallback((snapshot: ReturnType<typeof readPrivyAuthBootstrapSnapshot>, userId: string) => {
+    if (!snapshot || !isPrivyAuthBootstrapStatePending(snapshot.state)) {
+      return false;
+    }
+
+    return (
+      snapshot.owner === "usePrivyLogin" &&
+      snapshot.userId === userId &&
+      (snapshot.debugCode === "awaiting_privy_sdk_ready" ||
+        snapshot.debugCode === "awaiting_privy_identity_token_hook")
+    );
+  }, []);
 
   const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<AuthUser | null> => {
     const currentSnapshot = readPrivyAuthBootstrapSnapshot();
-    if (isPrivyAuthBootstrapStatePending(currentSnapshot?.state)) {
+    const resumablePendingSnapshot = isResumablePendingSnapshot(currentSnapshot, privyUser.id);
+    if (isPrivyAuthBootstrapStatePending(currentSnapshot?.state) && !resumablePendingSnapshot) {
       console.info("[AuthFlow] usePrivyLogin manual retry blocked by pending auth flow", {
         userId: privyUser.id,
         state: currentSnapshot?.state,
@@ -134,6 +175,14 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
         mode: currentSnapshot?.mode,
       });
       return null;
+    }
+
+    if (resumablePendingSnapshot) {
+      console.info("[AuthFlow] usePrivyLogin resuming deferred bootstrap handoff", {
+        userId: privyUser.id,
+        state: currentSnapshot?.state,
+        debugCode: currentSnapshot?.debugCode,
+      });
     }
 
     const cooldownActive =
@@ -178,13 +227,56 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }
 
     return syncedUser;
-  }, [handleSuccessfulLogin]);
+  }, [handleSuccessfulLogin, isResumablePendingSnapshot]);
+
+  useEffect(() => {
+    const pendingCallback = pendingPrivyCallbackRef.current;
+    if (!pendingCallback || pendingCallback.resumed || pendingPrivyCallbackResumeInFlightRef.current) {
+      return;
+    }
+
+    const hookIdentityToken = latestPrivyIdentityTokenRef.current;
+    const sdkReadyForBootstrap =
+      Boolean(hookIdentityToken) ||
+      (latestPrivyStateRef.current.ready && latestPrivyStateRef.current.authenticated);
+    const latestPrivyUser = latestPrivyUserRef.current;
+    const candidateUser =
+      latestPrivyUser?.id === pendingCallback.user.id
+        ? latestPrivyUser
+        : pendingCallback.user;
+
+    if (!sdkReadyForBootstrap || !candidateUser) {
+      return;
+    }
+
+    pendingCallback.resumed = true;
+    pendingPrivyCallbackResumeInFlightRef.current = true;
+    clearPendingPrivyCallbackTimeout();
+
+    console.info("[AuthFlow] usePrivyLogin resuming bootstrap after Privy SDK became ready", {
+      userId: candidateUser.id,
+      privyReady: latestPrivyStateRef.current.ready,
+      privyAuthenticated: latestPrivyStateRef.current.authenticated,
+      hookIdentityTokenPresent: Boolean(hookIdentityToken),
+      callbackWaitMs: Date.now() - pendingCallback.startedAt,
+    });
+
+    void (async () => {
+      try {
+        await runManualSync(candidateUser);
+      } finally {
+        clearPendingPrivyCallbackHandoff();
+      }
+    })();
+  }, [authenticated, clearPendingPrivyCallbackHandoff, clearPendingPrivyCallbackTimeout, identityToken, ready, runManualSync, user]);
 
   const handlePrivyAuthComplete = useCallback(async (privyUser: PrivyUserLike) => {
     clearPrivySyncFailureState();
     setLocalSyncError(null);
     const privyState = latestPrivyStateRef.current;
     const hookIdentityToken = latestPrivyIdentityTokenRef.current;
+    const sdkReadyForBootstrap =
+      Boolean(hookIdentityToken) || (privyState.ready && privyState.authenticated);
     console.info("[AuthFlow] usePrivyLogin Privy auth complete", {
       userId: privyUser.id,
       privyReady: privyState.ready,
@@ -193,40 +285,73 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       hookIdentityTokenLength: hookIdentityToken?.length ?? 0,
     });
 
-    if (!privyState.ready || !privyState.authenticated) {
-      setPrivyAuthBootstrapState("privy_pending", {
-        owner: "usePrivyLogin",
-        mode: "manual",
-        userId: privyUser.id,
-        detail: "waiting for Privy SDK authenticated state",
-        debugCode: "awaiting_privy_sdk_ready",
-      });
+    if (!sdkReadyForBootstrap) {
+      const currentSnapshot = readPrivyAuthBootstrapSnapshot();
+      const existingPendingCallback = pendingPrivyCallbackRef.current;
+      const duplicatePendingCallback =
+        existingPendingCallback?.user.id === privyUser.id &&
+        !existingPendingCallback.resumed;
+      const alreadyWaitingForSdkReady =
+        currentSnapshot?.owner === "usePrivyLogin" &&
+        currentSnapshot?.userId === privyUser.id &&
+        currentSnapshot?.state === "privy_pending" &&
+        currentSnapshot?.debugCode === "awaiting_privy_sdk_ready";
+
+      if (!duplicatePendingCallback) {
+        pendingPrivyCallbackRef.current = {
+          user: privyUser,
+          startedAt: Date.now(),
+          resumed: false,
+        };
+        clearPendingPrivyCallbackTimeout();
+        pendingPrivyCallbackTimeoutRef.current = window.setTimeout(() => {
+          const pendingCallback = pendingPrivyCallbackRef.current;
+          if (!pendingCallback || pendingCallback.user.id !== privyUser.id || pendingCallback.resumed) {
+            return;
+          }
+
+          const message =
+            "Privy sign-in completed, but the Privy SDK never became ready for backend sign-in. Please try again.";
+          console.warn("[AuthFlow] usePrivyLogin timed out waiting for Privy SDK readiness after callback", {
+            userId: privyUser.id,
+            waitMs: PRIVY_CALLBACK_READY_TIMEOUT_MS,
+          });
+          clearPendingPrivyCallbackHandoff();
+          setLocalSyncError(message);
+          setPrivyAuthBootstrapState("failed", {
+            owner: "usePrivyLogin",
+            mode: "manual",
+            userId: privyUser.id,
+            detail: message,
+            debugCode: "privy_sdk_ready_timeout",
+          });
+        }, PRIVY_CALLBACK_READY_TIMEOUT_MS);
+      }
+
+      if (!alreadyWaitingForSdkReady) {
+        setPrivyAuthBootstrapState("privy_pending", {
+          owner: "usePrivyLogin",
+          mode: "manual",
+          userId: privyUser.id,
+          detail: "waiting for Privy SDK authenticated state",
+          debugCode: "awaiting_privy_sdk_ready",
+        });
+      }
+
       console.info("[AuthFlow] usePrivyLogin deferring bootstrap until Privy SDK is ready/authenticated", {
         userId: privyUser.id,
         privyReady: privyState.ready,
         privyAuthenticated: privyState.authenticated,
+        hookIdentityTokenPresent: Boolean(hookIdentityToken),
+        alreadyWaitingForSdkReady,
+        duplicatePendingCallback,
       });
       return;
     }
 
-    if (!hookIdentityToken) {
-      setPrivyAuthBootstrapState("awaiting_identity_token", {
-        owner: "usePrivyLogin",
-        mode: "manual",
-        userId: privyUser.id,
-        detail: "waiting for Privy identity token",
-        debugCode: "awaiting_privy_identity_token_hook",
-      });
-      console.info("[AuthFlow] usePrivyLogin deferring bootstrap until Privy identity token hook is populated", {
-        userId: privyUser.id,
-        privyReady: privyState.ready,
-        privyAuthenticated: privyState.authenticated,
-      });
-      return;
-    }
-
+    clearPendingPrivyCallbackHandoff();
     await runManualSync(privyUser);
-  }, [runManualSync]);
+  }, [clearPendingPrivyCallbackHandoff, clearPendingPrivyCallbackTimeout, runManualSync]);
 
   const handlePrivyAuthError = useCallback((error: unknown) => {
     const errorMessage = getPrivyErrorMessage(error);

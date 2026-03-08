@@ -835,6 +835,27 @@ export function isPrivyAuthBootstrapStatePending(
   );
 }
 
+function canResumePrivyAuthBootstrapPendingState(
+  snapshot: PrivyAuthBootstrapSnapshot | null | undefined,
+  owner: PrivyAuthBootstrapOwner,
+  userId: string
+): boolean {
+  if (!snapshot || !isPrivyAuthBootstrapStatePending(snapshot.state)) {
+    return false;
+  }
+
+  if (!doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(snapshot)) {
+    return false;
+  }
+
+  return (
+    snapshot.owner === owner &&
+    snapshot.userId === userId &&
+    (snapshot.debugCode === "awaiting_privy_sdk_ready" ||
+      snapshot.debugCode === "awaiting_privy_identity_token_hook")
+  );
+}
+
 export function isPrivyAuthBootstrapStateBlockingApiMe(
   state: PrivyAuthBootstrapState | null | undefined
 ): boolean {
@@ -1122,7 +1143,11 @@ export async function startPrivyAuthBootstrap({
     return privyAuthBootstrapInFlight;
   }
 
-  if (sameUserSnapshot && isPrivyAuthBootstrapStatePending(sameUserSnapshot.state)) {
+  if (
+    sameUserSnapshot &&
+    isPrivyAuthBootstrapStatePending(sameUserSnapshot.state) &&
+    !canResumePrivyAuthBootstrapPendingState(sameUserSnapshot, owner, user.id)
+  ) {
     console.info("[AuthFlow] bootstrap blocked by shared pending state", {
       owner,
       mode,
@@ -1131,6 +1156,16 @@ export async function startPrivyAuthBootstrap({
       retryAlreadyScheduled: sameUserSnapshot.retryScheduled,
     });
     return null;
+  }
+
+  if (canResumePrivyAuthBootstrapPendingState(sameUserSnapshot, owner, user.id)) {
+    console.info("[AuthFlow] bootstrap resuming from deferred pending state", {
+      owner,
+      mode,
+      userId: user.id,
+      currentState: sameUserSnapshot?.state,
+      debugCode: sameUserSnapshot?.debugCode,
+    });
   }
 
   if (hardCooldownRemainingMs > 0) {
