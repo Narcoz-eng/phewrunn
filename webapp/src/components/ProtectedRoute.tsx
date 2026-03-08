@@ -4,6 +4,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import {
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
+  usePrivyAuthBootstrapSnapshot,
   usePrivySyncFailureSnapshot,
   useSession,
 } from "@/lib/auth-client";
@@ -156,6 +157,7 @@ function ProtectedRouteWithPrivy({
 }) {
   const { data: session, isPending, hasLiveSession } = useSession();
   const { ready, authenticated } = usePrivy();
+  const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
   const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
@@ -167,10 +169,16 @@ function ProtectedRouteWithPrivy({
   const activeLoginIntent =
     !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
+  const hasPrivyHydrationHint =
+    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !logoutCooldownActive;
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
-    hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession || hadTokenHint.current;
+    hasPrivyHydrationHint ||
+    hasPrivySyncHint ||
+    hasOAuthReturnHint ||
+    shouldHoldForConfirmedSession ||
+    hadTokenHint.current;
   const routeAuthStage =
     isPending
       ? "trying_to_connect"
@@ -178,7 +186,7 @@ function ProtectedRouteWithPrivy({
         ? "authenticated"
         : privySyncFailure
           ? "failed"
-          : hasPrivySyncHint || shouldHoldForConfirmedSession || hadTokenHint.current
+          : hasPrivyHydrationHint || hasPrivySyncHint || shouldHoldForConfirmedSession || hadTokenHint.current
             ? "trying_to_connect"
             : "anonymous";
 
@@ -191,6 +199,7 @@ function ProtectedRouteWithPrivy({
       effectiveUserId: effectiveUser?.id ?? null,
       hasLiveSession,
       isPending,
+      hasPrivyHydrationHint,
       hasPrivySyncHint,
       hasOAuthReturnHint,
       shouldHoldForConfirmedSession,
@@ -201,6 +210,7 @@ function ProtectedRouteWithPrivy({
     authenticated,
     effectiveUser?.id,
     hasLiveSession,
+    hasPrivyHydrationHint,
     hasOAuthReturnHint,
     hasPrivySyncHint,
     isPending,
@@ -220,6 +230,7 @@ function ProtectedRouteWithPrivy({
       effectiveUserId: effectiveUser.id,
       hasLiveSession,
       isPending,
+      hasPrivyHydrationHint,
       hasPrivySyncHint,
       shouldHoldForConfirmedSession,
       privySyncFailure: privySyncFailure?.message ?? null,
@@ -227,6 +238,7 @@ function ProtectedRouteWithPrivy({
   }, [
     effectiveUser,
     hasLiveSession,
+    hasPrivyHydrationHint,
     hasPrivySyncHint,
     isPending,
     location.pathname,
@@ -248,10 +260,10 @@ function ProtectedRouteWithPrivy({
     }
     const timer = window.setTimeout(
       () => setGraceExpired(true),
-      hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession ? 12_000 : 4_000
+      hasPrivyHydrationHint || hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession ? 12_000 : 4_000
     );
     return () => window.clearTimeout(timer);
-  }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivySyncHint, isPending, shouldHoldForConfirmedSession, shouldHoldForRecovery]);
+  }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivyHydrationHint, hasPrivySyncHint, isPending, shouldHoldForConfirmedSession, shouldHoldForRecovery]);
 
   if (effectiveUser) {
     hadTokenHint.current = false;
@@ -288,6 +300,17 @@ function ProtectedRouteWithPrivy({
     }
     if (hasOAuthReturnHint && !ready && !privySyncFailure) {
       return <RouteLoading label={graceExpired ? "Still returning from X..." : "Returning from X..."} />;
+    }
+    if (hasPrivyHydrationHint) {
+      return (
+        <RouteLoading
+          label={
+            graceExpired
+              ? "Still checking your Privy session..."
+              : "Checking your Privy session..."
+          }
+        />
+      );
     }
     if (hasPrivySyncHint) {
       return (

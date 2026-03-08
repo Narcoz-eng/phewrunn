@@ -93,6 +93,7 @@ type PrivySyncFailureSnapshot = {
 
 export type PrivyAuthBootstrapState =
   | "idle"
+  | "privy_hydrating"
   | "privy_pending"
   | "awaiting_identity_token"
   | "cooldown"
@@ -488,6 +489,7 @@ function normalizePrivyAuthBootstrapState(
 ): PrivyAuthBootstrapState | null {
   switch (value) {
     case "idle":
+    case "privy_hydrating":
     case "privy_pending":
     case "awaiting_identity_token":
     case "cooldown":

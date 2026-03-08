@@ -4,6 +4,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import {
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
+  usePrivyAuthBootstrapSnapshot,
   usePrivySyncFailureSnapshot,
   useSession,
 } from "@/lib/auth-client";
@@ -48,6 +49,7 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
 function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const { data: session, isPending, hasLiveSession } = useSession();
   const { ready, authenticated } = usePrivy();
+  const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
   const [graceExpired, setGraceExpired] = useState(false);
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
@@ -57,12 +59,17 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const activeLoginIntent =
     !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
+  const hasPrivyHydrationHint =
+    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !logoutCooldownActive;
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForOAuthReturn =
     hasOAuthReturnHint && !ready && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
-    hasPrivySyncHint || shouldHoldForOAuthReturn || shouldHoldForConfirmedSession;
+    hasPrivyHydrationHint ||
+    hasPrivySyncHint ||
+    shouldHoldForOAuthReturn ||
+    shouldHoldForConfirmedSession;
 
   useEffect(() => {
     if (!shouldHoldForRecovery) {
@@ -99,6 +106,10 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
 
   if (shouldHoldForOAuthReturn && !graceExpired && !privySyncFailure) {
     return <RouteLoading label="Returning from X..." />;
+  }
+
+  if (hasPrivyHydrationHint && !graceExpired && !privySyncFailure) {
+    return <RouteLoading label="Checking your Privy session..." />;
   }
 
   if (hasPrivySyncHint) {

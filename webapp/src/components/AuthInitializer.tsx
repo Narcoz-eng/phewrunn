@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken } from "@privy-io/react-auth";
 import {
   registerPreLogoutHook,
@@ -16,6 +16,8 @@ interface AuthInitializerProps {
   children: React.ReactNode;
 }
 
+const PRIVY_INITIAL_HYDRATION_GRACE_MS = 4_000;
+
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
   const { identityToken } = useIdentityToken();
@@ -24,6 +26,13 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
   const latestPrivyIdentityTokenRef = useRef<string | null>(null);
   const lastLoggedSdkSnapshotRef = useRef<string | null>(null);
+  const [initialHydrationTimedOut, setInitialHydrationTimedOut] = useState(false);
+  const initialHydrationStartAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    initialHydrationStartAtRef.current = Date.now();
+    setInitialHydrationTimedOut(false);
+  }, [providerInstanceId]);
 
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
@@ -84,20 +93,95 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   }, [isAuthenticated]);
 
   useEffect(() => {
+    if (ready || authenticated || hasLiveSession) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setInitialHydrationTimedOut(true);
+    }, PRIVY_INITIAL_HYDRATION_GRACE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [authenticated, hasLiveSession, ready]);
+
+  useEffect(() => {
+    if (ready || authenticated || hasLiveSession) {
+      if (initialHydrationTimedOut) {
+        setInitialHydrationTimedOut(false);
+      }
+      return;
+    }
+
+    if (Date.now() - initialHydrationStartAtRef.current >= PRIVY_INITIAL_HYDRATION_GRACE_MS) {
+      if (!initialHydrationTimedOut) {
+        setInitialHydrationTimedOut(true);
+      }
+    }
+  }, [authenticated, hasLiveSession, initialHydrationTimedOut, ready]);
+
+  useEffect(() => {
     if (authenticated) {
+      const snapshot = readPrivyAuthBootstrapSnapshot();
+      if (snapshot?.state === "privy_hydrating") {
+        console.info("[AuthFlow] authenticated Privy state resumed before anonymous commit", {
+          providerInstanceId,
+          ready,
+          authenticated,
+          userId: user?.id ?? null,
+          waitedMs: Date.now() - initialHydrationStartAtRef.current,
+        });
+      }
       return;
     }
 
     latestPrivyUserRef.current = null;
+    if (hasLiveSession) {
+      console.info("[AuthFlow] existing backend session preserved during Privy hydration", {
+        providerInstanceId,
+        ready,
+        authenticated,
+        previousUserId: user?.id ?? null,
+      });
+      return;
+    }
+    if (!ready && !hasLiveSession && !initialHydrationTimedOut) {
+      const snapshot = readPrivyAuthBootstrapSnapshot();
+      if (snapshot?.state !== "privy_hydrating") {
+        setPrivyAuthBootstrapState("privy_hydrating", {
+          owner: "AuthInitializer",
+          mode: "auto",
+          userId: null,
+          detail: "waiting for Privy SDK hydration",
+          debugCode: "awaiting_privy_initial_hydration",
+        });
+      }
+      console.info("[AuthFlow] anonymous suppressed during initial Privy hydration", {
+        providerInstanceId,
+        ready,
+        authenticated,
+        previousUserId: user?.id ?? null,
+        waitedMs: Date.now() - initialHydrationStartAtRef.current,
+      });
+      return;
+    }
     console.info("[AuthFlow] AuthInitializer applying anonymous state because Privy SDK is not authenticated", {
       providerInstanceId,
       ready,
       authenticated,
       previousUserId: user?.id ?? null,
       bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
+      hydrationTimedOut: initialHydrationTimedOut,
+    });
+    console.info("[AuthFlow] anonymous applied after hydrated unauthenticated state", {
+      providerInstanceId,
+      ready,
+      authenticated,
+      previousUserId: user?.id ?? null,
+      hydrationTimedOut: initialHydrationTimedOut,
+      waitedMs: Date.now() - initialHydrationStartAtRef.current,
     });
     setPrivyAuthAnonymousState("AuthInitializer");
-  }, [authenticated, providerInstanceId, ready, user]);
+  }, [authenticated, hasLiveSession, initialHydrationTimedOut, providerInstanceId, ready, user]);
 
   useEffect(() => {
     if (!ready || !authenticated || !user) {
