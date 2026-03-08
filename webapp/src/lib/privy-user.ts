@@ -795,14 +795,6 @@ export async function resolvePrivyAuthPayload({
         tokenResolution = "pending";
       }
     }
-    if (!privyIdToken) {
-      console.info("[AuthFlow] initial Privy identity flow settled without token; deferring retry", {
-        attemptId: debugContext?.attemptId ?? null,
-        caller: debugContext?.initialCaller ?? "system",
-        userId,
-        tokenResolution,
-      });
-    }
     if (privyIdToken) {
       tokenResolution = "available";
       return {
@@ -820,7 +812,25 @@ export async function resolvePrivyAuthPayload({
     }
 
     if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
+      console.warn("[AuthFlow] initial Privy identity flow halted before token became available", {
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenResolution,
+        sawRateLimit,
+        cooldownRemainingMs: getPrivyRateLimitRemainingMs(),
+        terminal: isTerminal?.() === true,
+      });
       throw new Error("Privy identity provider is rate limited");
+    }
+
+    if (!privyIdToken) {
+      console.info("[AuthFlow] initial Privy identity flow settled without token; deferring retry", {
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenResolution,
+      });
     }
 
     return {
