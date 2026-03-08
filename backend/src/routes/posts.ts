@@ -5148,8 +5148,12 @@ postsRouter.get("/trending", async (c) => {
           author: {
             select: {
               id: true,
+              name: true,
               username: true,
+              image: true,
               level: true,
+              xp: true,
+              isVerified: true,
             },
           },
         },
@@ -5165,7 +5169,15 @@ postsRouter.get("/trending", async (c) => {
       try {
         // Use SELECT p.* so this works regardless of which columns exist
         const rawRows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
-          SELECT p.*, u.id AS "authorUserId", u.username AS "authorUsername", u.level AS "authorLevel"
+          SELECT
+            p.*,
+            u.id AS "authorUserId",
+            u.name AS "authorName",
+            u.username AS "authorUsername",
+            u.image AS "authorImage",
+            u.level AS "authorLevel",
+            u.xp AS "authorXp",
+            u."isVerified" AS "authorIsVerified"
           FROM "Post" p
           JOIN "User" u ON u.id = p."authorId"
           WHERE p."contractAddress" IS NOT NULL
@@ -5190,8 +5202,12 @@ postsRouter.get("/trending", async (c) => {
           createdAt: r.createdAt,
           author: {
             id: r.authorUserId ?? r.authorId,
+            name: typeof r.authorName === "string" ? r.authorName : null,
             username: r.authorUsername ?? null,
+            image: typeof r.authorImage === "string" ? r.authorImage : null,
             level: toFiniteNumber(r.authorLevel, 0),
+            xp: toFiniteNumber(r.authorXp, 0),
+            isVerified: Boolean(r.authorIsVerified),
           },
         }));
       } catch (fallbackError) {
@@ -5211,8 +5227,20 @@ postsRouter.get("/trending", async (c) => {
     chainType: string | null;
     tokenName: string | null;
     tokenSymbol: string | null;
-    callers: Map<string, { userId: string; username: string | null; level: number }>;
+    callers: Map<
+      string,
+      {
+        id: string;
+        name: string | null;
+        username: string | null;
+        image: string | null;
+        level: number;
+        xp: number;
+        isVerified?: boolean;
+      }
+    >;
     earliestCall: Date;
+    earliestPostId: string;
     mcaps: number[];
     latestMcap: number | null;
     percentGains: number[]; // Track percent gains for each call
@@ -5232,6 +5260,7 @@ postsRouter.get("/trending", async (c) => {
         tokenSymbol: post.tokenSymbol,
         callers: new Map(),
         earliestCall: post.createdAt,
+        earliestPostId: post.id,
         mcaps: [],
         latestMcap: post.currentMcap,
         percentGains: [],
@@ -5244,9 +5273,13 @@ postsRouter.get("/trending", async (c) => {
     // Track unique callers
     if (!token.callers.has(post.authorId)) {
       token.callers.set(post.authorId, {
-        userId: post.author.id,
+        id: post.author.id,
+        name: post.author.name ?? null,
         username: post.author.username,
+        image: post.author.image ?? null,
         level: post.author.level,
+        xp: toFiniteNumber(post.author.xp, 0),
+        isVerified: Boolean(post.author.isVerified),
       });
     }
 
@@ -5288,7 +5321,7 @@ postsRouter.get("/trending", async (c) => {
   // Trending requires broad confirmation (10+ unique callers) before surfacing.
   const TRENDING_THRESHOLD = 10;
 
-  const trendingTokens = Array.from(addressMap.values())
+  const baseTrendingTokens = Array.from(addressMap.values())
     .filter((t) => t.callers.size >= TRENDING_THRESHOLD)
     .map((t) => {
       const callersArray = Array.from(t.callers.values());
@@ -5318,6 +5351,7 @@ postsRouter.get("/trending", async (c) => {
         chainType: t.chainType as "solana" | "evm",
         callCount: t.callers.size,
         earliestCall: t.earliestCall.toISOString(),
+        firstPostId: t.earliestPostId,
         latestMcap: t.latestMcap,
         avgEntryMcap: avgEntryMcap ? Math.round(avgEntryMcap) : null,
         avgGain: avgGain !== null ? Math.round(avgGain * 100) / 100 : null, // Include avgGain in response
@@ -5349,6 +5383,50 @@ postsRouter.get("/trending", async (c) => {
     })
     // Limit to top 10
     .slice(0, 10);
+
+  const earliestPostIdByContract = new Map<string, string>();
+  for (const token of baseTrendingTokens) {
+    earliestPostIdByContract.set(token.contractAddress.toLowerCase(), token.firstPostId);
+  }
+
+  if (baseTrendingTokens.length > 0) {
+    try {
+      const earliestPosts = await withPrismaRetry(
+        () =>
+          prisma.post.findMany({
+            where: {
+              contractAddress: {
+                in: baseTrendingTokens.map((token) => token.contractAddress),
+              },
+            },
+            select: {
+              id: true,
+              contractAddress: true,
+            },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          }),
+        { label: "posts:trending-earliest-posts" }
+      );
+
+      for (const post of earliestPosts) {
+        if (!post.contractAddress) continue;
+        const normalizedContract = post.contractAddress.toLowerCase();
+        if (!earliestPostIdByContract.has(normalizedContract)) {
+          earliestPostIdByContract.set(normalizedContract, post.id);
+        }
+      }
+    } catch (error) {
+      console.warn("[posts/trending] earliest post lookup unavailable; using fallback ids", {
+        message: getErrorMessage(error),
+      });
+    }
+  }
+
+  const trendingTokens = baseTrendingTokens.map((token) => ({
+    ...token,
+    firstPostId:
+      earliestPostIdByContract.get(token.contractAddress.toLowerCase()) ?? token.firstPostId,
+  }));
 
     trendingCache = {
       data: trendingTokens,

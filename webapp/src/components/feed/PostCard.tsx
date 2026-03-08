@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { LevelBadge, LevelBar } from "./LevelBar";
 import { RepostersDialog } from "./RepostersDialog";
-import { SharedAlphaDialog } from "./SharedAlphaDialog";
+import { SharedAlphaDialog, type SharedAlphaResponse } from "./SharedAlphaDialog";
 import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
@@ -1175,12 +1175,14 @@ export function PostCard({
   });
 
   // Fetch shared alpha users (other traders who called the same token)
-  const { data: sharedAlphaUsers } = useQuery({
-    queryKey: ["shared-alpha", post.id],
-    queryFn: () => api.get<SharedAlphaUser[]>(`/api/posts/${post.id}/shared-alpha`),
-    enabled: isSharedAlphaOpen && (post.sharedAlphaCount ?? 0) > 0,
+  const { data: sharedAlphaData } = useQuery({
+    queryKey: ["sharedAlpha", post.id],
+    queryFn: () => api.get<SharedAlphaResponse>(`/api/posts/${post.id}/shared-alpha`),
+    enabled: (post.sharedAlphaCount ?? 0) > 0 && isInViewport,
     staleTime: 60000,
   });
+  const sharedAlphaUsers = sharedAlphaData?.users ?? [];
+  const sharedAlphaTotalCount = sharedAlphaData?.count ?? post.sharedAlphaCount ?? 0;
 
   // Handle follow/unfollow with optimistic updates
   const handleFollow = async (e: React.MouseEvent) => {
@@ -1411,7 +1413,6 @@ export function PostCard({
   const isSettlementPending = !localSettled && timeUntilSettlement > 0 && hasContractAddress;
 
   const sharedByCount = post.sharedBy?.length ?? 0;
-  const sharedAlphaCount = post.sharedAlphaCount ?? 0;
 
   const handleLike = () => {
     setIsLiked(!isLiked);
@@ -3868,9 +3869,10 @@ export function PostCard({
             {/* Also Called By - Show other users who called this token */}
             {(post.sharedAlphaCount ?? 0) > 0 && (
               <AlsoCalledBy
-                users={sharedAlphaUsers ?? []}
-                totalCount={post.sharedAlphaCount ?? sharedAlphaUsers?.length ?? 0}
+                users={sharedAlphaUsers}
+                totalCount={sharedAlphaTotalCount}
                 onShowMore={() => setIsSharedAlphaOpen(true)}
+                maxDisplay={4}
               />
             )}
 
@@ -4304,25 +4306,6 @@ export function PostCard({
                   </div>
                 )}
               </div>
-            )}
-
-            {/* Shared Alpha Badge - Users who posted same CA within 48 hours */}
-            {sharedAlphaCount > 0 && hasContractAddress && (
-              <button
-                onClick={() => setIsSharedAlphaOpen(true)}
-                className={cn(
-                  "mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-lg",
-                  "bg-gradient-to-r from-accent/10 to-primary/10 hover:from-accent/20 hover:to-primary/20",
-                  "border border-accent/30 hover:border-accent/50",
-                  "text-sm text-foreground font-medium transition-all duration-200",
-                  "hover:shadow-md hover:shadow-accent/10 cursor-pointer group"
-                )}
-              >
-                <Sparkles className="h-4 w-4 text-accent group-hover:animate-pulse" />
-                <span className="bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent font-semibold">
-                  {sharedAlphaCount} {sharedAlphaCount === 1 ? "trader" : "traders"} called this
-                </span>
-              </button>
             )}
 
             {/* Shared By Counter - Clickable Badge (Reposts) */}
@@ -5428,6 +5411,7 @@ export function PostCard({
         contractAddress={post.contractAddress}
         open={isSharedAlphaOpen}
         onOpenChange={setIsSharedAlphaOpen}
+        initialCount={sharedAlphaTotalCount}
       />
     </div>
   );

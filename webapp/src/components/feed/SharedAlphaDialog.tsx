@@ -31,7 +31,7 @@ interface SharedAlphaDialogProps {
   initialCount?: number;
 }
 
-interface SharedAlphaResponse {
+export interface SharedAlphaResponse {
   users: SharedAlphaUser[];
   count: number;
 }

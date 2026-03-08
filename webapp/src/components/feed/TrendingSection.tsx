@@ -15,6 +15,7 @@ interface TrendingToken {
   tokenSymbol: string | null;
   tokenImage: string | null;
   callCount: number;
+  firstPostId: string | null;
   currentMcap: number | null;
   latestMcap?: number | null;
   avgEntryMcap?: number | null;
@@ -97,7 +98,10 @@ export function TrendingSection() {
                 "hover:scale-[1.02]"
               )}
               onClick={() => {
-                // Navigate to search with this token's CA
+                if (token.firstPostId) {
+                  navigate(`/post/${token.firstPostId}`);
+                  return;
+                }
                 navigate(`/?search=${token.contractAddress}`);
               }}
             >
