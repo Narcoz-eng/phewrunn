@@ -11,6 +11,8 @@ let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAu
   null;
 let privyIdentityRateLimitedUntilMs = 0;
 const privyIdentityRetryWaiters = new Map<number, (completed: boolean) => void>();
+let pendingPrivyIdentityRequestCount = 0;
+const privyIdentitySettleWaiters = new Set<() => void>();
 const RATE_LIMITED_TOKEN = Symbol("privy_identity_rate_limited");
 type IdentityTokenAttemptResult = {
   token?: string;
@@ -92,6 +94,41 @@ function getPrivyRateLimitRemainingMs(referenceTime = Date.now()): number {
   return Math.max(0, privyIdentityRateLimitedUntilMs - referenceTime);
 }
 
+function notifyPrivyIdentityRequestSettled(): void {
+  if (pendingPrivyIdentityRequestCount > 0) {
+    return;
+  }
+
+  const waiters = Array.from(privyIdentitySettleWaiters);
+  privyIdentitySettleWaiters.clear();
+  for (const waiter of waiters) {
+    waiter();
+  }
+}
+
+async function waitForOutstandingPrivyIdentityRequests(timeoutMs: number): Promise<boolean> {
+  if (pendingPrivyIdentityRequestCount === 0) {
+    return true;
+  }
+
+  return await new Promise<boolean>((resolve) => {
+    const finish = (completed: boolean) => {
+      window.clearTimeout(timeoutId);
+      privyIdentitySettleWaiters.delete(onSettled);
+      resolve(completed);
+    };
+
+    const onSettled = () => {
+      if (pendingPrivyIdentityRequestCount === 0) {
+        finish(true);
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => finish(false), timeoutMs);
+    privyIdentitySettleWaiters.add(onSettled);
+  });
+}
+
 export function getPrivyIdentityRateLimitRemainingMs(referenceTime = Date.now()): number {
   return getPrivyRateLimitRemainingMs(referenceTime);
 }
@@ -105,21 +142,28 @@ async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenA
     return { token: undefined, rateLimited: true };
   }
 
+  pendingPrivyIdentityRequestCount += 1;
+  const tokenPromise = getIdentityToken()
+    .then((token) => (typeof token === "string" && token.length > 0 ? token : undefined))
+    .catch((error) => {
+      if (isPrivyRateLimitError(error)) {
+        privyIdentityRateLimitedUntilMs = Date.now() + PRIVY_IDENTITY_429_COOLDOWN_MS;
+        cancelPrivyIdentityRetryTimers("privy_429");
+        console.warn("[AuthFlow] Privy identity provider returned 429", {
+          cooldownMs: PRIVY_IDENTITY_429_COOLDOWN_MS,
+          message: getPrivyErrorMessage(error),
+        });
+        return RATE_LIMITED_TOKEN;
+      }
+      return undefined;
+    })
+    .finally(() => {
+      pendingPrivyIdentityRequestCount = Math.max(0, pendingPrivyIdentityRequestCount - 1);
+      notifyPrivyIdentityRequestSettled();
+    });
+
   const raced = await Promise.race<string | undefined | typeof RATE_LIMITED_TOKEN>([
-    getIdentityToken()
-      .then((token) => (typeof token === "string" && token.length > 0 ? token : undefined))
-      .catch((error) => {
-        if (isPrivyRateLimitError(error)) {
-          privyIdentityRateLimitedUntilMs = Date.now() + PRIVY_IDENTITY_429_COOLDOWN_MS;
-          cancelPrivyIdentityRetryTimers("privy_429");
-          console.warn("[AuthFlow] Privy identity provider returned 429", {
-            cooldownMs: PRIVY_IDENTITY_429_COOLDOWN_MS,
-            message: getPrivyErrorMessage(error),
-          });
-          return RATE_LIMITED_TOKEN;
-        }
-        return undefined;
-      }),
+    tokenPromise,
     waitFor(timeoutMs).then(() => undefined),
   ]);
 
@@ -263,6 +307,10 @@ export async function resolvePrivyAuthPayload({
         name,
         privyIdToken,
       };
+    }
+
+    if (!sawRateLimit && getPrivyRateLimitRemainingMs() === 0 && isTerminal?.() !== true) {
+      await waitForOutstandingPrivyIdentityRequests(350);
     }
 
     for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
