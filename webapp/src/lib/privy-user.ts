@@ -3,6 +3,7 @@ import { getIdentityToken } from "@privy-io/react-auth";
 const IDENTITY_TOKEN_ATTEMPTS = 2;
 const IDENTITY_TOKEN_RETRY_DELAYS_MS = [180] as const;
 const AUTH_PAYLOAD_READY_DELAYS_MS = [1200] as const;
+const IDENTITY_TOKEN_SETTLE_GRACE_MS = 1500;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
 const QUICK_IDENTITY_TOKEN_TIMEOUT_MS = 120;
@@ -19,6 +20,8 @@ const RATE_LIMITED_TOKEN = Symbol("privy_identity_rate_limited");
 type IdentityTokenAttemptResult = {
   token?: string;
   rateLimited: boolean;
+  timedOut?: boolean;
+  pendingPromise?: Promise<string | undefined | typeof RATE_LIMITED_TOKEN>;
 };
 
 type LinkedAccountLike = {
@@ -179,9 +182,14 @@ async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenA
   }
 
   const tokenPromise = getOrStartPrivyIdentityTokenPromise();
+  let tokenPromiseSettled = false;
+  const trackedTokenPromise = tokenPromise.then((value) => {
+    tokenPromiseSettled = true;
+    return value;
+  });
 
   const raced = await Promise.race<string | undefined | typeof RATE_LIMITED_TOKEN>([
-    tokenPromise,
+    trackedTokenPromise,
     waitFor(timeoutMs).then(() => undefined),
   ]);
 
@@ -189,8 +197,52 @@ async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenA
     return { token: undefined, rateLimited: true };
   }
 
+  if (!tokenPromiseSettled) {
+    return {
+      token: undefined,
+      rateLimited: false,
+      timedOut: true,
+      pendingPromise: tokenPromise,
+    };
+  }
+
   return {
     token: raced,
+    rateLimited: false,
+  };
+}
+
+async function waitForPendingIdentityTokenResult(
+  pendingPromise: Promise<string | undefined | typeof RATE_LIMITED_TOKEN>,
+  timeoutMs: number
+): Promise<IdentityTokenAttemptResult> {
+  const settled = await Promise.race<string | undefined | typeof RATE_LIMITED_TOKEN | null>([
+    pendingPromise,
+    waitFor(timeoutMs).then(() => null),
+  ]);
+
+  if (settled === RATE_LIMITED_TOKEN) {
+    return { token: undefined, rateLimited: true };
+  }
+
+  if (typeof settled === "string" && settled.length > 0) {
+    return {
+      token: settled,
+      rateLimited: false,
+    };
+  }
+
+  if (settled === null) {
+    return {
+      token: undefined,
+      rateLimited: getPrivyRateLimitRemainingMs() > 0,
+      timedOut: true,
+      pendingPromise,
+    };
+  }
+
+  return {
+    token: undefined,
     rateLimited: false,
   };
 }
@@ -207,9 +259,23 @@ function hasOAuthIdentity(user: PrivyUserLike): boolean {
 
 export async function getPrivyIdentityTokenFast(): Promise<IdentityTokenAttemptResult> {
   for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    const result = await getIdentityTokenWithin(IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS);
+    let result = await getIdentityTokenWithin(IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS);
     if (result.token || result.rateLimited) {
       return result;
+    }
+
+    if (result.timedOut && result.pendingPromise) {
+      console.info("[AuthFlow] awaiting pending Privy identity token request before retry", {
+        attempt: attempt + 1,
+        settleGraceMs: IDENTITY_TOKEN_SETTLE_GRACE_MS,
+      });
+      result = await waitForPendingIdentityTokenResult(
+        result.pendingPromise,
+        IDENTITY_TOKEN_SETTLE_GRACE_MS
+      );
+      if (result.token || result.rateLimited) {
+        return result;
+      }
     }
 
     const delayMs = IDENTITY_TOKEN_RETRY_DELAYS_MS[attempt];
