@@ -70,7 +70,58 @@ export type ResolvedPrivyAuthPayload = {
   email?: string;
   name?: string;
   privyIdToken?: string;
+  pendingPrivyIdTokenPromise?: Promise<string | undefined>;
+  tokenResolution?: "available" | "pending" | "empty";
+  tokenLocalCheck?: {
+    tokenLength: number;
+    tokenExpired: boolean;
+    tokenInvalid: boolean;
+  } | null;
 };
+
+function inspectPrivyIdentityToken(token: string | undefined): {
+  tokenLength: number;
+  tokenExpired: boolean;
+  tokenInvalid: boolean;
+} | null {
+  if (typeof token !== "string" || token.length === 0) {
+    return null;
+  }
+
+  const tokenLength = token.length;
+  const parts = token.split(".");
+  if (parts.length < 2) {
+    return {
+      tokenLength,
+      tokenExpired: false,
+      tokenInvalid: true,
+    };
+  }
+
+  try {
+    const normalizedPayload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const paddedPayload = normalizedPayload.padEnd(
+      normalizedPayload.length + ((4 - (normalizedPayload.length % 4)) % 4),
+      "="
+    );
+    const payloadJson = atob(paddedPayload);
+    const payload = JSON.parse(payloadJson) as { exp?: unknown };
+    const exp =
+      typeof payload.exp === "number" && Number.isFinite(payload.exp) ? payload.exp : null;
+
+    return {
+      tokenLength,
+      tokenExpired: exp !== null ? exp * 1000 <= Date.now() : false,
+      tokenInvalid: false,
+    };
+  } catch {
+    return {
+      tokenLength,
+      tokenExpired: false,
+      tokenInvalid: true,
+    };
+  }
+}
 
 function getFetchUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") {
@@ -326,9 +377,53 @@ function getOrStartPrivyIdentityTokenPromise():
   }
 
   pendingPrivyIdentityRequestCount += 1;
+  const debugContextSnapshot = activePrivyIdentityDebugContext
+    ? {
+        attemptId: activePrivyIdentityDebugContext.attemptId,
+        caller: activePrivyIdentityDebugContext.currentCaller,
+        owner: activePrivyIdentityDebugContext.owner,
+        mode: activePrivyIdentityDebugContext.mode,
+        trigger: activePrivyIdentityDebugContext.trigger,
+        userId: activePrivyIdentityDebugContext.userId,
+        bootstrapAttempt: activePrivyIdentityDebugContext.bootstrapAttempt,
+        totalAttempts: activePrivyIdentityDebugContext.totalAttempts,
+      }
+    : null;
   const tokenPromise = getIdentityToken()
-    .then((token) => (typeof token === "string" && token.length > 0 ? token : undefined))
+    .then((token) => {
+      const normalizedToken = typeof token === "string" && token.length > 0 ? token : undefined;
+      const tokenLocalCheck = inspectPrivyIdentityToken(normalizedToken);
+      console.info("[AuthFlow] Privy getIdentityToken resolved", {
+        attemptId: debugContextSnapshot?.attemptId ?? null,
+        caller: debugContextSnapshot?.caller ?? "system",
+        owner: debugContextSnapshot?.owner ?? null,
+        mode: debugContextSnapshot?.mode ?? null,
+        trigger: debugContextSnapshot?.trigger ?? null,
+        userId: debugContextSnapshot?.userId ?? null,
+        bootstrapAttempt: debugContextSnapshot?.bootstrapAttempt ?? null,
+        totalAttempts: debugContextSnapshot?.totalAttempts ?? null,
+        returnedTokenString: typeof token === "string",
+        tokenLengthGreaterThanZero: typeof token === "string" ? token.length > 0 : false,
+        returnedEmptyToken:
+          typeof token !== "string" || token.trim().length === 0,
+        tokenLength: tokenLocalCheck?.tokenLength ?? 0,
+        tokenExpired: tokenLocalCheck?.tokenExpired ?? false,
+        tokenInvalid: tokenLocalCheck?.tokenInvalid ?? false,
+      });
+      return normalizedToken;
+    })
     .catch((error) => {
+      console.warn("[AuthFlow] Privy getIdentityToken threw", {
+        attemptId: debugContextSnapshot?.attemptId ?? null,
+        caller: debugContextSnapshot?.caller ?? "system",
+        owner: debugContextSnapshot?.owner ?? null,
+        mode: debugContextSnapshot?.mode ?? null,
+        trigger: debugContextSnapshot?.trigger ?? null,
+        userId: debugContextSnapshot?.userId ?? null,
+        bootstrapAttempt: debugContextSnapshot?.bootstrapAttempt ?? null,
+        totalAttempts: debugContextSnapshot?.totalAttempts ?? null,
+        message: getPrivyErrorMessage(error),
+      });
       if (isPrivyRateLimitError(error)) {
         privyIdentityRateLimitedUntilMs = Date.now() + PRIVY_IDENTITY_429_COOLDOWN_MS;
         cancelPrivyIdentityRetryTimers("privy_429");
@@ -581,6 +676,9 @@ export async function resolvePrivyAuthPayload({
     let email = getPrivyPrimaryEmail(latestUser);
     let name = getPrivyDisplayName(latestUser, email);
     let sawRateLimit = false;
+    let pendingPrivyIdTokenPromise: Promise<string | undefined> | undefined;
+    let tokenResolution: "available" | "pending" | "empty" = "empty";
+    let tokenLocalCheck = inspectPrivyIdentityToken(undefined);
 
     const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
       ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS
@@ -592,6 +690,7 @@ export async function resolvePrivyAuthPayload({
       debugContext?.initialCaller ?? "system"
     );
     let privyIdToken = initialTokenResult.token;
+    tokenLocalCheck = inspectPrivyIdentityToken(privyIdToken);
     sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
     if (!privyIdToken && initialTokenResult.timedOut && initialTokenResult.pendingPromise) {
       console.info("[AuthFlow] awaiting initial Privy identity token request before fast retry", {
@@ -604,21 +703,32 @@ export async function resolvePrivyAuthPayload({
         IDENTITY_TOKEN_SETTLE_GRACE_MS
       );
       privyIdToken = initialTokenResult.token;
+      tokenLocalCheck = inspectPrivyIdentityToken(privyIdToken);
       sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
+    }
+    if (!privyIdToken && initialTokenResult.timedOut && initialTokenResult.pendingPromise) {
+      pendingPrivyIdTokenPromise = initialTokenResult.pendingPromise.then((value) =>
+        typeof value === "string" && value.length > 0 ? value : undefined
+      );
+      tokenResolution = "pending";
     }
     if (!privyIdToken) {
       console.info("[AuthFlow] initial Privy identity flow settled without token; deferring retry", {
         attemptId: debugContext?.attemptId ?? null,
         caller: debugContext?.initialCaller ?? "system",
         userId,
+        tokenResolution,
       });
     }
     if (privyIdToken) {
+      tokenResolution = "available";
       return {
         user: latestUser,
         email,
         name,
         privyIdToken,
+        tokenResolution,
+        tokenLocalCheck,
       };
     }
 
@@ -665,9 +775,20 @@ export async function resolvePrivyAuthPayload({
         "controller_retry"
       );
       privyIdToken = delayedTokenResult.token;
+      tokenLocalCheck = inspectPrivyIdentityToken(privyIdToken);
       sawRateLimit = sawRateLimit || delayedTokenResult.rateLimited;
+      if (!privyIdToken && delayedTokenResult.timedOut && delayedTokenResult.pendingPromise) {
+        pendingPrivyIdTokenPromise = delayedTokenResult.pendingPromise.then((value) =>
+          typeof value === "string" && value.length > 0 ? value : undefined
+        );
+        tokenResolution = "pending";
+      } else if (!privyIdToken) {
+        pendingPrivyIdTokenPromise = undefined;
+        tokenResolution = "empty";
+      }
 
       if (privyIdToken) {
+        tokenResolution = "available";
         break;
       }
     }
@@ -681,6 +802,9 @@ export async function resolvePrivyAuthPayload({
       email,
       name,
       privyIdToken,
+      pendingPrivyIdTokenPromise,
+      tokenResolution,
+      tokenLocalCheck,
     };
   })();
 
