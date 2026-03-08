@@ -310,6 +310,8 @@ function PrivyLoginButton() {
     authStatus,
     authStatusMessage,
     cooldownRemainingMs,
+    backendSyncStarted,
+    bootstrapDebugCode,
   } = usePrivyLogin({
     onSuccess: (user) =>
       navigate(user.username ? "/" : "/welcome", { replace: true }),
@@ -408,11 +410,21 @@ function PrivyLoginButton() {
           {" "}
           {visibleStatus}
           {cooldownSeconds ? ` Retry available in about ${cooldownSeconds}s.` : ""}
+          {authStatus === "rate_limited_cooldown" && !backendSyncStarted ? (
+            <span className="mt-1 block text-[10px] text-amber-300/90">
+              Backend session sync did not start for this attempt.
+            </span>
+          ) : null}
         </div>
       ) : null}
       <p className="text-[11px] text-muted-foreground leading-relaxed">
         Wallet linking is handled separately in your profile after sign-in.
       </p>
+      {bootstrapDebugCode ? (
+        <p className="text-[10px] text-white/45 leading-relaxed">
+          Debug: {bootstrapDebugCode}
+        </p>
+      ) : null}
       {visibleSyncError ? (
         <p className="text-[11px] text-red-400 leading-relaxed">{visibleSyncError}</p>
       ) : null}

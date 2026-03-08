@@ -316,8 +316,11 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       : authStatus === "syncing_backend"
         ? "Finalizing your Phew session..."
         : authStatus === "rate_limited_cooldown"
-          ? bootstrapSnapshot?.detail ??
-            "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again."
+          ? bootstrapSnapshot?.debugCode === "privy_rate_limited_before_backend_sync"
+            ? bootstrapSnapshot.detail ??
+              "Sign-in could not start because Privy is temporarily rate limiting this browser/session. Please wait 10-15 seconds and try again, or use a fresh private window."
+            : bootstrapSnapshot?.detail ??
+              "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again."
           : authStatus === "authenticated"
             ? "Signed in. Loading your account..."
             : authStatus === "failed"
@@ -343,5 +346,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     syncError: localSyncError ?? bootstrapError ?? null,
     authStatus,
     authStatusMessage,
+    backendSyncStarted: bootstrapSnapshot?.backendSyncStarted === true,
+    bootstrapDebugCode: bootstrapSnapshot?.debugCode ?? null,
   };
 }

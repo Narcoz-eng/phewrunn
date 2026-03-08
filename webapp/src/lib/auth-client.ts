@@ -110,6 +110,8 @@ export type PrivyAuthBootstrapSnapshot = {
   tabId: string | null;
   userId: string | null;
   detail: string | null;
+  debugCode: string | null;
+  backendSyncStarted: boolean;
   attempt: number;
   totalAttempts: number;
   retryScheduled: boolean;
@@ -564,6 +566,11 @@ export function readPrivyAuthBootstrapSnapshot(): PrivyAuthBootstrapSnapshot | n
         typeof parsed.detail === "string" && parsed.detail.trim().length > 0
           ? parsed.detail.trim()
           : null,
+      debugCode:
+        typeof parsed.debugCode === "string" && parsed.debugCode.trim().length > 0
+          ? parsed.debugCode.trim()
+          : null,
+      backendSyncStarted: parsed.backendSyncStarted === true,
       attempt:
         typeof parsed.attempt === "number" && Number.isFinite(parsed.attempt) ? parsed.attempt : 0,
       totalAttempts:
@@ -744,6 +751,8 @@ export function setPrivyAuthBootstrapState(
     mode?: PrivyAuthBootstrapMode;
     userId?: string | null;
     detail?: string | null;
+    debugCode?: string | null;
+    backendSyncStarted?: boolean;
     attempt?: number;
     totalAttempts?: number;
     retryScheduled?: boolean;
@@ -759,6 +768,8 @@ export function setPrivyAuthBootstrapState(
     tabId: getPrivyBootstrapTabId(),
     userId: params.userId ?? null,
     detail: params.detail?.trim() || null,
+    debugCode: params.debugCode?.trim() || null,
+    backendSyncStarted: params.backendSyncStarted ?? false,
     attempt: params.attempt ?? 0,
     totalAttempts: params.totalAttempts ?? params.attempt ?? 0,
     retryScheduled: params.retryScheduled ?? false,
@@ -783,6 +794,8 @@ export function setPrivyAuthBootstrapState(
       previousUserId: previousSnapshot.userId,
       nextUserId: snapshot.userId,
       detail: snapshot.detail,
+      debugCode: snapshot.debugCode,
+      backendSyncStarted: snapshot.backendSyncStarted,
     });
   }
 
@@ -1130,6 +1143,7 @@ export async function startPrivyAuthBootstrap({
       rateLimited: false,
       cancelled: false,
     };
+    let backendSyncStartedForAttempt = false;
     let attempt = 0;
     let totalAttempts = sameUserSnapshot?.totalAttempts ?? 0;
 
@@ -1155,6 +1169,7 @@ export async function startPrivyAuthBootstrap({
             mode,
             userId: recoveredUser.id,
             detail: "existing backend session recovered",
+            debugCode: "existing_backend_session_recovered",
             totalAttempts,
           });
           return recoveredUser;
@@ -1169,6 +1184,7 @@ export async function startPrivyAuthBootstrap({
           mode,
           userId: user.id,
           detail: "resolving Privy identity token",
+          debugCode: "awaiting_privy_identity_token",
           attempt,
           totalAttempts,
         });
@@ -1197,6 +1213,17 @@ export async function startPrivyAuthBootstrap({
             mode,
             userId: resolvedPayload.user.id,
             detail: "syncing backend session",
+            debugCode: "backend_sync_started",
+            backendSyncStarted: true,
+            attempt,
+            totalAttempts,
+          });
+          backendSyncStartedForAttempt = true;
+
+          console.info("[AuthFlow] backend sync started", {
+            owner,
+            mode,
+            userId: resolvedPayload.user.id,
             attempt,
             totalAttempts,
           });
@@ -1213,6 +1240,8 @@ export async function startPrivyAuthBootstrap({
             mode,
             userId: syncResult.user.id,
             detail: "backend session synced",
+            debugCode: "backend_session_synced",
+            backendSyncStarted: true,
             attempt,
             totalAttempts,
           });
@@ -1228,15 +1257,34 @@ export async function startPrivyAuthBootstrap({
               getPrivyIdentityRateLimitRemainingMs(),
               PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS
             );
+            const backendSyncStarted = backendSyncStartedForAttempt;
+            const debugCode = backendSyncStarted
+              ? "privy_rate_limited_after_backend_sync_start"
+              : "privy_rate_limited_before_backend_sync";
+            const detail = backendSyncStarted
+              ? PRIVY_RATE_LIMIT_FAILURE_MESSAGE
+              : "Sign-in could not start because Privy is temporarily rate limiting this browser/session. Please wait 10-15 seconds and try again, or use a fresh private window.";
             cancelPendingPrivyAuthRetryTimers("privy_429");
-            writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
+            writePrivySyncFailureSnapshot(detail);
+            if (!backendSyncStarted) {
+              console.warn("[AuthFlow] backend sync did not start before Privy rate limit", {
+                owner,
+                mode,
+                userId: user.id,
+                attempt,
+                totalAttempts,
+                debugCode,
+              });
+            }
             setPrivyAuthBootstrapState("failed_rate_limited", {
               owner,
               mode,
               userId: user.id,
               attempt,
               totalAttempts,
-              detail: PRIVY_RATE_LIMIT_FAILURE_MESSAGE,
+              detail,
+              debugCode,
+              backendSyncStarted,
               cooldownUntilMs: Date.now() + retryInMs,
             });
             console.warn("[AuthFlow] bootstrap halted after Privy 429", {
