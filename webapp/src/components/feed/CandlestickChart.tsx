@@ -396,6 +396,27 @@ export function CandlestickChart({
   const crosshairVerticalStroke = "hsl(var(--foreground) / 0.18)";
   const crosshairHorizontalStroke = "hsl(var(--foreground) / 0.12)";
   const entryPointStroke = "hsl(var(--background) / 0.96)";
+  const tooltipWidth = 168;
+  const tooltipHeight = showVolume ? 144 : 124;
+  const tooltipStyle =
+    activeCrosshairX !== null && activeCrosshairY !== null
+      ? {
+          left:
+            activeCrosshairX >= width - tooltipWidth - 20
+              ? Math.max(8, activeCrosshairX - tooltipWidth - 12)
+              : Math.min(
+                  Math.max(8, width - tooltipWidth - 8),
+                  activeCrosshairX + 12
+                ),
+          top: Math.max(
+            8,
+            Math.min(
+              Math.max(8, mainContentBottom - tooltipHeight - 4),
+              activeCrosshairY - tooltipHeight * 0.55
+            )
+          ),
+        }
+      : { left: 8, top: 8 };
 
   return (
     <div
@@ -639,20 +660,23 @@ export function CandlestickChart({
       />
 
       {activePoint ? (
-        <div className="pointer-events-none absolute left-2 top-2 rounded-lg border border-slate-900/10 bg-white/90 px-2.5 py-2 text-[10px] text-slate-700 shadow-[0_18px_36px_-28px_rgba(148,163,184,0.72)] backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#0b0f16]/88 dark:text-white/80 dark:shadow-[0_18px_36px_-28px_rgba(0,0,0,0.95)]">
-          <div className="mb-1 text-[10px] font-medium text-slate-500 dark:text-white/45">{activePoint.fullLabel}</div>
+        <div
+          className="pointer-events-none absolute z-10 min-w-[156px] rounded-xl border border-[hsl(var(--foreground)/0.08)] bg-[linear-gradient(180deg,hsl(var(--background)/0.96),hsl(var(--background)/0.86))] px-3 py-2.5 text-[10px] text-[hsl(var(--foreground)/0.82)] shadow-[0_24px_54px_-34px_hsl(var(--foreground)/0.55)] backdrop-blur-xl"
+          style={tooltipStyle}
+        >
+          <div className="mb-1.5 text-[10px] font-semibold text-[hsl(var(--foreground)/0.56)]">{activePoint.fullLabel}</div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-            <span className="text-slate-500 dark:text-white/35">Open</span>
+            <span className="text-[hsl(var(--foreground)/0.42)]">Open</span>
             <span className="text-right font-medium">{formatPrice(activePoint.open)}</span>
-            <span className="text-slate-500 dark:text-white/35">High</span>
+            <span className="text-[hsl(var(--foreground)/0.42)]">High</span>
             <span className="text-right font-medium">{formatPrice(activePoint.high)}</span>
-            <span className="text-slate-500 dark:text-white/35">Low</span>
+            <span className="text-[hsl(var(--foreground)/0.42)]">Low</span>
             <span className="text-right font-medium">{formatPrice(activePoint.low)}</span>
-            <span className="text-slate-500 dark:text-white/35">Close</span>
+            <span className="text-[hsl(var(--foreground)/0.42)]">Close</span>
             <span className="text-right font-medium">{formatPrice(activePoint.close)}</span>
             {showVolume ? (
               <>
-                <span className="text-slate-500 dark:text-white/35">Volume</span>
+                <span className="text-[hsl(var(--foreground)/0.42)]">Volume</span>
                 <span className="text-right font-medium">{activePoint.volume.toLocaleString()}</span>
               </>
             ) : null}

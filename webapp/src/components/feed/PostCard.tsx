@@ -721,7 +721,9 @@ export function PostCard({
   const { connection } = useConnection();
   const wallet = useWallet();
   const { visible: isWalletModalVisible, setVisible: setWalletModalVisible } = useWalletModal();
-  const tradeWalletPublicKey = wallet.publicKey ?? wallet.wallet?.adapter?.publicKey ?? null;
+  const tradeWalletPublicKey =
+    wallet.publicKey ?? wallet.wallet?.adapter?.publicKey ?? wallet.adapter?.publicKey ?? null;
+  const tradeWalletAddress = tradeWalletPublicKey?.toBase58() ?? null;
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -787,6 +789,16 @@ export function PostCard({
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
     [heliusReadRpcUrl, connection]
   );
+  const tradeRpcConnections = useMemo(() => {
+    const seen = new Set<string>();
+    const connections = [tradeReadConnection, connection];
+    return connections.filter((candidate, index) => {
+      const key = candidate.rpcEndpoint || `rpc-${index}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [connection, tradeReadConnection]);
   const isLikelyMobileDevice = useMemo(() => {
     if (typeof navigator === "undefined") return false;
     const ua = navigator.userAgent || "";
@@ -2400,7 +2412,7 @@ export function PostCard({
   const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data === "number";
 
   const walletNativeBalanceQuery = useQuery({
-    queryKey: ["walletNativeBalance", tradeWalletPublicKey?.toBase58()],
+    queryKey: ["walletNativeBalance", tradeWalletAddress, tradeRpcConnections.map((rpc) => rpc.rpcEndpoint).join("|")],
     enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
     staleTime: 8_000,
     retry: 1,
@@ -2408,12 +2420,15 @@ export function PostCard({
     refetchInterval: isBuyDialogOpen ? 15_000 : false,
     queryFn: async () => {
       if (!tradeWalletPublicKey) return null;
-      try {
-        const lamports = await tradeReadConnection.getBalance(tradeWalletPublicKey);
-        return lamports / LAMPORTS_PER_SOL;
-      } catch {
-        return null;
+      for (const rpcConnection of tradeRpcConnections) {
+        try {
+          const lamports = await rpcConnection.getBalance(tradeWalletPublicKey, "processed");
+          return lamports / LAMPORTS_PER_SOL;
+        } catch {
+          continue;
+        }
       }
+      return null;
     },
   });
   const walletNativeBalance =
@@ -2421,6 +2436,10 @@ export function PostCard({
     Number.isFinite(walletNativeBalanceQuery.data)
       ? walletNativeBalanceQuery.data
       : null;
+  const walletNativeBalanceLoading =
+    walletNativeBalanceQuery.isLoading ||
+    (walletNativeBalanceQuery.isFetching && walletNativeBalance === null);
+  const refetchWalletNativeBalance = walletNativeBalanceQuery.refetch;
   const walletNativeBalanceUsd =
     walletNativeBalance !== null && solPriceUsd !== null
       ? walletNativeBalance * solPriceUsd
@@ -2437,7 +2456,12 @@ export function PostCard({
   const tradeOutputTokenLabel = tradeSide === "buy" ? displayTokenSymbol : "SOL";
 
   const walletTokenBalanceQuery = useQuery({
-    queryKey: ["walletTokenBalance", tradeWalletPublicKey?.toBase58(), post.contractAddress],
+    queryKey: [
+      "walletTokenBalance",
+      tradeWalletAddress,
+      post.contractAddress,
+      tradeRpcConnections.map((rpc) => rpc.rpcEndpoint).join("|"),
+    ],
     enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
     staleTime: 8_000,
     retry: 1,
@@ -2445,50 +2469,68 @@ export function PostCard({
     refetchInterval: isBuyDialogOpen ? 15_000 : false,
     queryFn: async () => {
       if (!tradeWalletPublicKey || !post.contractAddress) return null;
-      try {
-        const mint = new PublicKey(post.contractAddress);
-        const accounts = await tradeReadConnection.getParsedTokenAccountsByOwner(tradeWalletPublicKey, { mint });
-        let totalUiAmount = 0;
-        for (const account of accounts.value) {
-          type ParsedTokenAmountLike = {
-            uiAmount?: number | null;
-            uiAmountString?: string;
-          };
-          type ParsedTokenAccountLike = {
-            parsed?: {
-              info?: {
-                tokenAmount?: ParsedTokenAmountLike;
+      const mint = new PublicKey(post.contractAddress);
+      for (const rpcConnection of tradeRpcConnections) {
+        try {
+          const accounts = await rpcConnection.getParsedTokenAccountsByOwner(tradeWalletPublicKey, { mint });
+          let totalUiAmount = 0;
+          for (const account of accounts.value) {
+            type ParsedTokenAmountLike = {
+              uiAmount?: number | null;
+              uiAmountString?: string;
+            };
+            type ParsedTokenAccountLike = {
+              parsed?: {
+                info?: {
+                  tokenAmount?: ParsedTokenAmountLike;
+                };
               };
             };
-          };
-          // Parsed token account shape is stable, but web3 types are broad here.
-          const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
-          const tokenAmount = parsedData.parsed?.info?.tokenAmount;
-          const uiAmount =
-            typeof tokenAmount?.uiAmount === "number"
-              ? tokenAmount.uiAmount
-              : Number(tokenAmount?.uiAmountString ?? 0);
-          if (Number.isFinite(uiAmount)) {
-            totalUiAmount += uiAmount;
+            const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
+            const tokenAmount = parsedData.parsed?.info?.tokenAmount;
+            const uiAmount =
+              typeof tokenAmount?.uiAmount === "number"
+                ? tokenAmount.uiAmount
+                : Number(tokenAmount?.uiAmountString ?? 0);
+            if (Number.isFinite(uiAmount)) {
+              totalUiAmount += uiAmount;
+            }
           }
+          return totalUiAmount;
+        } catch {
+          continue;
         }
-        return totalUiAmount;
-      } catch {
-        // Treat lookup failures as "no visible balance" to keep sell UI quiet.
-        return 0;
       }
+      return 0;
     },
   });
   const walletTokenBalance =
     typeof walletTokenBalanceQuery.data === "number" && Number.isFinite(walletTokenBalanceQuery.data)
       ? walletTokenBalanceQuery.data
       : null;
+  const walletTokenBalanceLoading =
+    walletTokenBalanceQuery.isLoading ||
+    (walletTokenBalanceQuery.isFetching && walletTokenBalance === null);
+  const refetchWalletTokenBalance = walletTokenBalanceQuery.refetch;
   const walletTokenBalanceFormatted =
     walletTokenBalance === null
       ? "-"
       : walletTokenBalance.toLocaleString(undefined, {
           maximumFractionDigits: Math.min(8, Math.max(2, outputTokenDecimals)),
         });
+  useEffect(() => {
+    if (!isBuyDialogOpen || !isSolanaTradeSupported || !tradeWalletAddress || wallet.connecting) return;
+    void refetchWalletNativeBalance();
+    void refetchWalletTokenBalance();
+  }, [
+    isBuyDialogOpen,
+    isSolanaTradeSupported,
+    tradeWalletAddress,
+    wallet.connecting,
+    wallet.connected,
+    refetchWalletNativeBalance,
+    refetchWalletTokenBalance,
+  ]);
   const sellAmountExceedsBalance =
     tradeSide === "sell" &&
     walletTokenBalance !== null &&
@@ -3096,7 +3138,9 @@ export function PostCard({
           : null
       : null;
   const hasWalletSignerForTrade = !!(walletPublicKey && wallet.signTransaction);
-  const isWalletConnectedForTrade = Boolean(wallet.connected || hasWalletSignerForTrade);
+  const isWalletConnectedForTrade = Boolean(
+    tradeWalletPublicKey && (wallet.connected || hasWalletSignerForTrade)
+  );
   const walletShortAddress = walletPublicKey
     ? `${walletPublicKey.toBase58().slice(0, 4)}...${walletPublicKey.toBase58().slice(-4)}`
     : null;
@@ -3708,7 +3752,7 @@ export function PostCard({
   const tradeDialogFooterClassName =
     "relative z-20 flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(7,9,13,0.98))] sm:px-5";
   const chartPanelClassName =
-    "relative overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.74)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(6,8,12,0.98))] dark:shadow-none dark:ring-white/5";
+    "relative overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.74)] ring-1 ring-white/65 dark:border-white/[0.08] dark:bg-[radial-gradient(circle_at_12%_0%,rgba(16,185,129,0.08),transparent_30%),radial-gradient(circle_at_100%_0%,rgba(59,130,246,0.12),transparent_26%),linear-gradient(180deg,rgba(8,11,18,0.99),rgba(3,6,11,0.99))] dark:shadow-[0_34px_96px_-62px_rgba(0,0,0,0.98)] dark:ring-white/6";
   const chartDividerClassName = "border-slate-900/[0.06] dark:border-white/[0.06]";
   const chartDividerFillClassName = "bg-slate-900/[0.08] dark:bg-white/[0.08]";
   const chartMutedTextClassName = "text-slate-500 dark:text-white/30";
@@ -3721,7 +3765,7 @@ export function PostCard({
   const chartControlButtonClassName =
     "text-slate-500 hover:bg-slate-900/[0.05] hover:text-slate-800 dark:text-white/40 dark:hover:bg-white/[0.06] dark:hover:text-white/70 disabled:opacity-30";
   const chartCanvasClassName =
-    "relative h-[280px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.45),rgba(8,10,16,0.98))]";
+    "relative h-[280px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_16%_8%,rgba(59,130,246,0.12),transparent_28%),radial-gradient(circle_at_88%_14%,rgba(16,185,129,0.08),transparent_32%),linear-gradient(180deg,rgba(4,9,18,0.99),rgba(1,4,9,1))]";
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {
@@ -5037,9 +5081,11 @@ export function PostCard({
                       canExecute={canExecuteJupiterBuy}
                       walletConnected={isWalletConnectedForTrade}
                       walletBalance={walletNativeBalance}
+                      walletBalanceLoading={walletNativeBalanceLoading}
                       walletBalanceUsd={walletNativeBalanceUsd}
                       walletTokenBalance={walletTokenBalance}
                       walletTokenBalanceFormatted={walletTokenBalanceFormatted}
+                      walletTokenBalanceLoading={walletTokenBalanceLoading}
                       payAmountUsd={tradePayUsdEstimate}
                       receiveAmountUsd={tradeReceiveUsdEstimate}
                       slippageInputPercent={slippageInputPercent}

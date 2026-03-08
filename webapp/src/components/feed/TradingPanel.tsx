@@ -40,9 +40,11 @@ interface TradingPanelProps {
   canExecute: boolean;
   walletConnected: boolean;
   walletBalance: number | null;
+  walletBalanceLoading: boolean;
   walletBalanceUsd: number | null;
   walletTokenBalance: number | null;
   walletTokenBalanceFormatted: string;
+  walletTokenBalanceLoading: boolean;
   payAmountUsd: number | null;
   receiveAmountUsd: number | null;
   slippageInputPercent: string;
@@ -95,9 +97,11 @@ export function TradingPanel({
   canExecute,
   walletConnected,
   walletBalance,
+  walletBalanceLoading,
   walletBalanceUsd,
   walletTokenBalance,
   walletTokenBalanceFormatted,
+  walletTokenBalanceLoading,
   payAmountUsd,
   receiveAmountUsd,
   slippageInputPercent,
@@ -123,9 +127,13 @@ export function TradingPanel({
   const availableBalanceLabel = isBuy
     ? walletBalance !== null
       ? `${walletBalance.toFixed(4)} SOL`
+      : walletBalanceLoading
+        ? "Loading..."
       : "--"
     : walletTokenBalance !== null
       ? `${walletTokenBalanceFormatted} ${tokenSymbol}`
+      : walletTokenBalanceLoading
+        ? "Loading..."
       : "--";
   const availableBalanceUsdLabel =
     isBuy && walletBalanceUsd !== null ? formatUsdEstimate(walletBalanceUsd) : null;
