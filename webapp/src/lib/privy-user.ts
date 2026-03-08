@@ -123,6 +123,17 @@ function inspectPrivyIdentityToken(token: string | undefined): {
   }
 }
 
+function normalizePendingPrivyIdentityTokenPromise(
+  pendingPromise: Promise<string | undefined | typeof RATE_LIMITED_TOKEN>
+): Promise<string | undefined> {
+  return pendingPromise.then((value) => {
+    if (value === RATE_LIMITED_TOKEN) {
+      throw new Error("Privy identity provider is rate limited");
+    }
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+  });
+}
+
 function getFetchUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") {
     return input;
@@ -629,6 +640,21 @@ function createDelayedPrivyIdentityTokenPromise({
       "controller_retry"
     );
 
+    if (delayedTokenResult.rateLimited) {
+      throw new Error("Privy identity provider is rate limited");
+    }
+
+    if (!delayedTokenResult.token && delayedTokenResult.pendingPromise) {
+      console.info("[AuthFlow] delayed Privy identity token request still pending; awaiting resolution", {
+        delayMs,
+        attemptId: debugContext?.attemptId ?? null,
+        caller: "controller_retry",
+      });
+      return await normalizePendingPrivyIdentityTokenPromise(
+        delayedTokenResult.pendingPromise
+      );
+    }
+
     return delayedTokenResult.token;
   })();
 }
@@ -747,8 +773,8 @@ export async function resolvePrivyAuthPayload({
       sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
     }
     if (!privyIdToken && initialTokenResult.timedOut && initialTokenResult.pendingPromise) {
-      pendingPrivyIdTokenPromise = initialTokenResult.pendingPromise.then((value) =>
-        typeof value === "string" && value.length > 0 ? value : undefined
+      pendingPrivyIdTokenPromise = normalizePendingPrivyIdentityTokenPromise(
+        initialTokenResult.pendingPromise
       );
       tokenResolution = "pending";
     }
