@@ -12,6 +12,8 @@ let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAu
 let privyIdentityRateLimitedUntilMs = 0;
 const privyIdentityRetryWaiters = new Map<number, (completed: boolean) => void>();
 let pendingPrivyIdentityRequestCount = 0;
+let pendingPrivyIdentityTokenPromise: Promise<string | undefined | typeof RATE_LIMITED_TOKEN> | null =
+  null;
 const privyIdentitySettleWaiters = new Set<() => void>();
 const RATE_LIMITED_TOKEN = Symbol("privy_identity_rate_limited");
 type IdentityTokenAttemptResult = {
@@ -133,13 +135,11 @@ export function getPrivyIdentityRateLimitRemainingMs(referenceTime = Date.now())
   return getPrivyRateLimitRemainingMs(referenceTime);
 }
 
-async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenAttemptResult> {
-  const rateLimitRemainingMs = getPrivyRateLimitRemainingMs();
-  if (rateLimitRemainingMs > 0) {
-    console.warn("[AuthFlow] Privy identity token request skipped due to cooldown", {
-      retryInMs: rateLimitRemainingMs,
-    });
-    return { token: undefined, rateLimited: true };
+function getOrStartPrivyIdentityTokenPromise():
+  | Promise<string | undefined | typeof RATE_LIMITED_TOKEN> {
+  if (pendingPrivyIdentityTokenPromise) {
+    console.info("[AuthFlow] reusing pending Privy identity token request");
+    return pendingPrivyIdentityTokenPromise;
   }
 
   pendingPrivyIdentityRequestCount += 1;
@@ -158,9 +158,27 @@ async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenA
       return undefined;
     })
     .finally(() => {
+      if (pendingPrivyIdentityTokenPromise === tokenPromise) {
+        pendingPrivyIdentityTokenPromise = null;
+      }
       pendingPrivyIdentityRequestCount = Math.max(0, pendingPrivyIdentityRequestCount - 1);
       notifyPrivyIdentityRequestSettled();
     });
+
+  pendingPrivyIdentityTokenPromise = tokenPromise;
+  return tokenPromise;
+}
+
+async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenAttemptResult> {
+  const rateLimitRemainingMs = getPrivyRateLimitRemainingMs();
+  if (rateLimitRemainingMs > 0) {
+    console.warn("[AuthFlow] Privy identity token request skipped due to cooldown", {
+      retryInMs: rateLimitRemainingMs,
+    });
+    return { token: undefined, rateLimited: true };
+  }
+
+  const tokenPromise = getOrStartPrivyIdentityTokenPromise();
 
   const raced = await Promise.race<string | undefined | typeof RATE_LIMITED_TOKEN>([
     tokenPromise,
