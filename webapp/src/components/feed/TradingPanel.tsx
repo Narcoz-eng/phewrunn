@@ -146,19 +146,18 @@ export function TradingPanel({
   const panelSurfaceClassName =
     "flex flex-col overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(6,8,12,0.98))] dark:shadow-none dark:ring-white/5";
   const sectionBorderClassName = "border-slate-900/[0.07] dark:border-white/[0.07]";
-  const mutedTextClassName = "text-slate-500 dark:text-white/40";
-  const subtleTextClassName = "text-slate-400 dark:text-white/30";
+  const mutedTextClassName = "text-slate-500 dark:text-white/58";
   const fieldSurfaceClassName =
-    "border-slate-900/[0.08] bg-white/75 text-slate-900 placeholder:text-slate-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white dark:placeholder:text-white/20 dark:shadow-none";
+    "border-slate-900/[0.08] bg-white/75 text-slate-900 placeholder:text-slate-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:border-white/[0.1] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.03))] dark:text-white dark:placeholder:text-white/30 dark:shadow-none";
   const chipSurfaceClassName =
-    "bg-slate-900/[0.05] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:bg-white/[0.06] dark:text-white/70 dark:shadow-none";
+    "bg-slate-900/[0.05] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:bg-white/[0.08] dark:text-white/78 dark:shadow-none";
   const softSectionClassName =
-    "rounded-xl border border-slate-900/[0.06] bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-white/[0.06] dark:bg-white/[0.02] dark:shadow-none";
+    "rounded-xl border border-slate-900/[0.06] bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-white/[0.09] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.028))] dark:shadow-none";
 
   useEffect(() => {
     if (!showDetails || typeof window === "undefined") return;
     const frame = window.requestAnimationFrame(() => {
-      detailsRef.current?.scrollIntoView({ block: "nearest" });
+      detailsRef.current?.scrollIntoView({ block: "start" });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [showDetails]);
@@ -369,9 +368,9 @@ export function TradingPanel({
         {/* Expandable Order Details */}
         <button
           onClick={() => setShowDetails(!showDetails)}
-          className="flex items-center justify-between rounded-lg border border-slate-900/[0.06] bg-white/60 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-colors hover:bg-white dark:border-white/[0.06] dark:bg-white/[0.02] dark:shadow-none dark:hover:bg-white/[0.04]"
+          className="flex items-center justify-between rounded-lg border border-slate-900/[0.06] bg-white/60 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-colors hover:bg-white dark:border-white/[0.09] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.028))] dark:shadow-none dark:hover:bg-white/[0.07]"
         >
-          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-white/50">
+          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-white/65">
             <Shield className="w-3 h-3" />
             <span>
               Slippage {(slippageBps / 100).toFixed(1)}%
@@ -395,12 +394,12 @@ export function TradingPanel({
         </button>
 
         {showDetails && (
-          <div ref={detailsRef} className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div ref={detailsRef} className="scroll-mt-4 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
             {/* Slippage Quick Adjust */}
             <div className={cn("space-y-2 p-3", softSectionClassName)}>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10px] font-medium uppercase tracking-widest text-slate-500 dark:text-white/35">Slippage Tolerance</span>
-                <span className="text-[10px] text-slate-400 dark:text-white/25">0.01% - 50.00%</span>
+                <span className="text-[10px] font-medium uppercase tracking-widest text-slate-500 dark:text-white/55">Slippage Tolerance</span>
+                <span className="text-[10px] text-slate-400 dark:text-white/38">0.01% - 50.00%</span>
               </div>
               <div className="grid grid-cols-4 gap-1.5">
                 {SLIPPAGE_QUICK.map((bps) => (
@@ -412,8 +411,8 @@ export function TradingPanel({
                     className={cn(
                       "py-1.5 text-[11px] font-medium rounded-md transition-all",
                       slippageBps === bps
-                        ? "bg-slate-900/[0.08] text-slate-900 ring-1 ring-slate-900/[0.12] dark:bg-white/10 dark:text-white dark:ring-white/20"
-                        : "bg-slate-900/[0.04] text-slate-500 hover:bg-slate-900/[0.08] hover:text-slate-700 dark:bg-white/[0.03] dark:text-white/40 dark:hover:bg-white/[0.06] dark:hover:text-white/60"
+                        ? "bg-slate-900/[0.08] text-slate-900 ring-1 ring-slate-900/[0.12] dark:bg-white/12 dark:text-white dark:ring-white/24"
+                        : "bg-slate-900/[0.04] text-slate-500 hover:bg-slate-900/[0.08] hover:text-slate-700 dark:bg-white/[0.05] dark:text-white/58 dark:hover:bg-white/[0.09] dark:hover:text-white/82"
                     )}
                   >
                     {(bps / 100).toFixed(1)}%
@@ -436,7 +435,7 @@ export function TradingPanel({
                   className={cn("h-9 text-sm", fieldSurfaceClassName)}
                   placeholder="1.00"
                 />
-                <span className="text-xs font-medium text-slate-500 dark:text-white/45">%</span>
+                <span className="text-xs font-medium text-slate-500 dark:text-white/62">%</span>
               </div>
             </div>
 
@@ -527,14 +526,14 @@ function DetailRow({
 }) {
   return (
     <div className="flex items-center justify-between text-[11px]">
-      <span className="text-slate-500 dark:text-white/35">{label}</span>
+      <span className="text-slate-500 dark:text-white/55">{label}</span>
       <span
         className={cn(
           "font-medium",
           severity === "critical" && "text-rose-400",
           severity === "warning" && "text-amber-400",
-          severity === "safe" && "text-slate-700 dark:text-white/60",
-          !severity && "text-slate-600 dark:text-white/55"
+          severity === "safe" && "text-slate-700 dark:text-white/78",
+          !severity && "text-slate-600 dark:text-white/72"
         )}
       >
         {value || "--"}

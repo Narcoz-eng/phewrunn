@@ -783,7 +783,7 @@ export function PostCard({
   } | null>(null);
   const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
   const walletConnectCooldownUntilRef = useRef(0);
-  const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png";
+  const exactLogoImageSrc = "/phew-mark.svg";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
@@ -1394,9 +1394,93 @@ export function PostCard({
         ? "text-slate-200"
         : post.author.level >= 1
           ? "text-orange-300"
-          : post.author.level >= -2
-            ? "text-rose-200"
-            : "text-red-300";
+        : post.author.level >= -2
+          ? "text-rose-200"
+          : "text-red-300";
+  const winCardTrendTone =
+    winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
+      ? "gain"
+      : winCardSettledLoss
+        ? "loss"
+        : "neutral";
+  const winCardStatusTitle =
+    localSettled ? (winCardSettledWin ? "Settled Winner" : "Settled Result") : "Live Tracking";
+  const winCardStatusDetail = localSettled ? "1H benchmark locked" : "Live market snapshot";
+  const winCardMetricCards = [
+    {
+      label: "Entry MCAP",
+      value: formatMarketCap(post.entryMcap),
+      hint: "Position opened",
+      emphasis: false,
+    },
+    {
+      label: winCardSettledMcapLabel,
+      value: formatMarketCap(officialMcap),
+      hint: localSettled ? "Official benchmark" : "Current benchmark",
+      emphasis: false,
+    },
+    {
+      label: winCardCurrentMcapLabel,
+      value: formatMarketCap(winCardCurrentMcap),
+      hint: "Latest tracked MCAP",
+      emphasis: true,
+    },
+    {
+      label: winCardMarketMoveLabel,
+      value: winCardMarketMoveText,
+      hint: "Versus entry",
+      emphasis: false,
+      toneClass: winCardAccentClass,
+    },
+  ];
+  const winCardSnapshotRows = [
+    { shortLabel: "1H", ...winCardSnapshotMetrics[0] },
+    { shortLabel: "6H", ...winCardSnapshotMetrics[1] },
+    { shortLabel: "NOW", ...winCardSnapshotMetrics[2] },
+  ];
+  const winCardWalletSummaryCards = [
+    verifiedTotalPnlUsd !== null
+      ? {
+          label: "Wallet P/L",
+          value: winCardVerifiedPnlText ?? "N/A",
+          hint: verifiedTotalPnlUsd >= 0 ? "Verified profit" : "Verified loss",
+          toneClass: verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss",
+        }
+      : null,
+    boughtUsd !== null || boughtAmount !== null
+      ? {
+          label: "Bought",
+          value: boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A",
+          hint:
+            boughtAmount !== null
+              ? `Qty ${boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+              : "No amount",
+          toneClass: "text-foreground",
+        }
+      : null,
+    soldUsd !== null || soldAmount !== null
+      ? {
+          label: "Sold",
+          value: soldUsd !== null ? formatUsdStat(soldUsd) : "N/A",
+          hint:
+            soldAmount !== null
+              ? `Qty ${soldAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+              : "No amount",
+          toneClass: "text-foreground",
+        }
+      : null,
+    holdingUsd !== null || holdingAmount !== null
+      ? {
+          label: "Holding",
+          value: holdingUsd !== null ? formatUsdStat(holdingUsd) : "N/A",
+          hint:
+            holdingAmount !== null
+              ? `Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+              : "No position",
+          toneClass: "text-foreground",
+        }
+      : null,
+  ].filter(Boolean);
 
   // Calculate multiplier displays for each mcap field
   const multiplierLive = formatMultiplier(post.entryMcap, currentMcap);
@@ -1548,7 +1632,7 @@ export function PostCard({
 
     const canvas = document.createElement("canvas");
     const width = 1200;
-    const height = 700;
+    const height = 760;
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     canvas.width = Math.floor(width * dpr);
     canvas.height = Math.floor(height * dpr);
@@ -1569,9 +1653,22 @@ export function PostCard({
     const isSettledLoss = liveSettled && liveIsWin === false;
     const isPositive = profitLossValue !== null ? profitLossValue >= 0 : false;
     const accent = isSettledWin || (!liveSettled && isPositive) ? "#22c55e" : isSettledLoss ? "#ef4444" : "#94a3b8";
-    const accentSoft = isSettledWin || (!liveSettled && isPositive) ? "rgba(34,197,94,0.18)" : isSettledLoss ? "rgba(239,68,68,0.16)" : "rgba(148,163,184,0.16)";
-    const bgTop = "#0a0f16";
-    const bgBottom = "#080b10";
+    const accentSoft =
+      isSettledWin || (!liveSettled && isPositive)
+        ? "rgba(34,197,94,0.18)"
+        : isSettledLoss
+          ? "rgba(239,68,68,0.16)"
+          : "rgba(148,163,184,0.16)";
+    const levelToneColor =
+      post.author.level >= 8
+        ? "#fcd34d"
+        : post.author.level >= 4
+          ? "#e2e8f0"
+          : post.author.level >= 1
+            ? "#fdba74"
+            : post.author.level >= -2
+              ? "#fecdd3"
+              : "#fca5a5";
 
     const drawRoundedRect = (
       x: number,
@@ -1627,7 +1724,7 @@ export function PostCard({
 
       const trimmedLines = lines.slice(0, maxLines);
       if (lines.length > maxLines && trimmedLines.length > 0) {
-        trimmedLines[trimmedLines.length - 1] = `${trimmedLines[trimmedLines.length - 1]}…`;
+        trimmedLines[trimmedLines.length - 1] = `${trimmedLines[trimmedLines.length - 1]}...`;
       }
 
       trimmedLines.forEach((line, index) => {
@@ -1651,6 +1748,55 @@ export function PostCard({
       return "...";
     };
 
+    const drawPanel = (
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      options?: {
+        glowColor?: string;
+        fillStops?: Array<[number, string]>;
+        strokeStyle?: string;
+        topGlow?: string;
+      }
+    ) => {
+      if (options?.glowColor) {
+        ctx.save();
+        ctx.shadowColor = options.glowColor;
+        ctx.shadowBlur = 24;
+        drawRoundedRect(x, y, w, h, 26);
+        ctx.fillStyle = "rgba(0,0,0,0.02)";
+        ctx.fill();
+        ctx.restore();
+      }
+
+      const fill = ctx.createLinearGradient(x, y, x + w, y + h);
+      const stops =
+        options?.fillStops ??
+        [
+          [0, "rgba(12,18,28,0.96)"],
+          [0.55, "rgba(10,15,24,0.92)"],
+          [1, "rgba(7,11,18,0.95)"],
+        ];
+      stops.forEach(([stop, color]) => fill.addColorStop(stop, color));
+
+      drawRoundedRect(x, y, w, h, 26);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = options?.strokeStyle ?? "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      if (options?.topGlow) {
+        drawRoundedRect(x, y, w, 12, 26);
+        const topFill = ctx.createLinearGradient(x, y, x + w, y);
+        topFill.addColorStop(0, options.topGlow);
+        topFill.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = topFill;
+        ctx.fill();
+      }
+    };
+
     const titleName = post.author.username ? `@${post.author.username}` : post.author.name;
     const tokenPrimary = post.tokenSymbol || post.tokenName || "TOKEN";
     const tokenSecondary = post.tokenName && post.tokenSymbol ? post.tokenName : (post.contractAddress ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}` : "No contract");
@@ -1670,8 +1816,9 @@ export function PostCard({
           ? "Wallet Profit"
           : "Wallet Loss";
     const postPreview = stripContractAddress(post.content) || post.content || "No description";
-    const logoMarkSrc = exactLogoImageSrc;
-    const logoMarkFallbackSrc = "/phew-mark.svg";
+    const interactionsText = `${likeCount} likes / ${commentCount} comments / ${repostCount} reposts`;
+    const logoWordmarkSrc = "/phew-logo.svg";
+    const logoMarkSrc = "/phew-mark.svg";
     const authorAvatarSrc = getAvatarUrl(post.author.id, post.author.image);
     const loadCanvasImage = (src: string | null | undefined) =>
       new Promise<HTMLImageElement | null>((resolve) => {
@@ -1695,260 +1842,336 @@ export function PostCard({
       return null;
     };
 
+    const liveMetricCards = [
+      {
+        label: "Entry MCAP",
+        value: formatMarketCap(post.entryMcap),
+        hint: "Position opened",
+        emphasis: false,
+        tone: "#f8fafc",
+      },
+      {
+        label: liveSettled ? "Official MCAP" : "Reference MCAP",
+        value: formatMarketCap(officialValue),
+        hint: liveSettled ? "1H benchmark locked" : "Live benchmark",
+        emphasis: false,
+        tone: "#f8fafc",
+      },
+      {
+        label: liveSettled ? "Current MCAP (Live)" : "Current MCAP",
+        value: formatMarketCap(liveCurrentMcap),
+        hint: "Latest tracked MCAP",
+        emphasis: true,
+        tone: "#f8fafc",
+      },
+      {
+        label: profitLossValue === null ? "MCAP Delta" : profitLossValue >= 0 ? "MCAP Gain" : "MCAP Drop",
+        value:
+          profitLossValue === null
+            ? "N/A"
+            : `${profitLossValue >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(profitLossValue))}`,
+        hint: "Versus entry",
+        emphasis: false,
+        tone: profitLossValue === null ? "#f8fafc" : isPositive ? "#86efac" : "#fda4af",
+      },
+    ];
+
+    const liveSnapshotRows = [
+      { shortLabel: "1H", ...liveSnapshotMetrics[0] },
+      { shortLabel: "6H", ...liveSnapshotMetrics[1] },
+      { shortLabel: "NOW", ...liveSnapshotMetrics[2] },
+    ];
+
+    const liveWalletSummaryRows: Array<{ label: string; value: string; tone: string }> = [];
+    if (verifiedPnlText) {
+      liveWalletSummaryRows.push({
+        label: verifiedPnlLabel ?? "Wallet P/L",
+        value: verifiedPnlText,
+        tone: verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0 ? "#86efac" : "#fda4af",
+      });
+    }
+    if (boughtUsd !== null) {
+      liveWalletSummaryRows.push({
+        label: "Bought",
+        value: formatUsdStat(boughtUsd),
+        tone: "#f8fafc",
+      });
+    }
+    if (soldUsd !== null) {
+      liveWalletSummaryRows.push({
+        label: "Sold",
+        value: formatUsdStat(soldUsd),
+        tone: "#f8fafc",
+      });
+    }
+    if (holdingUsd !== null) {
+      liveWalletSummaryRows.push({
+        label: "Holding",
+        value: formatUsdStat(holdingUsd),
+        tone: "#f8fafc",
+      });
+    }
+
     setIsWinCardDownloading(true);
     try {
-      const [brandMarkImg, authorAvatarImg] = await Promise.all([
-        loadFirstCanvasImage([logoMarkSrc, logoMarkFallbackSrc]),
+      const [brandLogoImg, brandMarkImg, authorAvatarImg] = await Promise.all([
+        loadFirstCanvasImage([logoWordmarkSrc]),
+        loadFirstCanvasImage([logoMarkSrc]),
         loadCanvasImage(authorAvatarSrc),
       ]);
 
-      // Background (playful / attention-grabbing, but still premium)
-      const gradient = ctx.createLinearGradient(0, 0, width, height);
-      gradient.addColorStop(0, "#070a10");
-      gradient.addColorStop(0.45, "#091018");
-      gradient.addColorStop(1, "#06080d");
-      ctx.fillStyle = gradient;
+      ctx.fillStyle = "#061018";
       ctx.fillRect(0, 0, width, height);
 
-      const ambientLeft = ctx.createRadialGradient(210, 180, 10, 210, 180, 340);
-      ambientLeft.addColorStop(0, "rgba(163,230,53,0.18)");
-      ambientLeft.addColorStop(0.45, "rgba(132,204,22,0.11)");
-      ambientLeft.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = ambientLeft;
-      ctx.fillRect(-80, -40, 560, 520);
+      const pageGradient = ctx.createLinearGradient(0, 0, width, height);
+      pageGradient.addColorStop(0, "#081420");
+      pageGradient.addColorStop(0.45, "#07111a");
+      pageGradient.addColorStop(1, "#04080f");
+      ctx.fillStyle = pageGradient;
+      ctx.fillRect(0, 0, width, height);
 
-      const ambientRight = ctx.createRadialGradient(980, 170, 12, 980, 170, 360);
-      ambientRight.addColorStop(0, "rgba(45,212,191,0.16)");
-      ambientRight.addColorStop(0.45, "rgba(20,184,166,0.10)");
-      ambientRight.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = ambientRight;
-      ctx.fillRect(660, -60, 520, 520);
+      const leftGlow = ctx.createRadialGradient(220, 180, 20, 220, 180, 360);
+      leftGlow.addColorStop(0, "rgba(163,230,53,0.18)");
+      leftGlow.addColorStop(0.55, "rgba(163,230,53,0.07)");
+      leftGlow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = leftGlow;
+      ctx.fillRect(-40, -40, 520, 500);
 
-      const ambientBottom = ctx.createRadialGradient(300, 640, 20, 300, 640, 300);
-      ambientBottom.addColorStop(0, accentSoft);
-      ambientBottom.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = ambientBottom;
-      ctx.fillRect(20, 420, 540, 260);
+      const rightGlow = ctx.createRadialGradient(980, 190, 20, 980, 190, 360);
+      rightGlow.addColorStop(0, "rgba(45,212,191,0.16)");
+      rightGlow.addColorStop(0.58, "rgba(45,212,191,0.06)");
+      rightGlow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = rightGlow;
+      ctx.fillRect(700, -20, 460, 500);
 
-      // Motion ribbons
-      ctx.save();
-      ctx.translate(860, 120);
-      ctx.rotate(-0.24);
-      const ribbon = ctx.createLinearGradient(-180, 0, 180, 0);
-      ribbon.addColorStop(0, "rgba(163,230,53,0.03)");
-      ribbon.addColorStop(0.5, "rgba(255,255,255,0.08)");
-      ribbon.addColorStop(1, "rgba(45,212,191,0.03)");
-      ctx.fillStyle = ribbon;
-      drawRoundedRect(-180, -22, 360, 44, 22);
-      ctx.fill();
-      ctx.restore();
+      const accentGlow = ctx.createRadialGradient(540, 620, 20, 540, 620, 320);
+      accentGlow.addColorStop(0, accentSoft);
+      accentGlow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = accentGlow;
+      ctx.fillRect(240, 420, 620, 320);
 
       ctx.save();
-      ctx.translate(250, 510);
-      ctx.rotate(0.18);
-      const ribbon2 = ctx.createLinearGradient(-220, 0, 220, 0);
-      ribbon2.addColorStop(0, "rgba(45,212,191,0.03)");
-      ribbon2.addColorStop(0.5, "rgba(255,255,255,0.06)");
-      ribbon2.addColorStop(1, "rgba(163,230,53,0.03)");
-      ctx.fillStyle = ribbon2;
-      drawRoundedRect(-220, -20, 440, 40, 20);
-      ctx.fill();
-      ctx.restore();
-
-      // Diagonal texture streaks
-      ctx.save();
-      ctx.globalAlpha = 0.08;
+      ctx.globalAlpha = 0.05;
       ctx.strokeStyle = "rgba(255,255,255,0.8)";
       ctx.lineWidth = 1;
-      for (let i = -height; i < width + height; i += 40) {
+      for (let y = -height; y < width; y += 34) {
         ctx.beginPath();
-        ctx.moveTo(i, 0);
-        ctx.lineTo(i - 120, height);
+        ctx.moveTo(y, 0);
+        ctx.lineTo(y + height, height);
         ctx.stroke();
       }
       ctx.restore();
 
-      // Subtle grid
-      ctx.strokeStyle = "rgba(255,255,255,0.035)";
-      ctx.lineWidth = 1;
-      for (let x = 0; x < width; x += 48) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-        ctx.stroke();
-      }
-      for (let y = 0; y < height; y += 48) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-      }
-
-      // Confetti sparks for fast visual attention
-      const sparkColor = isSettledLoss ? "rgba(248,113,113,0.28)" : "rgba(163,230,53,0.24)";
-      ctx.strokeStyle = sparkColor;
-      ctx.lineWidth = 2;
-      const sparks = [
-        [94, 86, 18, -6],
-        [148, 96, 24, -8],
-        [1098, 112, -18, 6],
-        [1062, 124, -28, 10],
-        [104, 610, 16, 8],
-        [1088, 598, -20, -8],
-      ];
-      sparks.forEach(([sx, sy, dx, dy]) => {
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + dx, sy + dy);
-        ctx.stroke();
+      drawPanel(36, 34, width - 72, height - 68, {
+        fillStops: [
+          [0, "rgba(8,12,20,0.97)"],
+          [0.55, "rgba(7,12,18,0.94)"],
+          [1, "rgba(5,8,13,0.97)"],
+        ],
+        strokeStyle: "rgba(255,255,255,0.1)",
+        topGlow: "rgba(255,255,255,0.05)",
       });
 
-      // Main card container
-      drawRoundedRect(40, 36, width - 80, height - 72, 28);
-      const cardFill = ctx.createLinearGradient(40, 36, width - 40, height - 36);
-      cardFill.addColorStop(0, "rgba(9,12,18,0.92)");
-      cardFill.addColorStop(0.55, "rgba(10,14,20,0.88)");
-      cardFill.addColorStop(1, "rgba(7,10,15,0.90)");
-      ctx.fillStyle = cardFill;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.10)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.fillStyle = "rgba(255,255,255,0.05)";
-      drawRoundedRect(40, 36, width - 80, 10, 28);
-      ctx.fill();
+      ctx.save();
+      ctx.beginPath();
+      drawRoundedRect(36, 34, width - 72, height - 68, 34);
+      ctx.clip();
+      ctx.strokeStyle = "rgba(255,255,255,0.045)";
+      ctx.lineWidth = 1;
+      for (let x = 60; x < width; x += 52) {
+        ctx.beginPath();
+        ctx.moveTo(x, 34);
+        ctx.lineTo(x, height - 34);
+        ctx.stroke();
+      }
+      ctx.restore();
 
-      // Header brand
-      drawRoundedRect(68, 58, 338, 46, 20);
-      const brandPillFill = ctx.createLinearGradient(68, 58, 406, 104);
-      brandPillFill.addColorStop(0, "rgba(163,230,53,0.07)");
-      brandPillFill.addColorStop(0.45, "rgba(255,255,255,0.04)");
-      brandPillFill.addColorStop(1, "rgba(45,212,191,0.07)");
-      ctx.fillStyle = brandPillFill;
+      drawRoundedRect(72, 66, 308, 66, 22);
+      ctx.fillStyle = "rgba(255,255,255,0.05)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1.2;
       ctx.stroke();
 
-      drawRoundedRect(76, 68, 28, 28, 10);
-      ctx.fillStyle = "rgba(255,255,255,0.05)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      ctx.stroke();
-      if (brandMarkImg) {
-        ctx.save();
-        ctx.beginPath();
-        drawRoundedRect(78, 70, 24, 24, 8);
-        ctx.clip();
-        ctx.drawImage(brandMarkImg, 78, 70, 24, 24);
-        ctx.restore();
+      if (brandLogoImg) {
+        ctx.drawImage(brandLogoImg, 92, 72, 232, 54);
+      } else {
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "800 34px Inter, system-ui, sans-serif";
+        ctx.fillText("PHEW.RUN", 94, 108);
       }
 
-      ctx.font = "800 18px Inter, system-ui, sans-serif";
-      ctx.fillStyle = "rgba(248,250,252,0.92)";
-      ctx.fillText("PHEW", 114, 89);
-      ctx.fillStyle = "#bfe8c8";
-      ctx.fillText(".RUN", 169, 89);
-      ctx.fillStyle = "rgba(226,232,240,0.55)";
-      ctx.font = "600 9px Inter, system-ui, sans-serif";
-      ctx.fillText("PHEW RUNNING THE INTERNET", 114, 76);
-      ctx.fillStyle = "rgba(226,232,240,0.60)";
-      ctx.font = "700 10px Inter, system-ui, sans-serif";
-      ctx.fillText("ALPHA RECEIPT", 288, 86);
+      ctx.fillStyle = "rgba(226,232,240,0.62)";
+      ctx.font = "600 12px Inter, system-ui, sans-serif";
+      ctx.fillText("Official alpha result card", 92, 142);
 
-      drawRoundedRect(918, 58, 174, 40, 18);
-      const resultChipFill = ctx.createLinearGradient(918, 58, 1092, 98);
-      resultChipFill.addColorStop(0, accentSoft);
-      resultChipFill.addColorStop(1, "rgba(255,255,255,0.04)");
-      ctx.fillStyle = resultChipFill;
+      drawRoundedRect(870, 70, 258, 54, 20);
+      const headerChipFill = ctx.createLinearGradient(870, 70, 1128, 124);
+      headerChipFill.addColorStop(0, accentSoft);
+      headerChipFill.addColorStop(1, "rgba(255,255,255,0.035)");
+      ctx.fillStyle = headerChipFill;
       ctx.fill();
       ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.font = "800 12px Inter, system-ui, sans-serif";
+      ctx.fillText("SHARE PNG", 898, 101);
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "700 20px Inter, system-ui, sans-serif";
+      ctx.fillText(resultLabel, 992, 102);
+
+      drawPanel(72, 170, 538, 198, {
+        glowColor: `${accent}22`,
+        fillStops: [
+          [0, "rgba(12,18,28,0.96)"],
+          [0.62, "rgba(8,14,22,0.93)"],
+          [1, "rgba(8,14,20,0.95)"],
+        ],
+        strokeStyle: "rgba(255,255,255,0.08)",
+        topGlow: accentSoft,
+      });
+
+      ctx.fillStyle = "rgba(226,232,240,0.72)";
+      ctx.font = "700 12px Inter, system-ui, sans-serif";
+      ctx.fillText(liveSettled ? "Settled performance" : "Live performance", 100, 206);
+      ctx.fillStyle = accent;
+      ctx.shadowColor = `${accent}44`;
+      ctx.shadowBlur = 18;
+      ctx.font = "800 74px Inter, system-ui, sans-serif";
+      ctx.fillText(resultText, 96, 284);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(226,232,240,0.68)";
+      ctx.font = "600 17px Inter, system-ui, sans-serif";
+      ctx.fillText(liveSettled ? "1H benchmark locked" : "Live market snapshot", 102, 316);
+
+      const heroInfoChips = [
+        {
+          label: liveMetricCards[3].label.toUpperCase(),
+          value: liveMetricCards[3].value,
+          tone: liveMetricCards[3].tone,
+        },
+        verifiedPnlText
+          ? {
+              label: (verifiedPnlLabel ?? "Wallet P/L").toUpperCase(),
+              value: verifiedPnlText,
+              tone: verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0 ? "#86efac" : "#fda4af",
+            }
+          : {
+              label: "STATUS",
+              value: liveSettled ? "Benchmark locked" : "Live updates on",
+              tone: "#f8fafc",
+            },
+      ];
+
+      heroInfoChips.forEach((chip, index) => {
+        const chipX = 100 + index * 208;
+        drawRoundedRect(chipX, 332, 188, 60, 18);
+        ctx.fillStyle = "rgba(255,255,255,0.045)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.06)";
+        ctx.stroke();
+        ctx.fillStyle = "rgba(226,232,240,0.54)";
+        ctx.font = "700 10px Inter, system-ui, sans-serif";
+        ctx.fillText(chip.label, chipX + 16, 352);
+        ctx.fillStyle = chip.tone;
+        ctx.font = "700 18px Inter, system-ui, sans-serif";
+        ctx.fillText(fitTextSingleLine(chip.value, 156), chipX + 16, 376);
+      });
+
+      drawPanel(626, 170, 502, 198, {
+        fillStops: [
+          [0, "rgba(14,19,29,0.95)"],
+          [1, "rgba(9,14,21,0.94)"],
+        ],
+        strokeStyle: "rgba(255,255,255,0.08)",
+        topGlow: "rgba(255,255,255,0.06)",
+      });
+
+      drawRoundedRect(652, 196, 64, 64, 22);
       ctx.fillStyle = "rgba(255,255,255,0.05)";
-      drawRoundedRect(924, 64, 46, 28, 14);
       ctx.fill();
-      ctx.fillStyle = accent;
-      ctx.font = "800 10px Inter, system-ui, sans-serif";
-      ctx.fillText("SHARE", 936, 81);
-      ctx.font = "700 14px Inter, system-ui, sans-serif";
-      ctx.fillText(resultLabel, 977, 83);
-
-      // User / token block
-      drawRoundedRect(68, 120, 670, 150, 22);
-      const userPanelFill = ctx.createLinearGradient(68, 120, 738, 270);
-      userPanelFill.addColorStop(0, "rgba(255,255,255,0.035)");
-      userPanelFill.addColorStop(1, "rgba(255,255,255,0.02)");
-      ctx.fillStyle = userPanelFill;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      ctx.stroke();
-      drawRoundedRect(68, 120, 8, 150, 22);
-      ctx.fillStyle = accent;
-      ctx.globalAlpha = 0.9;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      // avatar
-      ctx.beginPath();
-      ctx.arc(108, 170, 24, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.07)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.09)";
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
       ctx.stroke();
       if (authorAvatarImg) {
         ctx.save();
         ctx.beginPath();
-        ctx.arc(108, 170, 22.5, 0, Math.PI * 2);
+        drawRoundedRect(658, 202, 52, 52, 18);
         ctx.clip();
-        ctx.drawImage(authorAvatarImg, 85.5, 147.5, 45, 45);
+        ctx.drawImage(authorAvatarImg, 658, 202, 52, 52);
         ctx.restore();
       } else {
         ctx.fillStyle = "#f8fafc";
-        ctx.font = "700 18px Inter, system-ui, sans-serif";
+        ctx.font = "700 24px Inter, system-ui, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText((post.author.username || post.author.name || "?").charAt(0).toUpperCase(), 108, 177);
+        ctx.fillText((post.author.username || post.author.name || "?").charAt(0).toUpperCase(), 684, 238);
         ctx.textAlign = "start";
       }
 
       ctx.fillStyle = "#f8fafc";
       ctx.font = "700 28px Inter, system-ui, sans-serif";
-      ctx.fillText(fitTextSingleLine(titleName, 570), 146, 162);
+      ctx.fillText(fitTextSingleLine(titleName, 330), 734, 222);
+      ctx.fillStyle = "rgba(226,232,240,0.66)";
+      ctx.font = "600 13px Inter, system-ui, sans-serif";
+      ctx.fillText(
+        `Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level} / ${formatTimeAgo(post.createdAt)}`,
+        734,
+        246
+      );
 
-      ctx.fillStyle = "rgba(226,232,240,0.75)";
-      ctx.font = "500 14px Inter, system-ui, sans-serif";
-      ctx.fillText(`Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}  |  ${formatTimeAgo(post.createdAt)}  |  ${post.chainType?.toUpperCase() || "CHAIN"}`, 146, 188);
+      drawRoundedRect(984, 196, 118, 34, 17);
+      const chainPillFill = ctx.createLinearGradient(984, 196, 1102, 230);
+      chainPillFill.addColorStop(0, "rgba(163,230,53,0.11)");
+      chainPillFill.addColorStop(1, "rgba(45,212,191,0.1)");
+      ctx.fillStyle = chainPillFill;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.stroke();
+      ctx.fillStyle = "#d9f99d";
+      ctx.font = "700 13px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(post.chainType?.toUpperCase() || "CHAIN", 1043, 218);
+      ctx.textAlign = "start";
 
-      drawRoundedRect(146, 198, 560, 58, 14);
-      const tokenChipFill = ctx.createLinearGradient(146, 204, 706, 250);
-      tokenChipFill.addColorStop(0, "rgba(163,230,53,0.05)");
-      tokenChipFill.addColorStop(0.4, "rgba(255,255,255,0.025)");
-      tokenChipFill.addColorStop(1, "rgba(45,212,191,0.05)");
-      ctx.fillStyle = tokenChipFill;
+      drawRoundedRect(652, 278, 450, 64, 18);
+      const tokenCardFill = ctx.createLinearGradient(652, 278, 1102, 342);
+      tokenCardFill.addColorStop(0, "rgba(163,230,53,0.06)");
+      tokenCardFill.addColorStop(0.45, "rgba(255,255,255,0.03)");
+      tokenCardFill.addColorStop(1, "rgba(45,212,191,0.06)");
+      ctx.fillStyle = tokenCardFill;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.stroke();
+      ctx.fillStyle = "rgba(226,232,240,0.55)";
+      ctx.font = "700 10px Inter, system-ui, sans-serif";
+      ctx.fillText("CALLED TOKEN", 676, 300);
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "700 23px Inter, system-ui, sans-serif";
+      ctx.fillText(fitTextSingleLine(tokenPrimary, 250), 676, 323);
+      ctx.fillStyle = "rgba(226,232,240,0.66)";
+      ctx.font = "600 13px Inter, system-ui, sans-serif";
+      ctx.fillText(fitTextSingleLine(tokenSecondary, 220), 676, 345);
+
+      drawRoundedRect(940, 286, 142, 42, 16);
+      ctx.fillStyle = "rgba(255,255,255,0.05)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.stroke();
+      if (brandMarkImg) {
+        ctx.drawImage(brandMarkImg, 950, 293, 28, 28);
+      }
+      ctx.fillStyle = levelToneColor;
+      ctx.font = "700 13px Inter, system-ui, sans-serif";
+      ctx.fillText(`${winCardLevelLabel} / LVL ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}`, 986, 312);
 
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "700 18px Inter, system-ui, sans-serif";
-      ctx.fillText(fitTextSingleLine(tokenPrimary, 450), 162, 219);
-      ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(248,250,252,0.96)";
-      ctx.font = "700 14px Inter, system-ui, sans-serif";
-      ctx.fillText(`LVL ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}`, 690, 218);
-      ctx.textAlign = "start";
-      ctx.fillStyle = "rgba(226,232,240,0.75)";
-      ctx.font = "500 12px Inter, system-ui, sans-serif";
-      ctx.fillText(`${tokenSecondary} | ${winCardLevelLabel}`, 162, 237);
-      const levelTrackX = 162;
-      const levelTrackY = 243;
-      const levelTrackW = 528;
+      const levelTrackX = 652;
+      const levelTrackY = 350;
+      const levelTrackW = 450;
       const levelTrackH = 8;
       drawRoundedRect(levelTrackX, levelTrackY, levelTrackW, levelTrackH, 4);
-      ctx.fillStyle = "rgba(255,255,255,0.10)";
+      ctx.fillStyle = "rgba(255,255,255,0.09)";
       ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.07)";
-      drawRoundedRect(levelTrackX + levelTrackW * 0.333 - 1, levelTrackY - 1, 2, levelTrackH + 2, 1);
-      ctx.fill();
-      const levelFillW = Math.max(10, Math.round(levelTrackW * winCardLevelProgressRatio));
+      const levelFillW = Math.max(18, Math.round(levelTrackW * winCardLevelProgressRatio));
       const levelFill = ctx.createLinearGradient(levelTrackX, levelTrackY, levelTrackX + levelFillW, levelTrackY);
       if (post.author.level >= 8) {
         levelFill.addColorStop(0, "#f59e0b");
@@ -1970,200 +2193,124 @@ export function PostCard({
       ctx.fillStyle = levelFill;
       ctx.fill();
 
-      // Result hero
-      drawRoundedRect(760, 120, 332, 150, 22);
-      const resultPanelFill = ctx.createLinearGradient(760, 120, 1092, 270);
-      resultPanelFill.addColorStop(0, "rgba(255,255,255,0.035)");
-      resultPanelFill.addColorStop(0.55, "rgba(255,255,255,0.02)");
-      resultPanelFill.addColorStop(1, "rgba(255,255,255,0.028)");
-      ctx.fillStyle = resultPanelFill;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      ctx.stroke();
-      drawRoundedRect(760, 120, 332, 10, 22);
-      const resultTopFill = ctx.createLinearGradient(760, 120, 1092, 130);
-      resultTopFill.addColorStop(0, accentSoft);
-      resultTopFill.addColorStop(1, "rgba(255,255,255,0.01)");
-      ctx.fillStyle = resultTopFill;
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(226,232,240,0.75)";
-      ctx.font = "600 13px Inter, system-ui, sans-serif";
-      ctx.fillText("Post Performance", 786, 148);
-
-      ctx.fillStyle = accent;
-      ctx.shadowColor = `${accent}55`;
-      ctx.shadowBlur = 16;
-      ctx.font = "800 44px Inter, system-ui, sans-serif";
-      ctx.fillText(resultText, 786, 205);
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = "rgba(226,232,240,0.60)";
-      ctx.font = "700 10px Inter, system-ui, sans-serif";
-      ctx.fillText("SHARE-READY", 1004, 148);
-
-      if (verifiedPnlText && verifiedPnlLabel) {
-        ctx.fillStyle = "rgba(226,232,240,0.72)";
-        ctx.font = "600 14px Inter, system-ui, sans-serif";
-        ctx.fillText(verifiedPnlLabel, 786, 235);
-        ctx.fillStyle = verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0 ? "#bbf7d0" : "#fecaca";
-        ctx.font = "700 18px Inter, system-ui, sans-serif";
-        ctx.fillText(verifiedPnlText, 786, 257);
-      }
-
       // Metrics row
-      const metricY = 296;
-      const metricW = 328;
-      const metricGap = 18;
-      const metricX1 = 68;
-      const metricX2 = metricX1 + metricW + metricGap;
-      const metricX3 = metricX2 + metricW + metricGap;
-      const metricH = 126;
-
-      const drawMetricCard = (x: number, title: string, value: string, sub?: string, valueColor = "#f8fafc") => {
-        drawRoundedRect(x, metricY, metricW, metricH, 18);
-        const metricFill = ctx.createLinearGradient(x, metricY, x + metricW, metricY + metricH);
-        metricFill.addColorStop(0, "rgba(255,255,255,0.03)");
-        metricFill.addColorStop(1, "rgba(255,255,255,0.02)");
-        ctx.fillStyle = metricFill;
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255,255,255,0.06)";
-        ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255,0.045)";
-        drawRoundedRect(x, metricY, metricW, 8, 18);
-        ctx.fill();
-
-        ctx.fillStyle = "rgba(226,232,240,0.72)";
+      const metricY = 388;
+      const metricGap = 16;
+      const metricW = 252;
+      const metricH = 108;
+      liveMetricCards.forEach((metric, index) => {
+        const x = 72 + index * (metricW + metricGap);
+        drawPanel(x, metricY, metricW, metricH, {
+          fillStops: metric.emphasis
+            ? [
+                [0, "rgba(163,230,53,0.12)"],
+                [0.52, "rgba(12,18,28,0.94)"],
+                [1, "rgba(45,212,191,0.12)"],
+              ]
+            : undefined,
+          strokeStyle: metric.emphasis ? "rgba(196,255,99,0.28)" : "rgba(255,255,255,0.08)",
+          topGlow: metric.emphasis ? "rgba(163,230,53,0.24)" : "rgba(255,255,255,0.045)",
+        });
+        ctx.fillStyle = "rgba(226,232,240,0.56)";
+        ctx.font = "700 11px Inter, system-ui, sans-serif";
+        ctx.fillText(metric.label.toUpperCase(), x + 18, metricY + 26);
+        ctx.fillStyle = metric.tone;
+        ctx.font = "800 27px Inter, system-ui, sans-serif";
+        ctx.fillText(fitTextSingleLine(metric.value, metricW - 36), x + 18, metricY + 62);
+        ctx.fillStyle = "rgba(226,232,240,0.62)";
         ctx.font = "600 12px Inter, system-ui, sans-serif";
-        ctx.fillText(title, x + 18, metricY + 28);
+        ctx.fillText(metric.hint, x + 18, metricY + 88);
+      });
 
-        ctx.fillStyle = valueColor;
-        ctx.font = "800 30px Inter, system-ui, sans-serif";
-        ctx.fillText(value, x + 18, metricY + 70);
-
-        if (sub) {
-          ctx.fillStyle = "rgba(226,232,240,0.6)";
-          ctx.font = "500 12px Inter, system-ui, sans-serif";
-          ctx.fillText(sub, x + 18, metricY + 96);
-        }
-      };
-
-      const drawSnapshotsCard = (x: number) => {
-        drawRoundedRect(x, metricY, metricW, metricH, 18);
-        const snapFill = ctx.createLinearGradient(x, metricY, x + metricW, metricY + metricH);
-        snapFill.addColorStop(0, "rgba(163,230,53,0.03)");
-        snapFill.addColorStop(0.5, "rgba(255,255,255,0.02)");
-        snapFill.addColorStop(1, "rgba(45,212,191,0.03)");
-        ctx.fillStyle = snapFill;
+      drawPanel(72, 518, 352, 156, {
+        strokeStyle: "rgba(255,255,255,0.08)",
+        topGlow: "rgba(255,255,255,0.05)",
+      });
+      ctx.fillStyle = "rgba(226,232,240,0.6)";
+      ctx.font = "700 11px Inter, system-ui, sans-serif";
+      ctx.fillText("SNAPSHOT LADDER", 94, 546);
+      liveSnapshotRows.forEach((row, index) => {
+        const rowY = 574 + index * 32;
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        drawRoundedRect(94, rowY - 4, 42, 10, 5);
         ctx.fill();
-        ctx.strokeStyle = "rgba(255,255,255,0.06)";
-        ctx.stroke();
-
+        ctx.fillStyle =
+          row.positive === null ? "rgba(148,163,184,0.55)" : row.positive ? "rgba(34,197,94,0.88)" : "rgba(239,68,68,0.88)";
+        drawRoundedRect(94, rowY - 4, Math.max(8, Math.round(42 * row.magnitudeRatio)), 10, 5);
+        ctx.fill();
         ctx.fillStyle = "rgba(226,232,240,0.72)";
-        ctx.font = "600 12px Inter, system-ui, sans-serif";
-        ctx.fillText("Snapshots", x + 18, metricY + 28);
+        ctx.font = "700 13px Inter, system-ui, sans-serif";
+        ctx.fillText(row.shortLabel, 152, rowY + 4);
+        ctx.fillStyle = row.positive === null ? "#e2e8f0" : row.positive ? "#86efac" : "#fda4af";
+        ctx.font = "700 14px Inter, system-ui, sans-serif";
+        ctx.fillText(row.percentText, 206, rowY + 4);
+        ctx.textAlign = "right";
+        ctx.fillStyle = row.positive === null ? "rgba(226,232,240,0.66)" : row.positive ? "#dcfce7" : "#fecdd3";
+        ctx.fillText(row.profitText, 396, rowY + 4);
+        ctx.textAlign = "start";
+      });
 
-        const rows = [
-          { short: "1H", ...liveSnapshotMetrics[0] },
-          { short: "6H", ...liveSnapshotMetrics[1] },
-          { short: "NOW", ...liveSnapshotMetrics[2] },
-        ];
-
-        rows.forEach((row, index) => {
-          const rowY = metricY + 52 + index * 22;
-          const barX = x + 18;
-          const barY = rowY + 4;
-          const barW = 28;
-          const fillW = Math.max(4, Math.round(barW * row.magnitudeRatio));
-          const barColor = row.positive === null ? "rgba(148,163,184,0.45)" : row.positive ? "rgba(34,197,94,0.75)" : "rgba(239,68,68,0.75)";
-          ctx.fillStyle = "rgba(255,255,255,0.08)";
-          drawRoundedRect(barX, barY, barW, 4, 2);
+      drawPanel(440, 518, 280, 156, {
+        strokeStyle: "rgba(255,255,255,0.08)",
+        topGlow: "rgba(255,255,255,0.05)",
+      });
+      ctx.fillStyle = "rgba(226,232,240,0.6)";
+      ctx.font = "700 11px Inter, system-ui, sans-serif";
+      ctx.fillText(hasWalletTradeInfo ? "WALLET SUMMARY" : "ENGAGEMENT", 462, 546);
+      if (liveWalletSummaryRows.length > 0) {
+        liveWalletSummaryRows.slice(0, 3).forEach((row, index) => {
+          const rowY = 578 + index * 34;
+          drawRoundedRect(462, rowY - 16, 236, 28, 12);
+          ctx.fillStyle = "rgba(255,255,255,0.04)";
           ctx.fill();
-          ctx.fillStyle = barColor;
-          drawRoundedRect(barX, barY, fillW, 4, 2);
-          ctx.fill();
-
-          ctx.fillStyle = "rgba(226,232,240,0.7)";
-          ctx.font = "700 11px Inter, system-ui, sans-serif";
-          ctx.fillText(row.short, x + 56, rowY);
-
-          ctx.fillStyle =
-            row.positive === null ? "#cbd5e1" : row.positive ? "#22c55e" : "#ef4444";
-          ctx.font = "700 12px Inter, system-ui, sans-serif";
-          ctx.fillText(row.percentText, x + 94, rowY);
-
+          ctx.fillStyle = "rgba(226,232,240,0.56)";
+          ctx.font = "700 10px Inter, system-ui, sans-serif";
+          ctx.fillText(row.label.toUpperCase(), 474, rowY - 1);
           ctx.textAlign = "right";
-          ctx.fillStyle =
-            row.positive === null ? "rgba(226,232,240,0.72)" : row.positive ? "#bbf7d0" : "#fecaca";
-          ctx.fillText(row.profitText, x + metricW - 18, rowY);
+          ctx.fillStyle = row.tone;
+          ctx.font = "700 14px Inter, system-ui, sans-serif";
+          ctx.fillText(row.value, 684, rowY - 1);
           ctx.textAlign = "start";
         });
-      };
-
-      drawMetricCard(metricX1, "Entry MCAP", formatMarketCap(post.entryMcap), "Position open");
-      drawMetricCard(metricX2, liveSettled ? "Official MCAP" : "Current MCAP", formatMarketCap(officialValue), liveSettled ? "1H settlement benchmark" : "Live market snapshot");
-      drawSnapshotsCard(metricX3);
-
-      // Post text panel
-      drawRoundedRect(68, 442, width - 136, 150, 20);
-      const postPanelFill = ctx.createLinearGradient(68, 442, width - 68, 592);
-      postPanelFill.addColorStop(0, "rgba(255,255,255,0.025)");
-      postPanelFill.addColorStop(1, "rgba(255,255,255,0.018)");
-      ctx.fillStyle = postPanelFill;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.06)";
-      ctx.stroke();
-
-      let postPanelTextY = 504;
-      let postPanelMaxLines = 3;
-      ctx.fillStyle = "rgba(226,232,240,0.72)";
-      ctx.font = "600 12px Inter, system-ui, sans-serif";
-      ctx.fillText("Alpha Call Notes", 88, 470);
-
-      if (hasWalletTradeInfo) {
-        const parts: string[] = [];
-        if (verifiedPnlText && verifiedPnlLabel) parts.push(`Wallet P/L ${verifiedPnlText}`);
-        if (boughtUsd !== null) parts.push(`Bought ${formatUsdStat(boughtUsd)}`);
-        if (soldUsd !== null) parts.push(`Sold ${formatUsdStat(soldUsd)}`);
-        if (boughtAmount !== null) parts.push(`Bought Qty ${boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
-        if (soldAmount !== null) parts.push(`Sold Qty ${soldAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
-        if (holdingUsd !== null) parts.push(`Held ${formatUsdStat(holdingUsd)}`);
-        if (holdingAmount !== null) parts.push(`Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
-
-        if (parts.length > 0) {
-          ctx.fillStyle = "rgba(226,232,240,0.72)";
-          ctx.font = "600 12px Inter, system-ui, sans-serif";
-          ctx.fillText("Wallet Summary", 88, 492);
-          ctx.fillStyle = "rgba(226,232,240,0.9)";
-          ctx.font = "500 11px Inter, system-ui, sans-serif";
-          drawWrappedText(parts.join(" | "), 88, 512, width - 176, 18, 2);
-          postPanelTextY = 548;
-          postPanelMaxLines = 2;
-        }
+      } else {
+        [interactionsText, liveSettled ? "1H benchmark locked" : "Live market snapshot"].forEach((item, index) => {
+          const rowY = 582 + index * 34;
+          drawRoundedRect(462, rowY - 16, 236, 28, 12);
+          ctx.fillStyle = "rgba(255,255,255,0.04)";
+          ctx.fill();
+          ctx.fillStyle = "rgba(226,232,240,0.82)";
+          ctx.font = "600 13px Inter, system-ui, sans-serif";
+          ctx.fillText(fitTextSingleLine(item, 214), 474, rowY - 1);
+        });
       }
 
+      drawPanel(736, 518, 392, 156, {
+        strokeStyle: "rgba(255,255,255,0.08)",
+        topGlow: accentSoft,
+      });
+      ctx.fillStyle = "rgba(226,232,240,0.6)";
+      ctx.font = "700 11px Inter, system-ui, sans-serif";
+      ctx.fillText("ALPHA NOTES", 758, 546);
       ctx.fillStyle = "#e5e7eb";
       ctx.font = "500 20px Inter, system-ui, sans-serif";
-      drawWrappedText(postPreview, 88, postPanelTextY, width - 176, 26, postPanelMaxLines);
+      drawWrappedText(postPreview, 758, 582, 340, 26, 3);
+      ctx.fillStyle = "rgba(226,232,240,0.58)";
+      ctx.font = "600 12px Inter, system-ui, sans-serif";
+      ctx.fillText(`Post ID ${post.id.slice(0, 10)}...`, 758, 652);
 
-      // Footer
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.beginPath();
-      ctx.moveTo(68, 614);
-      ctx.lineTo(width - 68, 614);
+      ctx.moveTo(72, 700);
+      ctx.lineTo(width - 72, 700);
       ctx.stroke();
-
-      ctx.fillStyle = "rgba(226,232,240,0.68)";
-      ctx.font = "500 12px Inter, system-ui, sans-serif";
-      ctx.fillText("Generated on PHEW.RUN - Share your receipts", 88, 642);
-      ctx.fillText(`Post ID: ${post.id.slice(0, 10)}...`, 88, 662);
-
-      const interactions = `${likeCount} likes | ${commentCount} comments | ${repostCount} reposts`;
+      ctx.fillStyle = "rgba(226,232,240,0.64)";
+      ctx.font = "600 12px Inter, system-ui, sans-serif";
+      ctx.fillText("Generated on PHEW.RUN for fast sharing", 82, 726);
       ctx.textAlign = "right";
-      ctx.fillText(interactions, width - 88, 642);
       ctx.fillText(
-        liveSettled ? "Settlement-based result snapshot" : "Live result snapshot (updates over time)",
-        width - 88,
-        662
+        liveSettled ? "Settlement verified snapshot" : "Live snapshot at export time",
+        width - 82,
+        726
       );
       ctx.textAlign = "start";
 
@@ -4674,6 +4821,7 @@ export function PostCard({
                 </div>
               </div>
 
+              {walletDisplayName !== undefined ? (
               <div className="rounded-2xl border border-slate-900/10 bg-slate-900/[0.03] p-4 shadow-[0_18px_44px_-36px_rgba(148,163,184,0.65)] dark:border-white/10 dark:bg-black/20 dark:shadow-none">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -4720,6 +4868,238 @@ export function PostCard({
                   If the wallet popup does not open, disable browser popup blocking for this site and ensure Phantom / Solflare is installed and unlocked.
                 </p>
               </div>
+            ) : (
+              <div className="relative overflow-hidden rounded-[26px] border border-white/10 bg-[#071019] shadow-[0_28px_90px_-36px_rgba(0,0,0,0.85)] ring-1 ring-white/5">
+                <div className="absolute inset-0 bg-[linear-gradient(135deg,#081420_0%,#07111a_48%,#04080f_100%)]" />
+                <div className="absolute inset-0 opacity-[0.05] [background-image:linear-gradient(rgba(255,255,255,0.9)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.9)_1px,transparent_1px)] [background-size:52px_52px]" />
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_14%,rgba(163,230,53,0.16),transparent_34%),radial-gradient(circle_at_86%_16%,rgba(45,212,191,0.16),transparent_34%),radial-gradient(circle_at_50%_88%,rgba(148,163,184,0.12),transparent_38%)]" />
+                <div
+                  className={cn(
+                    "absolute -top-20 left-16 h-72 w-72 rounded-full blur-3xl",
+                    winCardTrendTone === "gain"
+                      ? "bg-gain/20"
+                      : winCardTrendTone === "loss"
+                        ? "bg-loss/20"
+                        : "bg-slate-400/20"
+                  )}
+                />
+                <div className="absolute bottom-[-18%] right-[-8%] h-72 w-72 rounded-full bg-primary/12 blur-3xl" />
+
+                <div className="relative p-4 sm:p-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
+                      <img
+                        src={exactLogoImageSrc}
+                        alt="Phew"
+                        className="h-9 w-auto object-contain sm:h-10"
+                        loading="lazy"
+                      />
+                      <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300/60">
+                        Official alpha result card
+                      </div>
+                    </div>
+                    <div
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-3.5 py-1.5 text-[11px] font-semibold tracking-[0.16em]",
+                        winCardTrendTone === "gain"
+                          ? "border-gain/35 bg-gain/10 text-gain"
+                          : winCardTrendTone === "loss"
+                            ? "border-loss/35 bg-loss/10 text-loss"
+                            : "border-white/10 bg-white/5 text-slate-300"
+                      )}
+                    >
+                      {winCardResultLabel}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[1.06fr_0.94fr]">
+                    <div className="rounded-[22px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_22px_60px_-38px_rgba(0,0,0,0.92)]">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300/68">
+                        {winCardStatusTitle}
+                      </div>
+                      <div className={cn("mt-2 text-[2.35rem] font-black tracking-tight sm:text-[4.5rem]", winCardAccentClass)}>
+                        {winCardResultText}
+                      </div>
+                      <div className="text-sm text-slate-300/72 sm:text-base">{winCardStatusDetail}</div>
+
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.045] px-3.5 py-3">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300/56">
+                            {winCardMarketMoveLabel}
+                          </div>
+                          <div className={cn("mt-1 text-base font-semibold", winCardAccentClass)}>{winCardMarketMoveText}</div>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.045] px-3.5 py-3">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300/56">
+                            {winCardVerifiedPnlLabel ?? "Status"}
+                          </div>
+                          <div
+                            className={cn(
+                              "mt-1 text-base font-semibold",
+                              winCardVerifiedPnlText
+                                ? verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0
+                                  ? "text-gain"
+                                  : "text-loss"
+                                : "text-white"
+                            )}
+                          >
+                            {winCardVerifiedPnlText ?? winCardStatusDetail}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[22px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_22px_60px_-38px_rgba(0,0,0,0.92)]">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-14 w-14 border border-white/10">
+                          <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
+                          <AvatarFallback className="bg-white/5 text-base font-bold text-white">
+                            {(post.author.username || post.author.name || "?").charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xl font-semibold text-white">
+                            {post.author.username ? `@${post.author.username}` : post.author.name}
+                          </div>
+                          <div className="truncate text-[11px] uppercase tracking-[0.12em] text-slate-300/68">
+                            Level {post.author.level > 0 ? `+${post.author.level}` : post.author.level} / {formatTimeAgo(post.createdAt)}
+                          </div>
+                        </div>
+                        <div className="rounded-full border border-lime-300/20 bg-gradient-to-r from-lime-300/12 to-cyan-300/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-lime-100">
+                          {post.chainType?.toUpperCase() || "CHAIN"}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-[20px] border border-white/10 bg-gradient-to-r from-lime-300/8 via-white/[0.04] to-cyan-300/8 p-3.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Called token</div>
+                        <div className="mt-1 truncate text-lg font-semibold text-white">{winCardTokenPrimary}</div>
+                        <div className="mt-1 truncate text-sm text-slate-300/74">{winCardTokenSecondary}</div>
+                      </div>
+
+                      <div className="mt-3 rounded-[20px] border border-white/10 bg-black/20 p-3.5">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
+                            Reputation
+                          </div>
+                          <div className={cn("text-[11px] font-semibold tracking-[0.12em]", winCardLevelToneClass)}>
+                            {winCardLevelLabel} / LVL {post.author.level > 0 ? `+${post.author.level}` : post.author.level}
+                          </div>
+                        </div>
+                        <LevelBar level={post.author.level} size="sm" showLabel={false} className="space-y-0" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    {winCardMetricCards.map((metric) => (
+                      <div
+                        key={metric.label}
+                        className={cn(
+                          "rounded-[20px] border p-3.5 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.9)]",
+                          metric.emphasis
+                            ? "border-lime-300/25 bg-gradient-to-br from-lime-300/12 via-white/[0.04] to-cyan-300/12"
+                            : "border-white/10 bg-white/[0.045]"
+                        )}
+                      >
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
+                          {metric.label}
+                        </div>
+                        <div className={cn("mt-1.5 text-lg font-bold", metric.toneClass ?? "text-white")}>
+                          {metric.value}
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-300/68">{metric.hint}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_0.78fr_1.05fr]">
+                    <div className="rounded-[20px] border border-white/10 bg-white/[0.045] p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
+                        Snapshot ladder
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {winCardSnapshotRows.map((metric) => (
+                          <div key={metric.label} className="flex items-center gap-3">
+                            <div className="h-2 w-12 overflow-hidden rounded-full bg-white/10">
+                              <div
+                                className={cn(
+                                  "h-full rounded-full",
+                                  metric.positive === null
+                                    ? "bg-white/20"
+                                    : metric.positive
+                                      ? "bg-gradient-to-r from-lime-300/80 to-green-400/80"
+                                      : "bg-gradient-to-r from-rose-400/80 to-red-500/80"
+                                )}
+                                style={{ width: `${Math.max(8, Math.round(metric.magnitudeRatio * 100))}%` }}
+                              />
+                            </div>
+                            <div className="w-9 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-300/68">
+                              {metric.shortLabel}
+                            </div>
+                            <div className={cn("min-w-0 flex-1 text-sm font-semibold", metric.toneClass)}>
+                              {metric.percentText}
+                            </div>
+                            <div className={cn("text-sm", metric.positive === null ? "text-slate-300/72" : metric.toneClass)}>
+                              {metric.profitText}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[20px] border border-white/10 bg-white/[0.045] p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
+                        {winCardWalletSummaryCards.length > 0 ? "Wallet summary" : "Engagement"}
+                      </div>
+                      <div className="mt-3 space-y-2.5">
+                        {winCardWalletSummaryCards.length > 0 ? (
+                          (winCardWalletSummaryCards as Array<{ label: string; value: string; hint: string; toneClass: string }>)
+                            .slice(0, 3)
+                            .map((item) => (
+                              <div key={item.label} className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300/56">
+                                  {item.label}
+                                </div>
+                                <div className={cn("mt-1 text-sm font-semibold", item.toneClass)}>{item.value}</div>
+                                <div className="mt-0.5 text-[11px] text-slate-300/68">{item.hint}</div>
+                              </div>
+                            ))
+                        ) : (
+                          <>
+                            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm font-medium text-white">
+                              {likeCount} likes / {commentCount} comments / {repostCount} reposts
+                            </div>
+                            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-slate-300/78">
+                              {winCardStatusDetail}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[20px] border border-white/10 bg-white/[0.045] p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
+                        Alpha notes
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-100">
+                        {winCardPostPreview}
+                      </p>
+                      <div className="mt-4 text-[11px] text-slate-300/62">Post ID {post.id.slice(0, 10)}...</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-2 text-[11px] text-slate-300/70 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+                      <Sparkles className="h-3 w-3 text-slate-300/80" />
+                      Generated on PHEW.RUN for fast sharing
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                      {localSettled ? "Settlement verified snapshot" : "Live snapshot at export time"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
             </div>
           </div>
         </DialogContent>
@@ -5196,6 +5576,7 @@ export function PostCard({
 
           <div className="p-3 sm:p-5">
             <div className="mx-auto max-w-[980px]">
+              {(
               <div className="relative overflow-hidden rounded-2xl sm:rounded-[22px] border border-white/10 bg-[#090d13] shadow-[0_28px_90px_-36px_rgba(0,0,0,0.85)] ring-1 ring-white/5">
                 <div
                   className="absolute inset-0 opacity-[0.04]"
@@ -5483,6 +5864,7 @@ export function PostCard({
                   </div>
                 </div>
               </div>
+              )}
             </div>
           </div>
 

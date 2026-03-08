@@ -50,6 +50,7 @@ export default function Leaderboard() {
     ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
     : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
   const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
+  const unreadQueryKey = ["notifications", "unread-count", session?.user?.id ?? "anonymous"] as const;
   const sessionBackedUser = session?.user
     ? {
         id: session.user.id,
@@ -83,7 +84,7 @@ export default function Leaderboard() {
 
   // Fetch unread notification count
   const { data: unreadData } = useQuery({
-    queryKey: ["notifications", "unread-count"],
+    queryKey: unreadQueryKey,
     queryFn: async () => {
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
       writeSessionCache(unreadCacheKey, response.count);

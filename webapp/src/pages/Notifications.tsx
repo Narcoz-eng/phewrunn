@@ -17,6 +17,8 @@ import { PhewBellIcon } from "@/components/icons/PhewIcons";
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
 const NOTIFICATIONS_CACHE_TTL_MS = 30 * 60_000;
 const NOTIFICATION_MERGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
 
 function normalizeNotificationMessage(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/g, " ");
@@ -164,6 +166,17 @@ export default function Notifications() {
     () => (session?.user?.id ? `${NOTIFICATIONS_CACHE_KEY}:${session.user.id}` : NOTIFICATIONS_CACHE_KEY),
     [session?.user?.id]
   );
+  const unreadCacheKey = useMemo(
+    () =>
+      session?.user?.id
+        ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
+        : NOTIFICATIONS_UNREAD_CACHE_PREFIX,
+    [session?.user?.id]
+  );
+  const unreadQueryKey = useMemo(
+    () => ["notifications", "unread-count", session?.user?.id ?? "anonymous"] as const,
+    [session?.user?.id]
+  );
   const initialCachedNotifications = useMemo(
     () => readSessionCache<Notification[]>(notificationsCacheKey, NOTIFICATIONS_CACHE_TTL_MS),
     [notificationsCacheKey]
@@ -274,6 +287,20 @@ export default function Notifications() {
     writeSessionCache(notificationsCacheKey, notifications);
   }, [isFetched, notifications, notificationsCacheKey]);
 
+  const updateUnreadCountCache = useCallback(
+    (count: number) => {
+      const nextCount = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
+      queryClient.setQueryData(unreadQueryKey, { count: nextCount });
+      writeSessionCache(unreadCacheKey, nextCount);
+    },
+    [queryClient, unreadCacheKey, unreadQueryKey]
+  );
+
+  useEffect(() => {
+    if (!isFetched) return;
+    updateUnreadCountCache(notifications.filter((notification) => !notification.read).length);
+  }, [isFetched, notifications, updateUnreadCountCache]);
+
   // Mark notification as clicked (read)
   const markClickedMutation = useMutation({
     mutationFn: async (notificationIds: string[]) => {
@@ -286,11 +313,13 @@ export default function Notifications() {
     },
     onSuccess: (notificationIds) => {
       const idSet = new Set(notificationIds);
-      queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
-        old?.map((n) =>
-          idSet.has(n.id) ? { ...n, read: true } : n
-        )
-      );
+      const nextNotifications =
+        queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
+          old?.map((n) =>
+            idSet.has(n.id) ? { ...n, read: true } : n
+          )
+        ) ?? [];
+      updateUnreadCountCache(nextNotifications.filter((notification) => !notification.read).length);
     },
     onError: () => {
       // Silently fail for click tracking
@@ -331,9 +360,11 @@ export default function Notifications() {
     },
     onSuccess: ({ dismissedIds, failedIds }) => {
       const dismissedSet = new Set(dismissedIds);
-      queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
-        old?.filter((n) => !dismissedSet.has(n.id))
-      );
+      const nextNotifications =
+        queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
+          old?.filter((n) => !dismissedSet.has(n.id))
+        ) ?? [];
+      updateUnreadCountCache(nextNotifications.filter((notification) => !notification.read).length);
       if (failedIds.length > 0) {
         toast.warning("Some notifications could not be dismissed");
         return;
@@ -343,6 +374,9 @@ export default function Notifications() {
     onError: (_err, _id, context) => {
       if (context?.previousNotifications) {
         queryClient.setQueryData(notificationsQueryKey, context.previousNotifications);
+        updateUnreadCountCache(
+          context.previousNotifications.filter((notification) => !notification.read).length
+        );
       }
       toast.error("Failed to dismiss notification");
     },
@@ -357,6 +391,7 @@ export default function Notifications() {
       queryClient.setQueryData<Notification[]>(notificationsQueryKey, (old) =>
         old?.map((n) => ({ ...n, read: true }))
       );
+      updateUnreadCountCache(0);
       toast.success("All notifications marked as read");
     },
     onError: () => {
@@ -478,7 +513,7 @@ export default function Notifications() {
 
       <main className="app-page-shell pt-5">
         <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
-          <div className="sticky top-[4.4rem] z-40 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
+          <div className="relative z-10 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
             <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-border/65 bg-background/55 p-1.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
               <button
                 type="button"

@@ -46,10 +46,11 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
   const unreadCacheKey = user ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${user.id}` : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
   const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
+  const unreadQueryKey = ["notifications", "unread-count", user?.id ?? "anonymous"] as const;
 
   // Fetch unread notification count
   const { data: unreadData } = useQuery({
-    queryKey: ["notifications", "unread-count"],
+    queryKey: unreadQueryKey,
     queryFn: async () => {
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
       writeSessionCache(unreadCacheKey, response.count);
