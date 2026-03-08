@@ -783,7 +783,7 @@ export function PostCard({
   } | null>(null);
   const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
   const walletConnectCooldownUntilRef = useRef(0);
-  const exactLogoImageSrc = "/phew-mark.svg";
+  const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png?v=20260306e";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
@@ -1815,8 +1815,8 @@ export function PostCard({
           : "Wallet Loss";
     const postPreview = stripContractAddress(post.content) || post.content || "No description";
     const interactionsText = `${likeCount} likes / ${commentCount} comments / ${repostCount} reposts`;
-    const logoWordmarkSrc = "/phew-logo.svg";
-    const logoMarkSrc = "/phew-mark.svg";
+    const logoMarkSrc = exactLogoImageSrc;
+    const logoMarkFallbackSrc = "/phew-mark.svg";
     const authorAvatarSrc = getAvatarUrl(post.author.id, post.author.image);
     const loadCanvasImage = (src: string | null | undefined) =>
       new Promise<HTMLImageElement | null>((resolve) => {
@@ -1912,9 +1912,8 @@ export function PostCard({
 
     setIsWinCardDownloading(true);
     try {
-      const [brandLogoImg, brandMarkImg, authorAvatarImg] = await Promise.all([
-        loadFirstCanvasImage([logoWordmarkSrc]),
-        loadFirstCanvasImage([logoMarkSrc]),
+      const [brandMarkImg, authorAvatarImg] = await Promise.all([
+        loadFirstCanvasImage([logoMarkSrc, logoMarkFallbackSrc]),
         loadCanvasImage(authorAvatarSrc),
       ]);
 
@@ -1984,24 +1983,47 @@ export function PostCard({
       }
       ctx.restore();
 
-      drawRoundedRect(72, 66, 308, 66, 22);
+      drawRoundedRect(72, 66, 328, 66, 22);
       ctx.fillStyle = "rgba(255,255,255,0.05)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.08)";
       ctx.lineWidth = 1.2;
       ctx.stroke();
 
-      if (brandLogoImg) {
-        ctx.drawImage(brandLogoImg, 92, 72, 232, 54);
+      drawRoundedRect(88, 79, 42, 42, 14);
+      ctx.fillStyle = "rgba(255,255,255,0.04)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.stroke();
+      if (brandMarkImg) {
+        ctx.save();
+        ctx.beginPath();
+        drawRoundedRect(91, 82, 36, 36, 11);
+        ctx.clip();
+        ctx.drawImage(brandMarkImg, 91, 82, 36, 36);
+        ctx.restore();
       } else {
         ctx.fillStyle = "#f8fafc";
-        ctx.font = "800 34px Inter, system-ui, sans-serif";
-        ctx.fillText("PHEW.RUN", 94, 108);
+        ctx.font = "800 18px Inter, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("P", 109, 106);
+        ctx.textAlign = "start";
       }
+
+      ctx.font = "800 27px Inter, system-ui, sans-serif";
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillText("PHEW", 144, 102);
+      const runOffset = 144 + ctx.measureText("PHEW").width;
+      const runFill = ctx.createLinearGradient(runOffset, 76, runOffset + 86, 106);
+      runFill.addColorStop(0, "#A9FF34");
+      runFill.addColorStop(0.55, "#76FF44");
+      runFill.addColorStop(1, "#41E8CF");
+      ctx.fillStyle = runFill;
+      ctx.fillText(".RUN", runOffset, 102);
 
       ctx.fillStyle = "rgba(226,232,240,0.62)";
       ctx.font = "600 12px Inter, system-ui, sans-serif";
-      ctx.fillText("Official alpha result card", 92, 142);
+      ctx.fillText("Official alpha result card", 144, 122);
 
       drawRoundedRect(870, 70, 258, 54, 20);
       const headerChipFill = ctx.createLinearGradient(870, 70, 1128, 124);
@@ -2064,17 +2086,19 @@ export function PostCard({
 
       heroInfoChips.forEach((chip, index) => {
         const chipX = 100 + index * 208;
-        drawRoundedRect(chipX, 332, 188, 60, 18);
+        const chipY = 302;
+        const chipH = 48;
+        drawRoundedRect(chipX, chipY, 188, chipH, 18);
         ctx.fillStyle = "rgba(255,255,255,0.045)";
         ctx.fill();
         ctx.strokeStyle = "rgba(255,255,255,0.06)";
         ctx.stroke();
         ctx.fillStyle = "rgba(226,232,240,0.54)";
         ctx.font = "700 10px Inter, system-ui, sans-serif";
-        ctx.fillText(chip.label, chipX + 16, 352);
+        ctx.fillText(chip.label, chipX + 16, chipY + 18);
         ctx.fillStyle = chip.tone;
-        ctx.font = "700 18px Inter, system-ui, sans-serif";
-        ctx.fillText(fitTextSingleLine(chip.value, 156), chipX + 16, 376);
+        ctx.font = "700 16px Inter, system-ui, sans-serif";
+        ctx.fillText(fitTextSingleLine(chip.value, 156), chipX + 16, chipY + 38);
       });
 
       drawPanel(626, 170, 502, 198, {
@@ -4885,15 +4909,23 @@ export function PostCard({
 
                 <div className="relative p-4 sm:p-6">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
-                      <img
-                        src={exactLogoImageSrc}
-                        alt="Phew"
-                        className="h-9 w-auto object-contain sm:h-10"
-                        loading="lazy"
-                      />
-                      <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300/60">
-                        Official alpha result card
+                    <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
+                      <div className="h-11 w-11 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-0.5">
+                        <img
+                          src={exactLogoImageSrc}
+                          alt="Phew"
+                          className="h-full w-full rounded-[10px] object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="leading-tight">
+                        <div className="text-base font-extrabold tracking-tight uppercase leading-none">
+                          <span className="text-white">PHEW</span>
+                          <span className="bg-gradient-to-r from-[#A9FF34] via-[#76FF44] to-[#41E8CF] bg-clip-text text-transparent">.RUN</span>
+                        </div>
+                        <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300/60">
+                          Official alpha result card
+                        </div>
                       </div>
                     </div>
                     <div
