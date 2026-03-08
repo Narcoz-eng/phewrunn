@@ -322,7 +322,7 @@ function PrivyLoginButton() {
   const visibleSyncError = syncError ?? syncFailureMessage;
   const visibleStatus = authStatusMessage;
   const cooldownSeconds =
-    authStatus === "rate_limited_cooldown" && cooldownRemainingMs > 0
+    authStatus === "rate_limited" && cooldownRemainingMs > 0
       ? Math.ceil(cooldownRemainingMs / 1000)
       : null;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
@@ -395,22 +395,24 @@ function PrivyLoginButton() {
       {visibleStatus ? (
         <div className="rounded-[18px] border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-white/80">
           <span className="font-semibold text-white">
-            {authStatus === "awaiting_identity_token"
-              ? "Awaiting verification"
-              : authStatus === "syncing_backend"
-                ? "Finalizing session"
-                : authStatus === "rate_limited_cooldown"
-                  ? "Rate limited"
-                  : authStatus === "authenticated"
-                    ? "Signed in"
-                    : authStatus === "failed"
-                      ? "Sign-in failed"
-                      : "Status"}
+            {authStatus === "hydrating"
+              ? "Checking session"
+              : authStatus === "connecting_backend_session"
+                ? "Connecting session"
+                : authStatus === "finalizing_identity_verification"
+                  ? "Finalizing identity"
+                  : authStatus === "rate_limited"
+                    ? "Rate limited"
+                    : authStatus === "authenticated"
+                      ? "Signed in"
+                      : authStatus === "logout_in_progress"
+                        ? "Signing out"
+                        : "Signed out"}
           </span>
           {" "}
           {visibleStatus}
           {cooldownSeconds ? ` Retry available in about ${cooldownSeconds}s.` : ""}
-          {authStatus === "rate_limited_cooldown" && !backendSyncStarted ? (
+          {authStatus === "rate_limited" && !backendSyncStarted ? (
             <span className="mt-1 block text-[10px] text-amber-300/90">
               Backend session sync did not start for this attempt.
             </span>

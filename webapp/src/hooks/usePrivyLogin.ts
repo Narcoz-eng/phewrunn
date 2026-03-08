@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   clearPrivySyncFailureState,
+  getAuthUiState,
   getPrivyAuthBootstrapCooldownRemainingMs,
   isExplicitLogoutCoolingDown,
   isPrivyAuthBootstrapCooldownActive,
@@ -29,12 +30,13 @@ type UsePrivyLoginOptions = {
 };
 
 type VisibleAuthStatus =
-  | "idle"
-  | "awaiting_identity_token"
-  | "syncing_backend"
-  | "rate_limited_cooldown"
+  | "signed_out"
+  | "hydrating"
+  | "connecting_backend_session"
+  | "finalizing_identity_verification"
   | "authenticated"
-  | "failed";
+  | "rate_limited"
+  | "logout_in_progress";
 
 type LoginMethodOverride = "email" | "twitter";
 
@@ -162,7 +164,9 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       snapshot.owner === "usePrivyLogin" &&
       snapshot.userId === userId &&
       (snapshot.debugCode === "awaiting_privy_sdk_ready" ||
-        snapshot.debugCode === "awaiting_privy_identity_token_hook")
+        snapshot.debugCode === "awaiting_privy_identity_token_hook" ||
+        (snapshot.debugCode === "awaiting_privy_identity_verification_finalization" &&
+          Boolean(latestPrivyIdentityTokenRef.current)))
     );
   }, []);
 
@@ -490,39 +494,32 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   ]);
 
   const cooldownRemainingMs = getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot);
-  const authStatus: VisibleAuthStatus =
-    bootstrapSnapshot?.state === "awaiting_identity_token" ||
-    bootstrapSnapshot?.state === "awaiting_identity_verification_finalization" ||
-    bootstrapSnapshot?.state === "cooldown"
-      ? "awaiting_identity_token"
-      : bootstrapSnapshot?.state === "syncing_backend"
-        ? "syncing_backend"
-        : bootstrapSnapshot?.state === "failed_rate_limited"
-          ? "rate_limited_cooldown"
-          : bootstrapSnapshot?.state === "authenticated"
-            ? "authenticated"
-            : bootstrapSnapshot?.state === "failed" || localSyncError
-              ? "failed"
-              : "idle";
+  const authStatus: VisibleAuthStatus = getAuthUiState({
+    snapshot: bootstrapSnapshot,
+    privyAuthenticated: authenticated,
+    logoutCoolingDown: isExplicitLogoutCoolingDown(),
+  });
 
   const authStatusMessage =
-    authStatus === "awaiting_identity_token"
-      ? bootstrapSnapshot?.state === "awaiting_identity_verification_finalization"
-        ? "Privy is finishing identity verification for backend sign-in..."
-        : "Waiting for Privy to finish verification..."
-      : authStatus === "syncing_backend"
-        ? "Finalizing your Phew session..."
-        : authStatus === "rate_limited_cooldown"
-          ? bootstrapSnapshot?.debugCode === "privy_rate_limited_before_backend_sync"
-            ? bootstrapSnapshot.detail ??
-              "Sign-in could not start because Privy is temporarily rate limiting this browser/session. Please wait 10-15 seconds and try again, or use a fresh private window."
-            : bootstrapSnapshot?.detail ??
-              "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again."
-          : authStatus === "authenticated"
-            ? "Signed in. Loading your account..."
-            : authStatus === "failed"
-              ? localSyncError ?? bootstrapSnapshot?.detail ?? "Sign-in failed."
-              : null;
+    authStatus === "hydrating"
+      ? "Checking your Privy session..."
+      : authStatus === "connecting_backend_session"
+        ? "Connecting your backend session..."
+        : authStatus === "finalizing_identity_verification"
+          ? bootstrapSnapshot?.detail ??
+            localSyncError ??
+            "Privy is still finalizing identity verification for backend sign-in."
+          : authStatus === "rate_limited"
+            ? bootstrapSnapshot?.debugCode === "privy_rate_limited_before_backend_sync"
+              ? bootstrapSnapshot.detail ??
+                "Sign-in could not start because Privy is temporarily rate limiting this browser/session. Please wait 10-15 seconds and try again, or use a fresh private window."
+              : bootstrapSnapshot?.detail ??
+                "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again."
+            : authStatus === "authenticated"
+              ? "Signed in. Loading your account..."
+              : authStatus === "logout_in_progress"
+                ? "Signing out..."
+                : localSyncError ?? null;
 
   const bootstrapError =
     bootstrapSnapshot?.state === "failed" || bootstrapSnapshot?.state === "failed_rate_limited"

@@ -191,17 +191,22 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     const snapshot = readPrivyAuthBootstrapSnapshot();
     const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
     const currentState = sameUserSnapshot?.state ?? "idle";
+    const hookIdentityTokenPresent = Boolean(latestPrivyIdentityTokenRef.current);
     const canResumeDeferredUsePrivyLoginHandoff =
       sameUserSnapshot?.owner === "usePrivyLogin" &&
       (sameUserSnapshot.debugCode === "awaiting_privy_sdk_ready" ||
         sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook") &&
-      (Boolean(latestPrivyIdentityTokenRef.current) || (ready && authenticated));
+      (hookIdentityTokenPresent || (ready && authenticated));
     const canResumeAuthenticatedSdkTokenRequest =
       sameUserSnapshot?.owner === "AuthInitializer" &&
       currentState === "awaiting_identity_token" &&
       sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook" &&
       ready &&
       authenticated;
+    const canResumeFinalizationPendingHandoff =
+      sameUserSnapshot?.owner === "AuthInitializer" &&
+      currentState === "awaiting_identity_verification_finalization" &&
+      hookIdentityTokenPresent;
 
     if (hasLiveSession) {
       if (currentState !== "authenticated") {
@@ -223,7 +228,8 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         currentState === "cooldown" ||
         currentState === "syncing_backend") &&
       !canResumeDeferredUsePrivyLoginHandoff &&
-      !canResumeAuthenticatedSdkTokenRequest
+      !canResumeAuthenticatedSdkTokenRequest &&
+      !canResumeFinalizationPendingHandoff
     ) {
       console.info("[AuthFlow] AuthInitializer found controller-owned pending state", {
         userId: user.id,
@@ -243,14 +249,51 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       });
     }
 
-    if (!latestPrivyIdentityTokenRef.current) {
-      setPrivyAuthBootstrapState("awaiting_identity_token", {
-        owner: "AuthInitializer",
-        mode: "auto",
+    if (canResumeFinalizationPendingHandoff) {
+      console.info("[AuthFlow] AuthInitializer resuming finalization-pending handoff after hook token became available", {
         userId: user.id,
-        detail: "waiting for Privy identity token",
-        debugCode: "awaiting_privy_identity_token_hook",
+        state: currentState,
+        providerInstanceId,
+        debugCode: sameUserSnapshot?.debugCode,
+        hookIdentityTokenPresent,
       });
+    }
+
+    if (
+      sameUserSnapshot &&
+      (currentState === "failed_rate_limited" ||
+        currentState === "authenticated" ||
+        (currentState === "failed" && !hookIdentityTokenPresent))
+    ) {
+      console.info("[AuthFlow] AuthInitializer leaving terminal auth state untouched", {
+        userId: user.id,
+        state: currentState,
+      });
+      return;
+    }
+
+    if (!hookIdentityTokenPresent) {
+      if (currentState === "awaiting_identity_verification_finalization") {
+        console.info("[AuthFlow] AuthInitializer keeping finalization-pending state while waiting for hook token", {
+          userId: user.id,
+          providerInstanceId,
+          state: currentState,
+        });
+        return;
+      }
+
+      if (
+        currentState !== "awaiting_identity_token" ||
+        sameUserSnapshot?.debugCode !== "awaiting_privy_identity_token_hook"
+      ) {
+        setPrivyAuthBootstrapState("awaiting_identity_token", {
+          owner: "AuthInitializer",
+          mode: "auto",
+          userId: user.id,
+          detail: "waiting for Privy identity token",
+          debugCode: "awaiting_privy_identity_token_hook",
+        });
+      }
       console.info("[AuthFlow] AuthInitializer delegating authenticated SDK state to active identity token request", {
         userId: user.id,
         providerInstanceId,
@@ -258,19 +301,6 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         authenticated,
         hookIdentityTokenPresent: false,
       });
-    }
-
-    if (
-      sameUserSnapshot &&
-      (currentState === "failed" ||
-        currentState === "failed_rate_limited" ||
-        currentState === "authenticated")
-    ) {
-      console.info("[AuthFlow] AuthInitializer leaving terminal auth state untouched", {
-        userId: user.id,
-        state: currentState,
-      });
-      return;
     }
 
     console.info("[AuthFlow] AuthInitializer delegating bootstrap to controller", {

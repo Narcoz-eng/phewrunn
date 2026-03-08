@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
+  getAuthUiState,
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
   usePrivyAuthBootstrapSnapshot,
@@ -62,12 +63,19 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const hasPrivyHydrationHint =
     bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !logoutCooldownActive;
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
+  const authUiState = getAuthUiState({
+    snapshot: bootstrapSnapshot,
+    privyAuthenticated: authenticated,
+    logoutCoolingDown: logoutCooldownActive,
+  });
   const shouldHoldForOAuthReturn =
     hasOAuthReturnHint && !ready && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
     hasPrivyHydrationHint ||
-    hasPrivySyncHint ||
+    (hasPrivySyncHint &&
+      authUiState !== "rate_limited" &&
+      authUiState !== "finalizing_identity_verification") ||
     shouldHoldForOAuthReturn ||
     shouldHoldForConfirmedSession;
 
@@ -113,6 +121,12 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   }
 
   if (hasPrivySyncHint) {
+    if (
+      authUiState === "rate_limited" ||
+      authUiState === "finalizing_identity_verification"
+    ) {
+      return <>{children}</>;
+    }
     if (privySyncFailure && graceExpired) {
       return <>{children}</>;
     }

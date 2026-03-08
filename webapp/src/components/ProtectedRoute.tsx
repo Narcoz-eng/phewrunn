@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
+  getAuthUiState,
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
   usePrivyAuthBootstrapSnapshot,
@@ -61,6 +62,23 @@ function useStoredAuthHint(): boolean {
 
 function hasCompletedHandle(username: string | null | undefined): boolean {
   return typeof username === "string" && username.trim().length > 0;
+}
+
+function getPrivyHandoffLabel(state: ReturnType<typeof getAuthUiState>, detail: string | null, graceExpired: boolean): string {
+  switch (state) {
+    case "hydrating":
+      return graceExpired ? "Still checking your Privy session..." : "Checking your Privy session...";
+    case "finalizing_identity_verification":
+      return detail ?? (graceExpired ? "Still finalizing identity verification..." : "Finishing identity verification...");
+    case "rate_limited":
+      return detail ?? "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds and retry.";
+    case "connecting_backend_session":
+      return graceExpired ? "Still finalizing sign-in..." : "Completing sign-in...";
+    case "logout_in_progress":
+      return "Signing out...";
+    default:
+      return graceExpired ? "Still finalizing sign-in..." : "Finalizing sign-in...";
+  }
 }
 
 function ProtectedRouteFallback({
@@ -176,11 +194,18 @@ function ProtectedRouteWithPrivy({
     !effectiveUser &&
     !logoutCooldownActive;
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
+  const authUiState = getAuthUiState({
+    snapshot: bootstrapSnapshot,
+    privyAuthenticated: authenticated,
+    logoutCoolingDown: logoutCooldownActive,
+  });
+  const shouldHoldAuthenticatedPrivyState = ready && authenticated && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
     hasPrivyHydrationHint ||
     hasPrivyFinalizationHint ||
     hasPrivySyncHint ||
+    shouldHoldAuthenticatedPrivyState ||
     hasOAuthReturnHint ||
     shouldHoldForConfirmedSession ||
     hadTokenHint.current;
@@ -194,6 +219,7 @@ function ProtectedRouteWithPrivy({
           : hasPrivyHydrationHint ||
               hasPrivyFinalizationHint ||
               hasPrivySyncHint ||
+              shouldHoldAuthenticatedPrivyState ||
               shouldHoldForConfirmedSession ||
               hadTokenHint.current
             ? "trying_to_connect"
@@ -211,6 +237,8 @@ function ProtectedRouteWithPrivy({
       hasPrivyHydrationHint,
       hasPrivyFinalizationHint,
       hasPrivySyncHint,
+      authUiState,
+      shouldHoldAuthenticatedPrivyState,
       hasOAuthReturnHint,
       shouldHoldForConfirmedSession,
       hadTokenHint: hadTokenHint.current,
@@ -224,11 +252,13 @@ function ProtectedRouteWithPrivy({
     hasPrivyFinalizationHint,
     hasOAuthReturnHint,
     hasPrivySyncHint,
+    authUiState,
     isPending,
     location.pathname,
     privySyncFailure?.message,
     ready,
     routeAuthStage,
+    shouldHoldAuthenticatedPrivyState,
     shouldHoldForConfirmedSession,
   ]);
 
@@ -244,6 +274,7 @@ function ProtectedRouteWithPrivy({
       hasPrivyHydrationHint,
       hasPrivyFinalizationHint,
       hasPrivySyncHint,
+      authUiState,
       shouldHoldForConfirmedSession,
       privySyncFailure: privySyncFailure?.message ?? null,
     });
@@ -253,6 +284,7 @@ function ProtectedRouteWithPrivy({
     hasPrivyHydrationHint,
     hasPrivyFinalizationHint,
     hasPrivySyncHint,
+    authUiState,
     isPending,
     location.pathname,
     privySyncFailure?.message,
@@ -287,6 +319,13 @@ function ProtectedRouteWithPrivy({
   }
 
   if (!effectiveUser) {
+    if (shouldHoldAuthenticatedPrivyState) {
+      return (
+        <RouteLoading
+          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
+        />
+      );
+    }
     if (privySyncFailure && graceExpired) {
       return (
         <LoggedNavigate
@@ -393,6 +432,13 @@ function ProtectedRouteWithPrivy({
   }
 
   if (!hasLiveSession) {
+    if (shouldHoldAuthenticatedPrivyState) {
+      return (
+        <RouteLoading
+          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
+        />
+      );
+    }
     if (privySyncFailure && graceExpired) {
       return (
         <LoggedNavigate
