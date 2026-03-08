@@ -8,7 +8,7 @@ import {
   useAuth,
   readPrivyAuthBootstrapSnapshot,
 } from "@/lib/auth-client";
-import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
+import { usePrivyAvailable, usePrivyProviderInstanceId } from "@/components/PrivyWalletProvider";
 import type { PrivyUserLike } from "@/lib/privy-user";
 import { clearPrivyLoginIntent } from "@/lib/privy-login-intent";
 
@@ -20,8 +20,10 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
   const { identityToken } = useIdentityToken();
   const { isAuthenticated, hasLiveSession } = useAuth();
+  const providerInstanceId = usePrivyProviderInstanceId();
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
   const latestPrivyIdentityTokenRef = useRef<string | null>(null);
+  const lastLoggedSdkSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
@@ -45,6 +47,33 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         ? identityToken.trim()
         : null;
   }, [identityToken]);
+
+  useEffect(() => {
+    const snapshotKey = JSON.stringify({
+      providerInstanceId,
+      ready,
+      authenticated,
+      userId: user?.id ?? null,
+      hookIdentityTokenPresent: Boolean(latestPrivyIdentityTokenRef.current),
+      isAuthenticated,
+      hasLiveSession,
+    });
+
+    if (lastLoggedSdkSnapshotRef.current === snapshotKey) {
+      return;
+    }
+    lastLoggedSdkSnapshotRef.current = snapshotKey;
+
+    console.info("[AuthFlow] AuthInitializer Privy SDK snapshot", {
+      providerInstanceId,
+      ready,
+      authenticated,
+      userId: user?.id ?? null,
+      hookIdentityTokenPresent: Boolean(latestPrivyIdentityTokenRef.current),
+      isAuthenticated,
+      hasLiveSession,
+    });
+  }, [authenticated, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, user]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -71,6 +100,11 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     const snapshot = readPrivyAuthBootstrapSnapshot();
     const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
     const currentState = sameUserSnapshot?.state ?? "idle";
+    const canResumeDeferredUsePrivyLoginHandoff =
+      sameUserSnapshot?.owner === "usePrivyLogin" &&
+      (sameUserSnapshot.debugCode === "awaiting_privy_sdk_ready" ||
+        sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook") &&
+      (Boolean(latestPrivyIdentityTokenRef.current) || (ready && authenticated));
 
     if (hasLiveSession) {
       if (currentState !== "authenticated") {
@@ -89,13 +123,25 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       (currentState === "privy_pending" ||
         currentState === "awaiting_identity_token" ||
         currentState === "cooldown" ||
-        currentState === "syncing_backend")
+        currentState === "syncing_backend") &&
+      !canResumeDeferredUsePrivyLoginHandoff
     ) {
       console.info("[AuthFlow] AuthInitializer found controller-owned pending state", {
         userId: user.id,
         state: currentState,
+        providerInstanceId,
       });
       return;
+    }
+
+    if (canResumeDeferredUsePrivyLoginHandoff) {
+      console.info("[AuthFlow] AuthInitializer resuming deferred usePrivyLogin handoff", {
+        userId: user.id,
+        state: currentState,
+        providerInstanceId,
+        debugCode: sameUserSnapshot?.debugCode,
+        hookIdentityTokenPresent: Boolean(latestPrivyIdentityTokenRef.current),
+      });
     }
 
     if (!latestPrivyIdentityTokenRef.current) {
@@ -108,6 +154,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       });
       console.info("[AuthFlow] AuthInitializer waiting for Privy identity token hook", {
         userId: user.id,
+        providerInstanceId,
         ready,
         authenticated,
         hookIdentityTokenPresent: false,
@@ -131,6 +178,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     console.info("[AuthFlow] AuthInitializer delegating bootstrap to controller", {
       userId: user.id,
       state: currentState,
+      providerInstanceId,
     });
     void startPrivyAuthBootstrap({
       owner: "AuthInitializer",

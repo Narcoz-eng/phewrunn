@@ -14,6 +14,7 @@ import {
   usePrivyAuthBootstrapSnapshot,
 } from "@/lib/auth-client";
 import type { PrivyUserLike } from "@/lib/privy-user";
+import { usePrivyProviderInstanceId } from "@/components/PrivyWalletProvider";
 import {
   clearPrivyLoginIntent,
   writePrivyLoginIntent,
@@ -78,6 +79,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
   const { identityToken } = useIdentityToken();
   const { hasLiveSession } = useAuth();
+  const providerInstanceId = usePrivyProviderInstanceId();
   const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
   const { onSuccess } = options;
   const [localSyncError, setLocalSyncError] = useState<string | null>(null);
@@ -277,8 +279,9 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     const hookIdentityToken = latestPrivyIdentityTokenRef.current;
     const sdkReadyForBootstrap =
       Boolean(hookIdentityToken) || (privyState.ready && privyState.authenticated);
-    console.info("[AuthFlow] usePrivyLogin Privy auth complete", {
+    console.info("[AuthFlow] usePrivyLogin Privy login callback received", {
       userId: privyUser.id,
+      providerInstanceId,
       privyReady: privyState.ready,
       privyAuthenticated: privyState.authenticated,
       hookIdentityTokenPresent: Boolean(hookIdentityToken),
@@ -340,6 +343,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
       console.info("[AuthFlow] usePrivyLogin deferring bootstrap until Privy SDK is ready/authenticated", {
         userId: privyUser.id,
+        providerInstanceId,
         privyReady: privyState.ready,
         privyAuthenticated: privyState.authenticated,
         hookIdentityTokenPresent: Boolean(hookIdentityToken),
@@ -351,7 +355,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
     clearPendingPrivyCallbackHandoff();
     await runManualSync(privyUser);
-  }, [clearPendingPrivyCallbackHandoff, clearPendingPrivyCallbackTimeout, runManualSync]);
+  }, [clearPendingPrivyCallbackHandoff, clearPendingPrivyCallbackTimeout, providerInstanceId, runManualSync]);
 
   const handlePrivyAuthError = useCallback((error: unknown) => {
     const errorMessage = getPrivyErrorMessage(error);

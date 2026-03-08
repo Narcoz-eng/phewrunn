@@ -1,4 +1,4 @@
-import { Component, createContext, useContext, type ErrorInfo, type ReactNode } from "react";
+import { Component, createContext, useContext, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
 
 interface PrivyWalletProviderProps {
@@ -11,9 +11,21 @@ interface ErrorBoundaryState {
 }
 
 export const PrivyAvailableContext = createContext<boolean>(false);
+export const PrivyProviderInstanceContext = createContext<string | null>(null);
 
 export function usePrivyAvailable() {
   return useContext(PrivyAvailableContext);
+}
+
+export function usePrivyProviderInstanceId() {
+  return useContext(PrivyProviderInstanceContext);
+}
+
+function createPrivyProviderInstanceId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `privy_provider_${Math.random().toString(36).slice(2, 12)}_${Date.now().toString(36)}`;
 }
 
 class PrivyErrorBoundary extends Component<PrivyWalletProviderProps, ErrorBoundaryState> {
@@ -31,9 +43,11 @@ class PrivyErrorBoundary extends Component<PrivyWalletProviderProps, ErrorBounda
     if (this.state.hasError) {
       console.warn("[PrivyWalletProvider] Privy failed to initialize, falling back to non-Privy mode");
       return (
-        <PrivyAvailableContext.Provider value={false}>
-          {this.props.children}
-        </PrivyAvailableContext.Provider>
+        <PrivyProviderInstanceContext.Provider value={null}>
+          <PrivyAvailableContext.Provider value={false}>
+            {this.props.children}
+          </PrivyAvailableContext.Provider>
+        </PrivyProviderInstanceContext.Provider>
       );
     }
     return this.props.children;
@@ -42,35 +56,54 @@ class PrivyErrorBoundary extends Component<PrivyWalletProviderProps, ErrorBounda
 
 function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
   const appId = import.meta.env.VITE_PRIVY_APP_ID as string | undefined;
+  const providerInstanceIdRef = useRef<string>(createPrivyProviderInstanceId());
 
   if (!appId) {
     console.warn("[PrivyWalletProvider] Missing VITE_PRIVY_APP_ID - Privy login disabled");
     return (
-      <PrivyAvailableContext.Provider value={false}>
-        {children}
-      </PrivyAvailableContext.Provider>
+      <PrivyProviderInstanceContext.Provider value={null}>
+        <PrivyAvailableContext.Provider value={false}>
+          {children}
+        </PrivyAvailableContext.Provider>
+      </PrivyProviderInstanceContext.Provider>
     );
   }
 
+  useEffect(() => {
+    console.info("[PrivyWalletProvider] mounted", {
+      providerInstanceId: providerInstanceIdRef.current,
+      appId,
+      href: typeof window !== "undefined" ? window.location.href : null,
+    });
+
+    return () => {
+      console.info("[PrivyWalletProvider] unmounted", {
+        providerInstanceId: providerInstanceIdRef.current,
+      });
+    };
+  }, [appId]);
+
   return (
-    <PrivyProvider
-      appId={appId}
-      config={{
-        appearance: {
-          theme: "dark",
-        },
-        loginMethods: ["email", "twitter"],
-        embeddedWallets: {
-          showWalletUIs: false,
-          ethereum: { createOnLogin: "off" },
-          solana: { createOnLogin: "off" },
-        },
-      }}
-    >
-      <PrivyAvailableContext.Provider value={true}>
-        {children}
-      </PrivyAvailableContext.Provider>
-    </PrivyProvider>
+    <PrivyProviderInstanceContext.Provider value={providerInstanceIdRef.current}>
+      <PrivyProvider
+        appId={appId}
+        config={{
+          appearance: {
+            theme: "dark",
+          },
+          loginMethods: ["email", "twitter"],
+          embeddedWallets: {
+            showWalletUIs: false,
+            ethereum: { createOnLogin: "off" },
+            solana: { createOnLogin: "off" },
+          },
+        }}
+      >
+        <PrivyAvailableContext.Provider value={true}>
+          {children}
+        </PrivyAvailableContext.Provider>
+      </PrivyProvider>
+    </PrivyProviderInstanceContext.Provider>
   );
 }
 
