@@ -74,6 +74,7 @@ import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
 import type { PortfolioPosition } from "./PortfolioPanel";
 import { ReportDialog } from "@/components/reporting/ReportDialog";
+import { BrandLogo } from "@/components/BrandLogo";
 import {
   PhewChartIcon,
   PhewCommentIcon,
@@ -783,7 +784,7 @@ export function PostCard({
   } | null>(null);
   const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
   const walletConnectCooldownUntilRef = useRef(0);
-  const exactLogoImageSrc = "https://i.imgur.com/yDZerPC.png?v=20260306e";
+  const exactLogoImageSrc = "/phew-mark.svg";
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
@@ -4909,23 +4910,10 @@ export function PostCard({
 
                 <div className="relative p-4 sm:p-6">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
-                      <div className="h-11 w-11 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-0.5">
-                        <img
-                          src={exactLogoImageSrc}
-                          alt="Phew"
-                          className="h-full w-full rounded-[10px] object-cover"
-                          loading="lazy"
-                        />
-                      </div>
-                      <div className="leading-tight">
-                        <div className="text-base font-extrabold tracking-tight uppercase leading-none">
-                          <span className="text-white">PHEW</span>
-                          <span className="bg-gradient-to-r from-[#A9FF34] via-[#76FF44] to-[#41E8CF] bg-clip-text text-transparent">.RUN</span>
-                        </div>
-                        <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300/60">
-                          Official alpha result card
-                        </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 shadow-[0_16px_40px_-24px_rgba(0,0,0,0.9)]">
+                      <BrandLogo size="sm" className="gap-3" />
+                      <div className="mt-1 pl-[3.25rem] text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300/60">
+                        Official alpha result card
                       </div>
                     </div>
                     <div
@@ -5636,24 +5624,8 @@ export function PostCard({
 
                 <div className="relative p-3.5 sm:p-6">
                   <div className="mb-4 flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-gradient-to-r from-white/5 via-white/4 to-white/5 px-2.5 py-1.5 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.9)]">
-                      <div className="h-7 w-7 rounded-md border border-white/10 bg-white/5 p-0.5">
-                        <img
-                          src={exactLogoImageSrc}
-                          alt="Phew"
-                          className="h-full w-full object-cover rounded-[5px]"
-                          loading="lazy"
-                        />
-                      </div>
-                      <div className="leading-tight">
-                        <div className="text-xs font-semibold tracking-wide">
-                          <span className="text-white/90">PHEW</span>
-                          <span className="text-[#c0e5cb]">.RUN</span>
-                        </div>
-                        <div className="hidden sm:block text-[9px] tracking-[0.12em] text-slate-300/60">
-                          PHEW RUNNING THE INTERNET
-                        </div>
-                      </div>
+                    <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/5 via-white/4 to-white/5 px-3 py-2 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.9)]">
+                      <BrandLogo size="sm" className="gap-3" />
                     </div>
                     <div
                       className={cn(
