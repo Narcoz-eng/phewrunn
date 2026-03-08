@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
@@ -604,6 +604,104 @@ interface PostCardProps {
   enableRealtimePricePolling?: boolean;
 }
 
+type FeedPostsPageLike = {
+  items: Post[];
+};
+
+function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnapshot): Post {
+  const nextCurrentMcap = snapshot.currentMcap ?? post.currentMcap;
+  const nextSettled = snapshot.settled || post.settled;
+  const nextSettledAt = snapshot.settledAt ?? post.settledAt;
+  const nextMcap1h = snapshot.mcap1h ?? post.mcap1h;
+  const nextMcap6h = snapshot.mcap6h ?? post.mcap6h;
+  const nextIsWin =
+    nextMcap1h !== null && post.entryMcap !== null
+      ? nextMcap1h > post.entryMcap
+      : post.isWin;
+
+  if (
+    nextCurrentMcap === post.currentMcap &&
+    nextSettled === post.settled &&
+    nextSettledAt === post.settledAt &&
+    nextMcap1h === post.mcap1h &&
+    nextMcap6h === post.mcap6h &&
+    nextIsWin === post.isWin
+  ) {
+    return post;
+  }
+
+  return {
+    ...post,
+    currentMcap: nextCurrentMcap,
+    settled: nextSettled,
+    settledAt: nextSettledAt,
+    mcap1h: nextMcap1h,
+    mcap6h: nextMcap6h,
+    isWin: nextIsWin,
+  };
+}
+
+function syncRealtimeSnapshotToCachedPosts(
+  queryClient: QueryClient,
+  postId: string,
+  snapshot: BatchedPostPriceSnapshot
+): void {
+  queryClient.setQueriesData(
+    { queryKey: ["posts"] },
+    (existing: InfiniteData<FeedPostsPageLike> | undefined) => {
+      if (!existing?.pages?.length) {
+        return existing;
+      }
+
+      let didChange = false;
+      const nextPages = existing.pages.map((page) => {
+        let pageChanged = false;
+        const nextItems = page.items.map((item) => {
+          if (item.id !== postId) {
+            return item;
+          }
+          const nextItem = applyRealtimeSnapshotToPost(item, snapshot);
+          if (nextItem !== item) {
+            pageChanged = true;
+            didChange = true;
+          }
+          return nextItem;
+        });
+
+        return pageChanged ? { ...page, items: nextItems } : page;
+      });
+
+      return didChange ? { ...existing, pages: nextPages } : existing;
+    }
+  );
+
+  const syncPostArray = (existing: Post[] | undefined) => {
+    if (!Array.isArray(existing) || existing.length === 0) {
+      return existing;
+    }
+
+    let didChange = false;
+    const nextItems = existing.map((item) => {
+      if (item.id !== postId) {
+        return item;
+      }
+      const nextItem = applyRealtimeSnapshotToPost(item, snapshot);
+      if (nextItem !== item) {
+        didChange = true;
+      }
+      return nextItem;
+    });
+
+    return didChange ? nextItems : existing;
+  };
+
+  queryClient.setQueriesData({ queryKey: ["userPosts"] }, syncPostArray);
+  queryClient.setQueriesData({ queryKey: ["userReposts"] }, syncPostArray);
+  queryClient.setQueryData<Post>(["post", postId], (existing) =>
+    existing ? applyRealtimeSnapshotToPost(existing, snapshot) : existing
+  );
+}
+
 export function PostCard({
   post,
   className,
@@ -986,6 +1084,8 @@ export function PostCard({
       try {
         const data = await getPostPriceSnapshotBatched(post.id);
         if (!data) return;
+
+        syncRealtimeSnapshotToCachedPosts(queryClient, post.id, data);
 
         if (data.currentMcap !== null) {
           setCurrentMcap(data.currentMcap);

@@ -573,6 +573,7 @@ export default function Feed() {
       return failureCount < 2;
     },
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: false,
