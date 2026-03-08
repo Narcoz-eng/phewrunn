@@ -244,7 +244,7 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
 
 export default function Feed() {
   const { data: session } = useSession();
-  const { signOut, hasLiveSession, isUsingCachedUser } = useAuth();
+  const { signOut, hasLiveSession, canPerformAuthenticatedWrites } = useAuth();
   const { logout: privyLogout } = usePrivy();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -299,7 +299,7 @@ export default function Feed() {
       createdAt: session.user.createdAt ?? cachedFeedUser?.createdAt ?? new Date(0).toISOString(),
     };
   }, [cachedFeedUser, session?.user]);
-  const isAuthWritePending = Boolean(isUsingCachedUser);
+  const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
 
   useEffect(() => {
     if (!hasLiveSession || !session?.user?.id) {
@@ -319,12 +319,32 @@ export default function Feed() {
   }, [hasLiveSession, session?.user?.id]);
 
   const guardPendingAuthWrite = useCallback(() => {
+    if (!session?.user) {
+      toast.info("Sign in to interact with posts.");
+      return true;
+    }
     if (!isAuthWritePending) {
       return false;
     }
     toast.warning("Signing you in...");
     return true;
-  }, [isAuthWritePending]);
+  }, [isAuthWritePending, session?.user]);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    try {
+      await privyLogout();
+    } catch (error) {
+      console.error("[Feed] Privy logout failed:", error);
+    } finally {
+      navigate("/login", { replace: true });
+    }
+  }, [navigate, privyLogout, signOut]);
+
+  const handleWriteSessionExpired = useCallback(() => {
+    toast.error("Session expired. Please sign in again.");
+    void handleSignOut();
+  }, [handleSignOut]);
 
   const getFeedQueryKey = useCallback(
     (tab: FeedTab, search: string, viewerScope: string) =>
@@ -1010,6 +1030,10 @@ export default function Feed() {
       refetchUser();
     },
     onError: (error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        handleWriteSessionExpired();
+        return;
+      }
       const message = error instanceof ApiError ? error.message : "Failed to post";
       toast.error(message);
     },
@@ -1039,6 +1063,11 @@ export default function Feed() {
           : post
       );
     },
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        handleWriteSessionExpired();
+      }
+    },
   });
 
   // Repost mutation
@@ -1065,6 +1094,11 @@ export default function Feed() {
           : post
       );
     },
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        handleWriteSessionExpired();
+      }
+    },
   });
 
   // Comment mutation
@@ -1088,7 +1122,11 @@ export default function Feed() {
           : post
       );
     },
-    onError: () => {
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        handleWriteSessionExpired();
+        return;
+      }
       toast.error("Failed to add comment");
     },
   });
@@ -1099,17 +1137,6 @@ export default function Feed() {
       return;
     }
     await createPostMutation.mutateAsync(content);
-  };
-
-  const handleSignOut = async () => {
-    await signOut();
-    try {
-      await privyLogout();
-    } catch (error) {
-      console.error("[Feed] Privy logout failed:", error);
-    } finally {
-      navigate("/login", { replace: true });
-    }
   };
 
   const handleLike = async (postId: string) => {

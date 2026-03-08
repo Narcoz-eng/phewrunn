@@ -315,7 +315,7 @@ export function CreatePost({
               isLiquidated
                 ? "Posting disabled - Account liquidated"
                 : isAuthPending
-                  ? "Finishing sign-in..."
+                  ? "Signing you in..."
                   : "Drop your alpha... (paste a contract address)"
             }
             value={content}
@@ -331,7 +331,7 @@ export function CreatePost({
           />
           {isAuthPending ? (
             <p className="text-xs text-muted-foreground">
-              Session is still finalizing. Posting unlocks automatically in a moment.
+              Signing you in...
             </p>
           ) : null}
 
@@ -457,7 +457,7 @@ export function CreatePost({
               ) : isAuthPending ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Syncing...</span>
+                  <span>Signing you in...</span>
                 </>
               ) : isSubmitting ? (
                 <>

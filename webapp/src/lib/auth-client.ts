@@ -84,7 +84,6 @@ const PRIVY_BOOTSTRAP_LOCK_TTL_MS = 20_000;
 const PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY = "phew.auth.tab-id.v1";
 const AUTH_PRIVY_BOOTSTRAP_EVENT = "phew:auth-privy-bootstrap";
 const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
-const AUTH_BOOTSTRAPPED_SESSION_GRACE_MS = 20_000;
 
 type PrivySyncFailureSnapshot = {
   message: string;
@@ -184,17 +183,15 @@ export function hasRecentPrivySyncGrace(referenceTime = Date.now()): boolean {
   );
 }
 
-export function hasValidatedAuthSession(referenceTime = Date.now()): boolean {
+export function hasConfirmedBackendSession(referenceTime = Date.now()): boolean {
   if (isExplicitLogoutCoolingDown(referenceTime)) {
     return false;
   }
-  if (lastSuccessfulSessionAt > 0) {
-    return true;
-  }
-  return (
-    lastBootstrappedSessionAt > 0 &&
-    referenceTime - lastBootstrappedSessionAt < AUTH_BOOTSTRAPPED_SESSION_GRACE_MS
-  );
+  return lastSuccessfulSessionAt > 0;
+}
+
+export function hasValidatedAuthSession(referenceTime = Date.now()): boolean {
+  return hasConfirmedBackendSession(referenceTime);
 }
 
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
@@ -267,7 +264,6 @@ const privyAuthRetryWaiters = new Map<number, (completed: boolean) => void>();
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
 let lastSuccessfulSessionAt = 0;
-let lastBootstrappedSessionAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
 let inMemoryPrivySyncFailure: PrivySyncFailureSnapshot | null = null;
@@ -1079,16 +1075,6 @@ function markValidatedAuthSession(user: AuthUser): AuthUser {
   sessionRateLimitedUntil = 0;
   unauthorizedSessionFailures = 0;
   lastSuccessfulSessionAt = Date.now();
-  lastBootstrappedSessionAt = 0;
-  writeCachedAuthUser(user);
-  clearPrivySyncFailureSnapshot();
-  return user;
-}
-
-function markBootstrappedAuthSession(user: AuthUser): AuthUser {
-  sessionRateLimitedUntil = 0;
-  unauthorizedSessionFailures = 0;
-  lastBootstrappedSessionAt = Date.now();
   writeCachedAuthUser(user);
   clearPrivySyncFailureSnapshot();
   return user;
@@ -1887,7 +1873,6 @@ async function fetchSession(): Promise<AuthUser | null> {
 
         clearStoredAuthToken();
         clearCachedAuthUser();
-        lastBootstrappedSessionAt = 0;
         lastSuccessfulSessionAt = 0;
         sessionRateLimitedUntil = Date.now() + 5000;
         return null;
@@ -1923,7 +1908,6 @@ async function fetchSession(): Promise<AuthUser | null> {
       if (explicitNoSessionResponse) {
         clearStoredAuthToken();
         clearCachedAuthUser();
-        lastBootstrappedSessionAt = 0;
         lastSuccessfulSessionAt = 0;
         return null;
       }
@@ -2108,7 +2092,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     privyAuthBootstrapInFlight = null;
     lastPrivySyncAt = 0;
     lastSuccessfulSessionAt = 0;
-    lastBootstrappedSessionAt = 0;
     unauthorizedSessionFailures = 0;
     applyAuthProviderState("logout", {
       user: null,
@@ -2229,12 +2212,15 @@ export function useAuth() {
 
   const resolvedUser = getResolvedAuthUser(context.user);
   const isAuthenticated = Boolean(resolvedUser);
+  const hasConfirmedSession = isAuthenticated && hasConfirmedBackendSession();
   const hasLiveSession = isAuthenticated && hasValidatedAuthSession();
 
   return {
     user: resolvedUser,
     isAuthenticated,
+    hasConfirmedBackendSession: hasConfirmedSession,
     hasLiveSession,
+    canPerformAuthenticatedWrites: hasConfirmedSession,
     isUsingCachedUser: isAuthenticated && !hasLiveSession,
     isReady: !context.isLoading,
     isPending: context.isLoading,
@@ -2251,12 +2237,15 @@ export function useSession() {
   }
 
   const resolvedUser = getResolvedAuthUser(context.user);
+  const hasConfirmedSession = Boolean(resolvedUser) && hasConfirmedBackendSession();
   const hasLiveSession = Boolean(resolvedUser) && hasValidatedAuthSession();
 
   return {
     data: resolvedUser ? { user: resolvedUser } : null,
     isPending: context.isLoading,
+    hasConfirmedBackendSession: hasConfirmedSession,
     hasLiveSession,
+    canPerformAuthenticatedWrites: hasConfirmedSession,
     isUsingCachedUser: Boolean(resolvedUser) && !hasLiveSession,
   };
 }
@@ -2515,9 +2504,9 @@ export async function syncPrivySession(
       sessionFetchInFlight = null;
       unauthorizedSessionFailures = 0;
 
-      const bootstrappedUser = markBootstrappedAuthSession(syncedUser);
-      emitAuthSessionSynced(bootstrappedUser);
-      return { user: bootstrappedUser };
+      const confirmedUser = markValidatedAuthSession(syncedUser);
+      emitAuthSessionSynced(confirmedUser);
+      return { user: confirmedUser };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error("Sign-in timed out while connecting to the server");

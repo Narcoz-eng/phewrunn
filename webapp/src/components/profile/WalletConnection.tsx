@@ -97,7 +97,8 @@ interface WalletConnectionProps {
 export function WalletConnection({ className }: WalletConnectionProps) {
   const queryClient = useQueryClient();
   const { data: session } = useSession();
-  const { hasLiveSession } = useAuth();
+  const { canPerformAuthenticatedWrites } = useAuth();
+  const hasSessionUser = Boolean(session?.user?.id);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -137,7 +138,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
         throw error;
       }
     },
-    enabled: !!session?.user && hasLiveSession,
+    enabled: !!session?.user && canPerformAuthenticatedWrites,
     staleTime: 60_000,
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
@@ -203,9 +204,9 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   };
 
   const handleVerifyAndLink = useCallback(async (options?: { silent?: boolean }) => {
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       if (!options?.silent) {
-        toast.warning("Session is still finalizing. Try linking the wallet again in a moment.");
+        toast.warning(hasSessionUser ? "Signing you in..." : "Sign in to link a wallet.");
       }
       return;
     }
@@ -246,7 +247,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     } finally {
       setIsVerifying(false);
     }
-  }, [adapterConnected, adapterProviderId, adapterWalletAddress, connectMutation, hasLiveSession, session?.user?.id, signMessage]);
+  }, [adapterConnected, adapterProviderId, adapterWalletAddress, canPerformAuthenticatedWrites, connectMutation, hasSessionUser, session?.user?.id, signMessage]);
 
   useEffect(() => {
     if (!adapterConnected || !adapterWalletAddress || isLinked) return;
@@ -270,7 +271,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
     handleVerifyAndLink,
   ]);
 
-  if (!session?.user || isLoading || !hasLiveSession) {
+  if (!session?.user || isLoading || !canPerformAuthenticatedWrites) {
     return (
       <Card className={className}>
         <CardHeader>

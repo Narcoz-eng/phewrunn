@@ -155,7 +155,7 @@ export default function UserProfile() {
   const navigate = useNavigate();
   const location = useLocation();
   const { userId } = useParams<{ userId: string }>();
-  const { data: session, hasLiveSession } = useSession();
+  const { data: session, hasLiveSession, canPerformAuthenticatedWrites } = useSession();
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
@@ -378,7 +378,7 @@ export default function UserProfile() {
       if (!session?.user) {
         throw new Error("Sign in to follow users");
       }
-      if (!hasLiveSession) {
+      if (!canPerformAuthenticatedWrites) {
         throw new Error("Signing you in...");
       }
       const targetIdentifier = user?.username ?? user?.id ?? userId;
@@ -491,7 +491,7 @@ export default function UserProfile() {
       toast.info("Sign in to interact with posts.");
       return;
     }
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return;
     }
@@ -506,7 +506,7 @@ export default function UserProfile() {
       toast.info("Sign in to interact with posts.");
       return;
     }
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return;
     }
@@ -521,7 +521,7 @@ export default function UserProfile() {
       toast.info("Sign in to interact with posts.");
       return;
     }
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return;
     }
@@ -630,7 +630,7 @@ export default function UserProfile() {
 
           {!isOwnProfile && user && (
             <div className="flex items-center gap-2">
-              {hasLiveSession ? (
+              {canPerformAuthenticatedWrites ? (
                 <ReportDialog
                   targetType="user"
                   targetId={user.username ?? userId ?? ""}
@@ -648,13 +648,13 @@ export default function UserProfile() {
                     toast.info("Sign in to follow users.");
                     return;
                   }
-                  if (!hasLiveSession) {
+                  if (!canPerformAuthenticatedWrites) {
                     toast.info("Signing you in...");
                     return;
                   }
                   followMutation.mutate();
                 }}
-                disabled={followMutation.isPending || !session?.user || !hasLiveSession}
+                disabled={followMutation.isPending || !session?.user || !canPerformAuthenticatedWrites}
                 className="h-8 px-3 gap-1.5"
               >
                 {followMutation.isPending ? (
@@ -881,7 +881,7 @@ export default function UserProfile() {
                               >
                                 <PostCard
                                   post={post}
-                                  currentUserId={hasLiveSession ? session?.user?.id : undefined}
+                                  currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
                                   onLike={handleLike}
                                   onRepost={handleRepost}
                                   onComment={handleComment}
@@ -929,7 +929,7 @@ export default function UserProfile() {
                           >
                             <PostCard
                               post={post}
-                              currentUserId={hasLiveSession ? session?.user?.id : undefined}
+                              currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
                               onLike={handleLike}
                               onRepost={handleRepost}
                               onComment={handleComment}

@@ -12,7 +12,7 @@ import { toast } from "sonner";
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
-  const { data: session, hasLiveSession } = useSession();
+  const { data: session, canPerformAuthenticatedWrites } = useSession();
 
   const {
     data: post,
@@ -45,7 +45,7 @@ export default function PostDetail() {
       return false;
     }
 
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return false;
     }
@@ -94,7 +94,7 @@ export default function PostDetail() {
           ) : post ? (
             <PostCard
               post={post}
-              currentUserId={hasLiveSession ? session?.user?.id : undefined}
+              currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
               enableRealtimePricePolling
               onLike={async (postId) => {
                 if (!guardPostInteraction()) return;

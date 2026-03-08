@@ -150,7 +150,7 @@ export default function Notifications() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: session } = useSession();
-  const { isAuthenticated, hasLiveSession, isUsingCachedUser } = useAuth();
+  const { isAuthenticated, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
   const notificationsQueryKey = useMemo(
     () => ["notifications", session?.user?.id ?? "anonymous"] as const,
@@ -369,7 +369,7 @@ export default function Notifications() {
   };
 
   const handleMarkClicked = (notification: Notification) => {
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return;
     }
@@ -377,7 +377,7 @@ export default function Notifications() {
   };
 
   const handleDismiss = (notification: Notification) => {
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return;
     }
@@ -385,7 +385,7 @@ export default function Notifications() {
   };
 
   const handleMarkAllRead = () => {
-    if (!hasLiveSession) {
+    if (!canPerformAuthenticatedWrites) {
       toast.info("Signing you in...");
       return;
     }
@@ -435,7 +435,7 @@ export default function Notifications() {
               size="sm"
               className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
               onClick={handleMarkAllRead}
-              disabled={markAllReadMutation.isPending || !hasLiveSession}
+              disabled={markAllReadMutation.isPending || !canPerformAuthenticatedWrites}
             >
               <CheckCheck className="h-4 w-4" />
               <span className="text-xs">Mark all read</span>

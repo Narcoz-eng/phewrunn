@@ -2581,6 +2581,13 @@ export function PostCard({
     setIsBuyDialogOpen(true);
   };
 
+  const handleOpenTradeWalletConnectDialog = () => {
+    setBuyTxSignature(null);
+    setPendingBuyAfterWalletConnect(true);
+    handleCloseBuyDialog();
+    setIsWalletConnectDialogOpen(true);
+  };
+
   const connectDetectedWalletDirect = useCallback(async (): Promise<boolean> => {
     if (wallet.connected || wallet.publicKey || wallet.wallet?.adapter?.publicKey) {
       return true;
@@ -3012,8 +3019,7 @@ export function PostCard({
 
   const handleBuyFooterAction = () => {
     if (canTriggerWalletConnectFromFooter) {
-      setPendingBuyAfterWalletConnect(true);
-      openWalletSelector();
+      handleOpenTradeWalletConnectDialog();
       return;
     }
     void handleExecuteJupiterBuy();
@@ -4906,10 +4912,7 @@ export function PostCard({
                       onSlippageInputChange={setSlippageInputPercent}
                       onSlippageInputCommit={applySlippagePercentInput}
                       onExecute={handleExecuteJupiterBuy}
-                      onConnectWallet={() => {
-                        setPendingBuyAfterWalletConnect(true);
-                        openWalletSelector();
-                      }}
+                      onConnectWallet={handleOpenTradeWalletConnectDialog}
                       txSignature={buyTxSignature}
                       quickBuyPresets={buyQuickAmounts}
                       sellQuickPercents={sellQuickPercents}
