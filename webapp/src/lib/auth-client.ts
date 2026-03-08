@@ -6,6 +6,7 @@ import {
   cancelPrivyIdentityRetryTimers,
   resolvePrivyAuthPayload,
   getPrivyIdentityRateLimitRemainingMs,
+  type PrivyIdentityDebugContext,
   type PrivyUserLike,
 } from "./privy-user";
 
@@ -126,6 +127,7 @@ type StartPrivyAuthBootstrapOptions = {
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
   tryExistingBackendSession?: boolean;
+  triggerSource?: "component_mount" | "manual_user_action" | "system";
 };
 
 type PrivyAuthBootstrapLock = {
@@ -1053,12 +1055,20 @@ function waitForAuthDelay(delayMs: number): Promise<boolean> {
   });
 }
 
+function createPrivyBootstrapAttemptId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `privy_attempt_${Math.random().toString(36).slice(2, 12)}_${Date.now().toString(36)}`;
+}
+
 export async function startPrivyAuthBootstrap({
   owner,
   mode = "system",
   user,
   getLatestUser,
   tryExistingBackendSession = false,
+  triggerSource = "system",
 }: StartPrivyAuthBootstrapOptions): Promise<AuthUser | null> {
   const now = Date.now();
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
@@ -1143,6 +1153,7 @@ export async function startPrivyAuthBootstrap({
       rateLimited: false,
       cancelled: false,
     };
+    const privyBootstrapAttemptId = createPrivyBootstrapAttemptId();
     let backendSyncStartedForAttempt = false;
     let attempt = 0;
     let totalAttempts = sameUserSnapshot?.totalAttempts ?? 0;
@@ -1191,17 +1202,35 @@ export async function startPrivyAuthBootstrap({
         console.info("[AuthFlow] bootstrap attempt started", {
           owner,
           mode,
+          triggerSource,
           userId: user.id,
+          attemptId: privyBootstrapAttemptId,
           attempt,
           totalAttempts,
           retryAlreadyScheduled: false,
         });
 
         try {
+          const privyIdentityDebugContext: PrivyIdentityDebugContext = {
+            attemptId: privyBootstrapAttemptId,
+            owner,
+            mode,
+            trigger: triggerSource,
+            userId: user.id,
+            bootstrapAttempt: attempt,
+            totalAttempts,
+            initialCaller:
+              triggerSource === "component_mount"
+                ? "component_mount"
+                : triggerSource === "manual_user_action"
+                  ? "usePrivyLogin"
+                  : owner,
+          };
           const resolvedPayload = await resolvePrivyAuthPayload({
             user,
             getLatestUser,
             isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
+            debugContext: privyIdentityDebugContext,
           });
 
           if (!resolvedPayload.privyIdToken) {

@@ -112,6 +112,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       user: user as PrivyUserLike,
       getLatestUser: () => latestPrivyUserRef.current,
       tryExistingBackendSession: true,
+      triggerSource: "component_mount",
     });
   }, [authenticated, hasLiveSession, ready, user]);
 

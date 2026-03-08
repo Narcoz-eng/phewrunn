@@ -149,6 +149,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       mode: "manual",
       user: privyUser,
       getLatestUser: () => latestPrivyUserRef.current,
+      triggerSource: "manual_user_action",
     });
 
     if (syncedUser) {
