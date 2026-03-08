@@ -79,6 +79,12 @@ export type ResolvedPrivyAuthPayload = {
   } | null;
 };
 
+type PendingPrivyIdentityTokenResolution = {
+  token?: string;
+  timedOut: boolean;
+  settled: boolean;
+};
+
 function inspectPrivyIdentityToken(token: string | undefined): {
   tokenLength: number;
   tokenExpired: boolean;
@@ -132,6 +138,46 @@ function normalizePendingPrivyIdentityTokenPromise(
     }
     return typeof value === "string" && value.length > 0 ? value : undefined;
   });
+}
+
+async function waitForPendingPrivyIdentityTokenResolution(
+  pendingPromise: Promise<string | undefined>,
+  timeoutMs: number
+): Promise<PendingPrivyIdentityTokenResolution> {
+  let settled = false;
+  const trackedPromise = pendingPromise.then((value) => {
+    settled = true;
+    return value;
+  });
+
+  const raced = await Promise.race<string | undefined | null>([
+    trackedPromise,
+    new Promise<null>((resolve) => {
+      window.setTimeout(() => resolve(null), timeoutMs);
+    }),
+  ]);
+
+  if (typeof raced === "string" && raced.length > 0) {
+    return {
+      token: raced,
+      timedOut: false,
+      settled: true,
+    };
+  }
+
+  if (raced === null) {
+    return {
+      token: undefined,
+      timedOut: !settled,
+      settled,
+    };
+  }
+
+  return {
+    token: undefined,
+    timedOut: false,
+    settled: true,
+  };
 }
 
 function getFetchUrl(input: RequestInfo | URL): string {
@@ -717,11 +763,13 @@ export async function resolvePrivyAuthPayload({
   getLatestUser,
   isTerminal,
   debugContext,
+  pendingTokenWaitMs = 15_000,
 }: {
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
   isTerminal?: () => boolean;
   debugContext?: PrivyIdentityDebugContext;
+  pendingTokenWaitMs?: number;
 }): Promise<ResolvedPrivyAuthPayload> {
   const userId = user.id;
   if (privyAuthPayloadInFlight?.userId === userId) {
@@ -795,6 +843,56 @@ export async function resolvePrivyAuthPayload({
         tokenResolution = "pending";
       }
     }
+
+    if (!privyIdToken && pendingPrivyIdTokenPromise) {
+      console.info("[AuthFlow] pending Privy identity token wait started", {
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenResolution,
+        waitMs: pendingTokenWaitMs,
+      });
+
+      try {
+        const pendingTokenResult = await waitForPendingPrivyIdentityTokenResolution(
+          pendingPrivyIdTokenPromise,
+          pendingTokenWaitMs
+        );
+
+        if (pendingTokenResult.token) {
+          privyIdToken = pendingTokenResult.token;
+          tokenResolution = "available";
+          tokenLocalCheck = inspectPrivyIdentityToken(privyIdToken);
+          console.info("[AuthFlow] delayed Privy identity token became available inside resolver", {
+            attemptId: debugContext?.attemptId ?? null,
+            caller: debugContext?.initialCaller ?? "system",
+            userId,
+          });
+        } else if (pendingTokenResult.timedOut) {
+          cancelPrivyIdentityRetryTimers("pending_token_timeout");
+          console.warn("[AuthFlow] pending Privy identity token wait timed out", {
+            attemptId: debugContext?.attemptId ?? null,
+            caller: debugContext?.initialCaller ?? "system",
+            userId,
+            waitMs: pendingTokenWaitMs,
+          });
+        } else {
+          console.warn("[AuthFlow] pending Privy identity token settled without usable token", {
+            attemptId: debugContext?.attemptId ?? null,
+            caller: debugContext?.initialCaller ?? "system",
+            userId,
+            waitMs: pendingTokenWaitMs,
+          });
+        }
+      } catch (error) {
+        if (isPrivyRateLimitError(error)) {
+          sawRateLimit = true;
+        } else {
+          throw error;
+        }
+      }
+    }
+
     if (privyIdToken) {
       tokenResolution = "available";
       return {

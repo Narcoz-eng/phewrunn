@@ -1244,6 +1244,7 @@ export async function startPrivyAuthBootstrap({
             getLatestUser,
             isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
             debugContext: privyIdentityDebugContext,
+            pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
           });
 
           if (!resolvedPayload.privyIdToken) {
