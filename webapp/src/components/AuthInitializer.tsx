@@ -105,6 +105,12 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       (sameUserSnapshot.debugCode === "awaiting_privy_sdk_ready" ||
         sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook") &&
       (Boolean(latestPrivyIdentityTokenRef.current) || (ready && authenticated));
+    const canResumeAuthenticatedSdkTokenRequest =
+      sameUserSnapshot?.owner === "AuthInitializer" &&
+      currentState === "awaiting_identity_token" &&
+      sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook" &&
+      ready &&
+      authenticated;
 
     if (hasLiveSession) {
       if (currentState !== "authenticated") {
@@ -124,7 +130,8 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         currentState === "awaiting_identity_token" ||
         currentState === "cooldown" ||
         currentState === "syncing_backend") &&
-      !canResumeDeferredUsePrivyLoginHandoff
+      !canResumeDeferredUsePrivyLoginHandoff &&
+      !canResumeAuthenticatedSdkTokenRequest
     ) {
       console.info("[AuthFlow] AuthInitializer found controller-owned pending state", {
         userId: user.id,
@@ -152,14 +159,13 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         detail: "waiting for Privy identity token",
         debugCode: "awaiting_privy_identity_token_hook",
       });
-      console.info("[AuthFlow] AuthInitializer waiting for Privy identity token hook", {
+      console.info("[AuthFlow] AuthInitializer delegating authenticated SDK state to active identity token request", {
         userId: user.id,
         providerInstanceId,
         ready,
         authenticated,
         hookIdentityTokenPresent: false,
       });
-      return;
     }
 
     if (

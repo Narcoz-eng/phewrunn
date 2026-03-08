@@ -1271,6 +1271,21 @@ export async function startPrivyAuthBootstrap({
         });
 
         try {
+          if (
+            privyReady === true &&
+            privyAuthenticated === true &&
+            !(typeof privyIdentityToken === "string" && privyIdentityToken.trim().length > 0)
+          ) {
+            console.info("[AuthFlow] SDK authenticated; actively requesting identity token for backend sync", {
+              owner,
+              mode,
+              userId: user.id,
+              attemptId: privyBootstrapAttemptId,
+              attempt,
+              totalAttempts,
+            });
+          }
+
           const privyIdentityDebugContext: PrivyIdentityDebugContext = {
             attemptId: privyBootstrapAttemptId,
             owner,
@@ -1357,8 +1372,30 @@ export async function startPrivyAuthBootstrap({
               tokenResolution: resolvedPayload.tokenResolution ?? "empty",
               tokenLocalCheck: resolvedPayload.tokenLocalCheck ?? null,
             });
+            if (privyReady === true && privyAuthenticated === true) {
+              console.warn("[AuthFlow] identity token unavailable after authenticated SDK state", {
+                owner,
+                mode,
+                userId: resolvedPayload.user.id,
+                attemptId: privyBootstrapAttemptId,
+                attempt,
+                totalAttempts,
+                tokenResolution: resolvedPayload.tokenResolution ?? "empty",
+                tokenLocalCheck: resolvedPayload.tokenLocalCheck ?? null,
+              });
+            }
             throw new Error("Privy identity verification is still finalizing");
           }
+
+          console.info("[AuthFlow] identity token acquired; starting /api/auth/privy-sync", {
+            owner,
+            mode,
+            userId: resolvedPayload.user.id,
+            attemptId: privyBootstrapAttemptId,
+            attempt,
+            totalAttempts,
+            tokenLength: resolvedPayload.privyIdToken.length,
+          });
 
           setPrivyAuthBootstrapState("syncing_backend", {
             owner,
