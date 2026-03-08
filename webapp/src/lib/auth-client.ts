@@ -106,6 +106,7 @@ export type PrivyAuthBootstrapSnapshot = {
   state: PrivyAuthBootstrapState;
   owner: PrivyAuthBootstrapOwner;
   mode: PrivyAuthBootstrapMode;
+  tabId: string | null;
   userId: string | null;
   detail: string | null;
   attempt: number;
@@ -556,6 +557,7 @@ export function readPrivyAuthBootstrapSnapshot(): PrivyAuthBootstrapSnapshot | n
       state: normalizedState,
       owner: normalizePrivyAuthBootstrapOwner(parsed.owner),
       mode: normalizePrivyAuthBootstrapMode(parsed.mode ?? parsed.source),
+      tabId: typeof parsed.tabId === "string" && parsed.tabId.length > 0 ? parsed.tabId : null,
       userId: typeof parsed.userId === "string" && parsed.userId.length > 0 ? parsed.userId : null,
       detail:
         typeof parsed.detail === "string" && parsed.detail.trim().length > 0
@@ -627,6 +629,16 @@ function getPrivyBootstrapTabId(): string {
   }
 
   return created;
+}
+
+function doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(
+  snapshot: PrivyAuthBootstrapSnapshot | null | undefined
+): boolean {
+  if (!snapshot?.tabId) {
+    return false;
+  }
+
+  return snapshot.tabId === getPrivyBootstrapTabId();
 }
 
 function writePrivyAuthBootstrapLock(lock: PrivyAuthBootstrapLock | null): void {
@@ -742,6 +754,7 @@ export function setPrivyAuthBootstrapState(
     state,
     owner: params.owner ?? "system",
     mode: params.mode ?? "system",
+    tabId: getPrivyBootstrapTabId(),
     userId: params.userId ?? null,
     detail: params.detail?.trim() || null,
     attempt: params.attempt ?? 0,
@@ -810,6 +823,9 @@ export function isPrivyAuthBootstrapPending(referenceTime = Date.now()): boolean
     return false;
   }
   if (referenceTime - snapshot.recordedAt > PRIVY_BOOTSTRAP_STATE_TTL_MS) {
+    return false;
+  }
+  if (!doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(snapshot)) {
     return false;
   }
   return isPrivyAuthBootstrapStateBlockingApiMe(snapshot.state);
