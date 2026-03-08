@@ -655,12 +655,11 @@ export async function resolvePrivyAuthPayload({
       sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
     }
     if (!privyIdToken) {
-      const fastTokenResult = await getPrivyIdentityTokenFastWithContext(
-        debugContext,
-        "controller_retry"
-      );
-      privyIdToken = fastTokenResult.token;
-      sawRateLimit = sawRateLimit || fastTokenResult.rateLimited;
+      console.info("[AuthFlow] initial Privy identity flow settled without token; deferring retry", {
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+      });
     }
     if (privyIdToken) {
       return {
