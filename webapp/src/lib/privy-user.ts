@@ -227,9 +227,11 @@ export function getPrivyDisplayName(user: PrivyUserLike, email?: string): string
 export async function resolvePrivyAuthPayload({
   user,
   getLatestUser,
+  isTerminal,
 }: {
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
+  isTerminal?: () => boolean;
 }): Promise<ResolvedPrivyAuthPayload> {
   const userId = user.id;
   if (privyAuthPayloadInFlight?.userId === userId) {
@@ -264,6 +266,15 @@ export async function resolvePrivyAuthPayload({
     }
 
     for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
+      if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
+        console.info("[AuthFlow] finalizing retry suppressed due to privy_429", {
+          delayMs,
+          rateLimited: sawRateLimit || getPrivyRateLimitRemainingMs() > 0,
+          terminal: isTerminal?.() === true,
+        });
+        break;
+      }
+
       console.info("[AuthFlow] Privy identity still finalizing; retry scheduled", {
         delayMs,
       });
@@ -271,6 +282,16 @@ export async function resolvePrivyAuthPayload({
       if (!completed) {
         break;
       }
+
+      if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
+        console.info("[AuthFlow] finalizing retry suppressed due to privy_429", {
+          delayMs,
+          rateLimited: sawRateLimit || getPrivyRateLimitRemainingMs() > 0,
+          terminal: isTerminal?.() === true,
+        });
+        break;
+      }
+
       latestUser = getLatestUser?.() ?? latestUser;
       email = getPrivyPrimaryEmail(latestUser);
       name = getPrivyDisplayName(latestUser, email);
@@ -283,7 +304,7 @@ export async function resolvePrivyAuthPayload({
       }
     }
 
-    if (sawRateLimit) {
+    if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
       throw new Error("Privy identity provider is rate limited");
     }
 

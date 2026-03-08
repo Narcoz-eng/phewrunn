@@ -917,186 +917,207 @@ export async function startPrivyAuthBootstrap({
   }
 
   privyAuthBootstrapInFlight = (async () => {
+    const attemptState = {
+      rateLimited: false,
+      cancelled: false,
+    };
     let attempt = 0;
     let totalAttempts = sameUserSnapshot?.totalAttempts ?? 0;
 
-    if (tryExistingBackendSession) {
-      console.info("[AuthFlow] bootstrap checking existing backend session before Privy sync", {
-        owner,
-        mode,
-        userId: user.id,
-      });
-      const recoveredUser = await ensureBackendSessionReady(user.id, 1800).catch((error) => {
-        console.warn("[AuthFlow] existing backend session check failed", {
+    try {
+      if (tryExistingBackendSession) {
+        console.info("[AuthFlow] bootstrap checking existing backend session before Privy sync", {
           owner,
           mode,
           userId: user.id,
-          message: error instanceof Error ? error.message : String(error),
         });
-        return null;
-      });
-      if (recoveredUser) {
-        setPrivyAuthBootstrapState("authenticated", {
-          owner,
-          mode,
-          userId: recoveredUser.id,
-          detail: "existing backend session recovered",
-          totalAttempts,
-        });
-        return recoveredUser;
-      }
-    }
-
-    while (attempt < PRIVY_BOOTSTRAP_MAX_ATTEMPTS) {
-      attempt += 1;
-      totalAttempts += 1;
-      setPrivyAuthBootstrapState("awaiting_identity_token", {
-        owner,
-        mode,
-        userId: user.id,
-        detail: "resolving Privy identity token",
-        attempt,
-        totalAttempts,
-      });
-      console.info("[AuthFlow] bootstrap attempt started", {
-        owner,
-        mode,
-        userId: user.id,
-        attempt,
-        totalAttempts,
-        retryAlreadyScheduled: false,
-      });
-
-      try {
-        const resolvedPayload = await resolvePrivyAuthPayload({
-          user,
-          getLatestUser,
-        });
-
-        if (!resolvedPayload.privyIdToken) {
-          throw new Error("Privy identity verification is still finalizing");
-        }
-
-        setPrivyAuthBootstrapState("syncing_backend", {
-          owner,
-          mode,
-          userId: resolvedPayload.user.id,
-          detail: "syncing backend session",
-          attempt,
-          totalAttempts,
-        });
-
-        const syncResult = await syncPrivySession(
-          resolvedPayload.user.id,
-          resolvedPayload.email,
-          resolvedPayload.name,
-          resolvedPayload.privyIdToken
-        );
-
-        setPrivyAuthBootstrapState("authenticated", {
-          owner,
-          mode,
-          userId: syncResult.user.id,
-          detail: "backend session synced",
-          attempt,
-          totalAttempts,
-        });
-        return syncResult.user;
-      } catch (error) {
-        const message = getPrivyBootstrapErrorMessage(error);
-        const rateLimited = isPrivyRateLimitedMessage(message);
-        const finalizing = isPrivyFinalizationPendingMessage(message);
-
-        if (rateLimited) {
-          const retryInMs = Math.max(
-            getPrivyIdentityRateLimitRemainingMs(),
-            PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS
-          );
-          cancelPendingPrivyAuthRetryTimers("privy_429");
-          writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
-          setPrivyAuthBootstrapState("failed_rate_limited", {
+        const recoveredUser = await ensureBackendSessionReady(user.id, 1800).catch((error) => {
+          console.warn("[AuthFlow] existing backend session check failed", {
             owner,
             mode,
             userId: user.id,
-            detail: PRIVY_RATE_LIMIT_FAILURE_MESSAGE,
-            attempt,
-            totalAttempts,
-            cooldownUntilMs: Date.now() + retryInMs,
+            message: error instanceof Error ? error.message : String(error),
           });
-          console.warn("[AuthFlow] bootstrap halted after Privy 429", {
+          return null;
+        });
+        if (recoveredUser) {
+          setPrivyAuthBootstrapState("authenticated", {
+            owner,
+            mode,
+            userId: recoveredUser.id,
+            detail: "existing backend session recovered",
+            totalAttempts,
+          });
+          return recoveredUser;
+        }
+      }
+
+      while (attempt < PRIVY_BOOTSTRAP_MAX_ATTEMPTS) {
+        attempt += 1;
+        totalAttempts += 1;
+        setPrivyAuthBootstrapState("awaiting_identity_token", {
+          owner,
+          mode,
+          userId: user.id,
+          detail: "resolving Privy identity token",
+          attempt,
+          totalAttempts,
+        });
+        console.info("[AuthFlow] bootstrap attempt started", {
+          owner,
+          mode,
+          userId: user.id,
+          attempt,
+          totalAttempts,
+          retryAlreadyScheduled: false,
+        });
+
+        try {
+          const resolvedPayload = await resolvePrivyAuthPayload({
+            user,
+            getLatestUser,
+            isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
+          });
+
+          if (!resolvedPayload.privyIdToken) {
+            throw new Error("Privy identity verification is still finalizing");
+          }
+
+          setPrivyAuthBootstrapState("syncing_backend", {
+            owner,
+            mode,
+            userId: resolvedPayload.user.id,
+            detail: "syncing backend session",
+            attempt,
+            totalAttempts,
+          });
+
+          const syncResult = await syncPrivySession(
+            resolvedPayload.user.id,
+            resolvedPayload.email,
+            resolvedPayload.name,
+            resolvedPayload.privyIdToken
+          );
+
+          setPrivyAuthBootstrapState("authenticated", {
+            owner,
+            mode,
+            userId: syncResult.user.id,
+            detail: "backend session synced",
+            attempt,
+            totalAttempts,
+          });
+          return syncResult.user;
+        } catch (error) {
+          const message = getPrivyBootstrapErrorMessage(error);
+          const rateLimited = isPrivyRateLimitedMessage(message);
+          const finalizing = isPrivyFinalizationPendingMessage(message);
+
+          if (rateLimited) {
+            attemptState.rateLimited = true;
+            const retryInMs = Math.max(
+              getPrivyIdentityRateLimitRemainingMs(),
+              PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS
+            );
+            cancelPendingPrivyAuthRetryTimers("privy_429");
+            writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
+            setPrivyAuthBootstrapState("failed_rate_limited", {
+              owner,
+              mode,
+              userId: user.id,
+              attempt,
+              totalAttempts,
+              detail: PRIVY_RATE_LIMIT_FAILURE_MESSAGE,
+              cooldownUntilMs: Date.now() + retryInMs,
+            });
+            console.warn("[AuthFlow] bootstrap halted after Privy 429", {
+              owner,
+              mode,
+              userId: user.id,
+              attempt,
+              totalAttempts,
+              privy429: true,
+              retryScheduled: false,
+              retryInMs,
+            });
+            return null;
+          }
+
+          if (finalizing && attempt < PRIVY_BOOTSTRAP_MAX_ATTEMPTS) {
+            if (attemptState.rateLimited || getPrivyIdentityRateLimitRemainingMs() > 0) {
+              console.info("[AuthFlow] finalizing retry suppressed due to privy_429", {
+                owner,
+                mode,
+                userId: user.id,
+                attempt,
+                totalAttempts,
+              });
+              return null;
+            }
+
+            setPrivyAuthBootstrapState("cooldown", {
+              owner,
+              mode,
+              userId: user.id,
+              detail: "Privy identity verification is still finalizing",
+              attempt,
+              totalAttempts,
+              retryScheduled: true,
+              retryDelayMs: PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
+              cooldownUntilMs: Date.now() + PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
+            });
+            console.info("[AuthFlow] bootstrap retry scheduled", {
+              owner,
+              mode,
+              userId: user.id,
+              attempt,
+              totalAttempts,
+              retryAlreadyScheduled: false,
+              retryDelayMs: PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
+              reason: message,
+            });
+            const completed = await waitForAuthDelay(PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS);
+            if (!completed || getPrivyIdentityRateLimitRemainingMs() > 0) {
+              return null;
+            }
+            continue;
+          }
+
+          writePrivySyncFailureSnapshot(message);
+          setPrivyAuthBootstrapState("failed", {
+            owner,
+            mode,
+            userId: user.id,
+            detail: message,
+            attempt,
+            totalAttempts,
+          });
+          console.warn("[AuthFlow] bootstrap failed", {
             owner,
             mode,
             userId: user.id,
             attempt,
             totalAttempts,
-            privy429: true,
+            reason: message,
             retryScheduled: false,
-            retryInMs,
           });
           return null;
         }
-
-        if (finalizing && attempt < PRIVY_BOOTSTRAP_MAX_ATTEMPTS) {
-          setPrivyAuthBootstrapState("cooldown", {
-            owner,
-            mode,
-            userId: user.id,
-            detail: "Privy identity verification is still finalizing",
-            attempt,
-            totalAttempts,
-            retryScheduled: true,
-            retryDelayMs: PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
-            cooldownUntilMs: Date.now() + PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
-          });
-          console.info("[AuthFlow] bootstrap retry scheduled", {
-            owner,
-            mode,
-            userId: user.id,
-            attempt,
-            totalAttempts,
-            retryAlreadyScheduled: false,
-            retryDelayMs: PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
-            reason: message,
-          });
-          const completed = await waitForAuthDelay(PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS);
-          if (!completed || getPrivyIdentityRateLimitRemainingMs() > 0) {
-            return null;
-          }
-          continue;
-        }
-
-        writePrivySyncFailureSnapshot(message);
-        setPrivyAuthBootstrapState("failed", {
-          owner,
-          mode,
-          userId: user.id,
-          detail: message,
-          attempt,
-          totalAttempts,
-        });
-        console.warn("[AuthFlow] bootstrap failed", {
-          owner,
-          mode,
-          userId: user.id,
-          attempt,
-          totalAttempts,
-          reason: message,
-          retryScheduled: false,
-        });
-        return null;
       }
-    }
 
-    writePrivySyncFailureSnapshot("Privy identity verification is still finalizing");
-    setPrivyAuthBootstrapState("failed", {
-      owner,
-      mode,
-      userId: user.id,
-      detail: "Privy identity verification is still finalizing",
-      attempt: PRIVY_BOOTSTRAP_MAX_ATTEMPTS,
-      totalAttempts,
-    });
-    return null;
+      writePrivySyncFailureSnapshot("Privy identity verification is still finalizing");
+      setPrivyAuthBootstrapState("failed", {
+        owner,
+        mode,
+        userId: user.id,
+        detail: "Privy identity verification is still finalizing",
+        attempt: PRIVY_BOOTSTRAP_MAX_ATTEMPTS,
+        totalAttempts,
+      });
+      return null;
+    } finally {
+      attemptState.cancelled = true;
+    }
   })();
 
   try {
