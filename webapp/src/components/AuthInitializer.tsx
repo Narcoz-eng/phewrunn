@@ -219,6 +219,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       sameUserSnapshot &&
       (currentState === "privy_pending" ||
         currentState === "awaiting_identity_token" ||
+        currentState === "awaiting_identity_verification_finalization" ||
         currentState === "cooldown" ||
         currentState === "syncing_backend") &&
       !canResumeDeferredUsePrivyLoginHandoff &&

@@ -171,10 +171,15 @@ function ProtectedRouteWithPrivy({
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivyHydrationHint =
     bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !logoutCooldownActive;
+  const hasPrivyFinalizationHint =
+    bootstrapSnapshot?.state === "awaiting_identity_verification_finalization" &&
+    !effectiveUser &&
+    !logoutCooldownActive;
   const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
     hasPrivyHydrationHint ||
+    hasPrivyFinalizationHint ||
     hasPrivySyncHint ||
     hasOAuthReturnHint ||
     shouldHoldForConfirmedSession ||
@@ -186,7 +191,11 @@ function ProtectedRouteWithPrivy({
         ? "authenticated"
         : privySyncFailure
           ? "failed"
-          : hasPrivyHydrationHint || hasPrivySyncHint || shouldHoldForConfirmedSession || hadTokenHint.current
+          : hasPrivyHydrationHint ||
+              hasPrivyFinalizationHint ||
+              hasPrivySyncHint ||
+              shouldHoldForConfirmedSession ||
+              hadTokenHint.current
             ? "trying_to_connect"
             : "anonymous";
 
@@ -200,6 +209,7 @@ function ProtectedRouteWithPrivy({
       hasLiveSession,
       isPending,
       hasPrivyHydrationHint,
+      hasPrivyFinalizationHint,
       hasPrivySyncHint,
       hasOAuthReturnHint,
       shouldHoldForConfirmedSession,
@@ -211,6 +221,7 @@ function ProtectedRouteWithPrivy({
     effectiveUser?.id,
     hasLiveSession,
     hasPrivyHydrationHint,
+    hasPrivyFinalizationHint,
     hasOAuthReturnHint,
     hasPrivySyncHint,
     isPending,
@@ -231,6 +242,7 @@ function ProtectedRouteWithPrivy({
       hasLiveSession,
       isPending,
       hasPrivyHydrationHint,
+      hasPrivyFinalizationHint,
       hasPrivySyncHint,
       shouldHoldForConfirmedSession,
       privySyncFailure: privySyncFailure?.message ?? null,
@@ -239,6 +251,7 @@ function ProtectedRouteWithPrivy({
     effectiveUser,
     hasLiveSession,
     hasPrivyHydrationHint,
+    hasPrivyFinalizationHint,
     hasPrivySyncHint,
     isPending,
     location.pathname,

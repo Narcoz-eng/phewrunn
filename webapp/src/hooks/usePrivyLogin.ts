@@ -491,7 +491,9 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
   const cooldownRemainingMs = getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot);
   const authStatus: VisibleAuthStatus =
-    bootstrapSnapshot?.state === "awaiting_identity_token" || bootstrapSnapshot?.state === "cooldown"
+    bootstrapSnapshot?.state === "awaiting_identity_token" ||
+    bootstrapSnapshot?.state === "awaiting_identity_verification_finalization" ||
+    bootstrapSnapshot?.state === "cooldown"
       ? "awaiting_identity_token"
       : bootstrapSnapshot?.state === "syncing_backend"
         ? "syncing_backend"
@@ -505,7 +507,9 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
   const authStatusMessage =
     authStatus === "awaiting_identity_token"
-      ? "Waiting for Privy to finish verification..."
+      ? bootstrapSnapshot?.state === "awaiting_identity_verification_finalization"
+        ? "Privy is finishing identity verification for backend sign-in..."
+        : "Waiting for Privy to finish verification..."
       : authStatus === "syncing_backend"
         ? "Finalizing your Phew session..."
         : authStatus === "rate_limited_cooldown"
