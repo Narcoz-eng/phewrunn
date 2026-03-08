@@ -325,6 +325,17 @@ function ProtectedRouteWithPrivy({
         />
       );
     }
+    if (hasPrivyFinalizationHint) {
+      return (
+        <RouteLoading
+          label={
+            graceExpired
+              ? "Still finishing identity verification..."
+              : "Finishing identity verification..."
+          }
+        />
+      );
+    }
     if (hasPrivySyncHint) {
       return (
         <RouteLoading

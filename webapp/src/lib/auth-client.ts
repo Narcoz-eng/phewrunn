@@ -61,10 +61,10 @@ const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
-const PRIVY_BOOTSTRAP_MAX_ATTEMPTS = 4;
-const PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS = 5_000;
-const PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS = 20_000;
-const PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS = 15_000;
+const PRIVY_BOOTSTRAP_MAX_ATTEMPTS = 2;
+const PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS = 2_000;
+const PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS = 6_000;
+const PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS = 2_500;
 const PRIVY_RATE_LIMIT_FAILURE_MESSAGE =
   "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
 const SESSION_COOKIE_CANDIDATE_NAMES = [
@@ -1591,12 +1591,13 @@ export async function startPrivyAuthBootstrap({
               0,
               PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS - elapsedFinalizationMs
             );
+            const hasRetryAttemptsRemaining = attempt < PRIVY_BOOTSTRAP_MAX_ATTEMPTS;
             const retryDelayMs = Math.min(
               PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
               remainingFinalizationMs
             );
 
-            if (retryDelayMs > 0) {
+            if (retryDelayMs > 0 && hasRetryAttemptsRemaining) {
               clearPrivySyncFailureSnapshot();
               setPrivyAuthBootstrapState("awaiting_identity_verification_finalization", {
                 owner,
@@ -1622,6 +1623,7 @@ export async function startPrivyAuthBootstrap({
                   retryDelayMs,
                   elapsedFinalizationMs,
                   remainingFinalizationMs,
+                  hasRetryAttemptsRemaining,
                 }
               );
               const retryCompleted = await waitForAuthDelay(retryDelayMs);
@@ -1663,6 +1665,7 @@ export async function startPrivyAuthBootstrap({
               reason: message,
               elapsedFinalizationMs,
               timeoutMs: PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS,
+              hasRetryAttemptsRemaining,
             });
             return null;
           }
@@ -2188,6 +2191,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applyAuthProviderState, resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
+    console.info("[AuthFlow] logout started", {
+      hasLiveSession: hasValidatedAuthSession(),
+      bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
+    });
     for (const hook of preLogoutHooks) {
       try {
         await hook();
@@ -2197,14 +2204,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     explicitLogoutAt = Date.now();
+    cancelPendingPrivyAuthRetryTimers("logout");
+    clearPrivyAuthBootstrapState();
     clearStoredAuthToken();
     clearCachedAuthUser();
     clearPrivySyncFailureSnapshot();
-    setPrivyAuthAnonymousState("system");
+    cancelPrivyIdentityRetryTimers("logout");
     clearSessionCacheByPrefix("phew.");
     sessionRateLimitedUntil = 0;
     sessionFetchInFlight = null;
     privySyncInFlight = null;
+    privyAuthBootstrapInFlight = null;
     lastPrivySyncAt = 0;
     lastSuccessfulSessionAt = 0;
     lastBootstrappedSessionAt = 0;
@@ -2214,9 +2224,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading: false,
       isAuthenticated: false,
     });
+    console.info("[AuthFlow] logout local auth state cleared", {
+      bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
+    });
 
     try {
       await signOut();
+      console.info("[AuthFlow] logout backend session cleared");
     } catch (error) {
       console.error("[Auth] Logout error:", error);
     }

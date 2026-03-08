@@ -1,6 +1,6 @@
 import { getIdentityToken } from "@privy-io/react-auth";
 
-const AUTH_PAYLOAD_READY_DELAYS_MS = [10_000] as const;
+const AUTH_PAYLOAD_READY_DELAYS_MS = [2_000] as const;
 const IDENTITY_TOKEN_SETTLE_GRACE_MS = 1500;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
