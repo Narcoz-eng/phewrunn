@@ -406,6 +406,11 @@ export default function Notifications() {
   const shouldShowSessionRecovery = isAuthenticated && isUsingCachedUser && filteredNotifications.length === 0;
   const shouldShowRecoveryBanner = isAuthenticated && isUsingCachedUser && filteredNotifications.length > 0;
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -510,6 +515,7 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={104}
                 overscanPx={900}
+                className="pt-2"
                 renderItem={(notification, index) => (
                   <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
                     <NotificationItem
@@ -558,6 +564,7 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={112}
                 overscanPx={900}
+                className="pt-2"
                 renderItem={(notification, index) => (
                   <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
                     <NotificationItem

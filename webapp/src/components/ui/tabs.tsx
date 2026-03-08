@@ -12,7 +12,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex min-h-11 items-center justify-center rounded-[20px] border border-border/70 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.78),hsl(38_26%_92%/0.86))] p-1.5 text-muted-foreground shadow-[0_18px_34px_-30px_hsl(var(--foreground)/0.14)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(14,16,22,0.9),rgba(9,11,15,0.94))] dark:shadow-none",
+      "inline-flex min-h-11 items-stretch justify-center rounded-[20px] border border-border/70 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.78),hsl(38_26%_92%/0.86))] p-1.5 text-muted-foreground shadow-[0_18px_34px_-30px_hsl(var(--foreground)/0.14)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(14,16,22,0.9),rgba(9,11,15,0.94))] dark:shadow-none",
       className,
     )}
     {...props}
@@ -27,7 +27,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-2xl px-3.5 py-2 text-sm font-semibold ring-offset-background transition-all data-[state=active]:border data-[state=active]:border-primary/15 data-[state=active]:bg-[linear-gradient(180deg,hsl(0_0%_100%/0.95),hsl(37_34%_95%/0.9))] data-[state=active]:text-foreground data-[state=active]:shadow-[0_16px_28px_-26px_hsl(var(--foreground)/0.16)] dark:data-[state=active]:border-white/[0.08] dark:data-[state=active]:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:data-[state=active]:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "inline-flex h-full w-full items-center justify-center whitespace-nowrap rounded-2xl px-3.5 py-2 text-center text-sm font-semibold leading-none ring-offset-background transition-all data-[state=active]:border data-[state=active]:border-primary/15 data-[state=active]:bg-[linear-gradient(180deg,hsl(0_0%_100%/0.95),hsl(37_34%_95%/0.9))] data-[state=active]:text-foreground data-[state=active]:shadow-[0_16px_28px_-26px_hsl(var(--foreground)/0.16)] dark:data-[state=active]:border-white/[0.08] dark:data-[state=active]:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:data-[state=active]:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
       className,
     )}
     {...props}

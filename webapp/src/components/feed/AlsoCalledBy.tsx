@@ -41,60 +41,69 @@ export function AlsoCalledBy({
         </span>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex flex-wrap items-center gap-2.5">
         {displayUsers.length === 0 ? (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onShowMore();
             }}
-            className="inline-flex items-center rounded-full border border-border/70 bg-secondary/70 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+            className="inline-flex h-9 items-center rounded-full border border-border/70 bg-secondary/70 px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
           >
             View {totalCount} trader{totalCount === 1 ? "" : "s"}
           </button>
         ) : null}
 
-        <div className="flex items-center gap-3">
-          <button
+        {displayUsers.length > 0 ? (
+          <div className="flex items-center gap-2.5">
+            <div
+              className="flex items-center -space-x-2"
+              aria-label={`Preview of ${totalCount} traders who also called this token`}
+            >
+              {displayUsers.map((user) => (
+                <button
+                  key={user.id}
+                  type="button"
+                  onClick={(e) => handleUserClick(e, user)}
+                  className="relative rounded-full transition-transform hover:z-10 hover:scale-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  aria-label={`Open ${user.username || user.name || "user"} profile`}
+                >
+                  <Avatar className="h-8 w-8 border-2 border-background shadow-[0_10px_18px_-16px_hsl(var(--foreground)/0.3)] dark:shadow-none">
+                    <AvatarImage src={getAvatarUrl(user.id, user.image)} />
+                    <AvatarFallback className="text-[10px] bg-muted">
+                      {user.name?.charAt(0) || "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                </button>
+              ))}
+              {remaining > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowMore();
+                  }}
+                  className="relative z-[1] inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-background bg-secondary text-[10px] font-medium text-muted-foreground shadow-[0_10px_18px_-16px_hsl(var(--foreground)/0.3)] transition-colors hover:bg-secondary/90 dark:shadow-none"
+                >
+                  +{remaining}
+                </button>
+              )}
+            </div>
+
+            <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onShowMore();
             }}
-            className="flex -space-x-2"
+            className="inline-flex h-9 items-center rounded-full border border-border/70 bg-secondary/60 px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
             aria-label={`View ${totalCount} traders who also called this token`}
           >
-          {displayUsers.map((user) => (
-            <Avatar
-              key={user.id}
-              className="h-8 w-8 border-2 border-background cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all hover:z-10"
-              onClick={(e) => handleUserClick(e, user)}
-            >
-              <AvatarImage src={getAvatarUrl(user.id, user.image)} />
-              <AvatarFallback className="text-[10px] bg-muted">
-                {user.name?.charAt(0) || "?"}
-              </AvatarFallback>
-            </Avatar>
-          ))}
-          {remaining > 0 && (
-            <span className="h-8 w-8 rounded-full bg-secondary border-2 border-background flex items-center justify-center">
-              <span className="text-[10px] font-medium text-muted-foreground">
-                +{remaining}
-              </span>
-            </span>
-          )}
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onShowMore();
-            }}
-            className="inline-flex items-center rounded-full border border-border/70 bg-secondary/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
-          >
             {totalCount} trader{totalCount === 1 ? "" : "s"}
-          </button>
-        </div>
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
