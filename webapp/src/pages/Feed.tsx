@@ -27,6 +27,7 @@ interface FeedPage {
   items: Post[];
   hasMore: boolean;
   nextCursor: string | null;
+  totalPosts: number | null;
 }
 
 type CachedFeedPageEntry = {
@@ -46,6 +47,8 @@ const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
 const FEED_CURRENT_USER_CACHE_TTL_MS = 30 * 60_000;
+const FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS = 500;
+const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -97,7 +100,13 @@ function readCachedFirstFeedPageEntry(
 
     return {
       cachedAt: parsed.cachedAt,
-      page: parsed.page,
+      page: {
+        ...parsed.page,
+        totalPosts:
+          typeof parsed.page.totalPosts === "number" && Number.isFinite(parsed.page.totalPosts)
+            ? parsed.page.totalPosts
+            : null,
+      },
     };
   } catch {
     return null;
@@ -197,6 +206,19 @@ function sortPostsNewestFirst(items: Post[]): Post[] {
     }
     return b.id.localeCompare(a.id);
   });
+}
+
+function shouldEnableFeedCardRealtimePolling(post: Post, totalPosts: number | null): boolean {
+  if (totalPosts === null || totalPosts < FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS) {
+    return true;
+  }
+
+  const createdAtMs = new Date(post.createdAt).getTime();
+  if (!Number.isFinite(createdAtMs)) {
+    return true;
+  }
+
+  return Date.now() - createdAtMs < FEED_OLDER_POST_REFETCH_AGE_MS;
 }
 
 // Error Boundary Component for Feed
@@ -430,6 +452,10 @@ export default function Feed() {
     }
     const items = json.data as Post[];
     const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
+    const totalPosts =
+      typeof json?.totalPosts === "number" && Number.isFinite(json.totalPosts)
+        ? json.totalPosts
+        : null;
 
     if (shouldUseCachedFirstPageFallback && fallbackFirstPage && items.length === 0) {
       return fallbackFirstPage;
@@ -439,6 +465,7 @@ export default function Feed() {
       items,
       nextCursor,
       hasMore: Boolean(json?.hasMore && nextCursor),
+      totalPosts,
     } satisfies FeedPage;
   }, [cachedFirstPage, feedViewerScope, getFeedQueryKey, queryClient]);
 
@@ -538,6 +565,13 @@ export default function Feed() {
     }
     return sortPostsNewestFirst(mergedPosts);
   }, [activeTab, postsPages?.pages]);
+  const feedTotalPosts = useMemo(
+    () =>
+      postsPages?.pages.find((page) => typeof page.totalPosts === "number")?.totalPosts ??
+      cachedFirstPage?.totalPosts ??
+      null,
+    [cachedFirstPage?.totalPosts, postsPages?.pages]
+  );
   const hasLiveOverlay = useCallback(
     () => isOverlayOpen || hasActiveTradeDialogMarker(),
     [isOverlayOpen]
@@ -610,6 +644,7 @@ export default function Feed() {
               hasMore: true,
               nextCursor: nextFirstPage.nextCursor ?? null,
               items: carryOverItems,
+              totalPosts: nextFirstPage.totalPosts,
             });
           }
           restWithCarry.push(...restPages);
@@ -1355,7 +1390,7 @@ export default function Feed() {
                             onLike={handleLike}
                             onRepost={handleRepost}
                             onComment={handleComment}
-                            enableRealtimePricePolling
+                            enableRealtimePricePolling={shouldEnableFeedCardRealtimePolling(post, feedTotalPosts)}
                           />
                     </div>
                   </div>

@@ -118,6 +118,7 @@ type FeedResponsePayload = {
   data: unknown[];
   hasMore: boolean;
   nextCursor: string | null;
+  totalPosts?: number | null;
 };
 
 type PostPriceResponsePayload = {
@@ -211,6 +212,7 @@ const FEED_SHARED_RESPONSE_REDIS_KEY_PREFIX = "posts:feed:shared:v1";
 const FEED_CARD_SNAPSHOT_TTL_MS = process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
 const FEED_CARD_SNAPSHOT_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 16_000 : 2_000;
 const FEED_DEGRADED_CIRCUIT_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 15_000;
+const FEED_TOTAL_POST_COUNT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
 const POST_PRICE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 20 * 60_000 : 5 * 60_000;
@@ -283,6 +285,7 @@ const feedCardSnapshotCache = new Map<
     expiresAtMs: number;
   }
 >();
+let feedTotalPostCountCache: { count: number; expiresAtMs: number } | null = null;
 const feedResponseCache = new Map<
   string,
   {
@@ -638,6 +641,7 @@ function normalizeFeedResponsePayload(value: unknown): FeedResponsePayload | nul
     data?: unknown;
     hasMore?: unknown;
     nextCursor?: unknown;
+    totalPosts?: unknown;
   };
 
   if (!Array.isArray(payload.data) || typeof payload.hasMore !== "boolean") {
@@ -648,11 +652,16 @@ function normalizeFeedResponsePayload(value: unknown): FeedResponsePayload | nul
     typeof payload.nextCursor === "string" || payload.nextCursor === null
       ? payload.nextCursor
       : null;
+  const totalPosts =
+    typeof payload.totalPosts === "number" && Number.isFinite(payload.totalPosts)
+      ? payload.totalPosts
+      : null;
 
   return {
     data: payload.data,
     hasMore: payload.hasMore,
     nextCursor,
+    totalPosts,
   };
 }
 
@@ -1440,9 +1449,43 @@ function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedCardSnapshotCache.clear();
   trendingCache = null;
   trendingInFlight = null;
+  feedTotalPostCountCache = null;
 
   if (options?.leaderboard) {
     invalidateLeaderboardCaches();
+  }
+}
+
+async function readTotalPostCountHint(): Promise<number | null> {
+  const nowMs = Date.now();
+  if (feedTotalPostCountCache && feedTotalPostCountCache.expiresAtMs > nowMs) {
+    return feedTotalPostCountCache.count;
+  }
+
+  try {
+    const count = await withFeedTimeout(
+      prisma.post.count(),
+      "feed_total_posts_count_query",
+      FEED_SOCIAL_QUERY_TIMEOUT_MS
+    );
+    feedTotalPostCountCache = {
+      count,
+      expiresAtMs: nowMs + FEED_TOTAL_POST_COUNT_CACHE_TTL_MS,
+    };
+    return count;
+  } catch (error) {
+    if (
+      !isPrismaSchemaDriftError(error) &&
+      !isPrismaClientError(error) &&
+      !isFeedTimeoutError(error)
+    ) {
+      throw error;
+    }
+
+    console.warn("[posts/feed] total post count hint unavailable; continuing without dataset-size hint", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return feedTotalPostCountCache?.count ?? null;
   }
 }
 
@@ -4389,10 +4432,12 @@ postsRouter.get("/", async (c) => {
   });
 
   const responsePosts = postsWithUpdatedMcap;
+  const totalPostsHint = !cursor ? await readTotalPostCountHint() : null;
   const responsePayload: FeedResponsePayload = {
     data: responsePosts,
     hasMore,
     nextCursor,
+    totalPosts: totalPostsHint,
   };
   writeFeedResponseToCache(feedResponseCache, feedCacheKey, responsePayload);
   if (!following) {
