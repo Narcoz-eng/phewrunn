@@ -575,11 +575,11 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={104}
                 overscanPx={900}
-                className="pt-2"
+                className="pt-5"
                 renderItem={(notification, index) => (
                   <div
                     className={cn(
-                      index === 0 && "pt-2",
+                      index === 0 && "pt-4",
                       index < filteredNotifications.length - 1 && "pb-3"
                     )}
                   >
@@ -629,11 +629,11 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={112}
                 overscanPx={900}
-                className="pt-2"
+                className="pt-5"
                 renderItem={(notification, index) => (
                   <div
                     className={cn(
-                      index === 0 && "pt-2",
+                      index === 0 && "pt-4",
                       index < filteredNotifications.length - 1 && "pb-3"
                     )}
                   >

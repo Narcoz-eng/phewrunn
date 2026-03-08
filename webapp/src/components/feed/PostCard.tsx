@@ -1209,14 +1209,12 @@ export function PostCard({
   const { data: sharedAlphaData } = useQuery({
     queryKey: ["sharedAlpha", post.id],
     queryFn: () => api.get<SharedAlphaResponse>(`/api/posts/${post.id}/shared-alpha`),
-    enabled:
-      isInViewport &&
-      Boolean(post.contractAddress) &&
-      (typeof post.sharedAlphaCount !== "number" || post.sharedAlphaCount > 0),
+    enabled: isInViewport && Boolean(post.contractAddress),
     staleTime: 60000,
   });
   const sharedAlphaUsers = sharedAlphaData?.users ?? [];
   const sharedAlphaTotalCount = Math.max(post.sharedAlphaCount ?? 0, sharedAlphaData?.count ?? 0);
+  const hasSharedAlphaPreview = sharedAlphaUsers.length > 0 || sharedAlphaTotalCount > 0;
 
   // Handle follow/unfollow with optimistic updates
   const handleFollow = async (e: React.MouseEvent) => {
@@ -4124,7 +4122,7 @@ export function PostCard({
             )}
 
             {/* Also Called By - Show other users who called this token */}
-            {sharedAlphaTotalCount > 0 && (
+            {hasSharedAlphaPreview && (
               <AlsoCalledBy
                 users={sharedAlphaUsers}
                 totalCount={sharedAlphaTotalCount}

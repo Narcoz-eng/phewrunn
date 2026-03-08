@@ -22,10 +22,11 @@ export function AlsoCalledBy({
 }: AlsoCalledByProps) {
   const navigate = useNavigate();
   const safeUsers = Array.isArray(users) ? users : [];
+  const normalizedTotalCount = Math.max(totalCount, safeUsers.length);
   const displayUsers = safeUsers.slice(0, maxDisplay);
-  const remaining = totalCount - displayUsers.length;
+  const remaining = Math.max(0, normalizedTotalCount - displayUsers.length);
 
-  if (totalCount === 0) return null;
+  if (normalizedTotalCount === 0) return null;
 
   const handleUserClick = (e: React.MouseEvent, user: SharedAlphaUser) => {
     e.stopPropagation();
@@ -51,7 +52,7 @@ export function AlsoCalledBy({
             }}
             className="inline-flex h-9 items-center rounded-full border border-border/70 bg-secondary/70 px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
           >
-            View {totalCount} trader{totalCount === 1 ? "" : "s"}
+            View {normalizedTotalCount} trader{normalizedTotalCount === 1 ? "" : "s"}
           </button>
         ) : null}
 
@@ -59,7 +60,7 @@ export function AlsoCalledBy({
           <div className="flex items-center gap-2.5">
             <div
               className="flex items-center -space-x-2"
-              aria-label={`Preview of ${totalCount} traders who also called this token`}
+              aria-label={`Preview of ${normalizedTotalCount} traders who also called this token`}
             >
               {displayUsers.map((user) => (
                 <button
@@ -98,9 +99,9 @@ export function AlsoCalledBy({
               onShowMore();
             }}
             className="inline-flex h-9 items-center rounded-full border border-border/70 bg-secondary/60 px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
-            aria-label={`View ${totalCount} traders who also called this token`}
+            aria-label={`View ${normalizedTotalCount} traders who also called this token`}
           >
-            {totalCount} trader{totalCount === 1 ? "" : "s"}
+            {normalizedTotalCount} trader{normalizedTotalCount === 1 ? "" : "s"}
             </button>
           </div>
         ) : null}
