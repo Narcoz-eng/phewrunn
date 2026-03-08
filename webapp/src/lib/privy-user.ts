@@ -6,6 +6,7 @@ const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
 const QUICK_IDENTITY_TOKEN_TIMEOUT_MS = 120;
 const PRIVY_IDENTITY_429_COOLDOWN_MS = 10_000;
+const PRIVY_DIRECT_TOKEN_BUILD_MARKER = "direct-token-trace-20260308a";
 let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAuthPayload> } | null =
   null;
 let privyIdentityRateLimitedUntilMs = 0;
@@ -452,10 +453,28 @@ function getOrStartPrivyIdentityTokenPromise():
         totalAttempts: activePrivyIdentityDebugContext.totalAttempts,
       }
     : null;
+  console.info("[AuthFlow] BEFORE await privy.getIdentityToken()", {
+    buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+    attemptId: debugContextSnapshot?.attemptId ?? null,
+    caller: debugContextSnapshot?.caller ?? "system",
+    owner: debugContextSnapshot?.owner ?? null,
+    mode: debugContextSnapshot?.mode ?? null,
+    trigger: debugContextSnapshot?.trigger ?? null,
+    userId: debugContextSnapshot?.userId ?? null,
+  });
   const tokenPromise = getIdentityToken()
     .then((token) => {
       const normalizedToken = typeof token === "string" && token.length > 0 ? token : undefined;
       const tokenLocalCheck = inspectPrivyIdentityToken(normalizedToken);
+      console.info("[AuthFlow] AFTER await privy.getIdentityToken()", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: debugContextSnapshot?.attemptId ?? null,
+        caller: debugContextSnapshot?.caller ?? "system",
+        userId: debugContextSnapshot?.userId ?? null,
+        returnedTokenString: typeof token === "string",
+        returnedEmptyToken: typeof token !== "string" || token.trim().length === 0,
+        tokenLength: tokenLocalCheck?.tokenLength ?? 0,
+      });
       console.info("[AuthFlow] Privy getIdentityToken resolved", {
         attemptId: debugContextSnapshot?.attemptId ?? null,
         caller: debugContextSnapshot?.caller ?? "system",
@@ -476,6 +495,13 @@ function getOrStartPrivyIdentityTokenPromise():
       return normalizedToken;
     })
     .catch((error) => {
+      console.warn("[AuthFlow] AFTER await privy.getIdentityToken() threw", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: debugContextSnapshot?.attemptId ?? null,
+        caller: debugContextSnapshot?.caller ?? "system",
+        userId: debugContextSnapshot?.userId ?? null,
+        message: getPrivyErrorMessage(error),
+      });
       console.warn("[AuthFlow] Privy getIdentityToken threw", {
         attemptId: debugContextSnapshot?.attemptId ?? null,
         caller: debugContextSnapshot?.caller ?? "system",
@@ -790,6 +816,14 @@ async function resolvePrivyAuthPayloadInternal({
   const userId = user.id;
   if (allowInFlightReuse && privyAuthPayloadInFlight?.userId === userId) {
     beginPrivyIdentityDebugContext(debugContext, debugContext?.initialCaller ?? "system");
+    console.warn("[AuthFlow] direct token acquisition exited early because pending payload was reused", {
+      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+      attemptId: debugContext?.attemptId ?? null,
+      caller: debugContext?.initialCaller ?? "system",
+      owner: debugContext?.owner ?? null,
+      mode: debugContext?.mode ?? null,
+      userId,
+    });
     console.info("[AuthFlow] reusing pending Privy auth payload resolution", {
       attemptId: debugContext?.attemptId ?? null,
       caller: debugContext?.initialCaller ?? "system",
@@ -826,6 +860,13 @@ async function resolvePrivyAuthPayloadInternal({
     });
 
     if (privyIdTokenFromHook) {
+      console.info("[AuthFlow] direct token acquisition returned early from hook token", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenLength: privyIdTokenFromHook.length,
+      });
       console.info("[AuthFlow] using Privy identity token from hook", {
         attemptId: debugContext?.attemptId ?? null,
         caller: debugContext?.initialCaller ?? "system",
@@ -851,6 +892,16 @@ async function resolvePrivyAuthPayloadInternal({
       debugContext,
       debugContext?.initialCaller ?? "system"
     );
+    console.info("[AuthFlow] direct token acquisition returned from initial getIdentityTokenWithin", {
+      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+      attemptId: debugContext?.attemptId ?? null,
+      caller: debugContext?.initialCaller ?? "system",
+      userId,
+      rateLimited: initialTokenResult.rateLimited,
+      timedOut: initialTokenResult.timedOut ?? false,
+      hasToken: Boolean(initialTokenResult.token),
+      hasPendingPromise: Boolean(initialTokenResult.pendingPromise),
+    });
     let privyIdToken = initialTokenResult.token;
     tokenLocalCheck = inspectPrivyIdentityToken(privyIdToken);
     sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
@@ -943,6 +994,13 @@ async function resolvePrivyAuthPayloadInternal({
 
     if (privyIdToken) {
       tokenResolution = "available";
+      console.info("[AuthFlow] direct token acquisition returning usable token", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenLength: privyIdToken.length,
+      });
       return {
         user: latestUser,
         email,
@@ -958,6 +1016,16 @@ async function resolvePrivyAuthPayloadInternal({
     }
 
     if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
+      console.warn("[AuthFlow] direct token acquisition throwing before token became available", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenResolution,
+        sawRateLimit,
+        cooldownRemainingMs: getPrivyRateLimitRemainingMs(),
+        terminal: isTerminal?.() === true,
+      });
       console.warn("[AuthFlow] initial Privy identity flow halted before token became available", {
         attemptId: debugContext?.attemptId ?? null,
         caller: debugContext?.initialCaller ?? "system",
@@ -971,6 +1039,14 @@ async function resolvePrivyAuthPayloadInternal({
     }
 
     if (!privyIdToken) {
+      console.warn("[AuthFlow] direct token acquisition returning without token", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenResolution,
+        hasPendingPromise: Boolean(pendingPrivyIdTokenPromise),
+      });
       console.info("[AuthFlow] initial Privy identity flow settled without token; deferring retry", {
         attemptId: debugContext?.attemptId ?? null,
         caller: debugContext?.initialCaller ?? "system",
@@ -1018,7 +1094,8 @@ export async function requestPrivyIdentityTokenForBackendSync(
     pendingTokenWaitMs?: number;
   }
 ): Promise<ResolvedPrivyAuthPayload> {
-  console.info("[AuthFlow] controller invoking direct Privy identity token acquisition", {
+  console.info("[AuthFlow] ENTER direct token acquisition function", {
+    buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
     attemptId: options.debugContext?.attemptId ?? null,
     caller: options.debugContext?.initialCaller ?? "system",
     owner: options.debugContext?.owner ?? null,
@@ -1033,10 +1110,35 @@ export async function requestPrivyIdentityTokenForBackendSync(
     ),
   });
 
-  return resolvePrivyAuthPayloadInternal({
-    ...options,
-    allowInFlightReuse: false,
-  });
+  try {
+    const result = await resolvePrivyAuthPayloadInternal({
+      ...options,
+      allowInFlightReuse: false,
+    });
+    console.info("[AuthFlow] RETURN direct token acquisition function", {
+      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+      attemptId: options.debugContext?.attemptId ?? null,
+      caller: options.debugContext?.initialCaller ?? "system",
+      owner: options.debugContext?.owner ?? null,
+      mode: options.debugContext?.mode ?? null,
+      userId: options.user.id,
+      tokenResolution: result.tokenResolution ?? "empty",
+      hasPrivyIdToken: Boolean(result.privyIdToken),
+      hasPendingPrivyIdTokenPromise: Boolean(result.pendingPrivyIdTokenPromise),
+    });
+    return result;
+  } catch (error) {
+    console.warn("[AuthFlow] THROW direct token acquisition function", {
+      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+      attemptId: options.debugContext?.attemptId ?? null,
+      caller: options.debugContext?.initialCaller ?? "system",
+      owner: options.debugContext?.owner ?? null,
+      mode: options.debugContext?.mode ?? null,
+      userId: options.user.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function resolvePrivyAuthPayload(
