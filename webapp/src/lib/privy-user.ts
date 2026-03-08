@@ -1111,9 +1111,29 @@ export async function requestPrivyIdentityTokenForBackendSync(
   });
 
   try {
+    console.info("[AuthFlow] BEFORE resolvePrivyAuthPayload", {
+      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+      attemptId: options.debugContext?.attemptId ?? null,
+      caller: options.debugContext?.initialCaller ?? "system",
+      owner: options.debugContext?.owner ?? null,
+      mode: options.debugContext?.mode ?? null,
+      userId: options.user.id,
+      allowInFlightReuse: false,
+    });
     const result = await resolvePrivyAuthPayloadInternal({
       ...options,
       allowInFlightReuse: false,
+    });
+    console.info("[AuthFlow] AFTER resolvePrivyAuthPayload", {
+      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+      attemptId: options.debugContext?.attemptId ?? null,
+      caller: options.debugContext?.initialCaller ?? "system",
+      owner: options.debugContext?.owner ?? null,
+      mode: options.debugContext?.mode ?? null,
+      userId: options.user.id,
+      tokenResolution: result.tokenResolution ?? "empty",
+      hasPrivyIdToken: Boolean(result.privyIdToken),
+      hasPendingPrivyIdTokenPromise: Boolean(result.pendingPrivyIdTokenPromise),
     });
     console.info("[AuthFlow] RETURN direct token acquisition function", {
       buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
@@ -1135,7 +1155,9 @@ export async function requestPrivyIdentityTokenForBackendSync(
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
       userId: options.user.id,
+      errorName: error instanceof Error ? error.name : typeof error,
       message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack ?? null : null,
     });
     throw error;
   }
