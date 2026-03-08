@@ -1,8 +1,6 @@
 import { getIdentityToken } from "@privy-io/react-auth";
 
-const IDENTITY_TOKEN_ATTEMPTS = 2;
-const IDENTITY_TOKEN_RETRY_DELAYS_MS = [180] as const;
-const AUTH_PAYLOAD_READY_DELAYS_MS = [1200] as const;
+const AUTH_PAYLOAD_READY_DELAYS_MS = [5000] as const;
 const IDENTITY_TOKEN_SETTLE_GRACE_MS = 1500;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
@@ -448,102 +446,56 @@ function hasOAuthIdentity(user: PrivyUserLike): boolean {
 }
 
 export async function getPrivyIdentityTokenFast(): Promise<IdentityTokenAttemptResult> {
-  for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    let result = await getIdentityTokenWithin(
-      IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS,
-      undefined,
-      "controller_retry"
-    );
-    if (result.token || result.rateLimited) {
-      return result;
-    }
-
-    if (result.timedOut && result.pendingPromise) {
-      console.info("[AuthFlow] awaiting pending Privy identity token request before retry", {
-        attempt: attempt + 1,
-        settleGraceMs: IDENTITY_TOKEN_SETTLE_GRACE_MS,
-      });
-      result = await waitForPendingIdentityTokenResult(
-        result.pendingPromise,
-        IDENTITY_TOKEN_SETTLE_GRACE_MS
-      );
-      if (result.token || result.rateLimited) {
-        return result;
-      }
-    }
-
-    const delayMs = IDENTITY_TOKEN_RETRY_DELAYS_MS[attempt];
-    if (!delayMs) {
-      continue;
-    }
-
-    console.info("[AuthFlow] Privy identity token retry scheduled", {
-      attempt: attempt + 1,
-      delayMs,
-    });
-    const completed = await waitFor(delayMs);
-    if (!completed) {
-      return {
-        token: undefined,
-        rateLimited: getPrivyRateLimitRemainingMs() > 0,
-      };
-    }
+  let result = await getIdentityTokenWithin(
+    IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS,
+    undefined,
+    "controller_retry"
+  );
+  if (result.token || result.rateLimited) {
+    return result;
   }
 
-  return { token: undefined, rateLimited: false };
+  if (result.timedOut && result.pendingPromise) {
+    console.info("[AuthFlow] awaiting pending Privy identity token request before retry", {
+      attempt: 1,
+      settleGraceMs: IDENTITY_TOKEN_SETTLE_GRACE_MS,
+    });
+    result = await waitForPendingIdentityTokenResult(
+      result.pendingPromise,
+      IDENTITY_TOKEN_SETTLE_GRACE_MS
+    );
+  }
+
+  return result;
 }
 
 async function getPrivyIdentityTokenFastWithContext(
   context: PrivyIdentityDebugContext | undefined,
   caller: PrivyIdentityDebugCaller
 ): Promise<IdentityTokenAttemptResult> {
-  for (let attempt = 0; attempt < IDENTITY_TOKEN_ATTEMPTS; attempt += 1) {
-    let result = await getIdentityTokenWithin(
-      IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS,
-      context,
-      caller
-    );
-    if (result.token || result.rateLimited) {
-      return result;
-    }
+  let result = await getIdentityTokenWithin(
+    IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS,
+    context,
+    caller
+  );
+  if (result.token || result.rateLimited) {
+    return result;
+  }
 
-    if (result.timedOut && result.pendingPromise) {
-      console.info("[AuthFlow] awaiting pending Privy identity token request before retry", {
-        attempt: attempt + 1,
-        settleGraceMs: IDENTITY_TOKEN_SETTLE_GRACE_MS,
-        attemptId: context?.attemptId ?? null,
-        caller,
-      });
-      result = await waitForPendingIdentityTokenResult(
-        result.pendingPromise,
-        IDENTITY_TOKEN_SETTLE_GRACE_MS
-      );
-      if (result.token || result.rateLimited) {
-        return result;
-      }
-    }
-
-    const delayMs = IDENTITY_TOKEN_RETRY_DELAYS_MS[attempt];
-    if (!delayMs) {
-      continue;
-    }
-
-    console.info("[AuthFlow] Privy identity token retry scheduled", {
-      attempt: attempt + 1,
-      delayMs,
+  if (result.timedOut && result.pendingPromise) {
+    console.info("[AuthFlow] awaiting pending Privy identity token request before retry", {
+      attempt: 1,
+      settleGraceMs: IDENTITY_TOKEN_SETTLE_GRACE_MS,
       attemptId: context?.attemptId ?? null,
       caller,
     });
-    const completed = await waitFor(delayMs);
-    if (!completed) {
-      return {
-        token: undefined,
-        rateLimited: getPrivyRateLimitRemainingMs() > 0,
-      };
-    }
+    result = await waitForPendingIdentityTokenResult(
+      result.pendingPromise,
+      IDENTITY_TOKEN_SETTLE_GRACE_MS
+    );
   }
 
-  return { token: undefined, rateLimited: false };
+  return result;
 }
 
 export function getPrivyPrimaryEmail(user: PrivyUserLike): string | undefined {
