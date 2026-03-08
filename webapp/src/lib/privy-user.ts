@@ -379,6 +379,17 @@ export async function resolvePrivyAuthPayload({
     let initialTokenResult = await getIdentityTokenWithin(initialTokenTimeoutMs);
     let privyIdToken = initialTokenResult.token;
     sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
+    if (!privyIdToken && initialTokenResult.timedOut && initialTokenResult.pendingPromise) {
+      console.info("[AuthFlow] awaiting initial Privy identity token request before fast retry", {
+        settleGraceMs: IDENTITY_TOKEN_SETTLE_GRACE_MS,
+      });
+      initialTokenResult = await waitForPendingIdentityTokenResult(
+        initialTokenResult.pendingPromise,
+        IDENTITY_TOKEN_SETTLE_GRACE_MS
+      );
+      privyIdToken = initialTokenResult.token;
+      sawRateLimit = sawRateLimit || initialTokenResult.rateLimited;
+    }
     if (!privyIdToken) {
       const fastTokenResult = await getPrivyIdentityTokenFast();
       privyIdToken = fastTokenResult.token;
