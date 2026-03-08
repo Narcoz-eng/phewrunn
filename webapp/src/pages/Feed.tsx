@@ -208,6 +208,68 @@ function sortPostsNewestFirst(items: Post[]): Post[] {
   });
 }
 
+function mergePostWithCachedRealtimeState(post: Post, cachedPost: Post | null | undefined): Post {
+  if (!cachedPost) {
+    return post;
+  }
+
+  let didChange = false;
+  let nextCurrentMcap = post.currentMcap;
+  let nextSettled = post.settled;
+  let nextSettledAt = post.settledAt;
+  let nextMcap1h = post.mcap1h;
+  let nextMcap6h = post.mcap6h;
+  let nextIsWin = post.isWin;
+
+  const cachedLooksLikeLiveCurrent =
+    cachedPost.currentMcap !== null &&
+    cachedPost.entryMcap !== null &&
+    cachedPost.currentMcap !== cachedPost.entryMcap;
+  const fetchedLooksLikeBaselineCurrent =
+    post.currentMcap === null ||
+    (post.entryMcap !== null && post.currentMcap === post.entryMcap);
+
+  if (cachedLooksLikeLiveCurrent && fetchedLooksLikeBaselineCurrent) {
+    nextCurrentMcap = cachedPost.currentMcap;
+    didChange = true;
+  }
+
+  if (cachedPost.settled && !post.settled) {
+    nextSettled = true;
+    nextSettledAt = cachedPost.settledAt ?? post.settledAt;
+    didChange = true;
+  }
+
+  if (cachedPost.mcap1h !== null && post.mcap1h === null) {
+    nextMcap1h = cachedPost.mcap1h;
+    didChange = true;
+  }
+
+  if (cachedPost.mcap6h !== null && post.mcap6h === null) {
+    nextMcap6h = cachedPost.mcap6h;
+    didChange = true;
+  }
+
+  if (cachedPost.isWin !== null && post.isWin === null) {
+    nextIsWin = cachedPost.isWin;
+    didChange = true;
+  }
+
+  if (!didChange) {
+    return post;
+  }
+
+  return {
+    ...post,
+    currentMcap: nextCurrentMcap,
+    settled: nextSettled,
+    settledAt: nextSettledAt,
+    mcap1h: nextMcap1h,
+    mcap6h: nextMcap6h,
+    isWin: nextIsWin,
+  };
+}
+
 function shouldEnableFeedCardRealtimePolling(post: Post, totalPosts: number | null): boolean {
   if (totalPosts === null || totalPosts < FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS) {
     return true;
@@ -476,13 +538,27 @@ export default function Feed() {
       typeof json?.totalPosts === "number" && Number.isFinite(json.totalPosts)
         ? json.totalPosts
         : null;
+    const cachedRealtimePostsById = new Map<string, Post>();
+    for (const page of [currentQueryFirstPage, liveCachedFirstPage, cachedFirstPage]) {
+      if (!page?.items?.length) {
+        continue;
+      }
+      for (const item of page.items) {
+        if (!cachedRealtimePostsById.has(item.id)) {
+          cachedRealtimePostsById.set(item.id, item);
+        }
+      }
+    }
+    const mergedItems = items.map((item) =>
+      mergePostWithCachedRealtimeState(item, cachedRealtimePostsById.get(item.id))
+    );
 
-    if (shouldUseCachedFirstPageFallback && fallbackFirstPage && items.length === 0) {
+    if (shouldUseCachedFirstPageFallback && fallbackFirstPage && mergedItems.length === 0) {
       return fallbackFirstPage;
     }
 
     return {
-      items,
+      items: mergedItems,
       nextCursor,
       hasMore: Boolean(json?.hasMore && nextCursor),
       totalPosts,
