@@ -63,7 +63,7 @@ const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
 const PRIVY_BOOTSTRAP_MAX_ATTEMPTS = 2;
 const PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS = 1_500;
-const PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS = 7_500;
+const PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS = 15_000;
 const PRIVY_RATE_LIMIT_FAILURE_MESSAGE =
   "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
 const SESSION_COOKIE_CANDIDATE_NAMES = [
@@ -1264,6 +1264,14 @@ export async function startPrivyAuthBootstrap({
               if (awaitedToken) {
                 resolvedPayload.privyIdToken = awaitedToken;
                 resolvedPayload.tokenResolution = "available";
+                console.info("[AuthFlow] backend sync resumed: delayed identity token became available", {
+                  owner,
+                  mode,
+                  userId: resolvedPayload.user.id,
+                  attemptId: privyBootstrapAttemptId,
+                  attempt,
+                  totalAttempts,
+                });
               } else {
                 console.warn("[AuthFlow] backend sync skipped: token promise pending", {
                   owner,

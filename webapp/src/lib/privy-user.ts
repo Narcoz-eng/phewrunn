@@ -1,6 +1,6 @@
 import { getIdentityToken } from "@privy-io/react-auth";
 
-const AUTH_PAYLOAD_READY_DELAYS_MS = [5000] as const;
+const AUTH_PAYLOAD_READY_DELAYS_MS = [10_000] as const;
 const IDENTITY_TOKEN_SETTLE_GRACE_MS = 1500;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 280;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 220;
@@ -593,6 +593,46 @@ async function getPrivyIdentityTokenFastWithContext(
   return result;
 }
 
+function createDelayedPrivyIdentityTokenPromise({
+  delayMs,
+  debugContext,
+  isTerminal,
+}: {
+  delayMs: number;
+  debugContext?: PrivyIdentityDebugContext;
+  isTerminal?: () => boolean;
+}): Promise<string | undefined> {
+  return (async () => {
+    console.info("[AuthFlow] Privy identity token delayed follow-up scheduled", {
+      delayMs,
+      attemptId: debugContext?.attemptId ?? null,
+      caller: "controller_retry",
+    });
+
+    const completed = await waitFor(delayMs);
+    if (!completed) {
+      return undefined;
+    }
+
+    if (getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
+      console.info("[AuthFlow] delayed Privy identity token follow-up suppressed", {
+        delayMs,
+        attemptId: debugContext?.attemptId ?? null,
+        rateLimited: getPrivyRateLimitRemainingMs() > 0,
+        terminal: isTerminal?.() === true,
+      });
+      return undefined;
+    }
+
+    const delayedTokenResult = await getPrivyIdentityTokenFastWithContext(
+      debugContext,
+      "controller_retry"
+    );
+
+    return delayedTokenResult.token;
+  })();
+}
+
 export function getPrivyPrimaryEmail(user: PrivyUserLike): string | undefined {
   const directEmail = user.email?.address?.trim();
   if (directEmail) {
@@ -712,6 +752,23 @@ export async function resolvePrivyAuthPayload({
       );
       tokenResolution = "pending";
     }
+    if (
+      !privyIdToken &&
+      tokenResolution !== "pending" &&
+      !sawRateLimit &&
+      getPrivyRateLimitRemainingMs() === 0 &&
+      isTerminal?.() !== true
+    ) {
+      const delayedFollowUpMs = AUTH_PAYLOAD_READY_DELAYS_MS[0];
+      if (delayedFollowUpMs) {
+        pendingPrivyIdTokenPromise = createDelayedPrivyIdentityTokenPromise({
+          delayMs: delayedFollowUpMs,
+          debugContext,
+          isTerminal,
+        });
+        tokenResolution = "pending";
+      }
+    }
     if (!privyIdToken) {
       console.info("[AuthFlow] initial Privy identity flow settled without token; deferring retry", {
         attemptId: debugContext?.attemptId ?? null,
@@ -734,63 +791,6 @@ export async function resolvePrivyAuthPayload({
 
     if (!sawRateLimit && getPrivyRateLimitRemainingMs() === 0 && isTerminal?.() !== true) {
       await waitForOutstandingPrivyIdentityRequests(350);
-    }
-
-    for (const delayMs of AUTH_PAYLOAD_READY_DELAYS_MS) {
-      if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
-        console.info("[AuthFlow] finalizing retry suppressed due to privy_429", {
-          delayMs,
-          rateLimited: sawRateLimit || getPrivyRateLimitRemainingMs() > 0,
-          terminal: isTerminal?.() === true,
-          attemptId: debugContext?.attemptId ?? null,
-        });
-        break;
-      }
-
-      console.info("[AuthFlow] Privy identity still finalizing; retry scheduled", {
-        delayMs,
-        attemptId: debugContext?.attemptId ?? null,
-        caller: "controller_retry",
-      });
-      const completed = await waitFor(delayMs);
-      if (!completed) {
-        break;
-      }
-
-      if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
-        console.info("[AuthFlow] finalizing retry suppressed due to privy_429", {
-          delayMs,
-          rateLimited: sawRateLimit || getPrivyRateLimitRemainingMs() > 0,
-          terminal: isTerminal?.() === true,
-          attemptId: debugContext?.attemptId ?? null,
-        });
-        break;
-      }
-
-      latestUser = getLatestUser?.() ?? latestUser;
-      email = getPrivyPrimaryEmail(latestUser);
-      name = getPrivyDisplayName(latestUser, email);
-      const delayedTokenResult = await getPrivyIdentityTokenFastWithContext(
-        debugContext,
-        "controller_retry"
-      );
-      privyIdToken = delayedTokenResult.token;
-      tokenLocalCheck = inspectPrivyIdentityToken(privyIdToken);
-      sawRateLimit = sawRateLimit || delayedTokenResult.rateLimited;
-      if (!privyIdToken && delayedTokenResult.timedOut && delayedTokenResult.pendingPromise) {
-        pendingPrivyIdTokenPromise = delayedTokenResult.pendingPromise.then((value) =>
-          typeof value === "string" && value.length > 0 ? value : undefined
-        );
-        tokenResolution = "pending";
-      } else if (!privyIdToken) {
-        pendingPrivyIdTokenPromise = undefined;
-        tokenResolution = "empty";
-      }
-
-      if (privyIdToken) {
-        tokenResolution = "available";
-        break;
-      }
     }
 
     if (sawRateLimit || getPrivyRateLimitRemainingMs() > 0 || isTerminal?.() === true) {
