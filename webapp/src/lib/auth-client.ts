@@ -76,6 +76,9 @@ const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
 const AUTH_PRIVY_SYNC_FAILURE_EVENT = "phew:auth-privy-sync-failure";
 const PRIVY_BOOTSTRAP_STATE_STORAGE_KEY = "phew.auth.privy-bootstrap.v1";
 const PRIVY_BOOTSTRAP_STATE_TTL_MS = 30_000;
+const PRIVY_BOOTSTRAP_LOCK_STORAGE_KEY = "phew.auth.privy-bootstrap.lock.v1";
+const PRIVY_BOOTSTRAP_LOCK_TTL_MS = 20_000;
+const PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY = "phew.auth.tab-id.v1";
 const AUTH_PRIVY_BOOTSTRAP_EVENT = "phew:auth-privy-bootstrap";
 const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
 const AUTH_BOOTSTRAPPED_SESSION_GRACE_MS = 20_000;
@@ -119,6 +122,13 @@ type StartPrivyAuthBootstrapOptions = {
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
   tryExistingBackendSession?: boolean;
+};
+
+type PrivyAuthBootstrapLock = {
+  ownerTabId: string;
+  userId: string | null;
+  acquiredAt: number;
+  expiresAt: number;
 };
 
 let preLogoutHooks: Array<() => Promise<void>> = [];
@@ -228,6 +238,7 @@ interface SessionState {
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let privySyncInFlight: Promise<{ user: AuthUser }> | null = null;
 let privyAuthBootstrapInFlight: Promise<AuthUser | null> | null = null;
+let inMemoryPrivyBootstrapTabId: string | null = null;
 const privyAuthRetryWaiters = new Map<number, (completed: boolean) => void>();
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
@@ -578,6 +589,141 @@ export function readPrivyAuthBootstrapSnapshot(): PrivyAuthBootstrapSnapshot | n
   }
 }
 
+function generatePrivyBootstrapTabId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `tab_${Math.random().toString(36).slice(2, 12)}_${Date.now().toString(36)}`;
+}
+
+function getPrivyBootstrapTabId(): string {
+  if (inMemoryPrivyBootstrapTabId) {
+    return inMemoryPrivyBootstrapTabId;
+  }
+
+  if (typeof window === "undefined") {
+    inMemoryPrivyBootstrapTabId = generatePrivyBootstrapTabId();
+    return inMemoryPrivyBootstrapTabId;
+  }
+
+  try {
+    const stored = window.sessionStorage.getItem(PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY)?.trim();
+    if (stored) {
+      inMemoryPrivyBootstrapTabId = stored;
+      return stored;
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  const created = generatePrivyBootstrapTabId();
+  inMemoryPrivyBootstrapTabId = created;
+
+  try {
+    window.sessionStorage.setItem(PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY, created);
+  } catch {
+    // ignore storage errors
+  }
+
+  return created;
+}
+
+function writePrivyAuthBootstrapLock(lock: PrivyAuthBootstrapLock | null): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (!lock) {
+      window.localStorage.removeItem(PRIVY_BOOTSTRAP_LOCK_STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(PRIVY_BOOTSTRAP_LOCK_STORAGE_KEY, JSON.stringify(lock));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function readPrivyAuthBootstrapLock(referenceTime = Date.now()): PrivyAuthBootstrapLock | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PRIVY_BOOTSTRAP_LOCK_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PrivyAuthBootstrapLock>;
+    if (
+      typeof parsed.ownerTabId !== "string" ||
+      parsed.ownerTabId.trim().length === 0 ||
+      typeof parsed.acquiredAt !== "number" ||
+      !Number.isFinite(parsed.acquiredAt) ||
+      typeof parsed.expiresAt !== "number" ||
+      !Number.isFinite(parsed.expiresAt)
+    ) {
+      writePrivyAuthBootstrapLock(null);
+      return null;
+    }
+
+    if (parsed.expiresAt <= referenceTime) {
+      writePrivyAuthBootstrapLock(null);
+      return null;
+    }
+
+    return {
+      ownerTabId: parsed.ownerTabId,
+      userId: typeof parsed.userId === "string" && parsed.userId.length > 0 ? parsed.userId : null,
+      acquiredAt: parsed.acquiredAt,
+      expiresAt: parsed.expiresAt,
+    };
+  } catch {
+    writePrivyAuthBootstrapLock(null);
+    return null;
+  }
+}
+
+function acquirePrivyAuthBootstrapLock(
+  userId: string | null,
+  referenceTime = Date.now()
+): { acquired: true; ownerTabId: string } | { acquired: false; ownerTabId: string; lock: PrivyAuthBootstrapLock } {
+  const ownerTabId = getPrivyBootstrapTabId();
+  const existingLock = readPrivyAuthBootstrapLock(referenceTime);
+
+  if (existingLock && existingLock.ownerTabId !== ownerTabId) {
+    return {
+      acquired: false,
+      ownerTabId,
+      lock: existingLock,
+    };
+  }
+
+  writePrivyAuthBootstrapLock({
+    ownerTabId,
+    userId,
+    acquiredAt: referenceTime,
+    expiresAt: referenceTime + PRIVY_BOOTSTRAP_LOCK_TTL_MS,
+  });
+
+  return {
+    acquired: true,
+    ownerTabId,
+  };
+}
+
+function releasePrivyAuthBootstrapLock(ownerTabId: string): void {
+  const existingLock = readPrivyAuthBootstrapLock();
+  if (!existingLock || existingLock.ownerTabId !== ownerTabId) {
+    return;
+  }
+
+  writePrivyAuthBootstrapLock(null);
+}
+
 export function setPrivyAuthBootstrapState(
   state: PrivyAuthBootstrapState,
   params: {
@@ -867,6 +1013,7 @@ export async function startPrivyAuthBootstrap({
   const now = Date.now();
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
   const sameUserSnapshot = existingSnapshot?.userId === user.id ? existingSnapshot : null;
+  const currentState = sameUserSnapshot?.state ?? existingSnapshot?.state ?? "idle";
   const hardCooldownRemainingMs = Math.max(
     getPrivyIdentityRateLimitRemainingMs(now),
     getPrivyAuthBootstrapCooldownRemainingMs(sameUserSnapshot, now)
@@ -877,7 +1024,7 @@ export async function startPrivyAuthBootstrap({
     mode,
     userId: user.id,
     alreadyInProgress: Boolean(privyAuthBootstrapInFlight),
-    currentState: existingSnapshot?.state ?? "idle",
+    currentState,
   });
 
   if (privyAuthBootstrapInFlight) {
@@ -888,6 +1035,17 @@ export async function startPrivyAuthBootstrap({
       totalAttempts: sameUserSnapshot?.totalAttempts ?? 0,
     });
     return privyAuthBootstrapInFlight;
+  }
+
+  if (sameUserSnapshot && isPrivyAuthBootstrapStatePending(sameUserSnapshot.state)) {
+    console.info("[AuthFlow] bootstrap blocked by shared pending state", {
+      owner,
+      mode,
+      userId: user.id,
+      currentState: sameUserSnapshot.state,
+      retryAlreadyScheduled: sameUserSnapshot.retryScheduled,
+    });
+    return null;
   }
 
   if (hardCooldownRemainingMs > 0) {
@@ -913,6 +1071,20 @@ export async function startPrivyAuthBootstrap({
       cooldownBlocked: false,
     });
     writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
+    return null;
+  }
+
+  const lockAttempt = acquirePrivyAuthBootstrapLock(user.id, now);
+  if (!lockAttempt.acquired) {
+    console.info("[AuthFlow] bootstrap blocked by active browser tab", {
+      owner,
+      mode,
+      userId: user.id,
+      currentState,
+      lockOwnerTabId: lockAttempt.lock.ownerTabId,
+      lockUserId: lockAttempt.lock.userId,
+      lockExpiresInMs: Math.max(0, lockAttempt.lock.expiresAt - now),
+    });
     return null;
   }
 
@@ -1117,6 +1289,7 @@ export async function startPrivyAuthBootstrap({
       return null;
     } finally {
       attemptState.cancelled = true;
+      releasePrivyAuthBootstrapLock(lockAttempt.ownerTabId);
     }
   })();
 

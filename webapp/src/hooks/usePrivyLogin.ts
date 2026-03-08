@@ -112,6 +112,16 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
   const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<AuthUser | null> => {
     const currentSnapshot = readPrivyAuthBootstrapSnapshot();
+    if (isPrivyAuthBootstrapStatePending(currentSnapshot?.state)) {
+      console.info("[AuthFlow] usePrivyLogin manual retry blocked by pending auth flow", {
+        userId: privyUser.id,
+        state: currentSnapshot?.state,
+        owner: currentSnapshot?.owner,
+        mode: currentSnapshot?.mode,
+      });
+      return null;
+    }
+
     const cooldownActive =
       currentSnapshot?.state === "failed_rate_limited" &&
       isPrivyAuthBootstrapCooldownActive(currentSnapshot);
