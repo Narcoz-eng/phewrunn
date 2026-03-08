@@ -1581,8 +1581,7 @@ async function fetchSession(): Promise<AuthUser | null> {
         const hasSessionHint = Boolean(cachedUser) || hasSessionCookieHint() || recentlySynced;
         const shouldTreatAsTransient =
           recentlySynced ||
-          (hasSessionHint && recentlyHealthySession) ||
-          (hasSessionHint && unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT);
+          (hasSessionHint && recentlyHealthySession);
 
         if (
           cachedUser &&
