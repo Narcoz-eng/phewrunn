@@ -1110,43 +1110,118 @@ export async function requestPrivyIdentityTokenForBackendSync(
     ),
   });
 
+  beginPrivyIdentityDebugContext(
+    options.debugContext,
+    options.debugContext?.initialCaller ?? "system"
+  );
+
+  const latestUser = options.getLatestUser?.() ?? options.user;
+  const email = getPrivyPrimaryEmail(latestUser);
+  const name = getPrivyDisplayName(latestUser, email);
+  const hookPrivyIdToken = normalizePrivyIdentityTokenCandidate(
+    options.getLatestPrivyIdToken?.() ?? options.privyIdToken
+  );
+
   try {
-    console.info("[AuthFlow] BEFORE resolvePrivyAuthPayload", {
+    if (hookPrivyIdToken) {
+      const tokenLocalCheck = inspectPrivyIdentityToken(hookPrivyIdToken);
+      console.info("[AuthFlow] direct token acquisition returned early from hook token", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        userId: latestUser.id,
+        tokenLength: hookPrivyIdToken.length,
+      });
+      console.info("[AuthFlow] RETURN direct token acquisition function", {
+        buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        owner: options.debugContext?.owner ?? null,
+        mode: options.debugContext?.mode ?? null,
+        userId: latestUser.id,
+        tokenResolution: "available",
+        hasPrivyIdToken: true,
+        hasPendingPrivyIdTokenPromise: false,
+      });
+      return {
+        user: latestUser,
+        email,
+        name,
+        privyIdToken: hookPrivyIdToken,
+        tokenResolution: "available",
+        tokenLocalCheck,
+      };
+    }
+
+    console.info("[AuthFlow] direct controller path bypassing resolvePrivyAuthPayload", {
       buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
-      userId: options.user.id,
-      allowInFlightReuse: false,
+      userId: latestUser.id,
+      privyReady: options.privyReady ?? null,
+      privyAuthenticated: options.privyAuthenticated ?? null,
     });
-    const result = await resolvePrivyAuthPayloadInternal({
-      ...options,
-      allowInFlightReuse: false,
-    });
-    console.info("[AuthFlow] AFTER resolvePrivyAuthPayload", {
+
+    const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
+      ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS
+      : QUICK_IDENTITY_TOKEN_TIMEOUT_MS;
+
+    const directTokenResult = await getIdentityTokenWithin(
+      initialTokenTimeoutMs,
+      options.debugContext,
+      options.debugContext?.initialCaller ?? "system"
+    );
+
+    console.info("[AuthFlow] direct controller getIdentityToken attempt completed", {
       buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
-      userId: options.user.id,
-      tokenResolution: result.tokenResolution ?? "empty",
-      hasPrivyIdToken: Boolean(result.privyIdToken),
-      hasPendingPrivyIdTokenPromise: Boolean(result.pendingPrivyIdTokenPromise),
+      userId: latestUser.id,
+      rateLimited: directTokenResult.rateLimited,
+      timedOut: directTokenResult.timedOut ?? false,
+      hasToken: Boolean(directTokenResult.token),
+      hasPendingPromise: Boolean(directTokenResult.pendingPromise),
     });
+
+    if (directTokenResult.rateLimited || getPrivyRateLimitRemainingMs() > 0) {
+      throw new Error("Privy identity provider is rate limited");
+    }
+
+    const tokenLocalCheck = inspectPrivyIdentityToken(directTokenResult.token);
+    const normalizedPendingPromise =
+      directTokenResult.pendingPromise
+        ? normalizePendingPrivyIdentityTokenPromise(directTokenResult.pendingPromise)
+        : undefined;
+    const tokenResolution: "available" | "pending" | "empty" = directTokenResult.token
+      ? "available"
+      : normalizedPendingPromise
+        ? "pending"
+        : "empty";
+
     console.info("[AuthFlow] RETURN direct token acquisition function", {
       buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
-      userId: options.user.id,
-      tokenResolution: result.tokenResolution ?? "empty",
-      hasPrivyIdToken: Boolean(result.privyIdToken),
-      hasPendingPrivyIdTokenPromise: Boolean(result.pendingPrivyIdTokenPromise),
+      userId: latestUser.id,
+      tokenResolution,
+      hasPrivyIdToken: Boolean(directTokenResult.token),
+      hasPendingPrivyIdTokenPromise: Boolean(normalizedPendingPromise),
     });
-    return result;
+    return {
+      user: latestUser,
+      email,
+      name,
+      privyIdToken: directTokenResult.token,
+      pendingPrivyIdTokenPromise: normalizedPendingPromise,
+      tokenResolution,
+      tokenLocalCheck,
+    };
   } catch (error) {
     console.warn("[AuthFlow] THROW direct token acquisition function", {
       buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
@@ -1160,6 +1235,11 @@ export async function requestPrivyIdentityTokenForBackendSync(
       stack: error instanceof Error ? error.stack ?? null : null,
     });
     throw error;
+  } finally {
+    finishPrivyIdentityDebugContext(
+      options.debugContext,
+      getPrivyRateLimitRemainingMs() > 0 ? "rate_limited" : "settled"
+    );
   }
 }
 
