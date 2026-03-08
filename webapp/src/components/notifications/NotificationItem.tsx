@@ -136,7 +136,7 @@ export function NotificationItem({
         tabIndex={0}
         onClick={handleRowActivate}
         onKeyDown={handleRowKeyDown}
-        className="flex items-start gap-3.5 px-4 py-4 pr-24 outline-none sm:pr-28"
+        className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3.5 px-4 py-4 outline-none sm:grid-cols-[auto,minmax(0,1fr),auto] sm:px-5"
       >
         <div className="relative shrink-0">
           <Avatar
@@ -172,9 +172,9 @@ export function NotificationItem({
           </div>
         </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2.5">
-            <span className="truncate text-sm font-semibold text-foreground">
+        <div className="min-w-0 pt-0.5">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span className="max-w-[12rem] truncate text-sm font-semibold text-foreground sm:max-w-[18rem]">
               {fromUser ? `@${fromUser.username || fromUser.name}` : "PHEW"}
             </span>
             <span className="text-xs text-muted-foreground">{formatTimeAgo(notification.createdAt)}</span>
@@ -204,29 +204,29 @@ export function NotificationItem({
             </p>
           ) : null}
         </div>
-      </div>
 
-      <div className="absolute right-3 top-3 flex items-center gap-1.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-        {!notification.read ? (
+        <div className="col-start-2 flex items-center gap-1.5 justify-self-start pt-1 sm:col-start-3 sm:justify-self-end sm:pt-0.5 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+          {!notification.read ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full border border-border/70 bg-background/80 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
+              onClick={handleMarkReadClick}
+              title="Mark as read"
+            >
+              <Check className="h-4 w-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 rounded-full border border-border/70 bg-background/75 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
-            onClick={handleMarkReadClick}
-            title="Mark as read"
+            className="h-9 w-9 rounded-full border border-border/70 bg-background/80 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
+            onClick={handleDismissClick}
+            title="Dismiss notification"
           >
-            <Check className="h-3.5 w-3.5" />
+            <X className="h-4 w-4" />
           </Button>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-full border border-border/70 bg-background/75 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
-          onClick={handleDismissClick}
-          title="Dismiss notification"
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
+        </div>
       </div>
 
       {hasMergedItems && isExpanded ? (

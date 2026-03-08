@@ -453,7 +453,7 @@ export default function Notifications() {
 
       <main className="app-page-shell pt-5">
         <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
-          <div className="sticky top-[4.4rem] z-40 border-b border-border/60 bg-background/75 px-4 py-3 backdrop-blur-xl dark:bg-black/28">
+          <div className="sticky top-[4.4rem] z-40 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
             <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-border/65 bg-background/55 p-1.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
               <button
                 type="button"
@@ -497,7 +497,7 @@ export default function Notifications() {
               </div>
             </div>
           ) : shouldShowSessionRecovery ? (
-            <div className="px-4 py-5">
+            <div className="px-4 pb-6 pt-6">
               {[0, 1, 2].map((i) => (
                 <NotificationItemSkeleton key={i} />
               ))}
@@ -506,7 +506,7 @@ export default function Notifications() {
               </p>
             </div>
           ) : shouldShowRecoveryBanner ? (
-            <div className="px-4 pb-5 pt-4">
+            <div className="px-4 pb-6 pt-6">
               <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                 Notifications are showing cached activity while sign-in finishes. Actions will unlock automatically.
               </div>
@@ -515,9 +515,9 @@ export default function Notifications() {
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={104}
                 overscanPx={900}
-                className="pt-2"
+                className="pt-1"
                 renderItem={(notification, index) => (
-                  <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
+                  <div className={index < filteredNotifications.length - 1 ? "pb-3" : undefined}>
                     <NotificationItem
                       notification={notification}
                       onMarkClicked={handleMarkClicked}
@@ -530,7 +530,7 @@ export default function Notifications() {
             </div>
           ) : isLoading || (!isFetched && filteredNotifications.length === 0) ? (
             // Loading skeletons
-            <div className="px-4 py-5">
+            <div className="px-4 pb-6 pt-6">
               {[0, 1, 2, 3, 4].map((i) => (
                 <NotificationItemSkeleton key={i} />
               ))}
@@ -558,15 +558,15 @@ export default function Notifications() {
           ) : filteredNotifications.length === 0 ? (
             <EmptyState mode={activeFilter} />
           ) : (
-            <div className="px-4 pb-5 pt-4">
+            <div className="px-4 pb-6 pt-6">
               <WindowVirtualList
                 items={filteredNotifications}
                 getItemKey={(notification) => notification.id}
                 estimateItemHeight={112}
                 overscanPx={900}
-                className="pt-2"
+                className="pt-1"
                 renderItem={(notification, index) => (
-                  <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
+                  <div className={index < filteredNotifications.length - 1 ? "pb-3" : undefined}>
                     <NotificationItem
                       notification={notification}
                       onMarkClicked={handleMarkClicked}

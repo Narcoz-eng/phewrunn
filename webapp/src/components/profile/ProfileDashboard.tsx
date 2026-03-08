@@ -238,53 +238,57 @@ export function ProfileDashboard({
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {/* Total Alpha Calls */}
         <Card className="hover:border-primary/30 transition-colors">
-          <CardContent className="p-4 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-muted-foreground mb-1">
+          <CardContent className="flex min-h-[104px] flex-col items-center justify-center gap-2 px-4 py-4 text-center">
+            <div className="flex min-h-[18px] items-center justify-center gap-1.5 text-muted-foreground">
               <Target className="h-4 w-4" />
-              <span className="text-xs uppercase tracking-wider">
+              <span className="text-[11px] font-medium uppercase tracking-[0.18em]">
                 Alpha Calls
               </span>
             </div>
-            <p className="text-2xl font-bold font-mono text-foreground">
-              {stats.totalCalls}
-            </p>
+            <div className="flex min-h-[32px] items-center justify-center">
+              <p className="text-2xl font-bold font-mono text-foreground">
+                {stats.totalCalls}
+              </p>
+            </div>
           </CardContent>
         </Card>
 
         {/* Accuracy Score */}
         <Card className="hover:border-primary/30 transition-colors">
-          <CardContent className="p-4 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-muted-foreground mb-1">
+          <CardContent className="flex min-h-[104px] flex-col items-center justify-center gap-2 px-4 py-4 text-center">
+            <div className="flex min-h-[18px] items-center justify-center gap-1.5 text-muted-foreground">
               <Percent className="h-4 w-4" />
-              <span className="text-xs uppercase tracking-wider">
+              <span className="text-[11px] font-medium uppercase tracking-[0.18em]">
                 Accuracy Score
               </span>
             </div>
-            <p
-              className={cn(
-                "text-2xl font-bold font-mono",
-                stats.winRate >= 50
-                  ? "text-gain"
-                  : stats.winRate > 0
-                    ? "text-loss"
-                    : "text-muted-foreground"
-              )}
-            >
-              {stats.totalCalls > 0 ? `${stats.winRate.toFixed(1)}%` : "-"}
-            </p>
+            <div className="flex min-h-[32px] items-center justify-center">
+              <p
+                className={cn(
+                  "text-2xl font-bold font-mono",
+                  stats.winRate >= 50
+                    ? "text-gain"
+                    : stats.winRate > 0
+                      ? "text-loss"
+                      : "text-muted-foreground"
+                )}
+              >
+                {stats.totalCalls > 0 ? `${stats.winRate.toFixed(1)}%` : "-"}
+              </p>
+            </div>
           </CardContent>
         </Card>
 
         {/* Wins vs Losses */}
         <Card className="hover:border-primary/30 transition-colors">
-          <CardContent className="p-4 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-muted-foreground mb-1">
+          <CardContent className="flex min-h-[104px] flex-col items-center justify-center gap-2 px-4 py-4 text-center">
+            <div className="flex min-h-[18px] items-center justify-center gap-1.5 text-muted-foreground">
               <Trophy className="h-4 w-4" />
-              <span className="text-xs uppercase tracking-wider">
+              <span className="text-[11px] font-medium uppercase tracking-[0.18em]">
                 W / L
               </span>
             </div>
-            <div className="flex items-center justify-center gap-1">
+            <div className="flex min-h-[32px] items-center justify-center gap-1">
               <span className="text-2xl font-bold font-mono text-gain">
                 {stats.wins}
               </span>
