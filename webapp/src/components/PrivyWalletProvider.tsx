@@ -10,6 +10,8 @@ interface ErrorBoundaryState {
   error?: Error;
 }
 
+const SHOULD_LOG_PRIVY_PROVIDER = import.meta.env.DEV;
+
 export const PrivyAvailableContext = createContext<boolean>(false);
 export const PrivyProviderInstanceContext = createContext<string | null>(null);
 
@@ -57,6 +59,25 @@ class PrivyErrorBoundary extends Component<PrivyWalletProviderProps, ErrorBounda
 function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
   const appId = import.meta.env.VITE_PRIVY_APP_ID as string | undefined;
   const providerInstanceIdRef = useRef<string>(createPrivyProviderInstanceId());
+  const providerInstanceId = providerInstanceIdRef.current;
+
+  useEffect(() => {
+    if (!appId || !SHOULD_LOG_PRIVY_PROVIDER) {
+      return;
+    }
+
+    console.info("[PrivyWalletProvider] mounted", {
+      providerInstanceId,
+      appId,
+      href: typeof window !== "undefined" ? window.location.href : null,
+    });
+
+    return () => {
+      console.info("[PrivyWalletProvider] unmounted", {
+        providerInstanceId,
+      });
+    };
+  }, [appId, providerInstanceId]);
 
   if (!appId) {
     console.warn("[PrivyWalletProvider] Missing VITE_PRIVY_APP_ID - Privy login disabled");
@@ -69,22 +90,8 @@ function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
     );
   }
 
-  useEffect(() => {
-    console.info("[PrivyWalletProvider] mounted", {
-      providerInstanceId: providerInstanceIdRef.current,
-      appId,
-      href: typeof window !== "undefined" ? window.location.href : null,
-    });
-
-    return () => {
-      console.info("[PrivyWalletProvider] unmounted", {
-        providerInstanceId: providerInstanceIdRef.current,
-      });
-    };
-  }, [appId]);
-
   return (
-    <PrivyProviderInstanceContext.Provider value={providerInstanceIdRef.current}>
+    <PrivyProviderInstanceContext.Provider value={providerInstanceId}>
       <PrivyProvider
         appId={appId}
         config={{

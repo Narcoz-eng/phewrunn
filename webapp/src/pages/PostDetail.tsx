@@ -46,7 +46,7 @@ export default function PostDetail() {
     }
 
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Try again in a moment.");
+      toast.info("Signing you in...");
       return false;
     }
 

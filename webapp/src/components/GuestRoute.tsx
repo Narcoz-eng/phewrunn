@@ -33,7 +33,7 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
   const effectiveUser = session?.user ?? cachedUser;
 
   if (isPending) {
-    return <RouteLoading label="Loading..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   if (effectiveUser && hasLiveSession) {
@@ -41,7 +41,7 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
   }
 
   if (effectiveUser && !hasLiveSession) {
-    return <RouteLoading label="Finalizing sign-in..." />;
+    return <RouteLoading label="Signing you in..." />;
   }
 
   return <>{children}</>;
@@ -90,7 +90,7 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   }, [shouldHoldForRecovery]);
 
   if (isPending) {
-    return <RouteLoading label="Loading..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   if (effectiveUser && hasLiveSession) {
@@ -101,23 +101,15 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
     if (privySyncFailure && graceExpired) {
       return <>{children}</>;
     }
-    return (
-      <RouteLoading
-        label={
-          privySyncFailure
-            ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
-            : (graceExpired ? "Still finalizing sign-in..." : "Finalizing sign-in...")
-        }
-      />
-    );
+    return <RouteLoading label="Signing you in..." />;
   }
 
   if (shouldHoldForOAuthReturn && !graceExpired && !privySyncFailure) {
-    return <RouteLoading label="Returning from X..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   if (hasPrivyHydrationHint && !graceExpired && !privySyncFailure) {
-    return <RouteLoading label="Checking your Privy session..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   if (hasPrivySyncHint) {
@@ -130,15 +122,7 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
     if (privySyncFailure && graceExpired) {
       return <>{children}</>;
     }
-    return (
-      <RouteLoading
-        label={
-          privySyncFailure
-            ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
-            : "Completing sign-in..."
-        }
-      />
-    );
+    return <RouteLoading label="Signing you in..." />;
   }
 
   return <>{children}</>;

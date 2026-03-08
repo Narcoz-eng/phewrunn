@@ -282,7 +282,7 @@ export default function Feed() {
     if (!isAuthWritePending) {
       return false;
     }
-    toast.warning("Still finalizing sign-in. Try again in a moment.");
+    toast.warning("Signing you in...");
     return true;
   }, [isAuthWritePending]);
 

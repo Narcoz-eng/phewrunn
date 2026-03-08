@@ -99,7 +99,7 @@ export default function HandleOnboarding() {
 
   const handleSubmit = () => {
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Saving your handle will unlock in a moment.");
+      toast.info("Signing you in...");
       return;
     }
 

@@ -370,7 +370,7 @@ export default function Notifications() {
 
   const handleMarkClicked = (notification: Notification) => {
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Notifications will refresh in a moment.");
+      toast.info("Signing you in...");
       return;
     }
     markClickedMutation.mutate(getNotificationIds(notification));
@@ -378,7 +378,7 @@ export default function Notifications() {
 
   const handleDismiss = (notification: Notification) => {
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Notifications will refresh in a moment.");
+      toast.info("Signing you in...");
       return;
     }
     dismissMutation.mutate(getNotificationIds(notification));
@@ -386,7 +386,7 @@ export default function Notifications() {
 
   const handleMarkAllRead = () => {
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Notifications will refresh in a moment.");
+      toast.info("Signing you in...");
       return;
     }
     markAllReadMutation.mutate();

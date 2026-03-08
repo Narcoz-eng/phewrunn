@@ -307,24 +307,15 @@ function PrivyLoginButton() {
     isSyncing,
     isRetryBlocked,
     syncError,
-    authStatus,
     authStatusMessage,
-    cooldownRemainingMs,
-    backendSyncStarted,
-    bootstrapDebugCode,
   } = usePrivyLogin({
     onSuccess: (user) =>
       navigate(user.username ? "/" : "/welcome", { replace: true }),
   });
   const isLoading = isSyncing;
   const privySyncFailure = usePrivySyncFailureSnapshot();
-  const syncFailureMessage = privySyncFailure?.message ?? null;
-  const visibleSyncError = syncError ?? syncFailureMessage;
+  const visibleSyncError = syncError || privySyncFailure ? "Sign-in failed. Please retry." : null;
   const visibleStatus = authStatusMessage;
-  const cooldownSeconds =
-    authStatus === "rate_limited" && cooldownRemainingMs > 0
-      ? Math.ceil(cooldownRemainingMs / 1000)
-      : null;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
   const xLabel = privyReady ? "Sign in with X" : "Start X";
   const emailSubLabel = "Fastest path. Verification code lands instantly.";
@@ -342,7 +333,7 @@ function PrivyLoginButton() {
           {isLoading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Signing in...
+              Signing you in...
             </>
           ) : (
             <>
@@ -372,7 +363,7 @@ function PrivyLoginButton() {
           {isLoading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Signing in...
+              Signing you in...
             </>
           ) : (
             <>
@@ -394,39 +385,12 @@ function PrivyLoginButton() {
       </div>
       {visibleStatus ? (
         <div className="rounded-[18px] border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-white/80">
-          <span className="font-semibold text-white">
-            {authStatus === "hydrating"
-              ? "Checking session"
-              : authStatus === "connecting_backend_session"
-                ? "Connecting session"
-                : authStatus === "finalizing_identity_verification"
-                  ? "Finalizing identity"
-                  : authStatus === "rate_limited"
-                    ? "Rate limited"
-                    : authStatus === "authenticated"
-                      ? "Signed in"
-                      : authStatus === "logout_in_progress"
-                        ? "Signing out"
-                        : "Signed out"}
-          </span>
-          {" "}
           {visibleStatus}
-          {cooldownSeconds ? ` Retry available in about ${cooldownSeconds}s.` : ""}
-          {authStatus === "rate_limited" && !backendSyncStarted ? (
-            <span className="mt-1 block text-[10px] text-amber-300/90">
-              Backend session sync did not start for this attempt.
-            </span>
-          ) : null}
         </div>
       ) : null}
       <p className="text-[11px] text-muted-foreground leading-relaxed">
         Wallet linking is handled separately in your profile after sign-in.
       </p>
-      {bootstrapDebugCode ? (
-        <p className="text-[10px] text-white/45 leading-relaxed">
-          Debug: {bootstrapDebugCode}
-        </p>
-      ) : null}
       {visibleSyncError ? (
         <p className="text-[11px] text-red-400 leading-relaxed">{visibleSyncError}</p>
       ) : null}

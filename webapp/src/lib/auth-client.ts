@@ -61,13 +61,11 @@ const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
-const PRIVY_BOOTSTRAP_MAX_ATTEMPTS = 2;
-const PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS = 2_000;
-const PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS = 2_500;
+const PRIVY_BOOTSTRAP_MAX_ATTEMPTS = 1;
 const PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS = 1_500;
-const PRIVY_IDENTITY_TOKEN_HOOK_POLL_INTERVAL_MS = 120;
 const PRIVY_RATE_LIMIT_FAILURE_MESSAGE =
   "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
+const PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE = "Sign-in failed. Please retry.";
 const SESSION_COOKIE_CANDIDATE_NAMES = [
   "phew.session_token",
   "better-auth.session_token",
@@ -145,6 +143,7 @@ type StartPrivyAuthBootstrapOptions = {
   privyAuthenticated?: boolean;
   privyIdentityToken?: string | null | undefined;
   getLatestPrivyIdentityToken?: () => string | null | undefined;
+  refreshPrivyAuthState?: () => Promise<PrivyUserLike | null | undefined>;
   tryExistingBackendSession?: boolean;
   triggerSource?: "component_mount" | "manual_user_action" | "system";
 };
@@ -546,7 +545,7 @@ export function getAuthUiState(options: {
   privyAuthenticated?: boolean;
   logoutCoolingDown?: boolean;
 }): AuthUiState {
-  const { snapshot, privyAuthenticated = false, logoutCoolingDown = false } = options;
+  const { snapshot, logoutCoolingDown = false } = options;
 
   if (logoutCoolingDown || snapshot?.state === "logout_in_progress") {
     return "logout_in_progress";
@@ -567,7 +566,7 @@ export function getAuthUiState(options: {
     case "syncing_backend":
       return "connecting_backend_session";
     case "failed":
-      return privyAuthenticated ? "finalizing_identity_verification" : "signed_out";
+      return "signed_out";
     case "anonymous":
     case "idle":
     default:
@@ -897,6 +896,7 @@ function canResumePrivyAuthBootstrapPendingState(
   userId: string,
   hookIdentityTokenPresent = false
 ): boolean {
+  void hookIdentityTokenPresent;
   if (!snapshot || !isPrivyAuthBootstrapStatePending(snapshot.state)) {
     return false;
   }
@@ -910,8 +910,7 @@ function canResumePrivyAuthBootstrapPendingState(
     snapshot.userId === userId &&
     (snapshot.debugCode === "awaiting_privy_sdk_ready" ||
       snapshot.debugCode === "awaiting_privy_identity_token_hook" ||
-      (hookIdentityTokenPresent &&
-        snapshot.debugCode === "awaiting_privy_identity_verification_finalization"))
+      snapshot.debugCode === "awaiting_privy_identity_verification_finalization")
   );
 }
 
@@ -1105,66 +1104,10 @@ function getPrivyBootstrapErrorMessage(error: unknown): string {
   return "Failed to finish sign-in";
 }
 
-async function waitForPendingPrivyIdentityToken(
-  pendingPromise: Promise<string | undefined>,
-  timeoutMs: number
-): Promise<string | undefined> {
-  return await Promise.race<string | undefined>([
-    pendingPromise,
-    new Promise<string | undefined>((resolve) => {
-      window.setTimeout(() => resolve(undefined), timeoutMs);
-    }),
-  ]);
-}
-
 function normalizePrivyIdentityTokenCandidate(
   token: string | null | undefined
 ): string | undefined {
   return typeof token === "string" && token.trim().length > 0 ? token.trim() : undefined;
-}
-
-async function waitForLatestPrivyIdentityToken(options: {
-  getLatestPrivyIdentityToken?: () => string | null | undefined;
-  initialToken?: string | null | undefined;
-  timeoutMs: number;
-  isTerminal?: () => boolean;
-}): Promise<string | undefined> {
-  const startedAt = Date.now();
-  let latestToken = normalizePrivyIdentityTokenCandidate(
-    options.getLatestPrivyIdentityToken?.() ?? options.initialToken
-  );
-  if (latestToken) {
-    return latestToken;
-  }
-
-  while (Date.now() - startedAt < options.timeoutMs) {
-    if (options.isTerminal?.() === true) {
-      return undefined;
-    }
-
-    const remainingMs = options.timeoutMs - (Date.now() - startedAt);
-    const waitCompleted = await waitForAuthDelay(
-      Math.min(PRIVY_IDENTITY_TOKEN_HOOK_POLL_INTERVAL_MS, remainingMs)
-    );
-    if (!waitCompleted) {
-      return undefined;
-    }
-
-    latestToken = normalizePrivyIdentityTokenCandidate(
-      options.getLatestPrivyIdentityToken?.() ?? options.initialToken
-    );
-    if (latestToken) {
-      return latestToken;
-    }
-  }
-
-  return normalizePrivyIdentityTokenCandidate(
-    options.getLatestPrivyIdentityToken?.() ?? options.initialToken
-  );
-}
-
-function isPrivyFinalizationPendingMessage(message: string): boolean {
-  return /finalizing|identity verification|identity token/i.test(message);
 }
 
 function isPrivyRateLimitedMessage(message: string): boolean {
@@ -1214,6 +1157,7 @@ export async function startPrivyAuthBootstrap({
   privyAuthenticated,
   privyIdentityToken,
   getLatestPrivyIdentityToken,
+  refreshPrivyAuthState,
   tryExistingBackendSession = false,
   triggerSource = "system",
 }: StartPrivyAuthBootstrapOptions): Promise<AuthUser | null> {
@@ -1408,7 +1352,6 @@ export async function startPrivyAuthBootstrap({
     let backendSyncStartedForAttempt = false;
     let attempt = 0;
     let totalAttempts = sameUserSnapshot?.totalAttempts ?? 0;
-    let finalizationStartedAt: number | null = null;
 
     try {
       if (tryExistingBackendSession) {
@@ -1500,72 +1443,16 @@ export async function startPrivyAuthBootstrap({
             privyAuthenticated,
             privyIdToken: privyIdentityToken,
             getLatestPrivyIdToken: getLatestPrivyIdentityToken,
+            refreshPrivyAuthState,
             isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
             debugContext: privyIdentityDebugContext,
             pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
           });
 
           if (!resolvedPayload.privyIdToken) {
-            if (resolvedPayload.pendingPrivyIdTokenPromise) {
-              console.info("[AuthFlow] backend sync skipped: token promise pending", {
-                owner,
-                mode,
-                userId: resolvedPayload.user.id,
-                attemptId: privyBootstrapAttemptId,
-                attempt,
-                totalAttempts,
-                tokenResolution: resolvedPayload.tokenResolution ?? "pending",
-              });
-              const awaitedToken = await waitForPendingPrivyIdentityToken(
-                resolvedPayload.pendingPrivyIdTokenPromise,
-                PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS
-              );
-              if (awaitedToken) {
-                resolvedPayload.privyIdToken = awaitedToken;
-                resolvedPayload.tokenResolution = "available";
-                console.info("[AuthFlow] backend sync resumed: delayed identity token became available", {
-                  owner,
-                  mode,
-                  userId: resolvedPayload.user.id,
-                  attemptId: privyBootstrapAttemptId,
-                  attempt,
-                  totalAttempts,
-                });
-              } else {
-                console.warn("[AuthFlow] backend sync skipped: token promise pending", {
-                  owner,
-                  mode,
-                  userId: resolvedPayload.user.id,
-                  attemptId: privyBootstrapAttemptId,
-                  attempt,
-                  totalAttempts,
-                  waitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
-                  tokenResolution: resolvedPayload.tokenResolution ?? "pending",
-                });
-              }
-            }
-          }
-
-          if (!resolvedPayload.privyIdToken) {
-            const skipReason =
-              resolvedPayload.tokenResolution === "pending"
-                ? "token promise pending"
-                : resolvedPayload.tokenLocalCheck?.tokenInvalid ||
-                    resolvedPayload.tokenLocalCheck?.tokenExpired
-                  ? "token validation failed"
-                  : "no identity token";
-            console.warn(`[AuthFlow] backend sync skipped: ${skipReason}`, {
-              owner,
-              mode,
-              userId: resolvedPayload.user.id,
-              attemptId: privyBootstrapAttemptId,
-              attempt,
-              totalAttempts,
-              tokenResolution: resolvedPayload.tokenResolution ?? "empty",
-              tokenLocalCheck: resolvedPayload.tokenLocalCheck ?? null,
-            });
-            if (privyReady === true && privyAuthenticated === true) {
-              console.warn("[AuthFlow] identity token unavailable after authenticated SDK state", {
+            console.warn(
+              "[AuthFlow] backend sync aborted because no usable Privy identity token was available",
+              {
                 owner,
                 mode,
                 userId: resolvedPayload.user.id,
@@ -1573,10 +1460,22 @@ export async function startPrivyAuthBootstrap({
                 attempt,
                 totalAttempts,
                 tokenResolution: resolvedPayload.tokenResolution ?? "empty",
+                tokenSource: resolvedPayload.tokenSource ?? null,
                 tokenLocalCheck: resolvedPayload.tokenLocalCheck ?? null,
-              });
-            }
-            throw new Error("Privy identity verification is still finalizing");
+              }
+            );
+            writePrivySyncFailureSnapshot(PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE);
+            setPrivyAuthBootstrapState("failed", {
+              owner,
+              mode,
+              userId: user.id,
+              detail: PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE,
+              debugCode: "privy_identity_token_unavailable",
+              backendSyncStarted: false,
+              attempt,
+              totalAttempts,
+            });
+            return null;
           }
 
           console.info("[AuthFlow] identity token acquired; starting /api/auth/privy-sync", {
@@ -1630,13 +1529,12 @@ export async function startPrivyAuthBootstrap({
         } catch (error) {
           const message = getPrivyBootstrapErrorMessage(error);
           const rateLimited = isPrivyRateLimitedMessage(message);
-          const finalizing = isPrivyFinalizationPendingMessage(message);
 
           if (rateLimited) {
             attemptState.rateLimited = true;
             const retryInMs = Math.max(
               getPrivyIdentityRateLimitRemainingMs(),
-              PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS
+              PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS
             );
             const backendSyncStarted = backendSyncStartedForAttempt;
             const debugCode = backendSyncStarted
@@ -1681,118 +1579,6 @@ export async function startPrivyAuthBootstrap({
             return null;
           }
 
-          if (finalizing) {
-            if (attemptState.rateLimited || getPrivyIdentityRateLimitRemainingMs() > 0) {
-              console.info("[AuthFlow] finalizing retry suppressed due to privy_429", {
-                owner,
-                mode,
-                userId: user.id,
-                attempt,
-                totalAttempts,
-              });
-              return null;
-            }
-
-            if (finalizationStartedAt === null) {
-              finalizationStartedAt = Date.now();
-            }
-
-            const elapsedFinalizationMs = Date.now() - finalizationStartedAt;
-            const remainingFinalizationMs = Math.max(
-              0,
-              PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS - elapsedFinalizationMs
-            );
-            const finalizationWaitMs = Math.min(
-              PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
-              remainingFinalizationMs
-            );
-
-            if (finalizationWaitMs > 0) {
-              clearPrivySyncFailureSnapshot();
-              setPrivyAuthBootstrapState("awaiting_identity_verification_finalization", {
-                owner,
-                mode,
-                userId: user.id,
-                detail: "Privy is still finalizing identity verification for backend sign-in.",
-                debugCode: "awaiting_privy_identity_verification_finalization",
-                backendSyncStarted: false,
-                attempt,
-                totalAttempts,
-                retryScheduled: false,
-                retryDelayMs: finalizationWaitMs,
-              });
-              console.info(
-                "[AuthFlow] identity verification still finalizing; entering bounded pending state",
-                {
-                  owner,
-                  mode,
-                  userId: user.id,
-                  attemptId: privyBootstrapAttemptId,
-                  attempt,
-                  totalAttempts,
-                  finalizationWaitMs,
-                  elapsedFinalizationMs,
-                  remainingFinalizationMs,
-                }
-              );
-              const tokenAfterFinalizationWait = await waitForLatestPrivyIdentityToken({
-                getLatestPrivyIdentityToken,
-                initialToken: privyIdentityToken,
-                timeoutMs: finalizationWaitMs,
-                isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
-              });
-              if (tokenAfterFinalizationWait) {
-                privyIdentityToken = tokenAfterFinalizationWait;
-                console.info("[AuthFlow] identity token acquired after finalization wait; retrying backend handoff", {
-                  owner,
-                  mode,
-                  userId: user.id,
-                  attemptId: privyBootstrapAttemptId,
-                  attempt,
-                  totalAttempts,
-                  tokenLength: tokenAfterFinalizationWait.length,
-                });
-                continue;
-              }
-              console.warn("[AuthFlow] identity token unavailable after authenticated SDK state", {
-                owner,
-                mode,
-                userId: user.id,
-                attemptId: privyBootstrapAttemptId,
-                attempt,
-                totalAttempts,
-                waitMs: finalizationWaitMs,
-                reason: "finalization_token_unavailable",
-              });
-            }
-
-            const detail =
-              "Privy finished authenticating, but the identity token was not ready for backend sign-in. Please tap Sign in again.";
-            writePrivySyncFailureSnapshot(detail);
-            setPrivyAuthBootstrapState("failed", {
-              owner,
-              mode,
-              userId: user.id,
-              detail,
-              debugCode: "privy_identity_token_unavailable",
-              backendSyncStarted: false,
-              attempt,
-              totalAttempts,
-            });
-            console.warn("[AuthFlow] finalization timeout exceeded; failing auth", {
-              owner,
-              mode,
-              userId: user.id,
-              attemptId: privyBootstrapAttemptId,
-              attempt,
-              totalAttempts,
-              reason: message,
-              elapsedFinalizationMs,
-              timeoutMs: PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS,
-            });
-            return null;
-          }
-
           writePrivySyncFailureSnapshot(message);
           setPrivyAuthBootstrapState("failed", {
             owner,
@@ -1815,24 +1601,20 @@ export async function startPrivyAuthBootstrap({
         }
       }
 
-      console.warn("[AuthFlow] finalization timeout exceeded; failing auth", {
+      console.warn("[AuthFlow] bootstrap attempt finished without creating a backend session", {
         owner,
         mode,
         userId: user.id,
         attemptId: privyBootstrapAttemptId,
         attempt,
         totalAttempts,
-        timeoutMs: PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS,
       });
-      writePrivySyncFailureSnapshot(
-        "Privy finished authenticating, but the identity token was not ready for backend sign-in. Please tap Sign in again."
-      );
+      writePrivySyncFailureSnapshot(PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE);
       setPrivyAuthBootstrapState("failed", {
         owner,
         mode,
         userId: user.id,
-        detail:
-          "Privy finished authenticating, but the identity token was not ready for backend sign-in. Please tap Sign in again.",
+        detail: PRIVY_GENERIC_SIGN_IN_FAILURE_MESSAGE,
         debugCode: "privy_identity_token_unavailable",
         attempt: PRIVY_BOOTSTRAP_MAX_ATTEMPTS,
         totalAttempts,
@@ -2318,14 +2100,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hasLiveSession: hasValidatedAuthSession(),
       bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
     });
-    for (const hook of preLogoutHooks) {
-      try {
-        await hook();
-      } catch (error) {
-        console.warn("[Auth] Pre-logout hook failed:", error);
-      }
-    }
-
     explicitLogoutAt = Date.now();
     setPrivyAuthBootstrapState("logout_in_progress", {
       owner: "system",
@@ -2358,12 +2132,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
     });
 
-    try {
-      await signOut();
-      console.info("[AuthFlow] logout backend session cleared");
-    } catch (error) {
-      console.error("[Auth] Logout error:", error);
-    }
+    const upstreamLogoutTasks = [
+      signOut()
+        .then(() => {
+          console.info("[AuthFlow] logout backend session cleared");
+        })
+        .catch((error) => {
+          console.error("[Auth] Logout error:", error);
+        }),
+      ...preLogoutHooks.map(async (hook) => {
+        try {
+          await hook();
+        } catch (error) {
+          console.warn("[Auth] Pre-logout hook failed:", error);
+        }
+      }),
+    ];
+
+    await Promise.allSettled(upstreamLogoutTasks);
+    console.info("[AuthFlow] logout upstream auth providers cleared");
   }, [applyAuthProviderState]);
 
   // Initial session check

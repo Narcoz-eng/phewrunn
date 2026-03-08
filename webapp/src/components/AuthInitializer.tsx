@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { usePrivy, useIdentityToken } from "@privy-io/react-auth";
+import { usePrivy, useIdentityToken, useUser } from "@privy-io/react-auth";
 import {
+  isExplicitLogoutCoolingDown,
   registerPreLogoutHook,
   setPrivyAuthAnonymousState,
   setPrivyAuthBootstrapState,
@@ -20,6 +21,7 @@ const PRIVY_INITIAL_HYDRATION_GRACE_MS = 4_000;
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
+  const { refreshUser } = useUser();
   const { identityToken } = useIdentityToken();
   const { isAuthenticated, hasLiveSession } = useAuth();
   const providerInstanceId = usePrivyProviderInstanceId();
@@ -188,6 +190,16 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       return;
     }
 
+    if (isExplicitLogoutCoolingDown()) {
+      console.info("[AuthFlow] AuthInitializer suppressing bootstrap during explicit logout cooldown", {
+        providerInstanceId,
+        ready,
+        authenticated,
+        userId: user.id,
+      });
+      return;
+    }
+
     const snapshot = readPrivyAuthBootstrapSnapshot();
     const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
     const currentState = sameUserSnapshot?.state ?? "idle";
@@ -203,10 +215,6 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook" &&
       ready &&
       authenticated;
-    const canResumeFinalizationPendingHandoff =
-      sameUserSnapshot?.owner === "AuthInitializer" &&
-      currentState === "awaiting_identity_verification_finalization" &&
-      hookIdentityTokenPresent;
 
     if (hasLiveSession) {
       if (currentState !== "authenticated") {
@@ -224,12 +232,10 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       sameUserSnapshot &&
       (currentState === "privy_pending" ||
         currentState === "awaiting_identity_token" ||
-        currentState === "awaiting_identity_verification_finalization" ||
         currentState === "cooldown" ||
         currentState === "syncing_backend") &&
       !canResumeDeferredUsePrivyLoginHandoff &&
-      !canResumeAuthenticatedSdkTokenRequest &&
-      !canResumeFinalizationPendingHandoff
+      !canResumeAuthenticatedSdkTokenRequest
     ) {
       console.info("[AuthFlow] AuthInitializer found controller-owned pending state", {
         userId: user.id,
@@ -249,16 +255,6 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       });
     }
 
-    if (canResumeFinalizationPendingHandoff) {
-      console.info("[AuthFlow] AuthInitializer resuming finalization-pending handoff after hook token became available", {
-        userId: user.id,
-        state: currentState,
-        providerInstanceId,
-        debugCode: sameUserSnapshot?.debugCode,
-        hookIdentityTokenPresent,
-      });
-    }
-
     if (
       sameUserSnapshot &&
       (currentState === "failed_rate_limited" ||
@@ -273,15 +269,6 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     }
 
     if (!hookIdentityTokenPresent) {
-      if (currentState === "awaiting_identity_verification_finalization") {
-        console.info("[AuthFlow] AuthInitializer keeping finalization-pending state while waiting for hook token", {
-          userId: user.id,
-          providerInstanceId,
-          state: currentState,
-        });
-        return;
-      }
-
       if (
         currentState !== "awaiting_identity_token" ||
         sameUserSnapshot?.debugCode !== "awaiting_privy_identity_token_hook"
@@ -317,10 +304,11 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       privyAuthenticated: authenticated,
       privyIdentityToken: latestPrivyIdentityTokenRef.current,
       getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
+      refreshPrivyAuthState: async () => (await refreshUser()) as PrivyUserLike,
       tryExistingBackendSession: true,
       triggerSource: "component_mount",
     });
-  }, [authenticated, hasLiveSession, identityToken, ready, user]);
+  }, [authenticated, hasLiveSession, identityToken, providerInstanceId, ready, refreshUser, user]);
 
   return <>{children}</>;
 }

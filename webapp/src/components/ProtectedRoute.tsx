@@ -65,19 +65,21 @@ function hasCompletedHandle(username: string | null | undefined): boolean {
 }
 
 function getPrivyHandoffLabel(state: ReturnType<typeof getAuthUiState>, detail: string | null, graceExpired: boolean): string {
+  void detail;
+  void graceExpired;
   switch (state) {
     case "hydrating":
-      return graceExpired ? "Still checking your Privy session..." : "Checking your Privy session...";
+      return "Connecting...";
     case "finalizing_identity_verification":
-      return detail ?? (graceExpired ? "Still finalizing identity verification..." : "Finishing identity verification...");
+      return "Signing you in...";
     case "rate_limited":
-      return detail ?? "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds and retry.";
+      return "Sign-in failed. Please retry.";
     case "connecting_backend_session":
-      return graceExpired ? "Still finalizing sign-in..." : "Completing sign-in...";
+      return "Signing you in...";
     case "logout_in_progress":
-      return "Signing out...";
+      return "Connecting...";
     default:
-      return graceExpired ? "Still finalizing sign-in..." : "Finalizing sign-in...";
+      return "Signing you in...";
   }
 }
 
@@ -106,12 +108,12 @@ function ProtectedRouteFallback({
   }
 
   if (isPending) {
-    return <RouteLoading label="Loading..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   if (!effectiveUser) {
     if (hadTokenHint.current && !graceExpired) {
-      return <RouteLoading label="Signing in..." />;
+      return <RouteLoading label="Signing you in..." />;
     }
     return (
       <LoggedNavigate
@@ -131,7 +133,7 @@ function ProtectedRouteFallback({
 
   if (!hasLiveSession) {
     if (!graceExpired) {
-      return <RouteLoading label="Finalizing sign-in..." />;
+      return <RouteLoading label="Signing you in..." />;
     }
     return (
       <LoggedNavigate
@@ -160,7 +162,7 @@ function ProtectedRouteFallback({
   }
 
   if (!session?.user) {
-    return <RouteLoading label="Preparing your account..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   return <>{children}</>;
@@ -199,7 +201,13 @@ function ProtectedRouteWithPrivy({
     privyAuthenticated: authenticated,
     logoutCoolingDown: logoutCooldownActive,
   });
-  const shouldHoldAuthenticatedPrivyState = ready && authenticated && !logoutCooldownActive;
+  const shouldHoldAuthenticatedPrivyState =
+    ready &&
+    authenticated &&
+    !logoutCooldownActive &&
+    !privySyncFailure &&
+    bootstrapSnapshot?.state !== "failed" &&
+    bootstrapSnapshot?.state !== "failed_rate_limited";
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
     hasPrivyHydrationHint ||
@@ -315,77 +323,10 @@ function ProtectedRouteWithPrivy({
   }
 
   if (isPending) {
-    return <RouteLoading label="Loading..." />;
+    return <RouteLoading label="Connecting..." />;
   }
 
   if (!effectiveUser) {
-    if (shouldHoldAuthenticatedPrivyState) {
-      return (
-        <RouteLoading
-          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
-        />
-      );
-    }
-    if (privySyncFailure && graceExpired) {
-      return (
-        <LoggedNavigate
-          to="/login"
-          replace
-          state={{
-            from: location.pathname + location.search + location.hash,
-            syncError: privySyncFailure.message,
-          }}
-          reason="privy_no_effective_user_after_grace_with_sync_failure"
-          context={{
-            pathname: location.pathname,
-            ready,
-            authenticated,
-            hasLiveSession,
-            isPending,
-            hasPrivySyncHint,
-            hadTokenHint: hadTokenHint.current,
-            graceExpired,
-            privySyncFailure: privySyncFailure.message,
-          }}
-        />
-      );
-    }
-    if (hasOAuthReturnHint && !ready && !privySyncFailure) {
-      return <RouteLoading label={graceExpired ? "Still returning from X..." : "Returning from X..."} />;
-    }
-    if (hasPrivyHydrationHint) {
-      return (
-        <RouteLoading
-          label={
-            graceExpired
-              ? "Still checking your Privy session..."
-              : "Checking your Privy session..."
-          }
-        />
-      );
-    }
-    if (hasPrivyFinalizationHint) {
-      return (
-        <RouteLoading
-          label={
-            graceExpired
-              ? "Still finishing identity verification..."
-              : "Finishing identity verification..."
-          }
-        />
-      );
-    }
-    if (hasPrivySyncHint) {
-      return (
-        <RouteLoading
-          label={
-            privySyncFailure
-              ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
-              : (graceExpired ? "Still finalizing sign-in..." : "Completing sign-in...")
-          }
-        />
-      );
-    }
     if (privySyncFailure) {
       return (
         <LoggedNavigate
@@ -404,13 +345,33 @@ function ProtectedRouteWithPrivy({
             isPending,
             hasPrivySyncHint,
             hadTokenHint: hadTokenHint.current,
+            graceExpired,
             privySyncFailure: privySyncFailure.message,
           }}
         />
       );
     }
+    if (shouldHoldAuthenticatedPrivyState) {
+      return (
+        <RouteLoading
+          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
+        />
+      );
+    }
+    if (hasOAuthReturnHint && !ready && !privySyncFailure) {
+      return <RouteLoading label="Connecting..." />;
+    }
+    if (hasPrivyHydrationHint) {
+      return <RouteLoading label="Connecting..." />;
+    }
+    if (hasPrivyFinalizationHint) {
+      return <RouteLoading label="Signing you in..." />;
+    }
+    if (hasPrivySyncHint) {
+      return <RouteLoading label="Signing you in..." />;
+    }
     if (hadTokenHint.current && !graceExpired) {
-      return <RouteLoading label="Signing in..." />;
+      return <RouteLoading label="Signing you in..." />;
     }
     return (
       <LoggedNavigate
@@ -432,14 +393,7 @@ function ProtectedRouteWithPrivy({
   }
 
   if (!hasLiveSession) {
-    if (shouldHoldAuthenticatedPrivyState) {
-      return (
-        <RouteLoading
-          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
-        />
-      );
-    }
-    if (privySyncFailure && graceExpired) {
+    if (privySyncFailure) {
       return (
         <LoggedNavigate
           to="/login"
@@ -448,7 +402,7 @@ function ProtectedRouteWithPrivy({
             from: location.pathname + location.search + location.hash,
             syncError: privySyncFailure.message,
           }}
-          reason="privy_effective_user_without_live_session_after_grace"
+          reason="privy_effective_user_without_live_session_after_sync_failure"
           context={{
             pathname: location.pathname,
             ready,
@@ -462,15 +416,14 @@ function ProtectedRouteWithPrivy({
         />
       );
     }
-    return (
-      <RouteLoading
-        label={
-          privySyncFailure
-            ? (graceExpired ? "Retrying sign-in..." : "Recovering your session...")
-            : (graceExpired ? "Still finalizing sign-in..." : "Finalizing sign-in...")
-        }
-      />
-    );
+    if (shouldHoldAuthenticatedPrivyState) {
+      return (
+        <RouteLoading
+          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
+        />
+      );
+    }
+    return <RouteLoading label="Signing you in..." />;
   }
 
   if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {

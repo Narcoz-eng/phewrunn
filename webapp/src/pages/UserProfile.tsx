@@ -379,7 +379,7 @@ export default function UserProfile() {
         throw new Error("Sign in to follow users");
       }
       if (!hasLiveSession) {
-        throw new Error("Still finalizing sign-in. Try again in a moment.");
+        throw new Error("Signing you in...");
       }
       const targetIdentifier = user?.username ?? user?.id ?? userId;
       if (!targetIdentifier) {
@@ -492,7 +492,7 @@ export default function UserProfile() {
       return;
     }
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Try again in a moment.");
+      toast.info("Signing you in...");
       return;
     }
     const post = posts.find((p) => p.id === postId) || reposts.find((p) => p.id === postId);
@@ -507,7 +507,7 @@ export default function UserProfile() {
       return;
     }
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Try again in a moment.");
+      toast.info("Signing you in...");
       return;
     }
     const post = posts.find((p) => p.id === postId) || reposts.find((p) => p.id === postId);
@@ -522,7 +522,7 @@ export default function UserProfile() {
       return;
     }
     if (!hasLiveSession) {
-      toast.info("Still finalizing sign-in. Try again in a moment.");
+      toast.info("Signing you in...");
       return;
     }
     commentMutation.mutate({ postId, content });
@@ -649,7 +649,7 @@ export default function UserProfile() {
                     return;
                   }
                   if (!hasLiveSession) {
-                    toast.info("Still finalizing sign-in. Try again in a moment.");
+                    toast.info("Signing you in...");
                     return;
                   }
                   followMutation.mutate();
