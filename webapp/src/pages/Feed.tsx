@@ -41,13 +41,15 @@ const FEED_MAX_PAGES = 5;
 const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
 const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
 const FEED_PUBLIC_CACHE_SCOPE = "public";
-const FEED_NEW_POSTS_POLL_MS = 60_000;
+const FEED_NEW_POSTS_POLL_MS = 15_000;
 const FEED_ACTIVE_TAB_POLL_MS = 90_000;
 const FEED_TAB_PREFETCH_ENABLED = false;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
 const FEED_CURRENT_USER_CACHE_TTL_MS = 30 * 60_000;
+const FEED_LATEST_ACK_CACHE_KEY = "phew.feed.latest.ack.v1";
+const FEED_LATEST_ACK_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS = 500;
 const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
 const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
@@ -436,7 +438,11 @@ export default function Feed() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
+  const [latestAcknowledgedTopId, setLatestAcknowledgedTopId] = useState<string | null>(() =>
+    readSessionCache<string>(FEED_LATEST_ACK_CACHE_KEY, FEED_LATEST_ACK_CACHE_TTL_MS)
+  );
   const feedShownLoggedRef = useRef(false);
+  const latestAcknowledgedTopIdRef = useRef<string | null>(latestAcknowledgedTopId);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
   const feedViewerScope = hasLiveSession && session?.user?.id ? session.user.id : "anonymous";
   const cachedFirstPageEntry = useMemo(
@@ -486,6 +492,29 @@ export default function Feed() {
     };
   }, [cachedFeedUser, session?.user]);
   const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
+  const persistLatestAcknowledgedTopId = useCallback((nextTopId: string | null) => {
+    latestAcknowledgedTopIdRef.current = nextTopId;
+    setLatestAcknowledgedTopId(nextTopId);
+    if (typeof window === "undefined") return;
+
+    try {
+      if (nextTopId) {
+        writeSessionCache(FEED_LATEST_ACK_CACHE_KEY, nextTopId);
+        return;
+      }
+      window.sessionStorage.removeItem(FEED_LATEST_ACK_CACHE_KEY);
+    } catch {
+      // Ignore storage access failures.
+    }
+  }, []);
+  const clearPendingLatestState = useCallback(() => {
+    setPendingLatestFirstPage(null);
+    setPendingLatestCount(0);
+  }, []);
+  const setPendingLatestState = useCallback((nextFirstPage: FeedPage, nextCount: number) => {
+    setPendingLatestFirstPage(nextFirstPage);
+    setPendingLatestCount(nextCount);
+  }, []);
 
   useEffect(() => {
     if (!hasLiveSession || !session?.user?.id) {
@@ -503,6 +532,10 @@ export default function Feed() {
       pathname: typeof window !== "undefined" ? window.location.pathname : null,
     });
   }, [hasLiveSession, session?.user?.id]);
+
+  useEffect(() => {
+    latestAcknowledgedTopIdRef.current = latestAcknowledgedTopId;
+  }, [latestAcknowledgedTopId]);
 
   const guardPendingAuthWrite = useCallback(() => {
     if (!session?.user) {
@@ -926,9 +959,38 @@ export default function Feed() {
     if (!pendingLatestFirstPage) return;
     applyFirstPageToCache("latest", "", pendingLatestFirstPage);
     writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", pendingLatestFirstPage);
-    setPendingLatestFirstPage(null);
-    setPendingLatestCount(0);
-  }, [applyFirstPageToCache, feedViewerScope, pendingLatestFirstPage]);
+    persistLatestAcknowledgedTopId(pendingLatestFirstPage.items[0]?.id ?? null);
+    clearPendingLatestState();
+  }, [
+    applyFirstPageToCache,
+    clearPendingLatestState,
+    feedViewerScope,
+    pendingLatestFirstPage,
+    persistLatestAcknowledgedTopId,
+  ]);
+
+  const visibleLatestTopId =
+    activeTab === "latest" && !effectiveSearchQuery
+      ? postsPages?.pages?.[0]?.items?.[0]?.id ?? null
+      : null;
+
+  useEffect(() => {
+    if (!visibleLatestTopId) return;
+    if (typeof window === "undefined") return;
+    if (hasLiveOverlay()) return;
+    if (window.scrollY >= FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) return;
+
+    persistLatestAcknowledgedTopId(visibleLatestTopId);
+    if (pendingLatestFirstPage?.items?.[0]?.id === visibleLatestTopId) {
+      clearPendingLatestState();
+    }
+  }, [
+    clearPendingLatestState,
+    hasLiveOverlay,
+    pendingLatestFirstPage?.items,
+    persistLatestAcknowledgedTopId,
+    visibleLatestTopId,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1027,80 +1089,98 @@ export default function Feed() {
   // X-style lightweight new-post detection on Latest:
   // poll only the first page every 30s, then show a "new posts" button (or auto-apply near top).
   useEffect(() => {
-    if (!hasLiveSession) return;
     if (activeTab !== "latest") return;
     if (effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
     if (typeof window === "undefined") return;
 
     let cancelled = false;
+    let inFlight = false;
 
     const checkForNewPosts = async () => {
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (hasLiveOverlay()) return;
 
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
         getFeedQueryKey("latest", "", feedViewerScope)
       );
-      const currentFirstPage = currentData?.pages?.[0];
-      if (!currentFirstPage || currentFirstPage.items.length === 0) return;
+      const currentFirstPage = currentData?.pages?.[0] ?? cachedFirstPage ?? hydrationCachedFirstPage ?? null;
+      const baselineTopId = latestAcknowledgedTopIdRef.current ?? currentFirstPage?.items[0]?.id ?? null;
+      if (!currentFirstPage && !baselineTopId) return;
 
+      inFlight = true;
       try {
         const freshFirstPage = await fetchFeedPage("latest", "");
         if (cancelled || freshFirstPage.items.length === 0) return;
         if (hasLiveOverlay()) return;
 
-        const currentTopId = currentFirstPage.items[0]?.id;
         const freshTopId = freshFirstPage.items[0]?.id;
 
-        if (!currentTopId || !freshTopId) {
+        if (!freshTopId) {
           return;
         }
 
-        if (currentTopId === freshTopId) {
-          const currentFingerprint = buildRealtimePageFingerprint(currentFirstPage);
+        if (!baselineTopId) {
+          if (window.scrollY < FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) {
+            applyFirstPageToCache("latest", "", freshFirstPage);
+            writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", freshFirstPage);
+            persistLatestAcknowledgedTopId(freshTopId);
+            clearPendingLatestState();
+            return;
+          }
+
+          setPendingLatestState(freshFirstPage, freshFirstPage.items.length);
+          return;
+        }
+
+        if (baselineTopId === freshTopId) {
+          const currentFingerprint = buildRealtimePageFingerprint(currentFirstPage ?? freshFirstPage);
           const freshFingerprint = buildRealtimePageFingerprint(freshFirstPage);
 
           if (currentFingerprint !== freshFingerprint) {
             applyFirstPageToCache("latest", "", freshFirstPage);
             writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", freshFirstPage);
-            setPendingLatestFirstPage(null);
-            setPendingLatestCount(0);
+            if (window.scrollY < FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) {
+              persistLatestAcknowledgedTopId(freshTopId);
+            }
+            clearPendingLatestState();
             void refetchUser();
             return;
           }
 
-          setPendingLatestFirstPage(null);
-          setPendingLatestCount(0);
+          clearPendingLatestState();
           return;
         }
 
-        const currentIds = new Set(currentFirstPage.items.map((item) => item.id));
         let newCount = 0;
         for (const item of freshFirstPage.items) {
-          if (currentIds.has(item.id)) break;
+          if (item.id === baselineTopId) break;
           newCount++;
         }
         if (newCount <= 0) {
-          newCount = 1;
+          newCount = freshFirstPage.items.length;
         }
 
         // If user is near the top, apply instantly for a seamless "live" feel.
         if (window.scrollY < FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) {
           applyFirstPageToCache("latest", "", freshFirstPage);
           writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", freshFirstPage);
-          setPendingLatestFirstPage(null);
-          setPendingLatestCount(0);
+          persistLatestAcknowledgedTopId(freshTopId);
+          clearPendingLatestState();
           return;
         }
 
-        setPendingLatestFirstPage(freshFirstPage);
-        setPendingLatestCount(newCount);
+        setPendingLatestState(freshFirstPage, newCount);
       } catch {
         // Silent failure; polling should never break feed UX.
+      } finally {
+        inFlight = false;
       }
     };
+
+    void checkForNewPosts();
 
     const intervalId = window.setInterval(() => {
       void checkForNewPosts();
@@ -1121,14 +1201,18 @@ export default function Feed() {
   }, [
     activeTab,
     applyFirstPageToCache,
+    cachedFirstPage,
+    clearPendingLatestState,
     effectiveSearchQuery,
     feedViewerScope,
     fetchFeedPage,
     getFeedQueryKey,
     hasLiveOverlay,
+    hydrationCachedFirstPage,
+    persistLatestAcknowledgedTopId,
     queryClient,
     refetchUser,
-    hasLiveSession,
+    setPendingLatestState,
   ]);
 
   // Keep non-latest tabs (and searched latest) fresh with lightweight first-page sync.
@@ -1416,6 +1500,10 @@ export default function Feed() {
           effectiveSearchQuery,
           freshFirstPage
         );
+        if (activeTab === "latest" && !effectiveSearchQuery) {
+          persistLatestAcknowledgedTopId(freshFirstPage.items[0]?.id ?? null);
+          clearPendingLatestState();
+        }
       } catch {
         // Fallback to react-query refetch if manual refresh fails
         queryClient.setQueryData<InfiniteData<FeedPage>>(
@@ -1553,7 +1641,7 @@ export default function Feed() {
                 onClick={applyPendingLatestPosts}
                 className="h-10 rounded-full border border-primary/25 px-4 shadow-[0_20px_46px_-20px_hsl(var(--primary)/0.45)]"
               >
-                {pendingLatestCount > FEED_PAGE_SIZE ? `${FEED_PAGE_SIZE}+` : pendingLatestCount} new post{pendingLatestCount === 1 ? "" : "s"} • Show
+                {pendingLatestCount > FEED_PAGE_SIZE ? `${FEED_PAGE_SIZE}+` : pendingLatestCount} new alpha{pendingLatestCount === 1 ? "" : "s"} posted - Show
               </Button>
             </div>
           ) : null}
