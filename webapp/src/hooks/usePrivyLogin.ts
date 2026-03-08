@@ -6,6 +6,7 @@ import {
   isExplicitLogoutCoolingDown,
   isPrivyAuthBootstrapCooldownActive,
   isPrivyAuthBootstrapStatePending,
+  readPrivyAuthBootstrapSnapshot,
   setPrivyAuthBootstrapState,
   startPrivyAuthBootstrap,
   type AuthUser,
@@ -110,13 +111,14 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   }, [authenticated]);
 
   const runManualSync = useCallback(async (privyUser: PrivyUserLike): Promise<AuthUser | null> => {
+    const currentSnapshot = readPrivyAuthBootstrapSnapshot();
     const cooldownActive =
-      bootstrapSnapshot?.state === "failed_rate_limited" &&
-      isPrivyAuthBootstrapCooldownActive(bootstrapSnapshot);
+      currentSnapshot?.state === "failed_rate_limited" &&
+      isPrivyAuthBootstrapCooldownActive(currentSnapshot);
     if (cooldownActive) {
-      const retryInMs = getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot);
+      const retryInMs = getPrivyAuthBootstrapCooldownRemainingMs(currentSnapshot);
       const retryMessage =
-        bootstrapSnapshot.detail ??
+        currentSnapshot.detail ??
         "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
       setLocalSyncError(retryMessage);
       console.info("[AuthFlow] usePrivyLogin manual retry blocked by cooldown", {
@@ -130,7 +132,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       owner: "usePrivyLogin",
       mode: "manual",
       userId: privyUser.id,
-      existingState: bootstrapSnapshot?.state ?? "idle",
+      existingState: currentSnapshot?.state ?? "idle",
     });
     const syncedUser = await startPrivyAuthBootstrap({
       owner: "usePrivyLogin",
@@ -144,7 +146,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }
 
     return syncedUser;
-  }, [bootstrapSnapshot?.state, handleSuccessfulLogin]);
+  }, [handleSuccessfulLogin]);
 
   const handlePrivyAuthComplete = useCallback(async (privyUser: PrivyUserLike) => {
     clearPrivySyncFailureState();
@@ -182,20 +184,22 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   });
 
   const startLogin = useCallback((loginOptions?: StartLoginOptions) => {
-    if (oauthLoading || isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state)) {
+    const currentSnapshot = readPrivyAuthBootstrapSnapshot();
+
+    if (oauthLoading || isPrivyAuthBootstrapStatePending(currentSnapshot?.state)) {
       return;
     }
 
     const rateLimitedCooldownActive =
-      bootstrapSnapshot?.state === "failed_rate_limited" &&
-      isPrivyAuthBootstrapCooldownActive(bootstrapSnapshot);
+      currentSnapshot?.state === "failed_rate_limited" &&
+      isPrivyAuthBootstrapCooldownActive(currentSnapshot);
     if (rateLimitedCooldownActive) {
       const retryMessage =
-        bootstrapSnapshot.detail ??
+        currentSnapshot.detail ??
         "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again.";
       setLocalSyncError(retryMessage);
       console.info("[AuthFlow] usePrivyLogin start blocked by rate-limit cooldown", {
-        retryInMs: getPrivyAuthBootstrapCooldownRemainingMs(bootstrapSnapshot),
+        retryInMs: getPrivyAuthBootstrapCooldownRemainingMs(currentSnapshot),
       });
       return;
     }
@@ -272,9 +276,6 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     login(loginOptions);
   }, [
     authenticated,
-    bootstrapSnapshot?.state,
-    bootstrapSnapshot?.detail,
-    bootstrapSnapshot?.cooldownUntilMs,
     handlePrivyAuthError,
     initOAuth,
     login,

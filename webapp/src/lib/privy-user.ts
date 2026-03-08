@@ -10,6 +10,7 @@ const PRIVY_IDENTITY_429_COOLDOWN_MS = 10_000;
 let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAuthPayload> } | null =
   null;
 let privyIdentityRateLimitedUntilMs = 0;
+const privyIdentityRetryWaiters = new Map<number, (completed: boolean) => void>();
 const RATE_LIMITED_TOKEN = Symbol("privy_identity_rate_limited");
 type IdentityTokenAttemptResult = {
   token?: string;
@@ -38,9 +39,32 @@ export type ResolvedPrivyAuthPayload = {
   privyIdToken?: string;
 };
 
-async function waitFor(delayMs: number): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.setTimeout(resolve, delayMs);
+async function waitFor(delayMs: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const timeoutId = window.setTimeout(() => {
+      privyIdentityRetryWaiters.delete(timeoutId);
+      resolve(true);
+    }, delayMs);
+    privyIdentityRetryWaiters.set(timeoutId, resolve);
+  });
+}
+
+export function cancelPrivyIdentityRetryTimers(reason: string): void {
+  if (privyIdentityRetryWaiters.size === 0) {
+    return;
+  }
+
+  const waiters = Array.from(privyIdentityRetryWaiters.entries());
+  privyIdentityRetryWaiters.clear();
+
+  for (const [timeoutId, resolve] of waiters) {
+    window.clearTimeout(timeoutId);
+    resolve(false);
+  }
+
+  console.info("[AuthFlow] cancelled pending Privy identity retry timers", {
+    reason,
+    count: waiters.length,
   });
 }
 
@@ -87,6 +111,7 @@ async function getIdentityTokenWithin(timeoutMs: number): Promise<IdentityTokenA
       .catch((error) => {
         if (isPrivyRateLimitError(error)) {
           privyIdentityRateLimitedUntilMs = Date.now() + PRIVY_IDENTITY_429_COOLDOWN_MS;
+          cancelPrivyIdentityRetryTimers("privy_429");
           console.warn("[AuthFlow] Privy identity provider returned 429", {
             cooldownMs: PRIVY_IDENTITY_429_COOLDOWN_MS,
             message: getPrivyErrorMessage(error),
@@ -134,7 +159,13 @@ export async function getPrivyIdentityTokenFast(): Promise<IdentityTokenAttemptR
       attempt: attempt + 1,
       delayMs,
     });
-    await waitFor(delayMs);
+    const completed = await waitFor(delayMs);
+    if (!completed) {
+      return {
+        token: undefined,
+        rateLimited: getPrivyRateLimitRemainingMs() > 0,
+      };
+    }
   }
 
   return { token: undefined, rateLimited: false };
@@ -236,7 +267,10 @@ export async function resolvePrivyAuthPayload({
       console.info("[AuthFlow] Privy identity still finalizing; retry scheduled", {
         delayMs,
       });
-      await waitFor(delayMs);
+      const completed = await waitFor(delayMs);
+      if (!completed) {
+        break;
+      }
       latestUser = getLatestUser?.() ?? latestUser;
       email = getPrivyPrimaryEmail(latestUser);
       name = getPrivyDisplayName(latestUser, email);

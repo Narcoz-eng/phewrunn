@@ -2,6 +2,7 @@
 import type { ReactNode } from "react";
 import { clearSessionCacheByPrefix } from "./session-cache";
 import {
+  cancelPrivyIdentityRetryTimers,
   resolvePrivyAuthPayload,
   getPrivyIdentityRateLimitRemainingMs,
   type PrivyUserLike,
@@ -227,6 +228,7 @@ interface SessionState {
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let privySyncInFlight: Promise<{ user: AuthUser }> | null = null;
 let privyAuthBootstrapInFlight: Promise<AuthUser | null> | null = null;
+const privyAuthRetryWaiters = new Map<number, (completed: boolean) => void>();
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
 let lastSuccessfulSessionAt = 0;
@@ -828,9 +830,30 @@ function isPrivyRateLimitedMessage(message: string): boolean {
   return /429|too many requests|rate limit/i.test(message);
 }
 
-function waitForAuthDelay(delayMs: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, delayMs);
+function cancelPendingPrivyAuthRetryTimers(reason: string): void {
+  if (privyAuthRetryWaiters.size > 0) {
+    const waiters = Array.from(privyAuthRetryWaiters.entries());
+    privyAuthRetryWaiters.clear();
+    for (const [timeoutId, resolve] of waiters) {
+      window.clearTimeout(timeoutId);
+      resolve(false);
+    }
+    console.info("[AuthFlow] cancelled pending controller retry timers", {
+      reason,
+      count: waiters.length,
+    });
+  }
+
+  cancelPrivyIdentityRetryTimers(reason);
+}
+
+function waitForAuthDelay(delayMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timeoutId = window.setTimeout(() => {
+      privyAuthRetryWaiters.delete(timeoutId);
+      resolve(true);
+    }, delayMs);
+    privyAuthRetryWaiters.set(timeoutId, resolve);
   });
 }
 
@@ -844,6 +867,10 @@ export async function startPrivyAuthBootstrap({
   const now = Date.now();
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
   const sameUserSnapshot = existingSnapshot?.userId === user.id ? existingSnapshot : null;
+  const hardCooldownRemainingMs = Math.max(
+    getPrivyIdentityRateLimitRemainingMs(now),
+    getPrivyAuthBootstrapCooldownRemainingMs(sameUserSnapshot, now)
+  );
 
   console.info("[AuthFlow] bootstrap request received", {
     owner,
@@ -863,22 +890,30 @@ export async function startPrivyAuthBootstrap({
     return privyAuthBootstrapInFlight;
   }
 
-  const cooldownRemainingMs = sameUserSnapshot?.cooldownUntilMs
-    ? Math.max(0, sameUserSnapshot.cooldownUntilMs - now)
-    : 0;
-  if (sameUserSnapshot?.state === "failed_rate_limited") {
-    if (mode !== "manual" || cooldownRemainingMs > 0) {
-      console.info("[AuthFlow] bootstrap blocked by cooldown", {
-        owner,
-        mode,
-        userId: user.id,
-        retryAlreadyScheduled: false,
-        cooldownBlocked: true,
-        retryInMs: cooldownRemainingMs,
-      });
-      writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
-      return null;
-    }
+  if (hardCooldownRemainingMs > 0) {
+    console.info("[AuthFlow] bootstrap blocked by cooldown", {
+      owner,
+      mode,
+      userId: user.id,
+      retryAlreadyScheduled: false,
+      cooldownBlocked: true,
+      retryInMs: hardCooldownRemainingMs,
+      state: sameUserSnapshot?.state ?? existingSnapshot?.state ?? "idle",
+    });
+    writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
+    return null;
+  }
+
+  if (sameUserSnapshot?.state === "failed_rate_limited" && mode !== "manual") {
+    console.info("[AuthFlow] bootstrap blocked until explicit manual retry", {
+      owner,
+      mode,
+      userId: user.id,
+      retryAlreadyScheduled: false,
+      cooldownBlocked: false,
+    });
+    writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
+    return null;
   }
 
   privyAuthBootstrapInFlight = (async () => {
@@ -977,6 +1012,7 @@ export async function startPrivyAuthBootstrap({
             getPrivyIdentityRateLimitRemainingMs(),
             PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS
           );
+          cancelPendingPrivyAuthRetryTimers("privy_429");
           writePrivySyncFailureSnapshot(PRIVY_RATE_LIMIT_FAILURE_MESSAGE);
           setPrivyAuthBootstrapState("failed_rate_limited", {
             owner,
@@ -1022,7 +1058,10 @@ export async function startPrivyAuthBootstrap({
             retryDelayMs: PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS,
             reason: message,
           });
-          await waitForAuthDelay(PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS);
+          const completed = await waitForAuthDelay(PRIVY_BOOTSTRAP_FINALIZATION_RETRY_DELAY_MS);
+          if (!completed || getPrivyIdentityRateLimitRemainingMs() > 0) {
+            return null;
+          }
           continue;
         }
 
