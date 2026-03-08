@@ -774,6 +774,7 @@ async function resolvePrivyAuthPayloadInternal({
   isTerminal,
   debugContext,
   pendingTokenWaitMs = 15_000,
+  allowInFlightReuse = true,
 }: {
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
@@ -784,9 +785,10 @@ async function resolvePrivyAuthPayloadInternal({
   isTerminal?: () => boolean;
   debugContext?: PrivyIdentityDebugContext;
   pendingTokenWaitMs?: number;
+  allowInFlightReuse?: boolean;
 }): Promise<ResolvedPrivyAuthPayload> {
   const userId = user.id;
-  if (privyAuthPayloadInFlight?.userId === userId) {
+  if (allowInFlightReuse && privyAuthPayloadInFlight?.userId === userId) {
     beginPrivyIdentityDebugContext(debugContext, debugContext?.initialCaller ?? "system");
     console.info("[AuthFlow] reusing pending Privy auth payload resolution", {
       attemptId: debugContext?.attemptId ?? null,
@@ -1031,7 +1033,10 @@ export async function requestPrivyIdentityTokenForBackendSync(
     ),
   });
 
-  return resolvePrivyAuthPayloadInternal(options);
+  return resolvePrivyAuthPayloadInternal({
+    ...options,
+    allowInFlightReuse: false,
+  });
 }
 
 export async function resolvePrivyAuthPayload(
@@ -1047,5 +1052,8 @@ export async function resolvePrivyAuthPayload(
     pendingTokenWaitMs?: number;
   }
 ): Promise<ResolvedPrivyAuthPayload> {
-  return resolvePrivyAuthPayloadInternal(options);
+  return resolvePrivyAuthPayloadInternal({
+    ...options,
+    allowInFlightReuse: true,
+  });
 }
