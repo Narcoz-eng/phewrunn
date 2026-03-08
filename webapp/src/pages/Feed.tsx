@@ -50,6 +50,8 @@ const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
 const FEED_CURRENT_USER_CACHE_TTL_MS = 30 * 60_000;
 const FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS = 500;
 const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
+const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
+const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -209,6 +211,34 @@ function sortPostsNewestFirst(items: Post[]): Post[] {
   });
 }
 
+function isRecentFeedPost(post: Pick<Post, "createdAt"> | null | undefined): boolean {
+  if (!post?.createdAt) return false;
+  const createdAtMs = new Date(post.createdAt).getTime();
+  if (!Number.isFinite(createdAtMs)) return false;
+  return Date.now() - createdAtMs < FEED_RECENT_POST_CACHE_BYPASS_AGE_MS;
+}
+
+function shouldUseCachedFeedPageForHydration(
+  entry: CachedFeedPageEntry | null,
+  tab: FeedTab,
+  search: string
+): boolean {
+  if (!entry?.page.items.length) return false;
+  if (tab !== "latest" || search.trim().length > 0) return true;
+
+  const cacheAgeMs = Date.now() - entry.cachedAt;
+  const hasRecentLatestPosts = entry.page.items.slice(0, 5).some((post) => isRecentFeedPost(post));
+  if (!hasRecentLatestPosts) {
+    return true;
+  }
+
+  return cacheAgeMs <= FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS;
+}
+
+function shouldBypassCachedRealtimeMerge(post: Post, tab: FeedTab, search: string): boolean {
+  return tab === "latest" && search.trim().length === 0 && isRecentFeedPost(post);
+}
+
 function mergePostWithCachedRealtimeState(post: Post, cachedPost: Post | null | undefined): Post {
   if (!cachedPost) {
     return post;
@@ -329,6 +359,14 @@ export default function Feed() {
     [activeTab, effectiveSearchQuery, feedViewerScope]
   );
   const cachedFirstPage = cachedFirstPageEntry?.page ?? null;
+  const hydrationCachedFirstPageEntry = useMemo(
+    () =>
+      shouldUseCachedFeedPageForHydration(cachedFirstPageEntry, activeTab, effectiveSearchQuery)
+        ? cachedFirstPageEntry
+        : null,
+    [activeTab, cachedFirstPageEntry, effectiveSearchQuery]
+  );
+  const hydrationCachedFirstPage = hydrationCachedFirstPageEntry?.page ?? null;
   const feedCurrentUserCacheKey = useMemo(
     () => (session?.user?.id ? `${FEED_CURRENT_USER_CACHE_KEY}:${session.user.id}` : null),
     [session?.user?.id]
@@ -551,7 +589,9 @@ export default function Feed() {
       }
     }
     const mergedItems = items.map((item) =>
-      mergePostWithCachedRealtimeState(item, cachedRealtimePostsById.get(item.id))
+      shouldBypassCachedRealtimeMerge(item, tab, search)
+        ? item
+        : mergePostWithCachedRealtimeState(item, cachedRealtimePostsById.get(item.id))
     );
 
     if (shouldUseCachedFirstPageFallback && fallbackFirstPage && mergedItems.length === 0) {
@@ -635,13 +675,13 @@ export default function Feed() {
     queryFn: ({ pageParam }) => fetchFeedPage(activeTab, effectiveSearchQuery, pageParam),
     getNextPageParam: (lastPage) => (lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined),
     maxPages: FEED_MAX_PAGES,
-    initialData: cachedFirstPage
+    initialData: hydrationCachedFirstPage
       ? {
-          pages: [cachedFirstPage],
+          pages: [hydrationCachedFirstPage],
           pageParams: [undefined],
         }
       : undefined,
-    initialDataUpdatedAt: cachedFirstPageEntry?.cachedAt,
+    initialDataUpdatedAt: hydrationCachedFirstPageEntry?.cachedAt,
     enabled: activeTab !== "following" || hasLiveSession,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 429) {
@@ -649,6 +689,7 @@ export default function Feed() {
       }
       return failureCount < 2;
     },
+    gcTime: activeTab === "latest" && !effectiveSearchQuery ? 0 : 5 * 60_000,
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
