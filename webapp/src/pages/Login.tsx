@@ -190,7 +190,7 @@ const earlyCallerData = [
     textColor: "text-muted-foreground",
     borderColor: "border-border/40",
     bgColor: "bg-background/40",
-    desc: "By the time the crowd arrives, the edge is diluted, the trade is crowded, and the fee stream is mostly gone.",
+    desc: "By the time the crowd arrives, the edge is diluted, the trade is crowded, and most of the creator payout has already moved elsewhere.",
   },
 ];
 
@@ -199,7 +199,7 @@ const timingPillars = [
     icon: FlowRouteIcon,
     title: "Early good alpha gets the cleanest flow",
     description:
-      "The first convincing post catches traders before the market gets crowded, which means better attention and more routed buys.",
+      "The first convincing post catches traders before the market gets crowded, which means better attention and more buying routed through your call.",
     accent: "border-gain/20 bg-gain/5 text-gain",
   },
   {
@@ -279,9 +279,9 @@ const features = [
   },
   {
     icon: FlowRouteIcon,
-    title: "Get Paid Every Time They Buy",
+    title: "Earn When Traders Buy Through Your Call",
     description:
-      "Every routed buy from your post sends you 0.5%. Stronger calls create stronger fee momentum.",
+      "When traders buy from your post, your call keeps the route and credits you 0.5%. Stronger signal keeps that flow coming back.",
   },
   {
     icon: CommunityTrustIcon,
@@ -555,12 +555,12 @@ export default function Login() {
                   <span
                     className="bg-gradient-to-r from-[#c7f5a6] via-[#a9ef9d] to-[#98e9dc] bg-clip-text text-transparent"
                   >
-                    Get Paid on Every Buy.
+                    Earn When Your Call Gets The Buy.
                   </span>
                 </h1>
                 <p className="mt-3.5 max-w-xl text-[15px] leading-relaxed text-muted-foreground sm:mt-4 sm:text-lg">
-                  The first good alpha does more than win attention. It routes buy
-                  flow, raises your public reputation, and pays you{" "}
+                  The first good alpha does more than win attention. It captures
+                  the buy route, raises your public reputation, and credits you{" "}
                   <span className="text-foreground font-semibold">0.5%</span> every
                   time traders act directly from your post.
                 </p>
@@ -647,7 +647,7 @@ export default function Login() {
                               Start Earning Today
                             </h2>
                             <p className="text-xs text-muted-foreground leading-relaxed mt-1.5 max-w-[250px]">
-                              Route every buy through your post and turn public conviction into instant payout momentum.
+                              Be the post traders trust first and turn that conviction into creator payouts.
                             </p>
                           </div>
                         </div>
@@ -714,7 +714,7 @@ export default function Login() {
                               0.5%
                             </div>
                             <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed max-w-[190px]">
-                              Every buy executed from your post routes a slice of flow back to you automatically.
+                              Each routed buy credits your call automatically.
                             </p>
                           </div>
                           <div className="rounded-2xl border border-gain/15 bg-background/55 px-3 py-3 min-w-[108px]">
@@ -811,7 +811,7 @@ export default function Login() {
                         First Good Alpha Wins The Route
                       </h3>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Traders buy from the post they trust first. Every routed trade sends 0.5% back to you.
+                        Traders act on the post they trust first. The best call keeps the route and the creator payout.
                       </p>
                     </div>
                     <Suspense fallback={<VisualizationCardSkeleton />}>
@@ -841,7 +841,7 @@ export default function Login() {
                       Phew is not about posting early for the sake of noise. It is
                       about being early with conviction traders actually want to
                       follow. The first strong call captures the best attention,
-                      the cleanest buy flow, and the biggest fee stream.
+                      the cleanest buy flow, and the strongest creator payouts.
                     </p>
                   </div>
 
@@ -1165,7 +1165,7 @@ export default function Login() {
           disabled={!shouldDeferMarketing}
           fallback={
             <MarketingSectionPlaceholder
-              eyebrow="0.5% per buy"
+              eyebrow="Creator payouts on routed buys"
               title="Your next good call could pay you for a long time."
               className="border-t border-border/40 bg-gradient-to-b from-card/30 to-transparent"
             />
@@ -1182,7 +1182,7 @@ export default function Login() {
               >
                 <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gain/25 bg-gain/5 text-xs font-medium text-gain">
                   <FlowRouteIcon className="w-3.5 h-3.5" />
-                  0.5% per buy. Reputation earned in public.
+                  0.5% on routed buys. Reputation earned in public.
                 </div>
                 <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight">
                   Your Next Good Call Could
@@ -1193,7 +1193,7 @@ export default function Login() {
                 </h2>
                 <p className="text-sm text-muted-foreground leading-relaxed">
                   Sign up free. Post the right call early. Every trader who buys
-                  from your post sends 0.5% back through the route you created.
+                  through your post reinforces your signal and credits the route you created.
                 </p>
                 <div className="pt-2">
                   {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}

@@ -31,7 +31,9 @@ interface TradingPanelProps {
   jupiterOutputFormatted: string;
   jupiterMinReceiveFormatted: string;
   jupiterPriceImpactDisplay: string;
-  jupiterPlatformFeeDisplay: string;
+  routeFeeDisplay: string;
+  creatorFeeDisplay: string;
+  platformFeeDisplay: string;
   jupiterStatusLabel: string;
   isQuoteLoading: boolean;
   isExecuting: boolean;
@@ -84,7 +86,9 @@ export function TradingPanel({
   jupiterOutputFormatted,
   jupiterMinReceiveFormatted,
   jupiterPriceImpactDisplay,
-  jupiterPlatformFeeDisplay,
+  routeFeeDisplay,
+  creatorFeeDisplay,
+  platformFeeDisplay,
   jupiterStatusLabel,
   isQuoteLoading,
   isExecuting,
@@ -132,7 +136,7 @@ export function TradingPanel({
   const priceImpactSeverity =
     priceImpactNum > 5 ? "critical" : priceImpactNum > 2 ? "warning" : "safe";
   const panelSurfaceClassName =
-    "flex flex-col overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[#0a0c12] dark:shadow-none dark:ring-0";
+    "flex flex-col overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(6,8,12,0.98))] dark:shadow-none dark:ring-white/5";
   const sectionBorderClassName = "border-slate-900/[0.07] dark:border-white/[0.07]";
   const mutedTextClassName = "text-slate-500 dark:text-white/40";
   const subtleTextClassName = "text-slate-400 dark:text-white/30";
@@ -432,7 +436,9 @@ export function TradingPanel({
             <div className={cn("space-y-1.5 p-3", softSectionClassName)}>
               <DetailRow label="Min. Received" value={jupiterMinReceiveFormatted} />
               <DetailRow label="Price Impact" value={jupiterPriceImpactDisplay} severity={priceImpactSeverity} />
-              <DetailRow label="Platform Fee" value={jupiterPlatformFeeDisplay} />
+              <DetailRow label="Total Route Fee" value={routeFeeDisplay} />
+              <DetailRow label="Creator Reward" value={creatorFeeDisplay} />
+              <DetailRow label="Platform Fee" value={platformFeeDisplay} />
               <DetailRow label="Route" value="Jupiter v6" />
             </div>
           </div>

@@ -65,7 +65,7 @@ export default function PortfolioPanel({
   const totalIsProfit = totalUnrealizedPnl !== null && totalUnrealizedPnl >= 0;
   const positionCount = positions.length;
   const panelSurfaceClassName =
-    "overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[#0a0c12] dark:shadow-none dark:ring-0";
+    "overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(6,8,12,0.98))] dark:shadow-none dark:ring-white/5";
 
   if (!walletConnected) {
     return (

@@ -38,7 +38,7 @@ model User {
 
   // Trade fee settings (poster rewards from swap fees)
   tradeFeeRewardsEnabled Boolean @default(true)
-  tradeFeeShareBps       Int     @default(100) // 0-100 (max 1.00%)
+  tradeFeeShareBps       Int     @default(50) // 0-50 (max 0.50%)
   tradeFeePayoutAddress  String? // optional Solana payout wallet; falls back to walletAddress
 
   // Better Auth relations

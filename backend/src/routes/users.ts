@@ -30,16 +30,16 @@ const PROFILE_POST_WALLET_ENRICH_MAX_POSTS = process.env.NODE_ENV === "productio
 const PROFILE_WALLET_OVERVIEW_MAX_TOKENS = process.env.NODE_ENV === "production" ? 40 : 20;
 const PROFILE_WALLET_OVERVIEW_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4000 : 8000;
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
-const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
-const userSettingsPlatformFeeBps = FIXED_PLATFORM_FEE_BPS;
+const RETAINED_PLATFORM_FEE_BPS = 50; // 0.50% retained by the platform after creator reward
+const userSettingsPlatformFeeBps = RETAINED_PLATFORM_FEE_BPS;
 const hasUserSettingsPlatformFeeAccount = !!(
   process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || PLATFORM_FEE_ACCOUNT_FALLBACK
 );
 const activeUserSettingsPlatformFeeBps = hasUserSettingsPlatformFeeAccount ? userSettingsPlatformFeeBps : 0;
-const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100;
+const MAX_POSTER_TRADE_FEE_SHARE_BPS = 50;
 const DEFAULT_FEE_SETTINGS = {
   tradeFeeRewardsEnabled: true,
-  tradeFeeShareBps: 100,
+  tradeFeeShareBps: 50,
   tradeFeePayoutAddress: null as string | null,
 };
 const RESERVED_USERNAME_HANDLES = new Set([
@@ -202,9 +202,13 @@ function buildFeeSettingsResponse(user: {
   tradeFeeShareBps: number;
   tradeFeePayoutAddress: string | null;
 }) {
+  const normalizedTradeFeeShareBps = Math.min(
+    MAX_POSTER_TRADE_FEE_SHARE_BPS,
+    Math.max(0, Math.round(user.tradeFeeShareBps))
+  );
   return {
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
-    tradeFeeShareBps: user.tradeFeeShareBps,
+    tradeFeeShareBps: normalizedTradeFeeShareBps,
     tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     effectivePayoutAddress: user.tradeFeePayoutAddress ?? user.walletAddress ?? null,
     platformFeeBps: activeUserSettingsPlatformFeeBps,

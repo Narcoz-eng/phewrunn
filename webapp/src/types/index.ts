@@ -26,6 +26,8 @@ export interface PostAuthor {
   level: number;
   xp: number;
   isVerified?: boolean;
+  tradeFeeRewardsEnabled?: boolean;
+  tradeFeeShareBps?: number;
 }
 
 // Reposter type returned from /api/posts/:id/reposters

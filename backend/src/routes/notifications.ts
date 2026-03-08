@@ -200,7 +200,7 @@ function writeNotificationsUnreadCountCache(userId: string, count: number): void
   );
 }
 
-function invalidateNotificationsCache(userId: string): void {
+export function invalidateNotificationsCache(userId: string): void {
   notificationsUnreadCountCache.delete(userId);
   const prefix = `${userId}:`;
   for (const key of notificationsListCache.keys()) {

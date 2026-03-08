@@ -229,8 +229,7 @@ export default function Notifications() {
         : undefined,
     enabled: isAuthenticated && hasLiveSession,
     staleTime: 60_000,
-    refetchOnMount:
-      initialCachedNotifications && initialCachedNotifications.length > 0 ? false : "always",
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     retry: (failureCount, error) => {

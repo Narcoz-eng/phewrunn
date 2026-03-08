@@ -43,6 +43,7 @@ import {
   type ParsedSolanaTransaction,
 } from "../services/helius.js";
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
+import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
@@ -1578,9 +1579,9 @@ const CHART_PROVIDER_FAILURE_COOLDOWN_MAX_MS =
 const CHART_PROVIDER_FRESHNESS_GRACE_CANDLES = 6;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
-const FIXED_PLATFORM_FEE_BPS = 100; // 1.00%
-const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 100;
-const MAX_POSTER_TRADE_FEE_SHARE_BPS = 100; // max 1.00%
+const FIXED_PLATFORM_FEE_BPS = 100; // 1.00% total routed fee (0.50% creator + 0.50% platform)
+const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 50;
+const MAX_POSTER_TRADE_FEE_SHARE_BPS = 50; // max 0.50% effective creator fee
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const JUPITER_PLATFORM_FEE_BPS = FIXED_PLATFORM_FEE_BPS;
 const JUPITER_PLATFORM_FEE_ACCOUNT =
@@ -1814,6 +1815,7 @@ async function createNotificationSafely(params: {
     await prisma.notification.create({
       data: params.data as Prisma.NotificationUncheckedCreateInput,
     });
+    invalidateNotificationsCache(params.data.userId);
     return;
   } catch (error) {
     if (isPrismaKnownRequestError(error, "P2002")) {
@@ -1825,6 +1827,7 @@ async function createNotificationSafely(params: {
         await prisma.notification.create({
           data: params.fallbackData as Prisma.NotificationUncheckedCreateInput,
         });
+        invalidateNotificationsCache(params.fallbackData.userId);
         return;
       } catch (fallbackError) {
         if (isPrismaKnownRequestError(fallbackError, "P2002")) {
@@ -1845,9 +1848,21 @@ async function createManyNotificationsSafely(params: {
   fallbackData?: Prisma.NotificationCreateManyInput[];
 }): Promise<void> {
   if (params.data.length === 0) return;
+  const invalidateUsers = (items: Prisma.NotificationCreateManyInput[]) => {
+    const userIds = new Set<string>();
+    for (const item of items) {
+      if (typeof item.userId === "string" && item.userId.length > 0) {
+        userIds.add(item.userId);
+      }
+    }
+    for (const userId of userIds) {
+      invalidateNotificationsCache(userId);
+    }
+  };
 
   try {
     await prisma.notification.createMany({ data: params.data, skipDuplicates: true });
+    invalidateUsers(params.data);
     return;
   } catch (error) {
     if (
@@ -1857,6 +1872,7 @@ async function createManyNotificationsSafely(params: {
     ) {
       try {
         await prisma.notification.createMany({ data: params.fallbackData });
+        invalidateUsers(params.fallbackData);
         return;
       } catch (fallbackError) {
         logNonCriticalNotificationFailure(params.operation, fallbackError);
@@ -6561,7 +6577,7 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
       : 0;
     posterShareBpsApplied = posterShareBps;
     const posterShareAmountAtomic =
-      ((platformFeeAmountBigInt * BigInt(posterShareBps)) / 10_000n).toString();
+      ((platformFeeAmountBigInt * BigInt(posterShareBps)) / BigInt(platformFeeBpsApplied)).toString();
 
     const tradeFeeEventPromise = prisma.tradeFeeEvent.create({
       data: {

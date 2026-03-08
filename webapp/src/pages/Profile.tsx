@@ -801,7 +801,7 @@ export default function Profile() {
       toast.error("Fee share must be a valid number");
       return;
     }
-    const normalizedShareBps = Math.min(100, Math.max(0, Math.round(parsedSharePercent * 100)));
+    const normalizedShareBps = Math.min(50, Math.max(0, Math.round(parsedSharePercent * 100)));
     updateFeeSettingsMutation.mutate({
       tradeFeeRewardsEnabled: feeRewardsEnabled,
       tradeFeeShareBps: normalizedShareBps,
@@ -1396,12 +1396,12 @@ export default function Profile() {
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground">Your Share (%) (max 1.00)</label>
+                        <label className="text-xs font-medium text-muted-foreground">Your Creator Fee (%) (max 0.50)</label>
                         <Input
                           value={feeSharePercentInput}
                           onChange={(e) => setFeeSharePercentInput(e.target.value)}
                           inputMode="decimal"
-                          placeholder="50.00"
+                          placeholder="0.50"
                           className="mt-1"
                         />
                       </div>

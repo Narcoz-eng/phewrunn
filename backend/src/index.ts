@@ -385,6 +385,14 @@ const AUTH_RESPONSE_USER_LOOKUP_ORDER: AuthResponseUserLookupMode[] = [
   "minimal",
 ];
 let authResponseUserLookupMode: AuthResponseUserLookupMode = "full";
+const MAX_EFFECTIVE_POSTER_FEE_BPS = 50;
+
+function normalizeTradeFeeShareBps(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MAX_EFFECTIVE_POSTER_FEE_BPS;
+  }
+  return Math.max(0, Math.min(MAX_EFFECTIVE_POSTER_FEE_BPS, Math.round(value)));
+}
 
 function getAuthResponseUserLookupModes(
   startingMode: AuthResponseUserLookupMode = authResponseUserLookupMode
@@ -683,8 +691,7 @@ function normalizeCachedPrivyAuthUser(data: unknown): AuthResponseUser | null {
     isVerified: typeof candidate.isVerified === "boolean" ? candidate.isVerified : false,
     tradeFeeRewardsEnabled:
       typeof candidate.tradeFeeRewardsEnabled === "boolean" ? candidate.tradeFeeRewardsEnabled : true,
-    tradeFeeShareBps:
-      typeof candidate.tradeFeeShareBps === "number" ? candidate.tradeFeeShareBps : 100,
+    tradeFeeShareBps: normalizeTradeFeeShareBps(candidate.tradeFeeShareBps),
     tradeFeePayoutAddress:
       typeof candidate.tradeFeePayoutAddress === "string" ? candidate.tradeFeePayoutAddress : null,
     createdAt,
@@ -955,7 +962,7 @@ function buildMeResponseUserFromDbRecord(
     isAdmin: user.role === "admin" || (user.isAdmin ?? false),
     isVerified: user.isVerified ?? false,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
-    tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
+    tradeFeeShareBps: normalizeTradeFeeShareBps(user.tradeFeeShareBps),
     tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
     createdAt: user.createdAt ?? new Date(),
   };
@@ -991,7 +998,7 @@ async function queryMeResponseUserRaw(userId: string): Promise<MeResponseUser | 
     isAdmin: row.role === "admin" || row.isAdmin === true,
     isVerified: row.isVerified === true,
     tradeFeeRewardsEnabled: row.tradeFeeRewardsEnabled !== false,
-    tradeFeeShareBps: toNum(row.tradeFeeShareBps, 100),
+    tradeFeeShareBps: normalizeTradeFeeShareBps(toNum(row.tradeFeeShareBps, 50)),
     tradeFeePayoutAddress: (row.tradeFeePayoutAddress as string) ?? null,
     createdAt: row.createdAt as Date,
   };
@@ -1123,7 +1130,7 @@ function normalizeAuthResponseUser(
     isAdmin: normalizedRole === "admin" || (user.isAdmin ?? false),
     isVerified: user.isVerified ?? false,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
-    tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
+    tradeFeeShareBps: normalizeTradeFeeShareBps(user.tradeFeeShareBps),
     tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
     createdAt: user.createdAt ?? new Date(),
   };
@@ -3289,7 +3296,7 @@ app.get("/api/me", async (c) => {
 
   const defaultFeeSettings = {
     tradeFeeRewardsEnabled: true,
-    tradeFeeShareBps: 100,
+    tradeFeeShareBps: 50,
     tradeFeePayoutAddress: null as string | null,
   };
 

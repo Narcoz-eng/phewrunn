@@ -95,6 +95,8 @@ const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const MAX_CREATOR_ROUTE_FEE_BPS = 50;
+const DEFAULT_TOTAL_ROUTE_FEE_BPS = 100;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
@@ -3019,12 +3021,23 @@ export function PostCard({
   const jupiterPlatformFeeAtomic = jupiterQuote?.platformFee?.amount ?? null;
   const jupiterPlatformFeeBps = jupiterQuote?.platformFee?.feeBps ?? null;
   const jupiterPlatformFeeMint = jupiterQuote?.platformFee?.mint ?? null;
+  const creatorRouteFeeBps =
+    post.author.tradeFeeRewardsEnabled === false
+      ? 0
+      : Number.isFinite(post.author.tradeFeeShareBps)
+        ? Math.max(0, Math.min(MAX_CREATOR_ROUTE_FEE_BPS, Math.round(Number(post.author.tradeFeeShareBps))))
+        : MAX_CREATOR_ROUTE_FEE_BPS;
+  const totalRouteFeeBps =
+    jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
+      ? Math.max(DEFAULT_TOTAL_ROUTE_FEE_BPS, Math.round(Number(jupiterPlatformFeeBps)))
+      : DEFAULT_TOTAL_ROUTE_FEE_BPS;
+  const retainedPlatformFeeBps = Math.max(0, totalRouteFeeBps - creatorRouteFeeBps);
   const jupiterPlatformFeeAmountDisplay =
     !jupiterPlatformFeeAtomic || jupiterPlatformFeeAtomic === "0"
       ? "-"
       : jupiterPlatformFeeMint === SOL_MINT
         ? `${formatSolAtomic(jupiterPlatformFeeAtomic)} SOL`
-        : `${jupiterPlatformFeeAtomic} atomic`;
+        : `${formatTokenAmountFromAtomic(jupiterPlatformFeeAtomic, outputTokenDecimals)} ${displayTokenSymbol}`;
   const jupiterQuoteErrorMessage =
     !jupiterQuote && jupiterQuoteQuery.error instanceof Error ? jupiterQuoteQuery.error.message : null;
   const jupiterNoRouteDetected =
@@ -3033,12 +3046,15 @@ export function PostCard({
   const jupiterQuoteUnavailable =
     !!jupiterQuoteErrorMessage &&
     !jupiterNoRouteDetected;
-  const jupiterPlatformFeeDisplay =
+  const jupiterRouteFeeDisplay =
     showQuoteLoading || jupiterNoRouteDetected || jupiterQuoteUnavailable
       ? "-"
       : jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
         ? `${(Number(jupiterPlatformFeeBps) / 100).toFixed(2)}% (${jupiterPlatformFeeAmountDisplay})`
         : jupiterPlatformFeeAmountDisplay;
+  const creatorFeeDisplay =
+    creatorRouteFeeBps > 0 ? `${(creatorRouteFeeBps / 100).toFixed(2)}% max` : "Disabled";
+  const retainedPlatformFeeDisplay = `${(retainedPlatformFeeBps / 100).toFixed(2)}%`;
   const jupiterPriceImpactPct = jupiterQuote?.priceImpactPct ? Number(jupiterQuote.priceImpactPct) * 100 : null;
   const tradeInputAmountNumeric = useMemo(() => {
     if (jupiterQuote) {
@@ -3680,17 +3696,17 @@ export function PostCard({
     }
   }, [chartCandlesQuery.data?.source, isFallbackChartData]);
   const walletConnectDialogClassName =
-    "w-[calc(100vw-1rem)] max-w-md overflow-hidden border-slate-900/10 bg-[linear-gradient(180deg,rgba(255,252,247,0.98),rgba(246,239,228,0.98))] p-0 text-slate-900 shadow-[0_36px_120px_-50px_rgba(15,23,42,0.34)] dark:border-white/10 dark:bg-[#080a0f]/95 dark:text-white dark:shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]";
+    "w-[calc(100vw-1rem)] max-w-md overflow-hidden border-slate-900/10 bg-[linear-gradient(180deg,rgba(255,252,247,0.98),rgba(246,239,228,0.98))] p-0 text-slate-900 shadow-[0_36px_120px_-50px_rgba(15,23,42,0.34)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.96),rgba(4,6,10,0.98))] dark:text-white dark:shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]";
   const tradeDialogSurfaceClassName =
-    "flex w-[calc(100vw-0.75rem)] max-h-[94vh] max-w-6xl flex-col overflow-hidden border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,252,248,0.98),rgba(244,237,225,0.97))] p-0 text-slate-900 shadow-[0_60px_180px_-56px_rgba(15,23,42,0.34)] dark:border-white/[0.08] dark:bg-[#07090e] dark:text-white dark:shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden";
+    "flex w-[calc(100vw-0.75rem)] max-h-[94vh] max-w-6xl flex-col overflow-hidden border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,252,248,0.98),rgba(244,237,225,0.97))] p-0 text-slate-900 shadow-[0_60px_180px_-56px_rgba(15,23,42,0.34)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.99),rgba(5,7,10,0.99))] dark:text-white dark:shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden";
   const tradeDialogHeaderClassName =
-    "relative shrink-0 overflow-hidden border-b border-slate-900/[0.06] bg-[radial-gradient(circle_at_18%_0%,rgba(16,185,129,0.10),transparent_38%),radial-gradient(circle_at_100%_0%,rgba(245,158,11,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,242,232,0.9))] px-5 pb-3 pt-4 dark:border-white/[0.06] dark:bg-[#0a0c12] sm:px-6";
+    "relative shrink-0 overflow-hidden border-b border-slate-900/[0.06] bg-[radial-gradient(circle_at_18%_0%,rgba(16,185,129,0.10),transparent_38%),radial-gradient(circle_at_100%_0%,rgba(245,158,11,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,242,232,0.9))] px-5 pb-3 pt-4 dark:border-white/[0.06] dark:bg-[radial-gradient(circle_at_18%_0%,rgba(16,185,129,0.10),transparent_38%),radial-gradient(circle_at_100%_0%,rgba(59,130,246,0.08),transparent_30%),linear-gradient(180deg,rgba(10,12,18,0.98),rgba(7,9,13,0.96))] sm:px-6";
   const tradeDialogBodyClassName =
-    "min-h-0 flex-1 space-y-3 overflow-y-auto bg-[linear-gradient(180deg,rgba(255,252,248,0.9),rgba(245,238,226,0.98))] p-3 dark:bg-[#07090e] sm:p-4";
+    "min-h-0 flex-1 space-y-3 overflow-y-auto bg-[linear-gradient(180deg,rgba(255,252,248,0.9),rgba(245,238,226,0.98))] p-3 dark:bg-[linear-gradient(180deg,rgba(7,9,14,0.98),rgba(5,7,10,0.98))] sm:p-4";
   const tradeDialogFooterClassName =
-    "relative z-20 flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[#0a0c12] sm:px-5";
+    "relative z-20 flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(7,9,13,0.98))] sm:px-5";
   const chartPanelClassName =
-    "relative overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.74)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[#0a0c12] dark:shadow-none dark:ring-0";
+    "relative overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.74)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(6,8,12,0.98))] dark:shadow-none dark:ring-white/5";
   const chartDividerClassName = "border-slate-900/[0.06] dark:border-white/[0.06]";
   const chartDividerFillClassName = "bg-slate-900/[0.08] dark:bg-white/[0.08]";
   const chartMutedTextClassName = "text-slate-500 dark:text-white/30";
@@ -3703,7 +3719,7 @@ export function PostCard({
   const chartControlButtonClassName =
     "text-slate-500 hover:bg-slate-900/[0.05] hover:text-slate-800 dark:text-white/40 dark:hover:bg-white/[0.06] dark:hover:text-white/70 disabled:opacity-30";
   const chartCanvasClassName =
-    "relative h-[280px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[#080a10]";
+    "relative h-[280px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.45),rgba(8,10,16,0.98))]";
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {
@@ -5010,7 +5026,9 @@ export function PostCard({
                       jupiterOutputFormatted={jupiterOutputAmountFormatted}
                       jupiterMinReceiveFormatted={jupiterMinReceiveFormatted}
                       jupiterPriceImpactDisplay={jupiterPriceImpactDisplay}
-                      jupiterPlatformFeeDisplay={jupiterPlatformFeeDisplay}
+                      routeFeeDisplay={jupiterRouteFeeDisplay}
+                      creatorFeeDisplay={creatorFeeDisplay}
+                      platformFeeDisplay={retainedPlatformFeeDisplay}
                       jupiterStatusLabel={jupiterStatusLabel}
                       isQuoteLoading={showQuoteLoading}
                       isExecuting={isExecutingBuy}

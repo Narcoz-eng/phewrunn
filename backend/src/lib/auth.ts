@@ -74,6 +74,14 @@ const SESSION_USER_MINIMAL_SELECT = {
   email: true,
   image: true,
 } as const;
+const MAX_EFFECTIVE_POSTER_FEE_BPS = 50;
+
+function normalizeTradeFeeShareBps(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MAX_EFFECTIVE_POSTER_FEE_BPS;
+  }
+  return Math.max(0, Math.min(MAX_EFFECTIVE_POSTER_FEE_BPS, Math.round(value)));
+}
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -360,7 +368,7 @@ function toSessionUser(
     isBanned: user.isBanned ?? false,
     isVerified: user.isVerified ?? false,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
-    tradeFeeShareBps: user.tradeFeeShareBps ?? 100,
+    tradeFeeShareBps: normalizeTradeFeeShareBps(user.tradeFeeShareBps),
     tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
     lastUsernameUpdate: user.lastUsernameUpdate ?? null,
     lastPhotoUpdate: user.lastPhotoUpdate ?? null,
@@ -500,7 +508,7 @@ function buildSessionUserFromTokenClaims(
     isBanned: claims?.isBanned ?? false,
     isVerified: claims?.isVerified ?? false,
     tradeFeeRewardsEnabled: claims?.tradeFeeRewardsEnabled ?? true,
-    tradeFeeShareBps: claims?.tradeFeeShareBps ?? 100,
+    tradeFeeShareBps: normalizeTradeFeeShareBps(claims?.tradeFeeShareBps),
     tradeFeePayoutAddress: claims?.tradeFeePayoutAddress ?? null,
     createdAt,
     updatedAt,
