@@ -3158,14 +3158,14 @@ export function PostCard({
           ? "Route ready"
           : "Awaiting quote";
   const jupiterStatusTone = !isSolanaTradeSupported
-    ? "border-white/10 bg-white/5 text-white/70"
+    ? "border-slate-900/10 bg-slate-900/[0.04] text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-white/70"
     : jupiterNoRouteDetected
-      ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+      ? "border-amber-400/30 bg-amber-400/10 text-amber-700 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-100"
       : jupiterQuoteUnavailable
-        ? "border-loss/20 bg-loss/10 text-loss"
+        ? "border-loss/20 bg-loss/10 text-rose-600 dark:text-loss"
       : jupiterQuote
-        ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
-        : "border-white/10 bg-white/5 text-white/70";
+        ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-700 dark:border-lime-300/20 dark:bg-lime-300/10 dark:text-lime-100"
+        : "border-slate-900/10 bg-slate-900/[0.04] text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-white/70";
   const jupiterReceiveDisplay = showQuoteLoading
     ? "Loading quote..."
     : jupiterNoRouteDetected
@@ -3679,6 +3679,31 @@ export function PostCard({
         return "Live";
     }
   }, [chartCandlesQuery.data?.source, isFallbackChartData]);
+  const walletConnectDialogClassName =
+    "w-[calc(100vw-1rem)] max-w-md overflow-hidden border-slate-900/10 bg-[linear-gradient(180deg,rgba(255,252,247,0.98),rgba(246,239,228,0.98))] p-0 text-slate-900 shadow-[0_36px_120px_-50px_rgba(15,23,42,0.34)] dark:border-white/10 dark:bg-[#080a0f]/95 dark:text-white dark:shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]";
+  const tradeDialogSurfaceClassName =
+    "flex w-[calc(100vw-0.75rem)] max-h-[94vh] max-w-6xl flex-col overflow-hidden border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,252,248,0.98),rgba(244,237,225,0.97))] p-0 text-slate-900 shadow-[0_60px_180px_-56px_rgba(15,23,42,0.34)] dark:border-white/[0.08] dark:bg-[#07090e] dark:text-white dark:shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden";
+  const tradeDialogHeaderClassName =
+    "relative shrink-0 overflow-hidden border-b border-slate-900/[0.06] bg-[radial-gradient(circle_at_18%_0%,rgba(16,185,129,0.10),transparent_38%),radial-gradient(circle_at_100%_0%,rgba(245,158,11,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,242,232,0.9))] px-5 pb-3 pt-4 dark:border-white/[0.06] dark:bg-[#0a0c12] sm:px-6";
+  const tradeDialogBodyClassName =
+    "min-h-0 flex-1 space-y-3 overflow-y-auto bg-[linear-gradient(180deg,rgba(255,252,248,0.9),rgba(245,238,226,0.98))] p-3 dark:bg-[#07090e] sm:p-4";
+  const tradeDialogFooterClassName =
+    "relative z-20 flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[#0a0c12] sm:px-5";
+  const chartPanelClassName =
+    "relative overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.74)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[#0a0c12] dark:shadow-none dark:ring-0";
+  const chartDividerClassName = "border-slate-900/[0.06] dark:border-white/[0.06]";
+  const chartDividerFillClassName = "bg-slate-900/[0.08] dark:bg-white/[0.08]";
+  const chartMutedTextClassName = "text-slate-500 dark:text-white/30";
+  const chartMutedSubtleTextClassName = "text-slate-400 dark:text-white/20";
+  const chartStrongTextClassName = "text-slate-800 dark:text-white/70";
+  const chartInactiveButtonClassName =
+    "text-slate-500 hover:bg-slate-900/[0.04] hover:text-slate-800 dark:text-white/35 dark:hover:bg-white/[0.04] dark:hover:text-white/60";
+  const chartInactiveToggleButtonClassName =
+    "text-slate-500 hover:bg-slate-900/[0.04] hover:text-slate-700 dark:text-white/30 dark:hover:bg-white/[0.04] dark:hover:text-white/50";
+  const chartControlButtonClassName =
+    "text-slate-500 hover:bg-slate-900/[0.05] hover:text-slate-800 dark:text-white/40 dark:hover:bg-white/[0.06] dark:hover:text-white/70 disabled:opacity-30";
+  const chartCanvasClassName =
+    "relative h-[280px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[#080a10]";
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {
@@ -3709,6 +3734,11 @@ export function PostCard({
       return { startIndex, endIndex: startIndex + width - 1 };
     });
   }, [chartTotalPoints, chartInterval]);
+
+  useEffect(() => {
+    if (!isBuyDialogOpen) return;
+    resetChartWindow();
+  }, [isBuyDialogOpen, resetChartWindow]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -4528,13 +4558,13 @@ export function PostCard({
           }
         }
       }}>
-        <DialogContent className="w-[calc(100vw-1rem)] max-w-md border-white/10 bg-[#080a0f]/95 p-0 overflow-hidden shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]">
+        <DialogContent className={walletConnectDialogClassName}>
           <div className="relative">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(163,230,53,0.14),transparent_52%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.12),transparent_58%)]" />
-            <div className="absolute inset-0 opacity-[0.035]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
-            <DialogHeader className="relative px-5 pt-5 pb-4 border-b border-white/10">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(163,230,53,0.14),transparent_52%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.12),transparent_58%)] dark:bg-[radial-gradient(circle_at_20%_10%,rgba(163,230,53,0.14),transparent_52%),radial-gradient(circle_at_100%_0%,rgba(45,212,191,0.12),transparent_58%)]" />
+            <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.035]" style={{ backgroundImage: "linear-gradient(rgba(15,23,42,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.18) 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
+            <DialogHeader className="relative border-b border-slate-900/10 px-5 pb-4 pt-5 dark:border-white/10">
               <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-                <UserPlus className="h-4 w-4 text-amber-200" />
+                <UserPlus className="h-4 w-4 text-amber-500 dark:text-amber-200" />
                 Connect Wallet to Buy
               </DialogTitle>
               <DialogDescription className="text-xs sm:text-sm text-muted-foreground">
@@ -4543,10 +4573,10 @@ export function PostCard({
             </DialogHeader>
 
             <div className="relative p-5 space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="rounded-2xl border border-slate-900/10 bg-white/65 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
                 <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Selected token</div>
                 <div className="mt-3 flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-xl overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-900/10 bg-slate-900/[0.04] dark:border-white/10 dark:bg-black/30">
                     {resolvedTokenImage ? (
                       <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" />
                     ) : (
@@ -4564,7 +4594,7 @@ export function PostCard({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="rounded-2xl border border-slate-900/10 bg-slate-900/[0.03] p-4 shadow-[0_18px_44px_-36px_rgba(148,163,184,0.65)] dark:border-white/10 dark:bg-black/20 dark:shadow-none">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Wallet status</div>
@@ -4601,7 +4631,7 @@ export function PostCard({
                       setPendingBuyAfterWalletConnect(false);
                       setIsWalletConnectDialogOpen(false);
                     }}
-                    className="h-11 border-white/10 bg-white/5 hover:bg-white/10"
+                    className="h-11 border-slate-900/10 bg-white/70 text-slate-700 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10"
                   >
                     Cancel
                   </Button>
@@ -4622,24 +4652,24 @@ export function PostCard({
         }
       }}>
         <DialogContent
-          className="flex w-[calc(100vw-0.75rem)] max-w-6xl max-h-[94vh] flex-col overflow-hidden border-white/[0.08] bg-[#07090e] p-0 shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden"
+          className={tradeDialogSurfaceClassName}
           onInteractOutside={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
         >
-          <DialogHeader className="relative shrink-0 overflow-hidden px-5 sm:px-6 pt-4 pb-3 border-b border-white/[0.06] bg-[#0a0c12]">
+          <DialogHeader className={tradeDialogHeaderClassName}>
             <div className="flex items-center justify-between gap-3">
-              <DialogTitle className="flex items-center gap-2.5 text-sm sm:text-base font-semibold text-white">
+              <DialogTitle className="flex items-center gap-2.5 text-sm font-semibold text-slate-900 dark:text-white sm:text-base">
                 {resolvedTokenImage ? (
-                  <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-6 w-6 rounded-full ring-1 ring-white/[0.1]" />
+                  <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-6 w-6 rounded-full ring-1 ring-slate-900/10 dark:ring-white/[0.1]" />
                 ) : (
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/[0.1]">
-                    <Coins className="h-3 w-3 text-white/40" />
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/[0.04] ring-1 ring-slate-900/10 dark:bg-white/[0.06] dark:ring-white/[0.1]">
+                    <Coins className="h-3 w-3 text-slate-500 dark:text-white/40" />
                   </div>
                 )}
                 <span className="truncate">{displayTokenLabel}</span>
                 {post.chainType && (
-                  <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-white/35 font-medium">
+                  <span className="rounded-md bg-slate-900/[0.04] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-slate-500 dark:bg-white/[0.05] dark:text-white/35">
                     {post.chainType}
                   </span>
                 )}
@@ -4653,7 +4683,7 @@ export function PostCard({
                   variant="ghost"
                   size="sm"
                   onClick={handleCloseBuyDialog}
-                  className="h-7 w-7 rounded-lg bg-white/[0.04] p-0 text-white/40 hover:bg-white/[0.08] hover:text-white/60"
+                  className="h-7 w-7 rounded-lg bg-slate-900/[0.04] p-0 text-slate-500 hover:bg-slate-900/[0.08] hover:text-slate-700 dark:bg-white/[0.04] dark:text-white/40 dark:hover:bg-white/[0.08] dark:hover:text-white/60"
                 >
                   <Plus className="h-3.5 w-3.5 rotate-45" />
                 </Button>
@@ -4666,29 +4696,29 @@ export function PostCard({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-[#07090e]">
+          <div className={tradeDialogBodyClassName}>
             {/* Compact token stats bar */}
             <div className="flex items-center gap-2 flex-wrap px-1">
               {post.contractAddress && (
-                <span className="rounded-md bg-white/[0.04] px-2 py-1 text-[10px] font-mono text-white/30 truncate max-w-[200px]">
+                <span className="max-w-[200px] truncate rounded-md bg-slate-900/[0.04] px-2 py-1 font-mono text-[10px] text-slate-500 dark:bg-white/[0.04] dark:text-white/30">
                   {post.contractAddress}
                 </span>
               )}
               {isBuyDialogOpen && dexTokenDataQuery.isFetching && (
-                <span className="text-[10px] text-white/25 animate-pulse">Refreshing...</span>
+                <span className="animate-pulse text-[10px] text-slate-400 dark:text-white/25">Refreshing...</span>
               )}
             </div>
 
             {!isSolanaTradeSupported ? (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-xs text-white/40">
+              <div className="rounded-xl border border-slate-900/[0.08] bg-white/65 p-3 text-xs text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-white/40 dark:shadow-none">
                 Trading is available for Solana posts only. Chart navigation remains available.
               </div>
             ) : null}
             <div className="grid gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)] lg:items-start">
                   <div className="space-y-3 lg:min-h-0 lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
-                    <div className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0a0c12]">
+                    <div className={chartPanelClassName}>
                       {/* Chart Toolbar */}
-                      <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2.5">
+                      <div className={cn("flex items-center justify-between gap-2 border-b px-4 py-2.5", chartDividerClassName)}>
                         <div className="flex items-center gap-1.5">
                           {DEX_CHART_INTERVAL_OPTIONS.map((preset) => (
                             <button
@@ -4698,8 +4728,8 @@ export function PostCard({
                               className={cn(
                                 "rounded-md px-2 py-1 text-[11px] font-medium transition-all duration-150",
                                 chartInterval === preset.value
-                                  ? "bg-white/[0.1] text-white"
-                                  : "text-white/35 hover:text-white/60 hover:bg-white/[0.04]"
+                                  ? "bg-slate-900/[0.06] text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-white/[0.1] dark:text-white"
+                                  : chartInactiveButtonClassName
                               )}
                             >
                               {preset.label}
@@ -4714,7 +4744,7 @@ export function PostCard({
                               "rounded-md px-2 py-1 text-[10px] font-medium transition-all duration-150",
                               isChartInfoVisible
                                 ? "bg-blue-500/10 text-blue-400"
-                                : "text-white/30 hover:text-white/50 hover:bg-white/[0.04]"
+                                : chartInactiveToggleButtonClassName
                             )}
                           >
                             Vol
@@ -4726,7 +4756,7 @@ export function PostCard({
                               "rounded-md px-2 py-1 text-[10px] font-medium transition-all duration-150",
                               isChartTradesVisible
                                 ? "bg-emerald-500/10 text-emerald-400"
-                                : "text-white/30 hover:text-white/50 hover:bg-white/[0.04]"
+                                : chartInactiveToggleButtonClassName
                             )}
                           >
                             OHLC
@@ -4734,32 +4764,32 @@ export function PostCard({
                         </div>
                       </div>
                       {/* Compact market stats */}
-                      <div className="flex items-center gap-3 overflow-x-auto px-4 py-2 border-b border-white/[0.05] text-[11px]">
+                      <div className={cn("flex items-center gap-3 overflow-x-auto border-b px-4 py-2 text-[11px]", chartDividerClassName)}>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-white/30">MCap</span>
-                          <span className="font-medium text-white/70">{formatMarketCap(post.entryMcap)}</span>
+                          <span className={chartMutedTextClassName}>MCap</span>
+                          <span className={cn("font-medium", chartStrongTextClassName)}>{formatMarketCap(post.entryMcap)}</span>
                           {resolvedMarketCap != null && (
                             <>
-                              <span className="text-white/15">&rarr;</span>
-                              <span className="font-medium text-white/70">{formatMarketCap(resolvedMarketCap)}</span>
+                              <span className={chartMutedSubtleTextClassName}>&rarr;</span>
+                              <span className={cn("font-medium", chartStrongTextClassName)}>{formatMarketCap(resolvedMarketCap)}</span>
                             </>
                           )}
                         </div>
-                        <div className="w-px h-3 bg-white/[0.08] shrink-0" />
+                        <div className={cn("h-3 w-px shrink-0", chartDividerFillClassName)} />
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-white/30">Price</span>
-                          <span className="font-medium text-white/70">
+                          <span className={chartMutedTextClassName}>Price</span>
+                          <span className={cn("font-medium", chartStrongTextClassName)}>
                             {resolvedPriceUsd != null ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}` : "--"}
                           </span>
                         </div>
-                        <div className="w-px h-3 bg-white/[0.08] shrink-0" />
+                        <div className={cn("h-3 w-px shrink-0", chartDividerFillClassName)} />
                         <span className={cn(
                           "font-semibold shrink-0",
-                          currentTradeDeltaPct == null ? "text-white/40" : currentTradeDeltaPct >= 0 ? "text-emerald-400" : "text-rose-400"
+                          currentTradeDeltaPct == null ? "text-slate-400 dark:text-white/40" : currentTradeDeltaPct >= 0 ? "text-emerald-400" : "text-rose-400"
                         )}>
                           {currentTradeDeltaPct == null ? "--" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
                         </span>
-                        <div className="w-px h-3 bg-white/[0.08] shrink-0" />
+                        <div className={cn("h-3 w-px shrink-0", chartDividerFillClassName)} />
                         <span className={cn(
                           "rounded-md px-1.5 py-0.5 text-[10px] font-medium shrink-0",
                           !localSettled ? "bg-blue-500/10 text-blue-400" : localIsWin ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
@@ -4769,10 +4799,10 @@ export function PostCard({
                       </div>
 
                       {/* Chart controls */}
-                      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-white/[0.05]">
-                        <div className="min-w-0 text-[10px] text-white/30 truncate">
+                      <div className={cn("flex items-center justify-between gap-2 border-b px-4 py-2", chartDividerClassName)}>
+                        <div className={cn("min-w-0 truncate text-[10px]", chartMutedTextClassName)}>
                           {chartVisibleRangeLabel}
-                          {chartRangeDetailLabel ? <span className="ml-1.5 text-white/20">{chartRangeDetailLabel}</span> : null}
+                          {chartRangeDetailLabel ? <span className={cn("ml-1.5", chartMutedSubtleTextClassName)}>{chartRangeDetailLabel}</span> : null}
                         </div>
                             <div className="flex items-center gap-0.5">
                               <Button
@@ -4781,7 +4811,7 @@ export function PostCard({
                                 size="icon"
                                 onClick={() => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2)}
                                 disabled={!hasProfessionalChartData || !canPanChartLeft}
-                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
                               >
                                 <ChevronLeft className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
@@ -4791,18 +4821,18 @@ export function PostCard({
                                 size="icon"
                                 onClick={() => panChartWindowBy(CHART_PAN_STEP_POINTS * 2)}
                                 disabled={!hasProfessionalChartData || !canPanChartRight}
-                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
                               >
                                 <ChevronRight className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
-                              <div className="w-px h-3 bg-white/[0.08] mx-0.5" />
+                              <div className={cn("mx-0.5 h-3 w-px", chartDividerFillClassName)} />
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => zoomChartWindow("in")}
                                 disabled={!hasProfessionalChartData || !canZoomInChart}
-                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
                               >
                                 <Plus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
@@ -4812,17 +4842,17 @@ export function PostCard({
                                 size="icon"
                                 onClick={() => zoomChartWindow("out")}
                                 disabled={!hasProfessionalChartData || !canZoomOutChart}
-                                className="h-7 w-7 sm:h-6 sm:w-6 text-white/40 hover:text-white/70 hover:bg-white/[0.06] disabled:opacity-30"
+                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
                               >
                                 <Minus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
                               </Button>
-                              <div className="w-px h-3 bg-white/[0.08] mx-0.5" />
+                              <div className={cn("mx-0.5 h-3 w-px", chartDividerFillClassName)} />
                               <Button
                                 type="button"
                                 variant="ghost"
                                 onClick={resetChartWindow}
                                 disabled={!hasProfessionalChartData}
-                                className="h-7 px-2 sm:h-6 sm:px-1.5 text-[10px] text-white/30 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-30"
+                                className={cn("h-7 px-2 text-[10px] sm:h-6 sm:px-1.5", chartControlButtonClassName)}
                               >
                                 Reset
                               </Button>
@@ -4832,8 +4862,8 @@ export function PostCard({
                                 onClick={centerChartOnEntry}
                                 disabled={!hasProfessionalChartData || chartEntryIndex < 0}
                                 className={cn(
-                                  "h-7 px-2 sm:h-6 sm:px-1.5 text-[10px] hover:bg-white/[0.06] disabled:opacity-30",
-                                  isEntryInCurrentView ? "text-blue-400" : "text-white/30 hover:text-white/60"
+                                  "h-7 px-2 text-[10px] sm:h-6 sm:px-1.5 hover:bg-slate-900/[0.05] dark:hover:bg-white/[0.06] disabled:opacity-30",
+                                  isEntryInCurrentView ? "text-blue-400" : "text-slate-500 hover:text-slate-800 dark:text-white/30 dark:hover:text-white/60"
                                 )}
                               >
                                 Entry
@@ -4841,7 +4871,7 @@ export function PostCard({
                             </div>
                           </div>
                           {isLikelyMobileDevice ? (
-                            <div className="mt-1 text-[10px] text-white/28">
+                            <div className="mt-1 text-[10px] text-slate-400 dark:text-white/28">
                               Pinch to zoom. Drag sideways to pan.
                             </div>
                           ) : null}
@@ -4849,7 +4879,7 @@ export function PostCard({
                       <div
                         ref={chartInteractionRef}
                         className={cn(
-                          "relative h-[280px] sm:h-[360px] lg:h-[460px] xl:h-[520px] bg-[#080a10] px-1 sm:px-2 pb-2 pt-2 overscroll-contain",
+                          chartCanvasClassName,
                           hasProfessionalChartData
                             ? isChartMousePanning
                               ? "cursor-grabbing"
@@ -4899,19 +4929,20 @@ export function PostCard({
                             }}
                             formatPrice={formatUsdCompact}
                             formatTick={formatChartXAxisTick}
+                            resetHoverKey={isBuyDialogOpen ? `${post.id}:${chartInterval}` : null}
                           />
                         ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
                           <div className="flex h-full items-center justify-center">
                             <div className="flex flex-col items-center gap-2">
-                              <Loader2 className="h-5 w-5 animate-spin text-white/20" />
-                              <span className="text-[11px] text-white/25">Loading chart data...</span>
+                              <Loader2 className="h-5 w-5 animate-spin text-slate-400 dark:text-white/20" />
+                              <span className="text-[11px] text-slate-500 dark:text-white/25">Loading chart data...</span>
                             </div>
                           </div>
                         ) : chartCandlesQuery.error ? (
                           <div className="flex h-full items-center justify-center p-6 text-center">
                             <div className="space-y-2">
-                              <BarChart3 className="mx-auto h-6 w-6 text-white/15" />
-                              <p className="text-[11px] text-white/25">
+                              <BarChart3 className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
+                              <p className="text-[11px] text-slate-500 dark:text-white/25">
                                 Chart feed unavailable. Try a different interval.
                               </p>
                               <Button
@@ -4920,7 +4951,7 @@ export function PostCard({
                                 onClick={() => {
                                   void chartCandlesQuery.refetch();
                                 }}
-                                className="h-7 border-white/10 bg-white/[0.03] px-3 text-[10px] text-white/70 hover:bg-white/[0.06]"
+                                className="h-7 border-slate-900/10 bg-white/70 px-3 text-[10px] text-slate-700 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:text-white/70 dark:hover:bg-white/[0.06]"
                               >
                                 Retry
                               </Button>
@@ -4929,8 +4960,8 @@ export function PostCard({
                         ) : (
                           <div className="flex h-full items-center justify-center p-6 text-center">
                             <div className="space-y-2">
-                              <BarChart3 className="mx-auto h-6 w-6 text-white/15" />
-                              <p className="text-[11px] text-white/25">
+                              <BarChart3 className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
+                              <p className="text-[11px] text-slate-500 dark:text-white/25">
                                 Candle data not yet available for this token.
                               </p>
                             </div>
@@ -4939,7 +4970,7 @@ export function PostCard({
                       </div>
 
                       {/* Chart footer */}
-                      <div className="flex items-center justify-between border-t border-white/[0.05] px-4 py-2 text-[10px] text-white/25">
+                      <div className={cn("flex items-center justify-between border-t px-4 py-2 text-[10px] text-slate-500 dark:text-white/25", chartDividerClassName)}>
                         <div className="flex items-center gap-3">
                           {hasProfessionalChartData && (
                             <span>{chartFeedLabel} {chartRequestConfig.timeframe}/{chartRequestConfig.aggregate}</span>
@@ -5017,14 +5048,14 @@ export function PostCard({
                 </div>
           </div>
 
-          <DialogFooter className="relative z-20 px-4 sm:px-5 py-3 border-t border-white/[0.06] bg-[#0a0c12] flex-row items-center justify-between gap-2">
+          <DialogFooter className={tradeDialogFooterClassName}>
             <div className="flex items-center gap-2">
               {resolvedDexscreenerUrl && (
                 <a
                   href={resolvedDexscreenerUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-[10px] text-white/25 hover:text-white/50 transition-colors"
+                  className="flex items-center gap-1 text-[10px] text-slate-500 transition-colors hover:text-slate-700 dark:text-white/25 dark:hover:text-white/50"
                 >
                   DexScreener
                   <ExternalLink className="w-2.5 h-2.5" />
@@ -5036,7 +5067,7 @@ export function PostCard({
                 type="button"
                 variant="ghost"
                 onClick={handleCloseBuyDialog}
-                className="h-8 px-3 text-[11px] text-white/40 hover:text-white/60 hover:bg-white/[0.04]"
+                className="h-8 px-3 text-[11px] text-slate-500 hover:bg-slate-900/[0.04] hover:text-slate-700 dark:text-white/40 dark:hover:bg-white/[0.04] dark:hover:text-white/60"
               >
                 Close
               </Button>

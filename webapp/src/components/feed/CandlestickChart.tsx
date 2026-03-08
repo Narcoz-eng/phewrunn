@@ -28,6 +28,7 @@ type CandlestickChartProps = {
   onOverviewSelect?: (index: number) => void;
   formatPrice: (value: number) => string;
   formatTick: (timestampMs: number) => string;
+  resetHoverKey?: string | number | boolean | null;
   className?: string;
 };
 
@@ -42,6 +43,7 @@ const MAIN_PADDING_BOTTOM = 8;
 const SECTION_GAP = 10;
 const MIN_CANDLE_BODY_WIDTH = 3;
 const MAX_CANDLE_BODY_WIDTH = 14;
+const INITIAL_HOVER_LOCK_MS = 220;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -71,10 +73,12 @@ export function CandlestickChart({
   onOverviewSelect,
   formatPrice,
   formatTick,
+  resetHoverKey = null,
   className,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const overviewPointerActiveRef = useRef(false);
+  const suppressHoverUntilRef = useRef(0);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredVisibleIndex, setHoveredVisibleIndex] = useState<number | null>(null);
 
@@ -147,6 +151,12 @@ export function CandlestickChart({
     if (hoveredVisibleIndex < visibleData.length) return;
     setHoveredVisibleIndex(visibleData.length > 0 ? visibleData.length - 1 : null);
   }, [hoveredVisibleIndex, visibleData.length]);
+
+  useEffect(() => {
+    setHoveredVisibleIndex(null);
+    suppressHoverUntilRef.current =
+      typeof performance !== "undefined" ? performance.now() + INITIAL_HOVER_LOCK_MS : 0;
+  }, [resetHoverKey]);
 
   const width = size.width;
   const height = size.height;
@@ -242,19 +252,78 @@ export function CandlestickChart({
   const xTicks = useMemo(() => {
     if (visibleData.length === 0) return [];
     const lastIndex = visibleData.length - 1;
-    const step = Math.max(1, Math.floor(lastIndex / Math.max(1, X_TICK_COUNT - 1)));
-    const ticks: Array<{ x: number; label: string }> = [];
-    for (let index = 0; index <= lastIndex; index += step) {
+    if (lastIndex === 0) {
+      const onlyPoint = visibleData[0];
+      return onlyPoint
+        ? [{ x: xForVisibleIndex(0), label: formatTick(onlyPoint.ts), anchor: "end" as const }]
+        : [];
+    }
+
+    const longestLabelLength = visibleData.reduce((maxLength, point) => {
+      const nextLabelLength = formatTick(point.ts).length;
+      return Math.max(maxLength, nextLabelLength);
+    }, 0);
+    const minTickGapPx = Math.max(72, Math.min(132, longestLabelLength * 7.4));
+    const maxTickCount = clamp(
+      Math.floor(chartWidth / Math.max(1, minTickGapPx)) + 1,
+      2,
+      Math.min(X_TICK_COUNT, visibleData.length)
+    );
+    const ticks: Array<{ index: number; x: number; label: string; anchor: "start" | "middle" | "end" }> = [];
+
+    const pushTick = (index: number, anchor: "start" | "middle" | "end") => {
       const point = visibleData[index];
-      if (!point) continue;
-      ticks.push({ x: xForVisibleIndex(index), label: formatTick(point.ts) });
+      if (!point) return;
+      const label = formatTick(point.ts);
+      const x = xForVisibleIndex(index);
+      const existingIndex = ticks.findIndex((tick) => tick.index === index);
+      if (existingIndex >= 0) {
+        ticks[existingIndex] = { index, x, label, anchor };
+        return;
+      }
+      if (ticks.some((tick) => tick.label === label && Math.abs(tick.x - x) < minTickGapPx * 0.5)) {
+        return;
+      }
+      ticks.push({ index, x, label, anchor });
+    };
+
+    pushTick(0, "start");
+    for (let slot = 1; slot < maxTickCount - 1; slot += 1) {
+      const ratio = slot / Math.max(1, maxTickCount - 1);
+      const index = clamp(Math.round(ratio * lastIndex), 1, Math.max(1, lastIndex - 1));
+      if (index <= 0 || index >= lastIndex) continue;
+      pushTick(index, "middle");
     }
-    const lastPoint = visibleData[lastIndex];
-    if (lastPoint && ticks[ticks.length - 1]?.label !== formatTick(lastPoint.ts)) {
-      ticks.push({ x: xForVisibleIndex(lastIndex), label: formatTick(lastPoint.ts) });
+    pushTick(lastIndex, "end");
+
+    const sortedTicks = ticks.sort((left, right) => left.index - right.index);
+    const filteredTicks: typeof sortedTicks = [];
+
+    for (const tick of sortedTicks) {
+      const priorTick = filteredTicks[filteredTicks.length - 1];
+      if (!priorTick) {
+        filteredTicks.push(tick);
+        continue;
+      }
+
+      const requiredGapPx = tick.anchor === "end" ? minTickGapPx * 0.72 : minTickGapPx;
+      if (tick.x - priorTick.x >= requiredGapPx) {
+        filteredTicks.push(tick);
+        continue;
+      }
+
+      if (tick.anchor === "end") {
+        while (filteredTicks.length > 1) {
+          const candidatePrior = filteredTicks[filteredTicks.length - 1];
+          if (tick.x - candidatePrior.x >= minTickGapPx * 0.72) break;
+          filteredTicks.pop();
+        }
+        filteredTicks.push(tick);
+      }
     }
-    return ticks;
-  }, [formatTick, visibleData, xForVisibleIndex]);
+
+    return filteredTicks;
+  }, [chartWidth, formatTick, visibleData, xForVisibleIndex]);
 
   const yTicks = useMemo(() => {
     const ticks: Array<{ y: number; value: number }> = [];
@@ -279,6 +348,13 @@ export function CandlestickChart({
     const node = containerRef.current;
     if (!node || visibleData.length === 0) {
       setHoveredVisibleIndex(null);
+      return;
+    }
+    if (
+      suppressHoverUntilRef.current > 0 &&
+      typeof performance !== "undefined" &&
+      performance.now() < suppressHoverUntilRef.current
+    ) {
       return;
     }
     const rect = node.getBoundingClientRect();
@@ -310,6 +386,16 @@ export function CandlestickChart({
           return entryIndex >= 0 ? xForVisibleIndex(entryIndex) : null;
         })()
       : null;
+  const priceGridStroke = "hsl(var(--foreground) / 0.09)";
+  const axisLabelColor = "hsl(var(--muted-foreground) / 0.85)";
+  const axisBoundaryLabelColor = "hsl(var(--foreground) / 0.66)";
+  const overviewBackground = "hsl(var(--foreground) / 0.035)";
+  const overviewStroke = "hsl(var(--foreground) / 0.08)";
+  const overviewWindowFill = "hsl(var(--foreground) / 0.065)";
+  const overviewWindowStroke = "hsl(var(--foreground) / 0.24)";
+  const crosshairVerticalStroke = "hsl(var(--foreground) / 0.18)";
+  const crosshairHorizontalStroke = "hsl(var(--foreground) / 0.12)";
+  const entryPointStroke = "hsl(var(--background) / 0.96)";
 
   return (
     <div
@@ -333,13 +419,13 @@ export function CandlestickChart({
               x2={MAIN_PADDING_LEFT + chartWidth}
               y1={tick.y}
               y2={tick.y}
-              stroke="rgba(255,255,255,0.06)"
+              stroke={priceGridStroke}
               strokeDasharray={index === PRICE_TICK_COUNT - 1 ? "0" : "3 4"}
             />
             <text
               x={MAIN_PADDING_LEFT + chartWidth + 8}
               y={tick.y + 4}
-              fill="rgba(255,255,255,0.60)"
+              fill={axisLabelColor}
               fontSize="10"
             >
               {formatPrice(tick.value).replace("$", "")}
@@ -453,7 +539,7 @@ export function CandlestickChart({
               cy={yForPrice(entryPoint.close)}
               r="4"
               fill="#60a5fa"
-              stroke="rgba(8,10,16,0.92)"
+              stroke={entryPointStroke}
               strokeWidth="1.4"
             />
           </>
@@ -466,7 +552,7 @@ export function CandlestickChart({
               x2={activeCrosshairX}
               y1={priceTop}
               y2={showVolume ? volumeBottom : priceBottom}
-              stroke="rgba(255,255,255,0.16)"
+              stroke={crosshairVerticalStroke}
               strokeDasharray="3 5"
             />
             <line
@@ -474,7 +560,7 @@ export function CandlestickChart({
               x2={MAIN_PADDING_LEFT + chartWidth}
               y1={activeCrosshairY}
               y2={activeCrosshairY}
-              stroke="rgba(255,255,255,0.12)"
+              stroke={crosshairHorizontalStroke}
               strokeDasharray="3 5"
             />
             <circle cx={activeCrosshairX} cy={activeCrosshairY} r="3.2" fill={stroke} />
@@ -486,9 +572,10 @@ export function CandlestickChart({
             key={`x-tick-${index}`}
             x={tick.x}
             y={mainContentBottom + 16}
-            textAnchor={index === 0 ? "start" : index === xTicks.length - 1 ? "end" : "middle"}
-            fill="rgba(255,255,255,0.55)"
+            textAnchor={tick.anchor}
+            fill={tick.anchor === "end" ? axisBoundaryLabelColor : axisLabelColor}
             fontSize="10"
+            fontWeight={tick.anchor === "end" ? 600 : 500}
           >
             {tick.label}
           </text>
@@ -500,8 +587,8 @@ export function CandlestickChart({
           width={chartWidth}
           height={overviewHeight}
           rx="8"
-          fill="rgba(255,255,255,0.03)"
-          stroke="rgba(255,255,255,0.06)"
+          fill={overviewBackground}
+          stroke={overviewStroke}
         />
         <path
           d={overviewLinePath}
@@ -517,8 +604,8 @@ export function CandlestickChart({
             width={Math.max(10, xForGlobalIndex(safeWindow.endIndex) - xForGlobalIndex(safeWindow.startIndex) + 6)}
             height={Math.max(10, overviewHeight - 4)}
             rx="7"
-            fill="rgba(255,255,255,0.06)"
-            stroke="rgba(255,255,255,0.22)"
+            fill={overviewWindowFill}
+            stroke={overviewWindowStroke}
           />
         ) : null}
       </svg>
@@ -552,20 +639,20 @@ export function CandlestickChart({
       />
 
       {activePoint ? (
-        <div className="pointer-events-none absolute left-2 top-2 rounded-lg border border-white/[0.08] bg-[#0b0f16]/88 px-2.5 py-2 text-[10px] text-white/80 shadow-[0_18px_36px_-28px_rgba(0,0,0,0.95)] backdrop-blur-sm">
-          <div className="mb-1 text-[10px] font-medium text-white/45">{activePoint.fullLabel}</div>
+        <div className="pointer-events-none absolute left-2 top-2 rounded-lg border border-slate-900/10 bg-white/90 px-2.5 py-2 text-[10px] text-slate-700 shadow-[0_18px_36px_-28px_rgba(148,163,184,0.72)] backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#0b0f16]/88 dark:text-white/80 dark:shadow-[0_18px_36px_-28px_rgba(0,0,0,0.95)]">
+          <div className="mb-1 text-[10px] font-medium text-slate-500 dark:text-white/45">{activePoint.fullLabel}</div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-            <span className="text-white/35">Open</span>
+            <span className="text-slate-500 dark:text-white/35">Open</span>
             <span className="text-right font-medium">{formatPrice(activePoint.open)}</span>
-            <span className="text-white/35">High</span>
+            <span className="text-slate-500 dark:text-white/35">High</span>
             <span className="text-right font-medium">{formatPrice(activePoint.high)}</span>
-            <span className="text-white/35">Low</span>
+            <span className="text-slate-500 dark:text-white/35">Low</span>
             <span className="text-right font-medium">{formatPrice(activePoint.low)}</span>
-            <span className="text-white/35">Close</span>
+            <span className="text-slate-500 dark:text-white/35">Close</span>
             <span className="text-right font-medium">{formatPrice(activePoint.close)}</span>
             {showVolume ? (
               <>
-                <span className="text-white/35">Volume</span>
+                <span className="text-slate-500 dark:text-white/35">Volume</span>
                 <span className="text-right font-medium">{activePoint.volume.toLocaleString()}</span>
               </>
             ) : null}
