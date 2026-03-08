@@ -125,10 +125,10 @@ export function NotificationItem({
   return (
     <article
       className={cn(
-        "group relative mx-2 my-2 overflow-hidden rounded-[24px] border border-border/65 transition-colors shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.14)] dark:shadow-none",
+        "group relative overflow-hidden rounded-[24px] border border-border/65 transition-all duration-200 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.14)] dark:shadow-none",
         !notification.read
-          ? "bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.1),transparent_48%),linear-gradient(180deg,hsl(0_0%_100%/0.94),hsl(38_35%_94%/0.92))] hover:bg-primary/[0.06] dark:bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.12),transparent_44%),linear-gradient(180deg,rgba(14,16,22,0.96),rgba(10,12,16,0.98))]"
-          : "bg-[linear-gradient(180deg,hsl(0_0%_100%/0.82),hsl(38_30%_93%/0.86))] hover:bg-white/90 dark:bg-[linear-gradient(180deg,rgba(12,14,20,0.92),rgba(8,10,14,0.96))]"
+          ? "bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.1),transparent_48%),linear-gradient(180deg,hsl(0_0%_100%/0.94),hsl(38_35%_94%/0.92))] hover:border-primary/20 hover:bg-primary/[0.05] hover:shadow-[0_24px_42px_-34px_hsl(var(--primary)/0.22)] dark:bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.12),transparent_44%),linear-gradient(180deg,rgba(14,16,22,0.96),rgba(10,12,16,0.98))] dark:hover:shadow-none"
+          : "bg-[linear-gradient(180deg,hsl(0_0%_100%/0.82),hsl(38_30%_93%/0.86))] hover:border-border hover:bg-white/90 hover:shadow-[0_24px_42px_-34px_hsl(var(--foreground)/0.18)] dark:bg-[linear-gradient(180deg,rgba(12,14,20,0.92),rgba(8,10,14,0.96))] dark:hover:shadow-none"
       )}
     >
       <div
@@ -136,7 +136,7 @@ export function NotificationItem({
         tabIndex={0}
         onClick={handleRowActivate}
         onKeyDown={handleRowKeyDown}
-        className="flex items-start gap-3 px-4 py-3 pr-20 outline-none"
+        className="flex items-start gap-3.5 px-4 py-4 pr-24 outline-none sm:pr-28"
       >
         <div className="relative shrink-0">
           <Avatar
@@ -173,14 +173,14 @@ export function NotificationItem({
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <span className="truncate text-sm font-semibold text-foreground">
               {fromUser ? `@${fromUser.username || fromUser.name}` : "PHEW"}
             </span>
             <span className="text-xs text-muted-foreground">{formatTimeAgo(notification.createdAt)}</span>
             {!notification.read ? <span className="h-2 w-2 rounded-full bg-primary shrink-0" /> : null}
           </div>
-          <p className={cn("mt-0.5 text-sm leading-relaxed text-foreground/95", !notification.read && "font-medium")}>
+          <p className={cn("mt-1 text-sm leading-relaxed text-foreground/95", !notification.read && "font-medium")}>
             {notification.message}
           </p>
           {hasMergedItems ? (
@@ -206,12 +206,12 @@ export function NotificationItem({
         </div>
       </div>
 
-        <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="absolute right-3 top-3 flex items-center gap-1.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
         {!notification.read ? (
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
+            className="h-8 w-8 rounded-full border border-border/70 bg-background/75 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
             onClick={handleMarkReadClick}
             title="Mark as read"
           >
@@ -221,7 +221,7 @@ export function NotificationItem({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="h-8 w-8 rounded-full border border-border/70 bg-background/75 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
           onClick={handleDismissClick}
           title="Dismiss notification"
         >
@@ -230,7 +230,7 @@ export function NotificationItem({
       </div>
 
       {hasMergedItems && isExpanded ? (
-        <div className="border-t border-border/60 bg-muted/15 px-4 pb-3 pt-2">
+        <div className="border-t border-border/60 bg-muted/15 px-4 pb-4 pt-3">
           <div className="space-y-2">
             {mergedItems.map((item) => {
               const itemPreview = stripContractAddress(item.post?.content ?? "").trim();
@@ -252,7 +252,7 @@ export function NotificationItem({
                       navigate(itemHref);
                     }
                   }}
-                  className="w-full rounded-[16px] border border-border/60 bg-background/70 px-3 py-2 text-left hover:bg-background/90"
+                  className="w-full rounded-[16px] border border-border/60 bg-background/70 px-3 py-2.5 text-left transition-colors hover:bg-background/90"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[11px] text-muted-foreground">{formatTimeAgo(item.createdAt)}</span>
@@ -278,7 +278,7 @@ export function NotificationItem({
 
 export function NotificationItemSkeleton() {
   return (
-    <div className="mx-2 my-2 flex items-start gap-3 rounded-[24px] border border-border/60 px-4 py-3">
+    <div className="flex items-start gap-3 rounded-[24px] border border-border/60 px-4 py-4">
       <div className="h-10 w-10 rounded-full bg-muted animate-pulse shrink-0" />
       <div className="flex-1 space-y-2">
         <div className="h-3.5 w-1/3 bg-muted animate-pulse rounded" />

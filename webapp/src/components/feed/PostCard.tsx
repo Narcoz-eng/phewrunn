@@ -3163,15 +3163,15 @@ export function PostCard({
   const shouldPulseTradeCta =
     isSolanaTradeSupported && (!isWalletConnectedForTrade || !localSettled);
   const connectWalletTone =
-    "border-emerald-200/70 bg-gradient-to-r from-emerald-300/95 via-teal-300/90 to-cyan-300/95 text-[#04251f] hover:from-emerald-200 hover:via-teal-200 hover:to-cyan-200 shadow-[0_20px_44px_-24px_rgba(45,212,191,0.90)]";
+    "border-emerald-300/75 bg-[linear-gradient(135deg,rgba(199,245,166,0.96),rgba(152,233,220,0.94))] text-[#0c2e24] shadow-[0_20px_44px_-24px_rgba(45,212,191,0.72)] hover:brightness-[1.02] dark:border-emerald-200/25 dark:bg-[linear-gradient(135deg,rgba(52,211,153,0.18),rgba(45,212,191,0.14))] dark:text-white dark:shadow-[0_18px_40px_-28px_rgba(16,185,129,0.35)]";
   const tradeButtonTone = !isSolanaTradeSupported
-    ? "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+    ? "border-border/70 bg-white/80 text-slate-700 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
     : isWalletConnectedForTrade
       ? !localSettled
-        ? "border-lime-300/25 bg-gradient-to-r from-lime-400/20 via-lime-300/12 to-white/5 text-white hover:from-lime-400/25 hover:to-white/10 shadow-lg shadow-lime-400/10"
+        ? "border-emerald-300/70 bg-[linear-gradient(135deg,rgba(199,245,166,0.96),rgba(152,233,220,0.92))] text-[#0c2e24] hover:brightness-[1.02] shadow-[0_18px_40px_-24px_rgba(34,197,94,0.35)] dark:border-lime-300/25 dark:bg-gradient-to-r dark:from-lime-400/20 dark:via-lime-300/12 dark:to-white/5 dark:text-white dark:hover:from-lime-400/25 dark:hover:to-white/10 dark:shadow-lg dark:shadow-lime-400/10"
         : localIsWin
-          ? "border-gain/25 bg-gradient-to-r from-gain/20 via-gain/12 to-white/5 text-white hover:from-gain/25 hover:to-white/10 shadow-lg shadow-gain/15"
-          : "border-loss/20 bg-gradient-to-r from-white/6 to-white/4 text-white hover:from-white/10 hover:to-white/6"
+          ? "border-emerald-300/55 bg-[linear-gradient(135deg,rgba(221,255,230,0.96),rgba(192,245,214,0.92))] text-emerald-800 hover:brightness-[1.02] shadow-[0_18px_40px_-26px_rgba(16,185,129,0.28)] dark:border-gain/25 dark:bg-gradient-to-r dark:from-gain/20 dark:via-gain/12 dark:to-white/5 dark:text-white dark:hover:from-gain/25 dark:hover:to-white/10 dark:shadow-lg dark:shadow-gain/15"
+          : "border-rose-300/55 bg-[linear-gradient(135deg,rgba(255,244,244,0.96),rgba(255,228,228,0.92))] text-rose-700 hover:bg-rose-50 shadow-[0_18px_40px_-28px_rgba(244,63,94,0.18)] dark:border-loss/20 dark:bg-gradient-to-r dark:from-white/6 dark:to-white/4 dark:text-white dark:hover:from-white/10 dark:hover:to-white/6"
       : connectWalletTone;
   const canTriggerWalletConnectFromFooter = isSolanaTradeSupported && !hasWalletSignerForTrade;
   const isBuyFooterDisabled = isSolanaTradeSupported
@@ -3908,7 +3908,7 @@ export function PostCard({
                     targetLabel={resolvedTokenSymbol ?? post.author.username ?? post.author.name}
                     buttonVariant="ghost"
                     buttonSize="icon"
-                    buttonClassName="h-8 w-8 rounded-full border border-border/70 text-muted-foreground hover:text-foreground"
+                    buttonClassName="h-8 w-8 rounded-full border border-border/75 bg-white/78 text-slate-500 shadow-[0_14px_24px_-20px_hsl(var(--foreground)/0.18)] hover:bg-white hover:text-slate-800 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white/40 dark:shadow-none dark:hover:bg-white/[0.08] dark:hover:text-white/70"
                     iconOnly
                   />
                   <button
@@ -3917,8 +3917,8 @@ export function PostCard({
                     className={cn(
                       "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all",
                       isFollowing
-                        ? "border border-primary/25 bg-primary/10 text-primary hover:bg-primary/15"
-                        : "border border-primary/15 bg-primary text-primary-foreground shadow-[0_16px_34px_-20px_hsl(var(--primary)/0.42)] hover:brightness-[1.03]"
+                        ? "border border-emerald-300/55 bg-emerald-50 text-emerald-700 shadow-[0_14px_28px_-24px_rgba(16,185,129,0.24)] hover:bg-emerald-100 dark:border-primary/25 dark:bg-primary/10 dark:text-primary dark:shadow-none dark:hover:bg-primary/15"
+                        : "border border-primary/20 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),hsl(var(--accent)/0.85))] text-slate-950 shadow-[0_16px_34px_-20px_hsl(var(--primary)/0.42)] hover:brightness-[1.03] dark:border-primary/15 dark:bg-primary dark:text-primary-foreground dark:hover:brightness-[1.03]"
                     )}
                   >
                     {isFollowLoading ? (
@@ -4062,7 +4062,7 @@ export function PostCard({
                         type="button"
                         onClick={() => handleQuickBuyPresetClick(amount)}
                         disabled={isExecutingBuy}
-                        className="h-8 rounded-full border border-lime-300/15 bg-lime-300/5 px-2.5 text-[11px] font-semibold text-lime-50/90 transition-colors hover:bg-lime-300/10 hover:border-lime-300/25 disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="h-8 rounded-full border border-emerald-300/35 bg-white/80 px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:border-emerald-400/50 hover:bg-emerald-50 hover:text-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-lime-300/15 dark:bg-lime-300/5 dark:text-lime-50/90 dark:hover:bg-lime-300/10 dark:hover:border-lime-300/25 dark:hover:text-white"
                         title={`Quick buy ${amount} SOL`}
                       >
                         {amount} SOL
@@ -4075,7 +4075,7 @@ export function PostCard({
                         setShowSlippageSettings(true);
                         handleOpenBuyDialog();
                       }}
-                      className="h-8 rounded-full border border-white/10 bg-black/20 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                      className="h-8 rounded-full border border-border/75 bg-white/80 px-2.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-black/20 dark:text-muted-foreground dark:hover:bg-white/5 dark:hover:text-foreground"
                     >
                       Edit
                     </button>

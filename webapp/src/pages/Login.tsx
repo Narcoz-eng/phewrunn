@@ -356,7 +356,7 @@ function PrivyLoginButton() {
         <Button
           type="button"
           variant="outline"
-          className="h-auto min-h-[76px] w-full justify-between rounded-[24px] border border-white/15 bg-[linear-gradient(180deg,rgba(14,18,20,0.94),rgba(8,11,12,0.9))] px-4 py-4 text-left text-white shadow-[0_20px_60px_-34px_rgba(0,0,0,0.95)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-black/50"
+          className="group h-auto min-h-[76px] w-full justify-between rounded-[24px] border border-white/18 bg-[linear-gradient(180deg,rgba(14,18,20,0.96),rgba(8,11,12,0.94))] px-4 py-4 text-left text-white shadow-[0_20px_60px_-34px_rgba(0,0,0,0.95)] transition-[border-color,box-shadow,background-color,color] duration-300 hover:border-white/28 hover:bg-[linear-gradient(180deg,rgba(18,22,26,0.98),rgba(10,13,16,0.96))] hover:text-white hover:shadow-[0_24px_68px_-34px_rgba(0,0,0,0.98)]"
           onClick={() => login({ loginMethods: ["twitter"] })}
           disabled={isLoading || isRetryBlocked}
         >
@@ -368,17 +368,17 @@ function PrivyLoginButton() {
           ) : (
             <>
               <span className="flex min-w-0 flex-1 items-center gap-3">
-                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-black">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] text-sm font-black transition-colors group-hover:border-white/18 group-hover:bg-white/[0.09]">
                   X
                 </span>
                 <span className="min-w-0 flex-1 space-y-0.5 pr-2">
                   <span className="block truncate text-sm font-semibold leading-tight">{xLabel}</span>
-                  <span className="block truncate text-xs text-white/60 max-[420px]:hidden">
+                  <span className="block truncate text-xs text-white/70 max-[420px]:hidden">
                     {xSubLabel}
                   </span>
                 </span>
               </span>
-              <RouteArrowIcon className="h-4 w-4 shrink-0" />
+              <RouteArrowIcon className="h-4 w-4 shrink-0 transition-transform duration-300 group-hover:translate-x-0.5" />
             </>
           )}
         </Button>

@@ -129,19 +129,21 @@ function mergeNotifications(notifications: Notification[]): Notification[] {
 function EmptyState({ mode }: { mode: "all" | "unread" }) {
   const isUnreadMode = mode === "unread";
   return (
-    <div className="app-empty-state m-4">
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
-        <BellOff className="h-10 w-10 text-muted-foreground" />
-      </div>
-      <div>
-        <p className="font-semibold text-foreground text-lg">
-          {isUnreadMode ? "You're all caught up" : "No notifications yet"}
-        </p>
-        <p className="text-sm text-muted-foreground mt-1 max-w-xs">
-          {isUnreadMode
-            ? "Unread alerts will appear here as soon as there is new activity."
-            : "When someone interacts with your posts or follows you, you'll see it here."}
-        </p>
+    <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
+      <div className="app-empty-state w-full gap-5 px-8 py-12">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full border border-border/70 bg-muted/80">
+          <BellOff className="h-10 w-10 text-muted-foreground" />
+        </div>
+        <div>
+          <p className="text-lg font-semibold text-foreground">
+            {isUnreadMode ? "You're all caught up" : "No notifications yet"}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground max-w-xs">
+            {isUnreadMode
+              ? "Unread alerts will appear here as soon as there is new activity."
+              : "When someone interacts with your posts or follows you, you'll see it here."}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -446,14 +448,16 @@ export default function Notifications() {
 
       <main className="app-page-shell pt-5">
         <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
-          <div className="sticky top-[4.4rem] z-40 border-b border-border/60 bg-white/70 px-2 backdrop-blur-xl dark:bg-black/20">
-            <div className="app-tab-rail my-3 flex items-center">
+          <div className="sticky top-[4.4rem] z-40 border-b border-border/60 bg-background/75 px-4 py-3 backdrop-blur-xl dark:bg-black/28">
+            <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-border/65 bg-background/55 p-1.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
               <button
                 type="button"
                 onClick={() => setActiveFilter("all")}
                 className={cn(
-                  "relative z-10 h-11 rounded-[18px] px-4 text-sm font-semibold transition-colors",
-                  activeFilter === "all" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                  "h-11 rounded-[18px] px-4 text-sm font-semibold transition-all duration-200",
+                  activeFilter === "all"
+                    ? "border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.98),hsl(37_34%_95%/0.92))] text-foreground shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none"
+                    : "text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/[0.04]"
                 )}
               >
                 All
@@ -462,35 +466,33 @@ export default function Notifications() {
                 type="button"
                 onClick={() => setActiveFilter("unread")}
                 className={cn(
-                  "relative z-10 h-11 rounded-[18px] px-4 text-sm font-semibold transition-colors",
-                  activeFilter === "unread" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                  "h-11 rounded-[18px] px-4 text-sm font-semibold transition-all duration-200",
+                  activeFilter === "unread"
+                    ? "border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.98),hsl(37_34%_95%/0.92))] text-foreground shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none"
+                    : "text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/[0.04]"
                 )}
               >
                 Unread
               </button>
-              <span
-                className={cn(
-                  "absolute bottom-1.5 top-1.5 rounded-[18px] border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.95),hsl(37_34%_95%/0.9))] shadow-[0_16px_28px_-26px_hsl(var(--foreground)/0.16)] transition-all duration-300 dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none",
-                  activeFilter === "all" ? "left-1.5 w-[72px]" : "left-[86px] w-[88px]"
-                )}
-              />
             </div>
           </div>
 
           {!isAuthenticated ? (
-            <div className="app-empty-state m-4">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
-                <PhewBellIcon className="h-10 w-10 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="font-semibold text-foreground text-lg">Sign in to view notifications</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Activity alerts appear here after you sign in.
-                </p>
+            <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
+              <div className="app-empty-state w-full gap-5 px-8 py-12">
+                <div className="flex h-20 w-20 items-center justify-center rounded-full border border-border/70 bg-muted/80">
+                  <PhewBellIcon className="h-10 w-10 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">Sign in to view notifications</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Activity alerts appear here after you sign in.
+                  </p>
+                </div>
               </div>
             </div>
           ) : shouldShowSessionRecovery ? (
-            <div className="py-6">
+            <div className="px-4 py-5">
               {[0, 1, 2].map((i) => (
                 <NotificationItemSkeleton key={i} />
               ))}
@@ -499,8 +501,8 @@ export default function Notifications() {
               </p>
             </div>
           ) : shouldShowRecoveryBanner ? (
-            <div>
-              <div className="mx-4 mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <div className="px-4 pb-5 pt-4">
+              <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                 Notifications are showing cached activity while sign-in finishes. Actions will unlock automatically.
               </div>
               <WindowVirtualList
@@ -522,48 +524,52 @@ export default function Notifications() {
             </div>
           ) : isLoading || (!isFetched && filteredNotifications.length === 0) ? (
             // Loading skeletons
-            <div>
+            <div className="px-4 py-5">
               {[0, 1, 2, 3, 4].map((i) => (
                 <NotificationItemSkeleton key={i} />
               ))}
             </div>
           ) : error ? (
             // Error state
-            <div className="app-empty-state m-4">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
-                <PhewBellIcon className="h-10 w-10 text-destructive" />
+            <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
+              <div className="app-empty-state w-full gap-5 px-8 py-12">
+                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
+                  <PhewBellIcon className="h-10 w-10 text-destructive" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">
+                    Failed to load notifications
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {notificationsErrorMessage}
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => refetch()}>
+                  Try Again
+                </Button>
               </div>
-              <div>
-                <p className="font-semibold text-foreground text-lg">
-                  Failed to load notifications
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {notificationsErrorMessage}
-                </p>
-              </div>
-              <Button variant="outline" onClick={() => refetch()}>
-                Try Again
-              </Button>
             </div>
           ) : filteredNotifications.length === 0 ? (
             <EmptyState mode={activeFilter} />
           ) : (
-            <WindowVirtualList
-              items={filteredNotifications}
-              getItemKey={(notification) => notification.id}
-              estimateItemHeight={104}
-              overscanPx={900}
-              renderItem={(notification, index) => (
-                <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
-                  <NotificationItem
-                    notification={notification}
-                    onMarkClicked={handleMarkClicked}
-                    onDismiss={handleDismiss}
-                    onProfileClick={handleProfileClick}
-                  />
-                </div>
-              )}
-            />
+            <div className="px-4 pb-5 pt-4">
+              <WindowVirtualList
+                items={filteredNotifications}
+                getItemKey={(notification) => notification.id}
+                estimateItemHeight={112}
+                overscanPx={900}
+                renderItem={(notification, index) => (
+                  <div className={index < filteredNotifications.length - 1 ? "pb-0.5" : undefined}>
+                    <NotificationItem
+                      notification={notification}
+                      onMarkClicked={handleMarkClicked}
+                      onDismiss={handleDismiss}
+                      onProfileClick={handleProfileClick}
+                    />
+                  </div>
+                )}
+              />
+            </div>
           )}
         </div>
       </main>
