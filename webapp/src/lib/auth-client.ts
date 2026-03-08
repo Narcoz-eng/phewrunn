@@ -4,8 +4,8 @@ import { useRef } from "react";
 import { clearSessionCacheByPrefix } from "./session-cache";
 import {
   cancelPrivyIdentityRetryTimers,
-  resolvePrivyAuthPayload,
   getPrivyIdentityRateLimitRemainingMs,
+  requestPrivyIdentityTokenForBackendSync,
   type PrivyIdentityDebugContext,
   type PrivyUserLike,
 } from "./privy-user";
@@ -1377,7 +1377,7 @@ export async function startPrivyAuthBootstrap({
                   ? "usePrivyLogin"
                   : owner,
           };
-          const resolvedPayload = await resolvePrivyAuthPayload({
+          const resolvedPayload = await requestPrivyIdentityTokenForBackendSync({
             user,
             getLatestUser,
             privyReady,

@@ -764,7 +764,7 @@ export function getPrivyDisplayName(user: PrivyUserLike, email?: string): string
   return undefined;
 }
 
-export async function resolvePrivyAuthPayload({
+async function resolvePrivyAuthPayloadInternal({
   user,
   getLatestUser,
   privyReady,
@@ -1001,4 +1001,51 @@ export async function resolvePrivyAuthPayload({
       privyAuthPayloadInFlight = null;
     }
   }
+}
+
+export async function requestPrivyIdentityTokenForBackendSync(
+  options: {
+    user: PrivyUserLike;
+    getLatestUser?: () => PrivyUserLike | null | undefined;
+    privyReady?: boolean;
+    privyAuthenticated?: boolean;
+    privyIdToken?: string | null | undefined;
+    getLatestPrivyIdToken?: () => string | null | undefined;
+    isTerminal?: () => boolean;
+    debugContext?: PrivyIdentityDebugContext;
+    pendingTokenWaitMs?: number;
+  }
+): Promise<ResolvedPrivyAuthPayload> {
+  console.info("[AuthFlow] controller invoking direct Privy identity token acquisition", {
+    attemptId: options.debugContext?.attemptId ?? null,
+    caller: options.debugContext?.initialCaller ?? "system",
+    owner: options.debugContext?.owner ?? null,
+    mode: options.debugContext?.mode ?? null,
+    userId: options.user.id,
+    privyReady: options.privyReady ?? null,
+    privyAuthenticated: options.privyAuthenticated ?? null,
+    hookIdentityTokenPresent: Boolean(
+      normalizePrivyIdentityTokenCandidate(
+        options.getLatestPrivyIdToken?.() ?? options.privyIdToken
+      )
+    ),
+  });
+
+  return resolvePrivyAuthPayloadInternal(options);
+}
+
+export async function resolvePrivyAuthPayload(
+  options: {
+    user: PrivyUserLike;
+    getLatestUser?: () => PrivyUserLike | null | undefined;
+    privyReady?: boolean;
+    privyAuthenticated?: boolean;
+    privyIdToken?: string | null | undefined;
+    getLatestPrivyIdToken?: () => string | null | undefined;
+    isTerminal?: () => boolean;
+    debugContext?: PrivyIdentityDebugContext;
+    pendingTokenWaitMs?: number;
+  }
+): Promise<ResolvedPrivyAuthPayload> {
+  return resolvePrivyAuthPayloadInternal(options);
 }
