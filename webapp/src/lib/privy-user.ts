@@ -85,6 +85,12 @@ type PendingPrivyIdentityTokenResolution = {
   settled: boolean;
 };
 
+function normalizePrivyIdentityTokenCandidate(
+  token: string | null | undefined
+): string | undefined {
+  return typeof token === "string" && token.trim().length > 0 ? token.trim() : undefined;
+}
+
 function inspectPrivyIdentityToken(token: string | undefined): {
   tokenLength: number;
   tokenExpired: boolean;
@@ -761,12 +767,20 @@ export function getPrivyDisplayName(user: PrivyUserLike, email?: string): string
 export async function resolvePrivyAuthPayload({
   user,
   getLatestUser,
+  privyReady,
+  privyAuthenticated,
+  privyIdToken,
+  getLatestPrivyIdToken,
   isTerminal,
   debugContext,
   pendingTokenWaitMs = 15_000,
 }: {
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
+  privyReady?: boolean;
+  privyAuthenticated?: boolean;
+  privyIdToken?: string | null | undefined;
+  getLatestPrivyIdToken?: () => string | null | undefined;
   isTerminal?: () => boolean;
   debugContext?: PrivyIdentityDebugContext;
   pendingTokenWaitMs?: number;
@@ -789,10 +803,42 @@ export async function resolvePrivyAuthPayload({
     let latestUser = getLatestUser?.() ?? user;
     let email = getPrivyPrimaryEmail(latestUser);
     let name = getPrivyDisplayName(latestUser, email);
+    let privyIdTokenFromHook = normalizePrivyIdentityTokenCandidate(
+      getLatestPrivyIdToken?.() ?? privyIdToken
+    );
     let sawRateLimit = false;
     let pendingPrivyIdTokenPromise: Promise<string | undefined> | undefined;
-    let tokenResolution: "available" | "pending" | "empty" = "empty";
-    let tokenLocalCheck = inspectPrivyIdentityToken(undefined);
+    let tokenResolution: "available" | "pending" | "empty" = privyIdTokenFromHook
+      ? "available"
+      : "empty";
+    let tokenLocalCheck = inspectPrivyIdentityToken(privyIdTokenFromHook);
+
+    console.info("[AuthFlow] Privy SDK readiness snapshot before token resolution", {
+      attemptId: debugContext?.attemptId ?? null,
+      caller: debugContext?.initialCaller ?? "system",
+      userId,
+      privyReady: privyReady ?? null,
+      privyAuthenticated: privyAuthenticated ?? null,
+      hookIdentityTokenPresent: Boolean(privyIdTokenFromHook),
+      hookIdentityTokenLength: privyIdTokenFromHook?.length ?? 0,
+    });
+
+    if (privyIdTokenFromHook) {
+      console.info("[AuthFlow] using Privy identity token from hook", {
+        attemptId: debugContext?.attemptId ?? null,
+        caller: debugContext?.initialCaller ?? "system",
+        userId,
+        tokenLength: privyIdTokenFromHook.length,
+      });
+      return {
+        user: latestUser,
+        email,
+        name,
+        privyIdToken: privyIdTokenFromHook,
+        tokenResolution: "available",
+        tokenLocalCheck,
+      };
+    }
 
     const initialTokenTimeoutMs = hasOAuthIdentity(latestUser)
       ? OAUTH_IDENTITY_TOKEN_TIMEOUT_MS

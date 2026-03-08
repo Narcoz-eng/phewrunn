@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePrivy, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
+import { usePrivy, useIdentityToken, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   clearPrivySyncFailureState,
   getPrivyAuthBootstrapCooldownRemainingMs,
@@ -69,11 +69,14 @@ function waitFor(delayMs: number): Promise<void> {
 
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
+  const { identityToken } = useIdentityToken();
   const { hasLiveSession } = useAuth();
   const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
   const { onSuccess } = options;
   const [localSyncError, setLocalSyncError] = useState<string | null>(null);
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
+  const latestPrivyIdentityTokenRef = useRef<string | null>(null);
+  const latestPrivyStateRef = useRef({ ready: false, authenticated: false });
   const successfulLoginHandledRef = useRef(false);
 
   const handleSuccessfulLogin = useCallback((syncedUser: AuthUser) => {
@@ -90,6 +93,17 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   useEffect(() => {
     latestPrivyUserRef.current = user ? (user as PrivyUserLike) : null;
   }, [user]);
+
+  useEffect(() => {
+    latestPrivyIdentityTokenRef.current =
+      typeof identityToken === "string" && identityToken.trim().length > 0
+        ? identityToken.trim()
+        : null;
+  }, [identityToken]);
+
+  useEffect(() => {
+    latestPrivyStateRef.current = { ready, authenticated };
+  }, [authenticated, ready]);
 
   useEffect(() => {
     if (!hasLiveSession) {
@@ -143,12 +157,19 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       mode: "manual",
       userId: privyUser.id,
       existingState: currentSnapshot?.state ?? "idle",
+      privyReady: latestPrivyStateRef.current.ready,
+      privyAuthenticated: latestPrivyStateRef.current.authenticated,
+      hookIdentityTokenPresent: Boolean(latestPrivyIdentityTokenRef.current),
     });
     const syncedUser = await startPrivyAuthBootstrap({
       owner: "usePrivyLogin",
       mode: "manual",
       user: privyUser,
       getLatestUser: () => latestPrivyUserRef.current,
+      privyReady: latestPrivyStateRef.current.ready,
+      privyAuthenticated: latestPrivyStateRef.current.authenticated,
+      privyIdentityToken: latestPrivyIdentityTokenRef.current,
+      getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
       triggerSource: "manual_user_action",
     });
 
@@ -162,6 +183,48 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const handlePrivyAuthComplete = useCallback(async (privyUser: PrivyUserLike) => {
     clearPrivySyncFailureState();
     setLocalSyncError(null);
+    const privyState = latestPrivyStateRef.current;
+    const hookIdentityToken = latestPrivyIdentityTokenRef.current;
+    console.info("[AuthFlow] usePrivyLogin Privy auth complete", {
+      userId: privyUser.id,
+      privyReady: privyState.ready,
+      privyAuthenticated: privyState.authenticated,
+      hookIdentityTokenPresent: Boolean(hookIdentityToken),
+      hookIdentityTokenLength: hookIdentityToken?.length ?? 0,
+    });
+
+    if (!privyState.ready || !privyState.authenticated) {
+      setPrivyAuthBootstrapState("privy_pending", {
+        owner: "usePrivyLogin",
+        mode: "manual",
+        userId: privyUser.id,
+        detail: "waiting for Privy SDK authenticated state",
+        debugCode: "awaiting_privy_sdk_ready",
+      });
+      console.info("[AuthFlow] usePrivyLogin deferring bootstrap until Privy SDK is ready/authenticated", {
+        userId: privyUser.id,
+        privyReady: privyState.ready,
+        privyAuthenticated: privyState.authenticated,
+      });
+      return;
+    }
+
+    if (!hookIdentityToken) {
+      setPrivyAuthBootstrapState("awaiting_identity_token", {
+        owner: "usePrivyLogin",
+        mode: "manual",
+        userId: privyUser.id,
+        detail: "waiting for Privy identity token",
+        debugCode: "awaiting_privy_identity_token_hook",
+      });
+      console.info("[AuthFlow] usePrivyLogin deferring bootstrap until Privy identity token hook is populated", {
+        userId: privyUser.id,
+        privyReady: privyState.ready,
+        privyAuthenticated: privyState.authenticated,
+      });
+      return;
+    }
+
     await runManualSync(privyUser);
   }, [runManualSync]);
 
@@ -338,6 +401,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     ready,
     authenticated,
     user,
+    identityToken,
     privyLogout,
     isSyncing: oauthLoading || isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state),
     isRetryBlocked:

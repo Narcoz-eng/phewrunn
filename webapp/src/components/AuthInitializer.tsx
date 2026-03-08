@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useIdentityToken } from "@privy-io/react-auth";
 import {
   registerPreLogoutHook,
   setPrivyAuthAnonymousState,
@@ -18,8 +18,10 @@ interface AuthInitializerProps {
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
+  const { identityToken } = useIdentityToken();
   const { isAuthenticated, hasLiveSession } = useAuth();
   const latestPrivyUserRef = useRef<PrivyUserLike | null>(null);
+  const latestPrivyIdentityTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     const unregister = registerPreLogoutHook(async () => {
@@ -36,6 +38,13 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
   useEffect(() => {
     latestPrivyUserRef.current = user ? (user as PrivyUserLike) : null;
   }, [user]);
+
+  useEffect(() => {
+    latestPrivyIdentityTokenRef.current =
+      typeof identityToken === "string" && identityToken.trim().length > 0
+        ? identityToken.trim()
+        : null;
+  }, [identityToken]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -89,6 +98,23 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       return;
     }
 
+    if (!latestPrivyIdentityTokenRef.current) {
+      setPrivyAuthBootstrapState("awaiting_identity_token", {
+        owner: "AuthInitializer",
+        mode: "auto",
+        userId: user.id,
+        detail: "waiting for Privy identity token",
+        debugCode: "awaiting_privy_identity_token_hook",
+      });
+      console.info("[AuthFlow] AuthInitializer waiting for Privy identity token hook", {
+        userId: user.id,
+        ready,
+        authenticated,
+        hookIdentityTokenPresent: false,
+      });
+      return;
+    }
+
     if (
       sameUserSnapshot &&
       (currentState === "failed" ||
@@ -111,10 +137,14 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       mode: "auto",
       user: user as PrivyUserLike,
       getLatestUser: () => latestPrivyUserRef.current,
+      privyReady: ready,
+      privyAuthenticated: authenticated,
+      privyIdentityToken: latestPrivyIdentityTokenRef.current,
+      getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
       tryExistingBackendSession: true,
       triggerSource: "component_mount",
     });
-  }, [authenticated, hasLiveSession, ready, user]);
+  }, [authenticated, hasLiveSession, identityToken, ready, user]);
 
   return <>{children}</>;
 }

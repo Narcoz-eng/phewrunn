@@ -127,6 +127,10 @@ type StartPrivyAuthBootstrapOptions = {
   mode?: PrivyAuthBootstrapMode;
   user: PrivyUserLike;
   getLatestUser?: () => PrivyUserLike | null | undefined;
+  privyReady?: boolean;
+  privyAuthenticated?: boolean;
+  privyIdentityToken?: string | null | undefined;
+  getLatestPrivyIdentityToken?: () => string | null | undefined;
   tryExistingBackendSession?: boolean;
   triggerSource?: "component_mount" | "manual_user_action" | "system";
 };
@@ -1080,6 +1084,10 @@ export async function startPrivyAuthBootstrap({
   mode = "system",
   user,
   getLatestUser,
+  privyReady,
+  privyAuthenticated,
+  privyIdentityToken,
+  getLatestPrivyIdentityToken,
   tryExistingBackendSession = false,
   triggerSource = "system",
 }: StartPrivyAuthBootstrapOptions): Promise<AuthUser | null> {
@@ -1098,6 +1106,10 @@ export async function startPrivyAuthBootstrap({
     userId: user.id,
     alreadyInProgress: Boolean(privyAuthBootstrapInFlight),
     currentState,
+    privyReady: privyReady ?? null,
+    privyAuthenticated: privyAuthenticated ?? null,
+    hookIdentityTokenPresent:
+      typeof privyIdentityToken === "string" && privyIdentityToken.trim().length > 0,
   });
 
   if (privyAuthBootstrapInFlight) {
@@ -1242,6 +1254,10 @@ export async function startPrivyAuthBootstrap({
           const resolvedPayload = await resolvePrivyAuthPayload({
             user,
             getLatestUser,
+            privyReady,
+            privyAuthenticated,
+            privyIdToken: privyIdentityToken,
+            getLatestPrivyIdToken: getLatestPrivyIdentityToken,
             isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
             debugContext: privyIdentityDebugContext,
             pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
