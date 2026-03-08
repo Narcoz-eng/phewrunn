@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
+import { useRef } from "react";
 import { clearSessionCacheByPrefix } from "./session-cache";
 import {
   cancelPrivyIdentityRetryTimers,
@@ -750,6 +751,7 @@ export function setPrivyAuthBootstrapState(
     cooldownUntilMs?: number | null;
   } = {}
 ): void {
+  const previousSnapshot = inMemoryPrivyBootstrapSnapshot;
   const snapshot: PrivyAuthBootstrapSnapshot = {
     state,
     owner: params.owner ?? "system",
@@ -764,6 +766,25 @@ export function setPrivyAuthBootstrapState(
     cooldownUntilMs: params.cooldownUntilMs ?? null,
     recordedAt: Date.now(),
   };
+
+  if (
+    previousSnapshot?.state === "authenticated" &&
+    snapshot.state !== "authenticated" &&
+    previousSnapshot.tabId === snapshot.tabId
+  ) {
+    console.warn("[AuthFlow] authenticated state overwritten by pending bootstrap", {
+      previousState: previousSnapshot.state,
+      nextState: snapshot.state,
+      previousOwner: previousSnapshot.owner,
+      nextOwner: snapshot.owner,
+      previousMode: previousSnapshot.mode,
+      nextMode: snapshot.mode,
+      tabId: snapshot.tabId,
+      previousUserId: previousSnapshot.userId,
+      nextUserId: snapshot.userId,
+      detail: snapshot.detail,
+    });
+  }
 
   console.info("[AuthFlow] transition", snapshot);
   writePrivyBootstrapSnapshot(snapshot);
@@ -1342,6 +1363,10 @@ async function fetchSessionFromServer(
       },
       signal: controller.signal,
     });
+    console.info("[AuthColdStart] /api/me response received", {
+      reason,
+      status: response.status,
+    });
 
     if (response.status === 401 || response.status === 403) {
       return { status: "unauthorized" };
@@ -1461,18 +1486,35 @@ async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
   const pendingBootstrap = readPrivyAuthBootstrapSnapshot();
+  const pendingBootstrapBelongsToCurrentTab =
+    doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(pendingBootstrap);
 
   if (pendingBootstrap && isPrivyAuthBootstrapPending(now)) {
     console.info("[AuthFlow] /api/me gated until Privy sync settles", {
       state: pendingBootstrap.state,
       owner: pendingBootstrap.owner,
       mode: pendingBootstrap.mode,
+      tabId: pendingBootstrap.tabId,
       userId: pendingBootstrap.userId,
       detail: pendingBootstrap.detail,
       cachedUserPresent: Boolean(cachedUser),
     });
     return cachedUser;
   }
+
+  console.info("[AuthColdStart] /api/me allowed to run", {
+    cachedUserPresent: Boolean(cachedUser),
+    pendingBootstrapState: pendingBootstrap?.state ?? null,
+    pendingBootstrapOwner: pendingBootstrap?.owner ?? null,
+    pendingBootstrapTabId: pendingBootstrap?.tabId ?? null,
+    pendingBootstrapBelongsToCurrentTab,
+    reason:
+      pendingBootstrap == null
+        ? "no_bootstrap_snapshot"
+        : pendingBootstrapBelongsToCurrentTab
+          ? "current_tab_bootstrap_not_blocking"
+          : "foreign_tab_bootstrap_ignored",
+  });
 
   if (
     cachedUser &&
@@ -1505,6 +1547,11 @@ async function fetchSession(): Promise<AuthUser | null> {
         "Content-Type": "application/json",
       },
       signal: controller.signal,
+    });
+    console.info("[AuthColdStart] /api/me response received", {
+      status: response.status,
+      hasCachedUser: Boolean(cachedUser),
+      requestStartedAt,
     });
 
     if (!response.ok) {
@@ -1629,6 +1676,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: !!cachedUser,
     };
   });
+  const coldStartLoggedRef = useRef(false);
+  const coldStartSettledRef = useRef(false);
+
+  const applyAuthProviderState = useCallback(
+    (
+      reason: string,
+      nextState: SessionState,
+      metadata: Record<string, unknown> = {}
+    ) => {
+      setState((previousState) => {
+        if (previousState.user?.id && !nextState.user?.id && !nextState.isLoading) {
+          console.warn("[AuthColdStart] authenticated auth provider state replaced", {
+            reason,
+            previousUserId: previousState.user.id,
+            nextUserId: nextState.user?.id ?? null,
+            previousIsLoading: previousState.isLoading,
+            nextIsLoading: nextState.isLoading,
+            previousIsAuthenticated: previousState.isAuthenticated,
+            nextIsAuthenticated: nextState.isAuthenticated,
+            ...metadata,
+          });
+        }
+
+        console.info("[AuthColdStart] auth provider state applied", {
+          reason,
+          previousUserId: previousState.user?.id ?? null,
+          nextUserId: nextState.user?.id ?? null,
+          previousIsLoading: previousState.isLoading,
+          nextIsLoading: nextState.isLoading,
+          previousIsAuthenticated: previousState.isAuthenticated,
+          nextIsAuthenticated: nextState.isAuthenticated,
+          ...metadata,
+        });
+
+        return nextState;
+      });
+    },
+    []
+  );
 
   const resolveSessionWithRetry = useCallback(async () => {
     const optimisticCachedUser = readCachedAuthUser();
@@ -1638,6 +1724,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         state: bootstrapSnapshot.state,
         owner: bootstrapSnapshot.owner,
         mode: bootstrapSnapshot.mode,
+        tabId: bootstrapSnapshot.tabId,
         userId: bootstrapSnapshot.userId,
       });
       return optimisticCachedUser;
@@ -1662,6 +1749,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         state: postFetchBootstrapSnapshot.state,
         owner: postFetchBootstrapSnapshot.owner,
         mode: postFetchBootstrapSnapshot.mode,
+        tabId: postFetchBootstrapSnapshot.tabId,
         userId: postFetchBootstrapSnapshot.userId,
       });
       return optimisticCachedUser;
@@ -1697,20 +1785,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refetch = useCallback(async () => {
     try {
       const user = (await resolveSessionWithRetry()) ?? readCachedAuthUserSnapshot();
-      setState({
+      applyAuthProviderState("refetch", {
         user,
         isLoading: false,
         isAuthenticated: !!user,
       });
     } catch {
       const fallbackUser = readCachedAuthUserSnapshot();
-      setState({
+      applyAuthProviderState("refetch_fallback", {
         user: fallbackUser,
         isLoading: false,
         isAuthenticated: !!fallbackUser,
       });
     }
-  }, [resolveSessionWithRetry]);
+  }, [applyAuthProviderState, resolveSessionWithRetry]);
 
   const logout = useCallback(async () => {
     for (const hook of preLogoutHooks) {
@@ -1734,7 +1822,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     lastSuccessfulSessionAt = 0;
     lastBootstrappedSessionAt = 0;
     unauthorizedSessionFailures = 0;
-    setState({
+    applyAuthProviderState("logout", {
       user: null,
       isLoading: false,
       isAuthenticated: false,
@@ -1745,7 +1833,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("[Auth] Logout error:", error);
     }
-  }, []);
+  }, [applyAuthProviderState]);
 
   // Initial session check
   useEffect(() => {
@@ -1754,7 +1842,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const checkSession = async () => {
       const user = (await resolveSessionWithRetry()) ?? readCachedAuthUserSnapshot();
       if (mounted) {
-        setState({
+        applyAuthProviderState("initial_check", {
           user,
           isLoading: false,
           isAuthenticated: !!user,
@@ -1767,7 +1855,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [resolveSessionWithRetry]);
+  }, [applyAuthProviderState, resolveSessionWithRetry]);
 
   // Fast-path auth hydration after Privy sync without waiting for /api/me roundtrips.
   useEffect(() => {
@@ -1776,7 +1864,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const customEvent = event as CustomEvent<AuthSessionSyncEventDetail>;
       const syncedUser = customEvent.detail?.user;
       if (!syncedUser?.id) return;
-      setState({
+      applyAuthProviderState("session_synced_event", {
         user: syncedUser,
         isLoading: false,
         isAuthenticated: true,
@@ -1786,7 +1874,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       window.removeEventListener(AUTH_SESSION_SYNC_EVENT, handleSessionSynced as EventListener);
     };
+  }, [applyAuthProviderState]);
+
+  useEffect(() => {
+    if (coldStartLoggedRef.current || typeof window === "undefined") {
+      return;
+    }
+    coldStartLoggedRef.current = true;
+    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
+    const cachedUser = readCachedAuthUser();
+    console.info("[AuthColdStart] app mounted", {
+      href: window.location.href,
+      tabId: getPrivyBootstrapTabId(),
+      cachedUserId: cachedUser?.id ?? null,
+      cachedUserPresent: Boolean(cachedUser),
+      bootstrapSnapshot,
+    });
   }, []);
+
+  useEffect(() => {
+    if (coldStartSettledRef.current || state.isLoading) {
+      return;
+    }
+    coldStartSettledRef.current = true;
+    console.info("[AuthColdStart] final auth state after cold load", {
+      tabId: getPrivyBootstrapTabId(),
+      userId: state.user?.id ?? null,
+      isAuthenticated: state.isAuthenticated,
+      isLoading: state.isLoading,
+      hasLiveSession: Boolean(state.user) && hasValidatedAuthSession(),
+      bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
+    });
+  }, [state]);
 
   return createElement(
     AuthContext.Provider,

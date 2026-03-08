@@ -120,6 +120,69 @@ function ProtectedRouteWithPrivy({
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
     hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession || hadTokenHint.current;
+  const routeAuthStage =
+    isPending
+      ? "trying_to_connect"
+      : effectiveUser && hasLiveSession
+        ? "authenticated"
+        : privySyncFailure
+          ? "failed"
+          : hasPrivySyncHint || shouldHoldForConfirmedSession || hadTokenHint.current
+            ? "trying_to_connect"
+            : "anonymous";
+
+  useEffect(() => {
+    console.info("[AuthColdStart] protected route stage", {
+      stage: routeAuthStage,
+      pathname: location.pathname,
+      ready,
+      authenticated,
+      effectiveUserId: effectiveUser?.id ?? null,
+      hasLiveSession,
+      isPending,
+      hasPrivySyncHint,
+      hasOAuthReturnHint,
+      shouldHoldForConfirmedSession,
+      hadTokenHint: hadTokenHint.current,
+      privySyncFailure: privySyncFailure?.message ?? null,
+    });
+  }, [
+    authenticated,
+    effectiveUser?.id,
+    hasLiveSession,
+    hasOAuthReturnHint,
+    hasPrivySyncHint,
+    isPending,
+    location.pathname,
+    privySyncFailure?.message,
+    ready,
+    routeAuthStage,
+    shouldHoldForConfirmedSession,
+  ]);
+
+  useEffect(() => {
+    if (!effectiveUser || routeAuthStage !== "trying_to_connect") {
+      return;
+    }
+    console.warn("[AuthColdStart] protected route is holding pending state despite recovered user", {
+      pathname: location.pathname,
+      effectiveUserId: effectiveUser.id,
+      hasLiveSession,
+      isPending,
+      hasPrivySyncHint,
+      shouldHoldForConfirmedSession,
+      privySyncFailure: privySyncFailure?.message ?? null,
+    });
+  }, [
+    effectiveUser,
+    hasLiveSession,
+    hasPrivySyncHint,
+    isPending,
+    location.pathname,
+    privySyncFailure?.message,
+    routeAuthStage,
+    shouldHoldForConfirmedSession,
+  ]);
 
   useEffect(() => {
     if (
