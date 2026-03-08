@@ -54,14 +54,14 @@ export default function PostDetail() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+      <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
+      <header className="app-topbar">
+        <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center gap-3 px-4 sm:px-5">
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9"
+            className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
             onClick={handleBack}
           >
             <ArrowLeft className="h-5 w-5" />
@@ -70,8 +70,8 @@ export default function PostDetail() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto">
-        <div className="bg-card border-x border-border min-h-[calc(100vh-3.5rem)]">
+      <main className="app-page-shell pt-5">
+        <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
           {isLoading ? (
             <PostCardSkeleton />
           ) : error ? (

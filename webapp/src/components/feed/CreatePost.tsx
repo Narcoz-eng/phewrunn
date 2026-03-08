@@ -12,6 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { PhewSendIcon } from "@/components/icons/PhewIcons";
 
 interface CreatePostProps {
   user: User | null;
@@ -265,7 +266,7 @@ export function CreatePost({
 
   return (
     <div className={cn(
-      "bg-card border border-border rounded-xl p-4 transition-all",
+      "app-surface p-4 sm:p-5 transition-all",
       isLiquidated && "border-red-600/30 bg-red-950/10"
     )}>
       {/* Liquidation Warning - Enhanced */}
@@ -323,9 +324,10 @@ export function CreatePost({
             disabled={isComposerDisabled}
             rows={3}
             className={cn(
-              "w-full min-h-[80px] max-h-[200px] resize-y bg-background border border-border rounded-lg px-3 py-2",
-              "focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary",
+              "w-full min-h-[96px] max-h-[220px] resize-y rounded-[22px] border border-border/70 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.92),hsl(38_32%_94%/0.88))] px-4 py-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.84),0_18px_34px_-28px_hsl(var(--foreground)/0.12)]",
+              "focus:outline-none focus:ring-2 focus:ring-primary/45 focus:border-primary/45",
               "placeholder:text-muted-foreground/60 text-foreground leading-relaxed",
+              "dark:bg-[linear-gradient(180deg,rgba(13,15,21,0.92),rgba(8,10,14,0.96))] dark:shadow-none",
               (isLiquidated || isAuthPending) && "opacity-40 cursor-not-allowed bg-muted/50 grayscale"
             )}
           />
@@ -337,7 +339,7 @@ export function CreatePost({
 
           {/* Token Preview */}
           {detected && (
-            <div className="p-3 bg-secondary/50 rounded-lg border border-border/50 animate-fade-in-up">
+            <div className="app-surface-soft animate-fade-in-up p-3.5">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 {/* Chain Badge & Address */}
                 <div className="flex items-center gap-2">
@@ -367,7 +369,7 @@ export function CreatePost({
                     href={tokenInfo.dexscreenerUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-md border border-primary/20 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/15"
                   >
                     <ExternalLink className="h-3 w-3" />
                     Dexscreener
@@ -377,7 +379,7 @@ export function CreatePost({
 
               {/* Token Details */}
               {tokenInfo && !isFetchingToken && (
-                <div className="mt-2 pt-2 border-t border-border/50 animate-fade-in">
+                <div className="mt-3 border-t border-border/50 pt-3 animate-fade-in">
                   <div className="flex items-center gap-2">
                     {tokenInfo.imageUrl ? (
                       <img
@@ -394,7 +396,7 @@ export function CreatePost({
                       {tokenInfo.name}
                     </span>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     {tokenInfo.priceUsd != null ? (
                       <span>Price: ${tokenInfo.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
                     ) : null}
@@ -441,7 +443,7 @@ export function CreatePost({
               disabled={isComposerDisabled}
               size="sm"
               className={cn(
-                "gap-2 relative overflow-hidden",
+                "relative overflow-hidden gap-2 rounded-2xl px-4",
                 isLiquidated
                   ? "bg-red-900/50 text-red-400 border border-red-600/50 cursor-not-allowed hover:bg-red-900/50"
                   : "bg-primary hover:bg-primary/90 text-primary-foreground",
@@ -466,7 +468,7 @@ export function CreatePost({
                 </>
               ) : (
                 <>
-                  <Send className="h-4 w-4" />
+                  <PhewSendIcon className="h-4 w-4" />
                   <span>Post</span>
                 </>
               )}

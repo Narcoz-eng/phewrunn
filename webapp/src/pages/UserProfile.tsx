@@ -25,7 +25,6 @@ import {
   Calendar,
   TrendingUp,
   TrendingDown,
-  UserPlus,
   UserMinus,
   Loader2,
   Sparkles,
@@ -39,6 +38,7 @@ import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
 
 interface UserProfileData {
   id?: string | null;
@@ -612,14 +612,14 @@ export default function UserProfile() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+      <header className="app-topbar">
+        <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => navigate(-1)}
-              className="h-9 w-9"
+              className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -655,7 +655,7 @@ export default function UserProfile() {
                   followMutation.mutate();
                 }}
                 disabled={followMutation.isPending || !session?.user || !canPerformAuthenticatedWrites}
-                className="h-8 px-3 gap-1.5"
+                className="h-9 gap-1.5 rounded-full px-3"
               >
                 {followMutation.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -666,7 +666,7 @@ export default function UserProfile() {
                   </>
                 ) : (
                   <>
-                    <UserPlus className="h-3.5 w-3.5" />
+                    <PhewFollowIcon className="h-3.5 w-3.5" />
                     Follow
                   </>
                 )}
@@ -688,7 +688,7 @@ export default function UserProfile() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 py-6">
+      <main className="app-page-shell">
         {isLoadingUser ? (
           <div className="space-y-6">
             <div className="flex flex-col items-center gap-4">
@@ -700,7 +700,7 @@ export default function UserProfile() {
             <Skeleton className="h-32 w-full rounded-xl" />
           </div>
         ) : userError ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-4">
+          <div className="app-empty-state">
             <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
               <AlertCircle className="h-8 w-8 text-destructive" />
             </div>
@@ -813,8 +813,8 @@ export default function UserProfile() {
                     Posts
                   </TabsTrigger>
                   <TabsTrigger value="reposts" className="gap-1.5">
-                    <Repeat2 className="h-3.5 w-3.5" />
-                    Reposts
+                        <PhewRepostIcon className="h-3.5 w-3.5" />
+                        Reposts
                   </TabsTrigger>
                 </TabsList>
 
@@ -904,9 +904,9 @@ export default function UserProfile() {
                       ))}
                     </>
                   ) : reposts.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+                    <div className="app-empty-state">
                       <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                        <Repeat2 className="h-8 w-8 text-muted-foreground" />
+                        <PhewRepostIcon className="h-8 w-8 text-muted-foreground" />
                       </div>
                       <div>
                         <p className="font-semibold text-foreground">No reposts yet</p>

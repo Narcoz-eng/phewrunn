@@ -11,7 +11,7 @@ export function PostCardSkeleton({ className, showMarketData = true, style }: Po
   return (
     <div
       className={cn(
-        "bg-card border border-border rounded-xl transition-all duration-300",
+        "app-surface rounded-[28px] transition-all duration-300",
         className
       )}
       style={style}
@@ -42,7 +42,7 @@ export function PostCardSkeleton({ className, showMarketData = true, style }: Po
 
             {/* Market Data Card */}
             {showMarketData && (
-              <div className="mt-4 p-4 bg-secondary/50 rounded-xl border border-border/50">
+              <div className="app-surface-soft mt-4 rounded-[24px] p-4">
                 {/* Chain badge and address */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -59,18 +59,18 @@ export function PostCardSkeleton({ className, showMarketData = true, style }: Po
                 <Skeleton className="mt-4 h-12 w-full rounded-lg" />
 
                 {/* Entry Market Cap */}
-                <div className="mt-4 p-3 bg-background/50 rounded-lg border border-border/50">
+                <div className="mt-4 rounded-[18px] border border-border/60 bg-white/60 p-3 dark:bg-background/40">
                   <Skeleton className="h-3 w-24 mb-2" />
                   <Skeleton className="h-8 w-32" />
                 </div>
 
                 {/* Stats Grid */}
                 <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div className="p-2 bg-background/30 rounded-lg">
+                  <div className="rounded-[16px] bg-background/40 p-2 dark:bg-background/30">
                     <Skeleton className="h-3 w-14 mb-1" />
                     <Skeleton className="h-5 w-20" />
                   </div>
-                  <div className="p-2 bg-background/30 rounded-lg">
+                  <div className="rounded-[16px] bg-background/40 p-2 dark:bg-background/30">
                     <Skeleton className="h-3 w-14 mb-1" />
                     <Skeleton className="h-5 w-16" />
                   </div>
@@ -81,7 +81,7 @@ export function PostCardSkeleton({ className, showMarketData = true, style }: Po
         </div>
 
         {/* Social Buttons */}
-        <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between">
+        <div className="mt-5 flex items-center justify-between border-t border-border/50 pt-4">
           <div className="flex items-center gap-1">
             <Skeleton className="h-9 w-14 rounded-md" />
             <Skeleton className="h-9 w-14 rounded-md" />
@@ -98,7 +98,7 @@ export function PostCardSkeleton({ className, showMarketData = true, style }: Po
 // Simple skeleton for user profile card
 export function ProfileCardSkeleton({ className }: { className?: string }) {
   return (
-    <div className={cn("p-5 bg-card border border-border rounded-xl shadow-sm", className)}>
+    <div className={cn("app-surface p-5", className)}>
       <div className="flex items-center gap-4">
         <Skeleton className="h-16 w-16 rounded-full" />
         <div className="flex-1 space-y-2">

@@ -32,12 +32,12 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 // Loading fallback component
 function PageSkeleton() {
   return (
-    <div className="min-h-screen bg-background p-4">
-      <div className="max-w-2xl mx-auto space-y-4">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-32 w-full" />
+    <div className="min-h-screen bg-background">
+      <div className="app-page-shell space-y-4">
+        <Skeleton className="h-16 w-full rounded-[28px]" />
+        <Skeleton className="h-64 w-full rounded-[28px]" />
+        <Skeleton className="h-32 w-full rounded-[28px]" />
+        <Skeleton className="h-32 w-full rounded-[28px]" />
       </div>
     </div>
   );

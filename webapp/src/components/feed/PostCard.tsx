@@ -49,27 +49,19 @@ import {
 } from "@/types";
 import type { MultiplierDisplay } from "@/types";
 import {
-  Heart,
-  MessageCircle,
-  Repeat2,
-  Share,
   ExternalLink,
   Clock,
   TrendingUp,
   TrendingDown,
   CheckCircle2,
   XCircle,
-  Send,
   Users,
   Check,
-  BarChart3,
   Sparkles,
-  UserPlus,
   UserCheck,
   Loader2,
   Download,
   Coins,
-  Zap,
   ChevronLeft,
   ChevronRight,
   Minus,
@@ -82,6 +74,16 @@ import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
 import type { PortfolioPosition } from "./PortfolioPanel";
 import { ReportDialog } from "@/components/reporting/ReportDialog";
+import {
+  PhewChartIcon,
+  PhewCommentIcon,
+  PhewFollowIcon,
+  PhewLikeIcon,
+  PhewRepostIcon,
+  PhewSendIcon,
+  PhewShareIcon,
+  PhewTradeIcon,
+} from "@/components/icons/PhewIcons";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
@@ -3810,8 +3812,8 @@ export function PostCard({
     <div
       ref={cardRef}
       className={cn(
-        "group relative bg-card border border-border rounded-xl transition-all duration-300",
-        "hover:border-primary/30 hover:shadow-lg",
+        "group app-surface relative rounded-[28px] transition-all duration-300",
+        "hover:border-primary/35 hover:shadow-[0_30px_90px_-56px_hsl(var(--foreground)/0.22)] dark:hover:shadow-none",
         localSettled && localIsWin && "border-gain/20",
         localSettled && !localIsWin && "border-loss/20",
         className
@@ -3821,17 +3823,17 @@ export function PostCard({
       {localSettled && (
         <div
           className={cn(
-            "absolute inset-0 rounded-xl opacity-5 pointer-events-none",
+            "absolute inset-0 rounded-[28px] opacity-5 pointer-events-none",
             localIsWin ? "bg-gain" : "bg-loss"
           )}
         />
       )}
 
-      <div className="p-4">
+      <div className="p-4 sm:p-5">
         {/* Header */}
         <div className="flex items-start gap-3">
           <Avatar
-            className="h-11 w-11 border-2 border-border ring-2 ring-background cursor-pointer hover:ring-primary/50 transition-all"
+            className="h-11 w-11 cursor-pointer border-2 border-primary/15 ring-4 ring-white/70 transition-all hover:ring-primary/20 dark:border-white/[0.08] dark:ring-background"
             onClick={handleProfileClick}
           >
             <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
@@ -3869,10 +3871,10 @@ export function PostCard({
                     onClick={handleFollow}
                     disabled={isFollowLoading}
                     className={cn(
-                      "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all",
                       isFollowing
-                        ? "bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90"
+                        ? "border border-primary/25 bg-primary/10 text-primary hover:bg-primary/15"
+                        : "border border-primary/15 bg-primary text-primary-foreground shadow-[0_16px_34px_-20px_hsl(var(--primary)/0.42)] hover:brightness-[1.03]"
                     )}
                   >
                     {isFollowLoading ? (
@@ -3884,7 +3886,7 @@ export function PostCard({
                       </>
                     ) : (
                       <>
-                        <UserPlus className="h-3 w-3" />
+                        <PhewFollowIcon className="h-3 w-3" />
                         <span>Follow</span>
                       </>
                     )}
@@ -3934,7 +3936,7 @@ export function PostCard({
 
             {/* Market Cap Info */}
             {hasContractAddress && (
-              <div className="mt-4 p-4 bg-secondary/50 rounded-xl border border-border/50">
+              <div className="app-surface-soft mt-4 p-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   {/* Live Badge / Settled Status */}
                   <div className="flex items-center gap-2">
@@ -3998,7 +4000,7 @@ export function PostCard({
                             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lime-300" />
                           </span>
                         )}
-                        {isWalletConnectedForTrade ? <Zap className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                        {isWalletConnectedForTrade ? <PhewTradeIcon className="h-4 w-4" /> : <PhewFollowIcon className="h-4 w-4" />}
                         <span className="whitespace-nowrap">{tradeCtaLabel}</span>
                       </Button>
                     </motion.div>
@@ -4037,7 +4039,7 @@ export function PostCard({
                 )}
 
                 {/* Entry Market Cap - Prominent Display */}
-                <div className="mt-4 p-3 bg-background/50 rounded-lg border border-border/50">
+                <div className="mt-4 rounded-[20px] border border-border/60 bg-white/65 p-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-background/35 dark:shadow-none">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Entry Market Cap</p>
                   <p className="text-2xl font-bold font-mono text-foreground mt-1">
                     {formatMarketCap(post.entryMcap)}
@@ -4231,7 +4233,7 @@ export function PostCard({
                         <>
                           <div
                             className={cn(
-                              "p-2 bg-background/30 rounded-lg border border-primary/20",
+                              "rounded-[18px] border border-primary/20 bg-white/60 p-2 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-background/35 dark:shadow-none",
                               multiplierLive?.tier === 'mega' && mLiveStyles.glow
                             )}
                             style={{
@@ -4253,7 +4255,7 @@ export function PostCard({
                           </div>
                           <div
                             className={cn(
-                              "p-2 bg-background/30 rounded-lg",
+                              "rounded-[18px] bg-white/55 p-2 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-background/35 dark:shadow-none",
                               multiplierLive?.tier === 'mega' && "border border-yellow-500/30"
                             )}
                           >
@@ -4280,7 +4282,7 @@ export function PostCard({
                 )}
 
                 {hasWalletTradeInfo && (
-                  <div className="mt-3 rounded-lg border border-border/60 bg-background/25 p-3">
+                  <div className="mt-3 rounded-[20px] border border-border/60 bg-white/45 p-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-background/25 dark:shadow-none">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[10px] uppercase tracking-wider font-semibold text-foreground/80">
                         Wallet Trade Summary
@@ -4289,7 +4291,7 @@ export function PostCard({
 
                     <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {(holdingUsd !== null || holdingAmount !== null) && (
-                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5 sm:col-span-2">
+                        <div className="rounded-[16px] border border-border/60 bg-white/60 p-2.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-background/40 dark:shadow-none sm:col-span-2">
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Holding</p>
                             {holdingAmount !== null && (
@@ -4305,7 +4307,7 @@ export function PostCard({
                       )}
 
                       {verifiedTotalPnlUsd !== null && (
-                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
+                        <div className="rounded-[16px] border border-border/60 bg-white/60 p-2.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-background/40 dark:shadow-none">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Wallet P/L</p>
                           <p className={cn("mt-1 text-sm font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
                             {winCardVerifiedPnlText}
@@ -4314,7 +4316,7 @@ export function PostCard({
                       )}
 
                       {(boughtUsd !== null || boughtAmount !== null) && (
-                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
+                        <div className="rounded-[16px] border border-border/60 bg-white/60 p-2.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-background/40 dark:shadow-none">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Bought</p>
                           <p className="mt-1 text-sm font-semibold text-foreground">
                             {boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A"}
@@ -4328,7 +4330,7 @@ export function PostCard({
                       )}
 
                       {(soldUsd !== null || soldAmount !== null) && (
-                        <div className="rounded-md border border-border/60 bg-background/40 p-2.5">
+                        <div className="rounded-[16px] border border-border/60 bg-white/60 p-2.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-background/40 dark:shadow-none">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sold</p>
                           <p className="mt-1 text-sm font-semibold text-foreground">
                             {soldUsd !== null ? formatUsdStat(soldUsd) : "N/A"}
@@ -4359,10 +4361,10 @@ export function PostCard({
               <button
                 onClick={() => setIsRepostersOpen(true)}
                 className={cn(
-                  "mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-lg",
-                  "bg-primary/5 hover:bg-primary/10 border border-primary/20",
+                  "mt-3 inline-flex items-center gap-2 rounded-full border border-primary/20 px-3 py-2",
+                  "bg-primary/5 hover:bg-primary/10",
                   "text-sm text-foreground font-medium transition-all duration-200",
-                  "hover:border-primary/40 hover:shadow-sm cursor-pointer"
+                  "hover:border-primary/40 hover:shadow-[0_16px_30px_-24px_hsl(var(--primary)/0.3)] cursor-pointer dark:hover:shadow-none"
                 )}
               >
                 <Users className="h-4 w-4 text-primary" />
@@ -4386,7 +4388,7 @@ export function PostCard({
         </div>
 
         {/* Social Buttons */}
-        <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between">
+        <div className="mt-5 flex items-center justify-between border-t border-border/50 pt-4">
           <div className="flex items-center gap-1">
             {/* Like Button */}
             <Button
@@ -4394,12 +4396,12 @@ export function PostCard({
               size="sm"
               onClick={handleLike}
               className={cn(
-                "h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground",
+                "h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none",
                 isLiked && "text-loss hover:text-loss"
               )}
             >
-              <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-              <span className="text-xs font-medium">{likeCount > 0 ? likeCount : ""}</span>
+              <PhewLikeIcon className={cn("h-4 w-4", isLiked && "fill-current")} />
+              <span className="text-xs font-semibold">{likeCount > 0 ? likeCount : ""}</span>
             </Button>
 
             {/* Comment Button */}
@@ -4407,10 +4409,10 @@ export function PostCard({
               variant="ghost"
               size="sm"
               onClick={() => setIsCommentsOpen(!isCommentsOpen)}
-              className="h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
+              className="h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
             >
-              <MessageCircle className={cn("h-4 w-4", isCommentsOpen && "text-primary")} />
-              <span className="text-xs font-medium">{commentCount > 0 ? commentCount : ""}</span>
+              <PhewCommentIcon className={cn("h-4 w-4", isCommentsOpen && "text-primary")} />
+              <span className="text-xs font-semibold">{commentCount > 0 ? commentCount : ""}</span>
             </Button>
 
             {/* Repost Button */}
@@ -4419,12 +4421,12 @@ export function PostCard({
               size="sm"
               onClick={handleRepost}
               className={cn(
-                "h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground",
+                "h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none",
                 isReposted && "text-gain hover:text-gain"
               )}
             >
-              <Repeat2 className={cn("h-4 w-4", isReposted && "text-gain")} />
-              <span className="text-xs font-medium">{repostCount > 0 ? repostCount : ""}</span>
+              <PhewRepostIcon className={cn("h-4 w-4", isReposted && "text-gain")} />
+              <span className="text-xs font-semibold">{repostCount > 0 ? repostCount : ""}</span>
             </Button>
 
             {/* Share Button */}
@@ -4432,9 +4434,9 @@ export function PostCard({
               variant="ghost"
               size="sm"
               onClick={handleShare}
-              className="h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
+              className="h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
             >
-              {copied ? <Check className="h-4 w-4 text-gain" /> : <Share className="h-4 w-4" />}
+              {copied ? <Check className="h-4 w-4 text-gain" /> : <PhewShareIcon className="h-4 w-4" />}
             </Button>
 
             {/* Wincard / Result card preview */}
@@ -4442,7 +4444,7 @@ export function PostCard({
               variant="ghost"
               size="sm"
               onClick={handleOpenWinCardPreview}
-              className="h-9 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
+              className="h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
               title="Preview shareable win card"
             >
               <Download className="h-4 w-4" />
@@ -4480,15 +4482,15 @@ export function PostCard({
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
-                    className="flex-1 h-9 text-sm bg-secondary/50 border-border/50"
+                    className="h-10 flex-1 text-sm"
                   />
                   <Button
                     size="sm"
                     onClick={handleSubmitComment}
                     disabled={!commentText.trim()}
-                    className="h-9 px-3"
+                    className="h-10 rounded-full px-3"
                   >
-                    <Send className="h-4 w-4" />
+                    <PhewSendIcon className="h-4 w-4" />
                   </Button>
                 </motion.div>
 
@@ -4517,7 +4519,7 @@ export function PostCard({
                           hidden: { opacity: 0, y: -10 },
                           visible: { opacity: 1, y: 0 }
                         }}
-                        className="flex items-start gap-2 p-2 bg-secondary/30 rounded-lg"
+                        className="flex items-start gap-2 rounded-[18px] border border-border/50 bg-white/50 p-2.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none"
                       >
                         <Avatar
                           className="h-7 w-7 cursor-pointer border border-border"
@@ -4580,7 +4582,7 @@ export function PostCard({
             <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.035]" style={{ backgroundImage: "linear-gradient(rgba(15,23,42,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.18) 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
             <DialogHeader className="relative border-b border-slate-900/10 px-5 pb-4 pt-5 dark:border-white/10">
               <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-                <UserPlus className="h-4 w-4 text-amber-500 dark:text-amber-200" />
+                <PhewFollowIcon className="h-4 w-4 text-amber-500 dark:text-amber-200" />
                 Connect Wallet to Buy
               </DialogTitle>
               <DialogDescription className="text-xs sm:text-sm text-muted-foreground">
@@ -4637,7 +4639,7 @@ export function PostCard({
                       connectWalletTone
                     )}
                   >
-                    {wallet.connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                    {wallet.connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhewFollowIcon className="h-4 w-4" />}
                     {walletShortAddress ? "Switch Wallet" : "Choose Wallet"}
                   </Button>
                   <Button
@@ -4957,7 +4959,7 @@ export function PostCard({
                         ) : chartCandlesQuery.error ? (
                           <div className="flex h-full items-center justify-center p-6 text-center">
                             <div className="space-y-2">
-                              <BarChart3 className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
+                              <PhewChartIcon className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
                               <p className="text-[11px] text-slate-500 dark:text-white/25">
                                 Chart feed unavailable. Try a different interval.
                               </p>
@@ -4976,7 +4978,7 @@ export function PostCard({
                         ) : (
                           <div className="flex h-full items-center justify-center p-6 text-center">
                             <div className="space-y-2">
-                              <BarChart3 className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
+                              <PhewChartIcon className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
                               <p className="text-[11px] text-slate-500 dark:text-white/25">
                                 Candle data not yet available for this token.
                               </p>
@@ -5105,9 +5107,9 @@ export function PostCard({
                 {isExecutingBuy ? (
                   <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
                 ) : hasWalletSignerForTrade ? (
-                  <Zap className="h-3 w-3 mr-1.5" />
+                  <PhewTradeIcon className="mr-1.5 h-3 w-3" />
                 ) : (
-                  <UserPlus className="h-3 w-3 mr-1.5" />
+                  <PhewFollowIcon className="mr-1.5 h-3 w-3" />
                 )}
                 {hasWalletSignerForTrade ? (tradeSide === "buy" ? "Buy" : "Sell") : connectWalletCtaLabel}
               </Button>

@@ -5,13 +5,14 @@ import { api } from "@/lib/api";
 import { useAuth, useSession } from "@/lib/auth-client";
 import { Notification } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Bell, CheckCheck, ArrowLeft, BellOff } from "lucide-react";
+import { CheckCheck, ArrowLeft, BellOff } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
+import { PhewBellIcon } from "@/components/icons/PhewIcons";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
 const NOTIFICATIONS_CACHE_TTL_MS = 30 * 60_000;
@@ -128,8 +129,8 @@ function mergeNotifications(notifications: Notification[]): Notification[] {
 function EmptyState({ mode }: { mode: "all" | "unread" }) {
   const isUnreadMode = mode === "unread";
   return (
-    <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-      <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+    <div className="app-empty-state m-4">
+      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
         <BellOff className="h-10 w-10 text-muted-foreground" />
       </div>
       <div>
@@ -406,22 +407,22 @@ export default function Notifications() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+      <header className="app-topbar">
+        <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
           <div className="flex items-center gap-3">
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9"
+                className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
                 onClick={() => navigate(-1)}
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
               <div className="flex items-center gap-2">
-                <Bell className="h-5 w-5 text-primary" />
+                <PhewBellIcon className="h-5 w-5 text-primary" />
                 <h1 className="font-semibold text-lg">Notifications</h1>
                 {unreadCount > 0 && (
-                  <span className="px-2 py-0.5 text-xs font-medium bg-primary text-primary-foreground rounded-full">
+                  <span className="rounded-full border border-white/70 bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground shadow-[0_12px_24px_-18px_hsl(var(--primary)/0.65)] dark:border-black/30">
                     {unreadCount > 99 ? "99+" : unreadCount}
                   </span>
                 )}
@@ -432,7 +433,7 @@ export default function Notifications() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+              className="h-9 gap-1.5 rounded-full border border-border/60 bg-white/60 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.16)] hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
               onClick={handleMarkAllRead}
               disabled={markAllReadMutation.isPending || !canPerformAuthenticatedWrites}
             >
@@ -443,39 +444,43 @@ export default function Notifications() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto">
-        <div className="bg-card border-x border-border min-h-[calc(100vh-3.5rem)]">
-          <div className="sticky top-14 z-40 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-            <div className="flex items-center px-2">
+      <main className="app-page-shell pt-5">
+        <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
+          <div className="sticky top-[4.4rem] z-40 border-b border-border/60 bg-white/70 px-2 backdrop-blur-xl dark:bg-black/20">
+            <div className="app-tab-rail my-3 flex items-center">
               <button
                 type="button"
                 onClick={() => setActiveFilter("all")}
                 className={cn(
-                  "relative h-11 px-4 text-sm font-medium transition-colors",
+                  "relative z-10 h-11 rounded-[18px] px-4 text-sm font-semibold transition-colors",
                   activeFilter === "all" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
               >
                 All
-                {activeFilter === "all" ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
               </button>
               <button
                 type="button"
                 onClick={() => setActiveFilter("unread")}
                 className={cn(
-                  "relative h-11 px-4 text-sm font-medium transition-colors",
+                  "relative z-10 h-11 rounded-[18px] px-4 text-sm font-semibold transition-colors",
                   activeFilter === "unread" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
               >
                 Unread
-                {activeFilter === "unread" ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
               </button>
+              <span
+                className={cn(
+                  "absolute bottom-1.5 top-1.5 rounded-[18px] border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.95),hsl(37_34%_95%/0.9))] shadow-[0_16px_28px_-26px_hsl(var(--foreground)/0.16)] transition-all duration-300 dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none",
+                  activeFilter === "all" ? "left-1.5 w-[72px]" : "left-[86px] w-[88px]"
+                )}
+              />
             </div>
           </div>
 
           {!isAuthenticated ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
-                <Bell className="h-10 w-10 text-muted-foreground" />
+            <div className="app-empty-state m-4">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
+                <PhewBellIcon className="h-10 w-10 text-muted-foreground" />
               </div>
               <div>
                 <p className="font-semibold text-foreground text-lg">Sign in to view notifications</p>
@@ -524,9 +529,9 @@ export default function Notifications() {
             </div>
           ) : error ? (
             // Error state
-            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-              <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
-                <Bell className="h-10 w-10 text-destructive" />
+            <div className="app-empty-state m-4">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
+                <PhewBellIcon className="h-10 w-10 text-destructive" />
               </div>
               <div>
                 <p className="font-semibold text-foreground text-lg">

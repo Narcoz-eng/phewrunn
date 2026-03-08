@@ -16,12 +16,13 @@ import { SearchBar } from "@/components/feed/SearchBar";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Sparkles, RefreshCw, Trophy, TrendingUp, AlertCircle } from "lucide-react";
+import { Sparkles, RefreshCw, TrendingUp, AlertCircle } from "lucide-react";
 import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
+import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
 
 interface FeedPage {
   items: Post[];
@@ -1298,7 +1299,7 @@ export default function Feed() {
         onLogout={handleSignOut}
       />
 
-      <main className="max-w-2xl mx-auto px-4 py-6">
+      <main className="app-page-shell">
         {/* 1. Pinned Announcements (at very top) */}
         <AnnouncementBanner />
 
@@ -1320,9 +1321,9 @@ export default function Feed() {
         {isLoadingUser ? (
           <ProfileCardSkeleton className="mb-6" />
         ) : user ? (
-          <div className="mb-6 p-5 bg-card border border-border rounded-xl shadow-sm">
+          <div className="app-surface mb-6 p-5 sm:p-6">
             <div className="flex items-center gap-4">
-              <Avatar className="h-16 w-16 border-2 border-primary/30 ring-2 ring-background">
+              <Avatar className="h-16 w-16 border-2 border-primary/25 ring-4 ring-white/70 dark:ring-background">
                 <AvatarImage src={getAvatarUrl(user.id, user.image)} />
                 <AvatarFallback className="bg-muted text-muted-foreground text-xl">
                   {user.name?.charAt(0) || "?"}
@@ -1331,11 +1332,11 @@ export default function Feed() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="font-bold text-lg truncate">{user.username || user.name}</h2>
-                  <Trophy className="h-4 w-4 text-primary" />
+                  <PhewTrophyIcon className="h-4 w-4 text-primary" />
                 </div>
-                <p className="text-muted-foreground truncate text-xs font-thin">{user.email}</p>
+                <p className="truncate text-xs text-muted-foreground">{user.email}</p>
                 {/* XP Display */}
-                <p className="text-primary font-medium mt-3 text-lg">
+                <p className="mt-3 text-lg font-semibold text-primary">
                   {user.xp?.toLocaleString() || 0} XP
                 </p>
               </div>
@@ -1346,7 +1347,7 @@ export default function Feed() {
             </div>
           </div>
         ) : userError ? (
-          <div className="mb-6 p-5 bg-card border border-destructive/30 rounded-xl">
+          <div className="app-surface mb-6 border-destructive/30 p-5">
             <div className="flex items-center gap-3 text-destructive">
               <AlertCircle className="h-5 w-5" />
               <span className="text-sm">Failed to load profile</span>
@@ -1369,7 +1370,7 @@ export default function Feed() {
 
         {/* 4. Refresh Button and Tab Label */}
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-muted-foreground">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {searchQuery.length >= 3 ? (
               `Search results for "${searchQuery}"`
             ) : (
@@ -1385,7 +1386,7 @@ export default function Feed() {
             size="sm"
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="h-8 px-3 gap-1.5 text-muted-foreground hover:text-foreground"
+            className="h-9 gap-1.5 rounded-full border border-border/60 bg-white/60 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.16)] hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
             <span className="text-xs">Refresh</span>
@@ -1399,7 +1400,7 @@ export default function Feed() {
               <Button
                 type="button"
                 onClick={applyPendingLatestPosts}
-                className="h-9 rounded-full px-4 shadow-lg shadow-primary/20 border border-primary/30"
+                className="h-10 rounded-full border border-primary/25 px-4 shadow-[0_20px_46px_-20px_hsl(var(--primary)/0.45)]"
               >
                 {pendingLatestCount > FEED_PAGE_SIZE ? `${FEED_PAGE_SIZE}+` : pendingLatestCount} new post{pendingLatestCount === 1 ? "" : "s"} • Show
               </Button>
@@ -1407,7 +1408,7 @@ export default function Feed() {
           ) : null}
 
           {shouldShowFeedSoftError ? (
-            <div className="mb-3 p-3 rounded-lg border border-amber-400/25 bg-amber-400/10 text-amber-100">
+            <div className="app-surface-soft mb-3 border-amber-400/25 bg-amber-400/10 p-3 text-amber-900 dark:text-amber-100">
               <div className="flex items-center gap-2">
                 <AlertCircle className="h-4 w-4" />
                 <span className="text-xs sm:text-sm">
@@ -1433,8 +1434,8 @@ export default function Feed() {
               ))}
             </>
           ) : shouldShowFollowingAuthState ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+            <div className="app-empty-state">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
                 <Sparkles className="h-10 w-10 text-muted-foreground" />
               </div>
               <div>
@@ -1450,8 +1451,8 @@ export default function Feed() {
               onRetry={() => refetchPosts()}
             />
           ) : displayedPosts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+            <div className="app-empty-state">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
                 {activeTab === "trending" ? (
                   <TrendingUp className="h-10 w-10 text-muted-foreground" />
                 ) : (

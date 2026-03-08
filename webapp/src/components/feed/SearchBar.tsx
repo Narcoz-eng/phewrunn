@@ -36,7 +36,7 @@ export function SearchBar({ value, onChange, isLoading, className }: SearchBarPr
   }, [onChange]);
 
   return (
-    <div className={cn("relative mb-4", className)}>
+    <div className={cn("relative mb-5", className)}>
       <div className="relative">
         {/* Search Icon */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
@@ -54,11 +54,12 @@ export function SearchBar({ value, onChange, isLoading, className }: SearchBarPr
           value={localValue}
           onChange={(e) => setLocalValue(e.target.value)}
           className={cn(
-            "pl-10 pr-10 h-11",
-            "bg-secondary/50 border-border/50",
-            "focus:bg-background focus:border-primary/50",
+            "h-12 rounded-[22px] pl-11 pr-11 text-sm",
+            "border-border/70 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.92),hsl(38_32%_94%/0.9))]",
+            "shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.16)]",
+            "focus:border-primary/45",
             "placeholder:text-muted-foreground/60",
-            "transition-all duration-200"
+            "dark:bg-[linear-gradient(180deg,rgba(13,15,21,0.92),rgba(8,10,14,0.96))] dark:shadow-none"
           )}
         />
 
@@ -67,7 +68,7 @@ export function SearchBar({ value, onChange, isLoading, className }: SearchBarPr
           <Button
             variant="ghost"
             size="icon"
-            className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground hover:text-foreground"
+            className="absolute right-1.5 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
             onClick={handleClear}
           >
             <X className="h-4 w-4" />

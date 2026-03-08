@@ -12,52 +12,52 @@
 @layer base {
   /* Light Mode - Warm editorial ivory with sharper contrast */
   :root {
-    --card: 42 43% 98%;
-    --ring: 156 43% 39%;
-    --input: 42 50% 99%;
-    --muted: 36 31% 91%;
-    --accent: 40 58% 84%;
-    --border: 34 22% 84%;
-    --chart-1: 156 43% 39%;
-    --chart-2: 191 48% 43%;
-    --chart-3: 31 79% 54%;
-    --chart-4: 221 27% 29%;
-    --chart-5: 37 24% 78%;
-    --popover: 42 43% 98%;
-    --primary: 156 43% 39%;
-    --sidebar: 42 45% 97%;
+    --card: 0 0% 100%;
+    --ring: 157 57% 38%;
+    --input: 0 0% 100%;
+    --muted: 35 31% 90%;
+    --accent: 154 48% 90%;
+    --border: 31 24% 82%;
+    --chart-1: 157 57% 38%;
+    --chart-2: 192 62% 42%;
+    --chart-3: 32 86% 54%;
+    --chart-4: 224 28% 24%;
+    --chart-5: 42 32% 76%;
+    --popover: 0 0% 100%;
+    --primary: 157 57% 38%;
+    --sidebar: 38 44% 95%;
     --spacing: 0.23rem;
     --font-mono: JetBrains Mono, Courier New, monospace;
     --font-sans: Manrope, ui-sans-serif, sans-serif, system-ui;
-    --secondary: 38 46% 92%;
-    --background: 38 43% 96%;
+    --secondary: 38 42% 92%;
+    --background: 38 39% 95%;
     --font-serif: Signifier, Georgia, serif;
-    --foreground: 222 31% 14%;
+    --foreground: 224 32% 12%;
     --destructive: 4 72% 54%;
     --shadow-blur: 2px;
-    --shadow-color: 222 31% 14%;
-    --sidebar-ring: 138 8% 53%;
+    --shadow-color: 224 32% 12%;
+    --sidebar-ring: 157 57% 38%;
     --shadow-spread: 0px;
     --letter-spacing: 0em;
-    --shadow-opacity: 0.05;
-    --sidebar-accent: 37 32% 91%;
-    --sidebar-border: 34 22% 84%;
-    --card-foreground: 222 31% 14%;
+    --shadow-opacity: 0.08;
+    --sidebar-accent: 34 31% 89%;
+    --sidebar-border: 31 24% 82%;
+    --card-foreground: 224 32% 12%;
     --shadow-offset-x: 0px;
     --shadow-offset-y: 1px;
-    --sidebar-primary: 156 43% 39%;
-    --muted-foreground: 220 12% 39%;
-    --accent-foreground: 222 30% 16%;
-    --popover-foreground: 222 31% 14%;
+    --sidebar-primary: 157 57% 38%;
+    --muted-foreground: 220 12% 35%;
+    --accent-foreground: 224 28% 15%;
+    --popover-foreground: 224 32% 12%;
     --primary-foreground: 0 0% 100%;
-    --sidebar-foreground: 222 31% 14%;
-    --secondary-foreground: 222 31% 14%;
+    --sidebar-foreground: 224 32% 12%;
+    --secondary-foreground: 224 32% 12%;
     --destructive-foreground: 0 0% 100%;
-    --sidebar-accent-foreground: 222 31% 14%;
+    --sidebar-accent-foreground: 224 32% 12%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --radius: 0.45rem;
-    --gain: 146 66% 34%;
-    --loss: 4 78% 56%;
+    --radius: 0.9rem;
+    --gain: 146 63% 34%;
+    --loss: 4 74% 54%;
   }
 
   /* Dark Mode - Premium, Deep, Sophisticated */
@@ -115,9 +115,10 @@
     min-height: 100vh;
     isolation: isolate;
     background:
-      radial-gradient(circle at 12% 0%, hsl(var(--primary) / 0.12), transparent 26%),
-      radial-gradient(circle at 88% 8%, hsl(37 86% 60% / 0.18), transparent 24%),
-      linear-gradient(180deg, hsl(var(--background)), hsl(38 40% 93%));
+      radial-gradient(circle at 10% 0%, hsl(var(--primary) / 0.14), transparent 24%),
+      radial-gradient(circle at 84% 8%, hsl(37 92% 62% / 0.16), transparent 22%),
+      radial-gradient(circle at 50% 100%, hsl(190 82% 44% / 0.08), transparent 30%),
+      linear-gradient(180deg, hsl(42 45% 97%), hsl(var(--background)) 18%, hsl(36 32% 91%));
     background-attachment: fixed;
     font-family: 'Manrope', system-ui, -apple-system, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
@@ -130,8 +131,9 @@
     z-index: -2;
     pointer-events: none;
     background:
-      linear-gradient(135deg, hsl(0 0% 100% / 0.72), transparent 34%),
-      radial-gradient(circle at 30% 22%, hsl(var(--primary) / 0.06), transparent 28%);
+      linear-gradient(135deg, hsl(0 0% 100% / 0.78), transparent 34%),
+      linear-gradient(180deg, hsl(0 0% 100% / 0.52), transparent 18%, transparent 68%, hsl(var(--primary) / 0.03)),
+      radial-gradient(circle at 30% 22%, hsl(var(--primary) / 0.08), transparent 28%);
   }
 
   body::after {
@@ -198,10 +200,11 @@
     @apply transition-all duration-300 ease-out;
     @apply hover:border-primary/30;
     box-shadow:
-      0 24px 64px -44px hsl(222 31% 14% / 0.22),
-      inset 0 1px 0 hsl(0 0% 100% / 0.72);
+      0 28px 80px -46px hsl(224 32% 12% / 0.18),
+      0 10px 24px -18px hsl(224 32% 12% / 0.09),
+      inset 0 1px 0 hsl(0 0% 100% / 0.82);
     background:
-      linear-gradient(180deg, hsl(var(--card)), hsl(39 40% 95%));
+      linear-gradient(180deg, hsl(0 0% 100% / 0.98), hsl(38 37% 95% / 0.96));
   }
 
   .dark .card-premium {
@@ -227,8 +230,8 @@
   .card-glass {
     @apply rounded-xl border border-border/60 bg-card/85 backdrop-blur-xl shadow-lg;
     box-shadow:
-      0 24px 60px -42px hsl(222 31% 14% / 0.18),
-      inset 0 1px 0 hsl(0 0% 100% / 0.58);
+      0 30px 70px -46px hsl(224 32% 12% / 0.16),
+      inset 0 1px 0 hsl(0 0% 100% / 0.72);
   }
 
   .dark .card-glass {
@@ -314,10 +317,114 @@
 
   /* Input styles - sleek terminal feel */
   .input-premium {
-    @apply bg-secondary/50 border border-border rounded-lg px-4 py-3;
+    @apply rounded-xl border border-border px-4 py-3;
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.96), hsl(38 28% 94% / 0.88));
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.78),
+      0 14px 32px -28px hsl(224 32% 12% / 0.16);
     @apply focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50;
     @apply transition-all duration-200;
     @apply placeholder:text-muted-foreground/60;
+  }
+
+  .app-topbar {
+    @apply sticky top-0 z-50 border-b border-border/70 backdrop-blur-2xl;
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.9), hsl(38 42% 95% / 0.78));
+    box-shadow: 0 18px 50px -46px hsl(224 32% 12% / 0.22);
+  }
+
+  .dark .app-topbar {
+    @apply border-white/[0.08];
+    background:
+      linear-gradient(180deg, rgba(8, 10, 15, 0.92), rgba(8, 10, 15, 0.76));
+    box-shadow: none;
+  }
+
+  .app-page-shell {
+    @apply mx-auto max-w-[780px] px-4 py-6 sm:px-5;
+  }
+
+  .app-surface {
+    @apply rounded-[28px] border border-border/75 text-card-foreground;
+    background:
+      radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 42%),
+      linear-gradient(180deg, hsl(0 0% 100% / 0.96), hsl(38 34% 94% / 0.95));
+    box-shadow:
+      0 28px 90px -54px hsl(224 32% 12% / 0.2),
+      0 12px 30px -26px hsl(224 32% 12% / 0.12),
+      inset 0 1px 0 hsl(0 0% 100% / 0.82);
+  }
+
+  .dark .app-surface {
+    @apply border-white/[0.08];
+    background:
+      radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 40%),
+      linear-gradient(180deg, rgba(10, 12, 18, 0.98), rgba(7, 9, 13, 0.98));
+    box-shadow: none;
+  }
+
+  .app-surface-soft {
+    @apply rounded-[24px] border border-border/65;
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.78), hsl(37 35% 93% / 0.86));
+    box-shadow:
+      0 22px 46px -42px hsl(224 32% 12% / 0.16),
+      inset 0 1px 0 hsl(0 0% 100% / 0.72);
+  }
+
+  .dark .app-surface-soft {
+    @apply border-white/[0.07];
+    background:
+      linear-gradient(180deg, rgba(13, 15, 21, 0.92), rgba(8, 10, 14, 0.95));
+    box-shadow: none;
+  }
+
+  .app-tab-rail {
+    @apply relative overflow-hidden rounded-[22px] border border-border/70 p-1.5;
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.76), hsl(38 30% 92% / 0.88));
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.72),
+      0 18px 36px -34px hsl(224 32% 12% / 0.14);
+  }
+
+  .dark .app-tab-rail {
+    @apply border-white/[0.08];
+    background:
+      linear-gradient(180deg, rgba(13, 15, 21, 0.92), rgba(8, 10, 14, 0.94));
+    box-shadow: none;
+  }
+
+  .app-empty-state {
+    @apply flex flex-col items-center justify-center gap-4 rounded-[28px] border border-border/70 px-6 py-14 text-center;
+    background:
+      radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 48%),
+      linear-gradient(180deg, hsl(0 0% 100% / 0.84), hsl(38 35% 94% / 0.86));
+    box-shadow:
+      0 22px 56px -44px hsl(224 32% 12% / 0.16),
+      inset 0 1px 0 hsl(0 0% 100% / 0.74);
+  }
+
+  .dark .app-empty-state {
+    @apply border-white/[0.08];
+    background:
+      linear-gradient(180deg, rgba(12, 14, 20, 0.9), rgba(8, 10, 14, 0.94));
+    box-shadow: none;
+  }
+
+  .app-inline-chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-border/70 px-3 py-1.5 text-xs font-semibold tracking-[0.02em];
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.84), hsl(38 26% 92% / 0.78));
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.78);
+  }
+
+  .dark .app-inline-chip {
+    @apply border-white/[0.08];
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: none;
   }
 
   /* Button with glow */
