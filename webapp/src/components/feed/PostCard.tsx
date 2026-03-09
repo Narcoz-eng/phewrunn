@@ -4840,7 +4840,7 @@ export function PostCard({
 
             {shouldShowIntelligenceStrip ? (
               hasTokenIntelligence ? (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                   {confidenceScore !== null ? (
                     <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
@@ -4867,19 +4867,32 @@ export function PostCard({
                   ) : null}
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Timing</div>
-                    <div className="mt-1 flex items-center justify-between gap-2">
-                      <span className="font-semibold text-foreground">{post.timingTier || "UNRANKED"}</span>
-                      {tokenPageHref ? (
-                        <button
-                          type="button"
-                          onClick={() => navigate(tokenPageHref)}
-                          className="text-[11px] font-semibold text-primary"
-                        >
-                          Token page
-                        </button>
-                      ) : null}
-                    </div>
+                    <div className="mt-1 font-semibold text-foreground">{post.timingTier || "UNRANKED"}</div>
                   </div>
+                  {tokenPageHref ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(tokenPageHref)}
+                      className="group relative overflow-hidden rounded-[20px] border border-primary/35 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.32),transparent_48%),linear-gradient(135deg,hsl(var(--primary)/0.22),hsl(var(--background))_76%)] px-3.5 py-3 text-left shadow-[0_28px_68px_-32px_hsl(var(--primary)/0.6)] transition-all duration-200 hover:border-primary/50 hover:shadow-[0_30px_72px_-26px_hsl(var(--primary)/0.72)] sm:col-span-2 xl:col-span-1"
+                    >
+                      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.08),transparent)] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+                      <div className="relative flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-primary">
+                            <Sparkles className="h-3 w-3" />
+                            Phew Ultra
+                          </div>
+                          <div className="mt-2 text-sm font-semibold text-foreground">Open Token Lab</div>
+                          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                            Chart, clusters, sentiment, confidence, and timeline.
+                          </p>
+                        </div>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/12 text-primary transition-transform duration-200 group-hover:scale-105">
+                          <ExternalLink className="h-4.5 w-4.5" />
+                        </div>
+                      </div>
+                    </button>
+                  ) : null}
                 </div>
               ) : (
                 <div className="mt-3">

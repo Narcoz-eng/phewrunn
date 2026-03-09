@@ -197,7 +197,10 @@ export default function TokenPage() {
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="font-semibold text-lg">Token Intelligence</h1>
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/80">Phew Ultra</div>
+            <h1 className="font-semibold text-lg">Token Lab</h1>
+          </div>
         </div>
       </header>
 
@@ -205,7 +208,8 @@ export default function TokenPage() {
         {isLoading ? (
           <TokenScanningState
             address={tokenAddress}
-            subtitle="We are mapping liquidity, community sentiment, holder concentration, and bundle risk for this token."
+            title="Opening Phew Ultra Token Lab"
+            subtitle="We are mapping liquidity, community sentiment, holder concentration, bundle risk, and conviction signals for this token."
           />
         ) : error || !token ? (
           <div className="app-empty-state min-h-[360px]">
