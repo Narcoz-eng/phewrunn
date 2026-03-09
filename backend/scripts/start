@@ -32,7 +32,7 @@ if [[ -f "prisma/schema.prisma" ]]; then
   if [[ "${ENVIRONMENT}" == "production" ]]; then
     if compgen -G "prisma/migrations/*/migration.sql" > /dev/null; then
       echo "Applying Prisma migrations..."
-      bunx prisma migrate deploy
+      node ./scripts/prisma-migrate-deploy.mjs
     else
       echo "No Prisma migrations found; refusing to run prisma db push in production."
       exit 1

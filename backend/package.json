@@ -6,13 +6,13 @@
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "bun run --hot src/index.ts",
-    "start": "node_modules/.bin/prisma generate && node_modules/.bin/prisma migrate deploy && bun run src/index.ts",
+    "start": "node_modules/.bin/prisma generate && node ./scripts/prisma-migrate-deploy.mjs && bun run src/index.ts",
     "build": "npx prisma@6 generate",
     "test": "bun test",
     "studio:up": "cloud-studio --port 3001 --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "db:push": "npx prisma@6 db push",
-    "db:migrate": "npx prisma@6 migrate deploy",
+    "db:migrate": "node ./scripts/prisma-migrate-deploy.mjs",
     "db:generate": "npx prisma@6 generate",
     "studio": "npx prisma@6 studio"
   },

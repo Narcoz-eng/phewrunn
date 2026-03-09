@@ -45,6 +45,8 @@ function normalizeDatabaseUrl(
     const parsed = new URL(rawUrl);
     const hostname = parsed.hostname.toLowerCase();
     const notes: string[] = [];
+    const preferDirectRuntimeUrl =
+      process.env.PRISMA_PREFER_DIRECT_URL?.trim().toLowerCase() === "true";
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
@@ -95,10 +97,10 @@ function normalizeDatabaseUrl(
       }
     }
 
-    // Supabase transaction pooler is ideal in serverless.
-    // In long-lived runtimes (Bun/Node servers), DIRECT_URL is usually more stable.
+    // Prefer pooled DATABASE_URL by default for runtime stability.
+    // DIRECT_URL can still be opted into explicitly when needed.
     if (hostname.endsWith(".pooler.supabase.com")) {
-      if (!isServerlessRuntime && directUrl && !directUrl.startsWith("file:")) {
+      if (preferDirectRuntimeUrl && directUrl && !directUrl.startsWith("file:")) {
         const directParsed = new URL(directUrl);
         if (directParsed.searchParams.has("sslmode") || directParsed.protocol.startsWith("postgres")) {
           if (
@@ -107,9 +109,12 @@ function normalizeDatabaseUrl(
           ) {
             ensureSessionSafetyOptions(directParsed, notes);
           }
-          notes.push("using DIRECT_URL in non-serverless runtime");
+          notes.push("using DIRECT_URL for runtime queries");
           return { url: directParsed.toString(), notes };
         }
+      }
+      if (directUrl && !preferDirectRuntimeUrl) {
+        notes.push("using pooled DATABASE_URL for runtime queries");
       }
 
       if (!parsed.searchParams.has("pgbouncer")) {
@@ -585,8 +590,7 @@ async function initPostgresCompatColumns(prisma: PrismaClient) {
 const compatGuardrailsSetting = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS?.trim().toLowerCase();
 const shouldRunCompatGuardrails =
   isPostgres &&
-  (compatGuardrailsSetting === "true" ||
-    (!isProduction && compatGuardrailsSetting !== "false"));
+  compatGuardrailsSetting !== "false";
 let prismaReadyPromise: Promise<void> | null = null;
 
 async function initializePrismaRuntime(): Promise<void> {
