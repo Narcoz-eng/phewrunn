@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, ShieldAlert, TrendingUp, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PostCard } from "@/components/feed/PostCard";
-import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
+import { TokenScanningState } from "@/components/feed/TokenScanningState";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -152,6 +152,7 @@ export default function TokenPage() {
     },
     enabled: !!tokenAddress,
     staleTime: 20_000,
+    refetchOnWindowFocus: false,
   });
 
   const chartData = useMemo(
@@ -202,10 +203,10 @@ export default function TokenPage() {
 
       <main className="mx-auto max-w-[980px] px-4 pb-10 pt-5 sm:px-5">
         {isLoading ? (
-          <div className="space-y-4">
-            <PostCardSkeleton />
-            <PostCardSkeleton showMarketData={false} />
-          </div>
+          <TokenScanningState
+            address={tokenAddress}
+            subtitle="We are mapping liquidity, community sentiment, holder concentration, and bundle risk for this token."
+          />
         ) : error || !token ? (
           <div className="app-empty-state min-h-[360px]">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">

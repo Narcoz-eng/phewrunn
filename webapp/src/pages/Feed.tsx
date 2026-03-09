@@ -254,6 +254,9 @@ function buildRealtimePageFingerprint(page: FeedPage): string {
       item.mcap1h ?? "null",
       item.mcap6h ?? "null",
       item.isWin ?? "null",
+      item.confidenceScore ?? "null",
+      item.bundleRiskLabel ?? "null",
+      item.timingTier ?? "null",
       item.author?.level ?? "null",
       item.author?.xp ?? "null",
     ].join(":"))
@@ -302,6 +305,13 @@ function shouldMergeSessionCachedRealtimeState(tab: FeedTab, search: string): bo
   return !(tab === "latest" && search.trim().length === 0);
 }
 
+function isMissingFeedValue<T>(value: T | null | undefined): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
 function mergePostWithCachedRealtimeState(
   post: Post,
   cachedPost: Post | null | undefined,
@@ -322,6 +332,37 @@ function mergePostWithCachedRealtimeState(
   let nextIsReposted = post.isReposted;
   let nextIsFollowingAuthor = post.isFollowingAuthor;
   let nextCounts = post._count;
+  let nextTokenName = post.tokenName;
+  let nextTokenSymbol = post.tokenSymbol;
+  let nextTokenImage = post.tokenImage;
+  let nextDexscreenerUrl = post.dexscreenerUrl;
+  let nextConfidenceScore = post.confidenceScore;
+  let nextHotAlphaScore = post.hotAlphaScore;
+  let nextEarlyRunnerScore = post.earlyRunnerScore;
+  let nextHighConvictionScore = post.highConvictionScore;
+  let nextTimingTier = post.timingTier;
+  let nextFirstCallerRank = post.firstCallerRank;
+  let nextRoiPeakPct = post.roiPeakPct;
+  let nextRoiCurrentPct = post.roiCurrentPct;
+  let nextTrustedTraderCount = post.trustedTraderCount;
+  let nextEntryQualityScore = post.entryQualityScore;
+  let nextBundlePenaltyScore = post.bundlePenaltyScore;
+  let nextSentimentScore = post.sentimentScore;
+  let nextTokenRiskScore = post.tokenRiskScore;
+  let nextBundleRiskLabel = post.bundleRiskLabel;
+  let nextLiquidity = post.liquidity;
+  let nextVolume24h = post.volume24h;
+  let nextHolderCount = post.holderCount;
+  let nextLargestHolderPct = post.largestHolderPct;
+  let nextTop10HolderPct = post.top10HolderPct;
+  let nextBundledWalletCount = post.bundledWalletCount;
+  let nextEstimatedBundledSupplyPct = post.estimatedBundledSupplyPct;
+  let nextBundleClusters = post.bundleClusters;
+  let nextReactionCounts = post.reactionCounts;
+  let nextCurrentReactionType = post.currentReactionType;
+  let nextThreadCount = post.threadCount;
+  let nextRadarReasons = post.radarReasons;
+  let nextAuthor = post.author;
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -354,6 +395,201 @@ function mergePostWithCachedRealtimeState(
 
   if (cachedPost.isWin !== null && post.isWin === null) {
     nextIsWin = cachedPost.isWin;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.tokenName) && !isMissingFeedValue(cachedPost.tokenName)) {
+    nextTokenName = cachedPost.tokenName;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.tokenSymbol) && !isMissingFeedValue(cachedPost.tokenSymbol)) {
+    nextTokenSymbol = cachedPost.tokenSymbol;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.tokenImage) && !isMissingFeedValue(cachedPost.tokenImage)) {
+    nextTokenImage = cachedPost.tokenImage;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.dexscreenerUrl) && !isMissingFeedValue(cachedPost.dexscreenerUrl)) {
+    nextDexscreenerUrl = cachedPost.dexscreenerUrl;
+    didChange = true;
+  }
+
+  if (post.confidenceScore == null && cachedPost.confidenceScore != null) {
+    nextConfidenceScore = cachedPost.confidenceScore;
+    didChange = true;
+  }
+
+  if (post.hotAlphaScore == null && cachedPost.hotAlphaScore != null) {
+    nextHotAlphaScore = cachedPost.hotAlphaScore;
+    didChange = true;
+  }
+
+  if (post.earlyRunnerScore == null && cachedPost.earlyRunnerScore != null) {
+    nextEarlyRunnerScore = cachedPost.earlyRunnerScore;
+    didChange = true;
+  }
+
+  if (post.highConvictionScore == null && cachedPost.highConvictionScore != null) {
+    nextHighConvictionScore = cachedPost.highConvictionScore;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.timingTier) && !isMissingFeedValue(cachedPost.timingTier)) {
+    nextTimingTier = cachedPost.timingTier;
+    didChange = true;
+  }
+
+  if (post.firstCallerRank == null && cachedPost.firstCallerRank != null) {
+    nextFirstCallerRank = cachedPost.firstCallerRank;
+    didChange = true;
+  }
+
+  if (post.roiPeakPct == null && cachedPost.roiPeakPct != null) {
+    nextRoiPeakPct = cachedPost.roiPeakPct;
+    didChange = true;
+  }
+
+  if (post.roiCurrentPct == null && cachedPost.roiCurrentPct != null) {
+    nextRoiCurrentPct = cachedPost.roiCurrentPct;
+    didChange = true;
+  }
+
+  if (post.trustedTraderCount == null && cachedPost.trustedTraderCount != null) {
+    nextTrustedTraderCount = cachedPost.trustedTraderCount;
+    didChange = true;
+  }
+
+  if (post.entryQualityScore == null && cachedPost.entryQualityScore != null) {
+    nextEntryQualityScore = cachedPost.entryQualityScore;
+    didChange = true;
+  }
+
+  if (post.bundlePenaltyScore == null && cachedPost.bundlePenaltyScore != null) {
+    nextBundlePenaltyScore = cachedPost.bundlePenaltyScore;
+    didChange = true;
+  }
+
+  if (post.sentimentScore == null && cachedPost.sentimentScore != null) {
+    nextSentimentScore = cachedPost.sentimentScore;
+    didChange = true;
+  }
+
+  if (post.tokenRiskScore == null && cachedPost.tokenRiskScore != null) {
+    nextTokenRiskScore = cachedPost.tokenRiskScore;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.bundleRiskLabel) && !isMissingFeedValue(cachedPost.bundleRiskLabel)) {
+    nextBundleRiskLabel = cachedPost.bundleRiskLabel;
+    didChange = true;
+  }
+
+  if (post.liquidity == null && cachedPost.liquidity != null) {
+    nextLiquidity = cachedPost.liquidity;
+    didChange = true;
+  }
+
+  if (post.volume24h == null && cachedPost.volume24h != null) {
+    nextVolume24h = cachedPost.volume24h;
+    didChange = true;
+  }
+
+  if (post.holderCount == null && cachedPost.holderCount != null) {
+    nextHolderCount = cachedPost.holderCount;
+    didChange = true;
+  }
+
+  if (post.largestHolderPct == null && cachedPost.largestHolderPct != null) {
+    nextLargestHolderPct = cachedPost.largestHolderPct;
+    didChange = true;
+  }
+
+  if (post.top10HolderPct == null && cachedPost.top10HolderPct != null) {
+    nextTop10HolderPct = cachedPost.top10HolderPct;
+    didChange = true;
+  }
+
+  if (post.bundledWalletCount == null && cachedPost.bundledWalletCount != null) {
+    nextBundledWalletCount = cachedPost.bundledWalletCount;
+    didChange = true;
+  }
+
+  if (post.estimatedBundledSupplyPct == null && cachedPost.estimatedBundledSupplyPct != null) {
+    nextEstimatedBundledSupplyPct = cachedPost.estimatedBundledSupplyPct;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.bundleClusters) && !isMissingFeedValue(cachedPost.bundleClusters)) {
+    nextBundleClusters = cachedPost.bundleClusters;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.reactionCounts) && !isMissingFeedValue(cachedPost.reactionCounts)) {
+    nextReactionCounts = cachedPost.reactionCounts;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.currentReactionType) && !isMissingFeedValue(cachedPost.currentReactionType)) {
+    nextCurrentReactionType = cachedPost.currentReactionType;
+    didChange = true;
+  }
+
+  if (post.threadCount == null && cachedPost.threadCount != null) {
+    nextThreadCount = cachedPost.threadCount;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.radarReasons) && !isMissingFeedValue(cachedPost.radarReasons)) {
+    nextRadarReasons = cachedPost.radarReasons;
+    didChange = true;
+  }
+
+  const nextAuthorTrustScore =
+    post.author.trustScore == null && cachedPost.author?.trustScore != null
+      ? cachedPost.author.trustScore
+      : post.author.trustScore;
+  const nextAuthorReputationTier =
+    isMissingFeedValue(post.author.reputationTier) && !isMissingFeedValue(cachedPost.author?.reputationTier)
+      ? cachedPost.author.reputationTier
+      : post.author.reputationTier;
+  const nextAuthorWinRate30d =
+    post.author.winRate30d == null && cachedPost.author?.winRate30d != null
+      ? cachedPost.author.winRate30d
+      : post.author.winRate30d;
+  const nextAuthorAvgRoi30d =
+    post.author.avgRoi30d == null && cachedPost.author?.avgRoi30d != null
+      ? cachedPost.author.avgRoi30d
+      : post.author.avgRoi30d;
+  const nextAuthorFirstCallCount =
+    post.author.firstCallCount == null && cachedPost.author?.firstCallCount != null
+      ? cachedPost.author.firstCallCount
+      : post.author.firstCallCount;
+  const nextAuthorIsVerified =
+    post.author.isVerified == null && cachedPost.author?.isVerified != null
+      ? cachedPost.author.isVerified
+      : post.author.isVerified;
+
+  if (
+    nextAuthorTrustScore !== post.author.trustScore ||
+    nextAuthorReputationTier !== post.author.reputationTier ||
+    nextAuthorWinRate30d !== post.author.winRate30d ||
+    nextAuthorAvgRoi30d !== post.author.avgRoi30d ||
+    nextAuthorFirstCallCount !== post.author.firstCallCount ||
+    nextAuthorIsVerified !== post.author.isVerified
+  ) {
+    nextAuthor = {
+      ...post.author,
+      trustScore: nextAuthorTrustScore,
+      reputationTier: nextAuthorReputationTier,
+      winRate30d: nextAuthorWinRate30d,
+      avgRoi30d: nextAuthorAvgRoi30d,
+      firstCallCount: nextAuthorFirstCallCount,
+      isVerified: nextAuthorIsVerified,
+    };
     didChange = true;
   }
 
@@ -404,6 +640,37 @@ function mergePostWithCachedRealtimeState(
     mcap1h: nextMcap1h,
     mcap6h: nextMcap6h,
     isWin: nextIsWin,
+    tokenName: nextTokenName,
+    tokenSymbol: nextTokenSymbol,
+    tokenImage: nextTokenImage,
+    dexscreenerUrl: nextDexscreenerUrl,
+    confidenceScore: nextConfidenceScore,
+    hotAlphaScore: nextHotAlphaScore,
+    earlyRunnerScore: nextEarlyRunnerScore,
+    highConvictionScore: nextHighConvictionScore,
+    timingTier: nextTimingTier,
+    firstCallerRank: nextFirstCallerRank,
+    roiPeakPct: nextRoiPeakPct,
+    roiCurrentPct: nextRoiCurrentPct,
+    trustedTraderCount: nextTrustedTraderCount,
+    entryQualityScore: nextEntryQualityScore,
+    bundlePenaltyScore: nextBundlePenaltyScore,
+    sentimentScore: nextSentimentScore,
+    tokenRiskScore: nextTokenRiskScore,
+    bundleRiskLabel: nextBundleRiskLabel,
+    liquidity: nextLiquidity,
+    volume24h: nextVolume24h,
+    holderCount: nextHolderCount,
+    largestHolderPct: nextLargestHolderPct,
+    top10HolderPct: nextTop10HolderPct,
+    bundledWalletCount: nextBundledWalletCount,
+    estimatedBundledSupplyPct: nextEstimatedBundledSupplyPct,
+    bundleClusters: nextBundleClusters,
+    reactionCounts: nextReactionCounts,
+    currentReactionType: nextCurrentReactionType,
+    threadCount: nextThreadCount,
+    radarReasons: nextRadarReasons,
+    author: nextAuthor,
     isLiked: nextIsLiked,
     isReposted: nextIsReposted,
     isFollowingAuthor: nextIsFollowingAuthor,

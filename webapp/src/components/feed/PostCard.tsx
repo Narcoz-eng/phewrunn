@@ -29,6 +29,7 @@ import { LevelBadge, LevelBar } from "./LevelBar";
 import { RepostersDialog } from "./RepostersDialog";
 import { SharedAlphaDialog, type SharedAlphaResponse } from "./SharedAlphaDialog";
 import { TokenInfoCard } from "./TokenInfoCard";
+import { TokenScanningState } from "./TokenScanningState";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -1360,6 +1361,20 @@ export function PostCard({
   const hotAlphaScore = post.hotAlphaScore ?? null;
   const earlyRunnerScore = post.earlyRunnerScore ?? null;
   const highConvictionScore = post.highConvictionScore ?? null;
+  const tokenPageHref = post.contractAddress ? `/token/${post.contractAddress}` : null;
+  const hasTokenIntelligence =
+    confidenceScore !== null ||
+    hotAlphaScore !== null ||
+    earlyRunnerScore !== null ||
+    highConvictionScore !== null ||
+    post.bundleRiskLabel != null ||
+    post.timingTier != null ||
+    post.author.reputationTier != null ||
+    post.estimatedBundledSupplyPct != null ||
+    post.liquidity != null ||
+    post.volume24h != null ||
+    post.holderCount != null;
+  const shouldShowIntelligenceStrip = hasContractAddress || hasTokenIntelligence || Boolean(tokenPageHref);
   const threadTotal = post.threadCount ?? commentCount;
   const traderTier =
     post.author.reputationTier ??
@@ -1368,7 +1383,6 @@ export function PostCard({
       : typeof post.author.trustScore === "number" && post.author.trustScore >= 58
         ? "Trusted"
         : "Provisional");
-  const tokenPageHref = post.contractAddress ? `/token/${post.contractAddress}` : null;
   const formatUsdStat = (value: number) =>
     new Intl.NumberFormat(undefined, {
       style: "currency",
@@ -4739,53 +4753,59 @@ export function PostCard({
               </button>
             )}
 
-            {(confidenceScore !== null ||
-              post.bundleRiskLabel ||
-              post.timingTier ||
-              post.author.reputationTier ||
-              tokenPageHref) && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                {confidenceScore !== null ? (
-                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
-                    <div className="mt-1 flex items-center justify-between gap-3">
-                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-                        <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, confidenceScore))}%` }} />
+            {shouldShowIntelligenceStrip ? (
+              hasTokenIntelligence ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {confidenceScore !== null ? (
+                    <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
+                      <div className="mt-1 flex items-center justify-between gap-3">
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, confidenceScore))}%` }} />
+                        </div>
+                        <span className="font-semibold text-foreground">{confidenceScore.toFixed(0)}%</span>
                       </div>
-                      <span className="font-semibold text-foreground">{confidenceScore.toFixed(0)}%</span>
                     </div>
-                  </div>
-                ) : null}
-                <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Trader tier</div>
-                  <div className="mt-1 font-semibold text-foreground">{traderTier}</div>
-                </div>
-                {(post.bundleRiskLabel || post.estimatedBundledSupplyPct !== null) ? (
+                  ) : null}
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
-                    <div className="mt-1 font-semibold text-foreground">
-                      {post.bundleRiskLabel || "Unknown"}
-                      {typeof post.estimatedBundledSupplyPct === "number" ? ` | ${post.estimatedBundledSupplyPct.toFixed(1)}%` : ""}
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Trader tier</div>
+                    <div className="mt-1 font-semibold text-foreground">{traderTier}</div>
+                  </div>
+                  {(post.bundleRiskLabel || post.estimatedBundledSupplyPct !== null) ? (
+                    <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
+                      <div className="mt-1 font-semibold text-foreground">
+                        {post.bundleRiskLabel || "Unknown"}
+                        {typeof post.estimatedBundledSupplyPct === "number" ? ` | ${post.estimatedBundledSupplyPct.toFixed(1)}%` : ""}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Timing</div>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <span className="font-semibold text-foreground">{post.timingTier || "UNRANKED"}</span>
+                      {tokenPageHref ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(tokenPageHref)}
+                          className="text-[11px] font-semibold text-primary"
+                        >
+                          Token page
+                        </button>
+                      ) : null}
                     </div>
                   </div>
-                ) : null}
-                <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Timing</div>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <span className="font-semibold text-foreground">{post.timingTier || "UNRANKED"}</span>
-                    {tokenPageHref ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(tokenPageHref)}
-                        className="text-[11px] font-semibold text-primary"
-                      >
-                        Token page
-                      </button>
-                    ) : null}
-                  </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="mt-3">
+                  <TokenScanningState
+                    compact
+                    address={post.contractAddress}
+                    subtitle="Confidence, bundle risk, and timing signals are still being assembled."
+                  />
+                </div>
+              )
+            ) : null}
           </div>
         </div>
 
