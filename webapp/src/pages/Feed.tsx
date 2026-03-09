@@ -54,6 +54,7 @@ const FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS = 500;
 const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
 const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
 const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
+const FEED_QUERY_GC_TIME_MS = 5 * 60_000;
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -277,6 +278,10 @@ function shouldUseCachedFeedPageForHydration(
 
 function shouldBypassCachedRealtimeMerge(post: Post, tab: FeedTab, search: string): boolean {
   return tab === "latest" && search.trim().length === 0 && isRecentFeedPost(post);
+}
+
+function shouldMergeSessionCachedRealtimeState(tab: FeedTab, search: string): boolean {
+  return !(tab === "latest" && search.trim().length === 0);
 }
 
 function mergePostWithCachedRealtimeState(
@@ -628,20 +633,31 @@ export default function Feed() {
     search: string,
     pageParam?: string
   ): Promise<FeedPage> => {
-    const liveCachedFirstPage =
+    const liveCachedFirstPageEntry =
       !pageParam && !search && tab !== "following"
-        ? readPreferredCachedFirstFeedPage(feedViewerScope, tab, search)
+        ? readPreferredCachedFirstFeedPageEntry(feedViewerScope, tab, search)
         : null;
+    const liveCachedFirstPage = liveCachedFirstPageEntry?.page ?? null;
+    const queryKey = getFeedQueryKey(tab, search, feedViewerScope);
+    const currentQueryState = !pageParam
+      ? queryClient.getQueryState<InfiniteData<FeedPage>>(queryKey)
+      : null;
     const currentQueryFirstPage =
       !pageParam
-        ? queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey(tab, search, feedViewerScope))?.pages?.[0] ?? null
+        ? queryClient.getQueryData<InfiniteData<FeedPage>>(queryKey)?.pages?.[0] ?? null
         : null;
+    const hasAuthoritativeCurrentFirstPage =
+      Boolean(currentQueryFirstPage?.items.length) &&
+      (!liveCachedFirstPageEntry?.cachedAt ||
+        (currentQueryState?.dataUpdatedAt ?? 0) > liveCachedFirstPageEntry.cachedAt);
     const fallbackFirstPage =
-      liveCachedFirstPage && liveCachedFirstPage.items.length > 0
-        ? liveCachedFirstPage
-        : currentQueryFirstPage && currentQueryFirstPage.items.length > 0
-          ? currentQueryFirstPage
-          : cachedFirstPage && cachedFirstPage.items.length > 0
+      hasAuthoritativeCurrentFirstPage && currentQueryFirstPage
+        ? currentQueryFirstPage
+        : liveCachedFirstPage && liveCachedFirstPage.items.length > 0
+          ? liveCachedFirstPage
+          : currentQueryFirstPage && currentQueryFirstPage.items.length > 0
+            ? currentQueryFirstPage
+            : cachedFirstPage && cachedFirstPage.items.length > 0
             ? cachedFirstPage
             : null;
     const shouldUseCachedFirstPageFallback = !pageParam && !search && tab !== "following" && Boolean(fallbackFirstPage?.items.length);
@@ -668,7 +684,7 @@ export default function Feed() {
       endpoint += `?${params.toString()}`;
     }
 
-    const response = await api.raw(endpoint);
+    const response = await api.raw(endpoint, { cache: "no-store" });
     if (!response.ok) {
       if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
         return fallbackFirstPage;
@@ -696,17 +712,21 @@ export default function Feed() {
         ? json.totalPosts
         : null;
     const currentVisiblePostsById = new Map<string, Post>();
-    for (const item of currentQueryFirstPage?.items ?? []) {
+    const currentRealtimeMergeSource = hasAuthoritativeCurrentFirstPage ? currentQueryFirstPage : null;
+    for (const item of currentRealtimeMergeSource?.items ?? []) {
       currentVisiblePostsById.set(item.id, item);
     }
 
     const cachedRealtimePostsById = new Map<string, Post>();
-    for (const page of [liveCachedFirstPage, cachedFirstPage]) {
-      if (!page?.items?.length) {
-        continue;
-      }
-      for (const item of page.items) {
-        if (!cachedRealtimePostsById.has(item.id)) {
+    if (!pageParam && shouldMergeSessionCachedRealtimeState(tab, search)) {
+      for (const page of [liveCachedFirstPage, cachedFirstPage]) {
+        if (!page?.items?.length) {
+          continue;
+        }
+        for (const item of page.items) {
+          if (currentVisiblePostsById.has(item.id) || cachedRealtimePostsById.has(item.id)) {
+            continue;
+          }
           cachedRealtimePostsById.set(item.id, item);
         }
       }
@@ -801,6 +821,7 @@ export default function Feed() {
     refetch: refetchPosts,
     isFetching,
     isFetchingNextPage,
+    dataUpdatedAt: postsDataUpdatedAt,
     fetchNextPage,
     hasNextPage,
   } = useInfiniteQuery({
@@ -823,7 +844,7 @@ export default function Feed() {
       }
       return failureCount < 2;
     },
-    gcTime: activeTab === "latest" && !effectiveSearchQuery ? 0 : 5 * 60_000,
+    gcTime: FEED_QUERY_GC_TIME_MS,
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
@@ -867,8 +888,22 @@ export default function Feed() {
   useEffect(() => {
     const firstPage = postsPages?.pages?.[0];
     if (!firstPage) return;
+    if (postsDataUpdatedAt <= 0) return;
+    if (
+      hydrationCachedFirstPageEntry?.cachedAt &&
+      postsDataUpdatedAt <= hydrationCachedFirstPageEntry.cachedAt
+    ) {
+      return;
+    }
     writeCachedFirstFeedPageForScopes(feedViewerScope, activeTab, effectiveSearchQuery, firstPage);
-  }, [activeTab, effectiveSearchQuery, feedViewerScope, postsPages?.pages]);
+  }, [
+    activeTab,
+    effectiveSearchQuery,
+    feedViewerScope,
+    hydrationCachedFirstPageEntry?.cachedAt,
+    postsDataUpdatedAt,
+    postsPages?.pages,
+  ]);
 
   const updateInfinitePosts = useCallback((updater: (post: Post) => Post) => {
     const updatedData = queryClient.setQueryData<InfiniteData<FeedPage>>(
