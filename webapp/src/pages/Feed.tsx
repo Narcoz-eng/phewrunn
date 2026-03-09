@@ -16,7 +16,7 @@ import { SearchBar } from "@/components/feed/SearchBar";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Sparkles, RefreshCw, TrendingUp, AlertCircle } from "lucide-react";
+import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame } from "lucide-react";
 import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -653,16 +653,8 @@ export default function Feed() {
             ? currentQueryFirstPage
             : null;
     const shouldUseCachedFirstPageFallback = !pageParam && !search && tab !== "following" && Boolean(fallbackFirstPage?.items.length);
-    let endpoint = "/api/posts";
+    let endpoint = `/api/feed/${tab}`;
     const params = new URLSearchParams();
-
-    if (tab === "latest") {
-      params.set("sort", "latest");
-    } else if (tab === "trending") {
-      params.set("sort", "trending");
-    } else if (tab === "following") {
-      params.set("following", "true");
-    }
 
     if (search && search.length >= 3) {
       params.set("search", search);
@@ -689,19 +681,27 @@ export default function Feed() {
       );
     }
 
-    const json = await response.json().catch(() => null);
-    if (!json || !Array.isArray((json as { data?: unknown }).data)) {
+    const json = await response.json().catch(() => null) as {
+      data?: {
+        items?: Post[];
+        nextCursor?: string | null;
+        hasMore?: boolean;
+        totalPosts?: number | null;
+      };
+    } | null;
+    const data = json?.data;
+    if (!data || !Array.isArray(data.items)) {
       throw new ApiError(
         "Feed payload was invalid. Please retry.",
         response.status,
         json
       );
     }
-    const items = json.data as Post[];
-    const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
+    const items = data.items;
+    const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
     const totalPosts =
-      typeof json?.totalPosts === "number" && Number.isFinite(json.totalPosts)
-        ? json.totalPosts
+      typeof data.totalPosts === "number" && Number.isFinite(data.totalPosts)
+        ? data.totalPosts
         : null;
     const currentVisiblePostsById = new Map<string, Post>();
     const currentRealtimeMergeSource = hasCurrentFirstPage ? currentQueryFirstPage : null;
@@ -746,7 +746,7 @@ export default function Feed() {
     return {
       items: mergedItems,
       nextCursor,
-      hasMore: Boolean(json?.hasMore && nextCursor),
+      hasMore: Boolean(data.hasMore && nextCursor),
       totalPosts,
     } satisfies FeedPage;
   }, [feedViewerScope, getFeedQueryKey, queryClient]);
@@ -845,7 +845,7 @@ export default function Feed() {
 
   const posts = useMemo(() => {
     const mergedPosts = postsPages?.pages.flatMap((page) => page.items) ?? [];
-    if (activeTab === "trending") {
+    if (activeTab === "hot-alpha" || activeTab === "early-runners" || activeTab === "high-conviction") {
       return mergedPosts;
     }
     return sortPostsNewestFirst(mergedPosts);
@@ -1039,7 +1039,7 @@ export default function Feed() {
     if (!postsPages?.pages?.length) return;
 
     const prefetchTabs = () => {
-      const tabsToPrefetch: FeedTab[] = ["trending", "following"];
+      const tabsToPrefetch: FeedTab[] = ["hot-alpha", "early-runners", "high-conviction", "following"];
 
       for (const tab of tabsToPrefetch) {
         const key = getFeedQueryKey(tab, "", feedViewerScope);
@@ -1642,7 +1642,9 @@ export default function Feed() {
             ) : (
               <>
                 {activeTab === "latest" && "Latest Posts"}
-                {activeTab === "trending" && "Trending Posts"}
+                {activeTab === "hot-alpha" && "Hot Alpha"}
+                {activeTab === "early-runners" && "Early Runners"}
+                {activeTab === "high-conviction" && "High Conviction"}
                 {activeTab === "following" && "Following"}
               </>
             )}
@@ -1719,8 +1721,12 @@ export default function Feed() {
           ) : displayedPosts.length === 0 ? (
             <div className="app-empty-state">
               <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
-                {activeTab === "trending" ? (
-                  <TrendingUp className="h-10 w-10 text-muted-foreground" />
+                {activeTab === "hot-alpha" ? (
+                  <Flame className="h-10 w-10 text-muted-foreground" />
+                ) : activeTab === "early-runners" ? (
+                  <Radar className="h-10 w-10 text-muted-foreground" />
+                ) : activeTab === "high-conviction" ? (
+                  <BrainCircuit className="h-10 w-10 text-muted-foreground" />
                 ) : (
                   <Sparkles className="h-10 w-10 text-muted-foreground" />
                 )}
@@ -1729,6 +1735,12 @@ export default function Feed() {
                 <p className="font-semibold text-foreground text-lg">
                   {searchQuery.length >= 3
                     ? "No results found"
+                    : activeTab === "high-conviction"
+                    ? "No high conviction calls yet"
+                    : activeTab === "early-runners"
+                    ? "No early runners yet"
+                    : activeTab === "hot-alpha"
+                    ? "No hot alpha yet"
                     : activeTab === "following"
                     ? "No posts from people you follow"
                     : "No alpha yet"}
@@ -1736,6 +1748,12 @@ export default function Feed() {
                 <p className="text-sm text-muted-foreground mt-1">
                   {searchQuery.length >= 3
                     ? `Try a different search term`
+                    : activeTab === "high-conviction"
+                    ? "Calls with the strongest combined trust, confidence, and token health will show here"
+                    : activeTab === "early-runners"
+                    ? "AI-detected breakouts will surface here once signals line up"
+                    : activeTab === "hot-alpha"
+                    ? "Strong signal, engagement, and momentum calls will surface here"
                     : activeTab === "following"
                     ? "Follow some traders to see their calls here"
                     : "Be the first to drop a call!"}

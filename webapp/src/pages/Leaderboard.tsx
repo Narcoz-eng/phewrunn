@@ -5,6 +5,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DailyGainersTable } from "@/components/leaderboard/DailyGainersTable";
+import { IntelligenceLeaderboards } from "@/components/leaderboard/IntelligenceLeaderboards";
 import { TopUsersTable } from "@/components/leaderboard/TopUsersTable";
 import { StatsOverview } from "@/components/leaderboard/StatsOverview";
 import { useSession, useAuth } from "@/lib/auth-client";
@@ -33,9 +34,7 @@ import {
   Settings,
   User as UserIcon,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
-type LeaderboardSection = "gainers" | "users" | "stats";
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
 
@@ -233,12 +232,16 @@ export default function Leaderboard() {
         <div className="mb-8">
           <h1 className="text-2xl md:text-3xl font-bold">Leaderboard</h1>
           <p className="text-muted-foreground mt-1">
-            Top performers and platform stats
+            AI-ranked alpha races, first callers, top performers, and platform stats
           </p>
         </div>
 
         {/* Content Grid */}
         <div className="space-y-8">
+          <QueryErrorBoundary sectionName="Alpha Race">
+            <IntelligenceLeaderboards />
+          </QueryErrorBoundary>
+
           {/* Daily Top Gainers Section */}
           <section>
             <div className="flex items-center gap-2 mb-4">

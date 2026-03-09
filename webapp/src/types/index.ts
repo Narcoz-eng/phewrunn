@@ -28,6 +28,11 @@ export interface PostAuthor {
   isVerified?: boolean;
   tradeFeeRewardsEnabled?: boolean;
   tradeFeeShareBps?: number;
+  trustScore?: number | null;
+  reputationTier?: string | null;
+  winRate30d?: number | null;
+  avgRoi30d?: number | null;
+  firstCallCount?: number;
 }
 
 // Reposter type returned from /api/posts/:id/reposters
@@ -46,7 +51,30 @@ export interface Comment {
   authorId: string;
   author: PostAuthor;
   postId: string;
+  parentId?: string | null;
+  rootId?: string | null;
+  depth?: number;
+  kind?: string | null;
+  replyCount?: number;
+  deletedAt?: string | null;
   createdAt: string;
+}
+
+export type ReactionType = "alpha" | "based" | "printed" | "rug";
+
+export interface ReactionCounts {
+  alpha: number;
+  based: number;
+  printed: number;
+  rug: number;
+}
+
+export interface TokenBundleCluster {
+  id?: string;
+  clusterLabel: string;
+  walletCount: number;
+  estimatedSupplyPct: number;
+  evidenceJson?: unknown;
 }
 
 export interface Post {
@@ -78,6 +106,32 @@ export interface Post {
   isFollowingAuthor?: boolean; // Whether current user is following the post author
   viewCount: number;
   dexscreenerUrl: string | null;
+  confidenceScore?: number | null;
+  hotAlphaScore?: number | null;
+  earlyRunnerScore?: number | null;
+  highConvictionScore?: number | null;
+  timingTier?: string | null;
+  firstCallerRank?: number | null;
+  roiPeakPct?: number | null;
+  roiCurrentPct?: number | null;
+  trustedTraderCount?: number;
+  entryQualityScore?: number | null;
+  bundlePenaltyScore?: number | null;
+  sentimentScore?: number | null;
+  tokenRiskScore?: number | null;
+  bundleRiskLabel?: string | null;
+  liquidity?: number | null;
+  volume24h?: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
+  bundleClusters?: TokenBundleCluster[];
+  reactionCounts?: ReactionCounts;
+  currentReactionType?: ReactionType | null;
+  threadCount?: number;
+  radarReasons?: string[];
   // Shared by others (reposters)
   sharedBy?: PostAuthor[];
   // Shared Alpha - users who posted same CA within 48h
@@ -269,6 +323,10 @@ export interface Notification {
   type: string;
   message: string;
   read: boolean;
+  entityType?: string | null;
+  entityId?: string | null;
+  reasonCode?: string | null;
+  payload?: Record<string, unknown> | null;
   postId: string | null;
   fromUserId: string | null;
   fromUser: {

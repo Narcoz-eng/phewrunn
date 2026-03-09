@@ -15,6 +15,7 @@ import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-uti
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { ProfileDashboard, UserStats, RecentTrade } from "@/components/profile/ProfileDashboard";
+import { TraderIntelligenceCard } from "@/components/profile/TraderIntelligenceCard";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -786,6 +787,8 @@ export default function UserProfile() {
               recentTrades={recentTrades}
               isLoading={isLoadingUser}
             />
+
+            <TraderIntelligenceCard handle={user.username ?? user.id ?? userId} />
 
             {/* Followers/Following */}
             <div className="flex items-center justify-center gap-6 py-3">

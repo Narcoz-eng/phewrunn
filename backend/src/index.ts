@@ -18,6 +18,13 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { reportsRouter } from "./routes/reports.js";
 import { announcementsRouter } from "./routes/announcements.js";
 import { leaderboardRouter } from "./routes/leaderboard.js";
+import { feedRouter } from "./routes/feed.js";
+import { tokensRouter } from "./routes/tokens.js";
+import { callsRouter } from "./routes/calls.js";
+import { tradersRouter } from "./routes/traders.js";
+import { radarRouter } from "./routes/radar.js";
+import { alertsRouter } from "./routes/alerts.js";
+import { leaderboardsRouter } from "./routes/leaderboards.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
 
 // Security middleware imports
@@ -173,10 +180,12 @@ app.use("/api/posts", async (c, next) => {
   }
   return next();
 });
+app.use("/api/feed/*", feedRateLimit);
 // Admin endpoints - 50 req/min
 app.use("/api/admin/*", adminRateLimit);
 // Leaderboard endpoints - 60 req/min (expensive queries)
 app.use("/api/leaderboard/*", leaderboardRateLimit);
+app.use("/api/leaderboards/*", leaderboardRateLimit);
 app.use("/api/auth/privy-sync", bodySizeLimit(8 * 1024, "Privy sync payload is too large"));
 app.use("/api/auth/wallet", bodySizeLimit(16 * 1024, "Wallet auth payload is too large"));
 app.use("/api/posts/jupiter/quote", bodySizeLimit(12 * 1024, "Quote payload is too large"));
@@ -3696,6 +3705,13 @@ app.post("/api/posts/:id/comments", commentRateLimit);
 
 app.route("/api/posts", postsRouter);
 app.route("/api/users", usersRouter);
+app.route("/api/feed", feedRouter);
+app.route("/api/tokens", tokensRouter);
+app.route("/api/calls", callsRouter);
+app.route("/api/traders", tradersRouter);
+app.route("/api/radar", radarRouter);
+app.route("/api/alerts", alertsRouter);
+app.route("/api/leaderboards", leaderboardsRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/notifications", notificationsRouter);
 app.route("/api/reports", reportsRouter);

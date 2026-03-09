@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { useAuth, useSession } from "@/lib/auth-client";
 import { Notification } from "@/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { CheckCheck, ArrowLeft, BellOff } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
@@ -20,6 +21,19 @@ const NOTIFICATION_MERGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
 
+type AlertPreference = {
+  minConfidenceScore: number | null;
+  minLiquidity: number | null;
+  maxBundleRiskScore: number | null;
+  notifyFollowedTraders: boolean;
+  notifyFollowedTokens: boolean;
+  notifyEarlyRunners: boolean;
+  notifyHotAlpha: boolean;
+  notifyHighConviction: boolean;
+  notifyBundleChanges: boolean;
+  notifyConfidenceCross: boolean;
+};
+
 function normalizeNotificationMessage(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -27,6 +41,10 @@ function normalizeNotificationMessage(message: string): string {
 function buildNotificationGroupKey(notification: Notification): string {
   const actorKey = notification.fromUserId ?? "system";
   const postKey = notification.postId ?? "none";
+  const entityKey =
+    notification.entityType && notification.entityId
+      ? `${notification.entityType}:${notification.entityId}`
+      : postKey;
   const messageKey = normalizeNotificationMessage(notification.message).slice(0, 96);
 
   switch (notification.type) {
@@ -36,6 +54,14 @@ function buildNotificationGroupKey(notification: Notification): string {
     case "new_post":
     case "follow":
       return `${notification.type}:${actorKey}`;
+    case "posted_alpha":
+      return `${notification.type}:${actorKey}:${entityKey}`;
+    case "early_runner_detected":
+    case "hot_alpha_detected":
+    case "high_conviction_detected":
+    case "bundle_risk_changed":
+    case "token_confidence_crossed":
+      return `${notification.type}:${entityKey}`;
     case "win_1h":
     case "loss_1h":
     case "win_6h":
@@ -64,6 +90,18 @@ function buildMergedNotificationMessage(base: Notification, count: number): stri
       return `${actor} posted ${count} new Alphas`;
     case "follow":
       return `${actor} and ${count - 1} others followed you`;
+    case "posted_alpha":
+      return `${actor} posted ${count} alpha calls you follow`;
+    case "early_runner_detected":
+      return `${base.message} (+${count - 1} more runner signals)`;
+    case "hot_alpha_detected":
+      return `${base.message} (+${count - 1} more hot alpha signals)`;
+    case "high_conviction_detected":
+      return `${base.message} (+${count - 1} more conviction signals)`;
+    case "bundle_risk_changed":
+      return `${base.message} (+${count - 1} more risk changes)`;
+    case "token_confidence_crossed":
+      return `${base.message} (+${count - 1} more confidence alerts)`;
     default:
       return `${base.message} (+${count - 1} more)`;
   }
@@ -158,6 +196,7 @@ export default function Notifications() {
   const { data: session } = useSession();
   const { isAuthenticated, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
+  const [showAlertPreferences, setShowAlertPreferences] = useState(false);
   const notificationsQueryKey = useMemo(
     () => ["notifications", session?.user?.id ?? "anonymous"] as const,
     [session?.user?.id]
@@ -281,6 +320,28 @@ export default function Notifications() {
     }
     return "Please try again later.";
   }, [error]);
+
+  const {
+    data: alertPreferences,
+    refetch: refetchAlertPreferences,
+  } = useQuery({
+    queryKey: ["alert-preferences", session?.user?.id ?? "anonymous"],
+    queryFn: () => api.get<AlertPreference>("/api/alerts/preferences"),
+    enabled: isAuthenticated && hasLiveSession,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const updateAlertPreferencesMutation = useMutation({
+    mutationFn: (payload: Partial<AlertPreference>) => api.put<AlertPreference>("/api/alerts/preferences", payload),
+    onSuccess: () => {
+      toast.success("Alert preferences updated");
+      void refetchAlertPreferences();
+    },
+    onError: () => {
+      toast.error("Failed to update alert preferences");
+    },
+  });
 
   useEffect(() => {
     if (!isFetched) return;
@@ -514,6 +575,86 @@ export default function Notifications() {
       <main className="app-page-shell pt-5">
         <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
           <div className="relative z-10 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
+            <div className="mb-3 flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAlertPreferences((prev) => !prev)}
+              >
+                {showAlertPreferences ? "Hide alert settings" : "Alert settings"}
+              </Button>
+            </div>
+            {showAlertPreferences && alertPreferences ? (
+              <div className="mb-4 rounded-[24px] border border-border/65 bg-background/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min confidence</span>
+                    <Input
+                      type="number"
+                      defaultValue={alertPreferences.minConfidenceScore ?? 65}
+                      onBlur={(event) =>
+                        updateAlertPreferencesMutation.mutate({
+                          minConfidenceScore: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min liquidity</span>
+                    <Input
+                      type="number"
+                      defaultValue={alertPreferences.minLiquidity ?? 0}
+                      onBlur={(event) =>
+                        updateAlertPreferencesMutation.mutate({
+                          minLiquidity: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Max bundle risk</span>
+                    <Input
+                      type="number"
+                      defaultValue={alertPreferences.maxBundleRiskScore ?? 45}
+                      onBlur={(event) =>
+                        updateAlertPreferencesMutation.mutate({
+                          maxBundleRiskScore: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {[
+                    ["notifyFollowedTraders", "Followed traders"],
+                    ["notifyFollowedTokens", "Followed tokens"],
+                    ["notifyEarlyRunners", "Early runners"],
+                    ["notifyHotAlpha", "Hot alpha"],
+                    ["notifyHighConviction", "High conviction"],
+                    ["notifyBundleChanges", "Bundle changes"],
+                    ["notifyConfidenceCross", "Confidence cross"],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() =>
+                        updateAlertPreferencesMutation.mutate({
+                          [key]: !alertPreferences[key as keyof AlertPreference],
+                        } as Partial<AlertPreference>)
+                      }
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                        alertPreferences[key as keyof AlertPreference]
+                          ? "border-primary/30 bg-primary/10 text-primary"
+                          : "border-border/60 bg-secondary text-muted-foreground"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-border/65 bg-background/55 p-1.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
               <button
                 type="button"

@@ -31,6 +31,15 @@ model User {
   isAdmin       Boolean   @default(false) // for admin dashboard access
   isBanned      Boolean   @default(false) // banned users cannot post/comment
   isVerified    Boolean   @default(false) // blue checkmark verification
+  winRate7d     Float?
+  winRate30d    Float?
+  avgRoi7d      Float?
+  avgRoi30d     Float?
+  trustScore    Float?
+  reputationTier String?
+  firstCallCount Int      @default(0)
+  firstCallAvgRoi Float?
+  lastTraderMetricsAt DateTime?
 
   // Update frequency guards
   lastUsernameUpdate DateTime?  // Can only change username once per 7 days
@@ -52,6 +61,7 @@ model User {
   likes         Like[]
   comments      Comment[]
   reposts       Repost[]
+  reactions     Reaction[]
   notifications Notification[] @relation("UserNotifications") // notifications received
   notificationsSent Notification[] @relation("NotificationsFrom") // notifications triggered
   announcements Announcement[] // announcements created by admin
@@ -61,6 +71,10 @@ model User {
   reportsFiled       Report[] @relation("ReportsFiled")
   reportsReceived    Report[] @relation("ReportsReceived")
   reportReviews      Report[] @relation("ReportReviews")
+  tokenEvents        TokenEvent[]
+  tokenFollows       TokenFollow[]
+  traderMetricDays   TraderMetricDaily[]
+  alertPreference    AlertPreference?
 
   @@index([createdAt])
   @@index([level, xp])
@@ -69,6 +83,8 @@ model User {
   @@index([isVerified, createdAt])
   @@index([walletAddress])
   @@index([username])
+  @@index([trustScore, createdAt])
+  @@index([winRate30d, avgRoi30d])
 }
 
 // Better Auth Session model
@@ -143,6 +159,7 @@ model Post {
   content         String
   authorId        String
   author          User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  tokenId         String?
 
   // Contract Address tracking
   contractAddress String?
@@ -164,6 +181,21 @@ model Post {
 
   // Engagement tracking
   viewCount       Int       @default(0)
+  confidenceScore Float?
+  hotAlphaScore   Float?
+  earlyRunnerScore Float?
+  highConvictionScore Float?
+  timingTier      String?
+  firstCallerRank Int?
+  roiPeakPct      Float?
+  roiCurrentPct   Float?
+  threadCount     Int       @default(0)
+  reactionCounts  Json?
+  trustedTraderCount Int    @default(0)
+  entryQualityScore Float?
+  bundlePenaltyScore Float?
+  sentimentScore  Float?
+  lastIntelligenceAt DateTime?
 
   // Settlement (1H - official settlement)
   settled         Boolean   @default(false)
@@ -187,9 +219,12 @@ model Post {
   likes           Like[]
   comments        Comment[]
   reposts         Repost[]
+  reactions       Reaction[]
   notifications   Notification[]
   tradeFeeEvents  TradeFeeEvent[]
   reports         Report[]
+  tokenEvents     TokenEvent[]
+  token           Token?    @relation(fields: [tokenId], references: [id], onDelete: SetNull)
 
   // Indexes for efficient queries
   @@index([authorId, settled]) // For user stats queries
@@ -208,6 +243,11 @@ model Post {
   @@index([settled6h, createdAt])
   @@index([settled, isWin])
   @@index([createdAt, entryMcap])
+  @@index([tokenId, createdAt])
+  @@index([confidenceScore, createdAt])
+  @@index([hotAlphaScore, createdAt])
+  @@index([earlyRunnerScore, createdAt])
+  @@index([highConvictionScore, createdAt])
 }
 
 model AggregateSnapshot {
@@ -306,14 +346,26 @@ model Comment {
   content   String
   authorId  String
   postId    String
+  parentId  String?
+  rootId    String?
+  depth     Int      @default(0)
+  kind      String?
+  replyCount Int     @default(0)
+  deletedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies   Comment[] @relation("CommentReplies")
+  root      Comment? @relation("CommentRoot", fields: [rootId], references: [id], onDelete: SetNull)
+  threadReplies Comment[] @relation("CommentRoot")
 
   @@index([postId, createdAt])
   @@index([authorId, createdAt])
+  @@index([parentId, createdAt])
+  @@index([rootId, createdAt])
 }
 
 // Repost model for sharing posts
@@ -341,6 +393,12 @@ model Notification {
   read      Boolean   @default(false)
   dismissed Boolean   @default(false) // soft delete - user dismissed but kept for analytics
   clickedAt DateTime? // track when notification was clicked (for analytics)
+  readAt    DateTime?
+  priority  Int       @default(0)
+  entityType String?
+  entityId  String?
+  reasonCode String?
+  payload   Json?
 
   // Deep linking data
   postId    String?  // link to post if applicable
@@ -359,6 +417,180 @@ model Notification {
   @@index([userId, type, createdAt])
   @@index([fromUserId, createdAt])
   @@index([postId, createdAt])
+  @@index([entityType, entityId, createdAt])
+}
+
+model Token {
+  id                        String   @id @default(cuid())
+  chainType                 String
+  address                   String
+  symbol                    String?
+  name                      String?
+  imageUrl                  String?
+  dexscreenerUrl            String?
+  launchAt                  DateTime?
+  pairAddress               String?
+  dexId                     String?
+  liquidity                 Float?
+  volume24h                 Float?
+  holderCount               Int?
+  largestHolderPct          Float?
+  top10HolderPct            Float?
+  deployerSupplyPct         Float?
+  bundledWalletCount        Int?
+  bundledClusterCount       Int?
+  estimatedBundledSupplyPct Float?
+  bundleRiskLabel           String?
+  tokenRiskScore            Float?
+  sentimentScore            Float?
+  radarScore                Float?
+  confidenceScore           Float?
+  hotAlphaScore             Float?
+  earlyRunnerScore          Float?
+  highConvictionScore       Float?
+  isEarlyRunner             Boolean  @default(false)
+  earlyRunnerReasons        Json?
+  lastIntelligenceAt        DateTime?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  calls     Post[]
+  clusters  TokenBundleCluster[]
+  events    TokenEvent[]
+  snapshots TokenMetricSnapshot[]
+  followers TokenFollow[]
+
+  @@unique([chainType, address])
+  @@index([hotAlphaScore, updatedAt])
+  @@index([earlyRunnerScore, updatedAt])
+  @@index([highConvictionScore, updatedAt])
+  @@index([tokenRiskScore, updatedAt])
+}
+
+model TokenMetricSnapshot {
+  id                        String   @id @default(cuid())
+  tokenId                   String
+  capturedAt                DateTime @default(now())
+  priceUsd                  Float?
+  marketCap                 Float?
+  liquidity                 Float?
+  volume1h                  Float?
+  volume24h                 Float?
+  holderCount               Int?
+  largestHolderPct          Float?
+  top10HolderPct            Float?
+  bundledWalletCount        Int?
+  estimatedBundledSupplyPct Float?
+  tokenRiskScore            Float?
+  sentimentScore            Float?
+  confidenceScore           Float?
+  radarScore                Float?
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([tokenId, capturedAt])
+}
+
+model TokenBundleCluster {
+  id                 String   @id @default(cuid())
+  tokenId            String
+  clusterLabel       String
+  walletCount        Int
+  estimatedSupplyPct Float
+  evidenceJson       Json
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([tokenId, estimatedSupplyPct])
+}
+
+model TokenEvent {
+  id        String   @id @default(cuid())
+  tokenId    String
+  eventType  String
+  timestamp  DateTime
+  marketCap  Float?
+  liquidity  Float?
+  volume     Float?
+  traderId   String?
+  postId     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  token  Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  trader User? @relation(fields: [traderId], references: [id], onDelete: SetNull)
+  post   Post? @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([tokenId, timestamp])
+  @@index([eventType, timestamp])
+}
+
+model Reaction {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  type      String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId, type])
+  @@index([postId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model TokenFollow {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tokenId])
+  @@index([tokenId, createdAt])
+}
+
+model AlertPreference {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  minConfidenceScore   Float?   @default(65)
+  minLiquidity         Float?
+  maxBundleRiskScore   Float?   @default(45)
+  timeframeMinutes     Int?     @default(240)
+  notifyFollowedTraders Boolean @default(true)
+  notifyFollowedTokens  Boolean @default(true)
+  notifyEarlyRunners    Boolean @default(true)
+  notifyHotAlpha        Boolean @default(true)
+  notifyHighConviction  Boolean @default(true)
+  notifyBundleChanges   Boolean @default(true)
+  notifyConfidenceCross Boolean @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TraderMetricDaily {
+  id              String   @id @default(cuid())
+  traderId        String
+  bucketDate      DateTime
+  callsCount      Int
+  settledCount    Int
+  winRate         Float
+  avgRoi          Float
+  firstCalls      Int
+  firstCallAvgRoi Float?
+  trustScore      Float?
+
+  trader User @relation(fields: [traderId], references: [id], onDelete: Cascade)
+
+  @@unique([traderId, bucketDate])
+  @@index([bucketDate, trustScore])
 }
 
 // Announcement model for admin announcements shown in feed

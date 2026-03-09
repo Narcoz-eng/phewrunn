@@ -376,6 +376,10 @@ type RawNotificationRow = {
   type: string;
   message: string;
   read: boolean | null;
+  entityType: string | null;
+  entityId: string | null;
+  reasonCode: string | null;
+  payload: Prisma.JsonValue | null;
   postId: string | null;
   fromUserId: string | null;
   createdAt: Date;
@@ -394,6 +398,10 @@ function mapRawNotificationRow(row: RawNotificationRow) {
     type: row.type,
     message: row.message,
     read: row.read === true,
+    entityType: row.entityType ?? null,
+    entityId: row.entityId ?? null,
+    reasonCode: row.reasonCode ?? null,
+    payload: row.payload ?? null,
     postId: row.postId ?? null,
     fromUserId: row.fromUserId ?? null,
     fromUser: row.fromUserId
@@ -425,6 +433,10 @@ async function queryNotificationsRaw(userId: string, includeDismissed: boolean):
       n.type,
       n.message,
       n.read,
+      n."entityType",
+      n."entityId",
+      n."reasonCode",
+      n.payload,
       n."postId",
       n."fromUserId",
       n."createdAt",
@@ -514,6 +526,10 @@ async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnT
       n.type,
       n.message,
       n.read,
+      n."entityType",
+      n."entityId",
+      n."reasonCode",
+      n.payload,
       n."postId",
       n."fromUserId",
       n."createdAt",

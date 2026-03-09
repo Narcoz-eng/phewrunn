@@ -98,11 +98,7 @@ export function TrendingSection() {
                 "hover:scale-[1.02]"
               )}
               onClick={() => {
-                if (token.firstPostId) {
-                  navigate(`/post/${token.firstPostId}`);
-                  return;
-                }
-                navigate(`/?search=${token.contractAddress}`);
+                navigate(`/token/${token.contractAddress}`);
               }}
             >
               {/* Winner Badge */}

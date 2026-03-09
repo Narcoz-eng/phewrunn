@@ -10,6 +10,8 @@ import {
   Star,
   Check,
   X,
+  Flame,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
@@ -34,7 +36,60 @@ const notificationIcons: Record<string, { icon: typeof PhewBellIcon; colorClass:
   level_up: { icon: Award, colorClass: "text-amber-500" },
   new_post: { icon: PhewBellIcon, colorClass: "text-primary" },
   achievement: { icon: Star, colorClass: "text-amber-500" },
+  posted_alpha: { icon: PhewBellIcon, colorClass: "text-primary" },
+  early_runner_detected: { icon: TrendingUp, colorClass: "text-emerald-500" },
+  hot_alpha_detected: { icon: Flame, colorClass: "text-orange-500" },
+  high_conviction_detected: { icon: Star, colorClass: "text-violet-500" },
+  bundle_risk_changed: { icon: AlertTriangle, colorClass: "text-amber-500" },
+  token_confidence_crossed: { icon: Award, colorClass: "text-primary" },
 };
+
+function readNotificationPayloadString(notification: Notification, key: string): string | null {
+  const value = notification.payload?.[key];
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function buildNotificationDestination(notification: Notification): string | null {
+  if (notification.entityType === "token") {
+    const tokenAddress =
+      readNotificationPayloadString(notification, "tokenAddress") ?? notification.post?.contractAddress;
+    if (tokenAddress) {
+      return `/token/${tokenAddress}`;
+    }
+  }
+
+  if (notification.entityType === "call" || notification.entityType === "post") {
+    const callId = notification.entityId ?? notification.postId;
+    if (callId) {
+      return `/post/${callId}`;
+    }
+  }
+
+  if (notification.postId) {
+    return `/post/${notification.postId}`;
+  }
+
+  if (notification.entityType === "trader" || notification.entityType === "user") {
+    if (notification.fromUser) {
+      return buildProfilePath(notification.fromUser.id, notification.fromUser.username);
+    }
+    const handle = readNotificationPayloadString(notification, "handle");
+    if (handle) {
+      return `/${handle}`;
+    }
+    if (notification.entityId) {
+      return buildProfilePath(notification.entityId, handle);
+    }
+  }
+
+  if (notification.fromUser) {
+    return buildProfilePath(notification.fromUser.id, notification.fromUser.username);
+  }
+
+  return null;
+}
 
 function getNotificationIcon(notification: Notification) {
   if (notification.type === "settlement") {
@@ -75,13 +130,8 @@ export function NotificationItem({
     () => stripContractAddress(notification.post?.content ?? "").trim(),
     [notification.post?.content]
   );
-
-  const destinationHref =
-    notification.postId
-      ? `/post/${notification.postId}`
-      : fromUser
-        ? buildProfilePath(fromUser.id, fromUser.username)
-        : null;
+  const tokenAddress = readNotificationPayloadString(notification, "tokenAddress");
+  const destinationHref = buildNotificationDestination(notification);
 
   const handleRowActivate = () => {
     if (!notification.read) {
@@ -202,6 +252,10 @@ export function NotificationItem({
             <p className="mt-1 truncate text-[11px] font-mono text-muted-foreground/85">
               {notification.post.contractAddress}
             </p>
+          ) : tokenAddress ? (
+            <p className="mt-1 truncate text-[11px] font-mono text-muted-foreground/85">
+              {tokenAddress}
+            </p>
           ) : null}
         </div>
 
@@ -234,11 +288,8 @@ export function NotificationItem({
           <div className="space-y-2">
             {mergedItems.map((item) => {
               const itemPreview = stripContractAddress(item.post?.content ?? "").trim();
-              const itemHref = item.postId
-                ? `/post/${item.postId}`
-                : item.fromUser
-                  ? buildProfilePath(item.fromUser.id, item.fromUser.username)
-                  : null;
+              const itemHref = buildNotificationDestination(item);
+              const itemTokenAddress = readNotificationPayloadString(item, "tokenAddress");
               return (
                 <button
                   key={item.id}
@@ -259,6 +310,10 @@ export function NotificationItem({
                     {item.post?.contractAddress ? (
                       <span className="truncate text-[10px] font-mono text-muted-foreground">
                         {item.post.contractAddress}
+                      </span>
+                    ) : itemTokenAddress ? (
+                      <span className="truncate text-[10px] font-mono text-muted-foreground">
+                        {itemTokenAddress}
                       </span>
                     ) : null}
                   </div>

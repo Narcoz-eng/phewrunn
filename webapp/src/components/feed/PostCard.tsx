@@ -37,6 +37,7 @@ import { getPostPriceSnapshotBatched, type BatchedPostPriceSnapshot } from "@/li
 import {
   Post,
   Comment,
+  ReactionType,
   SharedAlphaUser,
   MIN_LEVEL,
   MAX_LEVEL,
@@ -80,7 +81,6 @@ import {
   PhewChartIcon,
   PhewCommentIcon,
   PhewFollowIcon,
-  PhewLikeIcon,
   PhewRepostIcon,
   PhewSendIcon,
   PhewShareIcon,
@@ -109,6 +109,12 @@ const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "240", label: "4h" },
   { value: "1D", label: "1D" },
 ] as const;
+const REACTION_BUTTONS: Array<{ type: ReactionType; emoji: string; label: string }> = [
+  { type: "alpha", emoji: "🔥", label: "Alpha" },
+  { type: "based", emoji: "🐸", label: "Based" },
+  { type: "printed", emoji: "💰", label: "Printed" },
+  { type: "rug", emoji: "💀", label: "Rug" },
+];
 type DexChartIntervalValue = (typeof DEX_CHART_INTERVAL_OPTIONS)[number]["value"];
 const CHART_DEFAULT_VISIBLE_POINTS = 72;
 const CHART_MIN_VISIBLE_POINTS = 18;
@@ -605,6 +611,7 @@ interface PostCardProps {
   className?: string;
   currentUserId?: string;
   onLike?: (postId: string) => void;
+  onReact?: (postId: string, type: ReactionType | null) => Promise<void> | void;
   onRepost?: (postId: string) => void;
   onComment?: (postId: string, content: string) => Promise<void> | void;
   enableRealtimePricePolling?: boolean;
@@ -743,9 +750,8 @@ export function PostCard({
   post,
   className,
   currentUserId,
-  onLike,
+  onReact,
   onRepost,
-  onComment,
   enableRealtimePricePolling = true,
 }: PostCardProps) {
   const navigate = useNavigate();
@@ -760,9 +766,18 @@ export function PostCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
-  const [isLiked, setIsLiked] = useState(post.isLiked);
+  const [replyingToComment, setReplyingToComment] = useState<Comment | null>(null);
   const [isReposted, setIsReposted] = useState(post.isReposted);
-  const [likeCount, setLikeCount] = useState(post._count?.likes ?? 0);
+  const [likeCount, setLikeCount] = useState(post.reactionCounts?.alpha ?? post._count?.likes ?? 0);
+  const [reactionCounts, setReactionCounts] = useState(post.reactionCounts ?? {
+    alpha: post._count?.likes ?? 0,
+    based: 0,
+    printed: 0,
+    rug: 0,
+  });
+  const [currentReactionType, setCurrentReactionType] = useState<ReactionType | null>(
+    post.currentReactionType ?? (post.isLiked ? "alpha" : null)
+  );
   const [repostCount, setRepostCount] = useState(post._count?.reposts ?? 0);
   const [copied, setCopied] = useState(false);
   const [isRepostersOpen, setIsRepostersOpen] = useState(false);
@@ -789,6 +804,16 @@ export function PostCard({
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
+
+  useEffect(() => {
+    setReactionCounts(post.reactionCounts ?? {
+      alpha: post._count?.likes ?? 0,
+      based: 0,
+      printed: 0,
+      rug: 0,
+    });
+    setCurrentReactionType(post.currentReactionType ?? (post.isLiked ? "alpha" : null));
+  }, [post.currentReactionType, post.isLiked, post.reactionCounts, post._count?.likes]);
   const quickBuyRetryCountRef = useRef(0);
   const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -874,19 +899,22 @@ export function PostCard({
   }, [post.isFollowingAuthor]);
 
   useEffect(() => {
-    setIsLiked(post.isLiked);
     setIsReposted(post.isReposted);
-    setLikeCount(post._count?.likes ?? 0);
+    setLikeCount(post.reactionCounts?.alpha ?? post._count?.likes ?? 0);
     setRepostCount(post._count?.reposts ?? 0);
     setCommentCount(post._count?.comments ?? 0);
   }, [
     post.id,
-    post.isLiked,
     post.isReposted,
+    post.reactionCounts?.alpha,
     post._count?.comments,
     post._count?.likes,
     post._count?.reposts,
   ]);
+
+  useEffect(() => {
+    setLikeCount(reactionCounts.alpha);
+  }, [reactionCounts.alpha]);
 
   // Complete the intended "connect then buy" flow without opening both popups at once.
   useEffect(() => {
@@ -1227,9 +1255,9 @@ export function PostCard({
 
   // Fetch comments when expanded
   const { data: comments, isLoading: isCommentsLoading, refetch: refetchComments } = useQuery({
-    queryKey: ["comments", post.id],
+    queryKey: ["callThread", post.id],
     queryFn: async () => {
-      const data = await api.get<Comment[]>(`/api/posts/${post.id}/comments`);
+      const data = await api.get<Comment[]>(`/api/calls/${post.id}/thread`);
       return data;
     },
     enabled: isCommentsOpen,
@@ -1328,6 +1356,19 @@ export function PostCard({
     soldAmount !== null ||
     holdingUsd !== null ||
     holdingAmount !== null;
+  const confidenceScore = post.confidenceScore ?? null;
+  const hotAlphaScore = post.hotAlphaScore ?? null;
+  const earlyRunnerScore = post.earlyRunnerScore ?? null;
+  const highConvictionScore = post.highConvictionScore ?? null;
+  const threadTotal = post.threadCount ?? commentCount;
+  const traderTier =
+    post.author.reputationTier ??
+    (typeof post.author.trustScore === "number" && post.author.trustScore >= 72
+      ? "Elite"
+      : typeof post.author.trustScore === "number" && post.author.trustScore >= 58
+        ? "Trusted"
+        : "Provisional");
+  const tokenPageHref = post.contractAddress ? `/token/${post.contractAddress}` : null;
   const formatUsdStat = (value: number) =>
     new Intl.NumberFormat(undefined, {
       style: "currency",
@@ -1568,10 +1609,41 @@ export function PostCard({
 
   const sharedByCount = post.sharedBy?.length ?? 0;
 
-  const handleLike = () => {
-    setIsLiked(!isLiked);
-    setLikeCount(isLiked ? likeCount - 1 : likeCount + 1);
-    onLike?.(post.id);
+  const handleReaction = async (type: ReactionType) => {
+    if (!currentUserId) return;
+    const previousType = currentReactionType;
+    const nextType = previousType === type ? null : type;
+    const nextCounts = { ...reactionCounts };
+    if (previousType) {
+      nextCounts[previousType] = Math.max(0, nextCounts[previousType] - 1);
+    }
+    if (nextType) {
+      nextCounts[nextType] += 1;
+    }
+
+    setCurrentReactionType(nextType);
+    setReactionCounts(nextCounts);
+
+    try {
+      if (onReact) {
+        await onReact(post.id, nextType);
+      } else {
+        const payload = nextType ?? previousType;
+        if (!payload) {
+          return;
+        }
+        const response = await api.post<{ reactionCounts: typeof nextCounts; currentReactionType: ReactionType | null }>(
+          `/api/calls/${post.id}/reactions`,
+          { type: payload }
+        );
+        setReactionCounts(response.reactionCounts);
+        setCurrentReactionType(response.currentReactionType);
+      }
+    } catch (error) {
+      setCurrentReactionType(previousType);
+      setReactionCounts(reactionCounts);
+      toast.error(error instanceof Error ? error.message : "Failed to react");
+    }
   };
 
   const handleRepost = () => {
@@ -2427,7 +2499,7 @@ export function PostCard({
   const handleSubmitComment = async () => {
     if (!commentText.trim() || !currentUserId) return;
     const trimmedComment = commentText.trim();
-    const previousComments = queryClient.getQueryData<Comment[]>(["comments", post.id]);
+    const previousComments = queryClient.getQueryData<Comment[]>(["callThread", post.id]);
     const optimisticCommentId = `optimistic-${post.id}-${Date.now()}`;
     const optimisticComment: Comment = {
       id: optimisticCommentId,
@@ -2442,27 +2514,32 @@ export function PostCard({
         xp: 0,
       },
       postId: post.id,
+      parentId: replyingToComment?.id ?? null,
+      rootId: replyingToComment?.rootId ?? replyingToComment?.id ?? null,
+      depth: Math.min(4, (replyingToComment?.depth ?? -1) + 1),
+      kind: "general",
+      replyCount: 0,
       createdAt: new Date().toISOString(),
     };
 
     try {
       setCommentText("");
+      setReplyingToComment(null);
       setCommentCount((prev) => prev + 1);
       if (isCommentsOpen && previousComments) {
-        queryClient.setQueryData<Comment[]>(["comments", post.id], [optimisticComment, ...previousComments]);
+        queryClient.setQueryData<Comment[]>(["callThread", post.id], [...previousComments, optimisticComment]);
       }
 
-      if (onComment) {
-        await onComment(post.id, trimmedComment);
-      } else {
-        await api.post(`/api/posts/${post.id}/comments`, { content: trimmedComment });
-      }
+      await api.post(`/api/calls/${post.id}/comments`, {
+        content: trimmedComment,
+        parentId: replyingToComment?.id,
+      });
       void refetchComments();
     } catch (error: unknown) {
       setCommentText(trimmedComment);
       setCommentCount((prev) => Math.max(0, prev - 1));
       if (isCommentsOpen && previousComments) {
-        queryClient.setQueryData<Comment[]>(["comments", post.id], previousComments);
+        queryClient.setQueryData<Comment[]>(["callThread", post.id], previousComments);
       }
       const err = error as { message?: string };
       toast.error(err.message || "Failed to add comment");
@@ -4661,25 +4738,79 @@ export function PostCard({
                 </div>
               </button>
             )}
+
+            {(confidenceScore !== null ||
+              post.bundleRiskLabel ||
+              post.timingTier ||
+              post.author.reputationTier ||
+              tokenPageHref) && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                {confidenceScore !== null ? (
+                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
+                    <div className="mt-1 flex items-center justify-between gap-3">
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, confidenceScore))}%` }} />
+                      </div>
+                      <span className="font-semibold text-foreground">{confidenceScore.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Trader tier</div>
+                  <div className="mt-1 font-semibold text-foreground">{traderTier}</div>
+                </div>
+                {(post.bundleRiskLabel || post.estimatedBundledSupplyPct !== null) ? (
+                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
+                    <div className="mt-1 font-semibold text-foreground">
+                      {post.bundleRiskLabel || "Unknown"}
+                      {typeof post.estimatedBundledSupplyPct === "number" ? ` | ${post.estimatedBundledSupplyPct.toFixed(1)}%` : ""}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Timing</div>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">{post.timingTier || "UNRANKED"}</span>
+                    {tokenPageHref ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(tokenPageHref)}
+                        className="text-[11px] font-semibold text-primary"
+                      >
+                        Token page
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Social Buttons */}
         <div className="mt-5 flex items-center justify-between border-t border-border/50 pt-4">
-          <div className="flex items-center gap-1">
-            {/* Like Button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleLike}
-              className={cn(
-                "h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none",
-                isLiked && "text-loss hover:text-loss"
-              )}
-            >
-              <PhewLikeIcon className={cn("h-4 w-4", isLiked && "fill-current")} />
-              <span className="text-xs font-semibold">{likeCount > 0 ? likeCount : ""}</span>
-            </Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {REACTION_BUTTONS.map((reaction) => {
+              const isActive = currentReactionType === reaction.type;
+              const count = reactionCounts[reaction.type] ?? 0;
+              return (
+                <Button
+                  key={reaction.type}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleReaction(reaction.type)}
+                  className={cn(
+                    "h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none",
+                    isActive && "border-primary/35 bg-primary/10 text-foreground"
+                  )}
+                >
+                  <span className="text-sm">{reaction.emoji}</span>
+                  <span className="text-[11px] font-semibold">{count > 0 ? count : reaction.label}</span>
+                </Button>
+              );
+            })}
 
             {/* Comment Button */}
             <Button
@@ -4689,7 +4820,7 @@ export function PostCard({
               className="h-10 rounded-full border border-border/60 bg-white/55 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.15)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
             >
               <PhewCommentIcon className={cn("h-4 w-4", isCommentsOpen && "text-primary")} />
-              <span className="text-xs font-semibold">{commentCount > 0 ? commentCount : ""}</span>
+              <span className="text-xs font-semibold">{threadTotal > 0 ? threadTotal : ""}</span>
             </Button>
 
             {/* Repost Button */}
@@ -4729,11 +4860,18 @@ export function PostCard({
           </div>
 
           {/* View Count */}
-          {post.viewCount > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {post.viewCount.toLocaleString()} views
-            </span>
-          )}
+          <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+            {hotAlphaScore !== null && hotAlphaScore >= 70 ? (
+              <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">Hot {hotAlphaScore.toFixed(0)}</span>
+            ) : null}
+            {earlyRunnerScore !== null && earlyRunnerScore >= 70 ? (
+              <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">Runner {earlyRunnerScore.toFixed(0)}</span>
+            ) : null}
+            {highConvictionScore !== null && highConvictionScore >= 75 ? (
+              <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">Conviction {highConvictionScore.toFixed(0)}</span>
+            ) : null}
+            {post.viewCount > 0 ? <span>{post.viewCount.toLocaleString()} views</span> : null}
+          </div>
         </div>
 
         {/* Comments Section - Animated */}
@@ -4752,23 +4890,39 @@ export function PostCard({
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ type: "spring", damping: 25, stiffness: 300, delay: 0.1 }}
-                  className="flex items-center gap-2"
+                  className="space-y-2"
                 >
-                  <Input
-                    placeholder="Add a comment..."
-                    value={commentText}
-                    onChange={(e) => setCommentText(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
-                    className="h-10 flex-1 text-sm"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleSubmitComment}
-                    disabled={!commentText.trim()}
-                    className="h-10 rounded-full px-3"
-                  >
-                    <PhewSendIcon className="h-4 w-4" />
-                  </Button>
+                  {replyingToComment ? (
+                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2 text-xs text-muted-foreground">
+                      <span>
+                        Replying to {replyingToComment.author.username || replyingToComment.author.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setReplyingToComment(null)}
+                        className="font-semibold text-primary"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder={replyingToComment ? "Reply to thread..." : "Add a comment..."}
+                      value={commentText}
+                      onChange={(e) => setCommentText(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
+                      className="h-10 flex-1 text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleSubmitComment}
+                      disabled={!commentText.trim()}
+                      className="h-10 rounded-full px-3"
+                    >
+                      <PhewSendIcon className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </motion.div>
 
                 {/* Comments List */}
@@ -4797,6 +4951,7 @@ export function PostCard({
                           visible: { opacity: 1, y: 0 }
                         }}
                         className="flex items-start gap-2 rounded-[18px] border border-border/50 bg-white/50 p-2.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none"
+                        style={{ marginLeft: `${Math.min(comment.depth ?? 0, 4) * 14}px` }}
                       >
                         <Avatar
                           className="h-7 w-7 cursor-pointer border border-border"
@@ -4823,6 +4978,19 @@ export function PostCard({
                           <p className="text-sm text-foreground mt-0.5 break-words">
                             {comment.content}
                           </p>
+                          <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+                            <button
+                              type="button"
+                              onClick={() => setReplyingToComment(comment)}
+                              className="font-semibold text-primary"
+                            >
+                              Reply
+                            </button>
+                            {typeof comment.replyCount === "number" && comment.replyCount > 0 ? (
+                              <span>{comment.replyCount} replies</span>
+                            ) : null}
+                            {comment.kind ? <span className="uppercase tracking-[0.14em]">{comment.kind}</span> : null}
+                          </div>
                         </div>
                       </motion.div>
                     ))

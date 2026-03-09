@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, type ComponentType } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -18,11 +18,11 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { LevelBadge } from "./LevelBar";
-import { LogOut, Settings, User as UserIcon } from "lucide-react";
+import { Flame, LogOut, Radar, Settings, User as UserIcon, BrainCircuit } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PhewBellIcon, PhewTrophyIcon } from "@/components/icons/PhewIcons";
 
-export type FeedTab = "latest" | "trending" | "following";
+export type FeedTab = "latest" | "hot-alpha" | "early-runners" | "high-conviction" | "following";
 
 interface FeedHeaderProps {
   user: User | null;
@@ -31,9 +31,11 @@ interface FeedHeaderProps {
   onLogout: () => void;
 }
 
-const tabs: { id: FeedTab; label: string }[] = [
+const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: string }> }[] = [
   { id: "latest", label: "Latest" },
-  { id: "trending", label: "Trending" },
+  { id: "hot-alpha", label: "Hot Alpha", icon: Flame },
+  { id: "early-runners", label: "Early Runners", icon: Radar },
+  { id: "high-conviction", label: "High Conviction", icon: BrainCircuit },
   { id: "following", label: "Following" },
 ];
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
@@ -177,12 +179,13 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
               }}
               onClick={() => onTabChange(tab.id)}
               className={cn(
-                "relative z-10 rounded-[18px] px-5 py-2.5 text-sm font-semibold transition-colors",
+                "relative z-10 inline-flex items-center gap-1.5 rounded-[18px] px-4 py-2.5 text-sm font-semibold transition-colors",
                 activeTab === tab.id
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
+              {tab.icon ? <tab.icon className="h-3.5 w-3.5" /> : null}
               {tab.label}
             </button>
           ))}

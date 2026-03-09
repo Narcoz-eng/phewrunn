@@ -24,6 +24,7 @@ const Admin = lazy(() => import("./pages/Admin"));
 const HandleOnboarding = lazy(() => import("./pages/HandleOnboarding"));
 const Login = lazy(() => import("./pages/Login"));
 const PostDetail = lazy(() => import("./pages/PostDetail"));
+const TokenPage = lazy(() => import("./pages/TokenPage"));
 const Terms = lazy(() => import("./pages/Terms"));
 const Privacy = lazy(() => import("./pages/Privacy"));
 const Docs = lazy(() => import("./pages/Docs"));
@@ -149,6 +150,14 @@ const App = () => (
                     element={
                       <ProtectedRoute>
                         <PostDetail />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/token/:tokenAddress"
+                    element={
+                      <ProtectedRoute>
+                        <TokenPage />
                       </ProtectedRoute>
                     }
                   />

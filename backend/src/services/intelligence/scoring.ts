@@ -1,0 +1,288 @@
+export const REACTION_TYPES = ["alpha", "based", "printed", "rug"] as const;
+
+export type ReactionType = (typeof REACTION_TYPES)[number];
+
+export type ReactionCounts = Record<ReactionType, number>;
+
+export type TokenRiskInputs = {
+  estimatedBundledSupplyPct: number | null;
+  bundledClusterCount: number | null;
+  largestHolderPct: number | null;
+  top10HolderPct: number | null;
+  deployerSupplyPct: number | null;
+};
+
+export type ConfidenceInputs = {
+  traderWinRate30d: number | null;
+  traderAvgRoi30d: number | null;
+  traderTrustScore: number | null;
+  entryQualityScore: number | null;
+  liquidityUsd: number | null;
+  volumeGrowth24hPct: number | null;
+  momentumPct: number | null;
+  trustedTraderCount: number | null;
+  top10HolderPct: number | null;
+  tokenRiskScore: number | null;
+};
+
+export type HotAlphaInputs = {
+  confidenceScore: number | null;
+  weightedEngagementPerHour: number | null;
+  earlyGainsPct: number | null;
+  traderTrustScore: number | null;
+  liquidityUsd: number | null;
+  sentimentScore: number | null;
+  momentumPct: number | null;
+  tokenRiskScore: number | null;
+};
+
+export type EarlyRunnerInputs = {
+  distinctTrustedTradersLast6h: number | null;
+  liquidityGrowth1hPct: number | null;
+  volumeGrowth1hPct: number | null;
+  holderGrowth1hPct: number | null;
+  momentumPct: number | null;
+  sentimentScore: number | null;
+  tokenRiskScore: number | null;
+};
+
+export type HighConvictionInputs = {
+  confidenceScore: number | null;
+  traderTrustScore: number | null;
+  entryQualityScore: number | null;
+  liquidityUsd: number | null;
+  sentimentScore: number | null;
+  trustedTraderCount: number | null;
+  tokenRiskScore: number | null;
+};
+
+function finite(value: number | null | undefined, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+export function pct(value: number | null | undefined, max: number): number {
+  if (!max || max <= 0) return 0;
+  return clampScore((finite(value) / max) * 100);
+}
+
+export function inversePct(value: number | null | undefined, max: number): number {
+  return clampScore(100 - pct(value, max));
+}
+
+export function logScore(value: number | null | undefined, pivot: number): number {
+  const normalizedValue = Math.max(0, finite(value));
+  if (pivot <= 0) return 0;
+  return clampScore((Math.log1p(normalizedValue) / Math.log1p(pivot)) * 100);
+}
+
+export function buildReactionCounts(types: Array<string | null | undefined>): ReactionCounts {
+  const counts: ReactionCounts = {
+    alpha: 0,
+    based: 0,
+    printed: 0,
+    rug: 0,
+  };
+
+  for (const type of types) {
+    if (!type) continue;
+    const normalized = type.trim().toLowerCase() as ReactionType;
+    if (normalized in counts) {
+      counts[normalized] += 1;
+    }
+  }
+
+  return counts;
+}
+
+export function computeWeightedEngagementPerHour(args: {
+  reactions: ReactionCounts;
+  threadReplies: number | null | undefined;
+  ageHours: number;
+}): number {
+  const ageHours = Math.max(1 / 12, args.ageHours);
+  const weightedTotal =
+    1.0 * args.reactions.alpha +
+    0.8 * args.reactions.based +
+    1.4 * args.reactions.printed +
+    1.2 * finite(args.threadReplies) -
+    1.8 * args.reactions.rug;
+
+  return weightedTotal / ageHours;
+}
+
+export function computeSentimentScore(args: {
+  reactions: ReactionCounts;
+  sentimentTrendAdjustment?: number | null;
+}): number {
+  const raw =
+    2.0 * args.reactions.alpha +
+    1.0 * args.reactions.based +
+    3.0 * args.reactions.printed -
+    4.0 * args.reactions.rug;
+
+  return clampScore(50 + raw + finite(args.sentimentTrendAdjustment));
+}
+
+export function computeTokenRiskScore(inputs: TokenRiskInputs): number {
+  const bundledSupplyRisk = pct(inputs.estimatedBundledSupplyPct, 40);
+  const clusterCountRisk = pct(inputs.bundledClusterCount, 8);
+  const largestHolderRisk = pct(inputs.largestHolderPct, 20);
+  const top10HolderRisk = pct(inputs.top10HolderPct, 65);
+  const deployerRisk = pct(inputs.deployerSupplyPct, 15);
+  const concentrationRisk = clampScore((largestHolderRisk * 0.55) + (top10HolderRisk * 0.45));
+
+  return clampScore(
+    0.35 * bundledSupplyRisk +
+    0.10 * clusterCountRisk +
+    0.20 * largestHolderRisk +
+    0.15 * top10HolderRisk +
+    0.10 * deployerRisk +
+    0.10 * concentrationRisk
+  );
+}
+
+export function determineBundleRiskLabel(tokenRiskScore: number | null | undefined): string {
+  const score = finite(tokenRiskScore);
+  if (score < 30) return "Clean";
+  if (score < 60) return "Moderate Bundling";
+  return "Hard Bundled";
+}
+
+export function computeConfidenceScore(inputs: ConfidenceInputs): number {
+  const traderWinRateScore = pct(inputs.traderWinRate30d, 80);
+  const traderRoiScore = logScore(Math.max(0, finite(inputs.traderAvgRoi30d)), 300);
+  const traderTrustScore = clampScore(finite(inputs.traderTrustScore));
+  const entryQualityScore = clampScore(finite(inputs.entryQualityScore, 50));
+  const liquidityScore = logScore(inputs.liquidityUsd, 250_000);
+  const volumeGrowthScore = pct(inputs.volumeGrowth24hPct, 300);
+  const momentumScore = pct(inputs.momentumPct, 120);
+  const confirmationScore = pct(inputs.trustedTraderCount, 5);
+  const holderHealthScore = inversePct(inputs.top10HolderPct, 70);
+  const bundlePenalty = pct(inputs.tokenRiskScore, 100);
+
+  const confidenceScoreRaw =
+    0.16 * traderTrustScore +
+    0.12 * traderWinRateScore +
+    0.10 * traderRoiScore +
+    0.12 * entryQualityScore +
+    0.12 * liquidityScore +
+    0.10 * volumeGrowthScore +
+    0.10 * momentumScore +
+    0.08 * confirmationScore +
+    0.10 * holderHealthScore;
+
+  return clampScore(confidenceScoreRaw - (0.20 * bundlePenalty));
+}
+
+export function computeHotAlphaScore(inputs: HotAlphaInputs): number {
+  const confidenceScore = clampScore(finite(inputs.confidenceScore));
+  const engagementVelocityScore = pct(inputs.weightedEngagementPerHour, 80);
+  const earlyGainsScore = pct(Math.max(0, finite(inputs.earlyGainsPct)), 250);
+  const traderTrustScore = clampScore(finite(inputs.traderTrustScore));
+  const liquidityScore = logScore(inputs.liquidityUsd, 250_000);
+  const sentimentScore = clampScore(finite(inputs.sentimentScore));
+  const momentumScore = pct(inputs.momentumPct, 120);
+  const bundlePenalty = pct(inputs.tokenRiskScore, 100);
+
+  const raw =
+    0.22 * confidenceScore +
+    0.18 * engagementVelocityScore +
+    0.14 * earlyGainsScore +
+    0.10 * traderTrustScore +
+    0.12 * liquidityScore +
+    0.10 * sentimentScore +
+    0.14 * momentumScore;
+
+  return clampScore(raw - (0.18 * bundlePenalty));
+}
+
+export function computeEarlyRunnerScore(inputs: EarlyRunnerInputs): number {
+  const trustedTraderClusterScore = pct(inputs.distinctTrustedTradersLast6h, 4);
+  const liquidityRiseScore = pct(inputs.liquidityGrowth1hPct, 120);
+  const volumeSpikeScore = pct(inputs.volumeGrowth1hPct, 300);
+  const holderGrowthScore = pct(inputs.holderGrowth1hPct, 80);
+  const momentumScore = pct(inputs.momentumPct, 100);
+  const sentimentScore = clampScore(finite(inputs.sentimentScore));
+  const riskGate = inversePct(inputs.tokenRiskScore, 100);
+
+  return clampScore(
+    0.22 * trustedTraderClusterScore +
+    0.18 * liquidityRiseScore +
+    0.22 * volumeSpikeScore +
+    0.14 * holderGrowthScore +
+    0.12 * momentumScore +
+    0.07 * sentimentScore +
+    0.05 * riskGate
+  );
+}
+
+export function computeHighConvictionScore(inputs: HighConvictionInputs): number {
+  const confidenceScore = clampScore(finite(inputs.confidenceScore));
+  const traderTrustScore = clampScore(finite(inputs.traderTrustScore));
+  const entryQualityScore = clampScore(finite(inputs.entryQualityScore, 50));
+  const liquidityScore = logScore(inputs.liquidityUsd, 250_000);
+  const sentimentScore = clampScore(finite(inputs.sentimentScore));
+  const confirmationScore = pct(inputs.trustedTraderCount, 5);
+  const healthScore = inversePct(inputs.tokenRiskScore, 100);
+
+  return clampScore(
+    0.32 * confidenceScore +
+    0.18 * traderTrustScore +
+    0.10 * entryQualityScore +
+    0.12 * liquidityScore +
+    0.08 * sentimentScore +
+    0.10 * confirmationScore +
+    0.10 * healthScore
+  );
+}
+
+export function computeTraderTrustScore(args: {
+  winRate30d: number | null;
+  avgRoi30d: number | null;
+  settledCount30d: number | null;
+  firstCallCount: number | null;
+  firstCallAvgRoi: number | null;
+}): number {
+  const winScore = pct(args.winRate30d, 85);
+  const roiScore = logScore(Math.max(0, finite(args.avgRoi30d)), 350);
+  const consistencyScore = pct(args.settledCount30d, 20);
+  const firstCallScore = pct(args.firstCallCount, 20);
+  const firstCallRoiScore = logScore(Math.max(0, finite(args.firstCallAvgRoi)), 350);
+
+  return clampScore(
+    0.35 * winScore +
+    0.20 * roiScore +
+    0.20 * consistencyScore +
+    0.10 * firstCallScore +
+    0.15 * firstCallRoiScore
+  );
+}
+
+export function determineTimingTier(args: {
+  firstCallerRank: number | null | undefined;
+  ageMinutesSinceFirstCall: number | null | undefined;
+  entryMcap: number | null | undefined;
+  firstCallEntryMcap: number | null | undefined;
+}): string | null {
+  const firstCallerRank = finite(args.firstCallerRank, -1);
+  const ageMinutesSinceFirstCall = finite(args.ageMinutesSinceFirstCall, Number.POSITIVE_INFINITY);
+  const entryMcap = finite(args.entryMcap, 0);
+  const firstCallEntryMcap = finite(args.firstCallEntryMcap, 0);
+
+  if (firstCallerRank === 1) return "FIRST CALLER";
+  if (
+    (firstCallerRank > 0 && firstCallerRank <= 3) ||
+    ageMinutesSinceFirstCall <= 30 ||
+    (entryMcap > 0 && firstCallEntryMcap > 0 && entryMcap <= firstCallEntryMcap * 1.5)
+  ) {
+    return "EARLY CALLER";
+  }
+  if (firstCallerRank > 0) {
+    return "LATE CALLER";
+  }
+  return null;
+}

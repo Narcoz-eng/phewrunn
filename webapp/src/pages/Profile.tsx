@@ -10,6 +10,7 @@ import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-uti
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { ProfileDashboard, UserStats, RecentTrade, WalletData } from "@/components/profile/ProfileDashboard";
+import { TraderIntelligenceCard } from "@/components/profile/TraderIntelligenceCard";
 import { WalletConnection } from "@/components/profile/WalletConnection";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -1176,6 +1177,8 @@ export default function Profile() {
               }
               isLoading={isLoadingUser}
             />
+
+            <TraderIntelligenceCard handle={user.username ?? user.id} />
 
             {/* Wallet Connection Section */}
             <WalletConnection />

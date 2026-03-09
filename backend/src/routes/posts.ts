@@ -45,6 +45,8 @@ import {
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { getEnrichedCallById } from "../services/intelligence/engine.js";
+import { fanoutPostedAlphaAlert } from "../services/intelligence/alerts.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -4749,6 +4751,20 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     authorUsername: authorSnapshot.username,
     postId: post.id,
   });
+
+  const enrichedCall = await getEnrichedCallById(post.id, user.id).catch(() => null);
+  if (enrichedCall) {
+    await fanoutPostedAlphaAlert({
+      postId: enrichedCall.id,
+      authorId: user.id,
+      authorLabel: authorSnapshot.username ? `@${authorSnapshot.username}` : authorSnapshot.name,
+      tokenId: enrichedCall.tokenId,
+      tokenSymbol: enrichedCall.tokenSymbol,
+      confidenceScore: enrichedCall.confidenceScore,
+      liquidity: enrichedCall.liquidity,
+      bundleRiskScore: enrichedCall.tokenRiskScore,
+    }).catch(() => undefined);
+  }
 
   invalidatePostReadCaches({ leaderboard: true });
 
