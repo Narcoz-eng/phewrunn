@@ -55,6 +55,24 @@ const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
 const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
 const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
 const FEED_QUERY_GC_TIME_MS = 5 * 60_000;
+const FEED_AI_REQUEST_TIMEOUT_MS = 4_500;
+const FEED_LEGACY_FALLBACK_TIMEOUT_MS = 3_000;
+
+type AiFeedResponse = {
+  data?: {
+    items?: Post[];
+    nextCursor?: string | null;
+    hasMore?: boolean;
+    totalPosts?: number | null;
+  };
+};
+
+type LegacyFeedResponse = {
+  data?: Post[];
+  nextCursor?: string | null;
+  hasMore?: boolean;
+  totalPosts?: number | null;
+};
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -406,6 +424,25 @@ function shouldEnableFeedCardRealtimePolling(post: Post, totalPosts: number | nu
   return Date.now() - createdAtMs < FEED_OLDER_POST_REFETCH_AGE_MS;
 }
 
+function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: string): string {
+  const params = new URLSearchParams();
+  params.set("limit", String(FEED_PAGE_SIZE));
+  params.set(
+    "sort",
+    tab === "hot-alpha" || tab === "high-conviction" ? "trending" : "latest"
+  );
+  if (tab === "following") {
+    params.set("following", "true");
+  }
+  if (search && search.length >= 3) {
+    params.set("search", search);
+  }
+  if (pageParam) {
+    params.set("cursor", pageParam);
+  }
+  return `/api/posts?${params.toString()}`;
+}
+
 // Error Boundary Component for Feed
 function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
   return (
@@ -672,41 +709,94 @@ export default function Feed() {
       endpoint += `?${params.toString()}`;
     }
 
-    const response = await api.raw(endpoint, { cache: "no-store" });
-    if (!response.ok) {
-      if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
-        return fallbackFirstPage;
+    const readPrimaryFeedPayload = async (): Promise<FeedPage> => {
+      const response = await api.raw(endpoint, {
+        cache: "no-store",
+        timeout: FEED_AI_REQUEST_TIMEOUT_MS,
+      });
+      if (!response.ok) {
+        const json = await response.json().catch(() => null);
+        throw new ApiError(
+          json?.error?.message || `Request failed with status ${response.status}`,
+          response.status,
+          json?.error || json
+        );
       }
-      const json = await response.json().catch(() => null);
-      throw new ApiError(
-        json?.error?.message || `Request failed with status ${response.status}`,
-        response.status,
-        json?.error || json
-      );
+
+      const json = await response.json().catch(() => null) as AiFeedResponse | null;
+      const data = json?.data;
+      if (!data || !Array.isArray(data.items)) {
+        throw new ApiError("Feed payload was invalid. Please retry.", response.status, json);
+      }
+
+      return {
+        items: data.items,
+        nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
+        hasMore: Boolean(data.hasMore && data.nextCursor),
+        totalPosts:
+          typeof data.totalPosts === "number" && Number.isFinite(data.totalPosts)
+            ? data.totalPosts
+            : null,
+      };
+    };
+
+    const readLegacyFeedPayload = async (): Promise<FeedPage> => {
+      const legacyEndpoint = buildLegacyFeedEndpoint(tab, search, pageParam);
+      const response = await api.raw(legacyEndpoint, {
+        cache: "no-store",
+        timeout: FEED_LEGACY_FALLBACK_TIMEOUT_MS,
+      });
+      if (!response.ok) {
+        const json = await response.json().catch(() => null);
+        throw new ApiError(
+          json?.error?.message || `Request failed with status ${response.status}`,
+          response.status,
+          json?.error || json
+        );
+      }
+
+      const json = await response.json().catch(() => null) as LegacyFeedResponse | null;
+      const items = Array.isArray(json?.data) ? json.data : null;
+      if (!items) {
+        throw new ApiError("Legacy feed payload was invalid. Please retry.", response.status, json);
+      }
+
+      const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
+      return {
+        items,
+        nextCursor,
+        hasMore: Boolean(json?.hasMore && nextCursor),
+        totalPosts:
+          typeof json?.totalPosts === "number" && Number.isFinite(json.totalPosts)
+            ? json.totalPosts
+            : null,
+      };
+    };
+
+    let page: FeedPage;
+    try {
+      page = await readPrimaryFeedPayload();
+      const shouldFallbackFromEmptyPrimary =
+        !pageParam &&
+        page.items.length === 0 &&
+        (tab === "latest" || tab === "following");
+      if (shouldFallbackFromEmptyPrimary) {
+        page = await readLegacyFeedPayload();
+      }
+    } catch (error) {
+      try {
+        page = await readLegacyFeedPayload();
+      } catch {
+        if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
+          return fallbackFirstPage;
+        }
+        throw error;
+      }
     }
 
-    const json = await response.json().catch(() => null) as {
-      data?: {
-        items?: Post[];
-        nextCursor?: string | null;
-        hasMore?: boolean;
-        totalPosts?: number | null;
-      };
-    } | null;
-    const data = json?.data;
-    if (!data || !Array.isArray(data.items)) {
-      throw new ApiError(
-        "Feed payload was invalid. Please retry.",
-        response.status,
-        json
-      );
-    }
-    const items = data.items;
-    const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
-    const totalPosts =
-      typeof data.totalPosts === "number" && Number.isFinite(data.totalPosts)
-        ? data.totalPosts
-        : null;
+    const items = page.items;
+    const nextCursor = page.nextCursor;
+    const totalPosts = page.totalPosts;
     const currentVisiblePostsById = new Map<string, Post>();
     const currentRealtimeMergeSource = hasCurrentFirstPage ? currentQueryFirstPage : null;
     for (const item of currentRealtimeMergeSource?.items ?? []) {
@@ -750,7 +840,7 @@ export default function Feed() {
     return {
       items: mergedItems,
       nextCursor,
-      hasMore: Boolean(data.hasMore && nextCursor),
+      hasMore: Boolean(page.hasMore && nextCursor),
       totalPosts,
     } satisfies FeedPage;
   }, [feedViewerScope, getFeedQueryKey, queryClient]);

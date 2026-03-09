@@ -26,6 +26,15 @@ const TRUSTED_TRADER_THRESHOLD = 58;
 const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
+const FEED_RESULT_CACHE_TTL_MS = 15_000;
+const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
+const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
+const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
+const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
+const RADAR_CACHE_TTL_MS = 15_000;
+const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
+const LEADERBOARD_CACHE_TTL_MS = 20_000;
+const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 
 const AUTHOR_SELECT = Prisma.validator<Prisma.UserSelect>()({
   id: true,
@@ -214,6 +223,20 @@ export type EnrichedCall = CallRecord & {
   radarReasons: string[];
 };
 
+type FeedListResult = {
+  items: EnrichedCall[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  totalItems: number;
+};
+
+type HydrateCallOptions = {
+  refreshTraders?: boolean;
+  refreshTokens?: boolean;
+  ensureTokenLinks?: boolean;
+  persistComputed?: boolean;
+};
+
 export type TokenOverview = {
   token: TokenRecord & {
     isFollowing: boolean;
@@ -295,6 +318,126 @@ export type LeaderboardsPayload = {
   bestEntryToday: EnrichedCall[];
 };
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const feedListCache = new Map<string, CacheEntry<FeedListResult>>();
+const feedListInFlight = new Map<string, Promise<FeedListResult>>();
+const followingSnapshotCache = new Map<
+  string,
+  CacheEntry<{ followedTraderIds: string[]; followedTokenIds: string[] }>
+>();
+const tokenOverviewCache = new Map<string, CacheEntry<TokenOverview | null>>();
+const tokenOverviewInFlight = new Map<string, Promise<TokenOverview | null>>();
+const radarCache = new Map<
+  string,
+  CacheEntry<Array<{ token: TokenOverview["token"]; score: number }>>
+>();
+const radarInFlight = new Map<
+  string,
+  Promise<Array<{ token: TokenOverview["token"]; score: number }>>
+>();
+const traderOverviewCache = new Map<
+  string,
+  CacheEntry<
+    | {
+        trader: {
+          id: string;
+          name: string;
+          username: string | null;
+          image: string | null;
+          level: number;
+          xp: number;
+          isVerified: boolean;
+          winRate7d: number | null;
+          winRate30d: number | null;
+          avgRoi7d: number | null;
+          avgRoi30d: number | null;
+          trustScore: number | null;
+          reputationTier: string | null;
+          firstCallCount: number;
+          firstCallAvgRoi: number | null;
+        };
+        calls: EnrichedCall[];
+        stats: {
+          callsCount: number;
+          avgConfidenceScore: number;
+          avgHotAlphaScore: number;
+          avgHighConvictionScore: number;
+          firstCallCount: number;
+        };
+      }
+    | null
+  >
+>();
+const traderOverviewInFlight = new Map<
+  string,
+  Promise<
+    | {
+        trader: {
+          id: string;
+          name: string;
+          username: string | null;
+          image: string | null;
+          level: number;
+          xp: number;
+          isVerified: boolean;
+          winRate7d: number | null;
+          winRate30d: number | null;
+          avgRoi7d: number | null;
+          avgRoi30d: number | null;
+          trustScore: number | null;
+          reputationTier: string | null;
+          firstCallCount: number;
+          firstCallAvgRoi: number | null;
+        };
+        calls: EnrichedCall[];
+        stats: {
+          callsCount: number;
+          avgConfidenceScore: number;
+          avgHotAlphaScore: number;
+          avgHighConvictionScore: number;
+          firstCallCount: number;
+        };
+      }
+    | null
+  >
+>();
+const dailyLeaderboardsCache = new Map<string, CacheEntry<LeaderboardsPayload>>();
+const dailyLeaderboardsInFlight = new Map<string, Promise<LeaderboardsPayload>>();
+const firstCallerLeaderboardsCache = new Map<
+  string,
+  CacheEntry<
+    Array<{
+      traderId: string;
+      handle: string | null;
+      name: string;
+      image: string | null;
+      trustScore: number | null;
+      firstCalls: number;
+      firstCallAvgRoi: number | null;
+      avgConfidenceScore: number;
+    }>
+  >
+>();
+const firstCallerLeaderboardsInFlight = new Map<
+  string,
+  Promise<
+    Array<{
+      traderId: string;
+      handle: string | null;
+      name: string;
+      image: string | null;
+      trustScore: number | null;
+      firstCalls: number;
+      firstCallAvgRoi: number | null;
+      avgConfidenceScore: number;
+    }>
+  >
+>();
+
 type TokenRefreshResult = {
   token: TokenRecord;
   previousToken: TokenRecord | null;
@@ -320,6 +463,99 @@ function normalizeChainType(chainType: string | null | undefined): string {
 
 function buildTokenKey(chainType: string | null | undefined, address: string): string {
   return `${normalizeChainType(chainType)}:${address.trim().toLowerCase()}`;
+}
+
+function cloneCachedValue<T>(value: T): T {
+  if (typeof globalThis.structuredClone === "function") {
+    return globalThis.structuredClone(value);
+  }
+  return value;
+}
+
+function readCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return cloneCachedValue(cached.value);
+}
+
+function writeCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number): T {
+  cache.set(key, {
+    expiresAt: Date.now() + ttlMs,
+    value: cloneCachedValue(value),
+  });
+  return value;
+}
+
+async function memoizeCached<T>(
+  cache: Map<string, CacheEntry<T>>,
+  inFlight: Map<string, Promise<T>>,
+  key: string,
+  ttlMs: number,
+  loader: () => Promise<T>
+): Promise<T> {
+  const cached = readCacheValue(cache, key);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const currentInFlight = inFlight.get(key);
+  if (currentInFlight) {
+    return cloneCachedValue(await currentInFlight);
+  }
+
+  const promise = loader()
+    .then((value) => writeCacheValue(cache, key, value, ttlMs))
+    .finally(() => {
+      inFlight.delete(key);
+    });
+
+  inFlight.set(key, promise);
+  return cloneCachedValue(await promise);
+}
+
+function sanitizeCacheKeyPart(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : "-";
+}
+
+function buildTokenMapFromRecords(records: CallRecord[]): Map<string, TokenRecord> {
+  const tokenMap = new Map<string, TokenRecord>();
+  for (const record of records) {
+    if (record.token) {
+      tokenMap.set(buildTokenKey(record.token.chainType, record.token.address), record.token);
+    }
+  }
+  return tokenMap;
+}
+
+function mergeTokenMaps(...maps: Array<Map<string, TokenRecord>>): Map<string, TokenRecord> {
+  const merged = new Map<string, TokenRecord>();
+  for (const current of maps) {
+    for (const [key, value] of current.entries()) {
+      merged.set(key, value);
+    }
+  }
+  return merged;
+}
+
+async function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timeoutId = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function growthPct(current: number | null | undefined, previous: number | null | undefined): number {
@@ -908,13 +1144,39 @@ async function readTokenClusters(tokenIds: string[]): Promise<Map<string, TokenO
   return byTokenId;
 }
 
-async function hydrateCalls(records: CallRecord[], viewerId: string | null): Promise<EnrichedCall[]> {
+async function hydrateCalls(
+  records: CallRecord[],
+  viewerId: string | null,
+  options: HydrateCallOptions = {}
+): Promise<EnrichedCall[]> {
   if (records.length === 0) return [];
 
-  await maybeRefreshTraderMetrics(records.map((record) => record.author));
+  const {
+    refreshTraders = false,
+    refreshTokens = false,
+    ensureTokenLinks = false,
+    persistComputed = false,
+  } = options;
 
-  const tokenMap = await refreshTokenIntelligenceForMap(await ensureTokensForCalls(records));
-  const tokenIds = Array.from(new Set(records.map((record) => record.tokenId).filter((value): value is string => Boolean(value))));
+  if (refreshTraders) {
+    await maybeRefreshTraderMetrics(records.map((record) => record.author));
+  }
+
+  let tokenMap = buildTokenMapFromRecords(records);
+  if (ensureTokenLinks) {
+    tokenMap = mergeTokenMaps(tokenMap, await ensureTokensForCalls(records));
+  }
+  if (refreshTokens && tokenMap.size > 0) {
+    tokenMap = mergeTokenMaps(tokenMap, await refreshTokenIntelligenceForMap(tokenMap));
+  }
+
+  const tokenIds = Array.from(
+    new Set(
+      records
+        .map((record) => record.tokenId ?? record.token?.id ?? null)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
   const relatedCalls = tokenIds.length > 0
     ? await prisma.post.findMany({
         where: {
@@ -954,10 +1216,12 @@ async function hydrateCalls(records: CallRecord[], viewerId: string | null): Pro
   }
 
   const enriched: EnrichedCall[] = [];
+  const postIntelligenceUpdates: Promise<unknown>[] = [];
   for (const record of records) {
     const key = record.contractAddress ? buildTokenKey(record.chainType, record.contractAddress) : null;
     const token = key ? tokenMap.get(key) ?? record.token ?? null : record.token ?? null;
-    const tokenCalls = record.tokenId ? callsByTokenId.get(record.tokenId) ?? [] : [];
+    const resolvedTokenId = record.tokenId ?? token?.id ?? null;
+    const tokenCalls = resolvedTokenId ? callsByTokenId.get(resolvedTokenId) ?? [] : [];
     const sameTokenIndex = tokenCalls.findIndex((call) => call.id === record.id);
     const firstCallerRank = sameTokenIndex >= 0 ? sameTokenIndex + 1 : record.firstCallerRank ?? null;
     const firstCall = tokenCalls[0] ?? null;
@@ -1099,26 +1363,34 @@ async function hydrateCalls(records: CallRecord[], viewerId: string | null): Pro
       radarReasons,
     });
 
-    await prisma.post.update({
-      where: { id: record.id },
-      data: {
-        confidenceScore,
-        hotAlphaScore,
-        earlyRunnerScore,
-        highConvictionScore,
-        timingTier,
-        firstCallerRank,
-        roiPeakPct,
-        roiCurrentPct,
-        threadCount: record.threadCount ?? record._count.comments,
-        reactionCounts: reactionCounts as Prisma.InputJsonValue,
-        trustedTraderCount,
-        entryQualityScore,
-        bundlePenaltyScore,
-        sentimentScore,
-        lastIntelligenceAt: new Date(),
-      },
-    }).catch(() => undefined);
+    if (persistComputed) {
+      postIntelligenceUpdates.push(
+        prisma.post.update({
+          where: { id: record.id },
+          data: {
+            confidenceScore,
+            hotAlphaScore,
+            earlyRunnerScore,
+            highConvictionScore,
+            timingTier,
+            firstCallerRank,
+            roiPeakPct,
+            roiCurrentPct,
+            threadCount: record.threadCount ?? record._count.comments,
+            reactionCounts: reactionCounts as Prisma.InputJsonValue,
+            trustedTraderCount,
+            entryQualityScore,
+            bundlePenaltyScore,
+            sentimentScore,
+            lastIntelligenceAt: new Date(),
+          },
+        }).catch(() => undefined)
+      );
+    }
+  }
+
+  if (postIntelligenceUpdates.length > 0) {
+    await Promise.allSettled(postIntelligenceUpdates);
   }
 
   return enriched;
@@ -1147,6 +1419,12 @@ async function getFollowingSnapshot(viewerId: string | null): Promise<{
     return { followedTraderIds: [], followedTokenIds: [] };
   }
 
+  const cacheKey = viewerId;
+  const cached = readCacheValue(followingSnapshotCache, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const [follows, tokenFollows] = await Promise.all([
     prisma.follow.findMany({
       where: { followerId: viewerId },
@@ -1158,10 +1436,10 @@ async function getFollowingSnapshot(viewerId: string | null): Promise<{
     }),
   ]);
 
-  return {
+  return writeCacheValue(followingSnapshotCache, cacheKey, {
     followedTraderIds: follows.map((follow) => follow.followingId),
     followedTokenIds: tokenFollows.map((follow) => follow.tokenId),
-  };
+  }, FOLLOWING_SNAPSHOT_CACHE_TTL_MS);
 }
 
 function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
@@ -1196,62 +1474,76 @@ function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
   });
 }
 
-export async function listFeedCalls(args: FeedArgs): Promise<{
-  items: EnrichedCall[];
-  hasMore: boolean;
-  nextCursor: string | null;
-  totalItems: number;
-}> {
+export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
   const limit = Math.max(1, Math.min(MAX_FEED_LIMIT, args.limit ?? DEFAULT_FEED_LIMIT));
-  const { followedTraderIds, followedTokenIds } = await getFollowingSnapshot(args.viewerId);
-  if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) {
+  const viewerKey = args.viewerId ?? "anonymous";
+  const searchKey = sanitizeCacheKeyPart(args.search);
+  const cursorKey = sanitizeCacheKeyPart(args.cursor);
+  const cacheKey = `feed:${args.kind}:${viewerKey}:${searchKey}:${cursorKey}:${limit}`;
+  const ttlMs =
+    args.kind === "following" || args.viewerId
+      ? PERSONALIZED_FEED_RESULT_CACHE_TTL_MS
+      : FEED_RESULT_CACHE_TTL_MS;
+
+  return memoizeCached(feedListCache, feedListInFlight, cacheKey, ttlMs, async () => {
+    const { followedTraderIds, followedTokenIds } = await getFollowingSnapshot(args.viewerId);
+    if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) {
+      return {
+        items: [],
+        hasMore: false,
+        nextCursor: null,
+        totalItems: 0,
+      };
+    }
+
+    const where: Prisma.PostWhereInput = {
+      ...(buildSearchWhere(args.search) ?? {}),
+    };
+
+    if (args.kind === "following") {
+      where.OR = [
+        ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
+        ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
+      ];
+    } else if (args.kind !== "latest") {
+      where.createdAt = {
+        gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
+      };
+    }
+
+    const candidateLimit = args.kind === "latest" || args.kind === "following" ? limit * 4 : limit * 8;
+    const records = await prisma.post.findMany({
+      where,
+      select: CALL_SELECT,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: Math.min(200, Math.max(limit + 1, candidateLimit)),
+    });
+
+    const hydrated = sortCalls(
+      args.kind,
+      await hydrateCalls(records, args.viewerId, {
+        refreshTraders: false,
+        refreshTokens: false,
+        ensureTokenLinks: false,
+        persistComputed: false,
+      })
+    );
+    const startIndex = args.cursor
+      ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
+      : 0;
+    const items = hydrated.slice(startIndex, startIndex + limit);
+    const nextCursor =
+      items.length === limit && hydrated[startIndex + limit]
+        ? items[items.length - 1]?.id ?? null
+        : null;
+
     return {
-      items: [],
-      hasMore: false,
-      nextCursor: null,
-      totalItems: 0,
+      items,
+      hasMore: startIndex + limit < hydrated.length,
+      nextCursor,
+      totalItems: hydrated.length,
     };
-  }
-
-  const where: Prisma.PostWhereInput = {
-    ...(buildSearchWhere(args.search) ?? {}),
-  };
-
-  if (args.kind === "following") {
-    where.OR = [
-      ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
-      ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
-    ];
-  } else if (args.kind !== "latest") {
-    where.createdAt = {
-      gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
-    };
-  }
-
-  const candidateLimit = args.kind === "latest" || args.kind === "following" ? limit * 4 : limit * 8;
-  const records = await prisma.post.findMany({
-    where,
-    select: CALL_SELECT,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: Math.min(200, Math.max(limit + 1, candidateLimit)),
   });
-
-  const hydrated = sortCalls(args.kind, await hydrateCalls(records, args.viewerId));
-  const startIndex = args.cursor
-    ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
-    : 0;
-  const items = hydrated.slice(startIndex, startIndex + limit);
-  const nextCursor =
-    items.length === limit && hydrated[startIndex + limit]
-      ? items[items.length - 1]?.id ?? null
-      : null;
-
-  return {
-    items,
-    hasMore: startIndex + limit < hydrated.length,
-    nextCursor,
-    totalItems: hydrated.length,
-  };
 }
 
 export async function getEnrichedCallById(id: string, viewerId: string | null): Promise<EnrichedCall | null> {
@@ -1261,7 +1553,12 @@ export async function getEnrichedCallById(id: string, viewerId: string | null): 
   });
 
   if (!record) return null;
-  const [call] = await hydrateCalls([record], viewerId);
+  const [call] = await hydrateCalls([record], viewerId, {
+    refreshTraders: false,
+    refreshTokens: false,
+    ensureTokenLinks: false,
+    persistComputed: false,
+  });
   return call ?? null;
 }
 
@@ -1305,204 +1602,221 @@ async function findTokenByAddress(address: string): Promise<TokenRecord | null> 
 }
 
 export async function getTokenOverviewByAddress(address: string, viewerId: string | null): Promise<TokenOverview | null> {
-  const token = await findTokenByAddress(address);
-  if (!token) return null;
+  const normalizedAddress = address.trim();
+  const cacheKey = `token:${viewerId ?? "anonymous"}:${sanitizeCacheKeyPart(normalizedAddress)}`;
+  const ttlMs = viewerId ? PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS : TOKEN_OVERVIEW_CACHE_TTL_MS;
 
-  const refreshed = await refreshTokenIntelligence(token.id);
-  const currentToken = refreshed?.token ?? token;
-  const [callsRaw, clusters, snapshots, events, tokenFollow] = await Promise.all([
-    prisma.post.findMany({
-      where: { tokenId: currentToken.id },
-      select: CALL_SELECT,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: 40,
-    }),
-    prisma.tokenBundleCluster.findMany({
-      where: { tokenId: currentToken.id },
-      select: {
-        id: true,
-        clusterLabel: true,
-        walletCount: true,
-        estimatedSupplyPct: true,
-        evidenceJson: true,
-      },
-      orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
-    }),
-    prisma.tokenMetricSnapshot.findMany({
-      where: { tokenId: currentToken.id },
-      select: {
-        capturedAt: true,
-        marketCap: true,
-        liquidity: true,
-        volume24h: true,
-        holderCount: true,
-        sentimentScore: true,
-        confidenceScore: true,
-      },
-      orderBy: { capturedAt: "asc" },
-      take: 96,
-    }),
-    prisma.tokenEvent.findMany({
-      where: { tokenId: currentToken.id },
-      select: {
-        id: true,
-        eventType: true,
-        timestamp: true,
-        marketCap: true,
-        liquidity: true,
-        volume: true,
-        traderId: true,
-        postId: true,
-        metadata: true,
-      },
-      orderBy: { timestamp: "desc" },
-      take: 48,
-    }),
-    viewerId
-      ? prisma.tokenFollow.findUnique({
-          where: {
-            userId_tokenId: {
-              userId: viewerId,
-              tokenId: currentToken.id,
+  return memoizeCached(tokenOverviewCache, tokenOverviewInFlight, cacheKey, ttlMs, async () => {
+    const token = await findTokenByAddress(normalizedAddress);
+    if (!token) return null;
+
+    const refreshPromise = shouldRefreshToken(token)
+      ? refreshTokenIntelligence(token.id).catch(() => null)
+      : null;
+    const refreshed = refreshPromise
+      ? await withSoftTimeout(refreshPromise, TOKEN_REFRESH_SOFT_TIMEOUT_MS)
+      : null;
+    const currentToken = refreshed?.token ?? token;
+
+    const [callsRaw, clusters, snapshots, events, tokenFollow] = await Promise.all([
+      prisma.post.findMany({
+        where: { tokenId: currentToken.id },
+        select: CALL_SELECT,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 40,
+      }),
+      prisma.tokenBundleCluster.findMany({
+        where: { tokenId: currentToken.id },
+        select: {
+          id: true,
+          clusterLabel: true,
+          walletCount: true,
+          estimatedSupplyPct: true,
+          evidenceJson: true,
+        },
+        orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
+      }),
+      prisma.tokenMetricSnapshot.findMany({
+        where: { tokenId: currentToken.id },
+        select: {
+          capturedAt: true,
+          marketCap: true,
+          liquidity: true,
+          volume24h: true,
+          holderCount: true,
+          sentimentScore: true,
+          confidenceScore: true,
+        },
+        orderBy: { capturedAt: "asc" },
+        take: 96,
+      }),
+      prisma.tokenEvent.findMany({
+        where: { tokenId: currentToken.id },
+        select: {
+          id: true,
+          eventType: true,
+          timestamp: true,
+          marketCap: true,
+          liquidity: true,
+          volume: true,
+          traderId: true,
+          postId: true,
+          metadata: true,
+        },
+        orderBy: { timestamp: "desc" },
+        take: 48,
+      }),
+      viewerId
+        ? prisma.tokenFollow.findUnique({
+            where: {
+              userId_tokenId: {
+                userId: viewerId,
+                tokenId: currentToken.id,
+              },
             },
-          },
-          select: { id: true },
-        })
-      : Promise.resolve(null),
-  ]);
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
 
-  const recentCalls = await hydrateCalls(callsRaw, viewerId);
-  const allReactionCounts = recentCalls.reduce(
-    (acc, call) => {
-      acc.alpha += call.reactionCounts.alpha;
-      acc.based += call.reactionCounts.based;
-      acc.printed += call.reactionCounts.printed;
-      acc.rug += call.reactionCounts.rug;
-      return acc;
-    },
-    buildReactionCounts([])
-  );
-  const totalSentimentReactions =
-    allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed + allReactionCounts.rug;
-  const bullishReactions =
-    allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed;
-  const bearishReactions = allReactionCounts.rug;
-  const sentimentScore = roundMetricOrZero(
-    currentToken.sentimentScore ?? computeSentimentScore({ reactions: allReactionCounts })
-  );
+    const recentCalls = await hydrateCalls(callsRaw, viewerId, {
+      refreshTraders: false,
+      refreshTokens: false,
+      ensureTokenLinks: false,
+      persistComputed: false,
+    });
+    const allReactionCounts = recentCalls.reduce(
+      (acc, call) => {
+        acc.alpha += call.reactionCounts.alpha;
+        acc.based += call.reactionCounts.based;
+        acc.printed += call.reactionCounts.printed;
+        acc.rug += call.reactionCounts.rug;
+        return acc;
+      },
+      buildReactionCounts([])
+    );
+    const totalSentimentReactions =
+      allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed + allReactionCounts.rug;
+    const bullishReactions =
+      allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed;
+    const bearishReactions = allReactionCounts.rug;
+    const sentimentScore = roundMetricOrZero(
+      currentToken.sentimentScore ?? computeSentimentScore({ reactions: allReactionCounts })
+    );
 
-  const topTraderMap = new Map<
-    string,
-    {
-      id: string;
-      name: string;
-      username: string | null;
-      image: string | null;
-      level: number;
-      xp: number;
-      trustScore: number | null;
-      reputationTier: string | null;
-      callsCount: number;
-      totalConfidence: number;
-      bestRoiPct: number;
+    const topTraderMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        username: string | null;
+        image: string | null;
+        level: number;
+        xp: number;
+        trustScore: number | null;
+        reputationTier: string | null;
+        callsCount: number;
+        totalConfidence: number;
+        bestRoiPct: number;
+      }
+    >();
+
+    for (const call of recentCalls) {
+      const current = topTraderMap.get(call.author.id) ?? {
+        id: call.author.id,
+        name: call.author.name,
+        username: call.author.username,
+        image: call.author.image,
+        level: call.author.level,
+        xp: call.author.xp,
+        trustScore: call.author.trustScore,
+        reputationTier: call.author.reputationTier,
+        callsCount: 0,
+        totalConfidence: 0,
+        bestRoiPct: -100,
+      };
+      current.callsCount += 1;
+      current.totalConfidence += call.confidenceScore;
+      current.bestRoiPct = Math.max(current.bestRoiPct, finite(call.roiPeakPct, -100));
+      topTraderMap.set(call.author.id, current);
     }
-  >();
 
-  for (const call of recentCalls) {
-    const current = topTraderMap.get(call.author.id) ?? {
-      id: call.author.id,
-      name: call.author.name,
-      username: call.author.username,
-      image: call.author.image,
-      level: call.author.level,
-      xp: call.author.xp,
-      trustScore: call.author.trustScore,
-      reputationTier: call.author.reputationTier,
-      callsCount: 0,
-      totalConfidence: 0,
-      bestRoiPct: -100,
-    };
-    current.callsCount += 1;
-    current.totalConfidence += call.confidenceScore;
-    current.bestRoiPct = Math.max(current.bestRoiPct, finite(call.roiPeakPct, -100));
-    topTraderMap.set(call.author.id, current);
-  }
+    const topTraders = Array.from(topTraderMap.values())
+      .map((entry) => ({
+        ...entry,
+        avgConfidenceScore: entry.callsCount > 0 ? roundMetricOrZero(entry.totalConfidence / entry.callsCount) : 0,
+        bestRoiPct: roundMetricOrZero(entry.bestRoiPct),
+      }))
+      .sort((left, right) => {
+        const trustDelta = finite(right.trustScore) - finite(left.trustScore);
+        if (trustDelta !== 0) return trustDelta;
+        return right.avgConfidenceScore - left.avgConfidenceScore;
+      })
+      .slice(0, 8);
 
-  const topTraders = Array.from(topTraderMap.values())
-    .map((entry) => ({
-      ...entry,
-      avgConfidenceScore: entry.callsCount > 0 ? roundMetricOrZero(entry.totalConfidence / entry.callsCount) : 0,
-      bestRoiPct: roundMetricOrZero(entry.bestRoiPct),
-    }))
-    .sort((left, right) => {
-      const trustDelta = finite(right.trustScore) - finite(left.trustScore);
-      if (trustDelta !== 0) return trustDelta;
-      return right.avgConfidenceScore - left.avgConfidenceScore;
-    })
-    .slice(0, 8);
-
-  const derivedTimeline = recentCalls.slice(0, 12).map((call) => ({
-    id: `call:${call.id}`,
-    eventType: "alpha_call",
-    timestamp: call.createdAt.toISOString(),
-    marketCap: call.entryMcap,
-    liquidity: call.liquidity,
-    volume: call.volume24h,
-    traderId: call.author.id,
-    postId: call.id,
-    metadata: {
-      traderHandle: call.author.username,
-      traderName: call.author.name,
-      timingTier: call.timingTier,
-      confidenceScore: call.confidenceScore,
-    },
-  }));
-
-  return {
-    token: {
-      ...currentToken,
-      isFollowing: Boolean(tokenFollow),
-      bundleClusters: clusters,
-      chart: snapshots.map((snapshot) => ({
-        timestamp: snapshot.capturedAt.toISOString(),
-        marketCap: snapshot.marketCap,
-        liquidity: snapshot.liquidity,
-        volume24h: snapshot.volume24h,
-        holderCount: snapshot.holderCount,
-        sentimentScore: snapshot.sentimentScore,
-        confidenceScore: snapshot.confidenceScore,
-      })),
-      callsCount: recentCalls.length,
-      distinctTraders: topTraderMap.size,
-      topTraders,
-      sentiment: {
-        score: sentimentScore,
-        reactions: allReactionCounts,
-        bullishPct: totalSentimentReactions > 0 ? roundMetricOrZero((bullishReactions / totalSentimentReactions) * 100) : 0,
-        bearishPct: totalSentimentReactions > 0 ? roundMetricOrZero((bearishReactions / totalSentimentReactions) * 100) : 0,
+    const derivedTimeline = recentCalls.slice(0, 12).map((call) => ({
+      id: `call:${call.id}`,
+      eventType: "alpha_call",
+      timestamp: call.createdAt.toISOString(),
+      marketCap: call.entryMcap,
+      liquidity: call.liquidity,
+      volume: call.volume24h,
+      traderId: call.author.id,
+      postId: call.id,
+      metadata: {
+        traderHandle: call.author.username,
+        traderName: call.author.name,
+        timingTier: call.timingTier,
+        confidenceScore: call.confidenceScore,
       },
-      risk: {
-        tokenRiskScore: currentToken.tokenRiskScore,
-        bundleRiskLabel: currentToken.bundleRiskLabel,
-        largestHolderPct: currentToken.largestHolderPct,
-        top10HolderPct: currentToken.top10HolderPct,
-        bundledWalletCount: currentToken.bundledWalletCount,
-        estimatedBundledSupplyPct: currentToken.estimatedBundledSupplyPct,
-        deployerSupplyPct: currentToken.deployerSupplyPct,
-        holderCount: currentToken.holderCount,
-      },
-      timeline: [
-        ...events.map((event) => ({
-          ...event,
-          timestamp: event.timestamp.toISOString(),
+    }));
+
+    return {
+      token: {
+        ...currentToken,
+        isFollowing: Boolean(tokenFollow),
+        bundleClusters: clusters,
+        chart: snapshots.map((snapshot) => ({
+          timestamp: snapshot.capturedAt.toISOString(),
+          marketCap: snapshot.marketCap,
+          liquidity: snapshot.liquidity,
+          volume24h: snapshot.volume24h,
+          holderCount: snapshot.holderCount,
+          sentimentScore: snapshot.sentimentScore,
+          confidenceScore: snapshot.confidenceScore,
         })),
-        ...derivedTimeline,
-      ]
-        .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
-        .slice(0, 48),
-      recentCalls,
-    },
-  };
+        callsCount: recentCalls.length,
+        distinctTraders: topTraderMap.size,
+        topTraders,
+        sentiment: {
+          score: sentimentScore,
+          reactions: allReactionCounts,
+          bullishPct: totalSentimentReactions > 0 ? roundMetricOrZero((bullishReactions / totalSentimentReactions) * 100) : 0,
+          bearishPct: totalSentimentReactions > 0 ? roundMetricOrZero((bearishReactions / totalSentimentReactions) * 100) : 0,
+        },
+        risk: {
+          tokenRiskScore: currentToken.tokenRiskScore,
+          bundleRiskLabel: currentToken.bundleRiskLabel,
+          largestHolderPct: currentToken.largestHolderPct,
+          top10HolderPct: currentToken.top10HolderPct,
+          bundledWalletCount: currentToken.bundledWalletCount,
+          estimatedBundledSupplyPct: currentToken.estimatedBundledSupplyPct,
+          deployerSupplyPct: currentToken.deployerSupplyPct,
+          holderCount: currentToken.holderCount,
+        },
+        timeline: [
+          ...events.map((event) => ({
+            ...event,
+            timestamp: event.timestamp.toISOString(),
+          })),
+          ...derivedTimeline,
+        ]
+          .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
+          .slice(0, 48),
+        recentCalls,
+      },
+    };
+  });
 }
 
 export async function listTokenCallsByAddress(address: string, viewerId: string | null): Promise<EnrichedCall[]> {
@@ -1514,45 +1828,53 @@ export async function listTokenCallsByAddress(address: string, viewerId: string 
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 50,
   });
-  return hydrateCalls(records, viewerId);
+  return hydrateCalls(records, viewerId, {
+    refreshTraders: false,
+    refreshTokens: false,
+    ensureTokenLinks: false,
+    persistComputed: false,
+  });
 }
 
 export async function listRadarTokens(kind: "early-runners" | "hot-alpha" | "high-conviction", viewerId: string | null): Promise<Array<{
   token: TokenOverview["token"];
   score: number;
 }>> {
-  const field =
-    kind === "early-runners"
-      ? "earlyRunnerScore"
-      : kind === "hot-alpha"
-        ? "hotAlphaScore"
-        : "highConvictionScore";
+  const cacheKey = `radar:${kind}:${viewerId ?? "anonymous"}`;
+  return memoizeCached(radarCache, radarInFlight, cacheKey, RADAR_CACHE_TTL_MS, async () => {
+    const field =
+      kind === "early-runners"
+        ? "earlyRunnerScore"
+        : kind === "hot-alpha"
+          ? "hotAlphaScore"
+          : "highConvictionScore";
 
-  const tokens = await prisma.token.findMany({
-    where: {
-      [field]: {
-        gte: kind === "hot-alpha" ? 55 : 50,
+    const tokens = await prisma.token.findMany({
+      where: {
+        [field]: {
+          gte: kind === "hot-alpha" ? 55 : 50,
+        },
       },
-    },
-    select: TOKEN_SELECT,
-    orderBy: [{ [field]: "desc" }, { updatedAt: "desc" }],
-    take: 18,
+      select: TOKEN_SELECT,
+      orderBy: [{ [field]: "desc" }, { updatedAt: "desc" }],
+      take: 18,
+    });
+
+    const overviews = await Promise.all(
+      tokens.map(async (token) => {
+        const overview = await getTokenOverviewByAddress(token.address, viewerId);
+        return overview?.token ?? null;
+      })
+    );
+
+    return overviews
+      .filter((token): token is TokenOverview["token"] => token !== null)
+      .map((token) => ({
+        token,
+        score: finite(token[field]),
+      }))
+      .sort((left, right) => right.score - left.score);
   });
-
-  const overviews = await Promise.all(
-    tokens.map(async (token) => {
-      const overview = await getTokenOverviewByAddress(token.address, viewerId);
-      return overview?.token ?? null;
-    })
-  );
-
-  return overviews
-    .filter((token): token is TokenOverview["token"] => token !== null)
-    .map((token) => ({
-      token,
-      score: finite(token[field]),
-    }))
-    .sort((left, right) => right.score - left.score);
 }
 
 export async function getTraderOverview(handle: string, viewerId: string | null): Promise<{
@@ -1582,119 +1904,135 @@ export async function getTraderOverview(handle: string, viewerId: string | null)
     firstCallCount: number;
   };
 } | null> {
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [{ id: handle }, { username: handle }],
-    },
-    select: AUTHOR_SELECT,
+  const cacheKey = `trader:${viewerId ?? "anonymous"}:${sanitizeCacheKeyPart(handle)}`;
+  return memoizeCached(traderOverviewCache, traderOverviewInFlight, cacheKey, TRADER_OVERVIEW_CACHE_TTL_MS, async () => {
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ id: handle }, { username: handle }],
+      },
+      select: AUTHOR_SELECT,
+    });
+
+    if (!user) return null;
+    void maybeRefreshTraderMetrics([user]).catch(() => undefined);
+
+    const callsRaw = await prisma.post.findMany({
+      where: { authorId: user.id },
+      select: CALL_SELECT,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 50,
+    });
+    const calls = await hydrateCalls(callsRaw, viewerId, {
+      refreshTraders: false,
+      refreshTokens: false,
+      ensureTokenLinks: false,
+      persistComputed: false,
+    });
+    const firstCallCount = calls.filter((call) => call.firstCallerRank === 1).length;
+
+    return {
+      trader: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        image: user.image,
+        level: user.level,
+        xp: user.xp,
+        isVerified: user.isVerified,
+        winRate7d: user.winRate7d,
+        winRate30d: user.winRate30d,
+        avgRoi7d: user.avgRoi7d,
+        avgRoi30d: user.avgRoi30d,
+        trustScore: user.trustScore,
+        reputationTier: user.reputationTier,
+        firstCallCount: user.firstCallCount,
+        firstCallAvgRoi: user.firstCallAvgRoi,
+      },
+      calls,
+      stats: {
+        callsCount: calls.length,
+        avgConfidenceScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.confidenceScore, 0) / calls.length) : 0,
+        avgHotAlphaScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.hotAlphaScore, 0) / calls.length) : 0,
+        avgHighConvictionScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.highConvictionScore, 0) / calls.length) : 0,
+        firstCallCount,
+      },
+    };
   });
-
-  if (!user) return null;
-  await maybeRefreshTraderMetrics([user]);
-
-  const callsRaw = await prisma.post.findMany({
-    where: { authorId: user.id },
-    select: CALL_SELECT,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 50,
-  });
-  const calls = await hydrateCalls(callsRaw, viewerId);
-  const firstCallCount = calls.filter((call) => call.firstCallerRank === 1).length;
-
-  return {
-    trader: {
-      id: user.id,
-      name: user.name,
-      username: user.username,
-      image: user.image,
-      level: user.level,
-      xp: user.xp,
-      isVerified: user.isVerified,
-      winRate7d: user.winRate7d,
-      winRate30d: user.winRate30d,
-      avgRoi7d: user.avgRoi7d,
-      avgRoi30d: user.avgRoi30d,
-      trustScore: user.trustScore,
-      reputationTier: user.reputationTier,
-      firstCallCount: user.firstCallCount,
-      firstCallAvgRoi: user.firstCallAvgRoi,
-    },
-    calls,
-    stats: {
-      callsCount: calls.length,
-      avgConfidenceScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.confidenceScore, 0) / calls.length) : 0,
-      avgHotAlphaScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.hotAlphaScore, 0) / calls.length) : 0,
-      avgHighConvictionScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.highConvictionScore, 0) / calls.length) : 0,
-      firstCallCount,
-    },
-  };
 }
 
 export async function listDailyLeaderboards(viewerId: string | null): Promise<LeaderboardsPayload> {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const cacheKey = `leaderboards:daily:${viewerId ?? "anonymous"}`;
+  return memoizeCached(dailyLeaderboardsCache, dailyLeaderboardsInFlight, cacheKey, LEADERBOARD_CACHE_TTL_MS, async () => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
 
-  const todaysCallsRaw = await prisma.post.findMany({
-    where: {
-      createdAt: {
-        gte: startOfDay,
+    const todaysCallsRaw = await prisma.post.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+        },
       },
-    },
-    select: CALL_SELECT,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 120,
-  });
+      select: CALL_SELECT,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 120,
+    });
 
-  const todaysCalls = await hydrateCalls(todaysCallsRaw, viewerId);
-  const traderMap = new Map<string, LeaderboardsPayload["topTradersToday"][number] & { wins: number }>();
+    const todaysCalls = await hydrateCalls(todaysCallsRaw, viewerId, {
+      refreshTraders: false,
+      refreshTokens: false,
+      ensureTokenLinks: false,
+      persistComputed: false,
+    });
+    const traderMap = new Map<string, LeaderboardsPayload["topTradersToday"][number] & { wins: number }>();
 
-  for (const call of todaysCalls) {
-    const current = traderMap.get(call.author.id) ?? {
-      traderId: call.author.id,
-      handle: call.author.username,
-      name: call.author.name,
-      image: call.author.image,
-      trustScore: call.author.trustScore,
-      avgRoiPct: 0,
-      winRatePct: 0,
-      callsCount: 0,
-      wins: 0,
-    };
-    current.callsCount += 1;
-    current.avgRoiPct += finite(call.roiPeakPct);
-    if (call.isWin) {
-      current.wins += 1;
+    for (const call of todaysCalls) {
+      const current = traderMap.get(call.author.id) ?? {
+        traderId: call.author.id,
+        handle: call.author.username,
+        name: call.author.name,
+        image: call.author.image,
+        trustScore: call.author.trustScore,
+        avgRoiPct: 0,
+        winRatePct: 0,
+        callsCount: 0,
+        wins: 0,
+      };
+      current.callsCount += 1;
+      current.avgRoiPct += finite(call.roiPeakPct);
+      if (call.isWin) {
+        current.wins += 1;
+      }
+      traderMap.set(call.author.id, current);
     }
-    traderMap.set(call.author.id, current);
-  }
 
-  const topTradersToday = Array.from(traderMap.values())
-    .map((entry) => ({
-      traderId: entry.traderId,
-      handle: entry.handle,
-      name: entry.name,
-      image: entry.image,
-      trustScore: entry.trustScore,
-      avgRoiPct: entry.callsCount > 0 ? roundMetricOrZero(entry.avgRoiPct / entry.callsCount) : 0,
-      winRatePct: entry.callsCount > 0 ? roundMetricOrZero((entry.wins / entry.callsCount) * 100) : 0,
-      callsCount: entry.callsCount,
-    }))
-    .sort((left, right) => {
-      const roiDelta = right.avgRoiPct - left.avgRoiPct;
-      if (roiDelta !== 0) return roiDelta;
-      return right.winRatePct - left.winRatePct;
-    })
-    .slice(0, 12);
+    const topTradersToday = Array.from(traderMap.values())
+      .map((entry) => ({
+        traderId: entry.traderId,
+        handle: entry.handle,
+        name: entry.name,
+        image: entry.image,
+        trustScore: entry.trustScore,
+        avgRoiPct: entry.callsCount > 0 ? roundMetricOrZero(entry.avgRoiPct / entry.callsCount) : 0,
+        winRatePct: entry.callsCount > 0 ? roundMetricOrZero((entry.wins / entry.callsCount) * 100) : 0,
+        callsCount: entry.callsCount,
+      }))
+      .sort((left, right) => {
+        const roiDelta = right.avgRoiPct - left.avgRoiPct;
+        if (roiDelta !== 0) return roiDelta;
+        return right.winRatePct - left.winRatePct;
+      })
+      .slice(0, 12);
 
-  return {
-    topTradersToday,
-    topAlphaToday: [...todaysCalls].sort((left, right) => right.hotAlphaScore - left.hotAlphaScore).slice(0, 12),
-    biggestRoiToday: [...todaysCalls].sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100)).slice(0, 12),
-    bestEntryToday: [...todaysCalls]
-      .filter((call) => call.firstCallerRank === 1 || call.timingTier === "FIRST CALLER")
-      .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
-      .slice(0, 12),
-  };
+    return {
+      topTradersToday,
+      topAlphaToday: [...todaysCalls].sort((left, right) => right.hotAlphaScore - left.hotAlphaScore).slice(0, 12),
+      biggestRoiToday: [...todaysCalls].sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100)).slice(0, 12),
+      bestEntryToday: [...todaysCalls]
+        .filter((call) => call.firstCallerRank === 1 || call.timingTier === "FIRST CALLER")
+        .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
+        .slice(0, 12),
+    };
+  });
 }
 
 export async function listFirstCallerLeaderboards(viewerId: string | null): Promise<Array<{
@@ -1707,55 +2045,69 @@ export async function listFirstCallerLeaderboards(viewerId: string | null): Prom
   firstCallAvgRoi: number | null;
   avgConfidenceScore: number;
 }>> {
-  const traders = await prisma.user.findMany({
-    where: {
-      firstCallCount: {
-        gt: 0,
-      },
-    },
-    select: AUTHOR_SELECT,
-    orderBy: [{ firstCallCount: "desc" }, { trustScore: "desc" }],
-    take: 24,
-  });
+  const cacheKey = `leaderboards:first-callers:${viewerId ?? "anonymous"}`;
+  return memoizeCached(
+    firstCallerLeaderboardsCache,
+    firstCallerLeaderboardsInFlight,
+    cacheKey,
+    LEADERBOARD_CACHE_TTL_MS,
+    async () => {
+      const traders = await prisma.user.findMany({
+        where: {
+          firstCallCount: {
+            gt: 0,
+          },
+        },
+        select: AUTHOR_SELECT,
+        orderBy: [{ firstCallCount: "desc" }, { trustScore: "desc" }],
+        take: 24,
+      });
 
-  const callsRaw = await prisma.post.findMany({
-    where: {
-      authorId: { in: traders.map((trader) => trader.id) },
-      firstCallerRank: 1,
-    },
-    select: CALL_SELECT,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 160,
-  });
-  const calls = await hydrateCalls(callsRaw, viewerId);
-  const confidenceByTrader = new Map<string, { total: number; count: number }>();
-  for (const call of calls) {
-    const current = confidenceByTrader.get(call.author.id) ?? { total: 0, count: 0 };
-    current.total += call.confidenceScore;
-    current.count += 1;
-    confidenceByTrader.set(call.author.id, current);
-  }
-
-  return traders
-    .map((trader) => {
-      const confidence = confidenceByTrader.get(trader.id);
-      return {
-        traderId: trader.id,
-        handle: trader.username,
-        name: trader.name,
-        image: trader.image,
-        trustScore: trader.trustScore,
-        firstCalls: trader.firstCallCount,
-        firstCallAvgRoi: trader.firstCallAvgRoi,
-        avgConfidenceScore: confidence?.count ? roundMetricOrZero(confidence.total / confidence.count) : 0,
-      };
-    })
-    .sort((left, right) => {
-      if (right.firstCalls !== left.firstCalls) {
-        return right.firstCalls - left.firstCalls;
+      const callsRaw = await prisma.post.findMany({
+        where: {
+          authorId: { in: traders.map((trader) => trader.id) },
+          firstCallerRank: 1,
+        },
+        select: CALL_SELECT,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 160,
+      });
+      const calls = await hydrateCalls(callsRaw, viewerId, {
+        refreshTraders: false,
+        refreshTokens: false,
+        ensureTokenLinks: false,
+        persistComputed: false,
+      });
+      const confidenceByTrader = new Map<string, { total: number; count: number }>();
+      for (const call of calls) {
+        const current = confidenceByTrader.get(call.author.id) ?? { total: 0, count: 0 };
+        current.total += call.confidenceScore;
+        current.count += 1;
+        confidenceByTrader.set(call.author.id, current);
       }
-      return finite(right.firstCallAvgRoi) - finite(left.firstCallAvgRoi);
-    });
+
+      return traders
+        .map((trader) => {
+          const confidence = confidenceByTrader.get(trader.id);
+          return {
+            traderId: trader.id,
+            handle: trader.username,
+            name: trader.name,
+            image: trader.image,
+            trustScore: trader.trustScore,
+            firstCalls: trader.firstCallCount,
+            firstCallAvgRoi: trader.firstCallAvgRoi,
+            avgConfidenceScore: confidence?.count ? roundMetricOrZero(confidence.total / confidence.count) : 0,
+          };
+        })
+        .sort((left, right) => {
+          if (right.firstCalls !== left.firstCalls) {
+            return right.firstCalls - left.firstCalls;
+          }
+          return finite(right.firstCallAvgRoi) - finite(left.firstCallAvgRoi);
+        });
+    }
+  );
 }
 
 export async function ensureAlertPreference(userId: string): Promise<AlertPreference> {
