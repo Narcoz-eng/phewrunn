@@ -23,6 +23,8 @@ export type ConfidenceInputs = {
   trustedTraderCount: number | null;
   top10HolderPct: number | null;
   tokenRiskScore: number | null;
+  roiCurrentPct?: number | null;
+  sentimentScore?: number | null;
 };
 
 export type HotAlphaInputs = {
@@ -152,6 +154,112 @@ export function determineBundleRiskLabel(tokenRiskScore: number | null | undefin
   return "Hard Bundled";
 }
 
+function computeConfidenceDrawdownPenalty(roiCurrentPct: number | null | undefined): number {
+  const roi = finite(roiCurrentPct);
+  if (roi >= 0) return 0;
+  const drawdown = Math.abs(roi);
+  if (drawdown >= 85) return 100;
+  if (drawdown >= 70) return 90;
+  if (drawdown >= 55) return 72;
+  if (drawdown >= 40) return 54;
+  if (drawdown >= 25) return 34;
+  return pct(drawdown, 25) * 0.7;
+}
+
+function computeNegativeSentimentPenalty(sentimentScore: number | null | undefined): number {
+  const score = clampScore(finite(sentimentScore, 50));
+  if (score >= 50) return 0;
+  return pct(50 - score, 50);
+}
+
+function computeConfidenceScoreCap(args: {
+  tokenRiskScore: number | null | undefined;
+  roiCurrentPct: number | null | undefined;
+}): number {
+  const risk = finite(args.tokenRiskScore);
+  const currentRoi = finite(args.roiCurrentPct);
+  let cap = 100;
+
+  if (risk >= 80) cap = Math.min(cap, 14);
+  else if (risk >= 65) cap = Math.min(cap, 28);
+  else if (risk >= 50) cap = Math.min(cap, 42);
+
+  if (currentRoi <= -85) cap = Math.min(cap, 8);
+  else if (currentRoi <= -70) cap = Math.min(cap, 14);
+  else if (currentRoi <= -55) cap = Math.min(cap, 22);
+  else if (currentRoi <= -40) cap = Math.min(cap, 30);
+  else if (currentRoi <= -25) cap = Math.min(cap, 44);
+
+  return cap;
+}
+
+function computeConfidenceScoreMultiplier(args: {
+  tokenRiskScore: number | null | undefined;
+  roiCurrentPct: number | null | undefined;
+  sentimentScore: number | null | undefined;
+}): number {
+  const risk = finite(args.tokenRiskScore);
+  const currentRoi = finite(args.roiCurrentPct);
+  const sentiment = clampScore(finite(args.sentimentScore, 50));
+  let multiplier = 1;
+
+  if (risk >= 80) multiplier *= 0.24;
+  else if (risk >= 65) multiplier *= 0.55;
+  else if (risk >= 50) multiplier *= 0.78;
+  else if (risk >= 40) multiplier *= 0.9;
+
+  if (currentRoi <= -85) multiplier *= 0.22;
+  else if (currentRoi <= -70) multiplier *= 0.34;
+  else if (currentRoi <= -55) multiplier *= 0.5;
+  else if (currentRoi <= -40) multiplier *= 0.68;
+  else if (currentRoi <= -25) multiplier *= 0.84;
+
+  if (sentiment <= 25) multiplier *= 0.72;
+  else if (sentiment <= 35) multiplier *= 0.84;
+  else if (sentiment <= 45) multiplier *= 0.94;
+
+  return multiplier;
+}
+
+export function applyConfidenceGuardrails(args: {
+  baseScore: number;
+  tokenRiskScore: number | null | undefined;
+  top10HolderPct: number | null | undefined;
+  roiCurrentPct?: number | null | undefined;
+  sentimentScore?: number | null | undefined;
+}): number {
+  const bundlePenalty = pct(args.tokenRiskScore, 100);
+  const holderConcentrationPenalty = pct(args.top10HolderPct, 85);
+  const drawdownPenalty = computeConfidenceDrawdownPenalty(args.roiCurrentPct);
+  const negativeSentimentPenalty = computeNegativeSentimentPenalty(args.sentimentScore);
+
+  const penaltyAdjusted = clampScore(
+    clampScore(args.baseScore) -
+      0.30 * bundlePenalty -
+      0.16 * holderConcentrationPenalty -
+      0.28 * drawdownPenalty -
+      0.10 * negativeSentimentPenalty
+  );
+
+  const multiplied =
+    penaltyAdjusted *
+    computeConfidenceScoreMultiplier({
+      tokenRiskScore: args.tokenRiskScore,
+      roiCurrentPct: args.roiCurrentPct,
+      sentimentScore: args.sentimentScore,
+    });
+
+  return clampScore(
+    Math.min(
+      computeConfidenceScoreCap({
+        tokenRiskScore: args.tokenRiskScore,
+        roiCurrentPct: args.roiCurrentPct,
+      }),
+      multiplied
+    )
+  );
+}
+
 export function computeConfidenceScore(inputs: ConfidenceInputs): number {
   const traderWinRateScore = pct(inputs.traderWinRate30d, 80);
   const traderRoiScore = logScore(Math.max(0, finite(inputs.traderAvgRoi30d)), 300);
@@ -162,20 +270,25 @@ export function computeConfidenceScore(inputs: ConfidenceInputs): number {
   const momentumScore = pct(inputs.momentumPct, 120);
   const confirmationScore = pct(inputs.trustedTraderCount, 5);
   const holderHealthScore = inversePct(inputs.top10HolderPct, 70);
-  const bundlePenalty = pct(inputs.tokenRiskScore, 100);
 
   const confidenceScoreRaw =
-    0.16 * traderTrustScore +
-    0.12 * traderWinRateScore +
-    0.10 * traderRoiScore +
-    0.12 * entryQualityScore +
+    0.18 * traderTrustScore +
+    0.13 * traderWinRateScore +
+    0.09 * traderRoiScore +
+    0.14 * entryQualityScore +
     0.12 * liquidityScore +
-    0.10 * volumeGrowthScore +
+    0.08 * volumeGrowthScore +
     0.10 * momentumScore +
     0.08 * confirmationScore +
-    0.10 * holderHealthScore;
+    0.08 * holderHealthScore;
 
-  return clampScore(confidenceScoreRaw - (0.20 * bundlePenalty));
+  return applyConfidenceGuardrails({
+    baseScore: confidenceScoreRaw,
+    tokenRiskScore: inputs.tokenRiskScore,
+    top10HolderPct: inputs.top10HolderPct,
+    roiCurrentPct: inputs.roiCurrentPct,
+    sentimentScore: inputs.sentimentScore,
+  });
 }
 
 export function computeHotAlphaScore(inputs: HotAlphaInputs): number {

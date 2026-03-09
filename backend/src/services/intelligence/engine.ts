@@ -1,6 +1,7 @@
 import { Prisma, type AlertPreference } from "@prisma/client";
 import { prisma } from "../../prisma.js";
 import {
+  applyConfidenceGuardrails,
   buildReactionCounts,
   clampScore,
   computeConfidenceScore,
@@ -35,6 +36,7 @@ const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
+const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
 
 const AUTHOR_SELECT = Prisma.validator<Prisma.UserSelect>()({
   id: true,
@@ -590,6 +592,8 @@ function deriveCurrentRoiPct(record: Pick<CallRecord, "entryMcap" | "currentMcap
 
 function shouldRefreshToken(token: TokenRecord | null): boolean {
   if (!token?.lastIntelligenceAt) return true;
+  if (token.lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) return true;
+  if (finite(token.tokenRiskScore) >= 60 && finite(token.confidenceScore) >= 35) return true;
   return Date.now() - token.lastIntelligenceAt.getTime() > TOKEN_INTELLIGENCE_STALE_MS;
 }
 
@@ -846,6 +850,10 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     recentCalls.length > 0
       ? recentCalls.reduce((sum, call) => sum + finite(call.confidenceScore), 0) / recentCalls.length
       : 0;
+  const avgCurrentRoiPct =
+    recentCalls.length > 0
+      ? recentCalls.reduce((sum, call) => sum + finite(deriveRoiPct(call.entryMcap, call.currentMcap)), 0) / recentCalls.length
+      : null;
   const avgHotAlpha =
     recentCalls.length > 0
       ? recentCalls.reduce((sum, call) => sum + finite(call.hotAlphaScore), 0) / recentCalls.length
@@ -865,12 +873,25 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
       tokenRiskScore,
     })
   );
+  const tokenConfidenceBaseScore = clampScore(
+    avgCallConfidence > 0
+      ? avgCallConfidence * 0.72 +
+          finite(sentimentScore) * 0.12 +
+          Math.max(0, 100 - finite(tokenRiskScore)) * 0.08 +
+          clampScore(Math.max(0, momentumPct)) * 0.08
+      : 0.34 * Math.max(0, 100 - finite(tokenRiskScore)) +
+          0.28 * finite(sentimentScore) +
+          0.20 * clampScore(Math.max(0, momentumPct)) +
+          0.18 * clampScore(100 - Math.min(100, Math.abs(finite(avgCurrentRoiPct, momentumPct))))
+  );
   const confidenceScore = roundMetric(
-    clampScore(
-      avgCallConfidence > 0
-        ? avgCallConfidence * 0.7 + finite(sentimentScore) * 0.1 + Math.max(0, 40 - finite(tokenRiskScore)) * 0.2
-        : 0.35 * Math.max(0, 100 - finite(tokenRiskScore)) + 0.35 * finite(sentimentScore) + 0.3 * clampScore(momentumPct)
-    )
+    applyConfidenceGuardrails({
+      baseScore: tokenConfidenceBaseScore,
+      tokenRiskScore,
+      top10HolderPct: distribution?.top10HolderPct ?? existing.top10HolderPct,
+      roiCurrentPct: avgCurrentRoiPct ?? momentumPct,
+      sentimentScore,
+    })
   );
   const hotAlphaScore = roundMetric(
     clampScore(avgHotAlpha * 0.65 + finite(earlyRunnerScore) * 0.15 + finite(sentimentScore) * 0.1 + clampScore(momentumPct) * 0.1)
@@ -1255,19 +1276,20 @@ async function hydrateCalls(
         })
     );
     const confidenceScore = roundMetricOrZero(
-      record.confidenceScore ??
-        computeConfidenceScore({
-          traderWinRate30d: record.author.winRate30d,
-          traderAvgRoi30d: record.author.avgRoi30d,
-          traderTrustScore: record.author.trustScore,
-          entryQualityScore,
-          liquidityUsd: token?.liquidity ?? record.currentMcap,
-          volumeGrowth24hPct: 0,
-          momentumPct: token?.earlyRunnerScore ?? roiCurrentPct ?? 0,
-          trustedTraderCount,
-          top10HolderPct: token?.top10HolderPct ?? null,
-          tokenRiskScore: token?.tokenRiskScore ?? null,
-        })
+      computeConfidenceScore({
+        traderWinRate30d: record.author.winRate30d,
+        traderAvgRoi30d: record.author.avgRoi30d,
+        traderTrustScore: record.author.trustScore,
+        entryQualityScore,
+        liquidityUsd: token?.liquidity ?? record.currentMcap,
+        volumeGrowth24hPct: 0,
+        momentumPct: roiCurrentPct ?? 0,
+        trustedTraderCount,
+        top10HolderPct: token?.top10HolderPct ?? null,
+        tokenRiskScore: token?.tokenRiskScore ?? null,
+        roiCurrentPct,
+        sentimentScore,
+      })
     );
     const weightedEngagementPerHour = computeWeightedEngagementPerHour({
       reactions: reactionCounts,
@@ -1275,41 +1297,38 @@ async function hydrateCalls(
       ageHours: Math.max(0.2, (Date.now() - record.createdAt.getTime()) / (60 * 60 * 1000)),
     });
     const hotAlphaScore = roundMetricOrZero(
-      record.hotAlphaScore ??
-        computeHotAlphaScore({
-          confidenceScore,
-          weightedEngagementPerHour,
-          earlyGainsPct: roiCurrentPct,
-          traderTrustScore: record.author.trustScore,
-          liquidityUsd: token?.liquidity ?? record.currentMcap,
-          sentimentScore,
-          momentumPct: token?.hotAlphaScore ?? roiCurrentPct ?? 0,
-          tokenRiskScore: token?.tokenRiskScore ?? null,
-        })
+      computeHotAlphaScore({
+        confidenceScore,
+        weightedEngagementPerHour,
+        earlyGainsPct: roiCurrentPct,
+        traderTrustScore: record.author.trustScore,
+        liquidityUsd: token?.liquidity ?? record.currentMcap,
+        sentimentScore,
+        momentumPct: token?.hotAlphaScore ?? roiCurrentPct ?? 0,
+        tokenRiskScore: token?.tokenRiskScore ?? null,
+      })
     );
     const earlyRunnerScore = roundMetricOrZero(
-      record.earlyRunnerScore ??
-        computeEarlyRunnerScore({
-          distinctTrustedTradersLast6h: distinctTrustedTraders,
-          liquidityGrowth1hPct: 0,
-          volumeGrowth1hPct: 0,
-          holderGrowth1hPct: 0,
-          momentumPct: token?.earlyRunnerScore ?? roiCurrentPct ?? 0,
-          sentimentScore,
-          tokenRiskScore: token?.tokenRiskScore ?? null,
-        })
+      computeEarlyRunnerScore({
+        distinctTrustedTradersLast6h: distinctTrustedTraders,
+        liquidityGrowth1hPct: 0,
+        volumeGrowth1hPct: 0,
+        holderGrowth1hPct: 0,
+        momentumPct: token?.earlyRunnerScore ?? roiCurrentPct ?? 0,
+        sentimentScore,
+        tokenRiskScore: token?.tokenRiskScore ?? null,
+      })
     );
     const highConvictionScore = roundMetricOrZero(
-      record.highConvictionScore ??
-        computeHighConvictionScore({
-          confidenceScore,
-          traderTrustScore: record.author.trustScore,
-          entryQualityScore,
-          liquidityUsd: token?.liquidity ?? record.currentMcap,
-          sentimentScore,
-          trustedTraderCount,
-          tokenRiskScore: token?.tokenRiskScore ?? null,
-        })
+      computeHighConvictionScore({
+        confidenceScore,
+        traderTrustScore: record.author.trustScore,
+        entryQualityScore,
+        liquidityUsd: token?.liquidity ?? record.currentMcap,
+        sentimentScore,
+        trustedTraderCount,
+        tokenRiskScore: token?.tokenRiskScore ?? null,
+      })
     );
     const timingTier =
       record.timingTier ??
