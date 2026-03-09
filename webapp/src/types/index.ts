@@ -94,6 +94,8 @@ export interface Post {
   settled: boolean;
   settledAt: string | null;
   isWin: boolean | null;
+  lastMcapUpdate?: string | null;
+  trackingMode?: string | null;
   createdAt: string;
   // Social features
   _count: {

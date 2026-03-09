@@ -312,6 +312,20 @@ function isMissingFeedValue<T>(value: T | null | undefined): boolean {
   return false;
 }
 
+function parseFeedTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getFeedMarketStateVersion(post: Pick<Post, "lastMcapUpdate" | "settledAt" | "createdAt">): number {
+  return Math.max(
+    parseFeedTimestamp(post.lastMcapUpdate),
+    parseFeedTimestamp(post.settledAt),
+    parseFeedTimestamp(post.createdAt)
+  );
+}
+
 function mergePostWithCachedRealtimeState(
   post: Post,
   cachedPost: Post | null | undefined,
@@ -363,6 +377,12 @@ function mergePostWithCachedRealtimeState(
   let nextThreadCount = post.threadCount;
   let nextRadarReasons = post.radarReasons;
   let nextAuthor = post.author;
+  let nextLastMcapUpdate = post.lastMcapUpdate ?? null;
+  let nextTrackingMode = post.trackingMode ?? null;
+
+  const fetchedMarketStateVersion = getFeedMarketStateVersion(post);
+  const cachedMarketStateVersion = getFeedMarketStateVersion(cachedPost);
+  const shouldPreferCachedMarketState = cachedMarketStateVersion > fetchedMarketStateVersion;
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -375,6 +395,41 @@ function mergePostWithCachedRealtimeState(
   if (cachedLooksLikeLiveCurrent && fetchedLooksLikeBaselineCurrent) {
     nextCurrentMcap = cachedPost.currentMcap;
     didChange = true;
+  }
+
+  if (shouldPreferCachedMarketState) {
+    if (cachedPost.currentMcap !== null && cachedPost.currentMcap !== post.currentMcap) {
+      nextCurrentMcap = cachedPost.currentMcap;
+      didChange = true;
+    }
+    if (cachedPost.settled !== post.settled) {
+      nextSettled = cachedPost.settled;
+      didChange = true;
+    }
+    if (cachedPost.settledAt !== post.settledAt) {
+      nextSettledAt = cachedPost.settledAt;
+      didChange = true;
+    }
+    if (cachedPost.mcap1h !== null && cachedPost.mcap1h !== post.mcap1h) {
+      nextMcap1h = cachedPost.mcap1h;
+      didChange = true;
+    }
+    if (cachedPost.mcap6h !== null && cachedPost.mcap6h !== post.mcap6h) {
+      nextMcap6h = cachedPost.mcap6h;
+      didChange = true;
+    }
+    if (cachedPost.isWin !== null && cachedPost.isWin !== post.isWin) {
+      nextIsWin = cachedPost.isWin;
+      didChange = true;
+    }
+    if ((cachedPost.lastMcapUpdate ?? null) !== (post.lastMcapUpdate ?? null)) {
+      nextLastMcapUpdate = cachedPost.lastMcapUpdate ?? null;
+      didChange = true;
+    }
+    if ((cachedPost.trackingMode ?? null) !== (post.trackingMode ?? null)) {
+      nextTrackingMode = cachedPost.trackingMode ?? null;
+      didChange = true;
+    }
   }
 
   if (cachedPost.settled && !post.settled) {
@@ -640,6 +695,8 @@ function mergePostWithCachedRealtimeState(
     mcap1h: nextMcap1h,
     mcap6h: nextMcap6h,
     isWin: nextIsWin,
+    lastMcapUpdate: nextLastMcapUpdate,
+    trackingMode: nextTrackingMode,
     tokenName: nextTokenName,
     tokenSymbol: nextTokenSymbol,
     tokenImage: nextTokenImage,

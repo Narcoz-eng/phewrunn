@@ -22,6 +22,51 @@ const pendingById = new Map<string, PendingResolver[]>();
 const cacheById = new Map<string, { data: BatchedPostPriceSnapshot | null; expiresAtMs: number }>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+function parseSnapshotTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getSnapshotVersion(snapshot: BatchedPostPriceSnapshot | null | undefined): number {
+  if (!snapshot) return 0;
+  return Math.max(
+    parseSnapshotTimestamp(snapshot.lastMcapUpdate),
+    parseSnapshotTimestamp(snapshot.settledAt)
+  );
+}
+
+function mergeSnapshotWithFresherState(
+  existing: BatchedPostPriceSnapshot | null | undefined,
+  incoming: BatchedPostPriceSnapshot | null
+): BatchedPostPriceSnapshot | null {
+  if (!incoming) {
+    return existing ?? null;
+  }
+  if (!existing) {
+    return incoming;
+  }
+
+  const existingVersion = getSnapshotVersion(existing);
+  const incomingVersion = getSnapshotVersion(incoming);
+
+  if (existingVersion > incomingVersion) {
+    return {
+      ...incoming,
+      currentMcap: existing.currentMcap,
+      mcap1h: existing.mcap1h,
+      mcap6h: existing.mcap6h,
+      settled: existing.settled,
+      settledAt: existing.settledAt,
+      trackingMode: existing.trackingMode,
+      lastMcapUpdate: existing.lastMcapUpdate,
+      percentChange: existing.percentChange,
+    };
+  }
+
+  return incoming;
+}
+
 function readCached(postId: string): BatchedPostPriceSnapshot | null | undefined {
   const cached = cacheById.get(postId);
   if (!cached) return undefined;
@@ -37,7 +82,8 @@ function resolvePending(ids: string[], payloadById: Record<string, BatchedPostPr
   for (const id of ids) {
     const resolvers = pendingById.get(id) ?? [];
     pendingById.delete(id);
-    const data = payloadById[id] ?? null;
+    const existingCached = cacheById.get(id)?.data ?? null;
+    const data = mergeSnapshotWithFresherState(existingCached, payloadById[id] ?? null);
     cacheById.set(id, { data, expiresAtMs: now + PRICE_CACHE_TTL_MS });
     resolvers.forEach((resolve) => resolve(data));
   }

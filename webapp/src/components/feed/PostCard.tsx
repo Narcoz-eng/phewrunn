@@ -622,6 +622,27 @@ type FeedPostsPageLike = {
   items: Post[];
 };
 
+function parseMarketStateTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getPostMarketStateVersion(post: Pick<Post, "lastMcapUpdate" | "settledAt" | "createdAt">): number {
+  return Math.max(
+    parseMarketStateTimestamp(post.lastMcapUpdate),
+    parseMarketStateTimestamp(post.settledAt),
+    parseMarketStateTimestamp(post.createdAt)
+  );
+}
+
+function getSnapshotMarketStateVersion(snapshot: Pick<BatchedPostPriceSnapshot, "lastMcapUpdate" | "settledAt">): number {
+  return Math.max(
+    parseMarketStateTimestamp(snapshot.lastMcapUpdate),
+    parseMarketStateTimestamp(snapshot.settledAt)
+  );
+}
+
 function resolveSnapshotCurrentMcap(
   existingCurrentMcap: number | null,
   entryMcap: number | null,
@@ -654,11 +675,25 @@ function resolveSnapshotCurrentMcap(
 }
 
 function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnapshot): Post {
-  const nextCurrentMcap = resolveSnapshotCurrentMcap(post.currentMcap, post.entryMcap, snapshot);
-  const nextSettled = snapshot.settled || post.settled;
-  const nextSettledAt = snapshot.settledAt ?? post.settledAt;
-  const nextMcap1h = snapshot.mcap1h ?? post.mcap1h;
-  const nextMcap6h = snapshot.mcap6h ?? post.mcap6h;
+  const postVersion = getPostMarketStateVersion(post);
+  const snapshotVersion = getSnapshotMarketStateVersion(snapshot);
+  const shouldPreserveExistingMarketState =
+    snapshotVersion > 0 && snapshotVersion < postVersion;
+  const nextCurrentMcap = shouldPreserveExistingMarketState
+    ? post.currentMcap
+    : resolveSnapshotCurrentMcap(post.currentMcap, post.entryMcap, snapshot);
+  const nextSettled = shouldPreserveExistingMarketState ? post.settled : snapshot.settled || post.settled;
+  const nextSettledAt = shouldPreserveExistingMarketState
+    ? post.settledAt
+    : snapshot.settledAt ?? post.settledAt;
+  const nextMcap1h = shouldPreserveExistingMarketState ? post.mcap1h : snapshot.mcap1h ?? post.mcap1h;
+  const nextMcap6h = shouldPreserveExistingMarketState ? post.mcap6h : snapshot.mcap6h ?? post.mcap6h;
+  const nextLastMcapUpdate = shouldPreserveExistingMarketState
+    ? post.lastMcapUpdate ?? null
+    : snapshot.lastMcapUpdate ?? post.lastMcapUpdate ?? null;
+  const nextTrackingMode = shouldPreserveExistingMarketState
+    ? post.trackingMode ?? null
+    : snapshot.trackingMode ?? post.trackingMode ?? null;
   const nextIsWin =
     nextMcap1h !== null && post.entryMcap !== null
       ? nextMcap1h > post.entryMcap
@@ -670,6 +705,8 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
     nextSettledAt === post.settledAt &&
     nextMcap1h === post.mcap1h &&
     nextMcap6h === post.mcap6h &&
+    nextLastMcapUpdate === post.lastMcapUpdate &&
+    nextTrackingMode === post.trackingMode &&
     nextIsWin === post.isWin
   ) {
     return post;
@@ -682,6 +719,8 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
     settledAt: nextSettledAt,
     mcap1h: nextMcap1h,
     mcap6h: nextMcap6h,
+    lastMcapUpdate: nextLastMcapUpdate,
+    trackingMode: nextTrackingMode,
     isWin: nextIsWin,
   };
 }
@@ -1151,15 +1190,51 @@ export function PostCard({
   const [localMcap1h, setLocalMcap1h] = useState(post.mcap1h);
   const [localMcap6h, setLocalMcap6h] = useState(post.mcap6h);
   const [localIsWin, setLocalIsWin] = useState(post.isWin);
+  const latestMarketStateVersionRef = useRef<number>(getPostMarketStateVersion(post));
 
   // Sync state when post prop changes
   useEffect(() => {
-    setCurrentMcap(post.currentMcap);
-    setLocalSettled(post.settled);
-    setLocalMcap1h(post.mcap1h);
-    setLocalMcap6h(post.mcap6h);
-    setLocalIsWin(post.isWin);
-  }, [post.currentMcap, post.settled, post.mcap1h, post.mcap6h, post.isWin]);
+    const incomingVersion = getPostMarketStateVersion(post);
+    const currentVersion = latestMarketStateVersionRef.current;
+    const shouldAdoptIncomingMarketState = incomingVersion >= currentVersion;
+
+    if (shouldAdoptIncomingMarketState) {
+      latestMarketStateVersionRef.current = incomingVersion;
+      setCurrentMcap(post.currentMcap);
+      setLocalSettled(post.settled);
+      setLocalMcap1h(post.mcap1h);
+      setLocalMcap6h(post.mcap6h);
+      setLocalIsWin(post.isWin);
+      return;
+    }
+
+    if (post.settled && !localSettled) {
+      setLocalSettled(true);
+    }
+    if (post.mcap1h !== null && localMcap1h === null) {
+      setLocalMcap1h(post.mcap1h);
+    }
+    if (post.mcap6h !== null && localMcap6h === null) {
+      setLocalMcap6h(post.mcap6h);
+    }
+    if (post.isWin !== null && localIsWin === null) {
+      setLocalIsWin(post.isWin);
+    }
+  }, [
+    post,
+    post.currentMcap,
+    post.settled,
+    post.mcap1h,
+    post.mcap6h,
+    post.isWin,
+    post.lastMcapUpdate,
+    post.settledAt,
+    post.createdAt,
+    localSettled,
+    localMcap1h,
+    localMcap6h,
+    localIsWin,
+  ]);
 
   // Real-time price updates with dynamic intervals:
   // - Unsettled posts (< 1 hour): Update every 30 seconds
@@ -1179,6 +1254,11 @@ export function PostCard({
         if (!data) return;
 
         syncRealtimeSnapshotToCachedPosts(queryClient, post.id, data);
+
+        const snapshotVersion = getSnapshotMarketStateVersion(data);
+        if (snapshotVersion > latestMarketStateVersionRef.current) {
+          latestMarketStateVersionRef.current = snapshotVersion;
+        }
 
         setCurrentMcap((prev) => resolveSnapshotCurrentMcap(prev, post.entryMcap, data));
 
@@ -1680,6 +1760,11 @@ export function PostCard({
         cache: "no-store",
       });
       if (!latest) return null;
+
+      const snapshotVersion = getSnapshotMarketStateVersion(latest);
+      if (snapshotVersion > latestMarketStateVersionRef.current) {
+        latestMarketStateVersionRef.current = snapshotVersion;
+      }
 
       if (typeof latest.currentMcap === "number" && Number.isFinite(latest.currentMcap)) {
         setCurrentMcap(latest.currentMcap);

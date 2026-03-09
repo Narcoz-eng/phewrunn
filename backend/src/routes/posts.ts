@@ -207,7 +207,7 @@ let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
 const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 9_000 : 3_000;
 const FEED_RESPONSE_STALE_FALLBACK_MS =
-  process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
+  process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 4_800;
 const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
 const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
@@ -217,8 +217,10 @@ const FEED_CARD_SNAPSHOT_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 1
 const FEED_DEGRADED_CIRCUIT_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 15_000;
 const FEED_TOTAL_POST_COUNT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
-const POST_PRICE_STALE_FALLBACK_MS =
-  process.env.NODE_ENV === "production" ? 20 * 60_000 : 5 * 60_000;
+const POST_PRICE_ACTIVE_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 75_000 : 20_000;
+const POST_PRICE_SETTLED_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
 const POST_PRICE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 40_000 : 4_000;
 const POST_PRICE_REDIS_KEY_PREFIX = "posts:price:v1";
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
@@ -454,9 +456,11 @@ function writeFeedCardSnapshots(items: unknown[]): void {
   for (const item of items) {
     const snapshot = sanitizeFeedCardSnapshot(item);
     if (!snapshot) continue;
+    const existingSnapshot = readFeedCardSnapshot(String(snapshot.id));
+    const mergedSnapshot = mergeFeedCardSnapshotRecords(existingSnapshot, snapshot);
     trimFeedCardSnapshotCache();
     feedCardSnapshotCache.set(String(snapshot.id), {
-      snapshot,
+      snapshot: mergedSnapshot,
       expiresAtMs: nowMs + FEED_CARD_SNAPSHOT_TTL_MS,
     });
   }
@@ -491,8 +495,10 @@ function readFeedResponseFromCache(
 ): FeedResponsePayload | null {
   const cached = cacheMap.get(key);
   if (!cached) return null;
-  if (cached.expiresAtMs > nowMs) return cached.payload;
-  if (opts?.allowStale && cached.staleUntilMs > nowMs) return cached.payload;
+  if (cached.expiresAtMs > nowMs) return hydrateFeedResponsePayload(cached.payload);
+  if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+    return hydrateFeedResponsePayload(cached.payload);
+  }
   cacheMap.delete(key);
   return null;
 }
@@ -615,23 +621,26 @@ async function readPostPriceCache(
 }
 
 function writePostPriceCache(postId: string, data: PostPriceResponsePayload): void {
+  const existingCached = postPriceResponseCache.get(postId)?.data ?? null;
+  const nextData = mergePostPricePayloadWithFresherState(existingCached, data);
   if (postPriceResponseCache.has(postId)) {
     postPriceResponseCache.delete(postId);
   }
   trimPostPriceCache();
   const nowMs = Date.now();
+  const staleFallbackMs = getPostPriceStaleFallbackMs(nextData);
   postPriceResponseCache.set(postId, {
-    data,
+    data: nextData,
     expiresAtMs: nowMs + POST_PRICE_CACHE_TTL_MS,
-    staleUntilMs: nowMs + POST_PRICE_STALE_FALLBACK_MS,
+    staleUntilMs: nowMs + staleFallbackMs,
   });
   void cacheSetJson(
     buildPostPriceRedisKey(postId),
     {
-      data,
+      data: nextData,
       cachedAt: nowMs,
     },
-    POST_PRICE_STALE_FALLBACK_MS
+    staleFallbackMs
   );
 }
 
@@ -675,7 +684,7 @@ async function readSharedFeedResponseFromRedis(key: string): Promise<FeedRespons
     return null;
   }
   writeFeedResponseToCache(feedSharedResponseCache, key, normalized);
-  return normalized;
+  return hydrateFeedResponsePayload(normalized);
 }
 
 function createSharedFeedPayload(payload: FeedResponsePayload): FeedResponsePayload {
@@ -733,6 +742,129 @@ function parseCachedDate(value: unknown): Date | null {
 
 function toNullableNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getPostPricePayloadVersion(
+  payload:
+    | Pick<PostPriceResponsePayload, "lastMcapUpdate" | "settledAt">
+    | { lastMcapUpdate?: string | null; settledAt?: string | null; createdAt?: string | Date | null }
+    | null
+    | undefined
+): number {
+  if (!payload) return 0;
+
+  const createdAt =
+    "createdAt" in payload ? parseCachedDate(payload.createdAt)?.getTime() ?? 0 : 0;
+
+  return Math.max(
+    parseCachedDate(payload.lastMcapUpdate)?.getTime() ?? 0,
+    parseCachedDate(payload.settledAt)?.getTime() ?? 0,
+    createdAt
+  );
+}
+
+function preserveNewerMarketStateFields(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...target };
+  const marketStateKeys = [
+    "currentMcap",
+    "settled",
+    "settledAt",
+    "mcap1h",
+    "mcap6h",
+    "isWin",
+    "lastMcapUpdate",
+    "trackingMode",
+  ] as const;
+
+  for (const key of marketStateKeys) {
+    if (key in source) {
+      merged[key] = source[key];
+    }
+  }
+
+  return merged;
+}
+
+function mergeFeedCardSnapshotRecords(
+  existingSnapshot: Record<string, unknown> | null,
+  nextSnapshot: Record<string, unknown>
+): Record<string, unknown> {
+  if (!existingSnapshot) {
+    return nextSnapshot;
+  }
+
+  const merged = {
+    ...existingSnapshot,
+    ...nextSnapshot,
+  };
+  const existingVersion = getPostPricePayloadVersion(existingSnapshot);
+  const nextVersion = getPostPricePayloadVersion(nextSnapshot);
+
+  if (existingVersion > nextVersion) {
+    return preserveNewerMarketStateFields(merged, existingSnapshot);
+  }
+
+  return merged;
+}
+
+function mergePostPricePayloadWithFresherState(
+  existingPayload: PostPriceResponsePayload | null | undefined,
+  nextPayload: PostPriceResponsePayload
+): PostPriceResponsePayload {
+  if (!existingPayload) {
+    return nextPayload;
+  }
+
+  const existingVersion = getPostPricePayloadVersion(existingPayload);
+  const nextVersion = getPostPricePayloadVersion(nextPayload);
+
+  if (existingVersion > nextVersion) {
+    return {
+      ...nextPayload,
+      currentMcap: existingPayload.currentMcap,
+      settled: existingPayload.settled,
+      settledAt: existingPayload.settledAt,
+      mcap1h: existingPayload.mcap1h,
+      mcap6h: existingPayload.mcap6h,
+      trackingMode: existingPayload.trackingMode,
+      lastMcapUpdate: existingPayload.lastMcapUpdate,
+      percentChange: existingPayload.percentChange,
+    };
+  }
+
+  return nextPayload;
+}
+
+function getPostPriceStaleFallbackMs(data: PostPriceResponsePayload): number {
+  return data.settled || data.trackingMode === TRACKING_MODE_SETTLED
+    ? POST_PRICE_SETTLED_STALE_FALLBACK_MS
+    : POST_PRICE_ACTIVE_STALE_FALLBACK_MS;
+}
+
+function hydrateFeedResponsePayload(payload: FeedResponsePayload): FeedResponsePayload {
+  return {
+    ...payload,
+    data: payload.data.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return item;
+      }
+
+      const id = (item as { id?: unknown }).id;
+      if (typeof id !== "string" || id.length === 0) {
+        return item;
+      }
+
+      const snapshot = readFeedCardSnapshot(id);
+      if (!snapshot) {
+        return item;
+      }
+
+      return mergeFeedCardSnapshotRecords(item as Record<string, unknown>, snapshot);
+    }),
+  };
 }
 
 function buildPostPricePayloadFromRecord(post: PriceRoutePostRecord): PostPriceResponsePayload {
