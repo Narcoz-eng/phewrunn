@@ -144,15 +144,15 @@ export function TradingPanel({
   const priceImpactSeverity =
     priceImpactNum > 5 ? "critical" : priceImpactNum > 2 ? "warning" : "safe";
   const panelSurfaceClassName =
-    "flex flex-col overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(6,8,12,0.98))] dark:shadow-none dark:ring-white/5";
+    "flex flex-col overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.7)] ring-1 ring-white/65 dark:border-white/[0.07] dark:bg-[radial-gradient(circle_at_14%_0%,rgba(16,185,129,0.08),transparent_28%),radial-gradient(circle_at_100%_0%,rgba(59,130,246,0.08),transparent_24%),linear-gradient(180deg,rgba(8,12,20,0.98),rgba(4,8,14,0.99))] dark:shadow-none dark:ring-white/5";
   const sectionBorderClassName = "border-slate-900/[0.07] dark:border-white/[0.07]";
   const mutedTextClassName = "text-slate-500 dark:text-white/58";
   const fieldSurfaceClassName =
-    "border-slate-900/[0.08] bg-white/75 text-slate-900 placeholder:text-slate-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:border-white/[0.1] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.03))] dark:text-white dark:placeholder:text-white/30 dark:shadow-none";
+    "border-slate-900/[0.08] bg-white/75 text-slate-900 placeholder:text-slate-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(10,17,30,0.98),rgba(6,12,22,0.98))] dark:text-white dark:placeholder:text-white/28 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]";
   const chipSurfaceClassName =
-    "bg-slate-900/[0.05] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:bg-white/[0.08] dark:text-white/78 dark:shadow-none";
+    "bg-slate-900/[0.05] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:bg-[linear-gradient(180deg,rgba(13,20,34,0.98),rgba(8,14,24,0.98))] dark:text-white/82 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]";
   const softSectionClassName =
-    "rounded-xl border border-slate-900/[0.06] bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-white/[0.09] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.028))] dark:shadow-none";
+    "rounded-xl border border-slate-900/[0.06] bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(9,15,27,0.95),rgba(5,10,19,0.97))] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]";
 
   useEffect(() => {
     if (!showDetails || typeof window === "undefined") return;
@@ -368,7 +368,7 @@ export function TradingPanel({
         {/* Expandable Order Details */}
         <button
           onClick={() => setShowDetails(!showDetails)}
-          className="flex items-center justify-between rounded-lg border border-slate-900/[0.06] bg-white/60 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-colors hover:bg-white dark:border-white/[0.09] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.028))] dark:shadow-none dark:hover:bg-white/[0.07]"
+          className="flex items-center justify-between rounded-lg border border-slate-900/[0.06] bg-white/60 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-colors hover:bg-white dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(10,17,29,0.96),rgba(6,11,20,0.98))] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] dark:hover:bg-[linear-gradient(180deg,rgba(12,19,34,0.98),rgba(7,13,24,1))]"
         >
           <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-white/65">
             <Shield className="w-3 h-3" />

@@ -614,8 +614,39 @@ type FeedPostsPageLike = {
   items: Post[];
 };
 
+function resolveSnapshotCurrentMcap(
+  existingCurrentMcap: number | null,
+  entryMcap: number | null,
+  snapshot: BatchedPostPriceSnapshot
+): number | null {
+  if (snapshot.currentMcap === null) {
+    return existingCurrentMcap;
+  }
+
+  if (existingCurrentMcap === null) {
+    return snapshot.currentMcap;
+  }
+
+  const existingLooksLive =
+    entryMcap !== null &&
+    existingCurrentMcap !== entryMcap;
+  const snapshotLooksBaseline =
+    snapshot.entryMcap !== null &&
+    snapshot.currentMcap === snapshot.entryMcap;
+  const snapshotHasResolvedOutcome =
+    snapshot.settled ||
+    snapshot.mcap1h !== null ||
+    snapshot.mcap6h !== null;
+
+  if (existingLooksLive && snapshotLooksBaseline && !snapshotHasResolvedOutcome) {
+    return existingCurrentMcap;
+  }
+
+  return snapshot.currentMcap;
+}
+
 function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnapshot): Post {
-  const nextCurrentMcap = snapshot.currentMcap ?? post.currentMcap;
+  const nextCurrentMcap = resolveSnapshotCurrentMcap(post.currentMcap, post.entryMcap, snapshot);
   const nextSettled = snapshot.settled || post.settled;
   const nextSettledAt = snapshot.settledAt ?? post.settledAt;
   const nextMcap1h = snapshot.mcap1h ?? post.mcap1h;
@@ -1120,9 +1151,7 @@ export function PostCard({
 
         syncRealtimeSnapshotToCachedPosts(queryClient, post.id, data);
 
-        if (data.currentMcap !== null) {
-          setCurrentMcap(data.currentMcap);
-        }
+        setCurrentMcap((prev) => resolveSnapshotCurrentMcap(prev, post.entryMcap, data));
 
         let shouldInvalidateRealtimeStats = false;
 

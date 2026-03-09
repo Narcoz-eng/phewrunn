@@ -639,26 +639,18 @@ export default function Feed() {
         : null;
     const liveCachedFirstPage = liveCachedFirstPageEntry?.page ?? null;
     const queryKey = getFeedQueryKey(tab, search, feedViewerScope);
-    const currentQueryState = !pageParam
-      ? queryClient.getQueryState<InfiniteData<FeedPage>>(queryKey)
-      : null;
     const currentQueryFirstPage =
       !pageParam
         ? queryClient.getQueryData<InfiniteData<FeedPage>>(queryKey)?.pages?.[0] ?? null
         : null;
-    const hasAuthoritativeCurrentFirstPage =
-      Boolean(currentQueryFirstPage?.items.length) &&
-      (!liveCachedFirstPageEntry?.cachedAt ||
-        (currentQueryState?.dataUpdatedAt ?? 0) > liveCachedFirstPageEntry.cachedAt);
+    const hasCurrentFirstPage = Boolean(currentQueryFirstPage?.items.length);
     const fallbackFirstPage =
-      hasAuthoritativeCurrentFirstPage && currentQueryFirstPage
+      hasCurrentFirstPage && currentQueryFirstPage
         ? currentQueryFirstPage
         : liveCachedFirstPage && liveCachedFirstPage.items.length > 0
           ? liveCachedFirstPage
           : currentQueryFirstPage && currentQueryFirstPage.items.length > 0
             ? currentQueryFirstPage
-            : cachedFirstPage && cachedFirstPage.items.length > 0
-            ? cachedFirstPage
             : null;
     const shouldUseCachedFirstPageFallback = !pageParam && !search && tab !== "following" && Boolean(fallbackFirstPage?.items.length);
     let endpoint = "/api/posts";
@@ -712,23 +704,22 @@ export default function Feed() {
         ? json.totalPosts
         : null;
     const currentVisiblePostsById = new Map<string, Post>();
-    const currentRealtimeMergeSource = hasAuthoritativeCurrentFirstPage ? currentQueryFirstPage : null;
+    const currentRealtimeMergeSource = hasCurrentFirstPage ? currentQueryFirstPage : null;
     for (const item of currentRealtimeMergeSource?.items ?? []) {
       currentVisiblePostsById.set(item.id, item);
     }
 
     const cachedRealtimePostsById = new Map<string, Post>();
-    if (!pageParam && shouldMergeSessionCachedRealtimeState(tab, search)) {
-      for (const page of [liveCachedFirstPage, cachedFirstPage]) {
-        if (!page?.items?.length) {
+    const canUseSessionRealtimeMerge =
+      !pageParam &&
+      !hasCurrentFirstPage &&
+      shouldMergeSessionCachedRealtimeState(tab, search);
+    if (canUseSessionRealtimeMerge && liveCachedFirstPage?.items?.length) {
+      for (const item of liveCachedFirstPage.items) {
+        if (currentVisiblePostsById.has(item.id) || cachedRealtimePostsById.has(item.id)) {
           continue;
         }
-        for (const item of page.items) {
-          if (currentVisiblePostsById.has(item.id) || cachedRealtimePostsById.has(item.id)) {
-            continue;
-          }
-          cachedRealtimePostsById.set(item.id, item);
-        }
+        cachedRealtimePostsById.set(item.id, item);
       }
     }
     const mergedItems = items.map((item) => {
@@ -758,7 +749,7 @@ export default function Feed() {
       hasMore: Boolean(json?.hasMore && nextCursor),
       totalPosts,
     } satisfies FeedPage;
-  }, [cachedFirstPage, feedViewerScope, getFeedQueryKey, queryClient]);
+  }, [feedViewerScope, getFeedQueryKey, queryClient]);
 
   // Update URL when search changes
   const handleSearchChange = useCallback((value: string) => {
@@ -1141,7 +1132,10 @@ export default function Feed() {
       const currentData = queryClient.getQueryData<InfiniteData<FeedPage>>(
         getFeedQueryKey("latest", "", feedViewerScope)
       );
-      const currentFirstPage = currentData?.pages?.[0] ?? cachedFirstPage ?? hydrationCachedFirstPage ?? null;
+      const currentFirstPage =
+        currentData?.pages?.[0] ??
+        readPreferredCachedFirstFeedPage(feedViewerScope, "latest", "") ??
+        null;
       const baselineTopId = latestAcknowledgedTopIdRef.current ?? currentFirstPage?.items[0]?.id ?? null;
       if (!currentFirstPage && !baselineTopId) return;
 
@@ -1236,14 +1230,12 @@ export default function Feed() {
   }, [
     activeTab,
     applyFirstPageToCache,
-    cachedFirstPage,
     clearPendingLatestState,
     effectiveSearchQuery,
     feedViewerScope,
     fetchFeedPage,
     getFeedQueryKey,
     hasLiveOverlay,
-    hydrationCachedFirstPage,
     persistLatestAcknowledgedTopId,
     queryClient,
     refetchUser,

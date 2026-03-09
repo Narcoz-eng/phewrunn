@@ -128,13 +128,13 @@ export function CandlestickChart({
     () => data.slice(safeWindow.startIndex, safeWindow.endIndex + 1),
     [data, safeWindow.endIndex, safeWindow.startIndex]
   );
+  const isShowingLatestEdge = safeWindow.endIndex >= data.length - 1;
+  const effectiveFutureSlotCount = isShowingLatestEdge ? Math.max(0, futureSlotCount) : 0;
 
   const activeVisibleIndex =
     hoveredVisibleIndex !== null && hoveredVisibleIndex >= 0 && hoveredVisibleIndex < visibleData.length
       ? hoveredVisibleIndex
-      : visibleData.length > 0
-        ? visibleData.length - 1
-        : null;
+      : null;
   const activePoint = activeVisibleIndex !== null ? visibleData[activeVisibleIndex] ?? null : null;
 
   useEffect(() => {
@@ -213,10 +213,10 @@ export function CandlestickChart({
   }, [data]);
 
   const xForVisibleIndex = useCallback((index: number) => {
-    const visibleSlotCount = Math.max(1, visibleData.length + Math.max(0, futureSlotCount));
+    const visibleSlotCount = Math.max(1, visibleData.length + effectiveFutureSlotCount);
     if (visibleSlotCount <= 1) return MAIN_PADDING_LEFT + chartWidth / 2;
     return MAIN_PADDING_LEFT + (index / (visibleSlotCount - 1)) * chartWidth;
-  }, [chartWidth, futureSlotCount, visibleData.length]);
+  }, [chartWidth, effectiveFutureSlotCount, visibleData.length]);
 
   const xForGlobalIndex = useCallback((index: number) => {
     if (data.length <= 1) return MAIN_PADDING_LEFT + chartWidth / 2;
@@ -594,9 +594,9 @@ export function CandlestickChart({
             x={tick.x}
             y={mainContentBottom + 16}
             textAnchor={tick.anchor}
-            fill={tick.anchor === "end" ? axisBoundaryLabelColor : axisLabelColor}
+            fill={tick.anchor === "end" && isShowingLatestEdge ? axisBoundaryLabelColor : axisLabelColor}
             fontSize="10"
-            fontWeight={tick.anchor === "end" ? 600 : 500}
+            fontWeight={tick.anchor === "end" && isShowingLatestEdge ? 600 : 500}
           >
             {tick.label}
           </text>
@@ -661,7 +661,7 @@ export function CandlestickChart({
 
       {activePoint ? (
         <div
-          className="pointer-events-none absolute z-10 min-w-[156px] rounded-xl border border-[hsl(var(--foreground)/0.08)] bg-[linear-gradient(180deg,hsl(var(--background)/0.96),hsl(var(--background)/0.86))] px-3 py-2.5 text-[10px] text-[hsl(var(--foreground)/0.82)] shadow-[0_24px_54px_-34px_hsl(var(--foreground)/0.55)] backdrop-blur-xl"
+          className="pointer-events-none absolute z-10 min-w-[156px] rounded-xl border border-[hsl(var(--foreground)/0.08)] bg-[linear-gradient(180deg,hsl(var(--background)/0.96),hsl(var(--background)/0.86))] px-3 py-2.5 text-[10px] text-[hsl(var(--foreground)/0.82)] shadow-[0_24px_54px_-34px_hsl(var(--foreground)/0.55)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(8,13,22,0.96),rgba(5,9,16,0.94))] dark:text-white/82 dark:shadow-[0_28px_70px_-40px_rgba(0,0,0,0.9)]"
           style={tooltipStyle}
         >
           <div className="mb-1.5 text-[10px] font-semibold text-[hsl(var(--foreground)/0.56)]">{activePoint.fullLabel}</div>
