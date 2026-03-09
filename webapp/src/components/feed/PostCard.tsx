@@ -4840,55 +4840,66 @@ export function PostCard({
 
             {shouldShowIntelligenceStrip ? (
               hasTokenIntelligence ? (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                  {confidenceScore !== null ? (
-                    <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
-                      <div className="mt-1 flex items-center justify-between gap-3">
-                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-                          <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, confidenceScore))}%` }} />
+                <div className="mt-3 space-y-2.5">
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    {confidenceScore !== null ? (
+                      <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
+                        <div className="mt-1 flex items-center justify-between gap-3">
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, confidenceScore))}%` }} />
+                          </div>
+                          <span className="font-semibold text-foreground">{confidenceScore.toFixed(0)}%</span>
                         </div>
-                        <span className="font-semibold text-foreground">{confidenceScore.toFixed(0)}%</span>
                       </div>
-                    </div>
-                  ) : null}
-                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Trader tier</div>
-                    <div className="mt-1 font-semibold text-foreground">{traderTier}</div>
-                  </div>
-                  {(post.bundleRiskLabel || post.estimatedBundledSupplyPct !== null) ? (
+                    ) : null}
                     <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
-                      <div className="mt-1 font-semibold text-foreground">
-                        {post.bundleRiskLabel || "Unknown"}
-                        {typeof post.estimatedBundledSupplyPct === "number" ? ` | ${post.estimatedBundledSupplyPct.toFixed(1)}%` : ""}
-                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Trader tier</div>
+                      <div className="mt-1 font-semibold text-foreground">{traderTier}</div>
                     </div>
-                  ) : null}
-                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Timing</div>
-                    <div className="mt-1 font-semibold text-foreground">{post.timingTier || "UNRANKED"}</div>
+                    {(post.bundleRiskLabel || post.estimatedBundledSupplyPct !== null) ? (
+                      <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
+                        <div className="mt-1 font-semibold text-foreground">
+                          {post.bundleRiskLabel || "Unknown"}
+                          {typeof post.estimatedBundledSupplyPct === "number" ? ` | ${post.estimatedBundledSupplyPct.toFixed(1)}%` : ""}
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Timing</div>
+                      <div className="mt-1 font-semibold text-foreground">{post.timingTier || "UNRANKED"}</div>
+                    </div>
                   </div>
                   {tokenPageHref ? (
                     <button
                       type="button"
                       onClick={() => navigate(tokenPageHref)}
-                      className="group relative overflow-hidden rounded-[20px] border border-primary/35 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.32),transparent_48%),linear-gradient(135deg,hsl(var(--primary)/0.22),hsl(var(--background))_76%)] px-3.5 py-3 text-left shadow-[0_28px_68px_-32px_hsl(var(--primary)/0.6)] transition-all duration-200 hover:border-primary/50 hover:shadow-[0_30px_72px_-26px_hsl(var(--primary)/0.72)] sm:col-span-2 xl:col-span-1"
+                      className="group relative overflow-hidden rounded-[20px] border border-primary/30 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.18),transparent_42%),linear-gradient(135deg,hsl(var(--primary)/0.14),hsl(var(--background))_78%)] px-4 py-3.5 text-left shadow-[0_24px_56px_-34px_hsl(var(--primary)/0.45)] transition-all duration-200 hover:border-primary/45 hover:shadow-[0_28px_62px_-30px_hsl(var(--primary)/0.58)]"
                     >
-                      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.08),transparent)] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-                      <div className="relative flex items-start justify-between gap-3">
+                      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.06),transparent)] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+                      <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
-                          <div className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-primary">
+                          <div className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-primary">
                             <Sparkles className="h-3 w-3" />
                             Phew Ultra
                           </div>
-                          <div className="mt-2 text-sm font-semibold text-foreground">Open Token Lab</div>
-                          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-                            Chart, clusters, sentiment, confidence, and timeline.
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-base font-semibold text-foreground">Open Token Lab</span>
+                            <span className="hidden rounded-full border border-primary/15 bg-primary/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary sm:inline-flex">
+                              Research hub
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                            Chart, bundle clusters, sentiment, conviction, and alpha timeline in one place.
                           </p>
                         </div>
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/12 text-primary transition-transform duration-200 group-hover:scale-105">
-                          <ExternalLink className="h-4.5 w-4.5" />
+                        <div className="flex items-center gap-3 self-start sm:self-auto">
+                          <div className="hidden h-10 w-px bg-gradient-to-b from-transparent via-primary/20 to-transparent sm:block" />
+                          <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-transform duration-200 group-hover:translate-x-0.5">
+                            View
+                            <ExternalLink className="h-4 w-4" />
+                          </div>
                         </div>
                       </div>
                     </button>
