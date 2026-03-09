@@ -75,6 +75,7 @@ import PortfolioPanel from "./PortfolioPanel";
 import type { PortfolioPosition } from "./PortfolioPanel";
 import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { BrandLogo } from "@/components/BrandLogo";
+import { EXACT_LOGO_IMAGE_SRC } from "@/lib/brand";
 import {
   PhewChartIcon,
   PhewCommentIcon,
@@ -784,7 +785,7 @@ export function PostCard({
   } | null>(null);
   const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
   const walletConnectCooldownUntilRef = useRef(0);
-  const exactLogoImageSrc = "/phew-mark.svg";
+  const exactLogoImageSrc = EXACT_LOGO_IMAGE_SRC;
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
@@ -1342,6 +1343,13 @@ export function PostCard({
         ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}`
         : "No contract";
   const winCardPostPreview = (stripContractAddress(post.content) || post.content || "No description").slice(0, 220);
+  const winCardChainLabel = post.chainType?.toUpperCase() || "CHAIN";
+  const winCardAuthorName = post.author.username ? `@${post.author.username}` : post.author.name;
+  const winCardAuthorMeta = `Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level} | ${formatTimeAgo(post.createdAt)} | ${winCardChainLabel}`;
+  const winCardShareIntro = "Share-ready alpha receipt with settlement snapshots and engagement proof.";
+  const winCardPerformanceEyebrow = localSettled ? "Settled performance" : "Live performance";
+  const winCardPerformanceSupport = localSettled ? "Benchmark locked" : "Live market snapshot";
+  const winCardFooterRightLabel = localSettled ? "Settlement verified snapshot" : "Live snapshot at export time";
   const buildWinCardSnapshotMetric = (label: string, snapshotMcap: number | null) => {
     if (post.entryMcap === null || snapshotMcap === null) {
       return {
@@ -1631,7 +1639,7 @@ export function PostCard({
 
     const canvas = document.createElement("canvas");
     const width = 1200;
-    const height = 760;
+    const height = 820;
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     canvas.width = Math.floor(width * dpr);
     canvas.height = Math.floor(height * dpr);
@@ -2026,8 +2034,8 @@ export function PostCard({
       ctx.font = "600 12px Inter, system-ui, sans-serif";
       ctx.fillText("Official alpha result card", 144, 122);
 
-      drawRoundedRect(870, 70, 258, 54, 20);
-      const headerChipFill = ctx.createLinearGradient(870, 70, 1128, 124);
+      drawRoundedRect(944, 72, 184, 42, 20);
+      const headerChipFill = ctx.createLinearGradient(944, 72, 1128, 114);
       headerChipFill.addColorStop(0, accentSoft);
       headerChipFill.addColorStop(1, "rgba(255,255,255,0.035)");
       ctx.fillStyle = headerChipFill;
@@ -2035,12 +2043,20 @@ export function PostCard({
       ctx.strokeStyle = accent;
       ctx.lineWidth = 1.4;
       ctx.stroke();
-      ctx.fillStyle = accent;
-      ctx.font = "800 12px Inter, system-ui, sans-serif";
-      ctx.fillText("SHARE PNG", 898, 101);
       ctx.fillStyle = "#f8fafc";
-      ctx.font = "700 20px Inter, system-ui, sans-serif";
-      ctx.fillText(resultLabel, 992, 102);
+      ctx.font = "800 13px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(resultLabel, 1036, 98);
+      ctx.textAlign = "start";
+
+      drawRoundedRect(72, 144, 1056, 42, 16);
+      ctx.fillStyle = "rgba(255,255,255,0.045)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.stroke();
+      ctx.fillStyle = "rgba(226,232,240,0.82)";
+      ctx.font = "500 15px Inter, system-ui, sans-serif";
+      ctx.fillText(winCardShareIntro, 96, 170);
 
       drawPanel(72, 170, 538, 198, {
         glowColor: `${accent}22`,
@@ -2323,17 +2339,17 @@ export function PostCard({
 
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.beginPath();
-      ctx.moveTo(72, 700);
-      ctx.lineTo(width - 72, 700);
+      ctx.moveTo(72, 760);
+      ctx.lineTo(width - 72, 760);
       ctx.stroke();
       ctx.fillStyle = "rgba(226,232,240,0.64)";
       ctx.font = "600 12px Inter, system-ui, sans-serif";
-      ctx.fillText("Generated on PHEW.RUN for fast sharing", 82, 726);
+      ctx.fillText("Generated on PHEW.RUN for fast sharing", 82, 786);
       ctx.textAlign = "right";
       ctx.fillText(
         liveSettled ? "Settlement verified snapshot" : "Live snapshot at export time",
         width - 82,
-        726
+        786
       );
       ctx.textAlign = "start";
 
@@ -5581,7 +5597,7 @@ export function PostCard({
       </Dialog>
 
       <Dialog open={isWinCardPreviewOpen} onOpenChange={setIsWinCardPreviewOpen}>
-        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-4xl max-h-[92vh] p-0 overflow-y-auto border-border/60 bg-background/95">
+        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-5xl max-h-[92vh] p-0 overflow-y-auto border-border/60 bg-background/95">
             <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-border/50">
               <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
                 <Sparkles className="h-4 w-4 text-primary" />
@@ -5595,88 +5611,92 @@ export function PostCard({
           <div className="p-3 sm:p-5">
             <div className="mx-auto max-w-[980px]">
               {(
-              <div className="relative overflow-hidden rounded-2xl sm:rounded-[22px] border border-white/10 bg-[#090d13] shadow-[0_28px_90px_-36px_rgba(0,0,0,0.85)] ring-1 ring-white/5">
+              <div className="relative overflow-hidden rounded-[26px] border border-white/10 bg-[#071019] shadow-[0_34px_120px_-52px_rgba(0,0,0,0.92)] ring-1 ring-white/5">
+                <div className="absolute inset-0 bg-[linear-gradient(135deg,#071019_0%,#07111a_44%,#04080f_100%)]" />
                 <div
-                  className="absolute inset-0 opacity-[0.04]"
+                  className="absolute inset-0 opacity-[0.06]"
                   style={{
                     backgroundImage:
                       "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)",
-                    backgroundSize: "34px 34px",
+                    backgroundSize: "38px 38px",
                   }}
                 />
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(163,230,53,0.14),transparent_42%),radial-gradient(circle_at_88%_16%,rgba(45,212,191,0.14),transparent_42%),radial-gradient(circle_at_22%_88%,rgba(148,163,184,0.08),transparent_48%)]" />
-                <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(120deg,transparent_0%,rgba(255,255,255,0.6)_48%,transparent_52%)] [background-size:260px_100%]" />
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_14%,rgba(163,230,53,0.16),transparent_34%),radial-gradient(circle_at_86%_16%,rgba(45,212,191,0.16),transparent_34%),radial-gradient(circle_at_50%_88%,rgba(148,163,184,0.1),transparent_38%)]" />
+                <div className="absolute inset-0 opacity-[0.09] [background-image:linear-gradient(120deg,transparent_0%,rgba(255,255,255,0.6)_48%,transparent_52%)] [background-size:280px_100%]" />
                 <div
                   className={cn(
-                    "absolute -top-20 right-[-6%] h-64 w-64 rounded-full blur-3xl",
-                    winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
-                      ? "bg-gain/20"
-                      : winCardSettledLoss
-                        ? "bg-loss/20"
-                        : "bg-slate-400/20"
+                    "absolute -right-14 top-[-4rem] h-72 w-72 rounded-full blur-3xl",
+                    winCardTrendTone === "gain"
+                      ? "bg-gain/18"
+                      : winCardTrendTone === "loss"
+                        ? "bg-loss/18"
+                        : "bg-slate-400/16"
                   )}
                 />
-                <div className="absolute -bottom-20 left-[-8%] h-64 w-64 rounded-full blur-3xl bg-primary/10" />
-                <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-r from-lime-300/8 via-white/5 to-teal-300/8" />
-                <div className="absolute inset-x-8 top-20 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                <div className="absolute -left-8 top-52 h-32 w-32 rounded-full border border-white/5 bg-white/[0.015]" />
-                <div className="absolute -right-10 bottom-28 h-40 w-40 rounded-full border border-white/5 bg-white/[0.015]" />
+                <div className="absolute -left-16 bottom-[-4rem] h-72 w-72 rounded-full bg-primary/12 blur-3xl" />
+                <div className="absolute left-8 top-24 h-px w-[calc(100%-4rem)] bg-gradient-to-r from-transparent via-white/12 to-transparent" />
 
-                <div className="relative p-3.5 sm:p-6">
-                  <div className="mb-4 flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/5 via-white/4 to-white/5 px-3 py-2 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.9)]">
+                <div className="relative p-4 sm:p-6 lg:p-7">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="inline-flex rounded-[22px] border border-white/10 bg-white/[0.045] px-4 py-3 shadow-[0_18px_44px_-28px_rgba(0,0,0,0.95)] backdrop-blur-sm">
                       <BrandLogo size="sm" className="gap-3" />
                     </div>
-                    <div
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-[11px] font-semibold tracking-[0.14em] shadow-[0_8px_24px_-18px_rgba(0,0,0,0.8)]",
-                        winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
-                          ? "border-gain/40 bg-gain/10 text-gain"
-                          : winCardSettledLoss
-                            ? "border-loss/40 bg-loss/10 text-loss"
-                            : "border-border/60 bg-white/5 text-muted-foreground"
-                      )}
-                    >
-                      {winCardResultLabel}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div
+                        className={cn(
+                          "inline-flex items-center rounded-full border px-3.5 py-1.5 text-[11px] font-semibold tracking-[0.18em] shadow-[0_12px_28px_-22px_rgba(0,0,0,0.9)]",
+                          winCardTrendTone === "gain"
+                            ? "border-gain/35 bg-gain/10 text-gain"
+                            : winCardTrendTone === "loss"
+                              ? "border-loss/35 bg-loss/10 text-loss"
+                              : "border-white/10 bg-white/5 text-slate-300"
+                        )}
+                      >
+                        {winCardResultLabel}
+                      </div>
+                      <div className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300/78">
+                        Share-ready
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mb-3 rounded-xl border border-white/10 bg-gradient-to-r from-lime-300/5 via-white/5 to-teal-300/5 px-3.5 py-2.5 text-[11px] sm:text-xs text-slate-200/85 shadow-[0_12px_32px_-24px_rgba(0,0,0,0.9)]">
-                    Share-ready alpha receipt with settlement snapshots and engagement proof.
+                  <div className="mt-4 rounded-[22px] border border-white/10 bg-white/[0.045] px-4 py-3 text-sm text-slate-200/86 shadow-[0_18px_44px_-30px_rgba(0,0,0,0.95)] sm:text-[15px]">
+                    {winCardShareIntro}
                   </div>
 
-                  <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                    <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-3.5 sm:p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.9)]">
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[1.14fr_0.86fr]">
+                    <div className="rounded-[24px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_26px_70px_-40px_rgba(0,0,0,0.95)] sm:p-5">
                       <div className="flex items-center gap-3">
-                        <Avatar className="h-11 w-11 border border-white/10">
+                        <Avatar className="h-14 w-14 border border-white/10 shadow-[0_12px_30px_-18px_rgba(0,0,0,0.85)]">
                           <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
-                          <AvatarFallback className="bg-white/5 text-sm font-bold text-white">
+                          <AvatarFallback className="bg-white/5 text-base font-bold text-white">
                             {(post.author.username || post.author.name || "?").charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
-                          <div className="truncate text-lg font-semibold text-white">
-                            {post.author.username ? `@${post.author.username}` : post.author.name}
+                          <div className="truncate text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                            {winCardAuthorName}
                           </div>
-                          <div className="truncate text-[11px] sm:text-xs text-slate-300/80">
-                            Level {post.author.level > 0 ? `+${post.author.level}` : post.author.level} | {formatTimeAgo(post.createdAt)} | {post.chainType?.toUpperCase() || "CHAIN"}
+                          <div className="truncate text-[11px] uppercase tracking-[0.14em] text-slate-300/68 sm:text-xs">
+                            {winCardAuthorMeta}
                           </div>
                         </div>
                       </div>
-                      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/30">
-                        <div className="mb-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium tracking-[0.12em] text-slate-300/75">
-                          TOKEN CALL
+                      <div className="mt-5 rounded-[22px] border border-white/10 bg-gradient-to-r from-lime-300/8 via-white/[0.04] to-cyan-300/8 p-4 shadow-inner shadow-black/30">
+                        <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300/72">
+                          Token call
                         </div>
-                        <div className="text-sm font-semibold text-white truncate">{winCardTokenPrimary}</div>
-                        <div className="mt-1 text-xs text-slate-300/80 truncate">{winCardTokenSecondary}</div>
+                        <div className="mt-3 truncate text-2xl font-semibold tracking-tight text-white sm:text-[2rem]">{winCardTokenPrimary}</div>
+                        <div className="mt-1 truncate text-sm text-slate-300/78 sm:text-[15px]">{winCardTokenSecondary}</div>
                       </div>
-                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/25">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                      <div className="mt-3 rounded-[22px] border border-white/10 bg-black/20 p-4 shadow-inner shadow-black/30">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300/60">
                             Reputation
                           </div>
-                          <div className={cn("text-[11px] font-semibold tracking-wide", winCardLevelToneClass)}>
-                            {winCardLevelLabel} · LVL {post.author.level > 0 ? `+${post.author.level}` : post.author.level}
+                          <div className={cn("text-[11px] font-semibold uppercase tracking-[0.14em]", winCardLevelToneClass)}>
+                            {winCardLevelLabel} / LVL {post.author.level > 0 ? `+${post.author.level}` : post.author.level}
                           </div>
                         </div>
                         <LevelBar
@@ -5688,18 +5708,26 @@ export function PostCard({
                       </div>
                     </div>
 
-                    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-white/6 to-white/4 p-3.5 sm:p-4 shadow-[0_18px_50px_-36px_rgba(0,0,0,0.9)]">
-                      <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-lime-300/70 via-white/30 to-teal-300/70" />
-                      <div className="text-xs uppercase tracking-[0.14em] text-slate-300/70">Performance</div>
-                      <div className={cn("mt-2 text-2xl sm:text-4xl font-bold tracking-tight", winCardAccentClass)}>
+                    <div className="relative overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_26px_70px_-40px_rgba(0,0,0,0.95)] sm:p-5">
+                      <div className={cn(
+                        "absolute inset-x-0 top-0 h-1.5",
+                        winCardTrendTone === "gain"
+                          ? "bg-gradient-to-r from-lime-300/70 via-white/30 to-cyan-300/70"
+                          : winCardTrendTone === "loss"
+                            ? "bg-gradient-to-r from-rose-400/75 via-white/20 to-red-500/70"
+                            : "bg-gradient-to-r from-slate-300/50 via-white/25 to-slate-400/50"
+                      )} />
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300/68">{winCardPerformanceEyebrow}</div>
+                      <div className={cn("mt-3 text-[2.8rem] font-black tracking-tight sm:text-[4.6rem]", winCardAccentClass)}>
                         {winCardResultText}
                       </div>
+                      <div className="text-sm text-slate-300/78 sm:text-base">{winCardPerformanceSupport}</div>
                       {winCardVerifiedPnlLabel && winCardVerifiedPnlText ? (
                         <>
-                          <div className="mt-3 text-xs text-slate-300/75">{winCardVerifiedPnlLabel}</div>
+                          <div className="mt-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/58">{winCardVerifiedPnlLabel}</div>
                           <div
                             className={cn(
-                              "mt-1 text-base sm:text-lg font-semibold",
+                              "mt-1 text-lg font-semibold tracking-tight",
                               verifiedTotalPnlUsd !== null && verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss"
                             )}
                           >
@@ -5707,57 +5735,57 @@ export function PostCard({
                           </div>
                         </>
                       ) : null}
-                      <div className={cn("mt-3 text-xs", winCardVerifiedPnlLabel ? "text-slate-300/60" : "text-slate-300/75")}>
+                      <div className="mt-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/58">
                         {winCardMarketMoveLabel}
                       </div>
-                      <div className={cn("mt-1 text-sm sm:text-base font-semibold", winCardAccentClass)}>
+                      <div className={cn("mt-1 text-lg font-semibold tracking-tight", winCardAccentClass)}>
                         {winCardMarketMoveText}
                       </div>
-                      <div className="mt-4 flex items-center gap-2 text-[11px] text-slate-300/70">
+                      <div className="mt-5 flex items-center gap-2 text-[11px] text-slate-300/70">
                         <Sparkles className="h-3.5 w-3.5" />
-                        Instant proof card for fast sharing
+                        {winCardFooterRightLabel}
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Entry MCAP</div>
-                      <div className="mt-1 text-base font-semibold text-white">{formatMarketCap(post.entryMcap)}</div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-[20px] border border-white/10 bg-white/[0.045] p-3.5 shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Entry MCAP</div>
+                      <div className="mt-2 text-xl font-bold tracking-tight text-white">{formatMarketCap(post.entryMcap)}</div>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                    <div className="rounded-[20px] border border-white/10 bg-white/[0.045] p-3.5 shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)]">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
                         {winCardSettledMcapLabel}
                       </div>
-                      <div className="mt-1 text-base font-semibold text-white">{formatMarketCap(officialMcap)}</div>
+                      <div className="mt-2 text-xl font-bold tracking-tight text-white">{formatMarketCap(officialMcap)}</div>
                     </div>
-                    <div className="rounded-xl border border-lime-300/25 bg-gradient-to-br from-lime-300/10 via-white/5 to-cyan-300/10 p-3 shadow-[0_14px_40px_-30px_rgba(163,230,53,0.85)]">
-                      <div className="text-[11px] uppercase tracking-[0.12em] text-lime-100/85">
+                    <div className="rounded-[20px] border border-lime-300/25 bg-gradient-to-br from-lime-300/12 via-white/[0.04] to-cyan-300/12 p-3.5 shadow-[0_18px_50px_-30px_rgba(163,230,53,0.82)]">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-100/85">
                         {winCardCurrentMcapLabel}
                       </div>
-                      <div className="mt-1 text-lg font-bold text-white">
+                      <div className="mt-2 text-xl font-bold tracking-tight text-white">
                         {formatMarketCap(winCardCurrentMcap)}
                       </div>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 sm:col-span-2 lg:col-span-1">
-                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Engagement</div>
-                      <div className="mt-1 text-xs sm:text-sm font-medium text-white">
+                    <div className="rounded-[20px] border border-white/10 bg-white/[0.045] p-3.5 shadow-[0_18px_50px_-34px_rgba(0,0,0,0.9)] sm:col-span-2 xl:col-span-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Engagement</div>
+                      <div className="mt-2 text-sm font-semibold tracking-tight text-white">
                         {likeCount} likes | {commentCount} comments | {repostCount} reposts
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
-                    <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
-                      Snapshot Profit Breakdown
+                  <div className="mt-4 rounded-[22px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_22px_60px_-38px_rgba(0,0,0,0.9)]">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300/60">
+                      Snapshot Ladder
                     </div>
                     <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
                       {winCardSnapshotMetrics.map((metric) => (
                         <div
                           key={metric.label}
-                          className="rounded-lg border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/20"
+                          className="rounded-[18px] border border-white/10 bg-black/20 p-3.5 shadow-inner shadow-black/30"
                         >
-                          <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">
                             {metric.label}
                           </div>
                           <div className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden">
@@ -5773,12 +5801,12 @@ export function PostCard({
                               style={{ width: `${Math.round(metric.magnitudeRatio * 100)}%` }}
                             />
                           </div>
-                          <div className={cn("mt-1 text-sm sm:text-base font-semibold", metric.toneClass)}>
+                          <div className={cn("mt-2 text-base font-semibold tracking-tight", metric.toneClass)}>
                             {metric.percentText}
                           </div>
                           <div
                             className={cn(
-                              "mt-0.5 text-xs sm:text-sm",
+                              "mt-1 text-sm",
                               metric.positive === null ? "text-slate-300/75" : metric.toneClass
                             )}
                           >
@@ -5790,25 +5818,25 @@ export function PostCard({
                   </div>
 
                   {hasWalletTradeInfo ? (
-                    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3.5">
+                    <div className="mt-4 rounded-[22px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_22px_60px_-38px_rgba(0,0,0,0.9)]">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300/60">
                           Wallet Trade Summary
                         </div>
                       </div>
-                      <div className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         {verifiedTotalPnlUsd !== null ? (
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Wallet P/L</div>
-                            <div className={cn("mt-1 text-sm font-semibold", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
+                          <div className="rounded-[18px] border border-white/10 bg-black/20 p-3.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Wallet P/L</div>
+                            <div className={cn("mt-2 text-base font-semibold tracking-tight", verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss")}>
                               {winCardVerifiedPnlText}
                             </div>
                           </div>
                         ) : null}
                         {boughtUsd !== null || boughtAmount !== null ? (
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Bought</div>
-                            <div className="mt-1 text-sm font-semibold text-white">
+                          <div className="rounded-[18px] border border-white/10 bg-black/20 p-3.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Bought</div>
+                            <div className="mt-2 text-base font-semibold tracking-tight text-white">
                               {boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A"}
                             </div>
                             {boughtAmount !== null ? (
@@ -5819,9 +5847,9 @@ export function PostCard({
                           </div>
                         ) : null}
                         {soldUsd !== null || soldAmount !== null ? (
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Sold</div>
-                            <div className="mt-1 text-sm font-semibold text-white">
+                          <div className="rounded-[18px] border border-white/10 bg-black/20 p-3.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Sold</div>
+                            <div className="mt-2 text-base font-semibold tracking-tight text-white">
                               {soldUsd !== null ? formatUsdStat(soldUsd) : "N/A"}
                             </div>
                             {soldAmount !== null ? (
@@ -5832,9 +5860,9 @@ export function PostCard({
                           </div>
                         ) : null}
                         {holdingUsd !== null || holdingAmount !== null ? (
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <div className="text-[11px] uppercase tracking-[0.1em] text-slate-300/70">Holding</div>
-                            <div className="mt-1 text-sm font-semibold text-white">
+                          <div className="rounded-[18px] border border-white/10 bg-black/20 p-3.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300/60">Holding</div>
+                            <div className="mt-2 text-base font-semibold tracking-tight text-white">
                               {holdingUsd !== null ? formatUsdStat(holdingUsd) : "N/A"}
                             </div>
                             {holdingAmount !== null ? (
@@ -5848,20 +5876,23 @@ export function PostCard({
                     </div>
                   ) : null}
 
-                  <div className="mt-4 rounded-xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.03] p-3.5">
-                    <div className="text-[11px] uppercase tracking-[0.12em] text-slate-300/70">Post</div>
-                    <p className="mt-1.5 text-sm leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
+                  <div className="mt-4 rounded-[22px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_22px_60px_-38px_rgba(0,0,0,0.9)]">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300/60">Alpha Notes</div>
+                    <p className="mt-4 text-sm leading-7 text-slate-100/92 whitespace-pre-wrap break-words sm:text-[15px]">
                       {winCardPostPreview}
                     </p>
+                    <div className="mt-4 inline-flex rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[11px] text-slate-300/74">
+                      Post ID: {post.id.slice(0, 10)}...
+                    </div>
                   </div>
 
-                  <div className="mt-4 flex flex-col items-start gap-2 text-[11px] text-slate-300/70 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
-                      <Sparkles className="h-3 w-3 text-slate-300/80" />
+                  <div className="mt-5 flex flex-col items-start gap-2 text-[11px] text-slate-300/72 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-slate-300/80" />
                       Generated on PHEW.RUN
                     </span>
-                    <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1">
-                      Post ID: {post.id.slice(0, 10)}...
+                    <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                      {winCardFooterRightLabel}
                     </span>
                   </div>
                 </div>
