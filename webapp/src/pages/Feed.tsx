@@ -449,7 +449,11 @@ export default function Feed() {
   const feedShownLoggedRef = useRef(false);
   const latestAcknowledgedTopIdRef = useRef<string | null>(latestAcknowledgedTopId);
   const effectiveSearchQuery = searchQuery.trim().length >= 3 ? searchQuery.trim() : "";
-  const feedViewerScope = hasLiveSession && session?.user?.id ? session.user.id : "anonymous";
+  // Keep feed cache/query scope stable while backend session confirmation catches up.
+  // Using hasLiveSession here causes the feed query to bounce between anonymous and
+  // user-scoped keys during transient /api/me churn, which can leave the page stuck
+  // in loading even when /api/feed/latest itself is healthy.
+  const feedViewerScope = session?.user?.id ?? "anonymous";
   const cachedFirstPageEntry = useMemo(
     () => readPreferredCachedFirstFeedPageEntry(feedViewerScope, activeTab, effectiveSearchQuery),
     [activeTab, effectiveSearchQuery, feedViewerScope]
