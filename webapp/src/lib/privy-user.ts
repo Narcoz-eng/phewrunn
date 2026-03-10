@@ -1202,7 +1202,35 @@ export async function requestPrivyIdentityTokenForBackendSync(
     }
 
     if (!options.refreshPrivyAuthState) {
-      console.info("[AuthFlow] authenticated Privy session will use server-visible Privy request token for backend sync", {
+      console.info("[AuthFlow] auth store token missing; trying direct Privy token acquisition", {
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        owner: options.debugContext?.owner ?? null,
+        mode: options.debugContext?.mode ?? null,
+        userId: latestUser.id,
+      });
+      const directPayload = await resolvePrivyAuthPayloadInternal({
+        user: latestUser,
+        getLatestUser: options.getLatestUser,
+        privyReady: options.privyReady,
+        privyAuthenticated: options.privyAuthenticated,
+        privyIdToken: options.privyIdToken,
+        getLatestPrivyIdToken: options.getLatestPrivyIdToken,
+        isTerminal: options.isTerminal,
+        debugContext: options.debugContext,
+        pendingTokenWaitMs: options.pendingTokenWaitMs,
+        allowInFlightReuse: true,
+      });
+
+      if (
+        directPayload.privyIdToken ||
+        directPayload.pendingPrivyIdTokenPromise ||
+        directPayload.tokenResolution === "pending"
+      ) {
+        return directPayload;
+      }
+
+      console.info("[AuthFlow] direct token acquisition unavailable; falling back to server-visible Privy request token", {
         attemptId: options.debugContext?.attemptId ?? null,
         caller: options.debugContext?.initialCaller ?? "system",
         owner: options.debugContext?.owner ?? null,
@@ -1215,7 +1243,7 @@ export async function requestPrivyIdentityTokenForBackendSync(
         name,
         tokenResolution: "server_request",
         tokenSource: "server_request",
-        tokenLocalCheck: null,
+        tokenLocalCheck: directPayload.tokenLocalCheck ?? null,
       };
     }
 
@@ -1268,7 +1296,36 @@ export async function requestPrivyIdentityTokenForBackendSync(
     });
 
     if (!hookPrivyIdToken) {
-      console.info("[AuthFlow] authenticated Privy session will use server-visible Privy request token for backend sync", {
+      console.info("[AuthFlow] refreshed auth store still missing token; trying direct Privy token acquisition", {
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        owner: options.debugContext?.owner ?? null,
+        mode: options.debugContext?.mode ?? null,
+        userId: latestUser.id,
+      });
+
+      const directPayload = await resolvePrivyAuthPayloadInternal({
+        user: latestUser,
+        getLatestUser: options.getLatestUser,
+        privyReady: options.privyReady,
+        privyAuthenticated: options.privyAuthenticated,
+        privyIdToken: options.getLatestPrivyIdToken?.() ?? options.privyIdToken,
+        getLatestPrivyIdToken: options.getLatestPrivyIdToken,
+        isTerminal: options.isTerminal,
+        debugContext: options.debugContext,
+        pendingTokenWaitMs: options.pendingTokenWaitMs,
+        allowInFlightReuse: true,
+      });
+
+      if (
+        directPayload.privyIdToken ||
+        directPayload.pendingPrivyIdTokenPromise ||
+        directPayload.tokenResolution === "pending"
+      ) {
+        return directPayload;
+      }
+
+      console.info("[AuthFlow] direct token acquisition unavailable after refresh; falling back to server-visible Privy request token", {
         attemptId: options.debugContext?.attemptId ?? null,
         caller: options.debugContext?.initialCaller ?? "system",
         owner: options.debugContext?.owner ?? null,
@@ -1281,7 +1338,7 @@ export async function requestPrivyIdentityTokenForBackendSync(
         name,
         tokenResolution: "server_request",
         tokenSource: "server_request",
-        tokenLocalCheck,
+        tokenLocalCheck: directPayload.tokenLocalCheck ?? tokenLocalCheck,
       };
     }
 
