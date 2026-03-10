@@ -54,6 +54,7 @@ const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
 const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 1_400;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
 const AUTH_SESSION_HOT_CACHE_MS = 20_000;
+const AUTH_SYNC_POST_RESPONSE_CONFIRMATION_TIMEOUT_MS = 3_500;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
 const SESSION_FETCH_TIMEOUT_MS = 4500;
@@ -2589,16 +2590,39 @@ export async function syncPrivySession(
       if (explicitLogoutAt > syncStartedAt) {
         throw new Error("Session sync completed after logout");
       }
-
-      explicitLogoutAt = 0;
-      lastPrivySyncAt = Date.now();
       sessionRateLimitedUntil = 0;
       sessionFetchInFlight = null;
       unauthorizedSessionFailures = 0;
 
-      const confirmedUser = markValidatedAuthSession(syncedUser);
-      emitAuthSessionSynced(confirmedUser);
-      return { user: confirmedUser };
+      const backendConfirmedUser = await ensureBackendSessionReady(
+        syncedUser.id,
+        AUTH_SYNC_POST_RESPONSE_CONFIRMATION_TIMEOUT_MS
+      ).catch((error) => {
+        console.warn("[AuthFlow] post-sync backend session confirmation failed", {
+          userId: syncedUser.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+
+      explicitLogoutAt = 0;
+
+      if (backendConfirmedUser) {
+        lastPrivySyncAt = Date.now();
+        lastTemporarySessionFailureAt = 0;
+        const confirmedUser = markValidatedAuthSession(backendConfirmedUser);
+        emitAuthSessionSynced(confirmedUser);
+        return { user: confirmedUser };
+      }
+
+      writeCachedAuthUser(syncedUser);
+      clearPrivySyncFailureSnapshot();
+      lastTemporarySessionFailureAt = Date.now();
+      console.warn("[AuthFlow] Privy sync succeeded before backend session confirmation", {
+        userId: syncedUser.id,
+      });
+      emitAuthSessionSynced(syncedUser);
+      return { user: syncedUser };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error("Sign-in timed out while connecting to the server");
