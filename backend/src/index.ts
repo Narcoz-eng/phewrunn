@@ -62,7 +62,6 @@ logProductionStatus();
 // Start rate limit cleanup (cleans expired entries every minute)
 startRateLimitCleanup(60000);
 startSessionMaintenance();
-startIntelligencePriorityLoop();
 
 // =====================================================
 // App Configuration
@@ -114,6 +113,53 @@ app.use(
 // 3.5. Prisma readiness gate - ensure DB is connected before serving API requests
 // Uses a short timeout so requests don't hang if guardrails are slow
 let prismaReady = false;
+const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
+let lastAuthSensitiveRequestAt = Date.now();
+let intelligencePriorityLoopBootstrapped = false;
+let intelligencePriorityLoopBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+
+function isAuthSensitivePath(path: string): boolean {
+  return path === "/api/me" || path === "/api/me/stats" || path.startsWith("/api/auth/");
+}
+
+function isIntelligenceSurfacePath(path: string): boolean {
+  return (
+    path.startsWith("/api/feed") ||
+    path.startsWith("/api/tokens") ||
+    path.startsWith("/api/calls") ||
+    path.startsWith("/api/traders") ||
+    path.startsWith("/api/radar") ||
+    path.startsWith("/api/alerts") ||
+    path.startsWith("/api/leaderboards") ||
+    path.startsWith("/api/leaderboard")
+  );
+}
+
+function scheduleIntelligencePriorityLoopBootstrap(): void {
+  if (intelligencePriorityLoopBootstrapped) {
+    return;
+  }
+
+  const quietForMs = Date.now() - lastAuthSensitiveRequestAt;
+  const remainingQuietMs = Math.max(0, INTELLIGENCE_PRIORITY_AUTH_QUIET_MS - quietForMs);
+
+  if (intelligencePriorityLoopBootstrapTimer) {
+    clearTimeout(intelligencePriorityLoopBootstrapTimer);
+  }
+
+  intelligencePriorityLoopBootstrapTimer = setTimeout(() => {
+    intelligencePriorityLoopBootstrapTimer = null;
+    if (Date.now() - lastAuthSensitiveRequestAt < INTELLIGENCE_PRIORITY_AUTH_QUIET_MS) {
+      scheduleIntelligencePriorityLoopBootstrap();
+      return;
+    }
+    intelligencePriorityLoopBootstrapped = true;
+    startIntelligencePriorityLoop({
+      canRun: () => Date.now() - lastAuthSensitiveRequestAt >= INTELLIGENCE_PRIORITY_AUTH_QUIET_MS,
+    });
+  }, remainingQuietMs);
+}
+
 function requiresStrictPrismaReadiness(path: string): boolean {
   return (
     path.startsWith("/api/feed") ||
@@ -150,6 +196,16 @@ app.use("/api/*", async (c, next) => {
         );
       }
     }
+  }
+  return next();
+});
+
+app.use("/api/*", async (c, next) => {
+  const path = c.req.path;
+  if (isAuthSensitivePath(path)) {
+    lastAuthSensitiveRequestAt = Date.now();
+  } else if (isIntelligenceSurfacePath(path)) {
+    scheduleIntelligencePriorityLoopBootstrap();
   }
   return next();
 });

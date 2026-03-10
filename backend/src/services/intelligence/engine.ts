@@ -52,7 +52,7 @@ const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
 const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
-const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 80;
+const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 24;
 const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
 
 const AUTHOR_SELECT = Prisma.validator<Prisma.UserSelect>()({
@@ -452,6 +452,7 @@ const marketContextCache = new Map<string, CacheEntry<MarketContextSnapshot>>();
 const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
 let intelligencePriorityLoopTimer: ReturnType<typeof setInterval> | null = null;
 let intelligencePriorityLoopInFlight: Promise<void> | null = null;
+let intelligencePriorityLoopCanRun: (() => boolean) | null = null;
 
 type TokenRefreshResult = {
   token: TokenRecord;
@@ -2202,7 +2203,7 @@ async function prewarmRecentTokenIntelligence(): Promise<void> {
     },
     select: CALL_SELECT,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: Math.max(INTELLIGENCE_PREWARM_TOKEN_LIMIT * 3, 160),
+    take: Math.max(INTELLIGENCE_PREWARM_TOKEN_LIMIT * 3, 72),
   });
 
   if (recentRecords.length === 0) {
@@ -2222,8 +2223,8 @@ async function prewarmRecentTokenIntelligence(): Promise<void> {
     })
     .slice(0, INTELLIGENCE_PREWARM_TOKEN_LIMIT);
 
-  for (let index = 0; index < tokensToRefresh.length; index += 6) {
-    const batch = tokensToRefresh.slice(index, index + 6);
+  for (let index = 0; index < tokensToRefresh.length; index += 3) {
+    const batch = tokensToRefresh.slice(index, index + 3);
     await Promise.allSettled(batch.map((token) => refreshTokenIntelligence(token.id)));
   }
 }
@@ -2236,15 +2237,6 @@ async function runIntelligencePriorityLoop(): Promise<void> {
   intelligencePriorityLoopInFlight = (async () => {
     try {
       await prewarmRecentTokenIntelligence();
-      await Promise.allSettled(
-        PRIORITY_FEED_KINDS.map((kind) =>
-          listFeedCalls({
-            kind,
-            viewerId: null,
-            limit: FEED_PRIORITY_POST_COUNT,
-          })
-        )
-      );
     } catch (error) {
       console.warn("[intelligence] priority prewarm failed", error);
     } finally {
@@ -2255,17 +2247,27 @@ async function runIntelligencePriorityLoop(): Promise<void> {
   return intelligencePriorityLoopInFlight;
 }
 
-export function startIntelligencePriorityLoop(): void {
+export function startIntelligencePriorityLoop(opts?: { canRun?: () => boolean }): void {
+  if (opts?.canRun) {
+    intelligencePriorityLoopCanRun = opts.canRun;
+  }
   if (intelligencePriorityLoopTimer) {
     return;
   }
 
-  setTimeout(() => {
+  const triggerLoop = () => {
+    if (intelligencePriorityLoopCanRun && !intelligencePriorityLoopCanRun()) {
+      return;
+    }
     void runIntelligencePriorityLoop();
+  };
+
+  setTimeout(() => {
+    triggerLoop();
   }, INTELLIGENCE_PREWARM_START_DELAY_MS);
 
   intelligencePriorityLoopTimer = setInterval(() => {
-    void runIntelligencePriorityLoop();
+    triggerLoop();
   }, INTELLIGENCE_PREWARM_INTERVAL_MS);
 }
 
