@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken, useUser } from "@privy-io/react-auth";
 import {
   isExplicitLogoutCoolingDown,
-  readCachedAuthUserSnapshot,
   registerPreLogoutHook,
   setPrivyAuthAnonymousState,
   setPrivyAuthBootstrapState,
@@ -159,22 +158,11 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     }
 
     latestPrivyUserRef.current = null;
-    const cachedAuthUser = readCachedAuthUserSnapshot();
     if (hasLiveSession) {
       console.info("[AuthFlow] existing backend session preserved during Privy hydration", {
         providerInstanceId,
         ready,
         authenticated,
-        previousUserId: user?.id ?? null,
-      });
-      return;
-    }
-    if (cachedAuthUser) {
-      console.info("[AuthFlow] cached backend session preserved during Privy hydration", {
-        providerInstanceId,
-        ready,
-        authenticated,
-        cachedUserId: cachedAuthUser.id,
         previousUserId: user?.id ?? null,
       });
       return;

@@ -48,13 +48,10 @@ const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
-const AUTH_TEMPORARY_SESSION_FAILURE_MS = 15_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
 const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 1_400;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
-const AUTH_SESSION_HOT_CACHE_MS = 20_000;
-const AUTH_SYNC_POST_RESPONSE_CONFIRMATION_TIMEOUT_MS = 3_500;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
 const SESSION_FETCH_TIMEOUT_MS = 4500;
@@ -87,12 +84,6 @@ const PRIVY_BOOTSTRAP_LOCK_TTL_MS = 20_000;
 const PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY = "phew.auth.tab-id.v1";
 const AUTH_PRIVY_BOOTSTRAP_EVENT = "phew:auth-privy-bootstrap";
 const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
-const AUTH_TEMPORARY_API_ME_ERROR_CODES = new Set([
-  "AUTH_SESSION_TEMPORARILY_UNAVAILABLE",
-  "AUTH_TEMPORARILY_UNAVAILABLE",
-  "AUTH_PROVIDER_TIMEOUT",
-  "PROFILE_TEMPORARILY_UNAVAILABLE",
-]);
 
 type PrivySyncFailureSnapshot = {
   message: string;
@@ -273,7 +264,6 @@ const privyAuthRetryWaiters = new Map<number, (completed: boolean) => void>();
 let sessionRateLimitedUntil = 0;
 let lastPrivySyncAt = 0;
 let lastSuccessfulSessionAt = 0;
-let lastTemporarySessionFailureAt = 0;
 let unauthorizedSessionFailures = 0;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
 let inMemoryPrivySyncFailure: PrivySyncFailureSnapshot | null = null;
@@ -286,27 +276,6 @@ function getInMemoryCachedAuthUser(): AuthUser | null {
     return null;
   }
   return inMemoryCachedAuthUser.user;
-}
-
-function extractApiErrorCode(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-
-  const directCode =
-    "code" in payload && typeof (payload as { code?: unknown }).code === "string"
-      ? (payload as { code: string }).code
-      : null;
-  if (directCode) {
-    return directCode;
-  }
-
-  const nestedError =
-    "error" in payload && typeof (payload as { error?: unknown }).error === "object"
-      ? (payload as { error?: { code?: unknown } }).error
-      : null;
-
-  return nestedError && typeof nestedError.code === "string" ? nestedError.code : null;
 }
 
 function clearLegacyStoredAuthTokenArtifacts(): void {
@@ -1824,13 +1793,6 @@ async function fetchSession(): Promise<AuthUser | null> {
   ) {
     return cachedUser;
   }
-  if (
-    cachedUser &&
-    lastSuccessfulSessionAt > 0 &&
-    now - lastSuccessfulSessionAt < AUTH_SESSION_HOT_CACHE_MS
-  ) {
-    return cachedUser;
-  }
   if (sessionRateLimitedUntil > now && cachedUser) {
     return cachedUser;
   }
@@ -1864,15 +1826,6 @@ async function fetchSession(): Promise<AuthUser | null> {
 
     if (!response.ok) {
       console.log("[Auth] Session response not ok:", response.status);
-      let errorCode: string | null = null;
-      const responseText = await response.text();
-      if (responseText) {
-        try {
-          errorCode = extractApiErrorCode(JSON.parse(responseText));
-        } catch {
-          errorCode = null;
-        }
-      }
       if (response.status === 429) {
         const retryAfterHeader = response.headers.get("retry-after");
         const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
@@ -1882,23 +1835,6 @@ async function fetchSession(): Promise<AuthUser | null> {
             : 5000;
         sessionRateLimitedUntil = Date.now() + backoffMs;
         console.warn(`[Auth] /api/me rate limited. Backing off for ${Math.ceil(backoffMs / 1000)}s`);
-      }
-      if (
-        response.status === 503 &&
-        (errorCode === null || AUTH_TEMPORARY_API_ME_ERROR_CODES.has(errorCode))
-      ) {
-        const retryAfterHeader = response.headers.get("retry-after");
-        const retryAfterSeconds = Number.parseInt(retryAfterHeader || "", 10);
-        const backoffMs =
-          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-            ? retryAfterSeconds * 1000
-            : 1800;
-        lastTemporarySessionFailureAt = Date.now();
-        sessionRateLimitedUntil = Date.now() + backoffMs;
-        console.warn(
-          `[Auth] /api/me temporary auth warmup (${errorCode ?? "HTTP_503"}); backing off for ${Math.ceil(backoffMs / 1000)}s`
-        );
-        return cachedUser;
       }
       // Clear local session hints after a confirmed unauthorized response.
       if (response.status === 401) {
@@ -1916,33 +1852,19 @@ async function fetchSession(): Promise<AuthUser | null> {
         const shouldTreatAsTransient =
           recentlySynced ||
           (hasSessionHint && recentlyHealthySession);
-        const shouldPreserveSessionDuringRecovery =
-          unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT &&
-          (
-            Boolean(cachedUser) ||
-            hasSessionCookieHint() ||
-            recentlySynced ||
-            recentlyHealthySession ||
-            lastSuccessfulSessionAt > 0
-          );
-        const recoveryBackoffMs = Math.min(
-          6_000,
-          1_200 + (unauthorizedSessionFailures - 1) * 900
-        );
 
         if (
           cachedUser &&
-          (shouldTreatAsTransient || shouldPreserveSessionDuringRecovery)
+          shouldTreatAsTransient
         ) {
-          sessionRateLimitedUntil = Date.now() + recoveryBackoffMs;
+          sessionRateLimitedUntil = Date.now() + 2000;
           console.warn(
             `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures})`
           );
           return cachedUser;
         }
 
-        if (shouldTreatAsTransient || shouldPreserveSessionDuringRecovery) {
-          sessionRateLimitedUntil = Date.now() + recoveryBackoffMs;
+        if (shouldTreatAsTransient) {
           console.warn(
             `[Auth] Temporary 401 from /api/me; preserving cached session hint (${unauthorizedSessionFailures})`
           );
@@ -1973,7 +1895,6 @@ async function fetchSession(): Promise<AuthUser | null> {
       // /api/me returns user data directly wrapped in { data: user }
       const user = data.data || data;
       if (user && user.id) {
-        lastTemporarySessionFailureAt = 0;
         return markValidatedAuthSession(toAuthUser(user));
       }
 
@@ -1988,7 +1909,6 @@ async function fetchSession(): Promise<AuthUser | null> {
         clearStoredAuthToken();
         clearCachedAuthUser();
         lastSuccessfulSessionAt = 0;
-        lastTemporarySessionFailureAt = 0;
         return null;
       }
     } catch (parseError) {
@@ -2066,9 +1986,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const resolveSessionWithRetry = useCallback(async () => {
     const optimisticCachedUser = readCachedAuthUser();
     const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
-    const recentlyTemporarySessionFailure =
-      lastTemporarySessionFailureAt > 0 &&
-      Date.now() - lastTemporarySessionFailureAt < AUTH_TEMPORARY_SESSION_FAILURE_MS;
     if (bootstrapSnapshot && isPrivyAuthBootstrapPending()) {
       console.info("[AuthFlow] /api/me retry skipped due to pending auth state", {
         state: bootstrapSnapshot.state,
@@ -2110,23 +2027,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const hasCookieSessionHint = hasSessionCookieHint();
     const recentlySynced = hasRecentPrivySyncGrace();
     const hasCachedSessionHint = Boolean(optimisticCachedUser);
-    if (
-      !hasCachedSessionHint &&
-      !hasCookieSessionHint &&
-      !recentlySynced &&
-      !recentlyTemporarySessionFailure
-    ) {
+    if (!hasCachedSessionHint && !hasCookieSessionHint && !recentlySynced) {
       return null;
     }
 
-    const retryAttempts = recentlyTemporarySessionFailure
-      ? Math.max(AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE, 4)
-      : AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE;
-    const retryDelayMs = recentlyTemporarySessionFailure
-      ? Math.max(AUTH_SESSION_RETRY_DELAY_MS, 350)
-      : recentlySynced
-        ? AUTH_SESSION_RETRY_DELAY_MS
-        : AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS;
+    const retryAttempts = AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE;
+    const retryDelayMs = recentlySynced
+      ? AUTH_SESSION_RETRY_DELAY_MS
+      : AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS;
 
     for (let attempt = 1; attempt < retryAttempts; attempt += 1) {
       await new Promise<void>((resolve) => {
@@ -2184,7 +2092,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     privyAuthBootstrapInFlight = null;
     lastPrivySyncAt = 0;
     lastSuccessfulSessionAt = 0;
-    lastTemporarySessionFailureAt = 0;
     unauthorizedSessionFailures = 0;
     applyAuthProviderState("logout", {
       user: null,
@@ -2590,39 +2497,16 @@ export async function syncPrivySession(
       if (explicitLogoutAt > syncStartedAt) {
         throw new Error("Session sync completed after logout");
       }
+
+      explicitLogoutAt = 0;
+      lastPrivySyncAt = Date.now();
       sessionRateLimitedUntil = 0;
       sessionFetchInFlight = null;
       unauthorizedSessionFailures = 0;
 
-      const backendConfirmedUser = await ensureBackendSessionReady(
-        syncedUser.id,
-        AUTH_SYNC_POST_RESPONSE_CONFIRMATION_TIMEOUT_MS
-      ).catch((error) => {
-        console.warn("[AuthFlow] post-sync backend session confirmation failed", {
-          userId: syncedUser.id,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      });
-
-      explicitLogoutAt = 0;
-
-      if (backendConfirmedUser) {
-        lastPrivySyncAt = Date.now();
-        lastTemporarySessionFailureAt = 0;
-        const confirmedUser = markValidatedAuthSession(backendConfirmedUser);
-        emitAuthSessionSynced(confirmedUser);
-        return { user: confirmedUser };
-      }
-
-      writeCachedAuthUser(syncedUser);
-      clearPrivySyncFailureSnapshot();
-      lastTemporarySessionFailureAt = Date.now();
-      console.warn("[AuthFlow] Privy sync succeeded before backend session confirmation", {
-        userId: syncedUser.id,
-      });
-      emitAuthSessionSynced(syncedUser);
-      return { user: syncedUser };
+      const confirmedUser = markValidatedAuthSession(syncedUser);
+      emitAuthSessionSynced(confirmedUser);
+      return { user: confirmedUser };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error("Sign-in timed out while connecting to the server");
