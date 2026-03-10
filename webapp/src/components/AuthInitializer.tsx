@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { usePrivy, useIdentityToken } from "@privy-io/react-auth";
+import { usePrivy, useIdentityToken, useUser } from "@privy-io/react-auth";
 import {
   hasValidatedAuthSession,
   registerPreLogoutHook,
@@ -22,6 +22,7 @@ const PRIVY_INITIAL_HYDRATION_GRACE_MS = 4_000;
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
   const { ready, authenticated, user, logout: privyLogout, getAccessToken } = usePrivy();
+  const { refreshUser } = useUser();
   const { identityToken } = useIdentityToken();
   const { isAuthenticated, hasLiveSession } = useAuth();
   const providerInstanceId = usePrivyProviderInstanceId();
@@ -338,11 +339,12 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       privyAuthenticated: authenticated,
       privyIdentityToken: latestPrivyIdentityTokenRef.current,
       getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
+      refreshPrivyAuthState: async () => (await refreshUser()) as PrivyUserLike,
       getLatestPrivyAccessToken: () => getAccessToken(),
       tryExistingBackendSession: true,
       triggerSource: "component_mount",
     });
-  }, [authenticated, getAccessToken, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, user]);
+  }, [authenticated, getAccessToken, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, refreshUser, user]);
 
   return <>{children}</>;
 }

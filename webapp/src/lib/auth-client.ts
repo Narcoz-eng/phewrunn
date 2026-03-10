@@ -145,6 +145,7 @@ type StartPrivyAuthBootstrapOptions = {
   privyAuthenticated?: boolean;
   privyIdentityToken?: string | null | undefined;
   getLatestPrivyIdentityToken?: () => string | null | undefined;
+  refreshPrivyAuthState?: () => Promise<PrivyUserLike | null | undefined>;
   privyAccessToken?: string | null | undefined;
   getLatestPrivyAccessToken?: () => Promise<string | null | undefined> | string | null | undefined;
   tryExistingBackendSession?: boolean;
@@ -1321,6 +1322,7 @@ export async function startPrivyAuthBootstrap({
   privyAuthenticated,
   privyIdentityToken,
   getLatestPrivyIdentityToken,
+  refreshPrivyAuthState,
   privyAccessToken,
   getLatestPrivyAccessToken,
   tryExistingBackendSession = false,
@@ -1619,6 +1621,7 @@ export async function startPrivyAuthBootstrap({
             privyAuthenticated,
             privyIdToken: privyIdentityToken,
             getLatestPrivyIdToken: getLatestPrivyIdentityToken,
+            refreshPrivyAuthState,
             isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
             debugContext: privyIdentityDebugContext,
             pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,

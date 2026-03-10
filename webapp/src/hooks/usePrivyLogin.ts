@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePrivy, useIdentityToken, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
+import { usePrivy, useIdentityToken, useLogin, useLoginWithOAuth, useUser } from "@privy-io/react-auth";
 import {
   clearPrivySyncFailureState,
   getAuthUiState,
@@ -79,6 +79,7 @@ function waitFor(delayMs: number): Promise<void> {
 
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const { ready, authenticated, user, logout: privyLogout, getAccessToken } = usePrivy();
+  const { refreshUser } = useUser();
   const { identityToken } = useIdentityToken();
   const { hasLiveSession } = useAuth();
   const providerInstanceId = usePrivyProviderInstanceId();
@@ -225,6 +226,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       privyAuthenticated: latestPrivyStateRef.current.authenticated,
       privyIdentityToken: latestPrivyIdentityTokenRef.current,
       getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
+      refreshPrivyAuthState: async () => (await refreshUser()) as PrivyUserLike,
       getLatestPrivyAccessToken: () => getAccessToken(),
       triggerSource: "manual_user_action",
     });
@@ -234,7 +236,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }
 
     return syncedUser;
-  }, [getAccessToken, handleSuccessfulLogin, isResumablePendingSnapshot]);
+  }, [getAccessToken, handleSuccessfulLogin, isResumablePendingSnapshot, refreshUser]);
 
   useEffect(() => {
     const pendingCallback = pendingPrivyCallbackRef.current;

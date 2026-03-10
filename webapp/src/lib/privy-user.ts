@@ -5,6 +5,8 @@ const IDENTITY_TOKEN_SETTLE_GRACE_MS = 800;
 const IDENTITY_TOKEN_ATTEMPT_TIMEOUT_MS = 1_200;
 const OAUTH_IDENTITY_TOKEN_TIMEOUT_MS = 1_200;
 const QUICK_IDENTITY_TOKEN_TIMEOUT_MS = 1_200;
+const PRIVY_REFRESH_IDENTITY_TOKEN_TIMEOUT_MS = 1_500;
+const PRIVY_REFRESH_IDENTITY_TOKEN_POLL_INTERVAL_MS = 120;
 const PRIVY_IDENTITY_429_COOLDOWN_MS = 10_000;
 const PRIVY_DIRECT_TOKEN_BUILD_MARKER = "direct-token-trace-20260308a";
 let privyAuthPayloadInFlight: { userId: string; promise: Promise<ResolvedPrivyAuthPayload> } | null =
@@ -72,7 +74,8 @@ export type ResolvedPrivyAuthPayload = {
   name?: string;
   privyIdToken?: string;
   pendingPrivyIdTokenPromise?: Promise<string | undefined>;
-  tokenResolution?: "available" | "pending" | "empty";
+  tokenResolution?: "available" | "pending" | "empty" | "server_request";
+  tokenSource?: "hook" | "refreshed_hook" | "server_request";
   tokenLocalCheck?: {
     tokenLength: number;
     tokenExpired: boolean;
@@ -815,6 +818,46 @@ export function getPrivyDisplayName(user: PrivyUserLike, email?: string): string
   return undefined;
 }
 
+async function waitForPrivyIdentityTokenFromStore(options: {
+  getLatestPrivyIdToken?: () => string | null | undefined;
+  initialToken?: string | null | undefined;
+  timeoutMs: number;
+  isTerminal?: () => boolean;
+}): Promise<string | undefined> {
+  let latestToken = normalizePrivyIdentityTokenCandidate(
+    options.getLatestPrivyIdToken?.() ?? options.initialToken
+  );
+  if (latestToken) {
+    return latestToken;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < options.timeoutMs) {
+    if (options.isTerminal?.() === true) {
+      return undefined;
+    }
+
+    const remainingMs = options.timeoutMs - (Date.now() - startedAt);
+    const completed = await waitFor(
+      Math.min(PRIVY_REFRESH_IDENTITY_TOKEN_POLL_INTERVAL_MS, remainingMs)
+    );
+    if (!completed) {
+      return undefined;
+    }
+
+    latestToken = normalizePrivyIdentityTokenCandidate(
+      options.getLatestPrivyIdToken?.() ?? options.initialToken
+    );
+    if (latestToken) {
+      return latestToken;
+    }
+  }
+
+  return normalizePrivyIdentityTokenCandidate(
+    options.getLatestPrivyIdToken?.() ?? options.initialToken
+  );
+}
+
 async function resolvePrivyAuthPayloadInternal({
   user,
   getLatestUser,
@@ -1114,67 +1157,181 @@ export async function requestPrivyIdentityTokenForBackendSync(
     privyAuthenticated?: boolean;
     privyIdToken?: string | null | undefined;
     getLatestPrivyIdToken?: () => string | null | undefined;
+    refreshPrivyAuthState?: () => Promise<PrivyUserLike | null | undefined>;
     isTerminal?: () => boolean;
     debugContext?: PrivyIdentityDebugContext;
     pendingTokenWaitMs?: number;
   }
 ): Promise<ResolvedPrivyAuthPayload> {
-  console.info("[AuthFlow] ENTER direct token acquisition function", {
-    buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
-    attemptId: options.debugContext?.attemptId ?? null,
-    caller: options.debugContext?.initialCaller ?? "system",
-    owner: options.debugContext?.owner ?? null,
-    mode: options.debugContext?.mode ?? null,
-    userId: options.user.id,
-    privyReady: options.privyReady ?? null,
-    privyAuthenticated: options.privyAuthenticated ?? null,
-    hookIdentityTokenPresent: Boolean(
-      normalizePrivyIdentityTokenCandidate(
-        options.getLatestPrivyIdToken?.() ?? options.privyIdToken
-      )
-    ),
-  });
+  beginPrivyIdentityDebugContext(
+    options.debugContext,
+    options.debugContext?.initialCaller ?? "system"
+  );
+
+  let latestUser = options.getLatestUser?.() ?? options.user;
+  let email = getPrivyPrimaryEmail(latestUser);
+  let name = getPrivyDisplayName(latestUser, email);
+  let hookPrivyIdToken = normalizePrivyIdentityTokenCandidate(
+    options.getLatestPrivyIdToken?.() ?? options.privyIdToken
+  );
 
   try {
-    console.info("[AuthFlow] BEFORE resolvePrivyAuthPayload", {
-      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+    console.info("[AuthFlow] Privy auth store snapshot before backend sync token resolution", {
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
-      userId: options.user.id,
-      allowInFlightReuse: false,
+      userId: latestUser.id,
+      privyReady: options.privyReady ?? null,
+      privyAuthenticated: options.privyAuthenticated ?? null,
+      hookIdentityTokenPresent: Boolean(hookPrivyIdToken),
+      hookIdentityTokenLength: hookPrivyIdToken?.length ?? 0,
     });
-    const result = await resolvePrivyAuthPayloadInternal({
-      ...options,
-      allowInFlightReuse: false,
-    });
-    console.info("[AuthFlow] AFTER resolvePrivyAuthPayload", {
-      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+
+    if (hookPrivyIdToken) {
+      const tokenLocalCheck = inspectPrivyIdentityToken(hookPrivyIdToken);
+      console.info("[AuthFlow] using Privy identity token from auth store", {
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        userId: latestUser.id,
+        tokenLength: hookPrivyIdToken.length,
+      });
+      return {
+        user: latestUser,
+        email,
+        name,
+        privyIdToken: hookPrivyIdToken,
+        tokenResolution: "available",
+        tokenSource: "hook",
+        tokenLocalCheck,
+      };
+    }
+
+    if (options.privyReady !== true || options.privyAuthenticated !== true) {
+      console.warn("[AuthFlow] Privy backend sync token requested before authenticated SDK state", {
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        owner: options.debugContext?.owner ?? null,
+        mode: options.debugContext?.mode ?? null,
+        userId: latestUser.id,
+        privyReady: options.privyReady ?? null,
+        privyAuthenticated: options.privyAuthenticated ?? null,
+      });
+      return {
+        user: latestUser,
+        email,
+        name,
+        tokenResolution: "empty",
+        tokenLocalCheck: null,
+      };
+    }
+
+    if (!options.refreshPrivyAuthState) {
+      console.info(
+        "[AuthFlow] authenticated Privy session will use server-visible Privy request token for backend sync",
+        {
+          attemptId: options.debugContext?.attemptId ?? null,
+          caller: options.debugContext?.initialCaller ?? "system",
+          owner: options.debugContext?.owner ?? null,
+          mode: options.debugContext?.mode ?? null,
+          userId: latestUser.id,
+        }
+      );
+      return {
+        user: latestUser,
+        email,
+        name,
+        tokenResolution: "server_request",
+        tokenSource: "server_request",
+        tokenLocalCheck: null,
+      };
+    }
+
+    console.info("[AuthFlow] refreshing Privy auth state to populate identity token", {
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
-      userId: options.user.id,
-      tokenResolution: result.tokenResolution ?? "empty",
-      hasPrivyIdToken: Boolean(result.privyIdToken),
-      hasPendingPrivyIdTokenPromise: Boolean(result.pendingPrivyIdTokenPromise),
+      userId: latestUser.id,
     });
-    console.info("[AuthFlow] RETURN direct token acquisition function", {
-      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+
+    try {
+      const refreshedUser = await options.refreshPrivyAuthState();
+      latestUser = refreshedUser ?? options.getLatestUser?.() ?? latestUser;
+      email = getPrivyPrimaryEmail(latestUser);
+      name = getPrivyDisplayName(latestUser, email);
+    } catch (error) {
+      if (isPrivyRateLimitError(error) || getPrivyRateLimitRemainingMs() > 0) {
+        throw new Error("Privy identity provider is rate limited");
+      }
+      console.warn("[AuthFlow] Privy auth state refresh failed", {
+        attemptId: options.debugContext?.attemptId ?? null,
+        caller: options.debugContext?.initialCaller ?? "system",
+        owner: options.debugContext?.owner ?? null,
+        mode: options.debugContext?.mode ?? null,
+        userId: latestUser.id,
+        message: getPrivyErrorMessage(error),
+      });
+      return {
+        user: latestUser,
+        email,
+        name,
+        tokenResolution: "server_request",
+        tokenSource: "server_request",
+        tokenLocalCheck: null,
+      };
+    }
+
+    hookPrivyIdToken = await waitForPrivyIdentityTokenFromStore({
+      getLatestPrivyIdToken: options.getLatestPrivyIdToken,
+      initialToken: options.privyIdToken,
+      timeoutMs: PRIVY_REFRESH_IDENTITY_TOKEN_TIMEOUT_MS,
+      isTerminal: options.isTerminal,
+    });
+
+    const tokenLocalCheck = inspectPrivyIdentityToken(hookPrivyIdToken);
+    console.info("[AuthFlow] Privy auth state refreshed", {
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
       mode: options.debugContext?.mode ?? null,
-      userId: options.user.id,
-      tokenResolution: result.tokenResolution ?? "empty",
-      hasPrivyIdToken: Boolean(result.privyIdToken),
-      hasPendingPrivyIdTokenPromise: Boolean(result.pendingPrivyIdTokenPromise),
+      userId: latestUser.id,
+      hookIdentityTokenPresent: Boolean(hookPrivyIdToken),
+      hookIdentityTokenLength: hookPrivyIdToken?.length ?? 0,
     });
-    return result;
+
+    if (!hookPrivyIdToken) {
+      console.info(
+        "[AuthFlow] authenticated Privy session will use server-visible Privy request token for backend sync",
+        {
+          attemptId: options.debugContext?.attemptId ?? null,
+          caller: options.debugContext?.initialCaller ?? "system",
+          owner: options.debugContext?.owner ?? null,
+          mode: options.debugContext?.mode ?? null,
+          userId: latestUser.id,
+        }
+      );
+      return {
+        user: latestUser,
+        email,
+        name,
+        tokenResolution: "server_request",
+        tokenSource: "server_request",
+        tokenLocalCheck,
+      };
+    }
+
+    return {
+      user: latestUser,
+      email,
+      name,
+      privyIdToken: hookPrivyIdToken,
+      tokenResolution: "available",
+      tokenSource: "refreshed_hook",
+      tokenLocalCheck,
+    };
   } catch (error) {
-    console.warn("[AuthFlow] THROW direct token acquisition function", {
-      buildMarker: PRIVY_DIRECT_TOKEN_BUILD_MARKER,
+    console.warn("[AuthFlow] Privy backend sync token resolution failed", {
       attemptId: options.debugContext?.attemptId ?? null,
       caller: options.debugContext?.initialCaller ?? "system",
       owner: options.debugContext?.owner ?? null,
@@ -1185,6 +1342,11 @@ export async function requestPrivyIdentityTokenForBackendSync(
       stack: error instanceof Error ? error.stack ?? null : null,
     });
     throw error;
+  } finally {
+    finishPrivyIdentityDebugContext(
+      options.debugContext,
+      getPrivyRateLimitRemainingMs() > 0 ? "rate_limited" : "settled"
+    );
   }
 }
 
