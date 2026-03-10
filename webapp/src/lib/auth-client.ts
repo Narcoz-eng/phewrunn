@@ -1852,19 +1852,33 @@ async function fetchSession(): Promise<AuthUser | null> {
         const shouldTreatAsTransient =
           recentlySynced ||
           (hasSessionHint && recentlyHealthySession);
+        const shouldPreserveSessionDuringRecovery =
+          unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT &&
+          (
+            Boolean(cachedUser) ||
+            hasSessionCookieHint() ||
+            recentlySynced ||
+            recentlyHealthySession ||
+            lastSuccessfulSessionAt > 0
+          );
+        const recoveryBackoffMs = Math.min(
+          6_000,
+          1_200 + (unauthorizedSessionFailures - 1) * 900
+        );
 
         if (
           cachedUser &&
-          shouldTreatAsTransient
+          (shouldTreatAsTransient || shouldPreserveSessionDuringRecovery)
         ) {
-          sessionRateLimitedUntil = Date.now() + 2000;
+          sessionRateLimitedUntil = Date.now() + recoveryBackoffMs;
           console.warn(
             `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures})`
           );
           return cachedUser;
         }
 
-        if (shouldTreatAsTransient) {
+        if (shouldTreatAsTransient || shouldPreserveSessionDuringRecovery) {
+          sessionRateLimitedUntil = Date.now() + recoveryBackoffMs;
           console.warn(
             `[Auth] Temporary 401 from /api/me; preserving cached session hint (${unauthorizedSessionFailures})`
           );

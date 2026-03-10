@@ -42,6 +42,11 @@ const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
+const LEADERBOARD_SNAPSHOT_TTL_MS = 2 * 60_000;
+const LEADERBOARD_SNAPSHOT_STALE_REVALIDATE_MS = 20 * 60_000;
+const LEADERBOARD_SNAPSHOT_VERSION = 2;
+const DAILY_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:daily:v${LEADERBOARD_SNAPSHOT_VERSION}`;
+const FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:first-callers:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
@@ -335,6 +340,17 @@ export type LeaderboardsPayload = {
   bestEntryToday: EnrichedCall[];
 };
 
+export type FirstCallerLeaderboardRow = {
+  traderId: string;
+  handle: string | null;
+  name: string;
+  image: string | null;
+  trustScore: number | null;
+  firstCalls: number;
+  firstCallAvgRoi: number | null;
+  avgConfidenceScore: number;
+};
+
 type CacheEntry<T> = {
   expiresAt: number;
   value: T;
@@ -426,33 +442,11 @@ const dailyLeaderboardsCache = new Map<string, CacheEntry<LeaderboardsPayload>>(
 const dailyLeaderboardsInFlight = new Map<string, Promise<LeaderboardsPayload>>();
 const firstCallerLeaderboardsCache = new Map<
   string,
-  CacheEntry<
-    Array<{
-      traderId: string;
-      handle: string | null;
-      name: string;
-      image: string | null;
-      trustScore: number | null;
-      firstCalls: number;
-      firstCallAvgRoi: number | null;
-      avgConfidenceScore: number;
-    }>
-  >
+  CacheEntry<FirstCallerLeaderboardRow[]>
 >();
 const firstCallerLeaderboardsInFlight = new Map<
   string,
-  Promise<
-    Array<{
-      traderId: string;
-      handle: string | null;
-      name: string;
-      image: string | null;
-      trustScore: number | null;
-      firstCalls: number;
-      firstCallAvgRoi: number | null;
-      avgConfidenceScore: number;
-    }>
-  >
+  Promise<FirstCallerLeaderboardRow[]>
 >();
 const marketContextCache = new Map<string, CacheEntry<MarketContextSnapshot>>();
 const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
@@ -605,6 +599,112 @@ async function memoizeCached<T>(
 
   inFlight.set(key, promise);
   return cloneCachedValue(await promise);
+}
+
+function parseLeaderboardsPayloadSnapshot(payload: Prisma.JsonValue): LeaderboardsPayload | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const candidate = payload as Partial<LeaderboardsPayload>;
+  if (
+    !Array.isArray(candidate.topTradersToday) ||
+    !Array.isArray(candidate.topAlphaToday) ||
+    !Array.isArray(candidate.biggestRoiToday) ||
+    !Array.isArray(candidate.bestEntryToday)
+  ) {
+    return null;
+  }
+
+  return candidate as LeaderboardsPayload;
+}
+
+function parseFirstCallerLeaderboardRowsSnapshot(
+  payload: Prisma.JsonValue
+): FirstCallerLeaderboardRow[] | null {
+  if (!Array.isArray(payload)) {
+    return null;
+  }
+
+  return payload as unknown as FirstCallerLeaderboardRow[];
+}
+
+async function readAggregateSnapshotPayload<T>(
+  key: string,
+  version: number,
+  parser: (payload: Prisma.JsonValue) => T | null
+): Promise<{ fresh: T | null; stale: T | null }> {
+  try {
+    const snapshot = await prisma.aggregateSnapshot.findUnique({
+      where: { key },
+      select: {
+        version: true,
+        payload: true,
+        capturedAt: true,
+        expiresAt: true,
+      },
+    });
+
+    if (!snapshot) {
+      return { fresh: null, stale: null };
+    }
+
+    const parsedPayload = parser(snapshot.payload);
+    if (!parsedPayload) {
+      return { fresh: null, stale: null };
+    }
+
+    const now = Date.now();
+    if (snapshot.version === version && snapshot.expiresAt.getTime() > now) {
+      return { fresh: parsedPayload, stale: parsedPayload };
+    }
+
+    const isUsableStale =
+      snapshot.capturedAt.getTime() + LEADERBOARD_SNAPSHOT_STALE_REVALIDATE_MS > now;
+
+    return {
+      fresh: null,
+      stale: isUsableStale ? parsedPayload : null,
+    };
+  } catch (error) {
+    console.warn("[intelligence] aggregate snapshot read failed", {
+      key,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return { fresh: null, stale: null };
+  }
+}
+
+async function writeAggregateSnapshotPayload<T>(
+  key: string,
+  version: number,
+  payload: T,
+  ttlMs: number
+): Promise<void> {
+  try {
+    const now = new Date();
+    await prisma.aggregateSnapshot.upsert({
+      where: { key },
+      create: {
+        key,
+        version,
+        payload: payload as Prisma.InputJsonValue,
+        capturedAt: now,
+        expiresAt: new Date(now.getTime() + ttlMs),
+      },
+      update: {
+        version,
+        payload: payload as Prisma.InputJsonValue,
+        capturedAt: now,
+        expiresAt: new Date(now.getTime() + ttlMs),
+      },
+    });
+  } catch (error) {
+    console.warn("[intelligence] aggregate snapshot write failed", {
+      key,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function sanitizeCacheKeyPart(value: string | null | undefined): string {
@@ -2851,151 +2951,234 @@ export async function getTraderOverview(handle: string, viewerId: string | null)
   });
 }
 
-export async function listDailyLeaderboards(viewerId: string | null): Promise<LeaderboardsPayload> {
-  const cacheKey = `leaderboards:daily:${viewerId ?? "anonymous"}`;
-  return memoizeCached(dailyLeaderboardsCache, dailyLeaderboardsInFlight, cacheKey, LEADERBOARD_CACHE_TTL_MS, async () => {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
 
-    const todaysCallsRaw = await prisma.post.findMany({
-      where: {
-        createdAt: {
-          gte: startOfDay,
-        },
+  const todaysCallsRaw = await prisma.post.findMany({
+    where: {
+      createdAt: {
+        gte: startOfDay,
       },
-      select: CALL_SELECT,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: 120,
-    });
+    },
+    select: CALL_SELECT,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 120,
+  });
 
-    const todaysCalls = await hydrateCalls(todaysCallsRaw, viewerId, {
+  const todaysCalls = await hydrateCalls(todaysCallsRaw, null, {
+    refreshTraders: false,
+    refreshTokens: false,
+    ensureTokenLinks: false,
+    persistComputed: false,
+    preferStoredIntelligence: true,
+  });
+  const traderMap = new Map<string, LeaderboardsPayload["topTradersToday"][number] & { wins: number }>();
+
+  for (const call of todaysCalls) {
+    const current = traderMap.get(call.author.id) ?? {
+      traderId: call.author.id,
+      handle: call.author.username,
+      name: call.author.name,
+      image: call.author.image,
+      trustScore: call.author.trustScore,
+      avgRoiPct: 0,
+      winRatePct: 0,
+      callsCount: 0,
+      wins: 0,
+    };
+    current.callsCount += 1;
+    current.avgRoiPct += finite(call.roiPeakPct);
+    if (call.isWin) {
+      current.wins += 1;
+    }
+    traderMap.set(call.author.id, current);
+  }
+
+  const topTradersToday = Array.from(traderMap.values())
+    .map((entry) => ({
+      traderId: entry.traderId,
+      handle: entry.handle,
+      name: entry.name,
+      image: entry.image,
+      trustScore: entry.trustScore,
+      avgRoiPct: entry.callsCount > 0 ? roundMetricOrZero(entry.avgRoiPct / entry.callsCount) : 0,
+      winRatePct: entry.callsCount > 0 ? roundMetricOrZero((entry.wins / entry.callsCount) * 100) : 0,
+      callsCount: entry.callsCount,
+    }))
+    .sort((left, right) => {
+      const roiDelta = right.avgRoiPct - left.avgRoiPct;
+      if (roiDelta !== 0) return roiDelta;
+      return right.winRatePct - left.winRatePct;
+    })
+    .slice(0, 12);
+
+  return {
+    topTradersToday,
+    topAlphaToday: [...todaysCalls]
+      .sort((left, right) => right.hotAlphaScore - left.hotAlphaScore)
+      .slice(0, 12),
+    biggestRoiToday: [...todaysCalls]
+      .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
+      .slice(0, 12),
+    bestEntryToday: [...todaysCalls]
+      .filter((call) => call.firstCallerRank === 1 || call.timingTier === "FIRST CALLER")
+      .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
+      .slice(0, 12),
+  };
+}
+
+export async function listDailyLeaderboards(_viewerId: string | null): Promise<LeaderboardsPayload> {
+  const cacheKey = "leaderboards:daily:global";
+  return memoizeCached(
+    dailyLeaderboardsCache,
+    dailyLeaderboardsInFlight,
+    cacheKey,
+    LEADERBOARD_CACHE_TTL_MS,
+    async () => {
+      const snapshot = await readAggregateSnapshotPayload(
+        DAILY_LEADERBOARD_SNAPSHOT_KEY,
+        LEADERBOARD_SNAPSHOT_VERSION,
+        parseLeaderboardsPayloadSnapshot
+      );
+
+      if (snapshot.fresh) {
+        return snapshot.fresh;
+      }
+
+      try {
+        const payload = await computeDailyLeaderboardsPayload();
+        await writeAggregateSnapshotPayload(
+          DAILY_LEADERBOARD_SNAPSHOT_KEY,
+          LEADERBOARD_SNAPSHOT_VERSION,
+          payload,
+          LEADERBOARD_SNAPSHOT_TTL_MS
+        );
+        return payload;
+      } catch (error) {
+        if (snapshot.stale) {
+          console.warn("[intelligence] serving stale daily leaderboard snapshot", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return snapshot.stale;
+        }
+        console.warn("[intelligence] daily leaderboard compute failed; serving empty payload", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          topTradersToday: [],
+          topAlphaToday: [],
+          biggestRoiToday: [],
+          bestEntryToday: [],
+        };
+      }
+    }
+  );
+}
+
+async function computeFirstCallerLeaderboardsPayload(): Promise<FirstCallerLeaderboardRow[]> {
+  const traders = await prisma.user.findMany({
+    where: {
+      firstCallCount: {
+        gt: 0,
+      },
+    },
+    select: AUTHOR_SELECT,
+    orderBy: [{ firstCallCount: "desc" }, { trustScore: "desc" }],
+    take: 24,
+  });
+
+  const traderIds = traders.map((trader) => trader.id);
+  if (traderIds.length === 0) {
+    return [];
+  }
+
+  const callsRaw = await prisma.post.findMany({
+    where: {
+      authorId: { in: traderIds },
+    },
+    select: CALL_SELECT,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 320,
+  });
+  const firstCalls = (
+    await hydrateCalls(callsRaw, null, {
       refreshTraders: false,
       refreshTokens: false,
       ensureTokenLinks: false,
       persistComputed: false,
-    });
-    const traderMap = new Map<string, LeaderboardsPayload["topTradersToday"][number] & { wins: number }>();
+      preferStoredIntelligence: true,
+    })
+  ).filter((call) => call.firstCallerRank === 1);
+  const confidenceByTrader = new Map<string, { total: number; count: number }>();
+  for (const call of firstCalls) {
+    const current = confidenceByTrader.get(call.author.id) ?? { total: 0, count: 0 };
+    current.total += call.confidenceScore;
+    current.count += 1;
+    confidenceByTrader.set(call.author.id, current);
+  }
 
-    for (const call of todaysCalls) {
-      const current = traderMap.get(call.author.id) ?? {
-        traderId: call.author.id,
-        handle: call.author.username,
-        name: call.author.name,
-        image: call.author.image,
-        trustScore: call.author.trustScore,
-        avgRoiPct: 0,
-        winRatePct: 0,
-        callsCount: 0,
-        wins: 0,
+  return traders
+    .map((trader) => {
+      const confidence = confidenceByTrader.get(trader.id);
+      return {
+        traderId: trader.id,
+        handle: trader.username,
+        name: trader.name,
+        image: trader.image,
+        trustScore: trader.trustScore,
+        firstCalls: trader.firstCallCount,
+        firstCallAvgRoi: trader.firstCallAvgRoi,
+        avgConfidenceScore: confidence?.count ? roundMetricOrZero(confidence.total / confidence.count) : 0,
       };
-      current.callsCount += 1;
-      current.avgRoiPct += finite(call.roiPeakPct);
-      if (call.isWin) {
-        current.wins += 1;
+    })
+    .sort((left, right) => {
+      if (right.firstCalls !== left.firstCalls) {
+        return right.firstCalls - left.firstCalls;
       }
-      traderMap.set(call.author.id, current);
-    }
-
-    const topTradersToday = Array.from(traderMap.values())
-      .map((entry) => ({
-        traderId: entry.traderId,
-        handle: entry.handle,
-        name: entry.name,
-        image: entry.image,
-        trustScore: entry.trustScore,
-        avgRoiPct: entry.callsCount > 0 ? roundMetricOrZero(entry.avgRoiPct / entry.callsCount) : 0,
-        winRatePct: entry.callsCount > 0 ? roundMetricOrZero((entry.wins / entry.callsCount) * 100) : 0,
-        callsCount: entry.callsCount,
-      }))
-      .sort((left, right) => {
-        const roiDelta = right.avgRoiPct - left.avgRoiPct;
-        if (roiDelta !== 0) return roiDelta;
-        return right.winRatePct - left.winRatePct;
-      })
-      .slice(0, 12);
-
-    return {
-      topTradersToday,
-      topAlphaToday: [...todaysCalls].sort((left, right) => right.hotAlphaScore - left.hotAlphaScore).slice(0, 12),
-      biggestRoiToday: [...todaysCalls].sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100)).slice(0, 12),
-      bestEntryToday: [...todaysCalls]
-        .filter((call) => call.firstCallerRank === 1 || call.timingTier === "FIRST CALLER")
-        .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
-        .slice(0, 12),
-    };
-  });
+      return finite(right.firstCallAvgRoi) - finite(left.firstCallAvgRoi);
+    });
 }
 
-export async function listFirstCallerLeaderboards(viewerId: string | null): Promise<Array<{
-  traderId: string;
-  handle: string | null;
-  name: string;
-  image: string | null;
-  trustScore: number | null;
-  firstCalls: number;
-  firstCallAvgRoi: number | null;
-  avgConfidenceScore: number;
-}>> {
-  const cacheKey = `leaderboards:first-callers:${viewerId ?? "anonymous"}`;
+export async function listFirstCallerLeaderboards(_viewerId: string | null): Promise<FirstCallerLeaderboardRow[]> {
+  const cacheKey = "leaderboards:first-callers:global";
   return memoizeCached(
     firstCallerLeaderboardsCache,
     firstCallerLeaderboardsInFlight,
     cacheKey,
     LEADERBOARD_CACHE_TTL_MS,
     async () => {
-      const traders = await prisma.user.findMany({
-        where: {
-          firstCallCount: {
-            gt: 0,
-          },
-        },
-        select: AUTHOR_SELECT,
-        orderBy: [{ firstCallCount: "desc" }, { trustScore: "desc" }],
-        take: 24,
-      });
+      const snapshot = await readAggregateSnapshotPayload(
+        FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY,
+        LEADERBOARD_SNAPSHOT_VERSION,
+        parseFirstCallerLeaderboardRowsSnapshot
+      );
 
-      const callsRaw = await prisma.post.findMany({
-        where: {
-          authorId: { in: traders.map((trader) => trader.id) },
-        },
-        select: CALL_SELECT,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 320,
-      });
-      const firstCalls = (await hydrateCalls(callsRaw, viewerId, {
-        refreshTraders: false,
-        refreshTokens: false,
-        ensureTokenLinks: false,
-        persistComputed: false,
-      })).filter((call) => call.firstCallerRank === 1);
-      const confidenceByTrader = new Map<string, { total: number; count: number }>();
-      for (const call of firstCalls) {
-        const current = confidenceByTrader.get(call.author.id) ?? { total: 0, count: 0 };
-        current.total += call.confidenceScore;
-        current.count += 1;
-        confidenceByTrader.set(call.author.id, current);
+      if (snapshot.fresh) {
+        return snapshot.fresh;
       }
 
-      return traders
-        .map((trader) => {
-          const confidence = confidenceByTrader.get(trader.id);
-          return {
-            traderId: trader.id,
-            handle: trader.username,
-            name: trader.name,
-            image: trader.image,
-            trustScore: trader.trustScore,
-            firstCalls: trader.firstCallCount,
-            firstCallAvgRoi: trader.firstCallAvgRoi,
-            avgConfidenceScore: confidence?.count ? roundMetricOrZero(confidence.total / confidence.count) : 0,
-          };
-        })
-        .sort((left, right) => {
-          if (right.firstCalls !== left.firstCalls) {
-            return right.firstCalls - left.firstCalls;
-          }
-          return finite(right.firstCallAvgRoi) - finite(left.firstCallAvgRoi);
+      try {
+        const payload = await computeFirstCallerLeaderboardsPayload();
+        await writeAggregateSnapshotPayload(
+          FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY,
+          LEADERBOARD_SNAPSHOT_VERSION,
+          payload,
+          LEADERBOARD_SNAPSHOT_TTL_MS
+        );
+        return payload;
+      } catch (error) {
+        if (snapshot.stale) {
+          console.warn("[intelligence] serving stale first-caller leaderboard snapshot", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return snapshot.stale;
+        }
+        console.warn("[intelligence] first-caller leaderboard compute failed; serving empty payload", {
+          message: error instanceof Error ? error.message : String(error),
         });
+        return [];
+      }
     }
   );
 }

@@ -2674,6 +2674,21 @@ function logApiMe200(
   });
 }
 
+function isTemporaryApiMeAuthReason(reason: string | null | undefined): boolean {
+  if (!reason) {
+    return false;
+  }
+
+  return (
+    reason === "session_recovery_exception" ||
+    reason === "db_session_lookup_unavailable" ||
+    reason === "signed_fallback_unresolved" ||
+    reason.includes("lookup_unavailable") ||
+    reason.includes("temporarily_unavailable") ||
+    reason.includes("timeout")
+  );
+}
+
 // =====================================================
 // Privy Session Sync Route
 // =====================================================
@@ -3305,6 +3320,17 @@ app.get("/api/me", async (c) => {
       : hasBearerToken
         ? failedAttempt?.reason ?? "bearer_session_missing"
         : "no_session_credentials";
+    const shouldTreatUnauthorizedAsTemporary =
+      (hasSessionCookie || hasBearerToken) &&
+      (
+        isTemporaryApiMeAuthReason(exact401Reason) ||
+        authTrace.tokenAttempts.some(
+          (attempt) =>
+            attempt.fallbackToDbUsed &&
+            !attempt.sessionResolved &&
+            isTemporaryApiMeAuthReason(attempt.reason)
+        )
+      );
     appendAuthDecision(authTrace, `/api/me:final_401:${exact401Reason}`);
     if (hasSessionCookie || hasBearerToken) {
       console.warn("[/api/me] Unauthorized request", {
@@ -3315,6 +3341,18 @@ app.get("/api/me", async (c) => {
       });
     }
     console.warn("[/api/me][auth-trace]", finalizeApiMeAuthTrace(authTrace, 401, exact401Reason));
+    if (shouldTreatUnauthorizedAsTemporary) {
+      c.header("Retry-After", "2");
+      return c.json(
+        {
+          error: {
+            message: "Session is temporarily reconnecting. Please retry.",
+            code: "AUTH_SESSION_TEMPORARILY_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     return c.body(null, 401);
   }
 

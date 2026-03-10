@@ -18,8 +18,8 @@ import {
   Trophy,
 } from "lucide-react";
 
-const DAILY_LEADERBOARD_CACHE_KEY = "phew.leaderboards.daily-intelligence.v1";
-const FIRST_CALLER_CACHE_KEY = "phew.leaderboards.first-callers.v1";
+const DAILY_LEADERBOARD_CACHE_KEY = "phew.leaderboards.daily-intelligence.v2";
+const FIRST_CALLER_CACHE_KEY = "phew.leaderboards.first-callers.v2";
 const LEADERBOARD_CACHE_TTL_MS = 2 * 60_000;
 
 type DailyLeaderboards = {
@@ -303,7 +303,7 @@ export function IntelligenceLeaderboards() {
     refetchOnWindowFocus: false,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
-    refetchOnMount: cachedDaily ? false : "always",
+    refetchOnMount: "always",
   });
 
   const {
@@ -320,7 +320,7 @@ export function IntelligenceLeaderboards() {
     refetchOnWindowFocus: false,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
-    refetchOnMount: cachedFirstCallers ? false : "always",
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
