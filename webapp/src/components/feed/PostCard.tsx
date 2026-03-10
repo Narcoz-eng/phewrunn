@@ -616,6 +616,7 @@ interface PostCardProps {
   onComment?: (postId: string, content: string) => Promise<void> | void;
   enableRealtimePricePolling?: boolean;
   autoOpenTradePanel?: boolean;
+  autoPrefillBuyAmountSol?: string | null;
   onTradePanelAutoOpened?: () => void;
 }
 
@@ -863,6 +864,7 @@ export function PostCard({
   onRepost,
   enableRealtimePricePolling = true,
   autoOpenTradePanel = false,
+  autoPrefillBuyAmountSol = null,
   onTradePanelAutoOpened,
 }: PostCardProps) {
   const navigate = useNavigate();
@@ -1090,16 +1092,24 @@ export function PostCard({
   useEffect(() => {
     if (!autoOpenTradePanel || isBuyDialogOpen || !post.contractAddress) return;
     if (typeof window === "undefined") {
+      if (autoPrefillBuyAmountSol) {
+        setTradeSide("buy");
+        setBuyAmountSol(autoPrefillBuyAmountSol);
+      }
       setIsBuyDialogOpen(true);
       onTradePanelAutoOpened?.();
       return;
     }
     const frameId = window.requestAnimationFrame(() => {
+      if (autoPrefillBuyAmountSol) {
+        setTradeSide("buy");
+        setBuyAmountSol(autoPrefillBuyAmountSol);
+      }
       setIsBuyDialogOpen(true);
       onTradePanelAutoOpened?.();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [autoOpenTradePanel, isBuyDialogOpen, onTradePanelAutoOpened, post.contractAddress]);
+  }, [autoOpenTradePanel, autoPrefillBuyAmountSol, isBuyDialogOpen, onTradePanelAutoOpened, post.contractAddress]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
@@ -4242,11 +4252,11 @@ export function PostCard({
   const walletConnectDialogClassName =
     "w-[calc(100vw-1rem)] max-w-md overflow-hidden border-slate-900/10 bg-[linear-gradient(180deg,rgba(255,252,247,0.98),rgba(246,239,228,0.98))] p-0 text-slate-900 shadow-[0_36px_120px_-50px_rgba(15,23,42,0.34)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.96),rgba(4,6,10,0.98))] dark:text-white dark:shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]";
   const tradeDialogSurfaceClassName =
-    "flex w-[calc(100vw-0.75rem)] max-h-[94vh] max-w-6xl flex-col overflow-hidden border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,252,248,0.98),rgba(244,237,225,0.97))] p-0 text-slate-900 shadow-[0_60px_180px_-56px_rgba(15,23,42,0.34)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.99),rgba(5,7,10,0.99))] dark:text-white dark:shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden";
+    "flex w-[calc(100vw-0.4rem)] max-h-[calc(100dvh-0.5rem)] max-w-6xl flex-col overflow-hidden border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,252,248,0.98),rgba(244,237,225,0.97))] p-0 text-slate-900 shadow-[0_60px_180px_-56px_rgba(15,23,42,0.34)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.99),rgba(5,7,10,0.99))] dark:text-white dark:shadow-[0_60px_180px_-40px_rgba(0,0,0,0.98)] [&>button]:hidden sm:w-[calc(100vw-0.75rem)] sm:max-h-[94vh]";
   const tradeDialogHeaderClassName =
     "relative shrink-0 overflow-hidden border-b border-slate-900/[0.06] bg-[radial-gradient(circle_at_18%_0%,rgba(16,185,129,0.10),transparent_38%),radial-gradient(circle_at_100%_0%,rgba(245,158,11,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,242,232,0.9))] px-5 pb-3 pt-4 dark:border-white/[0.06] dark:bg-[radial-gradient(circle_at_18%_0%,rgba(16,185,129,0.10),transparent_38%),radial-gradient(circle_at_100%_0%,rgba(59,130,246,0.08),transparent_30%),linear-gradient(180deg,rgba(10,12,18,0.98),rgba(7,9,13,0.96))] sm:px-6";
   const tradeDialogBodyClassName =
-    "min-h-0 flex-1 space-y-3 overflow-y-auto bg-[linear-gradient(180deg,rgba(255,252,248,0.9),rgba(245,238,226,0.98))] p-3 dark:bg-[linear-gradient(180deg,rgba(7,9,14,0.98),rgba(5,7,10,0.98))] sm:p-4";
+    "min-h-0 flex-1 space-y-2.5 overflow-y-auto bg-[linear-gradient(180deg,rgba(255,252,248,0.9),rgba(245,238,226,0.98))] p-2.5 dark:bg-[linear-gradient(180deg,rgba(7,9,14,0.98),rgba(5,7,10,0.98))] sm:space-y-3 sm:p-4";
   const tradeDialogFooterClassName =
     "relative z-20 flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(7,9,13,0.98))] sm:px-5";
   const chartPanelClassName =
@@ -4263,7 +4273,7 @@ export function PostCard({
   const chartControlButtonClassName =
     "text-slate-500 hover:bg-slate-900/[0.05] hover:text-slate-800 dark:text-white/40 dark:hover:bg-white/[0.06] dark:hover:text-white/70 disabled:opacity-30";
   const chartCanvasClassName =
-    "relative h-[280px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_16%_8%,rgba(59,130,246,0.12),transparent_28%),radial-gradient(circle_at_88%_14%,rgba(16,185,129,0.08),transparent_32%),linear-gradient(180deg,rgba(4,9,18,0.99),rgba(1,4,9,1))]";
+    "relative h-[220px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[320px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_16%_8%,rgba(59,130,246,0.12),transparent_28%),radial-gradient(circle_at_88%_14%,rgba(16,185,129,0.08),transparent_32%),linear-gradient(180deg,rgba(4,9,18,0.99),rgba(1,4,9,1))]";
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {

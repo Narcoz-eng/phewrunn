@@ -34,6 +34,7 @@ const TOKEN_CHART_INTERVAL_OPTIONS = [
   { value: "240", label: "4h" },
   { value: "1D", label: "1D" },
 ] as const;
+const TOKEN_QUICK_BUY_PRESETS = ["0.10", "0.20", "0.50", "1.00"] as const;
 
 type TokenChartIntervalValue = (typeof TOKEN_CHART_INTERVAL_OPTIONS)[number]["value"];
 
@@ -273,6 +274,7 @@ export default function TokenPage() {
   );
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
+  const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("15");
   const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
 
@@ -495,6 +497,20 @@ export default function TokenPage() {
       toast.info("No trade-ready call is available for this token yet.");
       return;
     }
+    setPendingQuickBuyAmountSol(null);
+    setPendingTradeCallId(primaryTradeCall.id);
+    recentCallsRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
+  const handleQuickBuyPreset = (amount: string) => {
+    if (!primaryTradeCall) {
+      toast.info("No trade-ready call is available for this token yet.");
+      return;
+    }
+    setPendingQuickBuyAmountSol(amount);
     setPendingTradeCallId(primaryTradeCall.id);
     recentCallsRef.current?.scrollIntoView({
       behavior: "smooth",
@@ -618,19 +634,19 @@ export default function TokenPage() {
                     ))}
                   </div>
 
-                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-stretch">
                     <Button
                       onClick={handleOpenTradePanel}
                       disabled={!primaryTradeCall}
-                      className="group h-12 min-w-0 justify-start gap-3 rounded-[20px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] sm:min-w-[220px] sm:flex-1 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="group min-h-[58px] min-w-0 justify-start gap-3 rounded-[22px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 py-3 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white/20 text-slate-950">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white/20 text-slate-950">
                         <PhewTradeIcon className="h-4 w-4" />
                       </span>
-                      <span className="min-w-0 flex flex-col items-start leading-none">
+                      <span className="min-w-0 flex flex-col items-start text-left">
                         <span className="text-sm font-semibold text-slate-950">Open trade panel</span>
-                        <span className="mt-1 truncate text-[11px] text-slate-900/75">
-                          Jump into the live setup for this token.
+                        <span className="mt-1 whitespace-normal text-[11px] leading-[1.25] text-slate-900/75">
+                          Open the full live trade setup for this token.
                         </span>
                       </span>
                     </Button>
@@ -638,7 +654,7 @@ export default function TokenPage() {
                       variant={token.isFollowing ? "outline" : "default"}
                       onClick={() => followMutation.mutate()}
                       disabled={followMutation.isPending}
-                      className="h-11 rounded-2xl sm:min-w-[170px]"
+                      className="h-full min-h-[58px] rounded-[22px] px-5 sm:min-w-[190px]"
                     >
                       {followMutation.isPending ? (
                         <>
@@ -713,66 +729,164 @@ export default function TokenPage() {
                     </Button>
                   ))}
                 </div>
-                <div className="h-[320px] w-full">
-                  {hasLiveChartTelemetry ? (
-                    <div className="h-full rounded-[24px] border border-border/60 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.09),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
-                      <CandlestickChart
-                        data={liveChartData}
-                        visibleStartIndex={liveChartWindow.startIndex}
-                        visibleEndIndex={liveChartWindow.endIndex}
-                        futureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
-                        showVolume
-                        showCandles
-                        stroke="hsl(var(--primary))"
-                        fill="hsla(var(--primary), 0.22)"
-                        formatPrice={formatTokenPrice}
-                        formatTick={(timestampMs) =>
-                          new Date(timestampMs).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        }
-                        className="h-full"
-                      />
-                    </div>
-                  ) : hasChartTelemetry ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData}>
-                        <defs>
-                          <linearGradient id="tokenChartFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
-                            <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.02} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
-                        <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={24} />
-                        <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
-                        <Tooltip
-                          formatter={(value: number | null, name: string) => {
-                            if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
-                            if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
-                            return [value ?? "N/A", name];
-                          }}
-                        />
-                        <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
-                        <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-primary/25 bg-gradient-to-br from-primary/8 via-transparent to-cyan-400/6 px-6 text-center">
-                      <div className="max-w-md space-y-3">
-                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
-                          <Loader2 className="h-5 w-5 animate-spin" />
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_230px]">
+                  <div className="space-y-4">
+                    <div className="h-[320px] w-full">
+                      {hasLiveChartTelemetry ? (
+                        <div className="h-full rounded-[24px] border border-border/60 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.09),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
+                          <CandlestickChart
+                            data={liveChartData}
+                            visibleStartIndex={liveChartWindow.startIndex}
+                            visibleEndIndex={liveChartWindow.endIndex}
+                            futureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
+                            showVolume
+                            showCandles
+                            stroke="hsl(var(--primary))"
+                            fill="hsla(var(--primary), 0.22)"
+                            formatPrice={formatTokenPrice}
+                            formatTick={(timestampMs) =>
+                              new Date(timestampMs).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
+                            }
+                            className="h-full"
+                          />
                         </div>
-                        <div className="space-y-1">
-                          <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
-                          <p className="text-sm text-muted-foreground">
-                            We are pulling the live price route, market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
-                          </p>
+                      ) : hasChartTelemetry ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={chartData}>
+                            <defs>
+                              <linearGradient id="tokenChartFill" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
+                                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.02} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
+                            <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={24} />
+                            <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
+                            <Tooltip
+                              formatter={(value: number | null, name: string) => {
+                                if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
+                                if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
+                                return [value ?? "N/A", name];
+                              }}
+                            />
+                            <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
+                            <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-primary/25 bg-gradient-to-br from-primary/8 via-transparent to-cyan-400/6 px-6 text-center">
+                          <div className="max-w-md space-y-3">
+                            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                            </div>
+                            <div className="space-y-1">
+                              <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
+                              <p className="text-sm text-muted-foreground">
+                                We are pulling the live price route, market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {hasChartTelemetry ? (
+                      <div className="rounded-[24px] border border-border/60 bg-white/50 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-foreground">Confidence + market cap timeline</div>
+                            <div className="text-xs text-muted-foreground">Snapshot intelligence history for conviction and market structure.</div>
+                          </div>
+                          <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                            {chartData.length} points
+                          </div>
+                        </div>
+                        <div className="h-[168px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={chartData}>
+                              <defs>
+                                <linearGradient id="tokenChartFillSecondary" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.28} />
+                                  <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.01} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.26} />
+                              <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} />
+                              <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 10 }} />
+                              <Tooltip
+                                formatter={(value: number | null, name: string) => {
+                                  if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
+                                  if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
+                                  return [value ?? "N/A", name];
+                                }}
+                              />
+                              <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFillSecondary)" />
+                              <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-[24px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.7),rgba(243,250,245,0.92))] p-4 shadow-[0_24px_54px_-40px_hsl(var(--primary)/0.35)] dark:bg-[linear-gradient(180deg,rgba(10,17,27,0.96),rgba(5,10,18,0.98))] dark:shadow-none">
+                      <div className="text-sm font-semibold text-foreground">Quick buy</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Open the first trade-ready call with a preset amount already loaded.
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        {TOKEN_QUICK_BUY_PRESETS.map((amount) => (
+                          <Button
+                            key={amount}
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleQuickBuyPreset(amount)}
+                            disabled={!primaryTradeCall}
+                            className="h-11 rounded-[18px] border-primary/20 bg-white/70 text-sm font-semibold text-foreground hover:border-primary/35 hover:bg-primary/8 dark:bg-white/[0.03]"
+                          >
+                            {amount} SOL
+                          </Button>
+                        ))}
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={handleOpenTradePanel}
+                        disabled={!primaryTradeCall}
+                        className="mt-3 h-11 w-full rounded-[18px] border border-primary/25 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),rgba(52,211,153,0.88))] text-sm font-semibold text-slate-950 shadow-[0_18px_36px_-26px_hsl(var(--primary)/0.48)] hover:brightness-[1.03] disabled:opacity-60"
+                      >
+                        Open full trade panel
+                      </Button>
+                    </div>
+
+                    <div className="rounded-[24px] border border-border/60 bg-white/50 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-white/[0.03] dark:shadow-none">
+                      <div className="text-sm font-semibold text-foreground">Live route</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {hasLiveChartTelemetry
+                          ? `${liveChartSourceLabel} is updating this panel in real time.`
+                          : "Live candles will appear here as soon as market route data is available."}
+                      </div>
+                      <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                          <span>Current liquidity</span>
+                          <span className="font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                          <span>24h volume</span>
+                          <span className="font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                          <span>Confidence</span>
+                          <span className={cn("font-semibold", scoreTone(token.confidenceScore))}>
+                            {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)}%` : "N/A"}
+                          </span>
                         </div>
                       </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
@@ -940,8 +1054,10 @@ export default function TokenPage() {
                       post={post}
                       currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
                       autoOpenTradePanel={pendingTradeCallId === post.id}
+                      autoPrefillBuyAmountSol={pendingTradeCallId === post.id ? pendingQuickBuyAmountSol : null}
                       onTradePanelAutoOpened={() => {
                         setPendingTradeCallId((current) => (current === post.id ? null : current));
+                        setPendingQuickBuyAmountSol(null);
                       }}
                     />
                   ))}
