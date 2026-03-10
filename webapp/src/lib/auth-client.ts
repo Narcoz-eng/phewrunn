@@ -1230,7 +1230,7 @@ async function resolvePrivyAccessTokenCandidate(
     return undefined;
   }
 
-  const retryDelaysMs = [0, 180, 320] as const;
+  const retryDelaysMs = [0, 180, 320, 520, 820, 1200, 1650] as const;
   let lastError: unknown = null;
 
   for (let index = 0; index < retryDelaysMs.length; index += 1) {
@@ -1318,6 +1318,19 @@ async function trySyncPrivySessionWithoutIdentityToken(options: {
       totalAttempts: options.totalAttempts,
     }
   );
+
+  if (!resolvedPrivyAccessToken) {
+    console.info("[AuthFlow] skipping /api/auth/privy-sync without identity token because no Privy access token is available yet", {
+      owner: options.owner,
+      mode: options.mode,
+      userId: options.userId,
+      attemptId: options.attemptId,
+      attempt: options.attempt,
+      totalAttempts: options.totalAttempts,
+      reason: options.reason,
+    });
+    return null;
+  }
 
   console.info("[AuthFlow] attempting /api/auth/privy-sync without identity token", {
     owner: options.owner,
@@ -2410,6 +2423,15 @@ async function fetchSession(): Promise<AuthUser | null> {
       cachedUserPresent: Boolean(cachedUser),
     });
     return cachedUser;
+  }
+
+  if (!cachedUser && !hasRecoverableBackendSessionHint(now)) {
+    console.info("[AuthFlow] /api/me skipped because there are no recoverable backend session hints", {
+      pendingBootstrapState: pendingBootstrap?.state ?? null,
+      pendingBootstrapOwner: pendingBootstrap?.owner ?? null,
+      pendingBootstrapBelongsToCurrentTab,
+    });
+    return null;
   }
 
   console.info("[AuthColdStart] /api/me allowed to run", {
