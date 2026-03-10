@@ -125,9 +125,12 @@ function formatPct(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
-function formatIntegerMetric(value: number | null | undefined, options?: { zeroIsValid?: boolean }): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "Scanning";
-  if (!options?.zeroIsValid && value <= 0) return "Scanning";
+function formatIntegerMetric(
+  value: number | null | undefined,
+  options?: { zeroIsValid?: boolean; emptyLabel?: string }
+): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return options?.emptyLabel ?? "Scanning";
+  if (!options?.zeroIsValid && value <= 0) return options?.emptyLabel ?? "Scanning";
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
@@ -328,6 +331,11 @@ export default function TokenPage() {
   };
 
   const showTokenLoading = !token && isLoading;
+  const holderCountLabel = token
+    ? formatIntegerMetric(token.holderCount, {
+        emptyLabel: isFetching ? "Scanning" : "Unavailable",
+      })
+    : "Scanning";
 
   return (
     <div className="min-h-screen bg-background">
@@ -420,15 +428,22 @@ export default function TokenPage() {
                   ))}
                 </div>
 
-                <div className="flex flex-col gap-2 sm:min-w-[220px]">
+                <div className="flex flex-col gap-2 sm:min-w-[260px]">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <Button
                       onClick={handleOpenTradePanel}
                       disabled={!primaryTradeCall}
-                      className="h-11 gap-2 rounded-2xl bg-gradient-to-r from-primary via-emerald-400 to-cyan-300 text-primary-foreground shadow-[0_20px_44px_-24px_hsl(var(--primary)/0.6)] hover:opacity-95"
+                      className="group h-12 justify-start gap-3 rounded-[20px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <PhewTradeIcon className="h-4 w-4" />
-                      Open trade panel
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white/20 text-slate-950">
+                        <PhewTradeIcon className="h-4 w-4" />
+                      </span>
+                      <span className="flex flex-col items-start leading-none">
+                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-900/70">
+                          First caller
+                        </span>
+                        <span className="mt-1 text-sm font-semibold text-slate-950">Open trade panel</span>
+                      </span>
                     </Button>
                     <Button
                       variant={token.isFollowing ? "outline" : "default"}
@@ -651,7 +666,7 @@ export default function TokenPage() {
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Holders</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatIntegerMetric(token.holderCount)}</div>
+                      <div className="mt-2 text-xl font-semibold text-foreground">{holderCountLabel}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Sentiment</div>

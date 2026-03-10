@@ -29,7 +29,6 @@ import { LevelBadge, LevelBar } from "./LevelBar";
 import { RepostersDialog } from "./RepostersDialog";
 import { SharedAlphaDialog, type SharedAlphaResponse } from "./SharedAlphaDialog";
 import { TokenInfoCard } from "./TokenInfoCard";
-import { TokenScanningState } from "./TokenScanningState";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -4903,8 +4902,8 @@ export function PostCard({
             )}
 
             {shouldShowIntelligenceStrip ? (
-              hasTokenIntelligence ? (
-                <div className="mt-3 space-y-2.5">
+              <div className="mt-3 space-y-2.5">
+                {hasTokenIntelligence ? (
                   <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                     {confidenceScore !== null ? (
                       <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
@@ -4935,49 +4934,45 @@ export function PostCard({
                       <div className="mt-1 font-semibold text-foreground">{post.timingTier || "UNRANKED"}</div>
                     </div>
                   </div>
-                  {tokenPageHref ? (
-                    <button
-                      type="button"
-                      onClick={() => navigate(tokenPageHref)}
-                      className="group relative overflow-hidden rounded-[20px] border border-primary/30 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.18),transparent_42%),linear-gradient(135deg,hsl(var(--primary)/0.14),hsl(var(--background))_78%)] px-4 py-3.5 text-left shadow-[0_24px_56px_-34px_hsl(var(--primary)/0.45)] transition-all duration-200 hover:border-primary/45 hover:shadow-[0_28px_62px_-30px_hsl(var(--primary)/0.58)]"
-                    >
-                      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.06),transparent)] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-                      <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <div className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-primary">
-                            <Sparkles className="h-3 w-3" />
-                            Phew Ultra
-                          </div>
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-base font-semibold text-foreground">Open Token Lab</span>
-                            <span className="hidden rounded-full border border-primary/15 bg-primary/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary sm:inline-flex">
-                              Research hub
-                            </span>
-                          </div>
-                          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                            Chart, bundle clusters, sentiment, conviction, and alpha timeline in one place.
-                          </p>
+                ) : (
+                  <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm text-muted-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                    Live confidence, bundle risk, and timing are still syncing. Token Lab is ready now.
+                  </div>
+                )}
+                {tokenPageHref ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(tokenPageHref)}
+                    className="group relative overflow-hidden rounded-[20px] border border-primary/30 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.18),transparent_42%),linear-gradient(135deg,hsl(var(--primary)/0.14),hsl(var(--background))_78%)] px-4 py-3.5 text-left shadow-[0_24px_56px_-34px_hsl(var(--primary)/0.45)] transition-all duration-200 hover:border-primary/45 hover:shadow-[0_28px_62px_-30px_hsl(var(--primary)/0.58)]"
+                  >
+                    <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.06),transparent)] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+                    <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-primary">
+                          <Sparkles className="h-3 w-3" />
+                          Phew Ultra
                         </div>
-                        <div className="flex items-center gap-3 self-start sm:self-auto">
-                          <div className="hidden h-10 w-px bg-gradient-to-b from-transparent via-primary/20 to-transparent sm:block" />
-                          <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-transform duration-200 group-hover:translate-x-0.5">
-                            View
-                            <ExternalLink className="h-4 w-4" />
-                          </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-base font-semibold text-foreground">Open Token Lab</span>
+                          <span className="hidden rounded-full border border-primary/15 bg-primary/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary sm:inline-flex">
+                            Research hub
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                          Open instantly, then load the deeper chart, callers, and risk data inside the token page.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 self-start sm:self-auto">
+                        <div className="hidden h-10 w-px bg-gradient-to-b from-transparent via-primary/20 to-transparent sm:block" />
+                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary transition-transform duration-200 group-hover:translate-x-0.5">
+                          View
+                          <ExternalLink className="h-4 w-4" />
                         </div>
                       </div>
-                    </button>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="mt-3">
-                  <TokenScanningState
-                    compact
-                    address={post.contractAddress}
-                    subtitle="Confidence, bundle risk, and timing signals are still being assembled."
-                  />
-                </div>
-              )
+                    </div>
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
