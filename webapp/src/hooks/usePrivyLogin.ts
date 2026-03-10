@@ -78,7 +78,7 @@ function waitFor(delayMs: number): Promise<void> {
 }
 
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
-  const { ready, authenticated, user, logout: privyLogout } = usePrivy();
+  const { ready, authenticated, user, logout: privyLogout, getAccessToken } = usePrivy();
   const { identityToken } = useIdentityToken();
   const { hasLiveSession } = useAuth();
   const providerInstanceId = usePrivyProviderInstanceId();
@@ -225,6 +225,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       privyAuthenticated: latestPrivyStateRef.current.authenticated,
       privyIdentityToken: latestPrivyIdentityTokenRef.current,
       getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
+      getLatestPrivyAccessToken: () => getAccessToken(),
       triggerSource: "manual_user_action",
     });
 
@@ -233,7 +234,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }
 
     return syncedUser;
-  }, [handleSuccessfulLogin, isResumablePendingSnapshot]);
+  }, [getAccessToken, handleSuccessfulLogin, isResumablePendingSnapshot]);
 
   useEffect(() => {
     const pendingCallback = pendingPrivyCallbackRef.current;

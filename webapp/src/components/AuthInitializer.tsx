@@ -21,7 +21,7 @@ interface AuthInitializerProps {
 const PRIVY_INITIAL_HYDRATION_GRACE_MS = 4_000;
 
 function AuthInitializerInner({ children }: AuthInitializerProps) {
-  const { ready, authenticated, user, logout: privyLogout } = usePrivy();
+  const { ready, authenticated, user, logout: privyLogout, getAccessToken } = usePrivy();
   const { identityToken } = useIdentityToken();
   const { isAuthenticated, hasLiveSession } = useAuth();
   const providerInstanceId = usePrivyProviderInstanceId();
@@ -338,10 +338,11 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       privyAuthenticated: authenticated,
       privyIdentityToken: latestPrivyIdentityTokenRef.current,
       getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
+      getLatestPrivyAccessToken: () => getAccessToken(),
       tryExistingBackendSession: true,
       triggerSource: "component_mount",
     });
-  }, [authenticated, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, user]);
+  }, [authenticated, getAccessToken, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, user]);
 
   return <>{children}</>;
 }

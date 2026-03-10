@@ -145,6 +145,8 @@ type StartPrivyAuthBootstrapOptions = {
   privyAuthenticated?: boolean;
   privyIdentityToken?: string | null | undefined;
   getLatestPrivyIdentityToken?: () => string | null | undefined;
+  privyAccessToken?: string | null | undefined;
+  getLatestPrivyAccessToken?: () => Promise<string | null | undefined> | string | null | undefined;
   tryExistingBackendSession?: boolean;
   triggerSource?: "component_mount" | "manual_user_action" | "system";
 };
@@ -1174,6 +1176,60 @@ function normalizePrivyIdentityTokenCandidate(
   return typeof token === "string" && token.trim().length > 0 ? token.trim() : undefined;
 }
 
+async function resolvePrivyAccessTokenCandidate(
+  initialToken: string | null | undefined,
+  getLatestPrivyAccessToken:
+    | (() => Promise<string | null | undefined> | string | null | undefined)
+    | undefined,
+  metadata: {
+    owner: PrivyAuthBootstrapOwner;
+    mode: PrivyAuthBootstrapMode;
+    userId: string;
+    attemptId: string;
+    attempt: number;
+    totalAttempts: number;
+  }
+): Promise<string | undefined> {
+  const normalizedInitialToken =
+    typeof initialToken === "string" && initialToken.trim().length > 0
+      ? initialToken.trim()
+      : undefined;
+  if (normalizedInitialToken) {
+    return normalizedInitialToken;
+  }
+
+  if (!getLatestPrivyAccessToken) {
+    return undefined;
+  }
+
+  try {
+    const candidate = await getLatestPrivyAccessToken();
+    const normalizedCandidate =
+      typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : undefined;
+    console.info("[AuthFlow] Privy access token resolution completed", {
+      owner: metadata.owner,
+      mode: metadata.mode,
+      userId: metadata.userId,
+      attemptId: metadata.attemptId,
+      attempt: metadata.attempt,
+      totalAttempts: metadata.totalAttempts,
+      hasAccessToken: Boolean(normalizedCandidate),
+    });
+    return normalizedCandidate;
+  } catch (error) {
+    console.warn("[AuthFlow] Privy access token resolution failed", {
+      owner: metadata.owner,
+      mode: metadata.mode,
+      userId: metadata.userId,
+      attemptId: metadata.attemptId,
+      attempt: metadata.attempt,
+      totalAttempts: metadata.totalAttempts,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
 async function waitForLatestPrivyIdentityToken(options: {
   getLatestPrivyIdentityToken?: () => string | null | undefined;
   initialToken?: string | null | undefined;
@@ -1265,6 +1321,8 @@ export async function startPrivyAuthBootstrap({
   privyAuthenticated,
   privyIdentityToken,
   getLatestPrivyIdentityToken,
+  privyAccessToken,
+  getLatestPrivyAccessToken,
   tryExistingBackendSession = false,
   triggerSource = "system",
 }: StartPrivyAuthBootstrapOptions): Promise<AuthUser | null> {
@@ -1639,8 +1697,20 @@ export async function startPrivyAuthBootstrap({
             }
 
             if (privyReady === true && privyAuthenticated === true) {
+              const resolvedPrivyAccessToken = await resolvePrivyAccessTokenCandidate(
+                privyAccessToken,
+                getLatestPrivyAccessToken,
+                {
+                  owner,
+                  mode,
+                  userId: resolvedPayload.user.id,
+                  attemptId: privyBootstrapAttemptId,
+                  attempt,
+                  totalAttempts,
+                }
+              );
               console.info(
-                "[AuthFlow] attempting /api/auth/privy-sync using server-visible Privy session",
+                "[AuthFlow] attempting /api/auth/privy-sync using Privy access-token fallback",
                 {
                   owner,
                   mode,
@@ -1649,6 +1719,7 @@ export async function startPrivyAuthBootstrap({
                   attempt,
                   totalAttempts,
                   skipReason,
+                  hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
                 }
               );
 
@@ -1658,15 +1729,18 @@ export async function startPrivyAuthBootstrap({
                   resolvedPayload.email,
                   resolvedPayload.name,
                   undefined,
-                  { allowMissingIdentityToken: true }
+                  {
+                    allowMissingIdentityToken: true,
+                    privyAuthToken: resolvedPrivyAccessToken,
+                  }
                 );
 
                 setPrivyAuthBootstrapState("authenticated", {
                   owner,
                   mode,
                   userId: syncResult.user.id,
-                  detail: "backend session synced from server-visible Privy session",
-                  debugCode: "backend_session_synced_server_visible_privy_session",
+                  detail: "backend session synced from Privy access-token fallback",
+                  debugCode: "backend_session_synced_privy_access_token",
                   backendSyncStarted: true,
                   attempt,
                   totalAttempts,
@@ -1674,7 +1748,7 @@ export async function startPrivyAuthBootstrap({
                 return syncResult.user;
               } catch (serverVisibleSyncError) {
                 console.warn(
-                  "[AuthFlow] server-visible Privy session sync failed while identity token was unavailable",
+                  "[AuthFlow] Privy access-token fallback sync failed while identity token was unavailable",
                   {
                     owner,
                     mode,
@@ -1682,6 +1756,7 @@ export async function startPrivyAuthBootstrap({
                     attemptId: privyBootstrapAttemptId,
                     attempt,
                     totalAttempts,
+                    hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
                     message:
                       serverVisibleSyncError instanceof Error
                         ? serverVisibleSyncError.message
@@ -2787,6 +2862,7 @@ export async function syncPrivySession(
   privyIdToken?: string,
   options?: {
     allowMissingIdentityToken?: boolean;
+    privyAuthToken?: string | null;
   }
 ): Promise<{ user: AuthUser }> {
   const normalizedUserId = privyUserId.trim();
@@ -2798,6 +2874,10 @@ export async function syncPrivySession(
   const normalizedPrivyIdToken =
     typeof privyIdToken === "string" && privyIdToken.trim().length > 0
       ? privyIdToken.trim()
+      : null;
+  const normalizedPrivyAuthToken =
+    typeof options?.privyAuthToken === "string" && options.privyAuthToken.trim().length > 0
+      ? options.privyAuthToken.trim()
       : null;
   if (!normalizedPrivyIdToken && options?.allowMissingIdentityToken !== true) {
     throw new Error("Privy identity verification is still finalizing");
@@ -2814,6 +2894,9 @@ export async function syncPrivySession(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(normalizedPrivyAuthToken
+            ? { Authorization: `Bearer ${normalizedPrivyAuthToken}` }
+            : {}),
         },
         credentials: "include",
         signal: controller.signal,
