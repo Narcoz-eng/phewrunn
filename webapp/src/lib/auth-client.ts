@@ -52,6 +52,7 @@ const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
 const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 1_400;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
+const AUTH_SESSION_HOT_CACHE_MS = 20_000;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
 const SESSION_FETCH_TIMEOUT_MS = 4500;
@@ -1790,6 +1791,13 @@ async function fetchSession(): Promise<AuthUser | null> {
     cachedUser &&
     lastPrivySyncAt > 0 &&
     now - lastPrivySyncAt < AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS
+  ) {
+    return cachedUser;
+  }
+  if (
+    cachedUser &&
+    lastSuccessfulSessionAt > 0 &&
+    now - lastSuccessfulSessionAt < AUTH_SESSION_HOT_CACHE_MS
   ) {
     return cachedUser;
   }

@@ -79,8 +79,11 @@ export default function Leaderboard() {
     },
     initialData: sessionBackedUser ?? undefined,
     enabled: !!session?.user && hasLiveSession,
-    staleTime: 30000,
+    gcTime: 15 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: sessionBackedUser ? false : "always",
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
 

@@ -1205,14 +1205,16 @@ export default function Feed() {
     },
     initialData: sessionBackedUser ?? undefined,
     enabled: hasLiveSession,
+    gcTime: 15 * 60 * 1000,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 429)) {
         return false;
       }
       return failureCount < 2;
     },
-    staleTime: 30000, // 30 seconds
-    refetchInterval: hasLiveSession && !isOverlayOpen ? 45_000 : false,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
+    refetchOnMount: sessionBackedUser || cachedFeedUser ? false : "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });

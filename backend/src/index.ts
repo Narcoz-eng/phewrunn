@@ -613,13 +613,19 @@ const ME_DB_LOOKUP_TIMEOUT_MS = (() => {
   const raw = process.env.ME_DB_LOOKUP_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return process.env.NODE_ENV === "production" ? 4000 : 4500;
+  return process.env.NODE_ENV === "production" ? 1800 : 2200;
 })();
 const ME_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const ME_RESPONSE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 60 * 60_000 : 10 * 60_000;
 const ME_RESPONSE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const ME_RESPONSE_REDIS_KEY_PREFIX = "me-response:v1";
+const ME_RESPONSE_REDIS_LOOKUP_TIMEOUT_MS =
+  process.env.NODE_ENV === "production" ? 140 : 220;
+const ME_FAST_SESSION_LOOKUP_TIMEOUT_MS =
+  process.env.NODE_ENV === "production" ? 700 : 900;
+const ME_FAST_FALLBACK_LOOKUP_TIMEOUT_MS =
+  process.env.NODE_ENV === "production" ? 500 : 700;
 type MeResponseUser = {
   id: string;
   name: string;
@@ -902,25 +908,49 @@ function normalizeCachedMeResponseEnvelope(
   };
 }
 
-async function readCachedMeResponse(
+function readLocalCachedMeResponse(
   userId: string,
   opts?: { allowStale?: boolean }
-): Promise<MeResponseUser | null> {
+): MeResponseUser | null {
   const nowMs = Date.now();
   const cached = meResponseCache.get(userId);
-  if (cached) {
-    if (cached.expiresAtMs > nowMs) {
-      return cached.data;
-    }
-    if (opts?.allowStale && cached.staleUntilMs > nowMs) {
-      return cached.data;
-    }
-    if (cached.staleUntilMs <= nowMs) {
-      meResponseCache.delete(userId);
-    }
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAtMs > nowMs) {
+    return cached.data;
+  }
+  if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+    return cached.data;
+  }
+  if (cached.staleUntilMs <= nowMs) {
+    meResponseCache.delete(userId);
+  }
+  return null;
+}
+
+async function readCachedMeResponse(
+  userId: string,
+  opts?: { allowStale?: boolean; localOnly?: boolean }
+): Promise<MeResponseUser | null> {
+  const localCached = readLocalCachedMeResponse(userId, opts);
+  if (localCached) {
+    return localCached;
+  }
+  if (opts?.localOnly) {
+    return null;
   }
 
-  const redisRaw = await cacheGetJson<Record<string, unknown>>(buildMeResponseRedisKey(userId));
+  const redisLookup = await withTimeoutResult(
+    cacheGetJson<Record<string, unknown>>(buildMeResponseRedisKey(userId)),
+    ME_RESPONSE_REDIS_LOOKUP_TIMEOUT_MS
+  );
+  if (redisLookup.timedOut) {
+    return null;
+  }
+
+  const nowMs = Date.now();
+  const redisRaw = redisLookup.value;
   const redisEnvelope = normalizeCachedMeResponseEnvelope(redisRaw);
   const redisCached =
     redisEnvelope?.data ??
@@ -962,6 +992,66 @@ function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser
     tradeFeeShareBps: user.tradeFeeShareBps,
     tradeFeePayoutAddress: user.tradeFeePayoutAddress,
     createdAt: user.createdAt,
+  };
+}
+
+function buildMeResponseUserFromSessionUser(
+  user: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+    walletAddress?: string | null;
+    username?: string | null;
+    level?: number | null;
+    xp?: number | null;
+    bio?: string | null;
+    role?: string | null;
+    isAdmin?: boolean | null;
+    isVerified?: boolean | null;
+    tradeFeeRewardsEnabled?: boolean | null;
+    tradeFeeShareBps?: number | null;
+    tradeFeePayoutAddress?: string | null;
+    createdAt?: Date | string | null;
+  },
+  defaults: {
+    tradeFeeRewardsEnabled: boolean;
+    tradeFeeShareBps: number;
+    tradeFeePayoutAddress: string | null;
+  }
+): MeResponseUser {
+  const createdAt =
+    user.createdAt instanceof Date
+      ? user.createdAt
+      : typeof user.createdAt === "string"
+        ? new Date(user.createdAt)
+        : new Date();
+
+  return {
+    id: user.id,
+    name: typeof user.name === "string" && user.name.trim().length > 0 ? user.name : "User",
+    email: typeof user.email === "string" ? user.email : "",
+    image: typeof user.image === "string" ? user.image : null,
+    walletAddress: typeof user.walletAddress === "string" ? user.walletAddress : null,
+    username: typeof user.username === "string" ? user.username : null,
+    level: typeof user.level === "number" && Number.isFinite(user.level) ? user.level : 0,
+    xp: typeof user.xp === "number" && Number.isFinite(user.xp) ? user.xp : 0,
+    bio: typeof user.bio === "string" ? user.bio : null,
+    isAdmin: user.role === "admin" || user.isAdmin === true,
+    isVerified: user.isVerified === true,
+    tradeFeeRewardsEnabled:
+      typeof user.tradeFeeRewardsEnabled === "boolean"
+        ? user.tradeFeeRewardsEnabled
+        : defaults.tradeFeeRewardsEnabled,
+    tradeFeeShareBps:
+      typeof user.tradeFeeShareBps === "number"
+        ? normalizeTradeFeeShareBps(user.tradeFeeShareBps)
+        : defaults.tradeFeeShareBps,
+    tradeFeePayoutAddress:
+      typeof user.tradeFeePayoutAddress === "string"
+        ? user.tradeFeePayoutAddress
+        : defaults.tradeFeePayoutAddress,
+    createdAt: Number.isNaN(createdAt.getTime()) ? new Date() : createdAt,
   };
 }
 
@@ -2665,7 +2755,7 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
 function logApiMe200(
   c: Context,
   userId: string,
-  source: "cache" | "database" | "session_fallback" | "stale_cache"
+  source: "local_cache" | "cache" | "database" | "session_fallback" | "stale_cache"
 ): void {
   console.info("[AuthFlow] /api/me 200", {
     requestId: c.get("requestId") ?? null,
@@ -3360,6 +3450,20 @@ app.get("/api/me", async (c) => {
   appendAuthDecision(authTrace, `/api/me:final_200:${finalAuthReason}`);
   console.info("[/api/me][auth-trace]", finalizeApiMeAuthTrace(authTrace, 200, null));
 
+  const defaultFeeSettings = {
+    tradeFeeRewardsEnabled: true,
+    tradeFeeShareBps: 50,
+    tradeFeePayoutAddress: null as string | null,
+  };
+  const sessionBackedUser = session?.user
+    ? buildMeResponseUserFromSessionUser(session.user, defaultFeeSettings)
+    : null;
+  const hotCachedUser = readLocalCachedMeResponse(user.id);
+  if (hotCachedUser) {
+    logApiMe200(c, user.id, "local_cache");
+    return c.json({ data: hotCachedUser });
+  }
+
   const cachedUser = await readCachedMeResponse(user.id);
   if (cachedUser) {
     logApiMe200(c, user.id, "cache");
@@ -3368,20 +3472,18 @@ app.get("/api/me", async (c) => {
 
   let dbUser: MeResponseUser | null = null;
 
-  const defaultFeeSettings = {
-    tradeFeeRewardsEnabled: true,
-    tradeFeeShareBps: 50,
-    tradeFeePayoutAddress: null as string | null,
-  };
-
   const sessionIsStatelessFallback =
     typeof session?.session?.id === "string" &&
     session.session.id.startsWith("stateless:");
+  const shouldPreferFastSessionFallback = Boolean(sessionBackedUser) || sessionIsStatelessFallback;
+  const primaryLookupTimeoutMs = shouldPreferFastSessionFallback
+    ? Math.min(ME_DB_LOOKUP_TIMEOUT_MS, ME_FAST_SESSION_LOOKUP_TIMEOUT_MS)
+    : ME_DB_LOOKUP_TIMEOUT_MS;
+  const compatibleFallbackLookupTimeoutMs = shouldPreferFastSessionFallback
+    ? ME_FAST_FALLBACK_LOOKUP_TIMEOUT_MS
+    : Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500);
 
   try {
-    const primaryLookupTimeoutMs = sessionIsStatelessFallback
-      ? Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 700)
-      : ME_DB_LOOKUP_TIMEOUT_MS;
     const meLookupMode = meResponseLookupMode;
     const runMeLookup = async (
       mode: MeResponseLookupMode,
@@ -3397,7 +3499,7 @@ app.get("/api/me", async (c) => {
 
     let fullLookup = await runMeLookup(meLookupMode, primaryLookupTimeoutMs);
 
-    if (fullLookup.timedOut && !sessionIsStatelessFallback) {
+    if (fullLookup.timedOut && !shouldPreferFastSessionFallback) {
       const retryTimeoutMs = Math.min(ME_DB_LOOKUP_TIMEOUT_MS + 1200, 5000);
       fullLookup = await runMeLookup(meLookupMode, retryTimeoutMs);
       if (fullLookup.timedOut) {
@@ -3407,14 +3509,14 @@ app.get("/api/me", async (c) => {
       }
     } else if (fullLookup.timedOut) {
       console.warn(
-        `[/api/me] Stateless session lookup exceeded ${primaryLookupTimeoutMs}ms; serving session-backed fallback`
+        `[/api/me] Fast user lookup exceeded ${primaryLookupTimeoutMs}ms; serving session-backed fallback`
       );
     }
 
     if (!fullLookup.timedOut) {
       dbUser = fullLookup.value ? buildMeResponseUserFromDbRecord(fullLookup.value) : null;
     } else {
-      const fallbackLookup = await runMeLookup("fallback", Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500));
+      const fallbackLookup = await runMeLookup("fallback", compatibleFallbackLookupTimeoutMs);
       if (!fallbackLookup.timedOut && fallbackLookup.value) {
         dbUser = buildMeResponseUserFromDbRecord(fallbackLookup.value);
       }
@@ -3428,7 +3530,7 @@ app.get("/api/me", async (c) => {
             where: { id: user.id },
             select: ME_RESPONSE_USER_FALLBACK_SELECT,
           }),
-          Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1500)
+          compatibleFallbackLookupTimeoutMs
         );
         if (!fallbackLookup.timedOut) {
           dbUser = fallbackLookup.value
@@ -3454,7 +3556,15 @@ app.get("/api/me", async (c) => {
 
     if (!dbUser) {
       try {
-        dbUser = await queryMeResponseUserRaw(user.id);
+        const rawLookup = await withTimeoutResult(
+          queryMeResponseUserRaw(user.id),
+          shouldPreferFastSessionFallback
+            ? Math.max(ME_FAST_FALLBACK_LOOKUP_TIMEOUT_MS, 350)
+            : Math.min(ME_DB_LOOKUP_TIMEOUT_MS, 1800)
+        );
+        if (!rawLookup.timedOut) {
+          dbUser = rawLookup.value;
+        }
       } catch (rawError) {
         console.error("[/api/me] Raw fallback user profile lookup failed:", rawError);
       }
@@ -3468,29 +3578,11 @@ app.get("/api/me", async (c) => {
       logApiMe200(c, user.id, "stale_cache");
       return c.json({ data: staleCachedUser });
     }
-    if (session?.user) {
-        const sessionBackedUser: MeResponseUser = {
-        id: session.user.id,
-        name: session.user.name,
-        email: session.user.email,
-        image: session.user.image,
-        walletAddress: session.user.walletAddress,
-        username: session.user.username,
-        level: session.user.level,
-        xp: session.user.xp,
-        bio: session.user.bio,
-        isAdmin: session.user.role === "admin" || session.user.isAdmin,
-        isVerified: session.user.isVerified,
-        tradeFeeRewardsEnabled:
-          session.user.tradeFeeRewardsEnabled ?? defaultFeeSettings.tradeFeeRewardsEnabled,
-        tradeFeeShareBps: session.user.tradeFeeShareBps ?? defaultFeeSettings.tradeFeeShareBps,
-        tradeFeePayoutAddress:
-          session.user.tradeFeePayoutAddress ?? defaultFeeSettings.tradeFeePayoutAddress,
-        createdAt: session.user.createdAt,
-      };
+    if (sessionBackedUser) {
       if (sessionIsStatelessFallback) {
         console.warn("[/api/me] Serving session-backed fallback profile while database is unavailable");
       }
+      writeLocalMeResponseCache(user.id, sessionBackedUser);
       logApiMe200(c, user.id, "session_fallback");
       return c.json({ data: sessionBackedUser });
     }
