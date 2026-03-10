@@ -88,6 +88,7 @@ type TokenPageData = {
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
+  holderCountSource?: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   deployerSupplyPct: number | null;
@@ -223,7 +224,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v3:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v4:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -331,11 +332,18 @@ export default function TokenPage() {
   };
 
   const showTokenLoading = !token && isLoading;
-  const holderCountLabel = token
+  const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
         emptyLabel: isFetching ? "Scanning" : "Unavailable",
       })
     : "Scanning";
+  const holderCountLabel =
+    token?.holderCountSource === "largest_accounts" &&
+    typeof token.holderCount === "number" &&
+    Number.isFinite(token.holderCount) &&
+    token.holderCount > 0
+      ? `${holderCountValue}+`
+      : holderCountValue;
 
   return (
     <div className="min-h-screen bg-background">
@@ -376,8 +384,8 @@ export default function TokenPage() {
         ) : (
           <div className="space-y-5">
             <section className="app-surface p-5 sm:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="flex items-center gap-4">
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                <div className="min-w-0 flex items-start gap-4">
                   <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-border/60 bg-secondary">
                     {token.imageUrl ? (
                       <img src={token.imageUrl} alt={token.symbol ?? token.name ?? "Token"} className="h-full w-full object-cover" />
@@ -385,9 +393,9 @@ export default function TokenPage() {
                       <Coins className="h-7 w-7 text-primary" />
                     )}
                   </div>
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-2xl font-bold text-foreground">
+                      <h2 className="break-words text-2xl font-bold text-foreground">
                         {token.symbol || token.name || token.address.slice(0, 8)}
                       </h2>
                       <span className={cn("rounded-full border px-3 py-1 text-xs font-semibold", riskTone(token.bundleRiskLabel))}>
@@ -412,44 +420,44 @@ export default function TokenPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {[
-                    { label: "Confidence", value: token.confidenceScore },
-                    { label: "Hot Alpha", value: token.hotAlphaScore },
-                    { label: "Early Runner", value: token.earlyRunnerScore },
-                    { label: "High Conviction", value: token.highConvictionScore },
-                  ].map((metric) => (
-                    <div key={metric.label} className="rounded-[20px] border border-border/60 bg-white/55 p-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{metric.label}</div>
-                      <div className={cn("mt-2 text-2xl font-bold", scoreTone(metric.value))}>
-                        {typeof metric.value === "number" ? `${metric.value.toFixed(0)}%` : "N/A"}
+                <div className="min-w-0 space-y-3">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {[
+                      { label: "Confidence", value: token.confidenceScore },
+                      { label: "Hot Alpha", value: token.hotAlphaScore },
+                      { label: "Early Runner", value: token.earlyRunnerScore },
+                      { label: "High Conviction", value: token.highConvictionScore },
+                    ].map((metric) => (
+                      <div key={metric.label} className="min-w-0 rounded-[20px] border border-border/60 bg-white/55 p-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{metric.label}</div>
+                        <div className={cn("mt-2 text-xl font-bold sm:text-2xl", scoreTone(metric.value))}>
+                          {typeof metric.value === "number" ? `${metric.value.toFixed(0)}%` : "N/A"}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
 
-                <div className="flex flex-col gap-2 sm:min-w-[260px]">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                     <Button
                       onClick={handleOpenTradePanel}
                       disabled={!primaryTradeCall}
-                      className="group h-12 justify-start gap-3 rounded-[20px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="group h-12 min-w-0 justify-start gap-3 rounded-[20px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] sm:min-w-[220px] sm:flex-1 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <span className="flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white/20 text-slate-950">
                         <PhewTradeIcon className="h-4 w-4" />
                       </span>
-                      <span className="flex flex-col items-start leading-none">
-                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-900/70">
-                          First caller
+                      <span className="min-w-0 flex flex-col items-start leading-none">
+                        <span className="text-sm font-semibold text-slate-950">Open trade panel</span>
+                        <span className="mt-1 truncate text-[11px] text-slate-900/75">
+                          Jump into the live setup for this token.
                         </span>
-                        <span className="mt-1 text-sm font-semibold text-slate-950">Open trade panel</span>
                       </span>
                     </Button>
                     <Button
                       variant={token.isFollowing ? "outline" : "default"}
                       onClick={() => followMutation.mutate()}
                       disabled={followMutation.isPending}
-                      className="h-11 rounded-2xl"
+                      className="h-11 rounded-2xl sm:min-w-[170px]"
                     >
                       {followMutation.isPending ? (
                         <>
@@ -598,7 +606,7 @@ export default function TokenPage() {
                           </Avatar>
                           <div className="min-w-0 flex-1">
                             <div className="truncate font-semibold text-foreground">{trader.username || trader.name}</div>
-                            <div className="text-xs text-muted-foreground">
+                            <div className="line-clamp-2 break-words text-xs text-muted-foreground">
                               {trader.reputationTier || "Unranked"} | {trader.callsCount} calls | {trader.avgConfidenceScore.toFixed(0)}% avg confidence
                             </div>
                           </div>
@@ -676,13 +684,18 @@ export default function TokenPage() {
                   <p className="mt-3 text-xs text-muted-foreground">
                     Sentiment starts neutral, then moves with community reactions, 24h price trend, and buy versus sell pressure.
                   </p>
+                  {token.holderCountSource === "largest_accounts" ? (
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Holder count is shown as a lower bound from the live largest-holder scan while the full distribution refresh completes.
+                    </p>
+                  ) : null}
                   <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bullish {token.sentiment.bullishPct.toFixed(0)}%</span>
                     <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bearish {token.sentiment.bearishPct.toFixed(0)}%</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">🔥 {token.sentiment.reactions.alpha}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">🐸 {token.sentiment.reactions.based}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">💰 {token.sentiment.reactions.printed}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">💀 {token.sentiment.reactions.rug}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Alpha {token.sentiment.reactions.alpha}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Based {token.sentiment.reactions.based}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Printed {token.sentiment.reactions.printed}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Rug {token.sentiment.reactions.rug}</span>
                   </div>
                 </section>
 

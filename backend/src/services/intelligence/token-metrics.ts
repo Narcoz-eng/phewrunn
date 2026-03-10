@@ -28,6 +28,7 @@ export type BundleClusterSnapshot = {
 
 export type TokenDistributionSnapshot = {
   holderCount: number | null;
+  holderCountSource: "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   deployerSupplyPct: number | null;
@@ -107,6 +108,7 @@ type RpcProgramAccountResult = Array<unknown>;
 
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
+const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
   process.env.HELIUS_RPC_ENDPOINT?.trim() || null,
@@ -250,12 +252,16 @@ export async function fetchDexTokenStats(
   return null;
 }
 
-async function rpcCall<T>(method: string, params: unknown[]): Promise<T | null> {
+async function rpcCall<T>(
+  method: string,
+  params: unknown[],
+  options?: { timeoutMs?: number }
+): Promise<T | null> {
   if (SOLANA_RPC_URLS.length === 0) return null;
 
   for (const endpoint of SOLANA_RPC_URLS) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6_000);
+    const timeoutId = setTimeout(() => controller.abort(), options?.timeoutMs ?? 6_000);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -280,6 +286,74 @@ async function rpcCall<T>(method: string, params: unknown[]): Promise<T | null> 
   }
 
   return null;
+}
+
+function searchForNumericField(
+  value: unknown,
+  fieldNames: Set<string>,
+  depth = 0
+): number | null {
+  if (depth > 4 || value === null || value === undefined) return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 0 ? value : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = searchForNumericField(item, fieldNames, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (fieldNames.has(key.toLowerCase())) {
+      const direct = searchForNumericField(nested, fieldNames, depth + 1);
+      if (direct !== null) return direct;
+    }
+  }
+
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    const found = searchForNumericField(nested, fieldNames, depth + 1);
+    if (found !== null) return found;
+  }
+
+  return null;
+}
+
+async function fetchBirdeyeHolderCount(address: string): Promise<number | null> {
+  if (!BIRDEYE_API_KEY) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3_800);
+  try {
+    const response = await fetch(
+      `https://public-api.birdeye.so/defi/token_overview?address=${encodeURIComponent(address)}`,
+      {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          "x-chain": "solana",
+          "X-API-KEY": BIRDEYE_API_KEY,
+        },
+        signal: controller.signal,
+      }
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as unknown;
+    return searchForNumericField(
+      payload,
+      new Set(["holder", "holders", "holdercount", "holder_count"])
+    );
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function uiAmountToNumber(input: {
@@ -339,7 +413,7 @@ export async function analyzeSolanaTokenDistribution(
   mintAddress: string,
   fallbackLiquidityUsd?: number | null
 ): Promise<TokenDistributionSnapshot | null> {
-  const [supplyResult, largestAccountsResult, holderAccountsResult] = await Promise.all([
+  const [supplyResult, largestAccountsResult, holderAccountsResult, birdeyeHolderCount] = await Promise.all([
     rpcCall<RpcTokenSupplyResult>("getTokenSupply", [mintAddress]),
     rpcCall<RpcLargestAccountsResult>("getTokenLargestAccounts", [mintAddress]),
     rpcCall<RpcProgramAccountResult>("getProgramAccounts", [
@@ -352,7 +426,8 @@ export async function analyzeSolanaTokenDistribution(
         ],
         dataSlice: { offset: 0, length: 0 },
       },
-    ]),
+    ], { timeoutMs: 11_000 }),
+    fetchBirdeyeHolderCount(mintAddress),
   ]);
 
   const totalSupply = uiAmountToNumber({
@@ -398,8 +473,23 @@ export async function analyzeSolanaTokenDistribution(
     deployerSupplyPct: largestHolderPct,
   });
 
+  let holderCount: number | null = null;
+  let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
+
+  if (Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0) {
+    holderCount = holderAccountsResult.length;
+    holderCountSource = "rpc_scan";
+  } else if (typeof birdeyeHolderCount === "number" && Number.isFinite(birdeyeHolderCount) && birdeyeHolderCount > 0) {
+    holderCount = Math.round(birdeyeHolderCount);
+    holderCountSource = "birdeye";
+  } else if (holderPcts.length > 0) {
+    holderCount = holderPcts.length;
+    holderCountSource = "largest_accounts";
+  }
+
   return {
-    holderCount: Array.isArray(holderAccountsResult) ? holderAccountsResult.length : null,
+    holderCount,
+    holderCountSource,
     largestHolderPct,
     top10HolderPct,
     deployerSupplyPct: largestHolderPct,

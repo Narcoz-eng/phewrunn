@@ -623,6 +623,16 @@ type FeedPostsPageLike = {
   items: Post[];
 };
 
+type TokenPageCacheLike = {
+  recentCalls: Post[];
+};
+
+type IntelligenceLeaderboardsCacheLike = {
+  topAlphaToday?: Post[];
+  biggestRoiToday?: Post[];
+  bestEntryToday?: Post[];
+};
+
 function syncFollowStateAcrossPostCaches(
   queryClient: QueryClient,
   author: Pick<PostAuthor, "id" | "username">,
@@ -653,6 +663,22 @@ function syncFollowStateAcrossPostCaches(
   queryClient.setQueriesData<Post[]>({ queryKey: ["userReposts"] }, (current) =>
     current?.map(syncPost) ?? current
   );
+  queryClient.setQueriesData<TokenPageCacheLike>({ queryKey: ["token-page"] }, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      recentCalls: current.recentCalls?.map(syncPost) ?? current.recentCalls,
+    };
+  });
+  queryClient.setQueriesData<IntelligenceLeaderboardsCacheLike>({ queryKey: ["leaderboards"] }, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      topAlphaToday: current.topAlphaToday?.map(syncPost) ?? current.topAlphaToday,
+      biggestRoiToday: current.biggestRoiToday?.map(syncPost) ?? current.biggestRoiToday,
+      bestEntryToday: current.bestEntryToday?.map(syncPost) ?? current.bestEntryToday,
+    };
+  });
   queryClient.setQueriesData<{ id?: string | null; username?: string | null; isFollowing?: boolean }>(
     { queryKey: ["userProfile"] },
     (current) => {

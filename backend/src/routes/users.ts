@@ -24,6 +24,7 @@ import {
   getWalletTradeSnapshotsForSolanaTokens,
   isHeliusConfigured,
 } from "../services/helius.js";
+import { invalidateViewerSocialCaches } from "../services/intelligence/engine.js";
 
 export const usersRouter = new Hono<{ Variables: AuthVariables }>();
 const PROFILE_POST_WALLET_ENRICH_MAX_POSTS = process.env.NODE_ENV === "production" ? 12 : 6;
@@ -2846,6 +2847,7 @@ usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
 
   // Get updated counts
   const followerCount = await prisma.follow.count({ where: { followingId: targetUserId } });
+  invalidateViewerSocialCaches(currentUser.id);
 
   return c.json({ data: { following: true, followerCount } });
 });
@@ -2890,6 +2892,7 @@ usersRouter.delete("/:id/follow", requireNotBanned, async (c) => {
 
   // Get updated counts
   const followerCount = await prisma.follow.count({ where: { followingId: targetUserId } });
+  invalidateViewerSocialCaches(currentUser.id);
 
   return c.json({ data: { following: false, followerCount } });
 });

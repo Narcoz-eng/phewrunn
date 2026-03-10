@@ -197,6 +197,7 @@ export type FeedArgs = {
 export type EnrichedCall = CallRecord & {
   isLiked: boolean;
   isReposted: boolean;
+  isFollowingAuthor: boolean;
   currentReactionType: string | null;
   reactionCounts: ReactionCounts;
   confidenceScore: number;
@@ -249,6 +250,7 @@ type HydrateCallOptions = {
 export type TokenOverview = {
   token: TokenRecord & {
     isFollowing: boolean;
+    holderCountSource: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
     bundleClusters: Array<{
       id: string;
       clusterLabel: string;
@@ -487,6 +489,10 @@ function hasFiniteMetric(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function hasPositiveMetric(value: number | null | undefined): value is number {
+  return hasFiniteMetric(value) && value > 0;
+}
+
 function pickFirstFiniteMetric(...values: Array<number | null | undefined>): number | null {
   for (const value of values) {
     if (hasFiniteMetric(value)) {
@@ -530,7 +536,12 @@ function tokenNeedsCoreHydration(token: TokenRecord | null): boolean {
   if (!hasFiniteMetric(token.highConvictionScore)) return true;
   if (!hasFiniteMetric(token.sentimentScore)) return true;
   if (!hasFiniteMetric(token.liquidity) && !hasFiniteMetric(token.volume24h)) return true;
-  if (token.chainType === "solana" && !hasFiniteMetric(token.holderCount) && !hasFiniteMetric(token.top10HolderPct)) {
+  if (
+    token.chainType === "solana" &&
+    (!hasPositiveMetric(token.holderCount) ||
+      !hasFiniteMetric(token.top10HolderPct) ||
+      !hasFiniteMetric(token.largestHolderPct))
+  ) {
     return true;
   }
   return false;
@@ -591,6 +602,40 @@ async function memoizeCached<T>(
 function sanitizeCacheKeyPart(value: string | null | undefined): string {
   const normalized = value?.trim().toLowerCase();
   return normalized && normalized.length > 0 ? normalized : "-";
+}
+
+function clearCacheEntriesByPrefix<T>(cache: Map<string, T>, prefix: string): void {
+  for (const key of Array.from(cache.keys())) {
+    if (key.startsWith(prefix)) {
+      cache.delete(key);
+    }
+  }
+}
+
+function clearCacheEntriesContaining<T>(cache: Map<string, T>, fragment: string): void {
+  for (const key of Array.from(cache.keys())) {
+    if (key.includes(fragment)) {
+      cache.delete(key);
+    }
+  }
+}
+
+export function invalidateViewerSocialCaches(viewerId: string | null | undefined): void {
+  const normalizedViewerId = viewerId?.trim();
+  if (!normalizedViewerId) return;
+
+  const viewerKey = sanitizeCacheKeyPart(normalizedViewerId);
+  followingSnapshotCache.delete(normalizedViewerId);
+  clearCacheEntriesContaining(feedListCache, `:${viewerKey}:`);
+  clearCacheEntriesContaining(feedListInFlight, `:${viewerKey}:`);
+  clearCacheEntriesByPrefix(tokenOverviewCache, `token:${normalizedViewerId}:`);
+  clearCacheEntriesByPrefix(tokenOverviewInFlight, `token:${normalizedViewerId}:`);
+  clearCacheEntriesByPrefix(traderOverviewCache, `trader:${normalizedViewerId}:`);
+  clearCacheEntriesByPrefix(traderOverviewInFlight, `trader:${normalizedViewerId}:`);
+  clearCacheEntriesByPrefix(dailyLeaderboardsCache, `leaderboards:daily:${normalizedViewerId}`);
+  clearCacheEntriesByPrefix(dailyLeaderboardsInFlight, `leaderboards:daily:${normalizedViewerId}`);
+  clearCacheEntriesByPrefix(firstCallerLeaderboardsCache, `leaderboards:first-callers:${normalizedViewerId}`);
+  clearCacheEntriesByPrefix(firstCallerLeaderboardsInFlight, `leaderboards:first-callers:${normalizedViewerId}`);
 }
 
 function buildTokenMapFromRecords(records: CallRecord[]): Map<string, TokenRecord> {
@@ -1321,9 +1366,14 @@ async function maybeRefreshTraderMetrics(authors: AuthorRecord[]): Promise<void>
   await refreshTraderMetrics(staleAuthorIds).catch(() => undefined);
 }
 
-async function readSocialState(viewerId: string | null, postIds: string[]): Promise<{
+async function readSocialState(
+  viewerId: string | null,
+  postIds: string[],
+  authorIds: string[]
+): Promise<{
   likedPostIds: Set<string>;
   repostedPostIds: Set<string>;
+  followedAuthorIds: Set<string>;
   reactionByPostId: Map<string, string>;
   reactionCountsByPostId: Map<string, ReactionCounts>;
 }> {
@@ -1353,12 +1403,13 @@ async function readSocialState(viewerId: string | null, postIds: string[]): Prom
     return {
       likedPostIds: new Set<string>(),
       repostedPostIds: new Set<string>(),
+      followedAuthorIds: new Set<string>(),
       reactionByPostId,
       reactionCountsByPostId,
     };
   }
 
-  const [likes, reposts] = await Promise.all([
+  const [likes, reposts, follows] = await Promise.all([
     prisma.like.findMany({
       where: {
         userId: viewerId,
@@ -1373,11 +1424,21 @@ async function readSocialState(viewerId: string | null, postIds: string[]): Prom
       },
       select: { postId: true },
     }),
+    authorIds.length > 0
+      ? prisma.follow.findMany({
+          where: {
+            followerId: viewerId,
+            followingId: { in: authorIds },
+          },
+          select: { followingId: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   return {
     likedPostIds: new Set(likes.map((like) => like.postId)),
     repostedPostIds: new Set(reposts.map((repost) => repost.postId)),
+    followedAuthorIds: new Set(follows.map((follow) => follow.followingId)),
     reactionByPostId,
     reactionCountsByPostId,
   };
@@ -1659,7 +1720,11 @@ async function hydrateCalls(
 
   const [socialState, bundleClustersByTokenId, timingMetaByPostId, tokenGrowthById, marketContext] =
     await Promise.all([
-      readSocialState(viewerId, records.map((record) => record.id)),
+      readSocialState(
+        viewerId,
+        records.map((record) => record.id),
+        Array.from(new Set(records.map((record) => record.authorId)))
+      ),
       preferStoredIntelligence
         ? Promise.resolve(new Map<string, EnrichedCall["bundleClusters"]>())
         : readTokenClusters(Array.from(new Set(Array.from(tokenMap.values()).map((token) => token.id)))),
@@ -1831,6 +1896,7 @@ async function hydrateCalls(
       token,
       isLiked: socialState.likedPostIds.has(record.id),
       isReposted: socialState.repostedPostIds.has(record.id),
+      isFollowingAuthor: socialState.followedAuthorIds.has(record.authorId),
       currentReactionType: socialState.reactionByPostId.get(record.id) ?? null,
       reactionCounts,
       confidenceScore,
@@ -2165,8 +2231,9 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       !hasFiniteMetric(currentToken.liquidity) ||
       !hasFiniteMetric(currentToken.volume24h) ||
       (currentToken.chainType === "solana" &&
-        !hasFiniteMetric(currentToken.holderCount) &&
-        !hasFiniteMetric(currentToken.top10HolderPct));
+        (!hasPositiveMetric(currentToken.holderCount) ||
+          !hasFiniteMetric(currentToken.top10HolderPct) ||
+          !hasFiniteMetric(currentToken.largestHolderPct)));
 
     const [callsRaw, clusters, snapshots, events, tokenFollow, dexStatsFallback, distributionFallback] = await Promise.all([
       listTokenRelatedCallRecords(currentToken, normalizedAddress, 80),
@@ -2268,6 +2335,9 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const resolvedHolderCount = Math.round(
       pickFirstPositiveMetric(currentToken.holderCount, distributionFallback?.holderCount) ?? 0
     ) || null;
+    const resolvedHolderCountSource =
+      distributionFallback?.holderCountSource ??
+      (resolvedHolderCount !== null ? "stored" : null);
     const resolvedLargestHolderPct = roundMetric(
       pickFirstFiniteMetric(currentToken.largestHolderPct, distributionFallback?.largestHolderPct)
     );
@@ -2461,6 +2531,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         liquidity: resolvedLiquidity,
         volume24h: resolvedVolume24h,
         holderCount: resolvedHolderCount,
+        holderCountSource: resolvedHolderCountSource,
         largestHolderPct: resolvedLargestHolderPct,
         top10HolderPct: resolvedTop10HolderPct,
         deployerSupplyPct: resolvedDeployerSupplyPct,

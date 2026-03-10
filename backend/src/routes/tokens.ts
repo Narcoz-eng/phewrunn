@@ -3,7 +3,11 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { prisma } from "../prisma.js";
-import { getTokenOverviewByAddress, listTokenCallsByAddress } from "../services/intelligence/engine.js";
+import {
+  getTokenOverviewByAddress,
+  invalidateViewerSocialCaches,
+  listTokenCallsByAddress,
+} from "../services/intelligence/engine.js";
 
 export const tokensRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -103,6 +107,7 @@ tokensRouter.post("/:tokenAddress/follow", requireNotBanned, zValidator("param",
     },
     update: {},
   });
+  invalidateViewerSocialCaches(user.id);
 
   return c.json({ data: { following: true, tokenId: overview.token.id } });
 });
@@ -127,6 +132,7 @@ tokensRouter.delete("/:tokenAddress/follow", requireAuth, zValidator("param", To
       },
     },
   }).catch(() => undefined);
+  invalidateViewerSocialCaches(user.id);
 
   return c.json({ data: { following: false, tokenId: overview.token.id } });
 });
