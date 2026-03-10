@@ -43,7 +43,9 @@ const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
 const FEED_PUBLIC_CACHE_SCOPE = "public";
 const FEED_NEW_POSTS_POLL_MS = 15_000;
 const FEED_ACTIVE_TAB_POLL_MS = 90_000;
-const FEED_TAB_PREFETCH_ENABLED = import.meta.env.DEV;
+const FEED_TAB_PREFETCH_ENABLED = true;
+const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 10_000 : 2_200;
+const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 2_500 : 750;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -1458,16 +1460,23 @@ export default function Feed() {
     if (searchQuery.trim().length >= 3) return;
     if (!postsPages?.pages?.length) return;
 
-    const prefetchTabs = () => {
-      const tabsToPrefetch: FeedTab[] = ["hot-alpha", "early-runners", "high-conviction", "following"];
+    let cancelled = false;
+    const tabsToPrefetch: FeedTab[] = ["hot-alpha", "early-runners", "high-conviction", "following"];
+    let staggerTimer: number | null = null;
 
-      for (const tab of tabsToPrefetch) {
-        const key = getFeedQueryKey(tab, "", feedViewerScope);
-        const state = queryClient.getQueryState(key);
-        if (state?.status === "success" && Date.now() - state.dataUpdatedAt < 45_000) {
-          continue;
-        }
+    const prefetchNextTab = (index: number) => {
+      if (cancelled || index >= tabsToPrefetch.length) {
+        return;
+      }
 
+      const tab = tabsToPrefetch[index];
+      if (!tab) {
+        return;
+      }
+
+      const key = getFeedQueryKey(tab, "", feedViewerScope);
+      const state = queryClient.getQueryState(key);
+      if (!(state?.status === "success" && Date.now() - state.dataUpdatedAt < 45_000)) {
         void queryClient.prefetchInfiniteQuery({
           queryKey: key,
           initialPageParam: undefined as string | undefined,
@@ -1476,22 +1485,30 @@ export default function Feed() {
           staleTime: 60_000,
         });
       }
+
+      staggerTimer = window.setTimeout(() => {
+        prefetchNextTab(index + 1);
+      }, FEED_TAB_PREFETCH_GAP_MS);
     };
 
     let idleHandle: number | null = null;
     const timer = window.setTimeout(() => {
       if ("requestIdleCallback" in window) {
         idleHandle = window.requestIdleCallback(() => {
-          prefetchTabs();
+          prefetchNextTab(0);
         }, { timeout: 1500 });
         return;
       }
 
-      prefetchTabs();
-    }, 2200);
+      prefetchNextTab(0);
+    }, FEED_TAB_PREFETCH_INITIAL_DELAY_MS);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(timer);
+      if (staggerTimer !== null) {
+        window.clearTimeout(staggerTimer);
+      }
       if (idleHandle !== null && "cancelIdleCallback" in window) {
         window.cancelIdleCallback(idleHandle);
       }

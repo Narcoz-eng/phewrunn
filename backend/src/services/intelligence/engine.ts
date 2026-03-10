@@ -2296,15 +2296,7 @@ async function refreshPriorityFeedSlice(
     return hydrated;
   }
 
-  const priorityIds = hydrated.slice(0, FEED_PRIORITY_POST_COUNT).map((call) => call.id);
-  if (priorityIds.length === 0) {
-    return hydrated;
-  }
-
-  const recordsById = new Map(records.map((record) => [record.id, record] as const));
-  const priorityRecords = priorityIds
-    .map((id) => recordsById.get(id))
-    .filter((record): record is CallRecord => Boolean(record));
+  const priorityRecords = records.slice(0, FEED_PRIORITY_POST_COUNT);
   if (priorityRecords.length === 0) {
     return hydrated;
   }
