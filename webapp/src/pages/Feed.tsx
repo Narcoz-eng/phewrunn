@@ -43,7 +43,7 @@ const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
 const FEED_PUBLIC_CACHE_SCOPE = "public";
 const FEED_NEW_POSTS_POLL_MS = 15_000;
 const FEED_ACTIVE_TAB_POLL_MS = 90_000;
-const FEED_TAB_PREFETCH_ENABLED = false;
+const FEED_TAB_PREFETCH_ENABLED = true;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -1255,7 +1255,7 @@ export default function Feed() {
     },
     gcTime: FEED_QUERY_GC_TIME_MS,
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
-    refetchOnMount: "always",
+    refetchOnMount: hydrationCachedFirstPage ? false : "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: false,

@@ -616,11 +616,55 @@ interface PostCardProps {
   onRepost?: (postId: string) => void;
   onComment?: (postId: string, content: string) => Promise<void> | void;
   enableRealtimePricePolling?: boolean;
+  autoOpenTradePanel?: boolean;
+  onTradePanelAutoOpened?: () => void;
 }
 
 type FeedPostsPageLike = {
   items: Post[];
 };
+
+function syncFollowStateAcrossPostCaches(
+  queryClient: QueryClient,
+  author: Pick<PostAuthor, "id" | "username">,
+  nextFollowing: boolean
+): void {
+  const normalizedUsername = author.username?.trim().toLowerCase() ?? null;
+  const matchesAuthor = (post: Post): boolean =>
+    post.author.id === author.id ||
+    post.authorId === author.id ||
+    (normalizedUsername !== null && post.author.username?.trim().toLowerCase() === normalizedUsername);
+  const syncPost = (post: Post): Post =>
+    matchesAuthor(post) ? { ...post, isFollowingAuthor: nextFollowing } : post;
+
+  queryClient.setQueriesData<InfiniteData<FeedPostsPageLike>>({ queryKey: ["posts"] }, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      pages: current.pages.map((page) => ({
+        ...page,
+        items: page.items.map(syncPost),
+      })),
+    };
+  });
+
+  queryClient.setQueriesData<Post[]>({ queryKey: ["userPosts"] }, (current) =>
+    current?.map(syncPost) ?? current
+  );
+  queryClient.setQueriesData<Post[]>({ queryKey: ["userReposts"] }, (current) =>
+    current?.map(syncPost) ?? current
+  );
+  queryClient.setQueriesData<{ id?: string | null; username?: string | null; isFollowing?: boolean }>(
+    { queryKey: ["userProfile"] },
+    (current) => {
+      if (!current) return current;
+      const matchesProfile =
+        current.id === author.id ||
+        (normalizedUsername !== null && current.username?.trim().toLowerCase() === normalizedUsername);
+      return matchesProfile ? { ...current, isFollowing: nextFollowing } : current;
+    }
+  );
+}
 
 function parseMarketStateTimestamp(value: string | null | undefined): number {
   if (!value) return 0;
@@ -793,6 +837,8 @@ export function PostCard({
   onReact,
   onRepost,
   enableRealtimePricePolling = true,
+  autoOpenTradePanel = false,
+  onTradePanelAutoOpened,
 }: PostCardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -1015,6 +1061,20 @@ export function PostCard({
       }
     };
   }, [isBuyDialogOpen, post.id]);
+
+  useEffect(() => {
+    if (!autoOpenTradePanel || isBuyDialogOpen || !post.contractAddress) return;
+    if (typeof window === "undefined") {
+      setIsBuyDialogOpen(true);
+      onTradePanelAutoOpened?.();
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      setIsBuyDialogOpen(true);
+      onTradePanelAutoOpened?.();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [autoOpenTradePanel, isBuyDialogOpen, onTradePanelAutoOpened, post.contractAddress]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
@@ -1366,6 +1426,7 @@ export function PostCard({
     const followTargetIdentifier = post.author.username || post.author.id;
     setIsFollowing(!wasFollowing);
     setIsFollowLoading(true);
+    syncFollowStateAcrossPostCaches(queryClient, post.author, !wasFollowing);
 
     try {
       if (wasFollowing) {
@@ -1376,23 +1437,25 @@ export function PostCard({
         toast.success(`Following ${post.author.username || post.author.name}`);
       }
       // Invalidate relevant queries to refresh data
-      queryClient.invalidateQueries({ queryKey: ["posts"] });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      queryClient.invalidateQueries({ queryKey: ["userProfile"] });
-      queryClient.invalidateQueries({ queryKey: ["userPosts"] });
-      queryClient.invalidateQueries({ queryKey: ["userReposts"] });
+      void queryClient.invalidateQueries({ queryKey: ["posts"] });
+      void queryClient.invalidateQueries({ queryKey: ["users"] });
+      void queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+      void queryClient.invalidateQueries({ queryKey: ["userPosts"] });
+      void queryClient.invalidateQueries({ queryKey: ["userReposts"] });
     } catch (error) {
       if (error instanceof ApiError) {
         const alreadyFollowing = !wasFollowing && error.status === 400 && /already following/i.test(error.message);
         const notFollowing = wasFollowing && error.status === 404 && /not following/i.test(error.message);
 
         if (alreadyFollowing || notFollowing) {
-          setIsFollowing(alreadyFollowing);
-          queryClient.invalidateQueries({ queryKey: ["posts"] });
-          queryClient.invalidateQueries({ queryKey: ["users"] });
-          queryClient.invalidateQueries({ queryKey: ["userProfile"] });
-          queryClient.invalidateQueries({ queryKey: ["userPosts"] });
-          queryClient.invalidateQueries({ queryKey: ["userReposts"] });
+          const nextFollowing = alreadyFollowing;
+          setIsFollowing(nextFollowing);
+          syncFollowStateAcrossPostCaches(queryClient, post.author, nextFollowing);
+          void queryClient.invalidateQueries({ queryKey: ["posts"] });
+          void queryClient.invalidateQueries({ queryKey: ["users"] });
+          void queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+          void queryClient.invalidateQueries({ queryKey: ["userPosts"] });
+          void queryClient.invalidateQueries({ queryKey: ["userReposts"] });
           toast.success(alreadyFollowing ? `Following ${post.author.username || post.author.name}` : `Unfollowed ${post.author.username || post.author.name}`);
           return;
         }
@@ -1400,6 +1463,7 @@ export function PostCard({
 
       // Revert on error
       setIsFollowing(wasFollowing);
+      syncFollowStateAcrossPostCaches(queryClient, post.author, wasFollowing);
       toast.error(error instanceof Error ? error.message : "Failed to update follow status");
     } finally {
       setIsFollowLoading(false);

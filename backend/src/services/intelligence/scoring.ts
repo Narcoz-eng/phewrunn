@@ -19,10 +19,14 @@ export type ConfidenceInputs = {
   entryQualityScore: number | null;
   liquidityUsd: number | null;
   volumeGrowth24hPct: number | null;
+  liquidityGrowth1hPct?: number | null;
+  holderGrowth1hPct?: number | null;
+  mcapGrowthPct?: number | null;
   momentumPct: number | null;
   trustedTraderCount: number | null;
   top10HolderPct: number | null;
   tokenRiskScore: number | null;
+  marketBreadthScore?: number | null;
   roiCurrentPct?: number | null;
   sentimentScore?: number | null;
 };
@@ -172,6 +176,28 @@ function computeNegativeSentimentPenalty(sentimentScore: number | null | undefin
   return pct(50 - score, 50);
 }
 
+function computeAccelerationScore(args: {
+  volumeGrowth24hPct: number | null | undefined;
+  liquidityGrowth1hPct: number | null | undefined;
+  holderGrowth1hPct: number | null | undefined;
+  mcapGrowthPct: number | null | undefined;
+  momentumPct: number | null | undefined;
+}): number {
+  const volumeGrowthScore = pct(args.volumeGrowth24hPct, 360);
+  const liquidityGrowthScore = pct(args.liquidityGrowth1hPct, 140);
+  const holderGrowthScore = pct(args.holderGrowth1hPct, 70);
+  const mcapGrowthScore = pct(args.mcapGrowthPct, 220);
+  const momentumScore = pct(args.momentumPct, 180);
+
+  return clampScore(
+    0.26 * volumeGrowthScore +
+      0.18 * liquidityGrowthScore +
+      0.14 * holderGrowthScore +
+      0.18 * mcapGrowthScore +
+      0.24 * momentumScore
+  );
+}
+
 function computeConfidenceScoreCap(args: {
   tokenRiskScore: number | null | undefined;
   roiCurrentPct: number | null | undefined;
@@ -267,20 +293,28 @@ export function computeConfidenceScore(inputs: ConfidenceInputs): number {
   const entryQualityScore = clampScore(finite(inputs.entryQualityScore, 50));
   const liquidityScore = logScore(inputs.liquidityUsd, 250_000);
   const volumeGrowthScore = pct(inputs.volumeGrowth24hPct, 300);
-  const momentumScore = pct(inputs.momentumPct, 120);
+  const accelerationScore = computeAccelerationScore({
+    volumeGrowth24hPct: inputs.volumeGrowth24hPct,
+    liquidityGrowth1hPct: inputs.liquidityGrowth1hPct,
+    holderGrowth1hPct: inputs.holderGrowth1hPct,
+    mcapGrowthPct: inputs.mcapGrowthPct,
+    momentumPct: inputs.momentumPct,
+  });
   const confirmationScore = pct(inputs.trustedTraderCount, 5);
   const holderHealthScore = inversePct(inputs.top10HolderPct, 70);
+  const marketBreadthScore = clampScore(finite(inputs.marketBreadthScore, 50));
 
   const confidenceScoreRaw =
-    0.18 * traderTrustScore +
-    0.13 * traderWinRateScore +
-    0.09 * traderRoiScore +
-    0.14 * entryQualityScore +
-    0.12 * liquidityScore +
-    0.08 * volumeGrowthScore +
-    0.10 * momentumScore +
-    0.08 * confirmationScore +
-    0.08 * holderHealthScore;
+    0.15 * traderTrustScore +
+    0.10 * traderWinRateScore +
+    0.07 * traderRoiScore +
+    0.13 * entryQualityScore +
+    0.09 * liquidityScore +
+    0.10 * volumeGrowthScore +
+    0.16 * accelerationScore +
+    0.07 * confirmationScore +
+    0.07 * holderHealthScore +
+    0.06 * marketBreadthScore;
 
   return applyConfidenceGuardrails({
     baseScore: confidenceScoreRaw,

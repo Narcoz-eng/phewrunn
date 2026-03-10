@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, useMemo, type ComponentType, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getAvatarUrl, type Post, formatMarketCap, formatTimeAgo } from "@/types";
 import { buildProfilePath } from "@/lib/profile-path";
 import { cn } from "@/lib/utils";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   Award,
   Flame,
@@ -16,6 +17,10 @@ import {
   TrendingUp,
   Trophy,
 } from "lucide-react";
+
+const DAILY_LEADERBOARD_CACHE_KEY = "phew.leaderboards.daily-intelligence.v1";
+const FIRST_CALLER_CACHE_KEY = "phew.leaderboards.first-callers.v1";
+const LEADERBOARD_CACHE_TTL_MS = 2 * 60_000;
 
 type DailyLeaderboards = {
   topTradersToday: Array<{
@@ -276,29 +281,56 @@ function FirstCallerRow({
 }
 
 export function IntelligenceLeaderboards() {
+  const cachedDaily = useMemo(
+    () => readSessionCache<DailyLeaderboards>(DAILY_LEADERBOARD_CACHE_KEY, LEADERBOARD_CACHE_TTL_MS),
+    []
+  );
+  const cachedFirstCallers = useMemo(
+    () => readSessionCache<FirstCallerRow[]>(FIRST_CALLER_CACHE_KEY, LEADERBOARD_CACHE_TTL_MS),
+    []
+  );
   const {
     data: daily,
     isLoading: isLoadingDaily,
+    isFetching: isFetchingDaily,
     error: dailyError,
     refetch: refetchDaily,
   } = useQuery({
     queryKey: ["leaderboards", "daily"],
     queryFn: () => api.get<DailyLeaderboards>("/api/leaderboards/daily"),
+    initialData: cachedDaily ?? undefined,
+    placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
-    staleTime: 60_000,
+    staleTime: 90_000,
+    gcTime: 10 * 60_000,
+    refetchOnMount: cachedDaily ? false : "always",
   });
 
   const {
     data: firstCallers = [],
     isLoading: isLoadingFirstCallers,
+    isFetching: isFetchingFirstCallers,
     error: firstCallersError,
     refetch: refetchFirstCallers,
   } = useQuery({
     queryKey: ["leaderboards", "first-callers"],
     queryFn: () => api.get<FirstCallerRow[]>("/api/leaderboards/first-callers"),
+    initialData: cachedFirstCallers ?? undefined,
+    placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
-    staleTime: 60_000,
+    staleTime: 90_000,
+    gcTime: 10 * 60_000,
+    refetchOnMount: cachedFirstCallers ? false : "always",
   });
+
+  useEffect(() => {
+    if (!daily) return;
+    writeSessionCache(DAILY_LEADERBOARD_CACHE_KEY, daily);
+  }, [daily]);
+
+  useEffect(() => {
+    writeSessionCache(FIRST_CALLER_CACHE_KEY, firstCallers);
+  }, [firstCallers]);
 
   return (
     <div className="space-y-6">
@@ -307,7 +339,7 @@ export function IntelligenceLeaderboards() {
         description="Today’s strongest traders, hottest calls, biggest ROI, and best entries ranked by the new intelligence engine."
         icon={Trophy}
       >
-        {isLoadingDaily ? (
+        {isLoadingDaily && !daily ? (
           <div className="grid gap-4 xl:grid-cols-2">
             <BoardSkeleton />
             <BoardSkeleton />
@@ -323,7 +355,14 @@ export function IntelligenceLeaderboards() {
             </Button>
           </div>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="space-y-3">
+            {isFetchingDaily ? (
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
+                <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+                Refreshing live leaderboard
+              </div>
+            ) : null}
+            <div className="grid gap-4 xl:grid-cols-2">
             <div className="rounded-[28px] border border-border/65 bg-card/80 p-5 shadow-[0_18px_36px_-32px_hsl(var(--foreground)/0.18)]">
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Trophy className="h-4 w-4 text-primary" />
@@ -405,6 +444,7 @@ export function IntelligenceLeaderboards() {
                 )}
               </div>
             </div>
+            </div>
           </div>
         )}
       </SectionShell>
@@ -414,7 +454,7 @@ export function IntelligenceLeaderboards() {
         description="Traders who consistently arrive earliest and still keep quality high."
         icon={Award}
       >
-        {isLoadingFirstCallers ? (
+        {isLoadingFirstCallers && firstCallers.length === 0 ? (
           <BoardSkeleton rows={6} />
         ) : firstCallersError ? (
           <div className="rounded-[24px] border border-destructive/30 bg-destructive/5 px-4 py-8 text-center">
@@ -428,6 +468,12 @@ export function IntelligenceLeaderboards() {
           <EmptyState title="No first-caller rankings yet" subtitle="Once enough calls are classified, this board will populate." />
         ) : (
           <div className="space-y-3">
+            {isFetchingFirstCallers ? (
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
+                <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+                Updating first-caller board
+              </div>
+            ) : null}
             {firstCallers.slice(0, 10).map((row, index) => (
               <FirstCallerRow key={row.traderId} row={row} index={index} />
             ))}

@@ -1,15 +1,16 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, BarChart3, Coins, ShieldAlert, TrendingUp, Users } from "lucide-react";
+import { ArrowLeft, AlertCircle, BarChart3, Coins, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PostCard } from "@/components/feed/PostCard";
 import { TokenScanningState } from "@/components/feed/TokenScanningState";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   Area,
   AreaChart,
@@ -20,6 +21,9 @@ import {
   YAxis,
 } from "recharts";
 import { toast } from "sonner";
+import { PhewTradeIcon } from "@/components/icons/PhewIcons";
+
+const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
 
 type TokenChartPoint = {
   timestamp: string;
@@ -139,21 +143,46 @@ export default function TokenPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: session, canPerformAuthenticatedWrites } = useSession();
+  const viewerScope = session?.user?.id ?? "anonymous";
+  const tokenQueryKey = useMemo(
+    () => ["token-page", viewerScope, tokenAddress] as const,
+    [tokenAddress, viewerScope]
+  );
+  const tokenCacheKey = useMemo(
+    () => (tokenAddress ? `phew.token-page.v2:${viewerScope}:${tokenAddress}` : null),
+    [tokenAddress, viewerScope]
+  );
+  const cachedToken = useMemo(
+    () => (tokenCacheKey ? readSessionCache<TokenPageData>(tokenCacheKey, TOKEN_PAGE_CACHE_TTL_MS) : null),
+    [tokenCacheKey]
+  );
+  const recentCallsRef = useRef<HTMLDivElement | null>(null);
+  const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
 
   const {
     data: token,
     isLoading,
+    isFetching,
     error,
   } = useQuery({
-    queryKey: ["token-page", tokenAddress],
+    queryKey: tokenQueryKey,
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
       return api.get<TokenPageData>(`/api/tokens/${tokenAddress}`);
     },
+    initialData: cachedToken ?? undefined,
+    placeholderData: (previousData) => previousData,
     enabled: !!tokenAddress,
-    staleTime: 20_000,
+    staleTime: 45_000,
+    gcTime: 8 * 60_000,
+    refetchOnMount: cachedToken ? false : "always",
     refetchOnWindowFocus: false,
   });
+
+  useEffect(() => {
+    if (!token || !tokenCacheKey) return;
+    writeSessionCache(tokenCacheKey, token);
+  }, [token, tokenCacheKey]);
 
   const chartData = useMemo(
     () =>
@@ -162,6 +191,12 @@ export default function TokenPage() {
         label: new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       })),
     [token?.chart]
+  );
+
+  const primaryTradeCall = useMemo(
+    () =>
+      token?.recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
+    [token?.recentCalls]
   );
 
   const followMutation = useMutation({
@@ -174,16 +209,48 @@ export default function TokenPage() {
       }
       return api.post<{ following: boolean }>(`/api/tokens/${tokenAddress}/follow`);
     },
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: tokenQueryKey });
+      const previousToken = queryClient.getQueryData<TokenPageData | undefined>(tokenQueryKey);
+      if (previousToken) {
+        queryClient.setQueryData<TokenPageData | undefined>(tokenQueryKey, {
+          ...previousToken,
+          isFollowing: !previousToken.isFollowing,
+        });
+      }
+      return { previousToken };
+    },
     onSuccess: (response) => {
-      queryClient.setQueryData<TokenPageData | undefined>(["token-page", tokenAddress], (current) =>
+      queryClient.setQueryData<TokenPageData | undefined>(tokenQueryKey, (current) =>
         current ? { ...current, isFollowing: response.following } : current
       );
+      void queryClient.invalidateQueries({ queryKey: ["posts"] });
       toast.success(response.following ? "Token followed" : "Token unfollowed");
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to update token follow");
+    onError: (_error, _variables, context) => {
+      if (context?.previousToken) {
+        queryClient.setQueryData(tokenQueryKey, context.previousToken);
+      }
+      toast.error(_error instanceof Error ? _error.message : "Failed to update token follow");
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: tokenQueryKey });
     },
   });
+
+  const handleOpenTradePanel = () => {
+    if (!primaryTradeCall) {
+      toast.info("No trade-ready call is available for this token yet.");
+      return;
+    }
+    setPendingTradeCallId(primaryTradeCall.id);
+    recentCallsRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
+  const showTokenLoading = !token && isLoading;
 
   return (
     <div className="min-h-screen bg-background">
@@ -205,7 +272,7 @@ export default function TokenPage() {
       </header>
 
       <main className="mx-auto max-w-[980px] px-4 pb-10 pt-5 sm:px-5">
-        {isLoading ? (
+        {showTokenLoading ? (
           <TokenScanningState
             address={tokenAddress}
             title="Opening Phew Ultra Token Lab"
@@ -275,14 +342,52 @@ export default function TokenPage() {
                     </div>
                   ))}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant={token.isFollowing ? "outline" : "default"}
-                    onClick={() => followMutation.mutate()}
-                    disabled={followMutation.isPending}
-                  >
-                    {token.isFollowing ? "Following token" : "Follow token"}
-                  </Button>
+
+                <div className="flex flex-col gap-2 sm:min-w-[220px]">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Button
+                      onClick={handleOpenTradePanel}
+                      disabled={!primaryTradeCall}
+                      className="h-11 gap-2 rounded-2xl bg-gradient-to-r from-primary via-emerald-400 to-cyan-300 text-primary-foreground shadow-[0_20px_44px_-24px_hsl(var(--primary)/0.6)] hover:opacity-95"
+                    >
+                      <PhewTradeIcon className="h-4 w-4" />
+                      Open trade panel
+                    </Button>
+                    <Button
+                      variant={token.isFollowing ? "outline" : "default"}
+                      onClick={() => followMutation.mutate()}
+                      disabled={followMutation.isPending}
+                      className="h-11 rounded-2xl"
+                    >
+                      {followMutation.isPending ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Updating
+                        </>
+                      ) : token.isFollowing ? (
+                        "Following token"
+                      ) : (
+                        "Follow token"
+                      )}
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-9 items-center gap-2 rounded-full border border-border/60 bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      Open Dexscreener
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                    {isFetching ? (
+                      <span className="inline-flex h-9 items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Refreshing live intelligence
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </section>
@@ -427,14 +532,7 @@ export default function TokenPage() {
                       <h3 className="text-base font-semibold text-foreground">Sentiment + market health</h3>
                       <p className="text-sm text-muted-foreground">Community reactions, liquidity, holders, and volume</p>
                     </div>
-                    <a
-                      href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-semibold text-primary"
-                    >
-                      Open Dexscreener
-                    </a>
+                    <span className="text-xs font-semibold text-primary">Live intelligence</span>
                   </div>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
@@ -464,7 +562,7 @@ export default function TokenPage() {
                   </div>
                 </section>
 
-                <section className="space-y-4">
+                <section ref={recentCallsRef} className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-foreground">Recent calls</h3>
                     <span className="text-sm text-muted-foreground">{token.callsCount} calls</span>
@@ -474,6 +572,10 @@ export default function TokenPage() {
                       key={post.id}
                       post={post}
                       currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
+                      autoOpenTradePanel={pendingTradeCallId === post.id}
+                      onTradePanelAutoOpened={() => {
+                        setPendingTradeCallId((current) => (current === post.id ? null : current));
+                      }}
                     />
                   ))}
                 </section>

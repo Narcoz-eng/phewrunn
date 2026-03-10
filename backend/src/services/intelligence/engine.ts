@@ -12,6 +12,7 @@ import {
   computeWeightedEngagementPerHour,
   determineBundleRiskLabel,
   determineTimingTier,
+  pct,
   type ReactionCounts,
 } from "./scoring.js";
 import { analyzeSolanaTokenDistribution, fetchDexTokenStats } from "./token-metrics.js";
@@ -35,6 +36,7 @@ const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
+const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
 
@@ -439,11 +441,20 @@ const firstCallerLeaderboardsInFlight = new Map<
     }>
   >
 >();
+const marketContextCache = new Map<string, CacheEntry<MarketContextSnapshot>>();
+const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
 
 type TokenRefreshResult = {
   token: TokenRecord;
   previousToken: TokenRecord | null;
   refreshed: boolean;
+};
+
+type MarketContextSnapshot = {
+  label: "risk-on" | "balanced" | "risk-off";
+  breadthScore: number;
+  confidenceBias: number;
+  accelerationMultiplier: number;
 };
 
 function finite(value: number | null | undefined, fallback = 0): number {
@@ -588,6 +599,134 @@ function deriveRoiPeakPct(record: Pick<CallRecord, "entryMcap" | "currentMcap" |
 
 function deriveCurrentRoiPct(record: Pick<CallRecord, "entryMcap" | "currentMcap" | "roiCurrentPct">): number | null {
   return record.roiCurrentPct ?? deriveRoiPct(record.entryMcap, record.currentMcap);
+}
+
+function toNumber(value: number | bigint | string | null | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function averageOf(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+async function getMarketContextSnapshot(): Promise<MarketContextSnapshot> {
+  return memoizeCached(
+    marketContextCache,
+    marketContextInFlight,
+    "global",
+    MARKET_CONTEXT_CACHE_TTL_MS,
+    async () => {
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const since6h = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
+      const [recentCalls, activeTokens] = await Promise.all([
+        prisma.post.findMany({
+          where: {
+            createdAt: {
+              gte: since24h,
+            },
+          },
+          select: {
+            entryMcap: true,
+            currentMcap: true,
+            isWin: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 240,
+        }),
+        prisma.token.findMany({
+          where: {
+            updatedAt: {
+              gte: since6h,
+            },
+          },
+          select: {
+            sentimentScore: true,
+            tokenRiskScore: true,
+            hotAlphaScore: true,
+            earlyRunnerScore: true,
+            highConvictionScore: true,
+          },
+          orderBy: { updatedAt: "desc" },
+          take: 120,
+        }),
+      ]);
+
+      const callRois = recentCalls
+        .map((call) => deriveRoiPct(call.entryMcap, call.currentMcap))
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+      const positiveCallShare =
+        callRois.length > 0 ? (callRois.filter((value) => value >= 0).length / callRois.length) * 100 : 50;
+      const positiveMomentumScore = pct(
+        averageOf(callRois.filter((value) => value > 0)),
+        180
+      );
+      const realizedWinShare =
+        recentCalls.length > 0
+          ? (recentCalls.filter((call) => call.isWin === true).length / recentCalls.length) * 100
+          : 50;
+      const averageSentimentScore = averageOf(
+        activeTokens
+          .map((token) => finite(token.sentimentScore, 50))
+          .filter((value) => Number.isFinite(value))
+      );
+      const lowRiskShare =
+        activeTokens.length > 0
+          ? (activeTokens.filter((token) => finite(token.tokenRiskScore, 100) <= 55).length / activeTokens.length) * 100
+          : 50;
+      const activeSignalShare =
+        activeTokens.length > 0
+          ? (activeTokens.filter((token) =>
+              Math.max(
+                finite(token.hotAlphaScore),
+                finite(token.earlyRunnerScore),
+                finite(token.highConvictionScore)
+              ) >= 60
+            ).length / activeTokens.length) * 100
+          : 50;
+
+      const breadthScore = clampScore(
+        0.24 * positiveCallShare +
+          0.18 * positiveMomentumScore +
+          0.18 * realizedWinShare +
+          0.16 * averageSentimentScore +
+          0.12 * lowRiskShare +
+          0.12 * activeSignalShare
+      );
+
+      if (breadthScore >= 68) {
+        return {
+          label: "risk-on",
+          breadthScore: roundMetricOrZero(breadthScore),
+          confidenceBias: 8,
+          accelerationMultiplier: 1.18,
+        };
+      }
+
+      if (breadthScore <= 38) {
+        return {
+          label: "risk-off",
+          breadthScore: roundMetricOrZero(breadthScore),
+          confidenceBias: -8,
+          accelerationMultiplier: 0.88,
+        };
+      }
+
+      return {
+        label: "balanced",
+        breadthScore: roundMetricOrZero(breadthScore),
+        confidenceBias: breadthScore >= 56 ? 3 : breadthScore <= 46 ? -3 : 0,
+        accelerationMultiplier: breadthScore >= 56 ? 1.08 : breadthScore <= 46 ? 0.95 : 1,
+      };
+    }
+  );
 }
 
 function shouldRefreshToken(token: TokenRecord | null): boolean {
@@ -839,7 +978,13 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
   const volumeGrowthPct = growthPct(volume24h, latestSnapshot?.volume24h ?? null);
   const liquidityGrowthPct = growthPct(liquidity, latestSnapshot?.liquidity ?? null);
   const holderGrowthPct = growthPct(holderCount, latestSnapshot?.holderCount ?? null);
+  const mcapGrowthPct = growthPct(marketCap, latestSnapshot?.marketCap ?? null);
   const momentumPct = finite(dexStats?.priceChange24hPct);
+  const marketContext = await getMarketContextSnapshot();
+  const marketAdjustedMomentumPct = Math.max(0, momentumPct) * marketContext.accelerationMultiplier;
+  const marketAdjustedVolumeGrowthPct = Math.max(0, volumeGrowthPct) * marketContext.accelerationMultiplier;
+  const marketAdjustedLiquidityGrowthPct = Math.max(0, liquidityGrowthPct) * marketContext.accelerationMultiplier;
+  const marketAdjustedHolderGrowthPct = Math.max(0, holderGrowthPct) * marketContext.accelerationMultiplier;
   const distinctTrustedTraders = new Set(
     recentCalls
       .filter((call) => finite(call.author.trustScore) >= TRUSTED_TRADER_THRESHOLD)
@@ -865,39 +1010,63 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
   const earlyRunnerScore = roundMetric(
     computeEarlyRunnerScore({
       distinctTrustedTradersLast6h: distinctTrustedTraders,
-      liquidityGrowth1hPct: liquidityGrowthPct,
-      volumeGrowth1hPct: volumeGrowthPct,
-      holderGrowth1hPct: holderGrowthPct,
-      momentumPct,
+      liquidityGrowth1hPct: marketAdjustedLiquidityGrowthPct,
+      volumeGrowth1hPct: marketAdjustedVolumeGrowthPct,
+      holderGrowth1hPct: marketAdjustedHolderGrowthPct,
+      momentumPct: Math.max(marketAdjustedMomentumPct, mcapGrowthPct),
       sentimentScore,
       tokenRiskScore,
     })
   );
   const tokenConfidenceBaseScore = clampScore(
     avgCallConfidence > 0
-      ? avgCallConfidence * 0.72 +
+      ? avgCallConfidence * 0.50 +
           finite(sentimentScore) * 0.12 +
           Math.max(0, 100 - finite(tokenRiskScore)) * 0.08 +
-          clampScore(Math.max(0, momentumPct)) * 0.08
-      : 0.34 * Math.max(0, 100 - finite(tokenRiskScore)) +
+          pct(marketAdjustedMomentumPct, 180) * 0.08 +
+          pct(marketAdjustedVolumeGrowthPct, 360) * 0.08 +
+          pct(marketAdjustedLiquidityGrowthPct, 140) * 0.05 +
+          pct(marketAdjustedHolderGrowthPct, 70) * 0.05 +
+          pct(mcapGrowthPct, 220) * 0.04 +
+          marketContext.breadthScore * 0.04 +
+          marketContext.confidenceBias
+      : 0.26 * Math.max(0, 100 - finite(tokenRiskScore)) +
           0.28 * finite(sentimentScore) +
-          0.20 * clampScore(Math.max(0, momentumPct)) +
-          0.18 * clampScore(100 - Math.min(100, Math.abs(finite(avgCurrentRoiPct, momentumPct))))
+          0.16 * pct(marketAdjustedMomentumPct, 180) +
+          0.10 * pct(marketAdjustedVolumeGrowthPct, 360) +
+          0.08 * pct(marketAdjustedLiquidityGrowthPct, 140) +
+          0.06 * pct(marketAdjustedHolderGrowthPct, 70) +
+          0.06 * pct(mcapGrowthPct, 220) +
+          0.08 * marketContext.breadthScore +
+          marketContext.confidenceBias
   );
   const confidenceScore = roundMetric(
     applyConfidenceGuardrails({
       baseScore: tokenConfidenceBaseScore,
       tokenRiskScore,
       top10HolderPct: distribution?.top10HolderPct ?? existing.top10HolderPct,
-      roiCurrentPct: avgCurrentRoiPct ?? momentumPct,
+      roiCurrentPct: avgCurrentRoiPct ?? mcapGrowthPct ?? momentumPct,
       sentimentScore,
     })
   );
   const hotAlphaScore = roundMetric(
-    clampScore(avgHotAlpha * 0.65 + finite(earlyRunnerScore) * 0.15 + finite(sentimentScore) * 0.1 + clampScore(momentumPct) * 0.1)
+    clampScore(
+      avgHotAlpha * 0.50 +
+        finite(earlyRunnerScore) * 0.18 +
+        finite(sentimentScore) * 0.08 +
+        pct(marketAdjustedMomentumPct, 180) * 0.09 +
+        pct(marketAdjustedVolumeGrowthPct, 360) * 0.08 +
+        marketContext.breadthScore * 0.07
+    )
   );
   const highConvictionScore = roundMetric(
-    clampScore(avgHighConviction * 0.7 + finite(confidenceScore) * 0.2 + Math.max(0, 100 - finite(tokenRiskScore)) * 0.1)
+    clampScore(
+      avgHighConviction * 0.52 +
+        finite(confidenceScore) * 0.24 +
+        Math.max(0, 100 - finite(tokenRiskScore)) * 0.09 +
+        pct(marketAdjustedLiquidityGrowthPct, 140) * 0.07 +
+        marketContext.breadthScore * 0.08
+    )
   );
   const radarScore = roundMetric(Math.max(finite(hotAlphaScore), finite(earlyRunnerScore), finite(highConvictionScore)));
   const radarReasons = buildRadarReasons({
@@ -1165,6 +1334,190 @@ async function readTokenClusters(tokenIds: string[]): Promise<Map<string, TokenO
   return byTokenId;
 }
 
+async function readTimingMetaForCalls(records: CallRecord[]): Promise<
+  Map<
+    string,
+    {
+      firstCallerRank: number | null;
+      firstCallCreatedAt: Date | null;
+      firstCallEntryMcap: number | null;
+    }
+  >
+> {
+  const tokenIds = Array.from(
+    new Set(records.map((record) => record.tokenId ?? record.token?.id ?? null).filter((value): value is string => Boolean(value)))
+  );
+  const recordIds = records.map((record) => record.id);
+
+  if (tokenIds.length === 0 || recordIds.length === 0) {
+    return new Map();
+  }
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      tokenId: string;
+      firstCallerRank: number | bigint | string;
+      firstCallCreatedAt: Date | null;
+      firstCallEntryMcap: number | null;
+    }>
+  >(Prisma.sql`
+    SELECT ranked.id,
+           ranked."tokenId",
+           ranked."firstCallerRank",
+           ranked."firstCallCreatedAt",
+           ranked."firstCallEntryMcap"
+    FROM (
+      SELECT
+        p.id,
+        p."tokenId",
+        ROW_NUMBER() OVER (PARTITION BY p."tokenId" ORDER BY p."createdAt" ASC, p.id ASC) AS "firstCallerRank",
+        FIRST_VALUE(p."createdAt") OVER (
+          PARTITION BY p."tokenId"
+          ORDER BY p."createdAt" ASC, p.id ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        ) AS "firstCallCreatedAt",
+        FIRST_VALUE(p."entryMcap") OVER (
+          PARTITION BY p."tokenId"
+          ORDER BY p."createdAt" ASC, p.id ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        ) AS "firstCallEntryMcap"
+      FROM "Post" p
+      WHERE p."tokenId" IN (${Prisma.join(tokenIds)})
+    ) ranked
+    WHERE ranked.id IN (${Prisma.join(recordIds)})
+  `);
+
+  const byId = new Map<
+    string,
+    {
+      firstCallerRank: number | null;
+      firstCallCreatedAt: Date | null;
+      firstCallEntryMcap: number | null;
+    }
+  >();
+
+  for (const row of rows) {
+    byId.set(row.id, {
+      firstCallerRank: toNumber(row.firstCallerRank),
+      firstCallCreatedAt: row.firstCallCreatedAt ?? null,
+      firstCallEntryMcap: row.firstCallEntryMcap ?? null,
+    });
+  }
+
+  return byId;
+}
+
+async function readLatestTokenGrowthById(tokenIds: string[]): Promise<
+  Map<
+    string,
+    {
+      volumeGrowthPct: number;
+      liquidityGrowthPct: number;
+      holderGrowthPct: number;
+      mcapGrowthPct: number;
+    }
+  >
+> {
+  if (tokenIds.length === 0) {
+    return new Map();
+  }
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      tokenId: string;
+      capturedAt: Date;
+      marketCap: number | null;
+      liquidity: number | null;
+      volume24h: number | null;
+      holderCount: number | null;
+      rowNumber: number | bigint | string;
+    }>
+  >(Prisma.sql`
+    SELECT ranked."tokenId",
+           ranked."capturedAt",
+           ranked."marketCap",
+           ranked."liquidity",
+           ranked."volume24h",
+           ranked."holderCount",
+           ranked."rowNumber"
+    FROM (
+      SELECT
+        s."tokenId",
+        s."capturedAt",
+        s."marketCap",
+        s."liquidity",
+        s."volume24h",
+        s."holderCount",
+        ROW_NUMBER() OVER (PARTITION BY s."tokenId" ORDER BY s."capturedAt" DESC) AS "rowNumber"
+      FROM "TokenMetricSnapshot" s
+      WHERE s."tokenId" IN (${Prisma.join(tokenIds)})
+    ) ranked
+    WHERE ranked."rowNumber" <= 2
+  `);
+
+  const latestByTokenId = new Map<
+    string,
+    {
+      marketCap: number | null;
+      liquidity: number | null;
+      volume24h: number | null;
+      holderCount: number | null;
+    }
+  >();
+  const previousByTokenId = new Map<
+    string,
+    {
+      marketCap: number | null;
+      liquidity: number | null;
+      volume24h: number | null;
+      holderCount: number | null;
+    }
+  >();
+
+  for (const row of rows) {
+    const rowNumber = toNumber(row.rowNumber);
+    if (rowNumber === 1) {
+      latestByTokenId.set(row.tokenId, {
+        marketCap: row.marketCap,
+        liquidity: row.liquidity,
+        volume24h: row.volume24h,
+        holderCount: row.holderCount,
+      });
+    } else if (rowNumber === 2) {
+      previousByTokenId.set(row.tokenId, {
+        marketCap: row.marketCap,
+        liquidity: row.liquidity,
+        volume24h: row.volume24h,
+        holderCount: row.holderCount,
+      });
+    }
+  }
+
+  const growthByTokenId = new Map<
+    string,
+    {
+      volumeGrowthPct: number;
+      liquidityGrowthPct: number;
+      holderGrowthPct: number;
+      mcapGrowthPct: number;
+    }
+  >();
+
+  for (const tokenId of tokenIds) {
+    const latest = latestByTokenId.get(tokenId) ?? null;
+    const previous = previousByTokenId.get(tokenId) ?? null;
+    growthByTokenId.set(tokenId, {
+      volumeGrowthPct: growthPct(latest?.volume24h ?? null, previous?.volume24h ?? null),
+      liquidityGrowthPct: growthPct(latest?.liquidity ?? null, previous?.liquidity ?? null),
+      holderGrowthPct: growthPct(latest?.holderCount ?? null, previous?.holderCount ?? null),
+      mcapGrowthPct: growthPct(latest?.marketCap ?? null, previous?.marketCap ?? null),
+    });
+  }
+
+  return growthByTokenId;
+}
+
 async function hydrateCalls(
   records: CallRecord[],
   viewerId: string | null,
@@ -1203,7 +1556,7 @@ async function hydrateCalls(
         where: {
           tokenId: { in: tokenIds },
           createdAt: {
-            gte: new Date(Date.now() - 48 * 60 * 60 * 1000),
+            gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
           },
         },
         select: {
@@ -1223,10 +1576,14 @@ async function hydrateCalls(
       })
     : [];
 
-  const socialState = await readSocialState(viewerId, records.map((record) => record.id));
-  const bundleClustersByTokenId = await readTokenClusters(
-    Array.from(new Set(Array.from(tokenMap.values()).map((token) => token.id)))
-  );
+  const [socialState, bundleClustersByTokenId, timingMetaByPostId, tokenGrowthById, marketContext] =
+    await Promise.all([
+      readSocialState(viewerId, records.map((record) => record.id)),
+      readTokenClusters(Array.from(new Set(Array.from(tokenMap.values()).map((token) => token.id)))),
+      readTimingMetaForCalls(records),
+      readLatestTokenGrowthById(tokenIds),
+      getMarketContextSnapshot(),
+    ]);
 
   const callsByTokenId = new Map<string, typeof relatedCalls>();
   for (const call of relatedCalls) {
@@ -1243,9 +1600,18 @@ async function hydrateCalls(
     const token = key ? tokenMap.get(key) ?? record.token ?? null : record.token ?? null;
     const resolvedTokenId = record.tokenId ?? token?.id ?? null;
     const tokenCalls = resolvedTokenId ? callsByTokenId.get(resolvedTokenId) ?? [] : [];
-    const sameTokenIndex = tokenCalls.findIndex((call) => call.id === record.id);
-    const firstCallerRank = sameTokenIndex >= 0 ? sameTokenIndex + 1 : record.firstCallerRank ?? null;
-    const firstCall = tokenCalls[0] ?? null;
+    const timingMeta = timingMetaByPostId.get(record.id);
+    const firstCallerRank = timingMeta?.firstCallerRank ?? record.firstCallerRank ?? null;
+    const firstCallCreatedAt = timingMeta?.firstCallCreatedAt ?? tokenCalls[0]?.createdAt ?? null;
+    const firstCallEntryMcap = timingMeta?.firstCallEntryMcap ?? tokenCalls[0]?.entryMcap ?? null;
+    const tokenGrowth = resolvedTokenId ? tokenGrowthById.get(resolvedTokenId) ?? null : null;
+    const volumeGrowthPct = tokenGrowth?.volumeGrowthPct ?? 0;
+    const liquidityGrowthPct = tokenGrowth?.liquidityGrowthPct ?? 0;
+    const holderGrowthPct = tokenGrowth?.holderGrowthPct ?? 0;
+    const mcapGrowthPct = tokenGrowth?.mcapGrowthPct ?? 0;
+    const marketAdjustedVolumeGrowthPct = Math.max(0, volumeGrowthPct) * marketContext.accelerationMultiplier;
+    const marketAdjustedLiquidityGrowthPct = Math.max(0, liquidityGrowthPct) * marketContext.accelerationMultiplier;
+    const marketAdjustedHolderGrowthPct = Math.max(0, holderGrowthPct) * marketContext.accelerationMultiplier;
     const distinctTrustedTraders = new Set(
       tokenCalls
         .filter((call) => Date.now() - call.createdAt.getTime() <= 6 * 60 * 60 * 1000)
@@ -1270,11 +1636,13 @@ async function hydrateCalls(
         computeEntryQualityScore({
           firstCallerRank,
           createdAt: record.createdAt,
-          firstCallCreatedAt: firstCall?.createdAt ?? null,
+          firstCallCreatedAt,
           entryMcap: record.entryMcap,
-          firstCallEntryMcap: firstCall?.entryMcap ?? null,
+          firstCallEntryMcap,
         })
     );
+    const marketAdjustedMomentumPct = Math.max(0, roiCurrentPct ?? 0) * marketContext.accelerationMultiplier;
+    const compositeMomentumPct = Math.max(marketAdjustedMomentumPct, Math.max(0, mcapGrowthPct) * marketContext.accelerationMultiplier);
     const confidenceScore = roundMetricOrZero(
       computeConfidenceScore({
         traderWinRate30d: record.author.winRate30d,
@@ -1282,11 +1650,15 @@ async function hydrateCalls(
         traderTrustScore: record.author.trustScore,
         entryQualityScore,
         liquidityUsd: token?.liquidity ?? record.currentMcap,
-        volumeGrowth24hPct: 0,
-        momentumPct: roiCurrentPct ?? 0,
+        volumeGrowth24hPct: marketAdjustedVolumeGrowthPct,
+        liquidityGrowth1hPct: marketAdjustedLiquidityGrowthPct,
+        holderGrowth1hPct: marketAdjustedHolderGrowthPct,
+        mcapGrowthPct,
+        momentumPct: compositeMomentumPct,
         trustedTraderCount,
         top10HolderPct: token?.top10HolderPct ?? null,
         tokenRiskScore: token?.tokenRiskScore ?? null,
+        marketBreadthScore: marketContext.breadthScore,
         roiCurrentPct,
         sentimentScore,
       })
@@ -1304,17 +1676,17 @@ async function hydrateCalls(
         traderTrustScore: record.author.trustScore,
         liquidityUsd: token?.liquidity ?? record.currentMcap,
         sentimentScore,
-        momentumPct: token?.hotAlphaScore ?? roiCurrentPct ?? 0,
+        momentumPct: compositeMomentumPct,
         tokenRiskScore: token?.tokenRiskScore ?? null,
       })
     );
     const earlyRunnerScore = roundMetricOrZero(
       computeEarlyRunnerScore({
         distinctTrustedTradersLast6h: distinctTrustedTraders,
-        liquidityGrowth1hPct: 0,
-        volumeGrowth1hPct: 0,
-        holderGrowth1hPct: 0,
-        momentumPct: token?.earlyRunnerScore ?? roiCurrentPct ?? 0,
+        liquidityGrowth1hPct: marketAdjustedLiquidityGrowthPct,
+        volumeGrowth1hPct: marketAdjustedVolumeGrowthPct,
+        holderGrowth1hPct: marketAdjustedHolderGrowthPct,
+        momentumPct: compositeMomentumPct,
         sentimentScore,
         tokenRiskScore: token?.tokenRiskScore ?? null,
       })
@@ -1335,17 +1707,19 @@ async function hydrateCalls(
       determineTimingTier({
         firstCallerRank,
         ageMinutesSinceFirstCall:
-          firstCall ? Math.max(0, (record.createdAt.getTime() - firstCall.createdAt.getTime()) / (60 * 1000)) : null,
+          firstCallCreatedAt
+            ? Math.max(0, (record.createdAt.getTime() - firstCallCreatedAt.getTime()) / (60 * 1000))
+            : null,
         entryMcap: record.entryMcap,
-        firstCallEntryMcap: firstCall?.entryMcap ?? null,
+        firstCallEntryMcap,
       });
     const bundlePenaltyScore = roundMetric(record.bundlePenaltyScore ?? token?.tokenRiskScore ?? null) ?? 0;
     const radarReasons = buildRadarReasons({
       distinctTrustedTraders,
-      volumeGrowthPct: 0,
-      liquidityGrowthPct: 0,
-      holderGrowthPct: 0,
-      momentumPct: roiCurrentPct ?? 0,
+      volumeGrowthPct,
+      liquidityGrowthPct,
+      holderGrowthPct,
+      momentumPct: Math.max(roiCurrentPct ?? 0, mcapGrowthPct),
       tokenRiskScore: token?.tokenRiskScore ?? null,
     });
 
@@ -2085,20 +2459,19 @@ export async function listFirstCallerLeaderboards(viewerId: string | null): Prom
       const callsRaw = await prisma.post.findMany({
         where: {
           authorId: { in: traders.map((trader) => trader.id) },
-          firstCallerRank: 1,
         },
         select: CALL_SELECT,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 160,
+        take: 320,
       });
-      const calls = await hydrateCalls(callsRaw, viewerId, {
+      const firstCalls = (await hydrateCalls(callsRaw, viewerId, {
         refreshTraders: false,
         refreshTokens: false,
         ensureTokenLinks: false,
         persistComputed: false,
-      });
+      })).filter((call) => call.firstCallerRank === 1);
       const confidenceByTrader = new Map<string, { total: number; count: number }>();
-      for (const call of calls) {
+      for (const call of firstCalls) {
         const current = confidenceByTrader.get(call.author.id) ?? { total: 0, count: 0 };
         current.total += call.confidenceScore;
         current.count += 1;
