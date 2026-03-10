@@ -312,6 +312,21 @@ export function hasStoredAuthTokenHint(): boolean {
   return Boolean(readCachedAuthUser()) || hasSessionCookieHint();
 }
 
+function hasRecoverableBackendSessionHint(referenceTime = Date.now()): boolean {
+  if (isExplicitLogoutCoolingDown(referenceTime)) {
+    return false;
+  }
+
+  return (
+    Boolean(readCachedAuthUser()) ||
+    hasSessionCookieHint() ||
+    hasRecentPrivySyncGrace(referenceTime) ||
+    hasValidatedAuthSession(referenceTime) ||
+    lastSuccessfulSessionAt > 0 ||
+    lastBootstrappedSessionAt > 0
+  );
+}
+
 clearLegacyStoredAuthTokenArtifacts();
 
 function hasSessionCookieHint(): boolean {
@@ -1411,7 +1426,17 @@ export async function startPrivyAuthBootstrap({
     let finalizationStartedAt: number | null = null;
 
     try {
-      if (tryExistingBackendSession) {
+      const shouldCheckExistingBackendSession =
+        tryExistingBackendSession && hasRecoverableBackendSessionHint();
+      if (tryExistingBackendSession && !shouldCheckExistingBackendSession) {
+        console.info("[AuthFlow] bootstrap skipping existing backend session check without local session hints", {
+          owner,
+          mode,
+          userId: user.id,
+        });
+      }
+
+      if (shouldCheckExistingBackendSession) {
         console.info("[AuthFlow] bootstrap checking existing backend session before Privy sync", {
           owner,
           mode,
