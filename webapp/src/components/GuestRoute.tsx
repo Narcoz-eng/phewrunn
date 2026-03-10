@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   getAuthUiState,
+  getExplicitLogoutAt,
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
   usePrivyAuthBootstrapSnapshot,
@@ -56,20 +57,27 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
   const logoutCooldownActive = isExplicitLogoutCoolingDown();
+  // After explicit logout, suppress Privy auto-bootstrap for longer than the
+  // hard cooldown so the user isn't trapped in "Signing you in..." when the
+  // Privy SDK is slow to de-authenticate.
+  const RECENT_LOGOUT_SUPPRESS_MS = 15_000;
+  const recentlyLoggedOut =
+    logoutCooldownActive ||
+    (getExplicitLogoutAt() > 0 && Date.now() - getExplicitLogoutAt() < RECENT_LOGOUT_SUPPRESS_MS);
   const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
   const activeLoginIntent =
-    !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
+    !effectiveUser && !recentlyLoggedOut ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivyHydrationHint =
-    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !logoutCooldownActive;
-  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
+    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !recentlyLoggedOut;
+  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !recentlyLoggedOut;
   const authUiState = getAuthUiState({
     snapshot: bootstrapSnapshot,
     privyAuthenticated: authenticated,
-    logoutCoolingDown: logoutCooldownActive,
+    logoutCoolingDown: recentlyLoggedOut,
   });
   const shouldHoldForOAuthReturn =
-    hasOAuthReturnHint && !ready && !effectiveUser && !logoutCooldownActive;
+    hasOAuthReturnHint && !ready && !effectiveUser && !recentlyLoggedOut;
   const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
   const shouldHoldForRecovery =
     hasPrivyHydrationHint ||

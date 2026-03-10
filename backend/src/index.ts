@@ -216,9 +216,10 @@ app.use("/api/*", sanitizeQuery());
 
 // 5. CSRF Protection - validate origin for state-changing requests
 app.use("/api/*", async (c, next) => {
-  // Explicitly exempt auth bootstrap endpoints that may be called before a cookie session exists.
-  // Keep logout and other state-changing routes protected.
-  if (c.req.path === "/api/auth/privy-sync" || c.req.path === "/api/auth/wallet") {
+  // Explicitly exempt auth bootstrap and session teardown endpoints.
+  // privy-sync/wallet: may be called before a cookie session exists.
+  // logout: must always succeed so users can sign out reliably.
+  if (c.req.path === "/api/auth/privy-sync" || c.req.path === "/api/auth/wallet" || c.req.path === "/api/auth/logout") {
     return next();
   }
   return csrfProtection()(c, next);
