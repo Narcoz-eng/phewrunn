@@ -26,6 +26,7 @@ import { radarRouter } from "./routes/radar.js";
 import { alertsRouter } from "./routes/alerts.js";
 import { leaderboardsRouter } from "./routes/leaderboards.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
+import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
 
 // Security middleware imports
 import {
@@ -61,6 +62,7 @@ logProductionStatus();
 // Start rate limit cleanup (cleans expired entries every minute)
 startRateLimitCleanup(60000);
 startSessionMaintenance();
+startIntelligencePriorityLoop();
 
 // =====================================================
 // App Configuration

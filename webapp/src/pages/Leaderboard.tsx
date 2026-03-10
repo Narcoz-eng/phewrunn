@@ -24,6 +24,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl } from "@/types";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
+import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 import {
   ArrowLeft,
   Trophy,
@@ -33,6 +34,7 @@ import {
   LogOut,
   Settings,
   User as UserIcon,
+  Wallet,
 } from "lucide-react";
 
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
@@ -42,6 +44,7 @@ export default function Leaderboard() {
   const navigate = useNavigate();
   const [topUsersReady, setTopUsersReady] = useState(false);
   const [statsReady, setStatsReady] = useState(false);
+  const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
   const { data: session } = useSession();
   const { signOut, hasLiveSession } = useAuth();
   const { logout: privyLogout } = usePrivy();
@@ -205,6 +208,16 @@ export default function Leaderboard() {
                       <span>Profile</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        setIsPortfolioOpen(true);
+                      }}
+                      className="cursor-pointer"
+                    >
+                      <Wallet className="mr-2 h-4 w-4" />
+                      <span>Portfolio</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => navigate("/profile?tab=settings")}
                       className="cursor-pointer"
                     >
@@ -221,6 +234,11 @@ export default function Leaderboard() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                <LivePortfolioDialog
+                  open={isPortfolioOpen}
+                  onOpenChange={setIsPortfolioOpen}
+                  walletAddress={user.walletAddress ?? null}
+                />
               </>
             )}
           </div>

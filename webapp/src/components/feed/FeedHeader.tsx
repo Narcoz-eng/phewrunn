@@ -18,9 +18,10 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { LevelBadge } from "./LevelBar";
-import { Flame, LogOut, Radar, Settings, User as UserIcon, BrainCircuit } from "lucide-react";
+import { Flame, LogOut, Radar, Settings, User as UserIcon, BrainCircuit, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PhewBellIcon, PhewTrophyIcon } from "@/components/icons/PhewIcons";
+import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 
 export type FeedTab = "latest" | "hot-alpha" | "early-runners" | "high-conviction" | "following";
 
@@ -46,6 +47,7 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
   const { hasLiveSession } = useAuth();
   const tabRefs = useRef<Map<FeedTab, HTMLButtonElement>>(new Map());
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
+  const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
   const unreadCacheKey = user ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${user.id}` : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
   const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
   const unreadQueryKey = ["notifications", "unread-count", user?.id ?? "anonymous"] as const;
@@ -157,6 +159,16 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
                   <UserIcon className="mr-2 h-4 w-4" />
                   <span>Profile</span>
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setIsPortfolioOpen(true);
+                  }}
+                  className="cursor-pointer"
+                >
+                  <Wallet className="mr-2 h-4 w-4" />
+                  <span>Portfolio</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate("/profile?tab=settings")} className="cursor-pointer">
                   <Settings className="mr-2 h-4 w-4" />
                   <span>Settings</span>
@@ -168,6 +180,11 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <LivePortfolioDialog
+              open={isPortfolioOpen}
+              onOpenChange={setIsPortfolioOpen}
+              walletAddress={user.walletAddress ?? null}
+            />
             </>
           )}
         </div>

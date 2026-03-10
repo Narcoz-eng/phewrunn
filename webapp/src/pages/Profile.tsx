@@ -56,6 +56,7 @@ import {
   normalizeProfileHandleInput,
 } from "@/lib/profile-path";
 import { PhewEditIcon } from "@/components/icons/PhewIcons";
+import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -123,6 +124,7 @@ function clampCropOffset(offset: CropOffset, image: CropImageMeta, scale: number
 export default function Profile() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { signOut, hasLiveSession } = useAuth();
@@ -1178,7 +1180,25 @@ export default function Profile() {
               isLoading={isLoadingUser}
             />
 
+            <div className="flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-2xl"
+                onClick={() => setIsPortfolioOpen(true)}
+              >
+                <Wallet className="mr-2 h-4 w-4" />
+                Open live portfolio
+              </Button>
+            </div>
+
             <TraderIntelligenceCard handle={user.username ?? user.id} />
+
+            <LivePortfolioDialog
+              open={isPortfolioOpen}
+              onOpenChange={setIsPortfolioOpen}
+              walletAddress={displayWalletAddress ?? user.walletAddress ?? null}
+            />
 
             {/* Wallet Connection Section */}
             <WalletConnection />

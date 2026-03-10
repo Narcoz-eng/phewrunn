@@ -32,6 +32,8 @@ const TRUSTED_TRADER_THRESHOLD = 58;
 const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
+const FEED_PRIORITY_POST_COUNT = 15;
+const FEED_PRIORITY_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 850 : 1_300;
 const FEED_RESULT_CACHE_TTL_MS = 15_000;
 const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
@@ -43,6 +45,10 @@ const LEADERBOARD_CACHE_TTL_MS = 20_000;
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
+const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
+const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
+const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 80;
+const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
 
 const AUTHOR_SELECT = Prisma.validator<Prisma.UserSelect>()({
   id: true,
@@ -450,6 +456,8 @@ const firstCallerLeaderboardsInFlight = new Map<
 >();
 const marketContextCache = new Map<string, CacheEntry<MarketContextSnapshot>>();
 const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
+let intelligencePriorityLoopTimer: ReturnType<typeof setInterval> | null = null;
+let intelligencePriorityLoopInFlight: Promise<void> | null = null;
 
 type TokenRefreshResult = {
   token: TokenRecord;
@@ -2036,6 +2044,131 @@ function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
   });
 }
 
+function shouldPriorityRefreshFeed(args: FeedArgs): boolean {
+  return !args.cursor && !args.search?.trim() && PRIORITY_FEED_KINDS.includes(args.kind);
+}
+
+async function refreshPriorityFeedSlice(
+  args: FeedArgs,
+  records: CallRecord[],
+  hydrated: EnrichedCall[]
+): Promise<EnrichedCall[]> {
+  if (!shouldPriorityRefreshFeed(args) || hydrated.length === 0 || records.length === 0) {
+    return hydrated;
+  }
+
+  const priorityIds = hydrated.slice(0, FEED_PRIORITY_POST_COUNT).map((call) => call.id);
+  if (priorityIds.length === 0) {
+    return hydrated;
+  }
+
+  const recordsById = new Map(records.map((record) => [record.id, record] as const));
+  const priorityRecords = priorityIds
+    .map((id) => recordsById.get(id))
+    .filter((record): record is CallRecord => Boolean(record));
+  if (priorityRecords.length === 0) {
+    return hydrated;
+  }
+
+  const refreshed = await withSoftTimeout(
+    hydrateCalls(priorityRecords, args.viewerId, {
+      refreshTraders: false,
+      refreshTokens: true,
+      ensureTokenLinks: true,
+      persistComputed: false,
+      preferStoredIntelligence: false,
+    }),
+    FEED_PRIORITY_REFRESH_TIMEOUT_MS
+  );
+
+  if (!refreshed || refreshed.length === 0) {
+    return hydrated;
+  }
+
+  const refreshedById = new Map(refreshed.map((call) => [call.id, call] as const));
+  return sortCalls(
+    args.kind,
+    hydrated.map((call) => refreshedById.get(call.id) ?? call)
+  );
+}
+
+async function prewarmRecentTokenIntelligence(): Promise<void> {
+  const recentRecords = await prisma.post.findMany({
+    where: {
+      OR: [
+        { tokenId: { not: null } },
+        { contractAddress: { not: null } },
+      ],
+    },
+    select: CALL_SELECT,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: Math.max(INTELLIGENCE_PREWARM_TOKEN_LIMIT * 3, 160),
+  });
+
+  if (recentRecords.length === 0) {
+    return;
+  }
+
+  const ensuredTokenMap = await ensureTokensForCalls(recentRecords);
+  const tokenMap = mergeTokenMaps(buildTokenMapFromRecords(recentRecords), ensuredTokenMap);
+  const tokensToRefresh = Array.from(tokenMap.values())
+    .sort((left, right) => {
+      const leftFreshness = left.lastIntelligenceAt?.getTime() ?? 0;
+      const rightFreshness = right.lastIntelligenceAt?.getTime() ?? 0;
+      if (leftFreshness !== rightFreshness) {
+        return leftFreshness - rightFreshness;
+      }
+      return (right.updatedAt?.getTime?.() ?? 0) - (left.updatedAt?.getTime?.() ?? 0);
+    })
+    .slice(0, INTELLIGENCE_PREWARM_TOKEN_LIMIT);
+
+  for (let index = 0; index < tokensToRefresh.length; index += 6) {
+    const batch = tokensToRefresh.slice(index, index + 6);
+    await Promise.allSettled(batch.map((token) => refreshTokenIntelligence(token.id)));
+  }
+}
+
+async function runIntelligencePriorityLoop(): Promise<void> {
+  if (intelligencePriorityLoopInFlight) {
+    return intelligencePriorityLoopInFlight;
+  }
+
+  intelligencePriorityLoopInFlight = (async () => {
+    try {
+      await prewarmRecentTokenIntelligence();
+      await Promise.allSettled(
+        PRIORITY_FEED_KINDS.map((kind) =>
+          listFeedCalls({
+            kind,
+            viewerId: null,
+            limit: FEED_PRIORITY_POST_COUNT,
+          })
+        )
+      );
+    } catch (error) {
+      console.warn("[intelligence] priority prewarm failed", error);
+    } finally {
+      intelligencePriorityLoopInFlight = null;
+    }
+  })();
+
+  return intelligencePriorityLoopInFlight;
+}
+
+export function startIntelligencePriorityLoop(): void {
+  if (intelligencePriorityLoopTimer) {
+    return;
+  }
+
+  setTimeout(() => {
+    void runIntelligencePriorityLoop();
+  }, INTELLIGENCE_PREWARM_START_DELAY_MS);
+
+  intelligencePriorityLoopTimer = setInterval(() => {
+    void runIntelligencePriorityLoop();
+  }, INTELLIGENCE_PREWARM_INTERVAL_MS);
+}
+
 export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
   const limit = Math.max(1, Math.min(MAX_FEED_LIMIT, args.limit ?? DEFAULT_FEED_LIMIT));
   const viewerKey = args.viewerId ?? "anonymous";
@@ -2081,7 +2214,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
       take: Math.min(200, Math.max(limit + 1, candidateLimit)),
     });
 
-    const hydrated = sortCalls(
+    const baseHydrated = sortCalls(
       args.kind,
       await hydrateCalls(records, args.viewerId, {
         refreshTraders: false,
@@ -2091,6 +2224,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         preferStoredIntelligence: true,
       })
     );
+    const hydrated = await refreshPriorityFeedSlice(args, records, baseHydrated);
     const startIndex = args.cursor
       ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
       : 0;

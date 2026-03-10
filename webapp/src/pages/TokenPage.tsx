@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
@@ -8,6 +8,7 @@ import { ArrowLeft, AlertCircle, BarChart3, Coins, ExternalLink, Loader2, Shield
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PostCard } from "@/components/feed/PostCard";
 import { TokenScanningState } from "@/components/feed/TokenScanningState";
+import { CandlestickChart } from "@/components/feed/CandlestickChart";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
@@ -24,6 +25,17 @@ import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
+const TOKEN_LIVE_CHART_VISIBLE_POINTS = 72;
+const TOKEN_LIVE_CHART_FUTURE_SLOTS = 6;
+const TOKEN_CHART_INTERVAL_OPTIONS = [
+  { value: "5", label: "5m" },
+  { value: "15", label: "15m" },
+  { value: "60", label: "1h" },
+  { value: "240", label: "4h" },
+  { value: "1D", label: "1D" },
+] as const;
+
+type TokenChartIntervalValue = (typeof TOKEN_CHART_INTERVAL_OPTIONS)[number]["value"];
 
 type TokenChartPoint = {
   timestamp: string;
@@ -33,6 +45,23 @@ type TokenChartPoint = {
   holderCount: number | null;
   sentimentScore: number | null;
   confidenceScore: number | null;
+};
+
+type TokenChartCandle = {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+type TokenChartCandlesSource = "birdeye" | "geckoterminal" | "unknown";
+
+type TokenChartCandlesResponse = {
+  candles: TokenChartCandle[];
+  source: TokenChartCandlesSource;
+  network: string | null;
 };
 
 type TokenTrader = PostAuthor & {
@@ -85,6 +114,7 @@ type TokenPageData = {
   name: string | null;
   imageUrl: string | null;
   dexscreenerUrl: string | null;
+  pairAddress?: string | null;
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
@@ -138,6 +168,15 @@ function formatIntegerMetric(
 function formatMarketMetric(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Scanning";
   return formatMarketCap(value);
+}
+
+function formatTokenPrice(value: number): string {
+  if (!Number.isFinite(value)) return "-";
+  if (value === 0) return "$0.00";
+  if (Math.abs(value) < 0.000001) return `$${value.toExponential(2)}`;
+  if (Math.abs(value) < 0.01) return `$${value.toFixed(6)}`;
+  if (Math.abs(value) < 1) return `$${value.toFixed(4)}`;
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
 }
 
 function formatTimelineEventLabel(eventType: string): string {
@@ -216,6 +255,7 @@ function riskTone(label: string | null | undefined): string {
 export default function TokenPage() {
   const { tokenAddress } = useParams<{ tokenAddress: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data: session, canPerformAuthenticatedWrites } = useSession();
   const viewerScope = session?.user?.id ?? "anonymous";
@@ -233,6 +273,8 @@ export default function TokenPage() {
   );
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
+  const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("15");
+  const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
 
   const {
     data: token,
@@ -259,6 +301,91 @@ export default function TokenPage() {
     writeSessionCache(tokenCacheKey, token);
   }, [token, tokenCacheKey]);
 
+  const chartRequestConfig = useMemo(() => {
+    switch (chartInterval) {
+      case "5":
+        return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
+      case "15":
+        return { timeframe: "minute" as const, aggregate: 5, limit: 360 };
+      case "60":
+        return { timeframe: "hour" as const, aggregate: 1, limit: 320 };
+      case "240":
+        return { timeframe: "hour" as const, aggregate: 4, limit: 320 };
+      case "1D":
+      default:
+        return { timeframe: "day" as const, aggregate: 1, limit: 260 };
+    }
+  }, [chartInterval]);
+
+  const liveChartQuery = useQuery<TokenChartCandlesResponse>({
+    queryKey: [
+      "token-live-chart",
+      tokenAddress,
+      token?.pairAddress ?? null,
+      chartRequestConfig.timeframe,
+      chartRequestConfig.aggregate,
+      chartRequestConfig.limit,
+    ],
+    enabled: Boolean(tokenAddress && token && (token.pairAddress || token.address)),
+    staleTime: 4_000,
+    gcTime: 8 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    refetchInterval:
+      chartRequestConfig.timeframe === "minute"
+        ? chartRequestConfig.aggregate <= 5
+          ? 8_000
+          : 12_000
+        : chartRequestConfig.timeframe === "hour"
+          ? 20_000
+          : 60_000,
+    queryFn: async () => {
+      if (!tokenAddress || !token) {
+        return {
+          candles: [],
+          source: "unknown" as const,
+          network: null,
+        };
+      }
+
+      const response = await api.raw("/api/posts/chart/candles", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          poolAddress: token.pairAddress ?? undefined,
+          tokenAddress: token.address,
+          chainType: token.chainType === "solana" ? "solana" : "ethereum",
+          timeframe: chartRequestConfig.timeframe,
+          aggregate: chartRequestConfig.aggregate,
+          limit: chartRequestConfig.limit,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.text().catch(() => "");
+        throw new Error(payload || `Chart request failed (${response.status})`);
+      }
+
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            data?: {
+              candles?: TokenChartCandle[];
+              source?: string;
+              network?: string | null;
+            };
+          }
+        | null;
+      const sourceRaw = payload?.data?.source;
+      return {
+        candles: Array.isArray(payload?.data?.candles) ? payload.data.candles : [],
+        source: sourceRaw === "birdeye" || sourceRaw === "geckoterminal" ? sourceRaw : "unknown",
+        network: typeof payload?.data?.network === "string" ? payload.data.network : null,
+      };
+    },
+  });
+
   const chartData = useMemo(
     () =>
       (token?.chart ?? []).map((point) => ({
@@ -268,17 +395,61 @@ export default function TokenPage() {
     [token?.chart]
   );
 
+  const liveChartData = useMemo(
+    () =>
+      (liveChartQuery.data?.candles ?? []).map((candle) => ({
+        ts: candle.timestamp,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        isBullish: candle.close >= candle.open,
+        label: new Date(candle.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        fullLabel: new Date(candle.timestamp).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      })),
+    [liveChartQuery.data?.candles]
+  );
+
+  const liveChartWindow = useMemo(() => {
+    if (liveChartData.length === 0) {
+      return { startIndex: 0, endIndex: -1 };
+    }
+    const visiblePoints = Math.min(TOKEN_LIVE_CHART_VISIBLE_POINTS, liveChartData.length);
+    return {
+      startIndex: Math.max(0, liveChartData.length - visiblePoints),
+      endIndex: liveChartData.length - 1,
+    };
+  }, [liveChartData]);
+
   const primaryTradeCall = useMemo(
     () =>
       token?.recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
     [token?.recentCalls]
   );
+  const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
     (point) =>
       [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
         (value) => typeof value === "number" && Number.isFinite(value) && value > 0
       )
   );
+  const hasLiveChartTelemetry = liveChartData.length > 1;
+  const liveChartPriceChangePct =
+    liveChartData.length > 1
+      ? ((liveChartData[liveChartData.length - 1]!.close - liveChartData[0]!.open) / liveChartData[0]!.open) * 100
+      : null;
+  const liveChartSourceLabel =
+    liveChartQuery.data?.source === "birdeye"
+      ? "Birdeye live"
+      : liveChartQuery.data?.source === "geckoterminal"
+        ? "GeckoTerminal live"
+        : "Live chart";
 
   const followMutation = useMutation({
     mutationFn: async () => {
@@ -330,6 +501,16 @@ export default function TokenPage() {
       block: "start",
     });
   };
+
+  useEffect(() => {
+    if (!shouldAutoOpenTradePanel || hasConsumedTradeDeepLink || !primaryTradeCall) return;
+    setPendingTradeCallId(primaryTradeCall.id);
+    setHasConsumedTradeDeepLink(true);
+    recentCallsRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [hasConsumedTradeDeepLink, primaryTradeCall, shouldAutoOpenTradePanel]);
 
   const showTokenLoading = !token && isLoading;
   const holderCountValue = token
@@ -494,18 +675,67 @@ export default function TokenPage() {
 
             <section className="grid gap-5 lg:items-start lg:grid-cols-[1.35fr_0.65fr]">
               <div className="app-surface p-5 sm:p-6">
-                <div className="mb-4 flex items-center justify-between">
+                <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <h3 className="text-lg font-semibold text-foreground">Market + confidence chart</h3>
-                    <p className="text-sm text-muted-foreground">Snapshots from the token intelligence engine</p>
+                    <h3 className="text-lg font-semibold text-foreground">Live price chart</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Real-time candles from the market route, with token snapshots held as fallback telemetry.
+                    </p>
                   </div>
-                  <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-xs text-muted-foreground">
-                    <BarChart3 className="mr-1 inline h-3.5 w-3.5" />
-                    {hasChartTelemetry ? `${chartData.length} points` : "Scanning"}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-xs text-muted-foreground">
+                      <BarChart3 className="mr-1 inline h-3.5 w-3.5" />
+                      {hasLiveChartTelemetry ? liveChartSourceLabel : hasChartTelemetry ? `${chartData.length} snapshot points` : "Scanning"}
+                    </div>
+                    {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct) ? (
+                      <div className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-semibold",
+                        liveChartPriceChangePct >= 0
+                          ? "border-gain/25 bg-gain/10 text-gain"
+                          : "border-loss/25 bg-loss/10 text-loss"
+                      )}>
+                        {liveChartPriceChangePct >= 0 ? "+" : ""}
+                        {liveChartPriceChangePct.toFixed(2)}%
+                      </div>
+                    ) : null}
                   </div>
                 </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {TOKEN_CHART_INTERVAL_OPTIONS.map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      variant={chartInterval === option.value ? "default" : "outline"}
+                      className="h-9 rounded-full px-3"
+                      onClick={() => setChartInterval(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
                 <div className="h-[320px] w-full">
-                  {hasChartTelemetry ? (
+                  {hasLiveChartTelemetry ? (
+                    <div className="h-full rounded-[24px] border border-border/60 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.09),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
+                      <CandlestickChart
+                        data={liveChartData}
+                        visibleStartIndex={liveChartWindow.startIndex}
+                        visibleEndIndex={liveChartWindow.endIndex}
+                        futureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
+                        showVolume
+                        showCandles
+                        stroke="hsl(var(--primary))"
+                        fill="hsla(var(--primary), 0.22)"
+                        formatPrice={formatTokenPrice}
+                        formatTick={(timestampMs) =>
+                          new Date(timestampMs).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        }
+                        className="h-full"
+                      />
+                    </div>
+                  ) : hasChartTelemetry ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={chartData}>
                         <defs>
@@ -537,7 +767,7 @@ export default function TokenPage() {
                         <div className="space-y-1">
                           <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
                           <p className="text-sm text-muted-foreground">
-                            We are pulling market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
+                            We are pulling the live price route, market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
                           </p>
                         </div>
                       </div>

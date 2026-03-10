@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, Wallet, X, ChevronDown, ChevronUp } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, X, ChevronDown, ChevronUp, ArrowUpRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 
@@ -23,6 +23,9 @@ interface PortfolioPanelProps {
   totalUnrealizedPnl: number | null;
   onQuickSell: (mint: string, amount: number) => void;
   walletConnected: boolean;
+  actionMode?: "hover" | "always";
+  actionLabel?: string;
+  actionTone?: "danger" | "neutral";
 }
 
 function formatUsd(value: number | null): string {
@@ -60,6 +63,9 @@ export default function PortfolioPanel({
   totalUnrealizedPnl,
   onQuickSell,
   walletConnected,
+  actionMode = "hover",
+  actionLabel = "Sell",
+  actionTone = "danger",
 }: PortfolioPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const totalIsProfit = totalUnrealizedPnl !== null && totalUnrealizedPnl >= 0;
@@ -189,11 +195,21 @@ export default function PortfolioPanel({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 rounded-md bg-rose-500/[0.08] px-2 text-[10px] font-semibold text-rose-400/80 hover:bg-rose-500/20 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className={cn(
+                          "h-6 rounded-md px-2 text-[10px] font-semibold transition-opacity",
+                          actionTone === "neutral"
+                            ? "bg-primary/10 text-primary hover:bg-primary/18 hover:text-primary"
+                            : "bg-rose-500/[0.08] text-rose-400/80 hover:bg-rose-500/20 hover:text-rose-400",
+                          actionMode === "always" ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        )}
                         onClick={() => onQuickSell(pos.mint, pos.balance)}
                       >
-                        <X className="mr-0.5 h-2.5 w-2.5" />
-                        Sell
+                        {actionTone === "neutral" ? (
+                          <ArrowUpRight className="mr-0.5 h-2.5 w-2.5" />
+                        ) : (
+                          <X className="mr-0.5 h-2.5 w-2.5" />
+                        )}
+                        {actionLabel}
                       </Button>
                     </div>
                   </div>
