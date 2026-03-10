@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePrivy, useIdentityToken, useLogin, useLoginWithOAuth, useUser } from "@privy-io/react-auth";
+import { usePrivy, useIdentityToken, useLogin, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   clearPrivySyncFailureState,
   getAuthUiState,
@@ -24,7 +24,6 @@ import { toast } from "sonner";
 
 const PRIVY_LOGOUT_SETTLE_MS = 250;
 const PRIVY_CALLBACK_READY_TIMEOUT_MS = 15_000;
-const GENERIC_SIGN_IN_FAILURE_MESSAGE = "Sign-in failed. Please retry.";
 
 type UsePrivyLoginOptions = {
   onSuccess?: (user: AuthUser) => void;
@@ -80,7 +79,6 @@ function waitFor(delayMs: number): Promise<void> {
 
 export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
   const { ready, authenticated, user, logout: privyLogout } = usePrivy();
-  const { refreshUser } = useUser();
   const { identityToken } = useIdentityToken();
   const { hasLiveSession } = useAuth();
   const providerInstanceId = usePrivyProviderInstanceId();
@@ -167,7 +165,8 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       snapshot.userId === userId &&
       (snapshot.debugCode === "awaiting_privy_sdk_ready" ||
         snapshot.debugCode === "awaiting_privy_identity_token_hook" ||
-        snapshot.debugCode === "awaiting_privy_identity_verification_finalization")
+        (snapshot.debugCode === "awaiting_privy_identity_verification_finalization" &&
+          Boolean(latestPrivyIdentityTokenRef.current)))
     );
   }, []);
 
@@ -226,7 +225,6 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       privyAuthenticated: latestPrivyStateRef.current.authenticated,
       privyIdentityToken: latestPrivyIdentityTokenRef.current,
       getLatestPrivyIdentityToken: () => latestPrivyIdentityTokenRef.current,
-      refreshPrivyAuthState: async () => (await refreshUser()) as PrivyUserLike,
       triggerSource: "manual_user_action",
     });
 
@@ -235,7 +233,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     }
 
     return syncedUser;
-  }, [handleSuccessfulLogin, isResumablePendingSnapshot, refreshUser]);
+  }, [handleSuccessfulLogin, isResumablePendingSnapshot]);
 
   useEffect(() => {
     const pendingCallback = pendingPrivyCallbackRef.current;
@@ -504,24 +502,28 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
 
   const authStatusMessage =
     authStatus === "hydrating"
-      ? "Connecting..."
+      ? "Checking your Privy session..."
       : authStatus === "connecting_backend_session"
-        ? "Signing you in..."
+        ? "Connecting your backend session..."
         : authStatus === "finalizing_identity_verification"
-          ? "Signing you in..."
-          : authStatus === "authenticated"
-            ? "Signing you in..."
-            : authStatus === "logout_in_progress"
-              ? "Connecting..."
-              : null;
+          ? bootstrapSnapshot?.detail ??
+            localSyncError ??
+            "Privy is still finalizing identity verification for backend sign-in."
+          : authStatus === "rate_limited"
+            ? bootstrapSnapshot?.debugCode === "privy_rate_limited_before_backend_sync"
+              ? bootstrapSnapshot.detail ??
+                "Sign-in could not start because Privy is temporarily rate limiting this browser/session. Please wait 10-15 seconds and try again, or use a fresh private window."
+              : bootstrapSnapshot?.detail ??
+                "Privy is temporarily rate limiting sign-in. Please wait 10-15 seconds, then tap Sign in again."
+            : authStatus === "authenticated"
+              ? "Signed in. Loading your account..."
+              : authStatus === "logout_in_progress"
+                ? "Signing out..."
+                : localSyncError ?? null;
 
   const bootstrapError =
     bootstrapSnapshot?.state === "failed" || bootstrapSnapshot?.state === "failed_rate_limited"
       ? bootstrapSnapshot.detail
-      : null;
-  const visibleSyncError =
-    localSyncError || bootstrapError || authStatus === "rate_limited"
-      ? GENERIC_SIGN_IN_FAILURE_MESSAGE
       : null;
 
   return {
@@ -536,7 +538,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       bootstrapSnapshot?.state === "failed_rate_limited" &&
       isPrivyAuthBootstrapCooldownActive(bootstrapSnapshot),
     cooldownRemainingMs,
-    syncError: visibleSyncError,
+    syncError: localSyncError ?? bootstrapError ?? null,
     authStatus,
     authStatusMessage,
     backendSyncStarted: bootstrapSnapshot?.backendSyncStarted === true,
