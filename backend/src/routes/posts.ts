@@ -279,10 +279,23 @@ const CREATE_POST_MARKETCAP_TIMEOUT_MS = process.env.NODE_ENV === "production" ?
 const CREATE_POST_HELIUS_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_200 : 1_800;
 const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
 const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 6 : 3;
+const SHARED_ALPHA_STALE_FALLBACK_MS =
+  process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
 const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
 const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
 const sharedAlphaWarmInFlight = new Map<string, Promise<void>>();
+const sharedAlphaResponseCache = new Map<
+  string,
+  {
+    data: {
+      users: Array<Record<string, unknown>>;
+      count: number;
+    };
+    expiresAtMs: number;
+    staleUntilMs: number;
+  }
+>();
 const feedCardSnapshotCache = new Map<
   string,
   {
@@ -474,6 +487,46 @@ function readFeedCardSnapshot(postId: string): Record<string, unknown> | null {
   }
   feedCardSnapshotCache.delete(postId);
   return null;
+}
+
+function readSharedAlphaResponseCache(
+  key: string,
+  opts?: { allowStale?: boolean }
+): { users: Array<Record<string, unknown>>; count: number } | null {
+  const cached = sharedAlphaResponseCache.get(key);
+  if (!cached) return null;
+
+  const nowMs = Date.now();
+  if (cached.expiresAtMs > nowMs) {
+    return {
+      users: cached.data.users.map((user) => ({ ...user })),
+      count: cached.data.count,
+    };
+  }
+
+  if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+    return {
+      users: cached.data.users.map((user) => ({ ...user })),
+      count: cached.data.count,
+    };
+  }
+
+  sharedAlphaResponseCache.delete(key);
+  return null;
+}
+
+function writeSharedAlphaResponseCache(
+  key: string,
+  data: { users: Array<Record<string, unknown>>; count: number }
+): void {
+  sharedAlphaResponseCache.set(key, {
+    data: {
+      users: data.users.map((user) => ({ ...user })),
+      count: data.count,
+    },
+    expiresAtMs: Date.now() + SHARED_ALPHA_CACHE_TTL_MS,
+    staleUntilMs: Date.now() + SHARED_ALPHA_STALE_FALLBACK_MS,
+  });
 }
 
 function hydrateFeedPostsFromSnapshots<T extends { id: string }>(posts: T[]): Array<T | Record<string, unknown>> {
@@ -1581,6 +1634,7 @@ function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedMcapCache.clear();
   sharedAlphaAuthorCache.clear();
   sharedAlphaWarmInFlight.clear();
+  sharedAlphaResponseCache.clear();
   feedCardSnapshotCache.clear();
   trendingCache = null;
   trendingInFlight = null;
@@ -6183,60 +6237,183 @@ postsRouter.get("/:id/reposters", async (c) => {
 // Get users who posted the same CA within 48 hours (Shared Alpha)
 postsRouter.get("/:id/shared-alpha", async (c) => {
   const postId = c.req.param("id");
+  const freshCached = readSharedAlphaResponseCache(postId);
+  if (freshCached) {
+    return c.json({ data: freshCached });
+  }
 
-  // Get the post with its CA
-  const post = await prisma.post.findUnique({
-    where: { id: postId },
-    select: {
-      id: true,
-      contractAddress: true,
-      createdAt: true,
-      authorId: true,
-    },
-  });
+  const snapshot = readFeedCardSnapshot(postId);
+  const snapshotAuthor =
+    snapshot && typeof snapshot.author === "object" && snapshot.author !== null && !Array.isArray(snapshot.author)
+      ? (snapshot.author as Record<string, unknown>)
+      : null;
+  const snapshotAuthorId =
+    typeof snapshot?.authorId === "string"
+      ? snapshot.authorId
+      : typeof snapshotAuthor?.id === "string"
+        ? snapshotAuthor.id
+        : null;
+  const snapshotContractAddress =
+    typeof snapshot?.contractAddress === "string" && snapshot.contractAddress.length > 0
+      ? snapshot.contractAddress
+      : null;
+  const snapshotSharedAlphaCount =
+    typeof snapshot?.sharedAlphaCount === "number" && Number.isFinite(snapshot.sharedAlphaCount)
+      ? Math.max(0, Math.round(snapshot.sharedAlphaCount))
+      : 0;
+
+  if (snapshotContractAddress && snapshotSharedAlphaCount === 0) {
+    const emptyData = { users: [], count: 0 };
+    writeSharedAlphaResponseCache(postId, emptyData);
+    return c.json({ data: emptyData });
+  }
+
+  let post:
+    | {
+        id: string;
+        contractAddress: string | null;
+        createdAt: Date;
+        authorId: string;
+      }
+    | null = snapshotContractAddress && snapshotAuthorId
+      ? {
+          id: postId,
+          contractAddress: snapshotContractAddress,
+          createdAt:
+            typeof snapshot?.createdAt === "string" || snapshot?.createdAt instanceof Date
+              ? new Date(snapshot.createdAt as string | Date)
+              : new Date(),
+          authorId: snapshotAuthorId,
+        }
+      : null;
+
+  if (!post) {
+    try {
+      post = await withFeedTimeout(
+        prisma.post.findUnique({
+          where: { id: postId },
+          select: {
+            id: true,
+            contractAddress: true,
+            createdAt: true,
+            authorId: true,
+          },
+        }),
+        "shared_alpha_post_query",
+        FEED_SOCIAL_QUERY_TIMEOUT_MS
+      );
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error) && !isFeedTimeoutError(error)) {
+        throw error;
+      }
+
+      const staleCached = readSharedAlphaResponseCache(postId, { allowStale: true });
+      if (staleCached) {
+        return c.json({ data: staleCached });
+      }
+
+      return c.json({
+        data: {
+          users: [],
+          count: snapshotSharedAlphaCount,
+        },
+      });
+    }
+  }
 
   if (!post) {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
   if (!post.contractAddress) {
-    return c.json({ data: { users: [], count: 0 } });
+    const emptyData = { users: [], count: 0 };
+    writeSharedAlphaResponseCache(postId, emptyData);
+    return c.json({ data: emptyData });
   }
 
-  // Find other posts with same CA within 48 hours
+  const nowMs = Date.now();
+  const cachedAuthors = sharedAlphaAuthorCache.get(post.contractAddress);
+  if (cachedAuthors && cachedAuthors.expiresAtMs > nowMs) {
+    const cachedCount = Math.max(0, cachedAuthors.authorIds.size - (cachedAuthors.authorIds.has(post.authorId) ? 1 : 0));
+    if (cachedCount === 0) {
+      const emptyData = { users: [], count: 0 };
+      writeSharedAlphaResponseCache(postId, emptyData);
+      return c.json({ data: emptyData });
+    }
+  }
+
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
-  const sharedPosts = await prisma.post.findMany({
-    where: {
-      contractAddress: post.contractAddress,
-      id: { not: post.id },
-      authorId: { not: post.authorId },
-      createdAt: { gte: fortyEightHoursAgo },
-    },
-    orderBy: { createdAt: "desc" },
-    distinct: ["authorId"],
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          xp: true,
-          isVerified: true,
+  try {
+    const sharedPosts = await withFeedTimeout(
+      prisma.post.findMany({
+        where: {
+          contractAddress: post.contractAddress,
+          id: { not: post.id },
+          authorId: { not: post.authorId },
+          createdAt: { gte: fortyEightHoursAgo },
         },
+        orderBy: { createdAt: "desc" },
+        distinct: ["authorId"],
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+              xp: true,
+              isVerified: true,
+            },
+          },
+        },
+      }),
+      "shared_alpha_users_query",
+      FEED_SOCIAL_QUERY_TIMEOUT_MS
+    );
+
+    const authorIds = new Set<string>([post.authorId]);
+    const users = sharedPosts.map((sharedPost) => {
+      authorIds.add(sharedPost.authorId);
+      return {
+        ...sharedPost.author,
+        postId: sharedPost.id,
+        postedAt: sharedPost.createdAt,
+      };
+    });
+
+    sharedAlphaAuthorCache.set(post.contractAddress, {
+      authorIds,
+      expiresAtMs: nowMs + SHARED_ALPHA_CACHE_TTL_MS,
+    });
+
+    const data = { users, count: users.length };
+    writeSharedAlphaResponseCache(postId, data);
+    return c.json({ data });
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error) && !isFeedTimeoutError(error)) {
+      throw error;
+    }
+
+    const staleCached = readSharedAlphaResponseCache(postId, { allowStale: true });
+    if (staleCached) {
+      return c.json({ data: staleCached });
+    }
+
+    const cachedAuthorIds = sharedAlphaAuthorCache.get(post.contractAddress);
+    const cachedCount =
+      cachedAuthorIds && cachedAuthorIds.expiresAtMs > nowMs
+        ? Math.max(0, cachedAuthorIds.authorIds.size - (cachedAuthorIds.authorIds.has(post.authorId) ? 1 : 0))
+        : snapshotSharedAlphaCount;
+
+    return c.json({
+      data: {
+        users: [],
+        count: cachedCount,
       },
-    },
-  });
-
-  const users = sharedPosts.map((p) => ({
-    ...p.author,
-    postId: p.id,
-    postedAt: p.createdAt,
-  }));
-
-  return c.json({ data: { users, count: users.length } });
+    });
+  }
 });
 
 // Get real-time price update for a post's CA (force refresh)
@@ -7862,13 +8039,25 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
       payloadById.set(id, cached);
     }
   }
+  const missingIds = uniqueIds.filter((id) => !payloadById.has(id));
+
+  if (missingIds.length === 0) {
+    return c.json({
+      data: Object.fromEntries(
+        uniqueIds.flatMap((id) => {
+          const payload = payloadById.get(id);
+          return payload ? [[id, payload] as const] : [];
+        })
+      ),
+    });
+  }
 
   let posts: PriceRoutePostRecord[] = [];
   let databaseLookupError: unknown = null;
   try {
     posts = await withPrismaRetry(
       () => prisma.post.findMany({
-        where: { id: { in: uniqueIds } },
+        where: { id: { in: missingIds } },
         select: {
           id: true,
           contractAddress: true,
@@ -7910,9 +8099,10 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
     }
   }
 
-  if (payloadById.size === 0) {
+  const unresolvedIds = uniqueIds.filter((id) => !payloadById.has(id));
+  if (unresolvedIds.length > 0) {
     const staleCachedEntries = await Promise.all(
-      uniqueIds.map(async (id) => [id, await resolveCachedPostPricePayload(id, { allowStale: true })] as const)
+      unresolvedIds.map(async (id) => [id, await resolveCachedPostPricePayload(id, { allowStale: true })] as const)
     );
     for (const [id, cached] of staleCachedEntries) {
       if (cached) {

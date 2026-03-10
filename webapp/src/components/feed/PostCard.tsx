@@ -1444,7 +1444,7 @@ export function PostCard({
   const { data: sharedAlphaData } = useQuery({
     queryKey: ["sharedAlpha", post.id],
     queryFn: () => api.get<SharedAlphaResponse>(`/api/posts/${post.id}/shared-alpha`),
-    enabled: isInViewport && Boolean(post.contractAddress),
+    enabled: isSharedAlphaOpen && Boolean(post.contractAddress),
     staleTime: 60000,
   });
   const sharedAlphaUsers = sharedAlphaData?.users ?? [];

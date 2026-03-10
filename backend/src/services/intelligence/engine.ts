@@ -1,5 +1,5 @@
 import { Prisma, type AlertPreference } from "@prisma/client";
-import { prisma } from "../../prisma.js";
+import { prisma, isTransientPrismaError } from "../../prisma.js";
 import {
   applyConfidenceGuardrails,
   buildReactionCounts,
@@ -356,6 +356,14 @@ type CacheEntry<T> = {
   value: T;
 };
 
+type SocialState = {
+  likedPostIds: Set<string>;
+  repostedPostIds: Set<string>;
+  followedAuthorIds: Set<string>;
+  reactionByPostId: Map<string, string>;
+  reactionCountsByPostId: Map<string, ReactionCounts>;
+};
+
 const feedListCache = new Map<string, CacheEntry<FeedListResult>>();
 const feedListInFlight = new Map<string, Promise<FeedListResult>>();
 const followingSnapshotCache = new Map<
@@ -564,6 +572,12 @@ function readCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string): T | 
     cache.delete(key);
     return null;
   }
+  return cloneCachedValue(cached.value);
+}
+
+function peekCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
+  const cached = cache.get(key);
+  if (!cached) return null;
   return cloneCachedValue(cached.value);
 }
 
@@ -1479,13 +1493,7 @@ async function readSocialState(
   viewerId: string | null,
   postIds: string[],
   authorIds: string[]
-): Promise<{
-  likedPostIds: Set<string>;
-  repostedPostIds: Set<string>;
-  followedAuthorIds: Set<string>;
-  reactionByPostId: Map<string, string>;
-  reactionCountsByPostId: Map<string, ReactionCounts>;
-}> {
+): Promise<SocialState> {
   const reactionRows = await prisma.reaction.findMany({
     where: {
       postId: { in: postIds },
@@ -1550,6 +1558,94 @@ async function readSocialState(
     followedAuthorIds: new Set(follows.map((follow) => follow.followingId)),
     reactionByPostId,
     reactionCountsByPostId,
+  };
+}
+
+function buildEmptySocialState(): SocialState {
+  return {
+    likedPostIds: new Set<string>(),
+    repostedPostIds: new Set<string>(),
+    followedAuthorIds: new Set<string>(),
+    reactionByPostId: new Map<string, string>(),
+    reactionCountsByPostId: new Map<string, ReactionCounts>(),
+  };
+}
+
+function parseStoredReactionCounts(value: Prisma.JsonValue | null | undefined): ReactionCounts {
+  const counts = buildReactionCounts([]);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return counts;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  for (const key of ["alpha", "based", "printed", "rug"] as const) {
+    const raw = candidate[key];
+    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+      counts[key] = Math.round(raw);
+    }
+  }
+
+  return counts;
+}
+
+async function readViewerSocialState(
+  viewerId: string | null,
+  postIds: string[],
+  authorIds: string[]
+): Promise<SocialState> {
+  if (!viewerId || postIds.length === 0) {
+    return buildEmptySocialState();
+  }
+
+  const [likes, reposts, follows, reactions] = await Promise.all([
+    prisma.like.findMany({
+      where: {
+        userId: viewerId,
+        postId: { in: postIds },
+      },
+      select: { postId: true },
+    }),
+    prisma.repost.findMany({
+      where: {
+        userId: viewerId,
+        postId: { in: postIds },
+      },
+      select: { postId: true },
+    }),
+    authorIds.length > 0
+      ? prisma.follow.findMany({
+          where: {
+            followerId: viewerId,
+            followingId: { in: authorIds },
+          },
+          select: { followingId: true },
+        })
+      : Promise.resolve([]),
+    prisma.reaction.findMany({
+      where: {
+        userId: viewerId,
+        postId: { in: postIds },
+      },
+      select: {
+        postId: true,
+        type: true,
+      },
+    }),
+  ]);
+
+  const reactionByPostId = new Map<string, string>();
+  for (const reaction of reactions) {
+    if (!reactionByPostId.has(reaction.postId)) {
+      reactionByPostId.set(reaction.postId, reaction.type);
+    }
+  }
+
+  return {
+    likedPostIds: new Set(likes.map((like) => like.postId)),
+    repostedPostIds: new Set(reposts.map((repost) => repost.postId)),
+    followedAuthorIds: new Set(follows.map((follow) => follow.followingId)),
+    reactionByPostId,
+    reactionCountsByPostId: new Map<string, ReactionCounts>(),
   };
 }
 
@@ -1827,13 +1923,27 @@ async function hydrateCalls(
       })
     : [];
 
+  const postIds = records.map((record) => record.id);
+  const authorIds = Array.from(new Set(records.map((record) => record.authorId)));
+  const socialStatePromise = (
+    preferStoredIntelligence
+      ? readViewerSocialState(viewerId, postIds, authorIds)
+      : readSocialState(viewerId, postIds, authorIds)
+  ).catch((error) => {
+    if (!isTransientPrismaError(error)) {
+      throw error;
+    }
+    console.warn("[intelligence/feed] social state degraded during transient prisma pressure", {
+      viewerId,
+      preferStoredIntelligence,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return buildEmptySocialState();
+  });
+
   const [socialState, bundleClustersByTokenId, timingMetaByPostId, tokenGrowthById, marketContext] =
     await Promise.all([
-      readSocialState(
-        viewerId,
-        records.map((record) => record.id),
-        Array.from(new Set(records.map((record) => record.authorId)))
-      ),
+      socialStatePromise,
       preferStoredIntelligence
         ? Promise.resolve(new Map<string, EnrichedCall["bundleClusters"]>())
         : readTokenClusters(Array.from(new Set(Array.from(tokenMap.values()).map((token) => token.id)))),
@@ -1895,7 +2005,9 @@ async function hydrateCalls(
             .filter((call) => finite(call.author.trustScore) >= TRUSTED_TRADER_THRESHOLD)
             .map((call) => call.authorId)
         ).size;
-    const reactionCounts = socialState.reactionCountsByPostId.get(record.id) ?? buildReactionCounts([]);
+    const reactionCounts =
+      socialState.reactionCountsByPostId.get(record.id) ??
+      parseStoredReactionCounts(record.reactionCounts);
     const sentimentScore = roundMetricOrZero(
       record.sentimentScore ??
         computeSentimentScore({
@@ -2096,21 +2208,47 @@ async function getFollowingSnapshot(viewerId: string | null): Promise<{
     return cached;
   }
 
-  const [follows, tokenFollows] = await Promise.all([
-    prisma.follow.findMany({
-      where: { followerId: viewerId },
-      select: { followingId: true },
-    }),
-    prisma.tokenFollow.findMany({
-      where: { userId: viewerId },
-      select: { tokenId: true },
-    }),
-  ]);
+  try {
+    const [follows, tokenFollows] = await Promise.all([
+      prisma.follow.findMany({
+        where: { followerId: viewerId },
+        select: { followingId: true },
+      }),
+      prisma.tokenFollow.findMany({
+        where: { userId: viewerId },
+        select: { tokenId: true },
+      }),
+    ]);
 
-  return writeCacheValue(followingSnapshotCache, cacheKey, {
-    followedTraderIds: follows.map((follow) => follow.followingId),
-    followedTokenIds: tokenFollows.map((follow) => follow.tokenId),
-  }, FOLLOWING_SNAPSHOT_CACHE_TTL_MS);
+    return writeCacheValue(
+      followingSnapshotCache,
+      cacheKey,
+      {
+        followedTraderIds: follows.map((follow) => follow.followingId),
+        followedTokenIds: tokenFollows.map((follow) => follow.tokenId),
+      },
+      FOLLOWING_SNAPSHOT_CACHE_TTL_MS
+    );
+  } catch (error) {
+    if (!isTransientPrismaError(error)) {
+      throw error;
+    }
+
+    const staleCached = peekCacheValue(followingSnapshotCache, cacheKey);
+    if (staleCached) {
+      console.warn("[intelligence/feed] serving stale following snapshot after transient prisma failure", {
+        viewerId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return staleCached;
+    }
+
+    console.warn("[intelligence/feed] following snapshot unavailable during transient prisma pressure", {
+      viewerId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return { followedTraderIds: [], followedTokenIds: [] };
+  }
 }
 
 function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
@@ -2281,10 +2419,91 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
     args.kind === "following" || args.viewerId
       ? PERSONALIZED_FEED_RESULT_CACHE_TTL_MS
       : FEED_RESULT_CACHE_TTL_MS;
+  const staleCached = peekCacheValue(feedListCache, cacheKey);
 
   return memoizeCached(feedListCache, feedListInFlight, cacheKey, ttlMs, async () => {
-    const { followedTraderIds, followedTokenIds } = await getFollowingSnapshot(args.viewerId);
-    if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) {
+    try {
+      const { followedTraderIds, followedTokenIds } =
+        args.kind === "following"
+          ? await getFollowingSnapshot(args.viewerId)
+          : { followedTraderIds: [], followedTokenIds: [] };
+      if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) {
+        return {
+          items: [],
+          hasMore: false,
+          nextCursor: null,
+          totalItems: 0,
+        };
+      }
+
+      const where: Prisma.PostWhereInput = {
+        ...(buildSearchWhere(args.search) ?? {}),
+      };
+
+      if (args.kind === "following") {
+        where.OR = [
+          ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
+          ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
+        ];
+      } else if (args.kind !== "latest") {
+        where.createdAt = {
+          gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
+        };
+      }
+
+      const candidateLimit = args.kind === "latest" || args.kind === "following" ? limit * 3 : limit * 5;
+      const records = await prisma.post.findMany({
+        where,
+        select: CALL_SELECT,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: Math.min(200, Math.max(limit + 1, candidateLimit)),
+      });
+
+      const baseHydrated = sortCalls(
+        args.kind,
+        await hydrateCalls(records, args.viewerId, {
+          refreshTraders: false,
+          refreshTokens: false,
+          ensureTokenLinks: false,
+          persistComputed: false,
+          preferStoredIntelligence: true,
+        })
+      );
+      const hydrated = await refreshPriorityFeedSlice(args, records, baseHydrated);
+      const startIndex = args.cursor
+        ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
+        : 0;
+      const items = hydrated.slice(startIndex, startIndex + limit);
+      const nextCursor =
+        items.length === limit && hydrated[startIndex + limit]
+          ? items[items.length - 1]?.id ?? null
+          : null;
+
+      return {
+        items,
+        hasMore: startIndex + limit < hydrated.length,
+        nextCursor,
+        totalItems: hydrated.length,
+      };
+    } catch (error) {
+      if (!isTransientPrismaError(error)) {
+        throw error;
+      }
+
+      if (staleCached) {
+        console.warn("[intelligence/feed] serving stale feed cache after transient prisma failure", {
+          kind: args.kind,
+          viewerId: args.viewerId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return staleCached;
+      }
+
+      console.warn("[intelligence/feed] feed unavailable during transient prisma pressure; serving empty state", {
+        kind: args.kind,
+        viewerId: args.viewerId,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return {
         items: [],
         hasMore: false,
@@ -2292,56 +2511,6 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         totalItems: 0,
       };
     }
-
-    const where: Prisma.PostWhereInput = {
-      ...(buildSearchWhere(args.search) ?? {}),
-    };
-
-    if (args.kind === "following") {
-      where.OR = [
-        ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
-        ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
-      ];
-    } else if (args.kind !== "latest") {
-      where.createdAt = {
-        gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
-      };
-    }
-
-    const candidateLimit = args.kind === "latest" || args.kind === "following" ? limit * 3 : limit * 5;
-    const records = await prisma.post.findMany({
-      where,
-      select: CALL_SELECT,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: Math.min(200, Math.max(limit + 1, candidateLimit)),
-    });
-
-    const baseHydrated = sortCalls(
-      args.kind,
-      await hydrateCalls(records, args.viewerId, {
-        refreshTraders: false,
-        refreshTokens: false,
-        ensureTokenLinks: false,
-        persistComputed: false,
-        preferStoredIntelligence: true,
-      })
-    );
-    const hydrated = await refreshPriorityFeedSlice(args, records, baseHydrated);
-    const startIndex = args.cursor
-      ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
-      : 0;
-    const items = hydrated.slice(startIndex, startIndex + limit);
-    const nextCursor =
-      items.length === limit && hydrated[startIndex + limit]
-        ? items[items.length - 1]?.id ?? null
-        : null;
-
-    return {
-      items,
-      hasMore: startIndex + limit < hydrated.length,
-      nextCursor,
-      totalItems: hydrated.length,
-    };
   });
 }
 

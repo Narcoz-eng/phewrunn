@@ -5,6 +5,7 @@ import { verifySignedSessionToken } from "./session-token.js";
 import type { AuthTokenAttemptTrace } from "./auth-trace.js";
 
 const LOCAL_REVOKED_SESSION_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
+const LOCAL_ACTIVE_SESSION_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 50_000 : 5_000;
 const SESSION_REVOCATION_IDENTIFIER = "session-revocation";
 const SESSION_REVOCATION_DB_ENABLED = (() => {
   const configured = process.env.AUTH_SESSION_REVOCATION_DB_ENABLED?.trim().toLowerCase();
@@ -15,8 +16,11 @@ const SESSION_REVOCATION_DB_ENABLED = (() => {
 const SESSION_REVOCATION_LOG_COOLDOWN_MS = 15_000;
 const SHOULD_READ_REVOCATIONS_FROM_REDIS =
   !SESSION_REVOCATION_DB_ENABLED || isRedisFastForHotPath();
+const SESSION_REVOCATION_NEGATIVE_CACHE_TTL_MS =
+  process.env.NODE_ENV === "production" ? 60_000 : 15_000;
 
 const localRevokedSessionTokens = new Map<string, number>();
+const localActiveSessionTokens = new Map<string, number>();
 let lastSessionRevocationDbWarningAt = 0;
 
 function getRevokedSessionKey(jti: string): string {
@@ -29,10 +33,16 @@ function cleanupExpiredLocalRevocations(now = Date.now()): void {
       localRevokedSessionTokens.delete(jti);
     }
   }
+  for (const [jti, expiresAtMs] of localActiveSessionTokens) {
+    if (expiresAtMs <= now) {
+      localActiveSessionTokens.delete(jti);
+    }
+  }
 }
 
 function rememberRevokedSessionJti(jti: string, expiresAtMs: number): void {
   cleanupExpiredLocalRevocations();
+  localActiveSessionTokens.delete(jti);
 
   if (localRevokedSessionTokens.has(jti)) {
     localRevokedSessionTokens.delete(jti);
@@ -46,6 +56,26 @@ function rememberRevokedSessionJti(jti: string, expiresAtMs: number): void {
   }
 
   localRevokedSessionTokens.set(jti, expiresAtMs);
+}
+
+function rememberActiveSessionJti(jti: string, expiresAtMs: number): void {
+  cleanupExpiredLocalRevocations();
+  if (localRevokedSessionTokens.has(jti)) {
+    return;
+  }
+
+  if (localActiveSessionTokens.has(jti)) {
+    localActiveSessionTokens.delete(jti);
+  }
+
+  if (localActiveSessionTokens.size >= LOCAL_ACTIVE_SESSION_MAX_ENTRIES) {
+    const oldestKey = localActiveSessionTokens.keys().next().value;
+    if (typeof oldestKey === "string") {
+      localActiveSessionTokens.delete(oldestKey);
+    }
+  }
+
+  localActiveSessionTokens.set(jti, expiresAtMs);
 }
 
 function logSessionRevocationDbWarning(stage: string, error: unknown): void {
@@ -135,6 +165,14 @@ export async function isSignedSessionTokenRevoked(
     return true;
   }
 
+  const activeExpiry = localActiveSessionTokens.get(verified.jti);
+  if (typeof activeExpiry === "number" && activeExpiry > now) {
+    if (attempt) {
+      attempt.redisResult = "active_local_cache";
+    }
+    return false;
+  }
+
   if (SHOULD_READ_REVOCATIONS_FROM_REDIS) {
     if (attempt) {
       attempt.redisTouched = true;
@@ -169,6 +207,11 @@ export async function isSignedSessionTokenRevoked(
     rememberRevokedSessionJti(verified.jti, dbHit.expiresAt.getTime());
     return true;
   }
+
+  rememberActiveSessionJti(
+    verified.jti,
+    Math.min(verified.expiresAt.getTime(), now + SESSION_REVOCATION_NEGATIVE_CACHE_TTL_MS)
+  );
 
   return false;
 }

@@ -50,15 +50,21 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const desiredConnectionLimit =
+    const defaultConnectionLimit =
       configuredConnectionLimit ??
       (isServerlessRuntime
         ? (isProduction ? 8 : 3)
         : (isProduction ? 25 : 10));
+    const minimumSafeConnectionLimit =
+      isServerlessRuntime
+        ? (isProduction ? 5 : 3)
+        : (isProduction ? 8 : 4);
+    const desiredConnectionLimit = Math.max(defaultConnectionLimit, minimumSafeConnectionLimit);
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
-    const desiredPoolTimeout =
+    const defaultPoolTimeout =
       configuredPoolTimeout ??
       (isProduction ? 10 : 8);
+    const desiredPoolTimeout = Math.min(defaultPoolTimeout, isProduction ? 8 : 6);
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
@@ -85,6 +91,12 @@ function normalizeDatabaseUrl(
       ) {
         parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
         notes.push(`set connection_limit=${desiredConnectionLimit}`);
+        if (
+          configuredConnectionLimit !== null &&
+          configuredConnectionLimit < minimumSafeConnectionLimit
+        ) {
+          notes.push(`raised configured connection_limit floor from ${configuredConnectionLimit} to ${desiredConnectionLimit}`);
+        }
       }
 
       const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
@@ -94,6 +106,9 @@ function normalizeDatabaseUrl(
       ) {
         parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
         notes.push(`set pool_timeout=${desiredPoolTimeout}`);
+        if (configuredPoolTimeout !== null && configuredPoolTimeout > desiredPoolTimeout) {
+          notes.push(`capped configured pool_timeout from ${configuredPoolTimeout} to ${desiredPoolTimeout}`);
+        }
       }
     }
 
