@@ -1601,6 +1601,60 @@ export async function startPrivyAuthBootstrap({
                 tokenLocalCheck: resolvedPayload.tokenLocalCheck ?? null,
               });
             }
+
+            if (privyReady === true && privyAuthenticated === true) {
+              console.info(
+                "[AuthFlow] attempting /api/auth/privy-sync using server-visible Privy session",
+                {
+                  owner,
+                  mode,
+                  userId: resolvedPayload.user.id,
+                  attemptId: privyBootstrapAttemptId,
+                  attempt,
+                  totalAttempts,
+                  skipReason,
+                }
+              );
+
+              try {
+                const syncResult = await syncPrivySession(
+                  resolvedPayload.user.id,
+                  resolvedPayload.email,
+                  resolvedPayload.name,
+                  undefined,
+                  { allowMissingIdentityToken: true }
+                );
+
+                setPrivyAuthBootstrapState("authenticated", {
+                  owner,
+                  mode,
+                  userId: syncResult.user.id,
+                  detail: "backend session synced from server-visible Privy session",
+                  debugCode: "backend_session_synced_server_visible_privy_session",
+                  backendSyncStarted: true,
+                  attempt,
+                  totalAttempts,
+                });
+                return syncResult.user;
+              } catch (serverVisibleSyncError) {
+                console.warn(
+                  "[AuthFlow] server-visible Privy session sync failed while identity token was unavailable",
+                  {
+                    owner,
+                    mode,
+                    userId: resolvedPayload.user.id,
+                    attemptId: privyBootstrapAttemptId,
+                    attempt,
+                    totalAttempts,
+                    message:
+                      serverVisibleSyncError instanceof Error
+                        ? serverVisibleSyncError.message
+                        : String(serverVisibleSyncError),
+                  }
+                );
+              }
+            }
+
             throw new Error("Privy identity verification is still finalizing");
           }
 
@@ -2690,7 +2744,10 @@ export async function syncPrivySession(
   privyUserId: string,
   email?: string,
   name?: string,
-  privyIdToken?: string
+  privyIdToken?: string,
+  options?: {
+    allowMissingIdentityToken?: boolean;
+  }
 ): Promise<{ user: AuthUser }> {
   const normalizedUserId = privyUserId.trim();
   void email;
@@ -2702,7 +2759,7 @@ export async function syncPrivySession(
     typeof privyIdToken === "string" && privyIdToken.trim().length > 0
       ? privyIdToken.trim()
       : null;
-  if (!normalizedPrivyIdToken) {
+  if (!normalizedPrivyIdToken && options?.allowMissingIdentityToken !== true) {
     throw new Error("Privy identity verification is still finalizing");
   }
 
@@ -2721,7 +2778,7 @@ export async function syncPrivySession(
         credentials: "include",
         signal: controller.signal,
         body: JSON.stringify({
-          privyIdToken: normalizedPrivyIdToken,
+          ...(normalizedPrivyIdToken ? { privyIdToken: normalizedPrivyIdToken } : {}),
           ...(name ? { name } : {}),
         }),
       });

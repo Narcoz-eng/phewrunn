@@ -462,7 +462,9 @@ function getOrStartPrivyIdentityTokenPromise():
     trigger: debugContextSnapshot?.trigger ?? null,
     userId: debugContextSnapshot?.userId ?? null,
   });
-  const tokenPromise = getIdentityToken()
+  let tokenPromise: Promise<string | undefined | typeof RATE_LIMITED_TOKEN>;
+  try {
+    tokenPromise = Promise.resolve(getIdentityToken())
     .then((token) => {
       const normalizedToken = typeof token === "string" && token.length > 0 ? token : undefined;
       const tokenLocalCheck = inspectPrivyIdentityToken(normalizedToken);
@@ -531,6 +533,29 @@ function getOrStartPrivyIdentityTokenPromise():
       pendingPrivyIdentityRequestCount = Math.max(0, pendingPrivyIdentityRequestCount - 1);
       notifyPrivyIdentityRequestSettled();
     });
+  } catch (error) {
+    console.warn("[AuthFlow] Privy getIdentityToken threw synchronously", {
+      attemptId: debugContextSnapshot?.attemptId ?? null,
+      caller: debugContextSnapshot?.caller ?? "system",
+      owner: debugContextSnapshot?.owner ?? null,
+      mode: debugContextSnapshot?.mode ?? null,
+      trigger: debugContextSnapshot?.trigger ?? null,
+      userId: debugContextSnapshot?.userId ?? null,
+      message: getPrivyErrorMessage(error),
+    });
+
+    if (isPrivyRateLimitError(error)) {
+      privyIdentityRateLimitedUntilMs = Date.now() + PRIVY_IDENTITY_429_COOLDOWN_MS;
+      cancelPrivyIdentityRetryTimers("privy_429");
+      pendingPrivyIdentityRequestCount = Math.max(0, pendingPrivyIdentityRequestCount - 1);
+      notifyPrivyIdentityRequestSettled();
+      return Promise.resolve(RATE_LIMITED_TOKEN);
+    }
+
+    pendingPrivyIdentityRequestCount = Math.max(0, pendingPrivyIdentityRequestCount - 1);
+    notifyPrivyIdentityRequestSettled();
+    return Promise.resolve(undefined);
+  }
 
   pendingPrivyIdentityTokenPromise = tokenPromise;
   return tokenPromise;
