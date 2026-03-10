@@ -1123,16 +1123,20 @@ function markValidatedAuthSession(user: AuthUser): AuthUser {
   writeCachedAuthUser(user);
   clearPrivySyncFailureSnapshot();
   const snapshot = readPrivyAuthBootstrapSnapshot();
+  const snapshotUserId =
+    typeof snapshot?.userId === "string" && snapshot.userId.startsWith("did:privy:")
+      ? snapshot.userId
+      : user.id;
   if (
     snapshot?.state !== "authenticated" ||
-    snapshot.userId !== user.id ||
+    snapshot.userId !== snapshotUserId ||
     snapshot.owner !== "system" ||
     snapshot.debugCode !== "backend_session_confirmed"
   ) {
     setPrivyAuthBootstrapState("authenticated", {
       owner: "system",
       mode: "system",
-      userId: user.id,
+      userId: snapshotUserId,
       detail: "backend session confirmed",
       debugCode: "backend_session_confirmed",
     });
@@ -1332,6 +1336,9 @@ export async function startPrivyAuthBootstrap({
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
   const sameUserSnapshot = existingSnapshot?.userId === user.id ? existingSnapshot : null;
   const currentState = sameUserSnapshot?.state ?? existingSnapshot?.state ?? "idle";
+  const validatedBackendUser = readCachedAuthUserSnapshot();
+  const hasValidatedBackendSession =
+    Boolean(validatedBackendUser?.id) && hasValidatedAuthSession();
   const hasHookIdentityToken = Boolean(
     normalizePrivyIdentityTokenCandidate(
       getLatestPrivyIdentityToken?.() ?? privyIdentityToken
@@ -1357,6 +1364,24 @@ export async function startPrivyAuthBootstrap({
       privyAuthenticated: privyAuthenticated ?? null,
       hookIdentityTokenPresent: hasHookIdentityToken,
     });
+
+  if (hasValidatedBackendSession && validatedBackendUser) {
+    console.info("[AuthFlow] bootstrap short-circuited because backend session is already validated", {
+      owner,
+      mode,
+      userId: user.id,
+      backendUserId: validatedBackendUser.id,
+      currentState,
+    });
+    setPrivyAuthBootstrapState("authenticated", {
+      owner: "system",
+      mode: "system",
+      userId: user.id,
+      detail: "existing backend session available",
+      debugCode: "existing_backend_session_available",
+    });
+    return validatedBackendUser;
+  }
 
   if (delegatedAuthenticatedSdkState) {
     console.info("[AuthFlow] controller received delegated bootstrap from AuthInitializer", {
@@ -1551,7 +1576,7 @@ export async function startPrivyAuthBootstrap({
           setPrivyAuthBootstrapState("authenticated", {
             owner,
             mode,
-            userId: recoveredUser.id,
+            userId: user.id,
             detail: "existing backend session recovered",
             debugCode: "existing_backend_session_recovered",
             totalAttempts,
@@ -1741,7 +1766,7 @@ export async function startPrivyAuthBootstrap({
                 setPrivyAuthBootstrapState("authenticated", {
                   owner,
                   mode,
-                  userId: syncResult.user.id,
+                  userId: user.id,
                   detail: "backend session synced from Privy access-token fallback",
                   debugCode: "backend_session_synced_privy_access_token",
                   backendSyncStarted: true,
@@ -1812,7 +1837,7 @@ export async function startPrivyAuthBootstrap({
           setPrivyAuthBootstrapState("authenticated", {
             owner,
             mode,
-            userId: syncResult.user.id,
+            userId: user.id,
             detail: "backend session synced",
             debugCode: "backend_session_synced",
             backendSyncStarted: true,

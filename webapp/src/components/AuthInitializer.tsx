@@ -223,7 +223,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
         setPrivyAuthBootstrapState("authenticated", {
           owner: "system",
           mode: "system",
-          userId: recoveredBackendUser?.id ?? user.id,
+          userId: user.id,
           detail: "existing backend session available",
           debugCode: "existing_backend_session_available",
         });
