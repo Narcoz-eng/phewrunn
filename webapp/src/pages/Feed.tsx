@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { usePrivy } from "@privy-io/react-auth";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
 import { Post, User } from "@/types";
@@ -793,7 +792,6 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
 export default function Feed() {
   const { data: session } = useSession();
   const { signOut, hasLiveSession, canPerformAuthenticatedWrites } = useAuth();
-  const { logout: privyLogout } = usePrivy();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -923,14 +921,8 @@ export default function Feed() {
 
   const handleSignOut = useCallback(async () => {
     await signOut();
-    try {
-      await privyLogout();
-    } catch (error) {
-      console.error("[Feed] Privy logout failed:", error);
-    } finally {
-      navigate("/login", { replace: true });
-    }
-  }, [navigate, privyLogout, signOut]);
+    navigate("/login", { replace: true });
+  }, [navigate, signOut]);
 
   const handleWriteSessionExpired = useCallback(() => {
     toast.error("Session expired. Please sign in again.");

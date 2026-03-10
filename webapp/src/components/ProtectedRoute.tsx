@@ -3,6 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   getAuthUiState,
+  getExplicitLogoutAt,
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
   usePrivyAuthBootstrapSnapshot,
@@ -185,26 +186,32 @@ function ProtectedRouteWithPrivy({
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
   const logoutCooldownActive = isExplicitLogoutCoolingDown();
+  // Suppress Privy auto-bootstrap for a longer window after explicit logout
+  // so the user isn't stuck on a loading screen while the Privy SDK settles.
+  const RECENT_LOGOUT_SUPPRESS_MS = 15_000;
+  const recentlyLoggedOut =
+    logoutCooldownActive ||
+    (getExplicitLogoutAt() > 0 && Date.now() - getExplicitLogoutAt() < RECENT_LOGOUT_SUPPRESS_MS);
   const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
   const activeLoginIntent =
-    !effectiveUser && !logoutCooldownActive ? readPrivyLoginIntent() : null;
+    !effectiveUser && !recentlyLoggedOut ? readPrivyLoginIntent() : null;
   const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
   const hasPrivyHydrationHint =
-    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !logoutCooldownActive;
+    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !recentlyLoggedOut;
   const hasPrivyFinalizationHint =
     bootstrapSnapshot?.state === "awaiting_identity_verification_finalization" &&
     !effectiveUser &&
-    !logoutCooldownActive;
-  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !logoutCooldownActive;
+    !recentlyLoggedOut;
+  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !recentlyLoggedOut;
   const authUiState = getAuthUiState({
     snapshot: bootstrapSnapshot,
     privyAuthenticated: authenticated,
-    logoutCoolingDown: logoutCooldownActive,
+    logoutCoolingDown: recentlyLoggedOut,
   });
   const shouldHoldAuthenticatedPrivyState =
     ready &&
     authenticated &&
-    !logoutCooldownActive &&
+    !recentlyLoggedOut &&
     !privySyncFailure &&
     bootstrapSnapshot?.state !== "failed" &&
     bootstrapSnapshot?.state !== "failed_rate_limited";

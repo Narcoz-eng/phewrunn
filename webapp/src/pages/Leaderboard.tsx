@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DailyGainersTable } from "@/components/leaderboard/DailyGainersTable";
@@ -47,7 +46,6 @@ export default function Leaderboard() {
   const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
   const { data: session } = useSession();
   const { signOut, hasLiveSession } = useAuth();
-  const { logout: privyLogout } = usePrivy();
   const unreadCacheKey = session?.user?.id
     ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
     : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
@@ -126,11 +124,6 @@ export default function Leaderboard() {
 
   const handleLogout = async () => {
     await signOut();
-    try {
-      await privyLogout();
-    } catch (error) {
-      console.error("[Leaderboard] Privy logout failed:", error);
-    }
     navigate("/login");
   };
 

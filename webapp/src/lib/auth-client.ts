@@ -85,7 +85,7 @@ const PRIVY_BOOTSTRAP_LOCK_STORAGE_KEY = "phew.auth.privy-bootstrap.lock.v1";
 const PRIVY_BOOTSTRAP_LOCK_TTL_MS = 20_000;
 const PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY = "phew.auth.tab-id.v1";
 const AUTH_PRIVY_BOOTSTRAP_EVENT = "phew:auth-privy-bootstrap";
-const EXPLICIT_LOGOUT_COOLDOWN_MS = 3_500;
+const EXPLICIT_LOGOUT_COOLDOWN_MS = 8_000;
 const AUTH_BOOTSTRAPPED_SESSION_GRACE_MS = 20_000;
 
 type PrivySyncFailureSnapshot = {
@@ -2511,14 +2511,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hasLiveSession: hasValidatedAuthSession(),
       bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
     });
-    for (const hook of preLogoutHooks) {
-      try {
-        await hook();
-      } catch (error) {
-        console.warn("[Auth] Pre-logout hook failed:", error);
-      }
-    }
 
+    // Mark logout immediately so all guards see it.
     explicitLogoutAt = Date.now();
     setPrivyAuthBootstrapState("logout_in_progress", {
       owner: "system",
@@ -2526,6 +2520,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       detail: "signing out",
       debugCode: "logout_started",
     });
+
+    // Clear backend session first so the Set-Cookie to expire the HttpOnly
+    // cookie arrives before any navigation or Privy SDK teardown.
+    try {
+      await signOut();
+      console.info("[AuthFlow] logout backend session cleared");
+    } catch (error) {
+      console.error("[Auth] Logout error:", error);
+    }
+
+    // Run pre-logout hooks (e.g. Privy SDK logout) with a retry for resilience.
+    for (const hook of preLogoutHooks) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await hook();
+          break;
+        } catch (error) {
+          if (attempt === 0) {
+            console.warn("[Auth] Pre-logout hook failed, retrying:", error);
+            await new Promise<void>((r) => setTimeout(r, 300));
+          } else {
+            console.warn("[Auth] Pre-logout hook failed after retry:", error);
+          }
+        }
+      }
+    }
+
     cancelPendingPrivyAuthRetryTimers("logout");
     clearPrivyAuthBootstrapState();
     clearStoredAuthToken();
@@ -2550,13 +2571,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.info("[AuthFlow] logout local auth state cleared", {
       bootstrapSnapshot: readPrivyAuthBootstrapSnapshot(),
     });
-
-    try {
-      await signOut();
-      console.info("[AuthFlow] logout backend session cleared");
-    } catch (error) {
-      console.error("[Auth] Logout error:", error);
-    }
   }, [applyAuthProviderState]);
 
   // Initial session check
