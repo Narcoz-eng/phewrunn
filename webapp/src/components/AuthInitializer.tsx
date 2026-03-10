@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken, useUser } from "@privy-io/react-auth";
 import {
   hasValidatedAuthSession,
+  isPrivyAuthBootstrapStatePending,
   registerPreLogoutHook,
   readCachedAuthUserSnapshot,
   setPrivyAuthAnonymousState,
@@ -199,28 +200,31 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     const hasAuthoritativeBackendSession =
       Boolean(authoritativeBackendUser?.id) && hasValidatedAuthSession();
     const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
-    const currentState = sameUserSnapshot?.state ?? "idle";
+    const currentState = sameUserSnapshot?.state ?? snapshot?.state ?? "idle";
     const hookIdentityTokenPresent = Boolean(latestPrivyIdentityTokenRef.current);
     const recoveredBackendUser = authoritativeBackendUser;
     const hasRecoveredBackendUser = Boolean(recoveredBackendUser?.id);
-    const canResumeDeferredUsePrivyLoginHandoff =
+    const canResumeUsePrivyLoginHandoff =
       sameUserSnapshot?.owner === "usePrivyLogin" &&
       (sameUserSnapshot.debugCode === "awaiting_privy_sdk_ready" ||
         sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook") &&
       (hookIdentityTokenPresent || (ready && authenticated));
-    const canResumeAuthenticatedSdkTokenRequest =
+    const canResumeAuthInitializerTokenHandoff =
       sameUserSnapshot?.owner === "AuthInitializer" &&
       currentState === "awaiting_identity_token" &&
       sameUserSnapshot.debugCode === "awaiting_privy_identity_token_hook" &&
-      ready &&
-      authenticated;
-    const canResumeFinalizationPendingHandoff =
+      (hookIdentityTokenPresent || (ready && authenticated));
+    const canResumeAuthInitializerFinalization =
       sameUserSnapshot?.owner === "AuthInitializer" &&
       currentState === "awaiting_identity_verification_finalization" &&
       hookIdentityTokenPresent;
+    const shouldPreserveSettledAuth =
+      hasAuthoritativeBackendSession ||
+      hasLiveSession ||
+      (snapshot?.state === "authenticated" && hasRecoveredBackendUser);
 
-    if (hasAuthoritativeBackendSession || hasLiveSession) {
-      if (currentState !== "authenticated") {
+    if (shouldPreserveSettledAuth) {
+      if (snapshot?.state !== "authenticated") {
         setPrivyAuthBootstrapState("authenticated", {
           owner: "system",
           mode: "system",
@@ -229,16 +233,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
           debugCode: "existing_backend_session_available",
         });
       }
-      return;
-    }
-
-    if (snapshot?.state === "authenticated" && hasRecoveredBackendUser) {
-      console.info("[AuthFlow] AuthInitializer preserving authenticated bootstrap state for recovered backend auth", {
-        privyUserId: user.id,
-        recoveredBackendUserId: recoveredBackendUser?.id ?? null,
-        snapshotUserId: snapshot.userId,
-        providerInstanceId,
-      });
+      clearPrivyLoginIntent();
       return;
     }
 
@@ -255,14 +250,10 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
 
     if (
       sameUserSnapshot &&
-      (currentState === "privy_pending" ||
-        currentState === "awaiting_identity_token" ||
-        currentState === "awaiting_identity_verification_finalization" ||
-        currentState === "cooldown" ||
-        currentState === "syncing_backend") &&
-      !canResumeDeferredUsePrivyLoginHandoff &&
-      !canResumeAuthenticatedSdkTokenRequest &&
-      !canResumeFinalizationPendingHandoff
+      isPrivyAuthBootstrapStatePending(currentState) &&
+      !canResumeUsePrivyLoginHandoff &&
+      !canResumeAuthInitializerTokenHandoff &&
+      !canResumeAuthInitializerFinalization
     ) {
       console.info("[AuthFlow] AuthInitializer found controller-owned pending state", {
         userId: user.id,
@@ -272,31 +263,13 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       return;
     }
 
-    if (canResumeDeferredUsePrivyLoginHandoff) {
-      console.info("[AuthFlow] AuthInitializer resuming deferred usePrivyLogin handoff", {
-        userId: user.id,
-        state: currentState,
-        providerInstanceId,
-        debugCode: sameUserSnapshot?.debugCode,
-        hookIdentityTokenPresent: Boolean(latestPrivyIdentityTokenRef.current),
-      });
-    }
-
-    if (canResumeFinalizationPendingHandoff) {
-      console.info("[AuthFlow] AuthInitializer resuming finalization-pending handoff after hook token became available", {
-        userId: user.id,
-        state: currentState,
-        providerInstanceId,
-        debugCode: sameUserSnapshot?.debugCode,
-        hookIdentityTokenPresent,
-      });
-    }
-
     if (
       sameUserSnapshot &&
       (currentState === "failed_rate_limited" ||
         currentState === "authenticated" ||
-        (currentState === "failed" && !hookIdentityTokenPresent))
+        (sameUserSnapshot.owner === "AuthInitializer" &&
+          currentState === "failed" &&
+          !hookIdentityTokenPresent))
     ) {
       console.info("[AuthFlow] AuthInitializer leaving terminal auth state untouched", {
         userId: user.id,
@@ -305,18 +278,37 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       return;
     }
 
-    if (!hookIdentityTokenPresent) {
-      if (currentState === "awaiting_identity_verification_finalization") {
-        console.info("[AuthFlow] AuthInitializer keeping finalization-pending state while waiting for hook token", {
-          userId: user.id,
-          providerInstanceId,
-          state: currentState,
-        });
-        return;
-      }
+    const delegatedOwner = canResumeUsePrivyLoginHandoff
+      ? "usePrivyLogin"
+      : "AuthInitializer";
+    const delegatedMode = canResumeUsePrivyLoginHandoff ? "manual" : "auto";
+    const delegatedTriggerSource = canResumeUsePrivyLoginHandoff
+      ? "manual_user_action"
+      : "component_mount";
 
+    if (canResumeUsePrivyLoginHandoff) {
+      console.info("[AuthFlow] AuthInitializer resuming deferred usePrivyLogin handoff", {
+        userId: user.id,
+        state: currentState,
+        providerInstanceId,
+        debugCode: sameUserSnapshot?.debugCode,
+        hookIdentityTokenPresent,
+      });
+    } else if (canResumeAuthInitializerFinalization) {
+      console.info(
+        "[AuthFlow] AuthInitializer resuming finalization-pending handoff after hook token became available",
+        {
+          userId: user.id,
+          state: currentState,
+          providerInstanceId,
+          debugCode: sameUserSnapshot?.debugCode,
+          hookIdentityTokenPresent,
+        }
+      );
+    } else if (!hookIdentityTokenPresent) {
       if (
         currentState !== "awaiting_identity_token" ||
+        sameUserSnapshot?.owner !== "AuthInitializer" ||
         sameUserSnapshot?.debugCode !== "awaiting_privy_identity_token_hook"
       ) {
         setPrivyAuthBootstrapState("awaiting_identity_token", {
@@ -340,10 +332,13 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       userId: user.id,
       state: currentState,
       providerInstanceId,
+      delegatedOwner,
+      delegatedMode,
+      delegatedTriggerSource,
     });
     void startPrivyAuthBootstrap({
-      owner: "AuthInitializer",
-      mode: "auto",
+      owner: delegatedOwner,
+      mode: delegatedMode,
       user: user as PrivyUserLike,
       getLatestUser: () => latestPrivyUserRef.current,
       privyReady: ready,
@@ -353,7 +348,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       refreshPrivyAuthState: async () => (await refreshUser()) as PrivyUserLike,
       getLatestPrivyAccessToken: () => getAccessToken(),
       tryExistingBackendSession: true,
-      triggerSource: "component_mount",
+      triggerSource: delegatedTriggerSource,
     });
   }, [authenticated, getAccessToken, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, refreshUser, user]);
 

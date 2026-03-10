@@ -858,6 +858,29 @@ export function setPrivyAuthBootstrapState(
     return;
   }
 
+  const isAutoDowngradingRecoveredSession =
+    previousSnapshot?.state === "authenticated" &&
+    state !== "authenticated" &&
+    state !== "logout_in_progress" &&
+    params.mode !== "manual" &&
+    Boolean(validatedUser?.id);
+
+  if (isAutoDowngradingRecoveredSession) {
+    console.info(
+      "[AuthFlow] ignoring bootstrap downgrade because recovered auth is already stable",
+      {
+        previousState: previousSnapshot?.state ?? null,
+        nextState: state,
+        nextOwner: params.owner ?? "system",
+        nextMode: params.mode ?? "system",
+        nextUserId: params.userId ?? null,
+        validatedUserId: validatedUser?.id ?? null,
+        debugCode: params.debugCode ?? null,
+      }
+    );
+    return;
+  }
+
   const snapshot: PrivyAuthBootstrapSnapshot = {
     state,
     owner: params.owner ?? "system",
@@ -1207,32 +1230,65 @@ async function resolvePrivyAccessTokenCandidate(
     return undefined;
   }
 
-  try {
-    const candidate = await getLatestPrivyAccessToken();
-    const normalizedCandidate =
-      typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : undefined;
-    console.info("[AuthFlow] Privy access token resolution completed", {
-      owner: metadata.owner,
-      mode: metadata.mode,
-      userId: metadata.userId,
-      attemptId: metadata.attemptId,
-      attempt: metadata.attempt,
-      totalAttempts: metadata.totalAttempts,
-      hasAccessToken: Boolean(normalizedCandidate),
-    });
-    return normalizedCandidate;
-  } catch (error) {
-    console.warn("[AuthFlow] Privy access token resolution failed", {
-      owner: metadata.owner,
-      mode: metadata.mode,
-      userId: metadata.userId,
-      attemptId: metadata.attemptId,
-      attempt: metadata.attempt,
-      totalAttempts: metadata.totalAttempts,
-      message: error instanceof Error ? error.message : String(error),
-    });
+  const retryDelaysMs = [0, 180, 320] as const;
+  let lastError: unknown = null;
+
+  for (let index = 0; index < retryDelaysMs.length; index += 1) {
+    const delayMs = retryDelaysMs[index] ?? 0;
+    if (delayMs > 0) {
+      const completed = await waitForAuthDelay(delayMs);
+      if (!completed) {
+        return undefined;
+      }
+    }
+
+    try {
+      const candidate = await getLatestPrivyAccessToken();
+      const normalizedCandidate =
+        typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : undefined;
+      console.info("[AuthFlow] Privy access token resolution completed", {
+        owner: metadata.owner,
+        mode: metadata.mode,
+        userId: metadata.userId,
+        attemptId: metadata.attemptId,
+        attempt: metadata.attempt,
+        totalAttempts: metadata.totalAttempts,
+        hasAccessToken: Boolean(normalizedCandidate),
+        accessTokenAttempt: index + 1,
+      });
+      if (normalizedCandidate) {
+        return normalizedCandidate;
+      }
+    } catch (error) {
+      lastError = error;
+      console.warn("[AuthFlow] Privy access token resolution failed", {
+        owner: metadata.owner,
+        mode: metadata.mode,
+        userId: metadata.userId,
+        attemptId: metadata.attemptId,
+        attempt: metadata.attempt,
+        totalAttempts: metadata.totalAttempts,
+        accessTokenAttempt: index + 1,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (lastError) {
     return undefined;
   }
+
+  console.info("[AuthFlow] Privy access token resolution completed", {
+    owner: metadata.owner,
+    mode: metadata.mode,
+    userId: metadata.userId,
+    attemptId: metadata.attemptId,
+    attempt: metadata.attempt,
+    totalAttempts: metadata.totalAttempts,
+    hasAccessToken: false,
+    accessTokenAttempt: retryDelaysMs.length,
+  });
+  return undefined;
 }
 
 async function trySyncPrivySessionWithoutIdentityToken(options: {
@@ -1415,6 +1471,7 @@ export async function startPrivyAuthBootstrap({
   const sameUserSnapshot = existingSnapshot?.userId === user.id ? existingSnapshot : null;
   const currentState = sameUserSnapshot?.state ?? existingSnapshot?.state ?? "idle";
   const validatedBackendUser = readCachedAuthUserSnapshot();
+  const cachedBackendUser = validatedBackendUser;
   const hasValidatedBackendSession =
     Boolean(validatedBackendUser?.id) && hasValidatedAuthSession();
   const hasHookIdentityToken = Boolean(
@@ -1459,6 +1516,25 @@ export async function startPrivyAuthBootstrap({
       debugCode: "existing_backend_session_available",
     });
     return validatedBackendUser;
+  }
+
+  if (
+    existingSnapshot?.state === "authenticated" &&
+    cachedBackendUser &&
+    mode !== "manual"
+  ) {
+    console.info(
+      "[AuthFlow] bootstrap short-circuited because authenticated snapshot already exists",
+      {
+        owner,
+        mode,
+        userId: user.id,
+        cachedUserId: cachedBackendUser.id,
+        snapshotUserId: existingSnapshot.userId,
+        currentState,
+      }
+    );
+    return cachedBackendUser;
   }
 
   if (delegatedAuthenticatedSdkState) {
@@ -1660,6 +1736,23 @@ export async function startPrivyAuthBootstrap({
             totalAttempts,
           });
           return recoveredUser;
+        }
+      }
+
+      if (privyReady === true && privyAuthenticated === true) {
+        const accessTokenFastPathUser = await trySyncPrivySessionWithoutIdentityToken({
+          owner,
+          mode,
+          userId: user.id,
+          attemptId: privyBootstrapAttemptId,
+          attempt: 0,
+          totalAttempts,
+          privyAccessToken,
+          getLatestPrivyAccessToken,
+          reason: "authenticated_sdk_access_token_fast_path",
+        });
+        if (accessTokenFastPathUser) {
+          return accessTokenFastPathUser;
         }
       }
 
