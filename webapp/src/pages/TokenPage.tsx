@@ -125,6 +125,77 @@ function formatPct(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
+function formatIntegerMetric(value: number | null | undefined, options?: { zeroIsValid?: boolean }): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "Scanning";
+  if (!options?.zeroIsValid && value <= 0) return "Scanning";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatMarketMetric(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Scanning";
+  return formatMarketCap(value);
+}
+
+function formatTimelineEventLabel(eventType: string): string {
+  switch (eventType) {
+    case "alpha_call":
+      return "Alpha call";
+    case "early_runner_detected":
+      return "Early runner detected";
+    case "hot_alpha_detected":
+      return "Hot alpha detected";
+    case "high_conviction_detected":
+      return "High conviction signal";
+    default:
+      return eventType.replace(/_/g, " ");
+  }
+}
+
+function buildTimelineCopy(event: TokenTimelineEvent): { title: string; description: string } {
+  const traderLabel = event.metadata?.traderHandle || event.metadata?.traderName || "Phew engine";
+  const eventLabel = formatTimelineEventLabel(event.eventType);
+  const details = [
+    event.marketCap ? `at ${formatMarketCap(event.marketCap)}` : null,
+    event.metadata?.timingTier ?? null,
+    typeof event.metadata?.confidenceScore === "number"
+      ? `${event.metadata.confidenceScore.toFixed(0)}% confidence`
+      : null,
+  ].filter(Boolean);
+
+  if (event.eventType === "alpha_call") {
+    return {
+      title: traderLabel,
+      description: `${eventLabel}${details.length ? ` ${details.join(" | ")}` : ""}`,
+    };
+  }
+
+  return {
+    title: eventLabel,
+    description: `${traderLabel}${details.length ? ` | ${details.join(" | ")}` : ""}`,
+  };
+}
+
+function isTokenPageDataCacheable(token: TokenPageData | null | undefined): token is TokenPageData {
+  if (!token) return false;
+  const hasSignals = [
+    token.confidenceScore,
+    token.hotAlphaScore,
+    token.earlyRunnerScore,
+    token.highConvictionScore,
+  ].some((value) => typeof value === "number" && Number.isFinite(value));
+  const hasMarketData = [token.liquidity, token.volume24h, token.holderCount].some(
+    (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+  );
+  const hasChart = token.chart.some(
+    (point) =>
+      [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+      )
+  );
+
+  return hasSignals || hasMarketData || hasChart || token.recentCalls.length > 0;
+}
+
 function scoreTone(value: number | null | undefined): string {
   const score = typeof value === "number" && Number.isFinite(value) ? value : 0;
   if (score >= 75) return "text-gain";
@@ -149,7 +220,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v2:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v3:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -180,7 +251,7 @@ export default function TokenPage() {
   });
 
   useEffect(() => {
-    if (!token || !tokenCacheKey) return;
+    if (!tokenCacheKey || !isTokenPageDataCacheable(token)) return;
     writeSessionCache(tokenCacheKey, token);
   }, [token, tokenCacheKey]);
 
@@ -197,6 +268,12 @@ export default function TokenPage() {
     () =>
       token?.recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
     [token?.recentCalls]
+  );
+  const hasChartTelemetry = chartData.some(
+    (point) =>
+      [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+      )
   );
 
   const followMutation = useMutation({
@@ -392,7 +469,7 @@ export default function TokenPage() {
               </div>
             </section>
 
-            <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
+            <section className="grid gap-5 lg:items-start lg:grid-cols-[1.35fr_0.65fr]">
               <div className="app-surface p-5 sm:p-6">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
@@ -401,32 +478,48 @@ export default function TokenPage() {
                   </div>
                   <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-xs text-muted-foreground">
                     <BarChart3 className="mr-1 inline h-3.5 w-3.5" />
-                    {chartData.length} points
+                    {hasChartTelemetry ? `${chartData.length} points` : "Scanning"}
                   </div>
                 </div>
                 <div className="h-[320px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData}>
-                      <defs>
-                        <linearGradient id="tokenChartFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
-                          <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
-                      <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={24} />
-                      <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
-                      <Tooltip
-                        formatter={(value: number | null, name: string) => {
-                          if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
-                          if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
-                          return [value ?? "N/A", name];
-                        }}
-                      />
-                      <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
-                      <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {hasChartTelemetry ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="tokenChartFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
+                            <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
+                        <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={24} />
+                        <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
+                        <Tooltip
+                          formatter={(value: number | null, name: string) => {
+                            if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
+                            if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
+                            return [value ?? "N/A", name];
+                          }}
+                        />
+                        <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
+                        <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-primary/25 bg-gradient-to-br from-primary/8 via-transparent to-cyan-400/6 px-6 text-center">
+                      <div className="max-w-md space-y-3">
+                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
+                          <p className="text-sm text-muted-foreground">
+                            We are pulling market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -447,7 +540,9 @@ export default function TokenPage() {
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundled wallets</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{token.risk.bundledWalletCount ?? 0}</div>
+                      <div className="mt-2 text-xl font-semibold text-foreground">
+                        {formatIntegerMetric(token.risk.bundledWalletCount, { zeroIsValid: true })}
+                      </div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundled supply</div>
@@ -465,7 +560,9 @@ export default function TokenPage() {
                           </div>
                         ))
                       ) : (
-                        <p className="text-sm text-muted-foreground">No clustered bundlers detected yet.</p>
+                        <p className="text-sm text-muted-foreground">
+                          {token.risk.bundleRiskLabel ? "No clustered bundlers detected yet." : "Scanning holder clusters and linked bundlers."}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -477,51 +574,60 @@ export default function TokenPage() {
                     <h3 className="text-base font-semibold text-foreground">Top traders</h3>
                   </div>
                   <div className="space-y-3">
-                    {token.topTraders.map((trader) => (
-                      <div key={trader.id} className="flex items-center gap-3 rounded-[18px] border border-border/60 bg-secondary p-3">
-                        <Avatar className="h-10 w-10 border border-border">
-                          <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
-                          <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-semibold text-foreground">{trader.username || trader.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {trader.reputationTier || "Unranked"} | {trader.callsCount} calls | {trader.avgConfidenceScore.toFixed(0)}% avg confidence
+                    {token.topTraders.length > 0 ? (
+                      token.topTraders.map((trader) => (
+                        <div key={trader.id} className="flex items-center gap-3 rounded-[18px] border border-border/60 bg-secondary p-3">
+                          <Avatar className="h-10 w-10 border border-border">
+                            <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
+                            <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-semibold text-foreground">{trader.username || trader.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {trader.reputationTier || "Unranked"} | {trader.callsCount} calls | {trader.avgConfidenceScore.toFixed(0)}% avg confidence
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold text-gain">{trader.bestRoiPct.toFixed(1)}%</div>
+                            <div className="text-[11px] text-muted-foreground">best ROI</div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-sm font-semibold text-gain">{trader.bestRoiPct.toFixed(1)}%</div>
-                          <div className="text-[11px] text-muted-foreground">best ROI</div>
-                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
+                        We are still ranking trader quality for this token.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </section>
               </div>
             </section>
 
-            <section className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
-              <div className="app-surface p-5">
+            <section className="grid gap-5 lg:items-start lg:grid-cols-[0.8fr_1.2fr]">
+              <div className="app-surface self-start p-5">
                 <div className="mb-4 flex items-center gap-2">
                   <TrendingUp className="h-4.5 w-4.5 text-primary" />
                   <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
                 </div>
                 <div className="space-y-3">
-                  {token.timeline.map((event) => (
-                    <div key={event.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-medium text-foreground">
-                          {event.metadata?.traderHandle || event.metadata?.traderName || event.eventType.replace(/_/g, " ")}
+                  {token.timeline.length > 0 ? (
+                    token.timeline.map((event) => {
+                      const timelineCopy = buildTimelineCopy(event);
+                      return (
+                        <div key={event.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-medium text-foreground">{timelineCopy.title}</div>
+                            <div className="text-xs text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">{timelineCopy.description}</div>
                         </div>
-                        <div className="text-xs text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {event.eventType.replace(/_/g, " ")}
-                        {event.marketCap ? ` at ${formatMarketCap(event.marketCap)}` : ""}
-                        {event.metadata?.timingTier ? ` | ${event.metadata.timingTier}` : ""}
-                      </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
+                      Timeline events are being assembled from calls and token signals.
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
 
@@ -537,21 +643,24 @@ export default function TokenPage() {
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Liquidity</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketCap(token.liquidity)}</div>
+                      <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Volume 24h</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketCap(token.volume24h)}</div>
+                      <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Holders</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{token.holderCount ?? 0}</div>
+                      <div className="mt-2 text-xl font-semibold text-foreground">{formatIntegerMetric(token.holderCount)}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Sentiment</div>
                       <div className={cn("mt-2 text-xl font-semibold", scoreTone(token.sentiment.score))}>{token.sentiment.score.toFixed(0)}</div>
                     </div>
                   </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Sentiment starts neutral, then moves with community reactions, 24h price trend, and buy versus sell pressure.
+                  </p>
                   <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bullish {token.sentiment.bullishPct.toFixed(0)}%</span>
                     <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bearish {token.sentiment.bearishPct.toFixed(0)}%</span>

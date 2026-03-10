@@ -15,7 +15,11 @@ import {
   pct,
   type ReactionCounts,
 } from "./scoring.js";
-import { analyzeSolanaTokenDistribution, fetchDexTokenStats } from "./token-metrics.js";
+import {
+  analyzeSolanaTokenDistribution,
+  fetchDexTokenStats,
+  type DexTokenStats,
+} from "./token-metrics.js";
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
 
@@ -478,6 +482,59 @@ function buildTokenKey(chainType: string | null | undefined, address: string): s
   return `${normalizeChainType(chainType)}:${address.trim().toLowerCase()}`;
 }
 
+function hasFiniteMetric(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function pickFirstFiniteMetric(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (hasFiniteMetric(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function pickFirstPositiveMetric(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (hasFiniteMetric(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function computeDexSentimentTrendAdjustment(dexStats: DexTokenStats | null | undefined): number {
+  const priceChangePct = finite(dexStats?.priceChange24hPct);
+  const buys24h = Math.max(0, finite(dexStats?.buys24h));
+  const sells24h = Math.max(0, finite(dexStats?.sells24h));
+  const totalTrades = buys24h + sells24h;
+  const orderFlowImbalancePct = totalTrades > 0 ? ((buys24h - sells24h) / totalTrades) * 100 : 0;
+  const priceAdjustment = Math.max(-14, Math.min(14, priceChangePct / 3));
+  const flowAdjustment = Math.max(-10, Math.min(10, orderFlowImbalancePct / 5));
+  const activityAdjustment = totalTrades >= 40 ? Math.min(4, totalTrades / 50) : 0;
+
+  if (!hasFiniteMetric(priceChangePct) && totalTrades === 0) {
+    return 0;
+  }
+
+  return roundMetricOrZero(priceAdjustment + flowAdjustment + activityAdjustment);
+}
+
+function tokenNeedsCoreHydration(token: TokenRecord | null): boolean {
+  if (!token) return true;
+  if (!hasFiniteMetric(token.confidenceScore)) return true;
+  if (!hasFiniteMetric(token.hotAlphaScore)) return true;
+  if (!hasFiniteMetric(token.earlyRunnerScore)) return true;
+  if (!hasFiniteMetric(token.highConvictionScore)) return true;
+  if (!hasFiniteMetric(token.sentimentScore)) return true;
+  if (!hasFiniteMetric(token.liquidity) && !hasFiniteMetric(token.volume24h)) return true;
+  if (token.chainType === "solana" && !hasFiniteMetric(token.holderCount) && !hasFiniteMetric(token.top10HolderPct)) {
+    return true;
+  }
+  return false;
+}
+
 function cloneCachedValue<T>(value: T): T {
   if (typeof globalThis.structuredClone === "function") {
     return globalThis.structuredClone(value);
@@ -730,6 +787,7 @@ async function getMarketContextSnapshot(): Promise<MarketContextSnapshot> {
 }
 
 function shouldRefreshToken(token: TokenRecord | null): boolean {
+  if (tokenNeedsCoreHydration(token)) return true;
   if (!token?.lastIntelligenceAt) return true;
   if (token.lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) return true;
   if (finite(token.tokenRiskScore) >= 60 && finite(token.confidenceScore) >= 35) return true;
@@ -968,13 +1026,34 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
   ]);
 
   const reactionCounts = buildReactionCounts(reactions.map((reaction) => reaction.type));
-  const sentimentScore = computeSentimentScore({ reactions: reactionCounts });
-  const liquidity = roundMetric(dexStats?.liquidityUsd ?? existing.liquidity);
-  const volume24h = roundMetric(dexStats?.volume24hUsd ?? existing.volume24h);
-  const marketCap = roundMetric(dexStats?.marketCap ?? existing.liquidity ?? null);
-  const holderCount = distribution?.holderCount ?? existing.holderCount;
-  const tokenRiskScore = roundMetric(distribution?.tokenRiskScore ?? existing.tokenRiskScore);
-  const bundleRiskLabel = distribution?.bundleRiskLabel ?? determineBundleRiskLabel(tokenRiskScore);
+  const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(dexStats);
+  const sentimentScore = computeSentimentScore({
+    reactions: reactionCounts,
+    sentimentTrendAdjustment,
+  });
+  const liquidity = roundMetric(
+    pickFirstPositiveMetric(dexStats?.liquidityUsd, existing.liquidity)
+  );
+  const volume24h = roundMetric(
+    pickFirstPositiveMetric(dexStats?.volume24hUsd, existing.volume24h)
+  );
+  const marketCap = roundMetric(
+    pickFirstPositiveMetric(
+      dexStats?.marketCap,
+      recentCalls[0]?.currentMcap,
+      recentCalls[0]?.entryMcap,
+      latestSnapshot?.marketCap
+    )
+  );
+  const holderCount = Math.round(
+    pickFirstPositiveMetric(distribution?.holderCount, existing.holderCount) ?? 0
+  ) || null;
+  const tokenRiskScore = roundMetric(
+    pickFirstFiniteMetric(distribution?.tokenRiskScore, existing.tokenRiskScore)
+  );
+  const bundleRiskLabel =
+    distribution?.bundleRiskLabel ??
+    (tokenRiskScore !== null ? determineBundleRiskLabel(tokenRiskScore) : existing.bundleRiskLabel);
   const volumeGrowthPct = growthPct(volume24h, latestSnapshot?.volume24h ?? null);
   const liquidityGrowthPct = growthPct(liquidity, latestSnapshot?.liquidity ?? null);
   const holderGrowthPct = growthPct(holderCount, latestSnapshot?.holderCount ?? null);
@@ -1013,7 +1092,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
       liquidityGrowth1hPct: marketAdjustedLiquidityGrowthPct,
       volumeGrowth1hPct: marketAdjustedVolumeGrowthPct,
       holderGrowth1hPct: marketAdjustedHolderGrowthPct,
-      momentumPct: Math.max(marketAdjustedMomentumPct, mcapGrowthPct),
+      momentumPct: Math.max(marketAdjustedMomentumPct, Math.max(0, mcapGrowthPct)),
       sentimentScore,
       tokenRiskScore,
     })
@@ -2003,15 +2082,26 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const token = await findTokenByAddress(normalizedAddress);
     if (!token) return null;
 
+    const forceHydration = tokenNeedsCoreHydration(token);
     const refreshPromise = shouldRefreshToken(token)
       ? refreshTokenIntelligence(token.id).catch(() => null)
       : null;
     const refreshed = refreshPromise
-      ? await withSoftTimeout(refreshPromise, TOKEN_REFRESH_SOFT_TIMEOUT_MS)
+      ? await withSoftTimeout(
+          refreshPromise,
+          forceHydration ? Math.max(TOKEN_REFRESH_SOFT_TIMEOUT_MS, 4_500) : TOKEN_REFRESH_SOFT_TIMEOUT_MS
+        )
       : null;
     const currentToken = refreshed?.token ?? token;
+    const needsFallbackTokenData =
+      tokenNeedsCoreHydration(currentToken) ||
+      !hasFiniteMetric(currentToken.liquidity) ||
+      !hasFiniteMetric(currentToken.volume24h) ||
+      (currentToken.chainType === "solana" &&
+        !hasFiniteMetric(currentToken.holderCount) &&
+        !hasFiniteMetric(currentToken.top10HolderPct));
 
-    const [callsRaw, clusters, snapshots, events, tokenFollow] = await Promise.all([
+    const [callsRaw, clusters, snapshots, events, tokenFollow, dexStatsFallback, distributionFallback] = await Promise.all([
       prisma.post.findMany({
         where: { tokenId: currentToken.id },
         select: CALL_SELECT,
@@ -2070,6 +2160,12 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             select: { id: true },
           })
         : Promise.resolve(null),
+      needsFallbackTokenData
+        ? fetchDexTokenStats(currentToken.address, currentToken.chainType).catch(() => null)
+        : Promise.resolve(null),
+      needsFallbackTokenData && currentToken.chainType === "solana"
+        ? analyzeSolanaTokenDistribution(currentToken.address, currentToken.liquidity).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     const recentCalls = await hydrateCalls(callsRaw, viewerId, {
@@ -2093,8 +2189,78 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const bullishReactions =
       allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed;
     const bearishReactions = allReactionCounts.rug;
+    const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(dexStatsFallback);
     const sentimentScore = roundMetricOrZero(
-      currentToken.sentimentScore ?? computeSentimentScore({ reactions: allReactionCounts })
+      computeSentimentScore({
+        reactions: allReactionCounts,
+        sentimentTrendAdjustment:
+          sentimentTrendAdjustment + (currentToken.sentimentScore !== null ? (currentToken.sentimentScore - 50) * 0.2 : 0),
+      })
+    );
+    const resolvedLiquidity = roundMetric(
+      pickFirstPositiveMetric(currentToken.liquidity, dexStatsFallback?.liquidityUsd)
+    );
+    const resolvedVolume24h = roundMetric(
+      pickFirstPositiveMetric(currentToken.volume24h, dexStatsFallback?.volume24hUsd)
+    );
+    const resolvedHolderCount = Math.round(
+      pickFirstPositiveMetric(currentToken.holderCount, distributionFallback?.holderCount) ?? 0
+    ) || null;
+    const resolvedLargestHolderPct = roundMetric(
+      pickFirstFiniteMetric(currentToken.largestHolderPct, distributionFallback?.largestHolderPct)
+    );
+    const resolvedTop10HolderPct = roundMetric(
+      pickFirstFiniteMetric(currentToken.top10HolderPct, distributionFallback?.top10HolderPct)
+    );
+    const resolvedDeployerSupplyPct = roundMetric(
+      pickFirstFiniteMetric(currentToken.deployerSupplyPct, distributionFallback?.deployerSupplyPct)
+    );
+    const resolvedBundledWalletCount =
+      distributionFallback?.bundledWalletCount ?? currentToken.bundledWalletCount;
+    const resolvedEstimatedBundledSupplyPct = roundMetric(
+      pickFirstFiniteMetric(
+        currentToken.estimatedBundledSupplyPct,
+        distributionFallback?.estimatedBundledSupplyPct
+      )
+    );
+    const resolvedTokenRiskScore = roundMetric(
+      pickFirstFiniteMetric(currentToken.tokenRiskScore, distributionFallback?.tokenRiskScore)
+    );
+    const resolvedBundleRiskLabel =
+      currentToken.bundleRiskLabel ??
+      distributionFallback?.bundleRiskLabel ??
+      (resolvedTokenRiskScore !== null ? determineBundleRiskLabel(resolvedTokenRiskScore) : null);
+    const resolvedConfidenceScore = roundMetric(
+      pickFirstFiniteMetric(
+        currentToken.confidenceScore,
+        recentCalls.length > 0
+          ? recentCalls.reduce((sum, call) => sum + finite(call.confidenceScore), 0) / recentCalls.length
+          : null
+      )
+    );
+    const resolvedHotAlphaScore = roundMetric(
+      pickFirstFiniteMetric(
+        currentToken.hotAlphaScore,
+        recentCalls.length > 0
+          ? recentCalls.reduce((sum, call) => sum + finite(call.hotAlphaScore), 0) / recentCalls.length
+          : null
+      )
+    );
+    const resolvedEarlyRunnerScore = roundMetric(
+      pickFirstFiniteMetric(
+        currentToken.earlyRunnerScore,
+        recentCalls.length > 0
+          ? Math.max(...recentCalls.map((call) => finite(call.earlyRunnerScore)))
+          : null
+      )
+    );
+    const resolvedHighConvictionScore = roundMetric(
+      pickFirstFiniteMetric(
+        currentToken.highConvictionScore,
+        recentCalls.length > 0
+          ? recentCalls.reduce((sum, call) => sum + finite(call.highConvictionScore), 0) / recentCalls.length
+          : null
+      )
     );
 
     const topTraderMap = new Map<
@@ -2111,6 +2277,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         callsCount: number;
         totalConfidence: number;
         bestRoiPct: number;
+        rankingScore: number;
       }
     >();
 
@@ -2127,10 +2294,16 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         callsCount: 0,
         totalConfidence: 0,
         bestRoiPct: -100,
+        rankingScore: 0,
       };
       current.callsCount += 1;
       current.totalConfidence += call.confidenceScore;
       current.bestRoiPct = Math.max(current.bestRoiPct, finite(call.roiPeakPct, -100));
+      current.rankingScore +=
+        call.confidenceScore * 0.42 +
+        finite(call.author.trustScore) * 0.22 +
+        pct(call.roiPeakPct, 220) * 0.22 +
+        pct(call.entryQualityScore, 100) * 0.14;
       topTraderMap.set(call.author.id, current);
     }
 
@@ -2141,8 +2314,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         bestRoiPct: roundMetricOrZero(entry.bestRoiPct),
       }))
       .sort((left, right) => {
-        const trustDelta = finite(right.trustScore) - finite(left.trustScore);
-        if (trustDelta !== 0) return trustDelta;
+        const rankingDelta = right.rankingScore - left.rankingScore;
+        if (rankingDelta !== 0) return rankingDelta;
         return right.avgConfidenceScore - left.avgConfidenceScore;
       })
       .slice(0, 8);
@@ -2163,13 +2336,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         confidenceScore: call.confidenceScore,
       },
     }));
-
-    return {
-      token: {
-        ...currentToken,
-        isFollowing: Boolean(tokenFollow),
-        bundleClusters: clusters,
-        chart: snapshots.map((snapshot) => ({
+    const chart = snapshots.length > 0
+      ? snapshots.map((snapshot) => ({
           timestamp: snapshot.capturedAt.toISOString(),
           marketCap: snapshot.marketCap,
           liquidity: snapshot.liquidity,
@@ -2177,7 +2345,72 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           holderCount: snapshot.holderCount,
           sentimentScore: snapshot.sentimentScore,
           confidenceScore: snapshot.confidenceScore,
-        })),
+        }))
+      : [
+          recentCalls[recentCalls.length - 1]
+            ? {
+                timestamp: recentCalls[recentCalls.length - 1]!.createdAt.toISOString(),
+                marketCap: pickFirstPositiveMetric(
+                  recentCalls[recentCalls.length - 1]!.entryMcap,
+                  recentCalls[recentCalls.length - 1]!.currentMcap
+                ),
+                liquidity: resolvedLiquidity,
+                volume24h: resolvedVolume24h,
+                holderCount: resolvedHolderCount,
+                sentimentScore,
+                confidenceScore: resolvedConfidenceScore,
+              }
+            : null,
+          {
+            timestamp:
+              currentToken.lastIntelligenceAt?.toISOString() ??
+              currentToken.updatedAt.toISOString(),
+            marketCap: pickFirstPositiveMetric(
+              dexStatsFallback?.marketCap,
+              recentCalls[0]?.currentMcap,
+              recentCalls[0]?.entryMcap,
+              events.find((event) => hasFiniteMetric(event.marketCap))?.marketCap
+            ),
+            liquidity: resolvedLiquidity,
+            volume24h: resolvedVolume24h,
+            holderCount: resolvedHolderCount,
+            sentimentScore,
+            confidenceScore: resolvedConfidenceScore,
+          },
+        ].filter((point): point is NonNullable<typeof point> => point !== null);
+
+    const bundleClusters =
+      clusters.length > 0
+        ? clusters
+        : (distributionFallback?.clusters ?? []).map((cluster) => ({
+            id: `derived:${currentToken.id}:${cluster.clusterLabel}`,
+            clusterLabel: cluster.clusterLabel,
+            walletCount: cluster.walletCount,
+            estimatedSupplyPct: cluster.estimatedSupplyPct,
+            evidenceJson: cluster.evidenceJson,
+          }));
+
+    return {
+      token: {
+        ...currentToken,
+        liquidity: resolvedLiquidity,
+        volume24h: resolvedVolume24h,
+        holderCount: resolvedHolderCount,
+        largestHolderPct: resolvedLargestHolderPct,
+        top10HolderPct: resolvedTop10HolderPct,
+        deployerSupplyPct: resolvedDeployerSupplyPct,
+        bundledWalletCount: resolvedBundledWalletCount,
+        estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
+        bundleRiskLabel: resolvedBundleRiskLabel,
+        tokenRiskScore: resolvedTokenRiskScore,
+        sentimentScore,
+        confidenceScore: resolvedConfidenceScore,
+        hotAlphaScore: resolvedHotAlphaScore,
+        earlyRunnerScore: resolvedEarlyRunnerScore,
+        highConvictionScore: resolvedHighConvictionScore,
+        isFollowing: Boolean(tokenFollow),
+        bundleClusters,
+        chart,
         callsCount: recentCalls.length,
         distinctTraders: topTraderMap.size,
         topTraders,
@@ -2188,14 +2421,14 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           bearishPct: totalSentimentReactions > 0 ? roundMetricOrZero((bearishReactions / totalSentimentReactions) * 100) : 0,
         },
         risk: {
-          tokenRiskScore: currentToken.tokenRiskScore,
-          bundleRiskLabel: currentToken.bundleRiskLabel,
-          largestHolderPct: currentToken.largestHolderPct,
-          top10HolderPct: currentToken.top10HolderPct,
-          bundledWalletCount: currentToken.bundledWalletCount,
-          estimatedBundledSupplyPct: currentToken.estimatedBundledSupplyPct,
-          deployerSupplyPct: currentToken.deployerSupplyPct,
-          holderCount: currentToken.holderCount,
+          tokenRiskScore: resolvedTokenRiskScore,
+          bundleRiskLabel: resolvedBundleRiskLabel,
+          largestHolderPct: resolvedLargestHolderPct,
+          top10HolderPct: resolvedTop10HolderPct,
+          bundledWalletCount: resolvedBundledWalletCount,
+          estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
+          deployerSupplyPct: resolvedDeployerSupplyPct,
+          holderCount: resolvedHolderCount,
         },
         timeline: [
           ...events.map((event) => ({

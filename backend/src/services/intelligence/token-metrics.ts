@@ -106,10 +106,17 @@ type RpcLargestAccountsResult = {
 type RpcProgramAccountResult = Array<unknown>;
 
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const HELIUS_RPC_URL =
-  process.env.HELIUS_RPC_URL?.trim() ||
-  process.env.HELIUS_RPC_ENDPOINT?.trim() ||
-  null;
+const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
+const SOLANA_RPC_URLS = [
+  process.env.HELIUS_RPC_URL?.trim() || null,
+  process.env.HELIUS_RPC_ENDPOINT?.trim() || null,
+  process.env.SOLANA_RPC_URL?.trim() || null,
+  DEFAULT_SOLANA_RPC_URL,
+].filter((value, index, collection): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  collection.indexOf(value) === index
+);
 
 function normalizeDexAddress(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -244,30 +251,35 @@ export async function fetchDexTokenStats(
 }
 
 async function rpcCall<T>(method: string, params: unknown[]): Promise<T | null> {
-  if (!HELIUS_RPC_URL) return null;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6_000);
-  try {
-    const response = await fetch(HELIUS_RPC_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: `intelligence:${method}`,
-        method,
-        params,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { result?: T; error?: unknown };
-    if (payload.error) return null;
-    return payload.result ?? null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
+  if (SOLANA_RPC_URLS.length === 0) return null;
+
+  for (const endpoint of SOLANA_RPC_URLS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6_000);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `intelligence:${method}`,
+          method,
+          params,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) continue;
+      const payload = (await response.json()) as { result?: T; error?: unknown };
+      if (payload.error) continue;
+      return payload.result ?? null;
+    } catch {
+      continue;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+
+  return null;
 }
 
 function uiAmountToNumber(input: {
@@ -327,8 +339,6 @@ export async function analyzeSolanaTokenDistribution(
   mintAddress: string,
   fallbackLiquidityUsd?: number | null
 ): Promise<TokenDistributionSnapshot | null> {
-  if (!HELIUS_RPC_URL) return null;
-
   const [supplyResult, largestAccountsResult, holderAccountsResult] = await Promise.all([
     rpcCall<RpcTokenSupplyResult>("getTokenSupply", [mintAddress]),
     rpcCall<RpcLargestAccountsResult>("getTokenLargestAccounts", [mintAddress]),
