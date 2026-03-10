@@ -50,7 +50,7 @@ const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
-const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 1_400;
+const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 2_800;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
@@ -2023,14 +2023,23 @@ async function fetchSession(): Promise<AuthUser | null> {
         const shouldTreatAsTransient =
           recentlySynced ||
           (hasSessionHint && recentlyHealthySession);
+        const shouldPreserveCachedUser =
+          Boolean(cachedUser) &&
+          unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT &&
+          !isExplicitLogoutCoolingDown();
 
-        if (
-          cachedUser &&
-          shouldTreatAsTransient
-        ) {
+        if (cachedUser && shouldTreatAsTransient) {
           sessionRateLimitedUntil = Date.now() + 2000;
           console.warn(
             `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures})`
+          );
+          return cachedUser;
+        }
+
+        if (shouldPreserveCachedUser) {
+          sessionRateLimitedUntil = Date.now() + 2_500;
+          console.warn(
+            `[Auth] Preserving cached session after /api/me 401 while backend session recovers (${unauthorizedSessionFailures}/${AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT})`
           );
           return cachedUser;
         }

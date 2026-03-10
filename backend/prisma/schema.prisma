@@ -1,6 +1,5 @@
 generator client {
   provider = "prisma-client-js"
-  engineType = "binary"
 }
 
 // Use PostgreSQL for production (e.g. Supabase). DATABASE_URL should be a postgres:// URI.

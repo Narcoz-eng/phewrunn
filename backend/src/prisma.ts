@@ -53,18 +53,18 @@ function normalizeDatabaseUrl(
     const defaultConnectionLimit =
       configuredConnectionLimit ??
       (isServerlessRuntime
-        ? (isProduction ? 8 : 3)
+        ? (isProduction ? 10 : 3)
         : (isProduction ? 25 : 10));
     const minimumSafeConnectionLimit =
       isServerlessRuntime
-        ? (isProduction ? 5 : 3)
+        ? (isProduction ? 8 : 3)
         : (isProduction ? 8 : 4);
     const desiredConnectionLimit = Math.max(defaultConnectionLimit, minimumSafeConnectionLimit);
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const defaultPoolTimeout =
       configuredPoolTimeout ??
-      (isProduction ? 10 : 8);
-    const desiredPoolTimeout = Math.min(defaultPoolTimeout, isProduction ? 8 : 6);
+      (isProduction ? 6 : 8);
+    const desiredPoolTimeout = Math.min(defaultPoolTimeout, isProduction ? 6 : 6);
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;

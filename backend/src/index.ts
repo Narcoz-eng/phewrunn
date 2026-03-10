@@ -1927,23 +1927,42 @@ function buildSessionCookie(params: {
     .join("; ");
 }
 
-function applySessionCookies(c: Context, sessionToken: string): void {
+function buildIssuedSessionCookies(
+  hostHeader: string | undefined,
+  sessionToken: string
+): string[] {
   const isProd = process.env.NODE_ENV === "production";
-  const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
-  const cookies: string[] = [];
-
-  cookies.push(...buildClearedSessionCookies(c.req.header("host"), { includeLegacy: false }));
-
-  // Set the canonical session cookie last so it wins within the response.
-  cookies.push(
+  const cookieDomain = resolveSessionCookieDomain(hostHeader);
+  const cookies = [
     buildSessionCookie({
       name: SESSION_COOKIE_NAME,
       value: sessionToken,
-      domain: cookieDomain ?? undefined,
       maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
       secure: isProd,
-    })
-  );
+    }),
+  ];
+
+  if (cookieDomain) {
+    cookies.push(
+      buildSessionCookie({
+        name: SESSION_COOKIE_NAME,
+        value: sessionToken,
+        domain: cookieDomain,
+        maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
+        secure: isProd,
+      })
+    );
+  }
+
+  return cookies;
+}
+
+function applySessionCookies(c: Context, sessionToken: string): void {
+  const hostHeader = c.req.header("host");
+  const cookies: string[] = [
+    ...buildClearedSessionCookies(hostHeader, { includeLegacy: false }),
+    ...buildIssuedSessionCookies(hostHeader, sessionToken),
+  ];
 
   cookies.forEach((cookie, index) => {
     c.header("Set-Cookie", cookie, index === 0 ? undefined : { append: true });
@@ -1956,11 +1975,13 @@ function logIssuedSessionCookie(
   sessionRecordWriteOutcome: SessionRecordWriteOutcome
 ): void {
   const isProd = process.env.NODE_ENV === "production";
-  const cookieDomain = resolveSessionCookieDomain(c.req.header("host"));
+  const hostHeader = c.req.header("host");
+  const cookieDomain = resolveSessionCookieDomain(hostHeader);
+  const issuedCookies = buildIssuedSessionCookies(hostHeader, "__redacted__");
   const clearedCookieNames = [SESSION_COOKIE_NAME];
   console.info("[auth/session] Issued session cookie", {
     requestId: c.get("requestId") ?? null,
-    host: c.req.header("host") ?? null,
+    host: hostHeader ?? null,
     origin: c.req.header("origin") ?? null,
     userAgent: c.req.header("user-agent") ?? null,
     userId,
@@ -1968,7 +1989,10 @@ function logIssuedSessionCookie(
     clearedCookieNames,
     clearedLegacyCookieNames: [],
     setCookieCount:
-      buildClearedSessionCookies(c.req.header("host"), { includeLegacy: false }).length + 1,
+      buildClearedSessionCookies(hostHeader, { includeLegacy: false }).length + issuedCookies.length,
+    issuedCookieVariants: issuedCookies.map((_, index) =>
+      index === 0 ? "host_only" : `domain:${cookieDomain ?? "none"}`
+    ),
     domain: cookieDomain ?? null,
     path: SESSION_COOKIE_PATH,
     httpOnly: true,
@@ -2595,13 +2619,19 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
   }
 
+  let verifiedPrivyUserId: string | null = null;
+  let cachedPrivyAuthUser: AuthResponseUser | null = null;
+  let resolvedAuthUser: AuthResponseUser | null = null;
+
   try {
     const { privyIdToken, name } = parsed.data;
     const verifiedIdentity = await resolveVerifiedPrivyRequestIdentity(
       c,
       normalizeRequestTokenCandidate(privyIdToken)
     );
-    const { verifiedPrivyUserId, verifiedEmail } = verifiedIdentity;
+    verifiedPrivyUserId = verifiedIdentity.verifiedPrivyUserId;
+    const { verifiedEmail } = verifiedIdentity;
+    cachedPrivyAuthUser = await readCachedPrivyAuthUser(verifiedPrivyUserId);
 
     const now = new Date();
     const existingLink = await findAuthUserLinkByPrivyUserId(verifiedPrivyUserId);
@@ -2648,12 +2678,14 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
       });
     }
 
+    resolvedAuthUser = user;
     user = await reconcilePrivyLinkedUserProfile({
       user,
       verifiedEmail,
       preferredName: name,
       privyUserId: verifiedPrivyUserId,
     });
+    resolvedAuthUser = user;
 
     if (existingLink && existingLink.userId !== user.id) {
       console.error("[privy-sync] Refusing to remap linked Privy user", {
@@ -2690,6 +2722,20 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     return response;
   } catch (error) {
     if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
+      const fallbackUser =
+        resolvedAuthUser ??
+        cachedPrivyAuthUser;
+
+      if (fallbackUser) {
+        console.warn("[privy-sync] Database unavailable; reissuing signed session from fallback auth state", {
+          requestId: c.get("requestId") ?? null,
+          userId: fallbackUser.id,
+          privyUserId: verifiedPrivyUserId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return issueAuthSessionResponse(c, fallbackUser);
+      }
+
       c.header("Retry-After", "2");
       return c.json(
         {
