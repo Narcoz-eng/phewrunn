@@ -1235,6 +1235,84 @@ async function resolvePrivyAccessTokenCandidate(
   }
 }
 
+async function trySyncPrivySessionWithoutIdentityToken(options: {
+  owner: PrivyAuthBootstrapOwner;
+  mode: PrivyAuthBootstrapMode;
+  userId: string;
+  email?: string;
+  name?: string;
+  attemptId: string;
+  attempt: number;
+  totalAttempts: number;
+  privyAccessToken?: string | null | undefined;
+  getLatestPrivyAccessToken?:
+    | (() => Promise<string | null | undefined> | string | null | undefined)
+    | undefined;
+  reason: string;
+}): Promise<AuthUser | null> {
+  const resolvedPrivyAccessToken = await resolvePrivyAccessTokenCandidate(
+    options.privyAccessToken,
+    options.getLatestPrivyAccessToken,
+    {
+      owner: options.owner,
+      mode: options.mode,
+      userId: options.userId,
+      attemptId: options.attemptId,
+      attempt: options.attempt,
+      totalAttempts: options.totalAttempts,
+    }
+  );
+
+  console.info("[AuthFlow] attempting /api/auth/privy-sync without identity token", {
+    owner: options.owner,
+    mode: options.mode,
+    userId: options.userId,
+    attemptId: options.attemptId,
+    attempt: options.attempt,
+    totalAttempts: options.totalAttempts,
+    reason: options.reason,
+    hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
+  });
+
+  try {
+    const syncResult = await syncPrivySession(
+      options.userId,
+      options.email,
+      options.name,
+      undefined,
+      {
+        allowMissingIdentityToken: true,
+        privyAuthToken: resolvedPrivyAccessToken,
+      }
+    );
+
+    setPrivyAuthBootstrapState("authenticated", {
+      owner: options.owner,
+      mode: options.mode,
+      userId: options.userId,
+      detail: "backend session synced without identity token",
+      debugCode: "backend_session_synced_server_visible_privy_auth",
+      backendSyncStarted: true,
+      attempt: options.attempt,
+      totalAttempts: options.totalAttempts,
+    });
+    return syncResult.user;
+  } catch (error) {
+    console.warn("[AuthFlow] backend sync without identity token failed", {
+      owner: options.owner,
+      mode: options.mode,
+      userId: options.userId,
+      attemptId: options.attemptId,
+      attempt: options.attempt,
+      totalAttempts: options.totalAttempts,
+      reason: options.reason,
+      hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 async function waitForLatestPrivyIdentityToken(options: {
   getLatestPrivyIdentityToken?: () => string | null | undefined;
   initialToken?: string | null | undefined;
@@ -1639,18 +1717,45 @@ export async function startPrivyAuthBootstrap({
                   ? "usePrivyLogin"
                   : owner,
           };
-          const resolvedPayload = await requestPrivyIdentityTokenForBackendSync({
-            user,
-            getLatestUser,
-            privyReady,
-            privyAuthenticated,
-            privyIdToken: privyIdentityToken,
-            getLatestPrivyIdToken: getLatestPrivyIdentityToken,
-            refreshPrivyAuthState,
-            isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
-            debugContext: privyIdentityDebugContext,
-            pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
-          });
+          let resolvedPayload: Awaited<
+            ReturnType<typeof requestPrivyIdentityTokenForBackendSync>
+          >;
+          try {
+            resolvedPayload = await requestPrivyIdentityTokenForBackendSync({
+              user,
+              getLatestUser,
+              privyReady,
+              privyAuthenticated,
+              privyIdToken: privyIdentityToken,
+              getLatestPrivyIdToken: getLatestPrivyIdentityToken,
+              refreshPrivyAuthState,
+              isTerminal: () => attemptState.rateLimited || attemptState.cancelled,
+              debugContext: privyIdentityDebugContext,
+              pendingTokenWaitMs: PRIVY_PENDING_IDENTITY_TOKEN_WAIT_MS,
+            });
+          } catch (resolutionError) {
+            if (privyReady === true && privyAuthenticated === true) {
+              const fallbackUser = await trySyncPrivySessionWithoutIdentityToken({
+                owner,
+                mode,
+                userId: user.id,
+                attemptId: privyBootstrapAttemptId,
+                attempt,
+                totalAttempts,
+                privyAccessToken,
+                getLatestPrivyAccessToken,
+                reason:
+                  resolutionError instanceof Error
+                    ? resolutionError.message
+                    : "privy_identity_resolution_failed",
+              });
+              if (fallbackUser) {
+                return fallbackUser;
+              }
+            }
+
+            throw resolutionError;
+          }
 
           if (!resolvedPayload.privyIdToken) {
             if (resolvedPayload.pendingPrivyIdTokenPromise) {
@@ -1725,72 +1830,21 @@ export async function startPrivyAuthBootstrap({
             }
 
             if (privyReady === true && privyAuthenticated === true) {
-              const resolvedPrivyAccessToken = await resolvePrivyAccessTokenCandidate(
+              const fallbackUser = await trySyncPrivySessionWithoutIdentityToken({
+                owner,
+                mode,
+                userId: resolvedPayload.user.id,
+                email: resolvedPayload.email,
+                name: resolvedPayload.name,
+                attemptId: privyBootstrapAttemptId,
+                attempt,
+                totalAttempts,
                 privyAccessToken,
                 getLatestPrivyAccessToken,
-                {
-                  owner,
-                  mode,
-                  userId: resolvedPayload.user.id,
-                  attemptId: privyBootstrapAttemptId,
-                  attempt,
-                  totalAttempts,
-                }
-              );
-              console.info(
-                "[AuthFlow] attempting /api/auth/privy-sync using Privy access-token fallback",
-                {
-                  owner,
-                  mode,
-                  userId: resolvedPayload.user.id,
-                  attemptId: privyBootstrapAttemptId,
-                  attempt,
-                  totalAttempts,
-                  skipReason,
-                  hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
-                }
-              );
-
-              try {
-                const syncResult = await syncPrivySession(
-                  resolvedPayload.user.id,
-                  resolvedPayload.email,
-                  resolvedPayload.name,
-                  undefined,
-                  {
-                    allowMissingIdentityToken: true,
-                    privyAuthToken: resolvedPrivyAccessToken,
-                  }
-                );
-
-                setPrivyAuthBootstrapState("authenticated", {
-                  owner,
-                  mode,
-                  userId: user.id,
-                  detail: "backend session synced from Privy access-token fallback",
-                  debugCode: "backend_session_synced_privy_access_token",
-                  backendSyncStarted: true,
-                  attempt,
-                  totalAttempts,
-                });
-                return syncResult.user;
-              } catch (serverVisibleSyncError) {
-                console.warn(
-                  "[AuthFlow] Privy access-token fallback sync failed while identity token was unavailable",
-                  {
-                    owner,
-                    mode,
-                    userId: resolvedPayload.user.id,
-                    attemptId: privyBootstrapAttemptId,
-                    attempt,
-                    totalAttempts,
-                    hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
-                    message:
-                      serverVisibleSyncError instanceof Error
-                        ? serverVisibleSyncError.message
-                        : String(serverVisibleSyncError),
-                  }
-                );
+                reason: skipReason,
+              });
+              if (fallbackUser) {
+                return fallbackUser;
               }
             }
 
@@ -1984,8 +2038,24 @@ export async function startPrivyAuthBootstrap({
               });
             }
 
-            const detail =
-              "Privy finished authenticating, but the identity token was not ready for backend sign-in. Please tap Sign in again.";
+            if (privyReady === true && privyAuthenticated === true) {
+              const fallbackUser = await trySyncPrivySessionWithoutIdentityToken({
+                owner,
+                mode,
+                userId: user.id,
+                attemptId: privyBootstrapAttemptId,
+                attempt,
+                totalAttempts,
+                privyAccessToken,
+                getLatestPrivyAccessToken,
+                reason: "identity_verification_finalization_timeout",
+              });
+              if (fallbackUser) {
+                return fallbackUser;
+              }
+            }
+
+            const detail = "Sign-in could not be completed. Please try again.";
             writePrivySyncFailureSnapshot(detail);
             setPrivyAuthBootstrapState("failed", {
               owner,
@@ -2042,15 +2112,30 @@ export async function startPrivyAuthBootstrap({
         totalAttempts,
         timeoutMs: PRIVY_BOOTSTRAP_FINALIZATION_TIMEOUT_MS,
       });
-      writePrivySyncFailureSnapshot(
-        "Privy finished authenticating, but the identity token was not ready for backend sign-in. Please tap Sign in again."
-      );
+      const finalFallbackUser =
+        privyReady === true && privyAuthenticated === true
+          ? await trySyncPrivySessionWithoutIdentityToken({
+              owner,
+              mode,
+              userId: user.id,
+              attemptId: privyBootstrapAttemptId,
+              attempt: PRIVY_BOOTSTRAP_MAX_ATTEMPTS,
+              totalAttempts,
+              privyAccessToken,
+              getLatestPrivyAccessToken,
+              reason: "identity_verification_finalization_exhausted",
+            })
+          : null;
+      if (finalFallbackUser) {
+        return finalFallbackUser;
+      }
+
+      writePrivySyncFailureSnapshot("Sign-in could not be completed. Please try again.");
       setPrivyAuthBootstrapState("failed", {
         owner,
         mode,
         userId: user.id,
-        detail:
-          "Privy finished authenticating, but the identity token was not ready for backend sign-in. Please tap Sign in again.",
+        detail: "Sign-in could not be completed. Please try again.",
         debugCode: "privy_identity_token_unavailable",
         attempt: PRIVY_BOOTSTRAP_MAX_ATTEMPTS,
         totalAttempts,

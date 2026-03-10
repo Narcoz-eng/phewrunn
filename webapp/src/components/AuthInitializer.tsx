@@ -195,13 +195,14 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     }
 
     const snapshot = readPrivyAuthBootstrapSnapshot();
+    const authoritativeBackendUser = readCachedAuthUserSnapshot();
+    const hasAuthoritativeBackendSession =
+      Boolean(authoritativeBackendUser?.id) && hasValidatedAuthSession();
     const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
     const currentState = sameUserSnapshot?.state ?? "idle";
     const hookIdentityTokenPresent = Boolean(latestPrivyIdentityTokenRef.current);
-    const recoveredBackendUser = readCachedAuthUserSnapshot();
-    const hasRecoveredBackendUser = Boolean(recoveredBackendUser?.id) || isAuthenticated;
-    const hasConfirmedRecoveredBackendSession =
-      Boolean(recoveredBackendUser?.id) && hasValidatedAuthSession();
+    const recoveredBackendUser = authoritativeBackendUser;
+    const hasRecoveredBackendUser = Boolean(recoveredBackendUser?.id);
     const canResumeDeferredUsePrivyLoginHandoff =
       sameUserSnapshot?.owner === "usePrivyLogin" &&
       (sameUserSnapshot.debugCode === "awaiting_privy_sdk_ready" ||
@@ -218,7 +219,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       currentState === "awaiting_identity_verification_finalization" &&
       hookIdentityTokenPresent;
 
-    if (hasLiveSession || hasConfirmedRecoveredBackendSession) {
+    if (hasAuthoritativeBackendSession || hasLiveSession) {
       if (currentState !== "authenticated") {
         setPrivyAuthBootstrapState("authenticated", {
           owner: "system",
@@ -228,6 +229,16 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
           debugCode: "existing_backend_session_available",
         });
       }
+      return;
+    }
+
+    if (snapshot?.state === "authenticated" && hasRecoveredBackendUser) {
+      console.info("[AuthFlow] AuthInitializer preserving authenticated bootstrap state for recovered backend auth", {
+        privyUserId: user.id,
+        recoveredBackendUserId: recoveredBackendUser?.id ?? null,
+        snapshotUserId: snapshot.userId,
+        providerInstanceId,
+      });
       return;
     }
 

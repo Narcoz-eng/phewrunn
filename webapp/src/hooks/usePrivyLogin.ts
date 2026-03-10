@@ -509,9 +509,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
       : authStatus === "connecting_backend_session"
         ? "Connecting your backend session..."
         : authStatus === "finalizing_identity_verification"
-          ? bootstrapSnapshot?.detail ??
-            localSyncError ??
-            "Privy is still finalizing identity verification for backend sign-in."
+          ? "Finalizing sign-in..."
           : authStatus === "rate_limited"
             ? bootstrapSnapshot?.debugCode === "privy_rate_limited_before_backend_sync"
               ? bootstrapSnapshot.detail ??
@@ -522,7 +520,7 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
               ? "Signed in. Loading your account..."
               : authStatus === "logout_in_progress"
                 ? "Signing out..."
-                : localSyncError ?? null;
+                : null;
 
   const bootstrapError =
     bootstrapSnapshot?.state === "failed" || bootstrapSnapshot?.state === "failed_rate_limited"
