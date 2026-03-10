@@ -834,6 +834,27 @@ export function setPrivyAuthBootstrapState(
   } = {}
 ): void {
   const previousSnapshot = inMemoryPrivyBootstrapSnapshot;
+  const validatedUser = readCachedAuthUserSnapshot();
+  const hasAuthoritativeBackendSession =
+    Boolean(validatedUser?.id) && hasValidatedAuthSession();
+  const isDowngradingAuthoritativeSession =
+    hasAuthoritativeBackendSession &&
+    state !== "authenticated" &&
+    state !== "logout_in_progress";
+
+  if (isDowngradingAuthoritativeSession) {
+    console.info("[AuthFlow] ignoring bootstrap downgrade because backend session is already validated", {
+      previousState: previousSnapshot?.state ?? null,
+      nextState: state,
+      nextOwner: params.owner ?? "system",
+      nextMode: params.mode ?? "system",
+      nextUserId: params.userId ?? null,
+      validatedUserId: validatedUser?.id ?? null,
+      debugCode: params.debugCode ?? null,
+    });
+    return;
+  }
+
   const snapshot: PrivyAuthBootstrapSnapshot = {
     state,
     owner: params.owner ?? "system",
@@ -1098,6 +1119,21 @@ function markValidatedAuthSession(user: AuthUser): AuthUser {
   lastBootstrappedSessionAt = 0;
   writeCachedAuthUser(user);
   clearPrivySyncFailureSnapshot();
+  const snapshot = readPrivyAuthBootstrapSnapshot();
+  if (
+    snapshot?.state !== "authenticated" ||
+    snapshot.userId !== user.id ||
+    snapshot.owner !== "system" ||
+    snapshot.debugCode !== "backend_session_confirmed"
+  ) {
+    setPrivyAuthBootstrapState("authenticated", {
+      owner: "system",
+      mode: "system",
+      userId: user.id,
+      detail: "backend session confirmed",
+      debugCode: "backend_session_confirmed",
+    });
+  }
   return user;
 }
 
@@ -2534,11 +2570,13 @@ export function useAuth() {
   const resolvedUser = getResolvedAuthUser(context.user);
   const isAuthenticated = Boolean(resolvedUser);
   const hasLiveSession = isAuthenticated && hasValidatedAuthSession();
+  const canPerformAuthenticatedWrites = hasLiveSession;
 
   return {
     user: resolvedUser,
     isAuthenticated,
     hasLiveSession,
+    canPerformAuthenticatedWrites,
     isUsingCachedUser: isAuthenticated && !hasLiveSession,
     isReady: !context.isLoading,
     isPending: context.isLoading,
@@ -2556,11 +2594,13 @@ export function useSession() {
 
   const resolvedUser = getResolvedAuthUser(context.user);
   const hasLiveSession = Boolean(resolvedUser) && hasValidatedAuthSession();
+  const canPerformAuthenticatedWrites = hasLiveSession;
 
   return {
     data: resolvedUser ? { user: resolvedUser } : null,
     isPending: context.isLoading,
     hasLiveSession,
+    canPerformAuthenticatedWrites,
     isUsingCachedUser: Boolean(resolvedUser) && !hasLiveSession,
   };
 }

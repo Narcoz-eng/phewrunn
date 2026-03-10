@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken } from "@privy-io/react-auth";
 import {
+  hasValidatedAuthSession,
   registerPreLogoutHook,
+  readCachedAuthUserSnapshot,
   setPrivyAuthAnonymousState,
   setPrivyAuthBootstrapState,
   startPrivyAuthBootstrap,
@@ -135,12 +137,15 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     }
 
     latestPrivyUserRef.current = null;
-    if (hasLiveSession) {
-      console.info("[AuthFlow] existing backend session preserved during Privy hydration", {
+    const recoveredBackendUser = readCachedAuthUserSnapshot();
+    if (isAuthenticated || recoveredBackendUser) {
+      console.info("[AuthFlow] recovered backend auth preserved during Privy hydration", {
         providerInstanceId,
         ready,
         authenticated,
         previousUserId: user?.id ?? null,
+        recoveredBackendUserId: recoveredBackendUser?.id ?? null,
+        hasLiveSession,
       });
       return;
     }
@@ -181,7 +186,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       waitedMs: Date.now() - initialHydrationStartAtRef.current,
     });
     setPrivyAuthAnonymousState("AuthInitializer");
-  }, [authenticated, hasLiveSession, initialHydrationTimedOut, providerInstanceId, ready, user]);
+  }, [authenticated, hasLiveSession, initialHydrationTimedOut, isAuthenticated, providerInstanceId, ready, user]);
 
   useEffect(() => {
     if (!ready || !authenticated || !user) {
@@ -192,6 +197,10 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     const sameUserSnapshot = snapshot?.userId === user.id ? snapshot : null;
     const currentState = sameUserSnapshot?.state ?? "idle";
     const hookIdentityTokenPresent = Boolean(latestPrivyIdentityTokenRef.current);
+    const recoveredBackendUser = readCachedAuthUserSnapshot();
+    const hasRecoveredBackendUser = Boolean(recoveredBackendUser?.id) || isAuthenticated;
+    const hasConfirmedRecoveredBackendSession =
+      Boolean(recoveredBackendUser?.id) && hasValidatedAuthSession();
     const canResumeDeferredUsePrivyLoginHandoff =
       sameUserSnapshot?.owner === "usePrivyLogin" &&
       (sameUserSnapshot.debugCode === "awaiting_privy_sdk_ready" ||
@@ -208,15 +217,27 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       currentState === "awaiting_identity_verification_finalization" &&
       hookIdentityTokenPresent;
 
-    if (hasLiveSession) {
+    if (hasLiveSession || hasConfirmedRecoveredBackendSession) {
       if (currentState !== "authenticated") {
         setPrivyAuthBootstrapState("authenticated", {
-          owner: "AuthInitializer",
+          owner: "system",
           mode: "system",
-          userId: user.id,
+          userId: recoveredBackendUser?.id ?? user.id,
           detail: "existing backend session available",
+          debugCode: "existing_backend_session_available",
         });
       }
+      return;
+    }
+
+    if (hasRecoveredBackendUser) {
+      console.info("[AuthFlow] AuthInitializer deferring Privy bootstrap while recovered backend auth is being confirmed", {
+        privyUserId: user.id,
+        recoveredBackendUserId: recoveredBackendUser?.id ?? null,
+        state: currentState,
+        providerInstanceId,
+        hasLiveSession,
+      });
       return;
     }
 
@@ -320,7 +341,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       tryExistingBackendSession: true,
       triggerSource: "component_mount",
     });
-  }, [authenticated, hasLiveSession, identityToken, ready, user]);
+  }, [authenticated, hasLiveSession, identityToken, isAuthenticated, providerInstanceId, ready, user]);
 
   return <>{children}</>;
 }
