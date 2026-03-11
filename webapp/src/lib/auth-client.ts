@@ -2413,14 +2413,21 @@ async function fetchSession(): Promise<AuthUser | null> {
   const pendingBootstrapBelongsToCurrentTab =
     doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(pendingBootstrap);
 
-  if (pendingBootstrap && isPrivyAuthBootstrapPending(now)) {
-    console.info("[AuthFlow] /api/me gated until Privy sync settles", {
+  // Only gate /api/me behind pending bootstrap when the session is ALREADY
+  // validated.  On page refresh module-level vars are 0 so
+  // hasValidatedAuthSession() returns false — we MUST call /api/me to
+  // re-validate the cookie.  The previous unconditional gate was the root
+  // cause of the PC sign-in loop: AuthInitializer set bootstrap to pending
+  // before the initial check could call /api/me, so the session was never
+  // validated and hasLiveSession stayed false.
+  if (
+    pendingBootstrap &&
+    isPrivyAuthBootstrapPending(now) &&
+    hasValidatedAuthSession(now)
+  ) {
+    console.info("[AuthFlow] /api/me gated (session already validated) until Privy sync settles", {
       state: pendingBootstrap.state,
       owner: pendingBootstrap.owner,
-      mode: pendingBootstrap.mode,
-      tabId: pendingBootstrap.tabId,
-      userId: pendingBootstrap.userId,
-      detail: pendingBootstrap.detail,
       cachedUserPresent: Boolean(cachedUser),
     });
     return cachedUser;
