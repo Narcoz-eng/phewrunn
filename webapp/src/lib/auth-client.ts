@@ -26,7 +26,8 @@ const getBaseUrl = () => {
       hostname.endsWith(".vibecodeapp.com") ||
       hostname === "phew.run" ||
       hostname === "www.phew.run" ||
-      hostname.endsWith(".phew.run");
+      hostname.endsWith(".phew.run") ||
+      hostname.endsWith(".vercel.app");
 
     // Prefer same-origin in deployed environments so a committed preview URL
     // does not send auth/session traffic to a different backend.
@@ -2533,6 +2534,21 @@ async function fetchSession(): Promise<AuthUser | null> {
           return cachedUser;
         }
 
+        // Keep cached user alive until the failure threshold is reached.
+        // On page refresh module-level vars are 0 so shouldTreatAsTransient
+        // is false, but Privy bootstrap may still re-establish the session.
+        // Clearing state on the very first 401 causes a sign-in loop.
+        if (
+          cachedUser &&
+          unauthorizedSessionFailures < AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT
+        ) {
+          sessionRateLimitedUntil = Date.now() + 1500;
+          console.warn(
+            `[Auth] 401 from /api/me but under failure threshold; keeping cached user (${unauthorizedSessionFailures}/${AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT})`
+          );
+          return cachedUser;
+        }
+
         clearStoredAuthToken();
         clearCachedAuthUser();
         lastBootstrappedSessionAt = 0;
@@ -2649,17 +2665,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resolveSessionWithRetry = useCallback(async () => {
     const optimisticCachedUser = readCachedAuthUser();
-    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
-    if (bootstrapSnapshot && isPrivyAuthBootstrapPending()) {
-      console.info("[AuthFlow] /api/me retry skipped due to pending auth state", {
-        state: bootstrapSnapshot.state,
-        owner: bootstrapSnapshot.owner,
-        mode: bootstrapSnapshot.mode,
-        tabId: bootstrapSnapshot.tabId,
-        userId: bootstrapSnapshot.userId,
-      });
-      return optimisticCachedUser;
-    }
 
     if (
       optimisticCachedUser &&
@@ -2669,6 +2674,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return optimisticCachedUser;
     }
 
+    // Always attempt /api/me even when bootstrap is pending — the session
+    // cookie may already be valid and a server round-trip is the only way to
+    // confirm it.  Skipping here was causing sign-in loops on page refresh
+    // because the cached user was returned without validation, keeping
+    // hasValidatedAuthSession() false.
     let user = await fetchSession();
     if (user) {
       return user;

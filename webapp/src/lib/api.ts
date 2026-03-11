@@ -17,7 +17,8 @@ const API_BASE_URL = (() => {
       hostname.endsWith(".vibecodeapp.com") ||
       hostname === "phew.run" ||
       hostname === "www.phew.run" ||
-      hostname.endsWith(".phew.run");
+      hostname.endsWith(".phew.run") ||
+      hostname.endsWith(".vercel.app");
 
     // Prefer same-origin in deployed environments so a committed dev preview URL
     // doesn't accidentally send production traffic to an outdated backend.

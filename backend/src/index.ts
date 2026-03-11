@@ -100,6 +100,7 @@ const allowed = [
   /^https:\/\/phew\.run$/,
   /^https:\/\/www\.phew\.run$/,
   /^https:\/\/[a-z0-9-]+\.phew\.run$/,
+  /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
 ];
 
 app.use(
@@ -1960,8 +1961,14 @@ function buildIssuedSessionCookies(
 
 function applySessionCookies(c: Context, sessionToken: string): void {
   const hostHeader = c.req.header("host");
+  // Only clear legacy cookie names — don't clear-then-set the primary cookie
+  // because some proxies (e.g. Vercel edge) may collapse or misorder duplicate
+  // Set-Cookie headers with the same name, causing the cookie to be deleted
+  // instead of updated.
+  const legacyClearCookies = buildClearedSessionCookies(hostHeader, { includeLegacy: true })
+    .filter((cookie) => !cookie.startsWith(`${SESSION_COOKIE_NAME}=`));
   const cookies: string[] = [
-    ...buildClearedSessionCookies(hostHeader, { includeLegacy: false }),
+    ...legacyClearCookies,
     ...buildIssuedSessionCookies(hostHeader, sessionToken),
   ];
 
