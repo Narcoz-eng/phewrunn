@@ -791,7 +791,7 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
 
 export default function Feed() {
   const { data: session } = useSession();
-  const { signOut, hasLiveSession, canPerformAuthenticatedWrites } = useAuth();
+  const { signOut, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1284,9 +1284,16 @@ export default function Feed() {
     setFrozenPostsWhileOverlayOpen(null);
   }, [posts, shouldFreezeFeedItems]);
   const displayedPosts = frozenPostsWhileOverlayOpen ?? posts;
-  const shouldShowFollowingAuthState = activeTab === "following" && !hasLiveSession;
+  const shouldShowFollowingSessionRecovery = activeTab === "following" && isUsingCachedUser;
+  const shouldShowFollowingAuthState =
+    activeTab === "following" && !hasLiveSession && !shouldShowFollowingSessionRecovery;
   const hasPosts = displayedPosts.length > 0;
-  const shouldShowFeedFatalError = Boolean(postsError && !hasPosts && !shouldShowFollowingAuthState);
+  const shouldShowFeedFatalError = Boolean(
+    postsError &&
+    !hasPosts &&
+    !shouldShowFollowingAuthState &&
+    !shouldShowFollowingSessionRecovery
+  );
   const shouldShowFeedSoftError = Boolean(postsError && hasPosts);
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
 
@@ -2130,6 +2137,18 @@ export default function Feed() {
                 />
               ))}
             </>
+          ) : shouldShowFollowingSessionRecovery ? (
+            <div className="app-empty-state">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
+                <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground text-lg">Loading Following</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Finalizing your session and loading followed traders.
+                </p>
+              </div>
+            </div>
           ) : shouldShowFollowingAuthState ? (
             <div className="app-empty-state">
               <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">

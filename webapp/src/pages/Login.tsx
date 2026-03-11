@@ -301,6 +301,7 @@ const stats = [
 
 function PrivyLoginButton() {
   const navigate = useNavigate();
+  const { user: authUser, hasLiveSession } = useAuth();
   const {
     login,
     ready: privyReady,
@@ -314,13 +315,14 @@ function PrivyLoginButton() {
   });
   const isLoading = isSyncing;
   const privySyncFailure = usePrivySyncFailureSnapshot();
-  // Only show error when bootstrap is NOT still in progress — suppresses
-  // the flash of "Sign-in failed" that appears between retry attempts.
+  // Once we have any recovered user, keep the UI in a pending state until the
+  // backend session confirms instead of flashing a stale failure.
   const visibleSyncError =
-    !isSyncing && (syncError || privySyncFailure)
+    !authUser && !hasLiveSession && !isSyncing && !authStatusMessage && (syncError || privySyncFailure)
       ? "Sign-in failed. Please retry."
       : null;
-  const visibleStatus = authStatusMessage;
+  const visibleStatus =
+    authStatusMessage ?? (authUser && !hasLiveSession ? "Finalizing your session..." : null);
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
   const xLabel = privyReady ? "Sign in with X" : "Start X";
   const emailSubLabel = "Fastest path. Verification code lands instantly.";
