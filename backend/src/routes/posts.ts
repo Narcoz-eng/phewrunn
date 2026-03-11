@@ -227,7 +227,6 @@ const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
 const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
-const FEED_MCAP_FAILURE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_000 : 1_000;
 const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 9_000 : 3_000;
 const FEED_RESPONSE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
@@ -245,7 +244,6 @@ const POST_PRICE_ACTIVE_STALE_FALLBACK_MS =
 const POST_PRICE_SETTLED_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
 const POST_PRICE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 40_000 : 4_000;
-const POST_PRICE_ROUTE_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 2_200;
 const POST_PRICE_REDIS_KEY_PREFIX = "posts:price:v1";
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const FEED_ENABLE_LIVE_SHARED_ALPHA = (() => {
@@ -3061,8 +3059,7 @@ async function getFeedMarketCapSnapshot(
     .then((result) => {
       feedMcapCache.set(cacheKey, {
         result,
-        expiresAtMs:
-          Date.now() + (result.mcap !== null ? FEED_MCAP_CACHE_TTL_MS : FEED_MCAP_FAILURE_CACHE_TTL_MS),
+        expiresAtMs: Date.now() + FEED_MCAP_CACHE_TTL_MS,
       });
       return result;
     })
@@ -8299,11 +8296,7 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
     const resolvedPayloadById = new Map(
       await Promise.all(
       posts.map(async (post) => {
-        const payload = await withTimeoutFallback(
-          resolvePostPricePayload(post),
-          POST_PRICE_ROUTE_REFRESH_TIMEOUT_MS,
-          buildPostPricePayloadFromRecord(post)
-        );
+        const payload = await resolvePostPricePayload(post);
         return [post.id, payload] as const;
       })
     )
