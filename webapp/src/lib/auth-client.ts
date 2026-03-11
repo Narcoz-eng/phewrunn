@@ -1716,7 +1716,15 @@ export async function startPrivyAuthBootstrap({
 
     try {
       const shouldCheckExistingBackendSession =
-        tryExistingBackendSession && hasRecoverableBackendSessionHint();
+        tryExistingBackendSession &&
+        (
+          hasRecoverableBackendSessionHint() ||
+          (
+            privyReady === true &&
+            privyAuthenticated === true &&
+            !isExplicitLogoutCoolingDown()
+          )
+        );
       if (tryExistingBackendSession && !shouldCheckExistingBackendSession) {
         console.info("[AuthFlow] bootstrap skipping existing backend session check without local session hints", {
           owner,
@@ -2433,15 +2441,10 @@ async function fetchSession(): Promise<AuthUser | null> {
     return cachedUser;
   }
 
-  if (!cachedUser && !hasRecoverableBackendSessionHint(now)) {
-    console.info("[AuthFlow] /api/me skipped because there are no recoverable backend session hints", {
-      pendingBootstrapState: pendingBootstrap?.state ?? null,
-      pendingBootstrapOwner: pendingBootstrap?.owner ?? null,
-      pendingBootstrapBelongsToCurrentTab,
-    });
-    return null;
-  }
-
+  // The authoritative backend session is stored in an HttpOnly cookie, so the
+  // browser cannot reliably expose a local "session hint" on cold start.
+  // Always allow the initial /api/me probe unless an active bootstrap already
+  // owns auth resolution.
   console.info("[AuthColdStart] /api/me allowed to run", {
     cachedUserPresent: Boolean(cachedUser),
     pendingBootstrapState: pendingBootstrap?.state ?? null,
