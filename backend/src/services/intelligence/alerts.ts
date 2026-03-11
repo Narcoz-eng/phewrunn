@@ -136,7 +136,10 @@ export async function fanoutPostedAlphaAlert(args: {
         ) {
           return false;
         }
-        return (followsTrader && pref.notifyFollowedTraders) || (followsToken && pref.notifyFollowedTokens);
+        // Trader followers already receive the primary new-post notification fanout.
+        // Keep this alert path for token followers so one post does not generate two
+        // nearly identical notifications for the same user.
+        return followsToken && pref.notifyFollowedTokens && !followsTrader;
       })
       .map((pref) =>
         createNotification({

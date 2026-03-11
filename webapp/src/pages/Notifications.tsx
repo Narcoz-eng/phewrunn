@@ -51,11 +51,11 @@ function buildNotificationGroupKey(notification: Notification): string {
     case "like":
     case "comment":
     case "repost":
-    case "new_post":
     case "follow":
       return `${notification.type}:${actorKey}`;
+    case "new_post":
     case "posted_alpha":
-      return `${notification.type}:${actorKey}:${entityKey}`;
+      return `followed_source_posted:${actorKey}`;
     case "early_runner_detected":
     case "hot_alpha_detected":
     case "high_conviction_detected":
@@ -75,7 +75,7 @@ function buildNotificationGroupKey(notification: Notification): string {
   }
 }
 
-function buildMergedNotificationMessage(base: Notification, count: number): string {
+function buildMergedNotificationMessage(base: Notification, count: number, uniquePostCount: number): string {
   if (count <= 1) return base.message;
   const actor = base.fromUser?.username || base.fromUser?.name || "Someone";
 
@@ -87,11 +87,10 @@ function buildMergedNotificationMessage(base: Notification, count: number): stri
     case "repost":
       return `${actor} reposted ${count} of your posts`;
     case "new_post":
-      return `${actor} posted ${count} new Alphas`;
+    case "posted_alpha":
+      return uniquePostCount <= 1 ? `${actor} posted a new Alpha` : `${actor} posted ${uniquePostCount} new Alphas`;
     case "follow":
       return `${actor} and ${count - 1} others followed you`;
-    case "posted_alpha":
-      return `${actor} posted ${count} alpha calls you follow`;
     case "early_runner_detected":
       return `${base.message} (+${count - 1} more runner signals)`;
     case "hot_alpha_detected":
@@ -152,11 +151,14 @@ function mergeNotifications(notifications: Notification[]): Notification[] {
 
     const mergedIds = byNewest.map((item) => item.id);
     const hasUnread = byNewest.some((item) => !item.read);
+    const uniquePostCount = new Set(
+      byNewest.map((item) => item.postId ?? item.entityId ?? item.id)
+    ).size;
 
     merged.push({
       ...base,
       read: !hasUnread,
-      message: buildMergedNotificationMessage(base, byNewest.length),
+      message: buildMergedNotificationMessage(base, byNewest.length, uniquePostCount),
       mergedCount: byNewest.length,
       mergedIds,
       mergedItems: byNewest,

@@ -829,7 +829,46 @@ function deriveRoiPeakPct(record: Pick<CallRecord, "entryMcap" | "currentMcap" |
 }
 
 function deriveCurrentRoiPct(record: Pick<CallRecord, "entryMcap" | "currentMcap" | "roiCurrentPct">): number | null {
-  return record.roiCurrentPct ?? deriveRoiPct(record.entryMcap, record.currentMcap);
+  return deriveRoiPct(record.entryMcap, record.currentMcap) ?? record.roiCurrentPct;
+}
+
+function toDateMs(value: Date | string | null | undefined): number {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function resolvePostIntelligenceSignalVersion(
+  record: Pick<CallRecord, "lastMcapUpdate" | "settledAt" | "entryMcap" | "currentMcap" | "roiCurrentPct">
+): number {
+  const liveRoiPct = deriveRoiPct(record.entryMcap, record.currentMcap);
+  const storedRoiPct = record.roiCurrentPct;
+  const roiDrifted =
+    hasFiniteMetric(liveRoiPct) &&
+    hasFiniteMetric(storedRoiPct) &&
+    Math.abs(liveRoiPct - storedRoiPct) >= 8;
+
+  return Math.max(
+    toDateMs(record.lastMcapUpdate),
+    toDateMs(record.settledAt),
+    roiDrifted ? Date.now() : 0
+  );
+}
+
+function shouldUseStoredPostIntelligence(
+  record: Pick<CallRecord, "lastIntelligenceAt" | "lastMcapUpdate" | "settledAt" | "entryMcap" | "currentMcap" | "roiCurrentPct">
+): boolean {
+  const lastIntelligenceAt = record.lastIntelligenceAt?.getTime() ?? 0;
+  if (lastIntelligenceAt <= 0) {
+    return false;
+  }
+
+  return resolvePostIntelligenceSignalVersion(record) <= lastIntelligenceAt;
 }
 
 function toNumber(value: number | bigint | string | null | undefined): number | null {
@@ -2020,7 +2059,8 @@ async function hydrateCalls(
         })
     );
     const roiPeakPct = roundMetric(record.roiPeakPct ?? deriveRoiPeakPct(record));
-    const roiCurrentPct = roundMetric(record.roiCurrentPct ?? deriveCurrentRoiPct(record));
+    const roiCurrentPct = roundMetric(deriveCurrentRoiPct(record));
+    const shouldUseStoredIntelligence = preferStoredIntelligence && shouldUseStoredPostIntelligence(record);
     const entryQualityScore = roundMetricOrZero(
       record.entryQualityScore ??
         computeEntryQualityScore({
@@ -2034,7 +2074,9 @@ async function hydrateCalls(
     const marketAdjustedMomentumPct = Math.max(0, roiCurrentPct ?? 0) * marketContext.accelerationMultiplier;
     const compositeMomentumPct = Math.max(marketAdjustedMomentumPct, Math.max(0, mcapGrowthPct) * marketContext.accelerationMultiplier);
     const confidenceScore = roundMetricOrZero(
-      record.confidenceScore ??
+      shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
+        ? record.confidenceScore
+        :
         computeConfidenceScore({
           traderWinRate30d: record.author.winRate30d,
           traderAvgRoi30d: record.author.avgRoi30d,
@@ -2060,7 +2102,9 @@ async function hydrateCalls(
       ageHours: Math.max(0.2, (Date.now() - record.createdAt.getTime()) / (60 * 60 * 1000)),
     });
     const hotAlphaScore = roundMetricOrZero(
-      record.hotAlphaScore ??
+      shouldUseStoredIntelligence && hasFiniteMetric(record.hotAlphaScore)
+        ? record.hotAlphaScore
+        :
         computeHotAlphaScore({
           confidenceScore,
           weightedEngagementPerHour,
@@ -2073,7 +2117,9 @@ async function hydrateCalls(
         })
     );
     const earlyRunnerScore = roundMetricOrZero(
-      record.earlyRunnerScore ??
+      shouldUseStoredIntelligence && hasFiniteMetric(record.earlyRunnerScore)
+        ? record.earlyRunnerScore
+        :
         computeEarlyRunnerScore({
           distinctTrustedTradersLast6h: distinctTrustedTraders,
           liquidityGrowth1hPct: marketAdjustedLiquidityGrowthPct,
@@ -2085,7 +2131,9 @@ async function hydrateCalls(
         })
     );
     const highConvictionScore = roundMetricOrZero(
-      record.highConvictionScore ??
+      shouldUseStoredIntelligence && hasFiniteMetric(record.highConvictionScore)
+        ? record.highConvictionScore
+        :
         computeHighConvictionScore({
           confidenceScore,
           traderTrustScore: record.author.trustScore,
@@ -2330,6 +2378,38 @@ function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
   });
 }
 
+function isEligibleForRankedFeed(
+  kind: FeedKind,
+  call: Pick<EnrichedCall, "hotAlphaScore" | "earlyRunnerScore" | "highConvictionScore" | "confidenceScore" | "roiCurrentPct">
+): boolean {
+  if (kind === "latest" || kind === "following") {
+    return true;
+  }
+
+  const roiCurrentPct = call.roiCurrentPct;
+  if (kind === "hot-alpha") {
+    return call.hotAlphaScore >= HOT_ALPHA_THRESHOLD && (roiCurrentPct === null || roiCurrentPct > -45);
+  }
+
+  if (kind === "early-runners") {
+    return call.earlyRunnerScore >= EARLY_RUNNER_THRESHOLD && (roiCurrentPct === null || roiCurrentPct > -50);
+  }
+
+  return (
+    call.highConvictionScore >= HIGH_CONVICTION_THRESHOLD &&
+    call.confidenceScore >= 45 &&
+    (roiCurrentPct === null || roiCurrentPct > -35)
+  );
+}
+
+function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
+  if (kind === "latest" || kind === "following") {
+    return calls;
+  }
+
+  return calls.filter((call) => isEligibleForRankedFeed(kind, call));
+}
+
 function shouldPriorityRefreshFeed(args: FeedArgs): boolean {
   return !args.cursor && !args.search?.trim() && PRIORITY_FEED_KINDS.includes(args.kind);
 }
@@ -2519,17 +2599,23 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         take: Math.min(200, Math.max(limit + 1, candidateLimit)),
       });
 
-      const baseHydrated = sortCalls(
+      const baseHydrated = filterCallsForFeedKind(
         args.kind,
-        await hydrateCalls(records, args.viewerId, {
-          refreshTraders: false,
-          refreshTokens: false,
-          ensureTokenLinks: false,
-          persistComputed: false,
-          preferStoredIntelligence: true,
-        })
+        sortCalls(
+          args.kind,
+          await hydrateCalls(records, args.viewerId, {
+            refreshTraders: false,
+            refreshTokens: false,
+            ensureTokenLinks: false,
+            persistComputed: false,
+            preferStoredIntelligence: true,
+          })
+        )
       );
-      const hydrated = await refreshPriorityFeedSlice(args, records, baseHydrated);
+      const hydrated = filterCallsForFeedKind(
+        args.kind,
+        await refreshPriorityFeedSlice(args, records, baseHydrated)
+      );
       const startIndex =
         isDirectChronologicalFeed && cursorBoundary
           ? 0

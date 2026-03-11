@@ -1554,12 +1554,37 @@ export function PostCard({
     post.volume24h != null ||
     post.holderCount != null;
   const shouldShowIntelligenceStrip = hasContractAddress || hasTokenIntelligence;
-  const normalizedConfidenceScore = Math.max(0, Math.min(100, confidenceScore ?? 0));
-  const normalizedBundleRiskLabel = post.bundleRiskLabel || "Unknown";
+  const hasResolvedConfidenceContext =
+    (typeof confidenceScore === "number" && confidenceScore > 0) ||
+    typeof hotAlphaScore === "number" ||
+    typeof earlyRunnerScore === "number" ||
+    typeof highConvictionScore === "number" ||
+    post.bundleRiskLabel != null ||
+    post.timingTier != null ||
+    post.liquidity != null ||
+    post.volume24h != null ||
+    post.holderCount != null ||
+    post.top10HolderPct != null ||
+    post.largestHolderPct != null;
+  const hasResolvedBundleContext =
+    typeof post.estimatedBundledSupplyPct === "number" ||
+    post.bundleRiskLabel != null ||
+    post.tokenRiskScore != null ||
+    post.bundledWalletCount != null ||
+    Boolean(post.bundleClusters?.length);
+  const normalizedConfidenceScore =
+    hasResolvedConfidenceContext && typeof confidenceScore === "number" && Number.isFinite(confidenceScore)
+      ? Math.max(0, Math.min(100, confidenceScore))
+      : null;
+  const normalizedBundleRiskLabel =
+    post.bundleRiskLabel ||
+    (hasResolvedBundleContext ? "Unknown" : "Pending");
   const normalizedBundledSupplyPct =
     typeof post.estimatedBundledSupplyPct === "number"
       ? `${post.estimatedBundledSupplyPct.toFixed(1)}%`
-      : "0.0%";
+      : hasResolvedBundleContext
+        ? "--"
+        : "Pending";
   const threadTotal = post.threadCount ?? commentCount;
   const traderTier =
     post.author.reputationTier ??
@@ -4950,9 +4975,14 @@ export function PostCard({
                     <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alpha confidence</div>
                     <div className="mt-1 flex items-center justify-between gap-3">
                       <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-                        <div className="h-full rounded-full bg-primary" style={{ width: `${normalizedConfidenceScore}%` }} />
+                        <div
+                          className="h-full rounded-full bg-primary transition-[width,opacity] duration-200"
+                          style={{ width: `${normalizedConfidenceScore ?? 0}%`, opacity: normalizedConfidenceScore === null ? 0.35 : 1 }}
+                        />
                       </div>
-                      <span className="font-semibold text-foreground">{normalizedConfidenceScore.toFixed(0)}%</span>
+                      <span className="font-semibold text-foreground">
+                        {normalizedConfidenceScore === null ? "Pending" : `${normalizedConfidenceScore.toFixed(0)}%`}
+                      </span>
                     </div>
                   </div>
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">

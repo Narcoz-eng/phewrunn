@@ -327,6 +327,55 @@ function getFeedMarketStateVersion(post: Pick<Post, "lastMcapUpdate" | "settledA
   );
 }
 
+function getFeedPostIntelligenceRichness(post: Post): number {
+  let score = 0;
+  const fields: Array<unknown> = [
+    post.confidenceScore,
+    post.hotAlphaScore,
+    post.earlyRunnerScore,
+    post.highConvictionScore,
+    post.timingTier,
+    post.firstCallerRank,
+    post.roiPeakPct,
+    post.roiCurrentPct,
+    post.trustedTraderCount,
+    post.entryQualityScore,
+    post.bundlePenaltyScore,
+    post.sentimentScore,
+    post.tokenRiskScore,
+    post.bundleRiskLabel,
+    post.liquidity,
+    post.volume24h,
+    post.holderCount,
+    post.largestHolderPct,
+    post.top10HolderPct,
+    post.bundledWalletCount,
+    post.estimatedBundledSupplyPct,
+    post.reactionCounts,
+    post.currentReactionType,
+    post.threadCount,
+    post.radarReasons,
+    post.author?.trustScore,
+    post.author?.reputationTier,
+    post.author?.winRate30d,
+    post.author?.avgRoi30d,
+    post.author?.firstCallCount,
+    post.author?.isVerified,
+  ];
+
+  for (const field of fields) {
+    if (!isMissingFeedValue(field)) {
+      score += 1;
+    }
+  }
+
+  if (Array.isArray(post.bundleClusters) && post.bundleClusters.length > 0) {
+    score += 1;
+  }
+
+  return score;
+}
+
 function mergePostWithCachedRealtimeState(
   post: Post,
   cachedPost: Post | null | undefined,
@@ -384,6 +433,7 @@ function mergePostWithCachedRealtimeState(
   const fetchedMarketStateVersion = getFeedMarketStateVersion(post);
   const cachedMarketStateVersion = getFeedMarketStateVersion(cachedPost);
   const shouldPreferCachedMarketState = cachedMarketStateVersion > fetchedMarketStateVersion;
+  const sameOrNewerCachedMarketState = cachedMarketStateVersion >= fetchedMarketStateVersion;
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -479,7 +529,27 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
+  if (
+    sameOrNewerCachedMarketState &&
+    typeof cachedPost.confidenceScore === "number" &&
+    cachedPost.confidenceScore > 0 &&
+    (post.confidenceScore == null || post.confidenceScore <= 0)
+  ) {
+    nextConfidenceScore = cachedPost.confidenceScore;
+    didChange = true;
+  }
+
   if (post.hotAlphaScore == null && cachedPost.hotAlphaScore != null) {
+    nextHotAlphaScore = cachedPost.hotAlphaScore;
+    didChange = true;
+  }
+
+  if (
+    sameOrNewerCachedMarketState &&
+    typeof cachedPost.hotAlphaScore === "number" &&
+    cachedPost.hotAlphaScore > 0 &&
+    (post.hotAlphaScore == null || post.hotAlphaScore <= 0)
+  ) {
     nextHotAlphaScore = cachedPost.hotAlphaScore;
     didChange = true;
   }
@@ -489,7 +559,27 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
+  if (
+    sameOrNewerCachedMarketState &&
+    typeof cachedPost.earlyRunnerScore === "number" &&
+    cachedPost.earlyRunnerScore > 0 &&
+    (post.earlyRunnerScore == null || post.earlyRunnerScore <= 0)
+  ) {
+    nextEarlyRunnerScore = cachedPost.earlyRunnerScore;
+    didChange = true;
+  }
+
   if (post.highConvictionScore == null && cachedPost.highConvictionScore != null) {
+    nextHighConvictionScore = cachedPost.highConvictionScore;
+    didChange = true;
+  }
+
+  if (
+    sameOrNewerCachedMarketState &&
+    typeof cachedPost.highConvictionScore === "number" &&
+    cachedPost.highConvictionScore > 0 &&
+    (post.highConvictionScore == null || post.highConvictionScore <= 0)
+  ) {
     nextHighConvictionScore = cachedPost.highConvictionScore;
     didChange = true;
   }
@@ -575,6 +665,17 @@ function mergePostWithCachedRealtimeState(
   }
 
   if (post.estimatedBundledSupplyPct == null && cachedPost.estimatedBundledSupplyPct != null) {
+    nextEstimatedBundledSupplyPct = cachedPost.estimatedBundledSupplyPct;
+    didChange = true;
+  }
+
+  if (
+    sameOrNewerCachedMarketState &&
+    typeof cachedPost.estimatedBundledSupplyPct === "number" &&
+    cachedPost.estimatedBundledSupplyPct > 0 &&
+    (post.estimatedBundledSupplyPct == null ||
+      (post.estimatedBundledSupplyPct <= 0 && isMissingFeedValue(post.bundleRiskLabel)))
+  ) {
     nextEstimatedBundledSupplyPct = cachedPost.estimatedBundledSupplyPct;
     didChange = true;
   }
@@ -1130,16 +1231,46 @@ export default function Feed() {
     }
 
     const cachedRealtimePostsById = new Map<string, Post>();
+    const rememberReusableCachedPost = (candidate: Post) => {
+      const existing = cachedRealtimePostsById.get(candidate.id);
+      if (!existing) {
+        cachedRealtimePostsById.set(candidate.id, candidate);
+        return;
+      }
+
+      const existingMarketStateVersion = getFeedMarketStateVersion(existing);
+      const candidateMarketStateVersion = getFeedMarketStateVersion(candidate);
+      if (candidateMarketStateVersion > existingMarketStateVersion) {
+        cachedRealtimePostsById.set(candidate.id, candidate);
+        return;
+      }
+
+      if (
+        candidateMarketStateVersion === existingMarketStateVersion &&
+        getFeedPostIntelligenceRichness(candidate) > getFeedPostIntelligenceRichness(existing)
+      ) {
+        cachedRealtimePostsById.set(candidate.id, candidate);
+      }
+    };
+
+    const cachedFeedQueries = queryClient.getQueriesData<InfiniteData<FeedPage>>({
+      queryKey: ["posts", feedViewerScope],
+    });
+    for (const [, cachedFeedData] of cachedFeedQueries) {
+      for (const cachedPage of cachedFeedData?.pages ?? []) {
+        for (const cachedItem of cachedPage.items ?? []) {
+          rememberReusableCachedPost(cachedItem);
+        }
+      }
+    }
+
     const canUseSessionRealtimeMerge =
       !pageParam &&
       !hasCurrentFirstPage &&
       shouldMergeSessionCachedRealtimeState(tab, search);
     if (canUseSessionRealtimeMerge && liveCachedFirstPage?.items?.length) {
       for (const item of liveCachedFirstPage.items) {
-        if (currentVisiblePostsById.has(item.id) || cachedRealtimePostsById.has(item.id)) {
-          continue;
-        }
-        cachedRealtimePostsById.set(item.id, item);
+        rememberReusableCachedPost(item);
       }
     }
     const mergedItems = items.map((item) => {

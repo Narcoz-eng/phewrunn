@@ -2059,7 +2059,7 @@ async function createManyNotificationsSafely(params: {
       isPrismaSchemaDriftError(error)
     ) {
       try {
-        await prisma.notification.createMany({ data: params.fallbackData });
+        await prisma.notification.createMany({ data: params.fallbackData, skipDuplicates: true });
         invalidateUsers(params.fallbackData);
         return;
       } catch (fallbackError) {
