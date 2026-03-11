@@ -167,36 +167,31 @@ function scheduleIntelligencePriorityLoopBootstrap(): void {
   }, remainingQuietMs);
 }
 
+function canBypassStrictPrismaReadiness(path: string): boolean {
+  return path === "/api/auth/logout";
+}
+
 function requiresStrictPrismaReadiness(path: string): boolean {
-  return (
-    path.startsWith("/api/feed") ||
-    path.startsWith("/api/tokens") ||
-    path.startsWith("/api/calls") ||
-    path.startsWith("/api/traders") ||
-    path.startsWith("/api/radar") ||
-    path.startsWith("/api/alerts") ||
-    path.startsWith("/api/leaderboards")
-  );
+  return !canBypassStrictPrismaReadiness(path);
 }
 
 app.use("/api/*", async (c, next) => {
   if (!prismaReady) {
     const requiresStrictReadiness = requiresStrictPrismaReadiness(c.req.path);
-    const readinessTimeoutMs = requiresStrictReadiness ? 10_000 : 3_000;
+    const readinessTimeoutMs = requiresStrictReadiness ? 12_000 : 4_000;
     try {
       await Promise.race([
         ensurePrismaReady().then(() => { prismaReady = true; }),
         new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), readinessTimeoutMs)),
       ]);
     } catch {
-      // Non-fatal: allow request through even if guardrails timed out;
-      // individual route handlers have their own fallbacks
       if (requiresStrictReadiness) {
+        c.header("Retry-After", "2");
         return c.json(
           {
             error: {
-              message: "Database is still preparing intelligence features. Retry shortly.",
-              code: "INTELLIGENCE_DB_NOT_READY",
+              message: "Database schema is still preparing. Retry shortly.",
+              code: "DATABASE_NOT_READY",
             },
           },
           503

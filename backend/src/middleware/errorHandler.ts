@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod";
+import { refreshPrismaCompatGuardrails } from "../prisma.js";
 
 /**
  * Error Handler Utilities
@@ -160,13 +161,33 @@ function isPrismaSchemaDriftFailure(error: unknown): boolean {
   );
 }
 
+async function triggerSchemaCompatRefresh(path: string): Promise<void> {
+  try {
+    await Promise.race([
+      refreshPrismaCompatGuardrails({
+        force: true,
+        reason: `schema_drift:${path}`,
+      }),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 2_500);
+      }),
+    ]);
+  } catch (refreshError) {
+    console.warn("[Prisma] Schema drift compat refresh failed", {
+      path,
+      message:
+        refreshError instanceof Error ? refreshError.message : String(refreshError),
+    });
+  }
+}
+
 /**
  * Create the global error handler for Hono
  */
 export function createErrorHandler() {
   const isProduction = process.env.NODE_ENV === "production";
 
-  return (err: Error, c: Context) => {
+  return async (err: Error, c: Context) => {
     // Get request ID if available
     const requestId = c.get("requestId") as string | undefined;
 
@@ -246,6 +267,8 @@ export function createErrorHandler() {
       }
 
       if (isPrismaSchemaDriftFailure(err)) {
+        await triggerSchemaCompatRefresh(c.req.path);
+        c.header("Retry-After", "2");
         return c.json(
           {
             error: {
@@ -319,6 +342,8 @@ export function createErrorHandler() {
       }
 
       if (isPrismaSchemaDriftFailure(err)) {
+        await triggerSchemaCompatRefresh(c.req.path);
+        c.header("Retry-After", "2");
         return c.json(
           {
             error: {

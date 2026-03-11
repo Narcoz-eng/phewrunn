@@ -724,7 +724,67 @@ const compatGuardrailsSetting = process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS?.tri
 const shouldRunCompatGuardrails =
   isPostgres &&
   compatGuardrailsSetting !== "false";
+const PRISMA_COMPAT_REFRESH_COOLDOWN_MS =
+  getPositiveIntEnv("PRISMA_COMPAT_REFRESH_COOLDOWN_MS") ??
+  (isProduction ? 60_000 : 10_000);
 let prismaReadyPromise: Promise<void> | null = null;
+let postgresCompatRefreshPromise: Promise<void> | null = null;
+let lastPostgresCompatRefreshStartedAt = 0;
+let lastPostgresCompatRefreshSucceededAt = 0;
+let lastPostgresCompatRefreshFailedAt = 0;
+let lastPostgresCompatRefreshError: string | null = null;
+
+async function refreshPrismaCompatGuardrails(options?: {
+  force?: boolean;
+  reason?: string;
+}): Promise<void> {
+  if (!isPostgres || !shouldRunCompatGuardrails) {
+    return;
+  }
+
+  if (postgresCompatRefreshPromise) {
+    return postgresCompatRefreshPromise;
+  }
+
+  const now = Date.now();
+  if (
+    !options?.force &&
+    lastPostgresCompatRefreshSucceededAt > 0 &&
+    now - lastPostgresCompatRefreshSucceededAt < PRISMA_COMPAT_REFRESH_COOLDOWN_MS
+  ) {
+    return;
+  }
+  if (
+    !options?.force &&
+    lastPostgresCompatRefreshFailedAt > 0 &&
+    now - lastPostgresCompatRefreshFailedAt < Math.max(5_000, Math.floor(PRISMA_COMPAT_REFRESH_COOLDOWN_MS / 4))
+  ) {
+    return;
+  }
+
+  postgresCompatRefreshPromise = (async () => {
+    lastPostgresCompatRefreshStartedAt = Date.now();
+    try {
+      await initPostgresCompatColumns(prisma);
+      lastPostgresCompatRefreshSucceededAt = Date.now();
+      lastPostgresCompatRefreshError = null;
+      console.log("[Prisma] Postgres compatibility columns check complete", {
+        reason: options?.reason ?? "startup",
+        startedAt: new Date(lastPostgresCompatRefreshStartedAt).toISOString(),
+        durationMs: lastPostgresCompatRefreshSucceededAt - lastPostgresCompatRefreshStartedAt,
+      });
+    } catch (error) {
+      lastPostgresCompatRefreshFailedAt = Date.now();
+      lastPostgresCompatRefreshError =
+        error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      postgresCompatRefreshPromise = null;
+    }
+  })();
+
+  return postgresCompatRefreshPromise;
+}
 
 async function initializePrismaRuntime(): Promise<void> {
   await prisma.$connect();
@@ -751,8 +811,7 @@ async function initializePrismaRuntime(): Promise<void> {
   }
 
   try {
-    await initPostgresCompatColumns(prisma);
-    console.log("[Prisma] Postgres compatibility columns check complete");
+    await refreshPrismaCompatGuardrails({ force: true, reason: "startup" });
   } catch (error) {
     console.warn("[Prisma] Failed to apply compatibility column guardrails:", error);
   }
@@ -864,4 +923,10 @@ function isTransientPrismaError(error: unknown): boolean {
   );
 }
 
-export { prisma, ensurePrismaReady, withPrismaRetry, isTransientPrismaError };
+export {
+  prisma,
+  ensurePrismaReady,
+  withPrismaRetry,
+  isTransientPrismaError,
+  refreshPrismaCompatGuardrails,
+};
