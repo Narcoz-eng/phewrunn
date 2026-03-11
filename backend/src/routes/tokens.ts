@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
@@ -10,6 +10,16 @@ import {
 } from "../services/intelligence/engine.js";
 
 export const tokensRouter = new Hono<{ Variables: AuthVariables }>();
+
+function applyTokenReadCacheHeaders(c: Context, viewerId: string | null): void {
+  c.header("Vary", "Cookie");
+  c.header(
+    "Cache-Control",
+    viewerId
+      ? "private, no-store"
+      : "public, max-age=20, stale-while-revalidate=60"
+  );
+}
 
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
@@ -24,6 +34,7 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
+  applyTokenReadCacheHeaders(c, viewer?.id ?? null);
   return c.json({ data: overview.token });
 });
 
@@ -36,6 +47,7 @@ tokensRouter.get("/:tokenAddress/chart", zValidator("param", TokenAddressParamSc
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
+  applyTokenReadCacheHeaders(c, viewer?.id ?? null);
   return c.json({ data: overview.token.chart });
 });
 
@@ -48,6 +60,7 @@ tokensRouter.get("/:tokenAddress/timeline", zValidator("param", TokenAddressPara
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
+  applyTokenReadCacheHeaders(c, viewer?.id ?? null);
   return c.json({ data: overview.token.timeline });
 });
 
@@ -55,6 +68,7 @@ tokensRouter.get("/:tokenAddress/calls", zValidator("param", TokenAddressParamSc
   const { tokenAddress } = c.req.valid("param");
   const viewer = c.get("user");
   const calls = await listTokenCallsByAddress(tokenAddress, viewer?.id ?? null);
+  applyTokenReadCacheHeaders(c, viewer?.id ?? null);
   return c.json({ data: calls });
 });
 
@@ -67,6 +81,7 @@ tokensRouter.get("/:tokenAddress/risk", zValidator("param", TokenAddressParamSch
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
+  applyTokenReadCacheHeaders(c, viewer?.id ?? null);
   return c.json({ data: overview.token.risk });
 });
 
@@ -79,6 +94,7 @@ tokensRouter.get("/:tokenAddress/sentiment", zValidator("param", TokenAddressPar
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
+  applyTokenReadCacheHeaders(c, viewer?.id ?? null);
   return c.json({ data: overview.token.sentiment });
 });
 

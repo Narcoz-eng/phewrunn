@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma.js";
@@ -11,6 +11,10 @@ import {
 } from "../types.js";
 
 export const leaderboardRouter = new Hono<{ Variables: AuthVariables & { requestId?: string } }>();
+
+function applyLeaderboardCacheHeaders(c: Context): void {
+  c.header("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+}
 
 type CacheEntry<T> = {
   data: T;
@@ -1111,6 +1115,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
   const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(dailyGainersCache);
   if (cached) {
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: cached });
   }
   const staleCached = readStaleCache(dailyGainersCache);
@@ -1121,6 +1126,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
       data: redisCached,
       expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
     };
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: redisCached });
   }
   if (dailyGainersInFlight) {
@@ -1130,12 +1136,14 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     } catch (error) {
       logLeaderboardFallback("daily-gainers/in-flight", error, Boolean(staleCached));
       if (staleCached) {
+        applyLeaderboardCacheHeaders(c);
         return c.json({ data: staleCached });
       }
       dailyGainersCache = {
         data: [],
         expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
       };
+      applyLeaderboardCacheHeaders(c);
       return c.json({ data: [] });
     }
   }
@@ -1153,10 +1161,12 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
 
   try {
     const data = await dailyGainersInFlight;
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data });
   } catch (error) {
     logLeaderboardFallback("daily-gainers", error, Boolean(staleCached));
     if (staleCached) {
+      applyLeaderboardCacheHeaders(c);
       return c.json({ data: staleCached });
     }
     try {
@@ -1166,6 +1176,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
         expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
       };
       void cacheSetJson(redisKey, rawData, DAILY_GAINERS_CACHE_TTL_MS);
+      applyLeaderboardCacheHeaders(c);
       return c.json({ data: rawData });
     } catch (rawError) {
       logLeaderboardFallback("daily-gainers/raw", rawError, false);
@@ -1199,6 +1210,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
   const topUsersCacheKey = `${sortBy}:${page}:${limit}`;
   const cached = topUsersCache.get(topUsersCacheKey);
   if (cached && cached.expiresAtMs > Date.now()) {
+    applyLeaderboardCacheHeaders(c);
     return c.json(cached.data);
   }
   const redisKey = buildLeaderboardRedisKey("top-users", cacheVersion, topUsersCacheKey);
@@ -1208,6 +1220,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       data: redisCached,
       expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
+    applyLeaderboardCacheHeaders(c);
     return c.json(redisCached);
   }
   const staleCached = cached?.data ?? null;
@@ -1219,6 +1232,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     } catch (error) {
       logLeaderboardFallback(`top-users/in-flight:${sortBy}`, error, Boolean(staleCached));
       if (staleCached) {
+        applyLeaderboardCacheHeaders(c);
         return c.json(staleCached);
       }
       const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
@@ -1226,6 +1240,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
         data: fallbackPayload,
         expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
       });
+      applyLeaderboardCacheHeaders(c);
       return c.json(fallbackPayload);
     }
   }
@@ -1242,10 +1257,12 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
     void cacheSetJson(redisKey, responsePayload, TOP_USERS_CACHE_TTL_MS);
+    applyLeaderboardCacheHeaders(c);
     return c.json(responsePayload);
   } catch (error) {
     logLeaderboardFallback(`top-users:${sortBy}`, error, Boolean(staleCached));
     if (staleCached) {
+      applyLeaderboardCacheHeaders(c);
       return c.json(staleCached);
     }
     const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
@@ -1253,6 +1270,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       data: fallbackPayload,
       expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
     });
+    applyLeaderboardCacheHeaders(c);
     return c.json(fallbackPayload);
   } finally {
     topUsersInFlight.delete(topUsersCacheKey);
@@ -1271,6 +1289,7 @@ leaderboardRouter.get("/stats", async (c) => {
   const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(statsCache);
   if (cached) {
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: cached });
   }
   const staleCached = readStaleCache(statsCache);
@@ -1278,11 +1297,13 @@ leaderboardRouter.get("/stats", async (c) => {
   const redisCached = await cacheGetJson<LeaderboardStatsPayload>(redisKey);
   if (redisCached) {
     writeLeaderboardStatsLocalCache(redisCached);
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: redisCached });
   }
   const snapshotCached = await readLeaderboardStatsSnapshot(cacheVersion);
   if (snapshotCached.fresh) {
     hydrateLeaderboardStatsCaches(redisKey, snapshotCached.fresh);
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: snapshotCached.fresh });
   }
 
@@ -1291,6 +1312,7 @@ leaderboardRouter.get("/stats", async (c) => {
     void queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace).catch((error) => {
       logLeaderboardFallback("stats/background-refresh", error, true);
     });
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: snapshotFallback });
   }
 
@@ -1300,16 +1322,19 @@ leaderboardRouter.get("/stats", async (c) => {
 
   try {
     const data = await statsInFlight!;
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data });
   } catch (error) {
     logLeaderboardFallback("stats", error, Boolean(staleCached));
     if (staleCached) {
+      applyLeaderboardCacheHeaders(c);
       return c.json({ data: staleCached });
     }
     statsCache = {
       data: EMPTY_LEADERBOARD_STATS_PAYLOAD,
       expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
     };
+    applyLeaderboardCacheHeaders(c);
     return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
 });

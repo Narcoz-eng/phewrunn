@@ -25,7 +25,7 @@ import { tradersRouter } from "./routes/traders.js";
 import { radarRouter } from "./routes/radar.js";
 import { alertsRouter } from "./routes/alerts.js";
 import { leaderboardsRouter } from "./routes/leaderboards.js";
-import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
+import { cacheGetJson, cacheSetJson, isRedisConfigured, isRedisFastForHotPath, isRedisFastForRateLimiting, redisDelete } from "./lib/redis.js";
 import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
 
 // Security middleware imports
@@ -319,6 +319,10 @@ app.get("/health", (c) => {
       environment: process.env.NODE_ENV || "development",
       database,
       dbConnected: true,
+      redisConfigured: isRedisConfigured(),
+      redisHotPathReady: isRedisFastForHotPath(),
+      redisRateLimitReady: isRedisFastForRateLimiting(),
+      intelligencePriorityLoopEnabled: INTELLIGENCE_PRIORITY_LOOP_ENABLED,
       // Don't expose version in production for security
       ...(isProduction ? {} : { version: "1.0.0" }),
     })
@@ -331,6 +335,10 @@ app.get("/health", (c) => {
         environment: process.env.NODE_ENV || "development",
         database,
         dbConnected: false,
+        redisConfigured: isRedisConfigured(),
+        redisHotPathReady: isRedisFastForHotPath(),
+        redisRateLimitReady: isRedisFastForRateLimiting(),
+        intelligencePriorityLoopEnabled: INTELLIGENCE_PRIORITY_LOOP_ENABLED,
       },
       503
     );
