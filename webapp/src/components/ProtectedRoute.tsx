@@ -375,6 +375,29 @@ function ProtectedRouteWithPrivy({
       return <RouteLoading label="Signing you in..." />;
     }
     if (hasPrivySyncHint) {
+      // Don't hold if bootstrap has failed — redirect to login so user can retry
+      if (
+        bootstrapSnapshot?.state === "failed" ||
+        bootstrapSnapshot?.state === "failed_rate_limited" ||
+        graceExpired ||
+        privySyncFailure
+      ) {
+        return (
+          <LoggedNavigate
+            to="/login"
+            replace
+            reason="privy_sync_hint_with_failed_bootstrap"
+            context={{
+              pathname: location.pathname,
+              ready,
+              authenticated,
+              hasLiveSession,
+              bootstrapState: bootstrapSnapshot?.state ?? null,
+              graceExpired,
+            }}
+          />
+        );
+      }
       return <RouteLoading label="Signing you in..." />;
     }
     if (hadTokenHint.current && !graceExpired) {
@@ -423,10 +446,27 @@ function ProtectedRouteWithPrivy({
         />
       );
     }
-    if (shouldHoldAuthenticatedPrivyState) {
+    if (shouldHoldAuthenticatedPrivyState && !graceExpired) {
       return (
         <RouteLoading
           label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
+        />
+      );
+    }
+    if (graceExpired) {
+      return (
+        <LoggedNavigate
+          to="/login"
+          replace
+          state={{ from: location.pathname + location.search + location.hash }}
+          reason="privy_effective_user_without_live_session_grace_expired"
+          context={{
+            pathname: location.pathname,
+            effectiveUserId: effectiveUser.id,
+            hasLiveSession,
+            graceExpired,
+            bootstrapState: bootstrapSnapshot?.state ?? null,
+          }}
         />
       );
     }

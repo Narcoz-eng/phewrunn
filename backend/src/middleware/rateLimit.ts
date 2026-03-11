@@ -324,7 +324,7 @@ export const authRateLimit = rateLimit({
 
 export const privySyncRateLimit = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 12,
+  max: 20,
   message: "Too many Privy sync attempts, please wait before trying again",
 });
 

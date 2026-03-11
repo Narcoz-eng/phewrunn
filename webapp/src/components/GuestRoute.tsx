@@ -123,11 +123,15 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   if (hasPrivySyncHint) {
     if (
       authUiState === "rate_limited" ||
-      authUiState === "finalizing_identity_verification"
+      authUiState === "finalizing_identity_verification" ||
+      authUiState === "signed_out"
     ) {
       return <>{children}</>;
     }
-    if (privySyncFailure && graceExpired) {
+    if (bootstrapSnapshot?.state === "failed" || bootstrapSnapshot?.state === "failed_rate_limited") {
+      return <>{children}</>;
+    }
+    if (privySyncFailure || graceExpired) {
       return <>{children}</>;
     }
     return <RouteLoading label="Signing you in..." />;
