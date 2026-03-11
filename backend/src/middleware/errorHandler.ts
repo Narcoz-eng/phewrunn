@@ -96,6 +96,70 @@ function formatZodError(error: ZodError): { message: string; details: unknown } 
   };
 }
 
+function getPrismaErrorCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+
+  return "";
+}
+
+function getPrismaErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+
+  return "";
+}
+
+function isTransientPrismaFailure(error: unknown): boolean {
+  const code = getPrismaErrorCode(error);
+  if (
+    code === "P1001" ||
+    code === "P1002" ||
+    code === "P1008" ||
+    code === "P1017" ||
+    code === "P2024"
+  ) {
+    return true;
+  }
+
+  const message = getPrismaErrorMessage(error);
+  return /timed out|connection pool|pool timeout|econnreset|etimedout|connection.*closed|server closed|can't reach database/i.test(
+    message
+  );
+}
+
+function isPrismaSchemaDriftFailure(error: unknown): boolean {
+  const code = getPrismaErrorCode(error);
+  if (code === "P2021" || code === "P2022") {
+    return true;
+  }
+
+  const normalizedMessage = getPrismaErrorMessage(error).toLowerCase();
+  return (
+    normalizedMessage.includes("does not exist in the current database") ||
+    normalizedMessage.includes("no such column") ||
+    normalizedMessage.includes("no such table") ||
+    normalizedMessage.includes("has no column named") ||
+    ((normalizedMessage.includes("column") ||
+      normalizedMessage.includes("relation") ||
+      normalizedMessage.includes("table")) &&
+      normalizedMessage.includes("does not exist"))
+  );
+}
+
 /**
  * Create the global error handler for Hono
  */
@@ -169,6 +233,30 @@ export function createErrorHandler() {
       const prismaError = err as { code?: string; meta?: { target?: string[] } };
       console.error("[PrismaError]", { ...logData, prismaCode: prismaError.code });
 
+      if (isTransientPrismaFailure(err)) {
+        return c.json(
+          {
+            error: {
+              message: "Database is temporarily unavailable. Retry shortly.",
+              code: ERROR_CODES.DATABASE_ERROR,
+            },
+          } satisfies ErrorResponse,
+          503
+        );
+      }
+
+      if (isPrismaSchemaDriftFailure(err)) {
+        return c.json(
+          {
+            error: {
+              message: "Database schema is still preparing. Retry shortly.",
+              code: ERROR_CODES.DATABASE_ERROR,
+            },
+          } satisfies ErrorResponse,
+          503
+        );
+      }
+
       // Handle common Prisma error codes
       if (prismaError.code === "P2002") {
         // Unique constraint violation
@@ -218,6 +306,30 @@ export function createErrorHandler() {
         prismaMessage: prismaUnknown.message,
       });
 
+      if (isTransientPrismaFailure(err)) {
+        return c.json(
+          {
+            error: {
+              message: "Database is temporarily unavailable. Retry shortly.",
+              code: ERROR_CODES.DATABASE_ERROR,
+            },
+          } satisfies ErrorResponse,
+          503
+        );
+      }
+
+      if (isPrismaSchemaDriftFailure(err)) {
+        return c.json(
+          {
+            error: {
+              message: "Database schema is still preparing. Retry shortly.",
+              code: ERROR_CODES.DATABASE_ERROR,
+            },
+          } satisfies ErrorResponse,
+          503
+        );
+      }
+
       return c.json(
         {
           error: {
@@ -226,6 +338,22 @@ export function createErrorHandler() {
           },
         } satisfies ErrorResponse,
         500
+      );
+    }
+
+    if (err.name === "PrismaClientInitializationError") {
+      console.error("[PrismaInitializationError]", logData);
+
+      return c.json(
+        {
+          error: {
+            message: isTransientPrismaFailure(err)
+              ? "Database is temporarily unavailable. Retry shortly."
+              : (isProduction ? "Database initialization failed" : err.message),
+            code: ERROR_CODES.DATABASE_ERROR,
+          },
+        } satisfies ErrorResponse,
+        isTransientPrismaFailure(err) ? 503 : 500
       );
     }
 
