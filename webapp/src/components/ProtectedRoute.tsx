@@ -375,18 +375,33 @@ function ProtectedRouteWithPrivy({
       return <RouteLoading label="Signing you in..." />;
     }
     if (hasPrivySyncHint) {
-      // Don't hold if bootstrap has failed — redirect to login so user can retry
+      // Don't hold if bootstrap has terminally failed — redirect to login so user can retry
       if (
         bootstrapSnapshot?.state === "failed" ||
-        bootstrapSnapshot?.state === "failed_rate_limited" ||
-        graceExpired ||
-        privySyncFailure
+        bootstrapSnapshot?.state === "failed_rate_limited"
       ) {
         return (
           <LoggedNavigate
             to="/login"
             replace
             reason="privy_sync_hint_with_failed_bootstrap"
+            context={{
+              pathname: location.pathname,
+              ready,
+              authenticated,
+              hasLiveSession,
+              bootstrapState: bootstrapSnapshot?.state ?? null,
+              graceExpired,
+            }}
+          />
+        );
+      }
+      if (privySyncFailure && graceExpired) {
+        return (
+          <LoggedNavigate
+            to="/login"
+            replace
+            reason="privy_sync_hint_with_sync_failure"
             context={{
               pathname: location.pathname,
               ready,
@@ -446,27 +461,10 @@ function ProtectedRouteWithPrivy({
         />
       );
     }
-    if (shouldHoldAuthenticatedPrivyState && !graceExpired) {
+    if (shouldHoldAuthenticatedPrivyState) {
       return (
         <RouteLoading
           label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
-        />
-      );
-    }
-    if (graceExpired) {
-      return (
-        <LoggedNavigate
-          to="/login"
-          replace
-          state={{ from: location.pathname + location.search + location.hash }}
-          reason="privy_effective_user_without_live_session_grace_expired"
-          context={{
-            pathname: location.pathname,
-            effectiveUserId: effectiveUser.id,
-            hasLiveSession,
-            graceExpired,
-            bootstrapState: bootstrapSnapshot?.state ?? null,
-          }}
         />
       );
     }
