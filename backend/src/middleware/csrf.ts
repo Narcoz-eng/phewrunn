@@ -26,6 +26,7 @@ const ALLOWED_ORIGIN_PATTERNS = [
   /^https:\/\/phew\.run$/,
   /^https:\/\/www\.phew\.run$/,
   /^https:\/\/[a-z0-9-]+\.phew\.run$/,
+  /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
 ];
 
 /**
