@@ -2539,13 +2539,6 @@ async function fetchSession(): Promise<AuthUser | null> {
           : "foreign_tab_bootstrap_ignored",
   });
 
-  if (
-    cachedUser &&
-    lastPrivySyncAt > 0 &&
-    now - lastPrivySyncAt < AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS
-  ) {
-    return readRecoverableCachedAuthUser(cachedUser);
-  }
   if (sessionRateLimitedUntil > now && cachedUser) {
     return readRecoverableCachedAuthUser(cachedUser);
   }
@@ -2808,14 +2801,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const postFetchBootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
     if (postFetchBootstrapSnapshot && isPrivyAuthBootstrapPending()) {
-      console.info("[AuthFlow] /api/me retries suppressed while auth is pending", {
+      const shouldContinueRecoveryWhilePending =
+        !optimisticCachedUser &&
+        (
+          hasRecentPrivySyncGrace() ||
+          postFetchBootstrapSnapshot.state === "syncing_backend" ||
+          postFetchBootstrapSnapshot.state === "awaiting_identity_verification_finalization" ||
+          postFetchBootstrapSnapshot.owner === "usePrivyLogin"
+        );
+      if (!shouldContinueRecoveryWhilePending) {
+        console.info("[AuthFlow] /api/me retries suppressed while auth is pending", {
+          state: postFetchBootstrapSnapshot.state,
+          owner: postFetchBootstrapSnapshot.owner,
+          mode: postFetchBootstrapSnapshot.mode,
+          tabId: postFetchBootstrapSnapshot.tabId,
+          userId: postFetchBootstrapSnapshot.userId,
+        });
+        return optimisticCachedUser;
+      }
+      console.info("[AuthFlow] /api/me retry loop continuing despite pending auth because active sign-in is still recoverable", {
         state: postFetchBootstrapSnapshot.state,
         owner: postFetchBootstrapSnapshot.owner,
         mode: postFetchBootstrapSnapshot.mode,
         tabId: postFetchBootstrapSnapshot.tabId,
         userId: postFetchBootstrapSnapshot.userId,
       });
-      return optimisticCachedUser;
     }
 
     // Fresh tabs can momentarily race cookie/session propagation right after sign-in.
