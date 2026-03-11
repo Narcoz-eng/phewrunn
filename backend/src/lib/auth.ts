@@ -209,6 +209,8 @@ const sessionFetchInFlight = new Map<string, Promise<SessionRecord | null>>();
 const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MISS_TTL_MS = 300;
 const SESSION_CACHE_MAX_ENTRIES = 10_000;
+const SESSION_DB_PERSISTENCE_ENABLED =
+  process.env.AUTH_SESSION_DB_PERSISTENCE_ENABLED?.trim().toLowerCase() === "true";
 const SESSION_STORE_CIRCUIT_OPEN_MS = 30_000;
 const SESSION_STORE_LOG_COOLDOWN_MS = 15_000;
 const SESSION_DB_FALLBACK_LOG_COOLDOWN_MS = 15_000;
@@ -1032,17 +1034,22 @@ export const auth = {
       const tokens = [...new Set([...cookieTokens, bearerToken].filter(Boolean) as string[])];
 
       if (tokens.length > 0) {
-        try {
-          await prisma.session.deleteMany({
-            where: { token: { in: tokens } },
-          });
-        } catch (error) {
-          if (!isSessionLookupUnavailableError(error)) {
-            console.warn("[auth/signOut] Session table delete failed; falling back to signed-token revocation", {
-              message: getErrorMessage(error),
+        const shouldDeleteSessionRows =
+          SESSION_DB_PERSISTENCE_ENABLED || tokens.some((token) => !looksLikeSignedSessionToken(token));
+
+        if (shouldDeleteSessionRows) {
+          try {
+            await prisma.session.deleteMany({
+              where: { token: { in: tokens } },
             });
-          } else {
-            console.warn("[auth/signOut] Session table delete skipped due unavailable session store");
+          } catch (error) {
+            if (!isSessionLookupUnavailableError(error)) {
+              console.warn("[auth/signOut] Session table delete failed; falling back to signed-token revocation", {
+                message: getErrorMessage(error),
+              });
+            } else {
+              console.warn("[auth/signOut] Session table delete skipped due unavailable session store");
+            }
           }
         }
         await revokeSignedSessionTokens(tokens);

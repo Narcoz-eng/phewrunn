@@ -1812,7 +1812,9 @@ async function createSessionRecord(params: {
   console.warn("[auth/session] Session store unavailable; continuing with signed stateless token fallback");
 }
 
-type SessionRecordWriteOutcome = "written" | "timed_out" | "failed";
+type SessionRecordWriteOutcome = "written" | "timed_out" | "failed" | "skipped";
+const SESSION_DB_PERSISTENCE_ENABLED =
+  process.env.AUTH_SESSION_DB_PERSISTENCE_ENABLED?.trim().toLowerCase() === "true";
 
 const SESSION_RECORD_WRITE_TIMEOUT_MS = (() => {
   const raw = process.env.SESSION_RECORD_WRITE_TIMEOUT_MS;
@@ -1829,6 +1831,10 @@ async function createSessionRecordBestEffort(params: {
   ipAddress: string;
   userAgent: string;
 }): Promise<SessionRecordWriteOutcome> {
+  if (!SESSION_DB_PERSISTENCE_ENABLED) {
+    return "skipped";
+  }
+
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -2627,6 +2633,7 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     return c.json({ error: { message: "Server misconfiguration", code: "SERVER_ERROR" } }, 500);
   }
 
+  const existingSession = c.get("session");
   let verifiedPrivyUserId: string | null = null;
   let cachedPrivyAuthUser: AuthResponseUser | null = null;
   let resolvedAuthUser: AuthResponseUser | null = null;
@@ -2732,7 +2739,8 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     if (isPrismaConnectivityError(error) || isAuthDbTimeoutError(error)) {
       const fallbackUser =
         resolvedAuthUser ??
-        cachedPrivyAuthUser;
+        cachedPrivyAuthUser ??
+        toAuthResponseUserFromSessionUser(existingSession?.user);
 
       if (fallbackUser) {
         console.warn("[privy-sync] Database unavailable; reissuing signed session from fallback auth state", {

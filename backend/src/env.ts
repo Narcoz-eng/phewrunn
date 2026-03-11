@@ -33,6 +33,10 @@ const envSchema = z.object({
   AUTH_SESSION_TOKEN_SECRET: z
     .string()
     .min(32, "AUTH_SESSION_TOKEN_SECRET must be at least 32 characters"),
+  AUTH_SESSION_DB_PERSISTENCE_ENABLED: z
+    .preprocess(normalizeBooleanEnv, z.enum(["true", "false"]))
+    .optional()
+    .default("false"),
 
   // Shared session revocation persistence
   AUTH_SESSION_REVOCATION_DB_ENABLED: z
@@ -89,14 +93,31 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
       warnings.push("DEBUG mode is enabled in production");
     }
 
+    if (parsed.AUTH_SESSION_DB_PERSISTENCE_ENABLED === "true") {
+      warnings.push(
+        "AUTH_SESSION_DB_PERSISTENCE_ENABLED=true will add Session table writes back into the auth path; keep it off unless you explicitly need legacy session compatibility"
+      );
+    }
+
     if (!parsed.CRON_SECRET) {
       warnings.push("CRON_SECRET is not configured; scheduled maintenance endpoint will be disabled");
     }
 
+    const hasUpstashFastPath = Boolean(
+      parsed.UPSTASH_REDIS_REST_URL && parsed.UPSTASH_REDIS_REST_TOKEN
+    );
+    const hasAnyRedis =
+      hasUpstashFastPath ||
+      Boolean(parsed.REDIS_URL);
+    if (!hasUpstashFastPath) {
+      warnings.push(
+        "Upstash Redis REST is not configured; auth/rate-limit hot paths will not have the fast shared cache backend recommended for serverless production"
+      );
+    }
+
     const hasSharedRevocationBackend =
       parsed.AUTH_SESSION_REVOCATION_DB_ENABLED === "true" ||
-      Boolean(parsed.UPSTASH_REDIS_REST_URL && parsed.UPSTASH_REDIS_REST_TOKEN) ||
-      Boolean(parsed.REDIS_URL);
+      hasAnyRedis;
     if (!hasSharedRevocationBackend) {
       warnings.push(
         "Shared session revocation is not configured; enable Redis or AUTH_SESSION_REVOCATION_DB_ENABLED=true"
@@ -135,6 +156,7 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
       .update(parsed.AUTH_SESSION_TOKEN_SECRET)
       .digest("hex")
       .slice(0, 12),
+    AUTH_SESSION_DB_PERSISTENCE_ENABLED: parsed.AUTH_SESSION_DB_PERSISTENCE_ENABLED,
     DEBUG: parsed.DEBUG,
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
