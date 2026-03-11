@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   getAuthUiState,
   getExplicitLogoutAt,
+  isPrivyAuthBootstrapStatePending,
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
+  useAuth,
   usePrivyAuthBootstrapSnapshot,
   usePrivySyncFailureSnapshot,
   useSession,
@@ -50,9 +52,17 @@ function GuestRouteFallback({ children }: { children: React.ReactNode }) {
 
 function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const { data: session, isPending, hasLiveSession } = useSession();
+  const { refetch } = useAuth();
   const { ready, authenticated } = usePrivy();
   const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
   const [graceExpired, setGraceExpired] = useState(false);
+  const sessionRecoveryAttemptRef = useRef<{
+    key: string | null;
+    startedAt: number;
+  }>({
+    key: null,
+    startedAt: 0,
+  });
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
@@ -96,6 +106,64 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
     const timer = window.setTimeout(() => setGraceExpired(true), 12_000);
     return () => window.clearTimeout(timer);
   }, [shouldHoldForRecovery]);
+
+  useEffect(() => {
+    const shouldAttemptSessionRecovery =
+      !recentlyLoggedOut &&
+      !isPending &&
+      !privySyncFailure &&
+      (
+        (Boolean(effectiveUser) && !hasLiveSession) ||
+        (
+          !effectiveUser &&
+          (
+            (ready && authenticated) ||
+            bootstrapSnapshot?.state === "authenticated" ||
+            isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state)
+          )
+        )
+      );
+
+    if (!shouldAttemptSessionRecovery) {
+      return;
+    }
+
+    const recoveryKey = [
+      effectiveUser?.id ?? "anonymous",
+      hasLiveSession ? "live" : "pending",
+      ready ? "ready" : "not_ready",
+      authenticated ? "authenticated" : "not_authenticated",
+      bootstrapSnapshot?.state ?? "none",
+      bootstrapSnapshot?.userId ?? "none",
+    ].join(":");
+    const lastAttempt = sessionRecoveryAttemptRef.current;
+    if (lastAttempt.key === recoveryKey && Date.now() - lastAttempt.startedAt < 4000) {
+      return;
+    }
+
+    sessionRecoveryAttemptRef.current = {
+      key: recoveryKey,
+      startedAt: Date.now(),
+    };
+
+    void refetch().catch((error) => {
+      console.warn("[AuthFlow] GuestRoute session recovery probe failed", {
+        recoveryKey,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [
+    authenticated,
+    bootstrapSnapshot?.state,
+    bootstrapSnapshot?.userId,
+    effectiveUser,
+    hasLiveSession,
+    isPending,
+    privySyncFailure,
+    ready,
+    recentlyLoggedOut,
+    refetch,
+  ]);
 
   if (isPending) {
     return <RouteLoading label="Connecting..." />;

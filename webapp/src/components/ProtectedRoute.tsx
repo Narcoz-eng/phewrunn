@@ -4,8 +4,10 @@ import { usePrivy } from "@privy-io/react-auth";
 import {
   getAuthUiState,
   getExplicitLogoutAt,
+  isPrivyAuthBootstrapStatePending,
   isExplicitLogoutCoolingDown,
   readCachedAuthUserSnapshot,
+  useAuth,
   usePrivyAuthBootstrapSnapshot,
   usePrivySyncFailureSnapshot,
   useSession,
@@ -177,11 +179,19 @@ function ProtectedRouteWithPrivy({
   allowMissingUsername: boolean;
 }) {
   const { data: session, isPending, hasLiveSession } = useSession();
+  const { refetch } = useAuth();
   const { ready, authenticated } = usePrivy();
   const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
   const location = useLocation();
   const hadTokenHint = useRef(useStoredAuthHint());
   const [graceExpired, setGraceExpired] = useState(false);
+  const sessionRecoveryAttemptRef = useRef<{
+    key: string | null;
+    startedAt: number;
+  }>({
+    key: null,
+    startedAt: 0,
+  });
   const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
@@ -324,6 +334,69 @@ function ProtectedRouteWithPrivy({
     );
     return () => window.clearTimeout(timer);
   }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivyHydrationHint, hasPrivySyncHint, isPending, shouldHoldForConfirmedSession, shouldHoldForRecovery]);
+
+  useEffect(() => {
+    const shouldAttemptSessionRecovery =
+      !recentlyLoggedOut &&
+      !isPending &&
+      !privySyncFailure &&
+      (
+        (Boolean(effectiveUser) && !hasLiveSession) ||
+        (
+          !effectiveUser &&
+          (
+            (ready && authenticated) ||
+            bootstrapSnapshot?.state === "authenticated" ||
+            isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state) ||
+            hadTokenHint.current
+          )
+        )
+      );
+
+    if (!shouldAttemptSessionRecovery) {
+      return;
+    }
+
+    const recoveryKey = [
+      location.pathname,
+      effectiveUser?.id ?? "anonymous",
+      hasLiveSession ? "live" : "pending",
+      ready ? "ready" : "not_ready",
+      authenticated ? "authenticated" : "not_authenticated",
+      bootstrapSnapshot?.state ?? "none",
+      bootstrapSnapshot?.userId ?? "none",
+      hadTokenHint.current ? "had_hint" : "no_hint",
+    ].join(":");
+    const lastAttempt = sessionRecoveryAttemptRef.current;
+    if (lastAttempt.key === recoveryKey && Date.now() - lastAttempt.startedAt < 4000) {
+      return;
+    }
+
+    sessionRecoveryAttemptRef.current = {
+      key: recoveryKey,
+      startedAt: Date.now(),
+    };
+
+    void refetch().catch((error) => {
+      console.warn("[AuthFlow] ProtectedRoute session recovery probe failed", {
+        recoveryKey,
+        pathname: location.pathname,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [
+    authenticated,
+    bootstrapSnapshot?.state,
+    bootstrapSnapshot?.userId,
+    effectiveUser,
+    hasLiveSession,
+    isPending,
+    location.pathname,
+    privySyncFailure,
+    ready,
+    recentlyLoggedOut,
+    refetch,
+  ]);
 
   if (effectiveUser) {
     hadTokenHint.current = false;

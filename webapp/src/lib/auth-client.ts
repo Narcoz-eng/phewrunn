@@ -2722,6 +2722,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     userId: null,
     startedAt: 0,
   });
+  const backgroundAnonymousSessionRecoveryRef = useRef<{
+    recoveryKey: string | null;
+    startedAt: number;
+  }>({
+    recoveryKey: null,
+    startedAt: 0,
+  });
 
   const applyAuthProviderState = useCallback(
     (
@@ -3036,6 +3043,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [applyAuthProviderState, state.isLoading, state.user?.id]);
+
+  useEffect(() => {
+    if (state.isLoading || state.user) {
+      backgroundAnonymousSessionRecoveryRef.current = {
+        recoveryKey: null,
+        startedAt: 0,
+      };
+      return;
+    }
+
+    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
+    const shouldRecoverAnonymousSession =
+      hasRecentPrivySyncGrace() ||
+      bootstrapSnapshot?.state === "authenticated" ||
+      isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state);
+
+    if (!shouldRecoverAnonymousSession) {
+      return;
+    }
+
+    const recoveryKey = [
+      bootstrapSnapshot?.state ?? "none",
+      bootstrapSnapshot?.userId ?? "none",
+      String(lastPrivySyncAt),
+    ].join(":");
+    const lastAttempt = backgroundAnonymousSessionRecoveryRef.current;
+    if (
+      lastAttempt.recoveryKey === recoveryKey &&
+      Date.now() - lastAttempt.startedAt < AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+    ) {
+      return;
+    }
+
+    backgroundAnonymousSessionRecoveryRef.current = {
+      recoveryKey,
+      startedAt: Date.now(),
+    };
+
+    let cancelled = false;
+    void resolveSessionWithRetry()
+      .then((resolvedUser) => {
+        if (cancelled) {
+          return;
+        }
+        const recoveredUser = resolvedUser ?? readCachedAuthUserSnapshot();
+        applyAuthProviderState("background_anonymous_session_recovery", {
+          user: recoveredUser,
+          isLoading: false,
+          isAuthenticated: !!recoveredUser,
+        }, {
+          bootstrapState: bootstrapSnapshot?.state ?? null,
+          bootstrapUserId: bootstrapSnapshot?.userId ?? null,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        console.warn("[AuthFlow] anonymous session recovery probe failed", {
+          bootstrapState: bootstrapSnapshot?.state ?? null,
+          bootstrapUserId: bootstrapSnapshot?.userId ?? null,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAuthProviderState, resolveSessionWithRetry, state.isLoading, state.user]);
 
   useEffect(() => {
     if (coldStartLoggedRef.current || typeof window === "undefined") {
