@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
-import { useRef } from "react";
+import { useRef, useLayoutEffect } from "react";
 import { clearSessionCacheByPrefix } from "./session-cache";
 import {
   cancelPrivyIdentityRetryTimers,
@@ -263,6 +263,12 @@ interface SessionState {
   isAuthenticated: boolean;
 }
 
+type AuthProviderStateBridge = (
+  reason: string,
+  nextState: SessionState,
+  metadata?: Record<string, unknown>
+) => void;
+
 let sessionFetchInFlight: Promise<AuthUser | null> | null = null;
 let privySyncInFlight: Promise<{ user: AuthUser }> | null = null;
 let privyAuthBootstrapInFlight: Promise<AuthUser | null> | null = null;
@@ -276,6 +282,15 @@ let unauthorizedSessionFailures = 0;
 let inMemoryCachedAuthUser: { user: AuthUser; cachedAt: number } | null = null;
 let inMemoryPrivySyncFailure: PrivySyncFailureSnapshot | null = null;
 let inMemoryPrivyBootstrapSnapshot: PrivyAuthBootstrapSnapshot | null = null;
+let authProviderStateBridge: AuthProviderStateBridge | null = null;
+
+function applyAuthProviderBridge(
+  reason: string,
+  nextState: SessionState,
+  metadata: Record<string, unknown> = {}
+): void {
+  authProviderStateBridge?.(reason, nextState, metadata);
+}
 
 function getInMemoryCachedAuthUser(): AuthUser | null {
   if (!inMemoryCachedAuthUser) return null;
@@ -1145,6 +1160,14 @@ function markValidatedAuthSession(user: AuthUser): AuthUser {
   lastBootstrappedSessionAt = 0;
   writeCachedAuthUser(user);
   clearPrivySyncFailureSnapshot();
+  applyAuthProviderBridge("validated_session_marked", {
+    user,
+    isLoading: false,
+    isAuthenticated: true,
+  }, {
+    source: "markValidatedAuthSession",
+    userId: user.id,
+  });
   const snapshot = readPrivyAuthBootstrapSnapshot();
   const snapshotUserId =
     typeof snapshot?.userId === "string" && snapshot.userId.startsWith("did:privy:")
@@ -1173,6 +1196,14 @@ function markBootstrappedAuthSession(user: AuthUser): AuthUser {
   lastBootstrappedSessionAt = Date.now();
   writeCachedAuthUser(user);
   clearPrivySyncFailureSnapshot();
+  applyAuthProviderBridge("bootstrapped_session_marked", {
+    user,
+    isLoading: false,
+    isAuthenticated: true,
+  }, {
+    source: "markBootstrappedAuthSession",
+    userId: user.id,
+  });
   return user;
 }
 
@@ -2708,6 +2739,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     []
   );
+
+  useLayoutEffect(() => {
+    authProviderStateBridge = applyAuthProviderState;
+    return () => {
+      if (authProviderStateBridge === applyAuthProviderState) {
+        authProviderStateBridge = null;
+      }
+    };
+  }, [applyAuthProviderState]);
 
   const resolveSessionWithRetry = useCallback(async () => {
     const optimisticCachedUser = readCachedAuthUser();
