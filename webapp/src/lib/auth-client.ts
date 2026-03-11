@@ -201,6 +201,13 @@ export function hasValidatedAuthSession(referenceTime = Date.now()): boolean {
   );
 }
 
+function hasAuthoritativeValidatedAuthSession(referenceTime = Date.now()): boolean {
+  if (isExplicitLogoutCoolingDown(referenceTime)) {
+    return false;
+  }
+  return lastSuccessfulSessionAt > 0;
+}
+
 // Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
 export async function signIn() {
   throw new Error("Email/password auth has been removed. Use Privy sign-in.");
@@ -420,6 +427,12 @@ export function readCachedAuthUserSnapshot(): AuthUser | null {
   }
 
   return readCachedAuthUser();
+}
+
+function readRecoverableCachedAuthUser(
+  fallbackUser: AuthUser | null = null
+): AuthUser | null {
+  return readCachedAuthUserSnapshot() ?? fallbackUser;
 }
 
 function clearPrivySyncFailureSnapshot(): void {
@@ -2498,7 +2511,7 @@ async function fetchSession(): Promise<AuthUser | null> {
   if (
     pendingBootstrap &&
     isPrivyAuthBootstrapPending(now) &&
-    hasValidatedAuthSession(now)
+    hasAuthoritativeValidatedAuthSession(now)
   ) {
     console.info("[AuthFlow] /api/me gated (session already validated) until Privy sync settles", {
       state: pendingBootstrap.state,
@@ -2531,10 +2544,10 @@ async function fetchSession(): Promise<AuthUser | null> {
     lastPrivySyncAt > 0 &&
     now - lastPrivySyncAt < AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS
   ) {
-    return cachedUser;
+    return readRecoverableCachedAuthUser(cachedUser);
   }
   if (sessionRateLimitedUntil > now && cachedUser) {
-    return cachedUser;
+    return readRecoverableCachedAuthUser(cachedUser);
   }
 
   if (sessionFetchInFlight) {
@@ -2580,7 +2593,7 @@ async function fetchSession(): Promise<AuthUser | null> {
       if (response.status === 401) {
         if (lastPrivySyncAt > requestStartedAt) {
           console.warn("[Auth] Ignoring stale 401 from /api/me after newer Privy sync");
-          return cachedUser;
+          return readRecoverableCachedAuthUser(cachedUser);
         }
 
         unauthorizedSessionFailures += 1;
@@ -2601,14 +2614,14 @@ async function fetchSession(): Promise<AuthUser | null> {
           console.warn(
             `[Auth] Temporary 401 from /api/me; keeping cached session (${unauthorizedSessionFailures})`
           );
-          return cachedUser;
+          return readRecoverableCachedAuthUser(cachedUser);
         }
 
         if (shouldTreatAsTransient) {
           console.warn(
             `[Auth] Temporary 401 from /api/me; preserving cached session hint (${unauthorizedSessionFailures})`
           );
-          return cachedUser;
+          return readRecoverableCachedAuthUser(cachedUser);
         }
 
         // Keep cached user alive until the failure threshold is reached.
@@ -2623,7 +2636,7 @@ async function fetchSession(): Promise<AuthUser | null> {
           console.warn(
             `[Auth] 401 from /api/me but under failure threshold; keeping cached user (${unauthorizedSessionFailures}/${AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT})`
           );
-          return cachedUser;
+          return readRecoverableCachedAuthUser(cachedUser);
         }
 
         clearStoredAuthToken();
@@ -2633,7 +2646,7 @@ async function fetchSession(): Promise<AuthUser | null> {
         sessionRateLimitedUntil = Date.now() + 5000;
         return null;
       }
-      return cachedUser;
+      return readRecoverableCachedAuthUser(cachedUser);
     }
 
     sessionRateLimitedUntil = 0;
@@ -2642,7 +2655,7 @@ async function fetchSession(): Promise<AuthUser | null> {
 
     // Handle null or empty responses
     if (!text || text === "null" || text === "undefined") {
-      return cachedUser;
+      return readRecoverableCachedAuthUser(cachedUser);
     }
 
     try {
@@ -2672,14 +2685,14 @@ async function fetchSession(): Promise<AuthUser | null> {
       console.log("[Auth] Failed to parse session response:", parseError);
     }
 
-    return cachedUser;
+    return readRecoverableCachedAuthUser(cachedUser);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       console.warn("[Auth] /api/me timed out, using cached session if available");
-      return cachedUser;
+      return readRecoverableCachedAuthUser(cachedUser);
     }
     console.error("[Auth] Failed to fetch session:", error);
-    return cachedUser;
+    return readRecoverableCachedAuthUser(cachedUser);
   } finally {
     clearTimeout(timeoutId);
     sessionFetchInFlight = null;
@@ -2702,6 +2715,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   const coldStartLoggedRef = useRef(false);
   const coldStartSettledRef = useRef(false);
+  const backgroundSessionConfirmationRef = useRef<{
+    userId: string | null;
+    startedAt: number;
+  }>({
+    userId: null,
+    startedAt: 0,
+  });
 
   const applyAuthProviderState = useCallback(
     (
@@ -2710,15 +2730,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       metadata: Record<string, unknown> = {}
     ) => {
       setState((previousState) => {
-        if (previousState.user?.id && !nextState.user?.id && !nextState.isLoading) {
+        const preservedCachedUser =
+          !nextState.user && !nextState.isLoading && !isExplicitLogoutCoolingDown()
+            ? readCachedAuthUserSnapshot()
+            : null;
+        const resolvedNextState =
+          preservedCachedUser && !nextState.user
+            ? {
+                user: preservedCachedUser,
+                isLoading: false,
+                isAuthenticated: true,
+              }
+            : nextState;
+
+        if (previousState.user?.id && !resolvedNextState.user?.id && !resolvedNextState.isLoading) {
           console.warn("[AuthColdStart] authenticated auth provider state replaced", {
             reason,
             previousUserId: previousState.user.id,
-            nextUserId: nextState.user?.id ?? null,
+            nextUserId: resolvedNextState.user?.id ?? null,
             previousIsLoading: previousState.isLoading,
-            nextIsLoading: nextState.isLoading,
+            nextIsLoading: resolvedNextState.isLoading,
             previousIsAuthenticated: previousState.isAuthenticated,
-            nextIsAuthenticated: nextState.isAuthenticated,
+            nextIsAuthenticated: resolvedNextState.isAuthenticated,
             ...metadata,
           });
         }
@@ -2726,15 +2759,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.info("[AuthColdStart] auth provider state applied", {
           reason,
           previousUserId: previousState.user?.id ?? null,
-          nextUserId: nextState.user?.id ?? null,
+          nextUserId: resolvedNextState.user?.id ?? null,
           previousIsLoading: previousState.isLoading,
-          nextIsLoading: nextState.isLoading,
+          nextIsLoading: resolvedNextState.isLoading,
           previousIsAuthenticated: previousState.isAuthenticated,
-          nextIsAuthenticated: nextState.isAuthenticated,
+          nextIsAuthenticated: resolvedNextState.isAuthenticated,
+          preservedCachedUserId: preservedCachedUser?.id ?? null,
           ...metadata,
         });
 
-        return nextState;
+        return resolvedNextState;
       });
     },
     []
@@ -2929,6 +2963,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(AUTH_SESSION_SYNC_EVENT, handleSessionSynced as EventListener);
     };
   }, [applyAuthProviderState]);
+
+  useEffect(() => {
+    const currentUserId = state.user?.id ?? null;
+
+    if (!currentUserId) {
+      backgroundSessionConfirmationRef.current = {
+        userId: null,
+        startedAt: 0,
+      };
+      return;
+    }
+
+    if (state.isLoading || hasAuthoritativeValidatedAuthSession()) {
+      backgroundSessionConfirmationRef.current = {
+        userId: currentUserId,
+        startedAt: 0,
+      };
+      return;
+    }
+
+    const bootstrapSnapshot = readPrivyAuthBootstrapSnapshot();
+    const shouldConfirmSession =
+      hasRecentPrivySyncGrace() ||
+      lastBootstrappedSessionAt > 0 ||
+      bootstrapSnapshot?.userId === currentUserId ||
+      bootstrapSnapshot?.state === "authenticated" ||
+      isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state);
+
+    if (!shouldConfirmSession) {
+      return;
+    }
+
+    const lastAttempt = backgroundSessionConfirmationRef.current;
+    if (
+      lastAttempt.userId === currentUserId &&
+      Date.now() - lastAttempt.startedAt < AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+    ) {
+      return;
+    }
+
+    backgroundSessionConfirmationRef.current = {
+      userId: currentUserId,
+      startedAt: Date.now(),
+    };
+
+    let cancelled = false;
+    void ensureBackendSessionReady(currentUserId, AUTH_SESSION_CONFIRMATION_TIMEOUT_MS)
+      .then((confirmedUser) => {
+        if (cancelled || !confirmedUser) {
+          return;
+        }
+        applyAuthProviderState("background_session_confirmation", {
+          user: confirmedUser,
+          isLoading: false,
+          isAuthenticated: true,
+        }, {
+          userId: confirmedUser.id,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        console.warn("[AuthFlow] background backend session confirmation failed", {
+          userId: currentUserId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAuthProviderState, state.isLoading, state.user?.id]);
 
   useEffect(() => {
     if (coldStartLoggedRef.current || typeof window === "undefined") {
