@@ -14,6 +14,21 @@ function normalizeBooleanEnv(value: unknown): unknown {
   return "false";
 }
 
+function normalizeOptionalStringEnv(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") return value;
+
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+
+  const lower = normalized.toLowerCase();
+  if (lower === "undefined" || lower === "null" || lower === "none") {
+    return undefined;
+  }
+
+  return normalized;
+}
+
 /**
  * Environment variable schema using Zod
  * This ensures all required environment variables are present and valid
@@ -51,24 +66,33 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
 
   // Optional: Vercel Cron / maintenance endpoint auth
-  CRON_SECRET: z.string().min(16, "CRON_SECRET must be at least 16 characters").optional(),
+  CRON_SECRET: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(16, "CRON_SECRET must be at least 16 characters").optional()),
 
   // Optional: Helius Solana RPC (wallet holdings/trade snapshot enrichment)
-  HELIUS_RPC_URL: z.string().url("HELIUS_RPC_URL must be a valid URL").optional(),
+  HELIUS_RPC_URL: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("HELIUS_RPC_URL must be a valid URL").optional()),
 
   // Optional: Jupiter integrator fee settings
   JUPITER_PLATFORM_FEE_BPS: z
-    .string()
-    .regex(/^\d+$/, "JUPITER_PLATFORM_FEE_BPS must be an integer string")
-    .optional(),
-  JUPITER_PLATFORM_FEE_ACCOUNT: z.string().min(32, "JUPITER_PLATFORM_FEE_ACCOUNT must be a valid Solana token account").optional(),
+    .preprocess(normalizeOptionalStringEnv, z.string()
+      .regex(/^\d+$/, "JUPITER_PLATFORM_FEE_BPS must be an integer string")
+      .optional()),
+  JUPITER_PLATFORM_FEE_ACCOUNT: z
+    .preprocess(
+      normalizeOptionalStringEnv,
+      z.string().min(32, "JUPITER_PLATFORM_FEE_ACCOUNT must be a valid Solana token account").optional()
+    ),
 
   // Optional: Upstash Redis REST (shared rate limiting + cache)
-  UPSTASH_REDIS_REST_URL: z.string().url("UPSTASH_REDIS_REST_URL must be a valid URL").optional(),
-  UPSTASH_REDIS_REST_TOKEN: z.string().min(1, "UPSTASH_REDIS_REST_TOKEN cannot be empty").optional(),
+  UPSTASH_REDIS_REST_URL: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("UPSTASH_REDIS_REST_URL must be a valid URL").optional()),
+  UPSTASH_REDIS_REST_TOKEN: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "UPSTASH_REDIS_REST_TOKEN cannot be empty").optional()),
 
   // Optional: Standard Redis URL (Redis Cloud / Redis Labs, shared rate limiting + cache)
-  REDIS_URL: z.string().url("REDIS_URL must be a valid URL").optional(),
+  REDIS_URL: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("REDIS_URL must be a valid URL").optional()),
 });
 
 /**
