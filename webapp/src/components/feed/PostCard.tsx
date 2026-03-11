@@ -1530,8 +1530,9 @@ export function PostCard({
   const { data: sharedAlphaData } = useQuery({
     queryKey: ["sharedAlpha", post.id],
     queryFn: () => api.get<SharedAlphaResponse>(`/api/posts/${post.id}/shared-alpha`),
-    enabled: isSharedAlphaOpen && Boolean(post.contractAddress),
+    enabled: Boolean(post.contractAddress) && (isInViewport || isSharedAlphaOpen),
     staleTime: 60000,
+    refetchOnWindowFocus: false,
   });
   const sharedAlphaUsers = sharedAlphaData?.users ?? [];
   const sharedAlphaTotalCount = Math.max(post.sharedAlphaCount ?? 0, sharedAlphaData?.count ?? 0);
