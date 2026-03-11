@@ -314,7 +314,12 @@ function PrivyLoginButton() {
   });
   const isLoading = isSyncing;
   const privySyncFailure = usePrivySyncFailureSnapshot();
-  const visibleSyncError = syncError || privySyncFailure ? "Sign-in failed. Please retry." : null;
+  // Only show error when bootstrap is NOT still in progress — suppresses
+  // the flash of "Sign-in failed" that appears between retry attempts.
+  const visibleSyncError =
+    !isSyncing && (syncError || privySyncFailure)
+      ? "Sign-in failed. Please retry."
+      : null;
   const visibleStatus = authStatusMessage;
   const emailLabel = privyReady ? "Continue with Email" : "Initialize Email";
   const xLabel = privyReady ? "Sign in with X" : "Start X";
