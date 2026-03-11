@@ -251,7 +251,8 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
     if (
       sameUserSnapshot &&
       isPrivyAuthBootstrapStatePending(currentState) &&
-      sameUserSnapshot.owner === "usePrivyLogin"
+      sameUserSnapshot.owner === "usePrivyLogin" &&
+      !canResumeUsePrivyLoginHandoff
     ) {
       console.info("[AuthFlow] AuthInitializer leaving usePrivyLogin-owned bootstrap untouched", {
         userId: user.id,
