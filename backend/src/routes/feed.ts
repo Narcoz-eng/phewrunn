@@ -29,6 +29,11 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
 
   const query = c.req.valid("query");
   const viewer = c.get("user");
+  const shouldUsePublicResponseCaching =
+    !viewer &&
+    kind !== "following" &&
+    !query.cursor &&
+    !query.search?.trim();
   const result = await listFeedCalls({
     kind,
     viewerId: viewer?.id ?? null,
@@ -36,6 +41,14 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
     cursor: query.cursor ?? null,
     search: query.search ?? null,
   });
+
+  c.header("Vary", "Cookie");
+  c.header(
+    "Cache-Control",
+    shouldUsePublicResponseCaching
+      ? "public, max-age=15, stale-while-revalidate=45"
+      : "private, no-store"
+  );
 
   return c.json({
     data: {

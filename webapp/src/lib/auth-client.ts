@@ -48,10 +48,9 @@ const AUTH_SESSION_CACHE_KEY = "phew.auth.session.v1";
 const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_401_GRACE_AFTER_PRIVY_SYNC_MS = 30_000;
 const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
-const AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS = 20_000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
-const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 1_400;
+const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 2_400;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
@@ -2676,18 +2675,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const resolveSessionWithRetry = useCallback(async () => {
     const optimisticCachedUser = readCachedAuthUser();
 
-    if (
-      optimisticCachedUser &&
-      lastPrivySyncAt > 0 &&
-      Date.now() - lastPrivySyncAt < AUTH_CACHE_FIRST_AFTER_PRIVY_SYNC_MS
-    ) {
-      return optimisticCachedUser;
-    }
-
     // Always attempt /api/me even when bootstrap is pending — the session
     // cookie may already be valid and a server round-trip is the only way to
-    // confirm it.  Skipping here was causing sign-in loops on page refresh
-    // because the cached user was returned without validation, keeping
+    // confirm it. Returning the cached user immediately after Privy sync keeps
+    // the app in a bootstrapped-but-unvalidated state on fresh devices, which
+    // is why a manual refresh was sometimes needed to finish sign-in.
+    // Skipping here also caused sign-in loops on page refresh because the
+    // cached user was returned without validation, keeping
     // hasValidatedAuthSession() false.
     let user = await fetchSession();
     if (user) {
@@ -3216,6 +3210,21 @@ export async function syncPrivySession(
         return null;
       });
       const resolvedUser = confirmedUser ?? bootstrappedUser;
+      if (!confirmedUser) {
+        void ensureBackendSessionReady(bootstrappedUser.id)
+          .then((eventualConfirmedUser) => {
+            if (!eventualConfirmedUser) {
+              return;
+            }
+            emitAuthSessionSynced(eventualConfirmedUser);
+          })
+          .catch((error) => {
+            console.warn("[AuthFlow] background backend session confirmation failed after Privy sync", {
+              userId: bootstrappedUser.id,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
       emitAuthSessionSynced(resolvedUser);
       return { user: resolvedUser };
     } catch (error) {

@@ -250,6 +250,11 @@ type FeedListResult = {
   totalItems: number;
 };
 
+type FeedCursorBoundary = {
+  id: string;
+  createdAt: Date;
+};
+
 type HydrateCallOptions = {
   refreshTraders?: boolean;
   refreshTokens?: boolean;
@@ -2194,6 +2199,48 @@ function buildSearchWhere(search: string | null | undefined): Prisma.PostWhereIn
   };
 }
 
+async function resolveFeedCursorBoundary(
+  kind: FeedKind,
+  cursor: string | null | undefined
+): Promise<FeedCursorBoundary | null> {
+  const normalizedCursor = cursor?.trim();
+  if (!normalizedCursor || (kind !== "latest" && kind !== "following")) {
+    return null;
+  }
+
+  const record = await prisma.post.findUnique({
+    where: { id: normalizedCursor },
+    select: { id: true, createdAt: true },
+  });
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    createdAt: record.createdAt,
+  };
+}
+
+function buildFeedCursorWhere(cursorBoundary: FeedCursorBoundary | null): Prisma.PostWhereInput | undefined {
+  if (!cursorBoundary) {
+    return undefined;
+  }
+
+  return {
+    OR: [
+      { createdAt: { lt: cursorBoundary.createdAt } },
+      {
+        AND: [
+          { createdAt: cursorBoundary.createdAt },
+          { id: { lt: cursorBoundary.id } },
+        ],
+      },
+    ],
+  };
+}
+
 async function getFollowingSnapshot(viewerId: string | null): Promise<{
   followedTraderIds: string[];
   followedTokenIds: string[];
@@ -2428,22 +2475,43 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         };
       }
 
-      const where: Prisma.PostWhereInput = {
-        ...(buildSearchWhere(args.search) ?? {}),
-      };
-
-      if (args.kind === "following") {
-        where.OR = [
-          ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
-          ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
-        ];
-      } else if (args.kind !== "latest") {
-        where.createdAt = {
-          gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
-        };
+      const cursorBoundary = await resolveFeedCursorBoundary(args.kind, args.cursor);
+      const whereClauses: Prisma.PostWhereInput[] = [];
+      const searchWhere = buildSearchWhere(args.search);
+      if (searchWhere) {
+        whereClauses.push(searchWhere);
       }
 
-      const candidateLimit = args.kind === "latest" || args.kind === "following" ? limit * 3 : limit * 5;
+      if (args.kind === "following") {
+        whereClauses.push({
+          OR: [
+            ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
+            ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
+          ],
+        });
+      } else if (args.kind !== "latest") {
+        whereClauses.push({
+          createdAt: {
+            gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
+          },
+        });
+      }
+
+      const cursorWhere = buildFeedCursorWhere(cursorBoundary);
+      if (cursorWhere) {
+        whereClauses.push(cursorWhere);
+      }
+
+      const where =
+        whereClauses.length === 0
+          ? undefined
+          : whereClauses.length === 1
+            ? whereClauses[0]
+            : { AND: whereClauses };
+      const isDirectChronologicalFeed = args.kind === "latest" || args.kind === "following";
+      const candidateLimit = isDirectChronologicalFeed
+        ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
+        : limit * 5;
       const records = await prisma.post.findMany({
         where,
         select: CALL_SELECT,
@@ -2462,9 +2530,12 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         })
       );
       const hydrated = await refreshPriorityFeedSlice(args, records, baseHydrated);
-      const startIndex = args.cursor
-        ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
-        : 0;
+      const startIndex =
+        isDirectChronologicalFeed && cursorBoundary
+          ? 0
+          : args.cursor
+            ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
+            : 0;
       const items = hydrated.slice(startIndex, startIndex + limit);
       const nextCursor =
         items.length === limit && hydrated[startIndex + limit]

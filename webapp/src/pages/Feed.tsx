@@ -43,8 +43,8 @@ const FEED_PUBLIC_CACHE_SCOPE = "public";
 const FEED_NEW_POSTS_POLL_MS = 15_000;
 const FEED_ACTIVE_TAB_POLL_MS = 90_000;
 const FEED_TAB_PREFETCH_ENABLED = true;
-const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 10_000 : 2_200;
-const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 2_500 : 750;
+const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 2_500 : 1_200;
+const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 550 : 300;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -56,8 +56,8 @@ const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
 const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
 const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
 const FEED_QUERY_GC_TIME_MS = 5 * 60_000;
-const FEED_AI_REQUEST_TIMEOUT_MS = 1_800;
-const FEED_LEGACY_FALLBACK_TIMEOUT_MS = 1_800;
+const FEED_AI_REQUEST_TIMEOUT_MS = 2_800;
+const FEED_LEGACY_FALLBACK_TIMEOUT_MS = 2_200;
 
 type AiFeedResponse = {
   data?: {
@@ -1027,9 +1027,17 @@ export default function Feed() {
       endpoint += `?${params.toString()}`;
     }
 
+    const requestCacheMode: RequestCache =
+      !pageParam &&
+      !search &&
+      tab !== "following" &&
+      feedViewerScope === FEED_PUBLIC_CACHE_SCOPE
+        ? "default"
+        : "no-store";
+
     const readPrimaryFeedPayload = async (): Promise<FeedPage> => {
       const response = await api.raw(endpoint, {
-        cache: "no-store",
+        cache: requestCacheMode,
         timeout: FEED_AI_REQUEST_TIMEOUT_MS,
       });
       if (!response.ok) {
@@ -1061,7 +1069,7 @@ export default function Feed() {
     const readLegacyFeedPayload = async (): Promise<FeedPage> => {
       const legacyEndpoint = buildLegacyFeedEndpoint(tab, search, pageParam);
       const response = await api.raw(legacyEndpoint, {
-        cache: "no-store",
+        cache: requestCacheMode,
         timeout: FEED_LEGACY_FALLBACK_TIMEOUT_MS,
       });
       if (!response.ok) {
@@ -1454,13 +1462,14 @@ export default function Feed() {
 
   useEffect(() => {
     if (!FEED_TAB_PREFETCH_ENABLED) return;
-    if (!hasLiveSession) return;
     if (activeTab !== "latest") return;
     if (searchQuery.trim().length >= 3) return;
     if (!postsPages?.pages?.length) return;
 
     let cancelled = false;
-    const tabsToPrefetch: FeedTab[] = ["hot-alpha", "early-runners", "high-conviction", "following"];
+    const tabsToPrefetch: FeedTab[] = hasLiveSession
+      ? ["hot-alpha", "early-runners", "high-conviction", "following"]
+      : ["hot-alpha", "early-runners", "high-conviction"];
     let staggerTimer: number | null = null;
 
     const prefetchNextTab = (index: number) => {
