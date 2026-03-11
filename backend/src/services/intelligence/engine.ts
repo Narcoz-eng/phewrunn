@@ -41,6 +41,8 @@ const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
+const TOKEN_OVERVIEW_DEX_FALLBACK_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_400 : 3_000;
+const TOKEN_OVERVIEW_DISTRIBUTION_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 3_000 : 3_800;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_SNAPSHOT_TTL_MS = 2 * 60_000;
 const LEADERBOARD_SNAPSHOT_STALE_REVALIDATE_MS = 20 * 60_000;
@@ -2946,10 +2948,16 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           })
         : Promise.resolve(null),
       needsFallbackTokenData
-        ? fetchDexTokenStats(currentToken.address, currentToken.chainType).catch(() => null)
+        ? withSoftTimeout(
+            fetchDexTokenStats(currentToken.address, currentToken.chainType).catch(() => null),
+            TOKEN_OVERVIEW_DEX_FALLBACK_TIMEOUT_MS
+          )
         : Promise.resolve(null),
       needsFallbackTokenData && currentToken.chainType === "solana"
-        ? analyzeSolanaTokenDistribution(currentToken.address, currentToken.liquidity).catch(() => null)
+        ? withSoftTimeout(
+            analyzeSolanaTokenDistribution(currentToken.address, currentToken.liquidity).catch(() => null),
+            TOKEN_OVERVIEW_DISTRIBUTION_TIMEOUT_MS
+          )
         : Promise.resolve(null),
     ]);
 

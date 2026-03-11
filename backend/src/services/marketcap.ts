@@ -24,10 +24,10 @@ export const ONE_HOUR_MS = 60 * 60 * 1000;
 export const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
 // Rate limiting and backoff settings
-const MAX_RETRIES = 1;
+const MAX_RETRIES = 2;
 const BASE_DELAY_MS = 350;
 const MAX_DELAY_MS = 3000;
-const REQUEST_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1400 : 1800;
+const REQUEST_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2600 : 2200;
 
 // Simple in-memory rate limiter
 let lastRequestTime = 0;
