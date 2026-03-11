@@ -424,6 +424,17 @@ export function usePrivyLogin(options: UsePrivyLoginOptions = {}) {
     setLocalSyncError(null);
     successfulLoginHandledRef.current = false;
 
+    // Clear stale failed bootstrap state so the new login attempt isn't blocked
+    if (currentSnapshot?.state === "failed") {
+      setPrivyAuthBootstrapState("idle", {
+        owner: "usePrivyLogin",
+        mode: "manual",
+        userId: currentSnapshot.userId,
+        detail: "cleared stale failure for new login attempt",
+        debugCode: "manual_retry_cleared_failure",
+      });
+    }
+
     if (!ready) {
       if (isXLogin) {
         clearPrivyLoginIntent();
