@@ -51,6 +51,7 @@ const AUTH_TRANSIENT_401_RECOVERY_MS = 2 * 60 * 1000;
 const AUTH_MAX_401_FAILURES_BEFORE_SIGNOUT = 4;
 const AUTH_SESSION_CONFIRMATION_TIMEOUT_MS = 5_500;
 const AUTH_SESSION_FAST_CONFIRMATION_TIMEOUT_MS = 2_400;
+const AUTH_ACTIVE_SIGNIN_RECOVERY_TIMEOUT_MS = 15_000;
 const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as const;
 // Keep this comfortably above the backend /api/me lookup budget so the client
 // does not abort session hydration before the server can serve a fallback.
@@ -2828,12 +2829,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    const hasActivePrivyRecoveryHint =
+      Boolean(postFetchBootstrapSnapshot) &&
+      (
+        postFetchBootstrapSnapshot.state === "authenticated" ||
+        postFetchBootstrapSnapshot.owner === "usePrivyLogin" ||
+        postFetchBootstrapSnapshot.backendSyncStarted === true ||
+        isPrivyAuthBootstrapStatePending(postFetchBootstrapSnapshot.state)
+      );
+    if (hasActivePrivyRecoveryHint) {
+      console.info("[AuthFlow] starting extended backend session recovery after active Privy handoff", {
+        state: postFetchBootstrapSnapshot?.state ?? null,
+        owner: postFetchBootstrapSnapshot?.owner ?? null,
+        mode: postFetchBootstrapSnapshot?.mode ?? null,
+        userId: postFetchBootstrapSnapshot?.userId ?? null,
+        backendSyncStarted: postFetchBootstrapSnapshot?.backendSyncStarted ?? false,
+      });
+      const recoveredUser = await ensureBackendSessionReady(
+        postFetchBootstrapSnapshot?.userId ?? undefined,
+        AUTH_ACTIVE_SIGNIN_RECOVERY_TIMEOUT_MS
+      );
+      if (recoveredUser) {
+        return recoveredUser;
+      }
+    }
+
     // Fresh tabs can momentarily race cookie/session propagation right after sign-in.
     // Retry when we have session hints, or immediately after a Privy sync.
     const hasCookieSessionHint = hasSessionCookieHint();
     const recentlySynced = hasRecentPrivySyncGrace();
     const hasCachedSessionHint = Boolean(optimisticCachedUser);
-    if (!hasCachedSessionHint && !hasCookieSessionHint && !recentlySynced) {
+    if (!hasCachedSessionHint && !hasCookieSessionHint && !recentlySynced && !hasActivePrivyRecoveryHint) {
       return null;
     }
 
