@@ -319,13 +319,10 @@ function parseFeedTimestamp(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getFeedMarketStateVersion(
-  post: Pick<Post, "lastMcapUpdate" | "settledAt" | "createdAt" | "lastIntelligenceAt">
-): number {
+function getFeedMarketStateVersion(post: Pick<Post, "lastMcapUpdate" | "settledAt" | "createdAt">): number {
   return Math.max(
     parseFeedTimestamp(post.lastMcapUpdate),
     parseFeedTimestamp(post.settledAt),
-    parseFeedTimestamp(post.lastIntelligenceAt),
     parseFeedTimestamp(post.createdAt)
   );
 }
@@ -431,15 +428,12 @@ function mergePostWithCachedRealtimeState(
   let nextRadarReasons = post.radarReasons;
   let nextAuthor = post.author;
   let nextLastMcapUpdate = post.lastMcapUpdate ?? null;
-  let nextLastIntelligenceAt = post.lastIntelligenceAt ?? null;
   let nextTrackingMode = post.trackingMode ?? null;
 
   const fetchedMarketStateVersion = getFeedMarketStateVersion(post);
   const cachedMarketStateVersion = getFeedMarketStateVersion(cachedPost);
   const shouldPreferCachedMarketState = cachedMarketStateVersion > fetchedMarketStateVersion;
   const sameOrNewerCachedMarketState = cachedMarketStateVersion >= fetchedMarketStateVersion;
-  const fetchedIntelligenceVersion = parseFeedTimestamp(post.lastIntelligenceAt);
-  const cachedIntelligenceVersion = parseFeedTimestamp(cachedPost.lastIntelligenceAt);
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -483,10 +477,6 @@ function mergePostWithCachedRealtimeState(
       nextLastMcapUpdate = cachedPost.lastMcapUpdate ?? null;
       didChange = true;
     }
-    if ((cachedPost.lastIntelligenceAt ?? null) !== (post.lastIntelligenceAt ?? null)) {
-      nextLastIntelligenceAt = cachedPost.lastIntelligenceAt ?? null;
-      didChange = true;
-    }
     if ((cachedPost.trackingMode ?? null) !== (post.trackingMode ?? null)) {
       nextTrackingMode = cachedPost.trackingMode ?? null;
       didChange = true;
@@ -496,11 +486,6 @@ function mergePostWithCachedRealtimeState(
   if (cachedPost.settled && !post.settled) {
     nextSettled = true;
     nextSettledAt = cachedPost.settledAt ?? post.settledAt;
-    didChange = true;
-  }
-
-  if (cachedIntelligenceVersion > fetchedIntelligenceVersion) {
-    nextLastIntelligenceAt = cachedPost.lastIntelligenceAt ?? null;
     didChange = true;
   }
 
@@ -813,7 +798,6 @@ function mergePostWithCachedRealtimeState(
     mcap6h: nextMcap6h,
     isWin: nextIsWin,
     lastMcapUpdate: nextLastMcapUpdate,
-    lastIntelligenceAt: nextLastIntelligenceAt,
     trackingMode: nextTrackingMode,
     tokenName: nextTokenName,
     tokenSymbol: nextTokenSymbol,

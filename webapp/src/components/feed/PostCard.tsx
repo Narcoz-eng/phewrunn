@@ -634,18 +634,6 @@ type IntelligenceLeaderboardsCacheLike = {
   bestEntryToday?: Post[];
 };
 
-type SessionFeedPageEnvelope = {
-  cachedAt?: number;
-  page?: {
-    items?: Post[];
-    hasMore?: boolean;
-    nextCursor?: string | null;
-    totalPosts?: number | null;
-  };
-};
-
-const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v2";
-
 function syncFollowStateAcrossPostCaches(
   queryClient: QueryClient,
   author: Pick<PostAuthor, "id" | "username">,
@@ -702,56 +690,6 @@ function syncFollowStateAcrossPostCaches(
       return matchesProfile ? { ...current, isFollowing: nextFollowing } : current;
     }
   );
-
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    for (let index = 0; index < window.sessionStorage.length; index += 1) {
-      const key = window.sessionStorage.key(index);
-      if (!key || !key.startsWith(`${FEED_FIRST_PAGE_CACHE_PREFIX}:`)) {
-        continue;
-      }
-
-      const raw = window.sessionStorage.getItem(key);
-      if (!raw) {
-        continue;
-      }
-
-      const parsed = JSON.parse(raw) as SessionFeedPageEnvelope;
-      const items = parsed.page?.items;
-      if (!Array.isArray(items) || items.length === 0) {
-        continue;
-      }
-
-      let didChange = false;
-      const nextItems = items.map((item) => {
-        const nextItem = syncPost(item);
-        if (nextItem !== item) {
-          didChange = true;
-        }
-        return nextItem;
-      });
-
-      if (!didChange || !parsed.page) {
-        continue;
-      }
-
-      window.sessionStorage.setItem(
-        key,
-        JSON.stringify({
-          ...parsed,
-          page: {
-            ...parsed.page,
-            items: nextItems,
-          },
-        } satisfies SessionFeedPageEnvelope)
-      );
-    }
-  } catch {
-    // Ignore session storage failures.
-  }
 }
 
 function parseMarketStateTimestamp(value: string | null | undefined): number {

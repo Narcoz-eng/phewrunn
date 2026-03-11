@@ -53,78 +53,6 @@ function getSnapshotVersion(snapshot: BatchedPostPriceSnapshot | null | undefine
   );
 }
 
-function getSnapshotIntelligenceRichness(snapshot: BatchedPostPriceSnapshot | null | undefined): number {
-  if (!snapshot) return 0;
-
-  let score = 0;
-  const fields: Array<unknown> = [
-    snapshot.confidenceScore,
-    snapshot.hotAlphaScore,
-    snapshot.earlyRunnerScore,
-    snapshot.highConvictionScore,
-    snapshot.timingTier,
-    snapshot.bundleRiskLabel,
-    snapshot.tokenRiskScore,
-    snapshot.liquidity,
-    snapshot.volume24h,
-    snapshot.holderCount,
-    snapshot.largestHolderPct,
-    snapshot.top10HolderPct,
-    snapshot.bundledWalletCount,
-    snapshot.estimatedBundledSupplyPct,
-  ];
-
-  for (const field of fields) {
-    if (field !== null && field !== undefined) {
-      score += 1;
-    }
-  }
-
-  return score;
-}
-
-function mergeSnapshotWithExistingIntelligence(
-  existing: BatchedPostPriceSnapshot,
-  incoming: BatchedPostPriceSnapshot
-): BatchedPostPriceSnapshot {
-  return {
-    ...incoming,
-    confidenceScore: existing.confidenceScore,
-    hotAlphaScore: existing.hotAlphaScore,
-    earlyRunnerScore: existing.earlyRunnerScore,
-    highConvictionScore: existing.highConvictionScore,
-    roiCurrentPct: existing.roiCurrentPct,
-    timingTier: existing.timingTier,
-    bundleRiskLabel: existing.bundleRiskLabel,
-    tokenRiskScore: existing.tokenRiskScore,
-    liquidity: existing.liquidity,
-    volume24h: existing.volume24h,
-    holderCount: existing.holderCount,
-    largestHolderPct: existing.largestHolderPct,
-    top10HolderPct: existing.top10HolderPct,
-    bundledWalletCount: existing.bundledWalletCount,
-    estimatedBundledSupplyPct: existing.estimatedBundledSupplyPct,
-    lastIntelligenceAt: existing.lastIntelligenceAt,
-  };
-}
-
-function shouldPreserveExistingIntelligence(
-  existing: BatchedPostPriceSnapshot,
-  incoming: BatchedPostPriceSnapshot
-): boolean {
-  const existingConfidence = typeof existing.confidenceScore === "number" ? existing.confidenceScore : null;
-  const incomingConfidence = typeof incoming.confidenceScore === "number" ? incoming.confidenceScore : null;
-  const existingRichness = getSnapshotIntelligenceRichness(existing);
-  const incomingRichness = getSnapshotIntelligenceRichness(incoming);
-
-  return (
-    existingConfidence !== null &&
-    existingConfidence > 0 &&
-    (incomingConfidence === null || incomingConfidence <= 0) &&
-    incomingRichness < existingRichness
-  );
-}
-
 function mergeSnapshotWithFresherState(
   existing: BatchedPostPriceSnapshot | null | undefined,
   incoming: BatchedPostPriceSnapshot | null
@@ -167,10 +95,6 @@ function mergeSnapshotWithFresherState(
       estimatedBundledSupplyPct: existing.estimatedBundledSupplyPct,
       lastIntelligenceAt: existing.lastIntelligenceAt,
     };
-  }
-
-  if (shouldPreserveExistingIntelligence(existing, incoming)) {
-    return mergeSnapshotWithExistingIntelligence(existing, incoming);
   }
 
   return incoming;
