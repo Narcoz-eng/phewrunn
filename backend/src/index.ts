@@ -114,6 +114,8 @@ app.use(
 // 3.5. Prisma readiness gate - ensure DB is connected before serving API requests
 // Uses a short timeout so requests don't hang if guardrails are slow
 let prismaReady = false;
+const INTELLIGENCE_PRIORITY_LOOP_ENABLED =
+  process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED?.trim().toLowerCase() === "true";
 const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 let lastAuthSensitiveRequestAt = Date.now();
 let intelligencePriorityLoopBootstrapped = false;
@@ -137,6 +139,10 @@ function isIntelligenceSurfacePath(path: string): boolean {
 }
 
 function scheduleIntelligencePriorityLoopBootstrap(): void {
+  if (!INTELLIGENCE_PRIORITY_LOOP_ENABLED) {
+    return;
+  }
+
   if (intelligencePriorityLoopBootstrapped) {
     return;
   }
@@ -203,9 +209,9 @@ app.use("/api/*", async (c, next) => {
 
 app.use("/api/*", async (c, next) => {
   const path = c.req.path;
-  if (isAuthSensitivePath(path)) {
+  if (INTELLIGENCE_PRIORITY_LOOP_ENABLED && isAuthSensitivePath(path)) {
     lastAuthSensitiveRequestAt = Date.now();
-  } else if (isIntelligenceSurfacePath(path)) {
+  } else if (INTELLIGENCE_PRIORITY_LOOP_ENABLED && isIntelligenceSurfacePath(path)) {
     scheduleIntelligencePriorityLoopBootstrap();
   }
   return next();
