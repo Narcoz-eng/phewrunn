@@ -2404,6 +2404,43 @@ function emitAuthSessionSynced(user: AuthUser): void {
   );
 }
 
+function finalizeRecoveredPrivySyncUser(user: AuthUser): { user: AuthUser } {
+  explicitLogoutAt = 0;
+  lastPrivySyncAt = Date.now();
+  sessionRateLimitedUntil = 0;
+  sessionFetchInFlight = null;
+  unauthorizedSessionFailures = 0;
+  emitAuthSessionSynced(user);
+  return { user };
+}
+
+async function tryRecoverBackendSessionAfterPrivySyncFailure(
+  expectedUserId: string,
+  reason: string
+): Promise<AuthUser | null> {
+  try {
+    const recoveredUser = await ensureBackendSessionReady(
+      expectedUserId,
+      AUTH_SESSION_CONFIRMATION_TIMEOUT_MS
+    );
+    if (recoveredUser) {
+      console.info("[AuthFlow] recovered backend session after privy-sync failure", {
+        expectedUserId,
+        recoveredUserId: recoveredUser.id,
+        reason,
+      });
+      return recoveredUser;
+    }
+  } catch (error) {
+    console.warn("[AuthFlow] backend session recovery after privy-sync failure did not complete", {
+      expectedUserId,
+      reason,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return null;
+}
+
 // Auth context
 interface AuthContextType extends SessionState {
   refetch: () => Promise<void>;
@@ -3183,6 +3220,15 @@ export async function syncPrivySession(
             : response.status
               ? `Failed to sign in (${response.status})`
               : "Failed to sign in");
+        if (response.status === 503) {
+          const recoveredUser = await tryRecoverBackendSessionAfterPrivySyncFailure(
+            normalizedUserId,
+            message
+          );
+          if (recoveredUser) {
+            return finalizeRecoveredPrivySyncUser(recoveredUser);
+          }
+        }
         console.error("[Auth] privy-sync failed:", message);
         throw new Error(message);
       }
@@ -3229,10 +3275,26 @@ export async function syncPrivySession(
       return { user: resolvedUser };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
+        const recoveredUser = await tryRecoverBackendSessionAfterPrivySyncFailure(
+          normalizedUserId,
+          "privy_sync_timeout"
+        );
+        if (recoveredUser) {
+          return finalizeRecoveredPrivySyncUser(recoveredUser);
+        }
         throw new Error("Sign-in timed out while connecting to the server");
       }
       console.error("[Auth] syncPrivySession error:", error);
       if (error instanceof Error) {
+        if (/temporarily reconnecting|temporarily unavailable|failed to sign in \(503\)/i.test(error.message)) {
+          const recoveredUser = await tryRecoverBackendSessionAfterPrivySyncFailure(
+            normalizedUserId,
+            error.message
+          );
+          if (recoveredUser) {
+            return finalizeRecoveredPrivySyncUser(recoveredUser);
+          }
+        }
         throw error;
       }
       throw new Error("Failed to sync Privy session");

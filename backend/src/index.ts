@@ -360,7 +360,9 @@ const PRIVY_CLIENT =
 const PRIVY_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const PRIVY_IDENTITY_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const privyIdentityCache = new Map<string, { userId: string; email: string | null; cachedAt: number }>();
-const PRIVY_AUTH_USER_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30 * 60 * 1000 : 5 * 60 * 1000;
+// Returning-user sign-in should survive transient DB pressure on fresh devices.
+// Keep the Privy-user -> auth-user cache long-lived enough to bridge that path.
+const PRIVY_AUTH_USER_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 7 * 24 * 60 * 60 * 1000 : 5 * 60 * 1000;
 const PRIVY_AUTH_USER_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const PRIVY_AUTH_USER_REDIS_KEY_PREFIX = "privy-auth-user:v1";
 const privyAuthUserCache = new Map<string, { user: AuthResponseUser; expiresAtMs: number }>();
@@ -2649,6 +2651,19 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     cachedPrivyAuthUser = await readCachedPrivyAuthUser(verifiedPrivyUserId);
 
     const now = new Date();
+    if (cachedPrivyAuthUser) {
+      const response = await issueAuthSessionResponse(c, cachedPrivyAuthUser, now);
+      console.info("[AuthFlow] /api/auth/privy-sync 200", {
+        requestId: c.get("requestId") ?? null,
+        userId: cachedPrivyAuthUser.id,
+        privyUserId: verifiedPrivyUserId,
+        verificationMethod: verifiedIdentity.verificationMethod,
+        verificationSource: verifiedIdentity.verificationSource,
+        source: "privy_auth_user_cache",
+      });
+      return response;
+    }
+
     const existingLink = await findAuthUserLinkByPrivyUserId(verifiedPrivyUserId);
 
     let user: AuthResponseUser | null = null;
