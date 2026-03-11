@@ -5,9 +5,9 @@ import { PrismaClient, Prisma } from "@prisma/client";
  *
  * Production Recommendations:
  * - Use a connection pool (PgBouncer for PostgreSQL)
- * - Set appropriate pool size based on your workload:
- *   - connection_limit = (num_physical_cores * 2) + effective_spindle_count
- *   - For most cloud instances: 10-20 connections per instance
+ * - For serverless runtimes, keep Prisma's application-side pool tiny.
+ *   Start with connection_limit=1 and only increase after measuring pool pressure.
+ * - Use Supavisor/PgBouncer transaction mode for short-lived/serverless traffic.
  * - Enable SSL for production databases
  * - Use read replicas for read-heavy workloads
  */
@@ -50,21 +50,17 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const defaultConnectionLimit =
+    const desiredConnectionLimit =
       configuredConnectionLimit ??
       (isServerlessRuntime
-        ? (isProduction ? 10 : 3)
-        : (isProduction ? 25 : 10));
-    const minimumSafeConnectionLimit =
-      isServerlessRuntime
-        ? (isProduction ? 8 : 3)
-        : (isProduction ? 8 : 4);
-    const desiredConnectionLimit = Math.max(defaultConnectionLimit, minimumSafeConnectionLimit);
+        ? 1
+        : (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
-    const defaultPoolTimeout =
+    const desiredPoolTimeout =
       configuredPoolTimeout ??
-      (isProduction ? 6 : 8);
-    const desiredPoolTimeout = Math.min(defaultPoolTimeout, isProduction ? 6 : 6);
+      (isServerlessRuntime
+        ? (isProduction ? 10 : 8)
+        : (isProduction ? 8 : 10));
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
@@ -91,12 +87,6 @@ function normalizeDatabaseUrl(
       ) {
         parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
         notes.push(`set connection_limit=${desiredConnectionLimit}`);
-        if (
-          configuredConnectionLimit !== null &&
-          configuredConnectionLimit < minimumSafeConnectionLimit
-        ) {
-          notes.push(`raised configured connection_limit floor from ${configuredConnectionLimit} to ${desiredConnectionLimit}`);
-        }
       }
 
       const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
@@ -106,9 +96,6 @@ function normalizeDatabaseUrl(
       ) {
         parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
         notes.push(`set pool_timeout=${desiredPoolTimeout}`);
-        if (configuredPoolTimeout !== null && configuredPoolTimeout > desiredPoolTimeout) {
-          notes.push(`capped configured pool_timeout from ${configuredPoolTimeout} to ${desiredPoolTimeout}`);
-        }
       }
     }
 
@@ -192,6 +179,11 @@ if (datasourceRuntime) {
     ...datasourceRuntime,
     usedDirectUrlFallback: normalizedDb.notes.includes("using DIRECT_URL in non-serverless runtime"),
   });
+  if (isServerlessRuntime && datasourceRuntime.provider === "postgresql" && datasourceRuntime.mode === "direct") {
+    console.warn(
+      "[Prisma] Serverless runtime is using a direct Postgres connection. Use Supabase transaction-mode pooler for DATABASE_URL and reserve DIRECT_URL for migrations."
+    );
+  }
 }
 
 const prisma = new PrismaClient({
