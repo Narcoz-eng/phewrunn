@@ -698,18 +698,24 @@ function parseMarketStateTimestamp(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getPostMarketStateVersion(post: Pick<Post, "lastMcapUpdate" | "settledAt" | "createdAt">): number {
+function getPostDynamicStateVersion(
+  post: Pick<Post, "lastMcapUpdate" | "settledAt" | "createdAt" | "lastIntelligenceAt">
+): number {
   return Math.max(
     parseMarketStateTimestamp(post.lastMcapUpdate),
     parseMarketStateTimestamp(post.settledAt),
+    parseMarketStateTimestamp(post.lastIntelligenceAt),
     parseMarketStateTimestamp(post.createdAt)
   );
 }
 
-function getSnapshotMarketStateVersion(snapshot: Pick<BatchedPostPriceSnapshot, "lastMcapUpdate" | "settledAt">): number {
+function getSnapshotDynamicStateVersion(
+  snapshot: Pick<BatchedPostPriceSnapshot, "lastMcapUpdate" | "settledAt" | "lastIntelligenceAt">
+): number {
   return Math.max(
     parseMarketStateTimestamp(snapshot.lastMcapUpdate),
-    parseMarketStateTimestamp(snapshot.settledAt)
+    parseMarketStateTimestamp(snapshot.settledAt),
+    parseMarketStateTimestamp(snapshot.lastIntelligenceAt)
   );
 }
 
@@ -745,25 +751,73 @@ function resolveSnapshotCurrentMcap(
 }
 
 function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnapshot): Post {
-  const postVersion = getPostMarketStateVersion(post);
-  const snapshotVersion = getSnapshotMarketStateVersion(snapshot);
-  const shouldPreserveExistingMarketState =
+  const postVersion = getPostDynamicStateVersion(post);
+  const snapshotVersion = getSnapshotDynamicStateVersion(snapshot);
+  const shouldPreserveExistingDynamicState =
     snapshotVersion > 0 && snapshotVersion < postVersion;
-  const nextCurrentMcap = shouldPreserveExistingMarketState
+  const nextCurrentMcap = shouldPreserveExistingDynamicState
     ? post.currentMcap
     : resolveSnapshotCurrentMcap(post.currentMcap, post.entryMcap, snapshot);
-  const nextSettled = shouldPreserveExistingMarketState ? post.settled : snapshot.settled || post.settled;
-  const nextSettledAt = shouldPreserveExistingMarketState
+  const nextSettled = shouldPreserveExistingDynamicState ? post.settled : snapshot.settled || post.settled;
+  const nextSettledAt = shouldPreserveExistingDynamicState
     ? post.settledAt
     : snapshot.settledAt ?? post.settledAt;
-  const nextMcap1h = shouldPreserveExistingMarketState ? post.mcap1h : snapshot.mcap1h ?? post.mcap1h;
-  const nextMcap6h = shouldPreserveExistingMarketState ? post.mcap6h : snapshot.mcap6h ?? post.mcap6h;
-  const nextLastMcapUpdate = shouldPreserveExistingMarketState
+  const nextMcap1h = shouldPreserveExistingDynamicState ? post.mcap1h : snapshot.mcap1h ?? post.mcap1h;
+  const nextMcap6h = shouldPreserveExistingDynamicState ? post.mcap6h : snapshot.mcap6h ?? post.mcap6h;
+  const nextLastMcapUpdate = shouldPreserveExistingDynamicState
     ? post.lastMcapUpdate ?? null
     : snapshot.lastMcapUpdate ?? post.lastMcapUpdate ?? null;
-  const nextTrackingMode = shouldPreserveExistingMarketState
+  const nextLastIntelligenceAt = shouldPreserveExistingDynamicState
+    ? post.lastIntelligenceAt ?? null
+    : snapshot.lastIntelligenceAt ?? post.lastIntelligenceAt ?? null;
+  const nextTrackingMode = shouldPreserveExistingDynamicState
     ? post.trackingMode ?? null
     : snapshot.trackingMode ?? post.trackingMode ?? null;
+  const nextConfidenceScore = shouldPreserveExistingDynamicState
+    ? post.confidenceScore ?? null
+    : snapshot.confidenceScore ?? post.confidenceScore ?? null;
+  const nextHotAlphaScore = shouldPreserveExistingDynamicState
+    ? post.hotAlphaScore ?? null
+    : snapshot.hotAlphaScore ?? post.hotAlphaScore ?? null;
+  const nextEarlyRunnerScore = shouldPreserveExistingDynamicState
+    ? post.earlyRunnerScore ?? null
+    : snapshot.earlyRunnerScore ?? post.earlyRunnerScore ?? null;
+  const nextHighConvictionScore = shouldPreserveExistingDynamicState
+    ? post.highConvictionScore ?? null
+    : snapshot.highConvictionScore ?? post.highConvictionScore ?? null;
+  const nextRoiCurrentPct = shouldPreserveExistingDynamicState
+    ? post.roiCurrentPct ?? null
+    : snapshot.roiCurrentPct ?? post.roiCurrentPct ?? null;
+  const nextTimingTier = shouldPreserveExistingDynamicState
+    ? post.timingTier ?? null
+    : snapshot.timingTier ?? post.timingTier ?? null;
+  const nextBundleRiskLabel = shouldPreserveExistingDynamicState
+    ? post.bundleRiskLabel ?? null
+    : snapshot.bundleRiskLabel ?? post.bundleRiskLabel ?? null;
+  const nextTokenRiskScore = shouldPreserveExistingDynamicState
+    ? post.tokenRiskScore ?? null
+    : snapshot.tokenRiskScore ?? post.tokenRiskScore ?? null;
+  const nextLiquidity = shouldPreserveExistingDynamicState
+    ? post.liquidity ?? null
+    : snapshot.liquidity ?? post.liquidity ?? null;
+  const nextVolume24h = shouldPreserveExistingDynamicState
+    ? post.volume24h ?? null
+    : snapshot.volume24h ?? post.volume24h ?? null;
+  const nextHolderCount = shouldPreserveExistingDynamicState
+    ? post.holderCount ?? null
+    : snapshot.holderCount ?? post.holderCount ?? null;
+  const nextLargestHolderPct = shouldPreserveExistingDynamicState
+    ? post.largestHolderPct ?? null
+    : snapshot.largestHolderPct ?? post.largestHolderPct ?? null;
+  const nextTop10HolderPct = shouldPreserveExistingDynamicState
+    ? post.top10HolderPct ?? null
+    : snapshot.top10HolderPct ?? post.top10HolderPct ?? null;
+  const nextBundledWalletCount = shouldPreserveExistingDynamicState
+    ? post.bundledWalletCount ?? null
+    : snapshot.bundledWalletCount ?? post.bundledWalletCount ?? null;
+  const nextEstimatedBundledSupplyPct = shouldPreserveExistingDynamicState
+    ? post.estimatedBundledSupplyPct ?? null
+    : snapshot.estimatedBundledSupplyPct ?? post.estimatedBundledSupplyPct ?? null;
   const nextIsWin =
     nextMcap1h !== null && post.entryMcap !== null
       ? nextMcap1h > post.entryMcap
@@ -776,7 +830,23 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
     nextMcap1h === post.mcap1h &&
     nextMcap6h === post.mcap6h &&
     nextLastMcapUpdate === post.lastMcapUpdate &&
+    nextLastIntelligenceAt === (post.lastIntelligenceAt ?? null) &&
     nextTrackingMode === post.trackingMode &&
+    nextConfidenceScore === (post.confidenceScore ?? null) &&
+    nextHotAlphaScore === (post.hotAlphaScore ?? null) &&
+    nextEarlyRunnerScore === (post.earlyRunnerScore ?? null) &&
+    nextHighConvictionScore === (post.highConvictionScore ?? null) &&
+    nextRoiCurrentPct === (post.roiCurrentPct ?? null) &&
+    nextTimingTier === (post.timingTier ?? null) &&
+    nextBundleRiskLabel === (post.bundleRiskLabel ?? null) &&
+    nextTokenRiskScore === (post.tokenRiskScore ?? null) &&
+    nextLiquidity === (post.liquidity ?? null) &&
+    nextVolume24h === (post.volume24h ?? null) &&
+    nextHolderCount === (post.holderCount ?? null) &&
+    nextLargestHolderPct === (post.largestHolderPct ?? null) &&
+    nextTop10HolderPct === (post.top10HolderPct ?? null) &&
+    nextBundledWalletCount === (post.bundledWalletCount ?? null) &&
+    nextEstimatedBundledSupplyPct === (post.estimatedBundledSupplyPct ?? null) &&
     nextIsWin === post.isWin
   ) {
     return post;
@@ -790,7 +860,23 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
     mcap1h: nextMcap1h,
     mcap6h: nextMcap6h,
     lastMcapUpdate: nextLastMcapUpdate,
+    lastIntelligenceAt: nextLastIntelligenceAt,
     trackingMode: nextTrackingMode,
+    confidenceScore: nextConfidenceScore,
+    hotAlphaScore: nextHotAlphaScore,
+    earlyRunnerScore: nextEarlyRunnerScore,
+    highConvictionScore: nextHighConvictionScore,
+    roiCurrentPct: nextRoiCurrentPct,
+    timingTier: nextTimingTier,
+    bundleRiskLabel: nextBundleRiskLabel,
+    tokenRiskScore: nextTokenRiskScore,
+    liquidity: nextLiquidity,
+    volume24h: nextVolume24h,
+    holderCount: nextHolderCount,
+    largestHolderPct: nextLargestHolderPct,
+    top10HolderPct: nextTop10HolderPct,
+    bundledWalletCount: nextBundledWalletCount,
+    estimatedBundledSupplyPct: nextEstimatedBundledSupplyPct,
     isWin: nextIsWin,
   };
 }
@@ -1285,11 +1371,11 @@ export function PostCard({
   const [localMcap1h, setLocalMcap1h] = useState(post.mcap1h);
   const [localMcap6h, setLocalMcap6h] = useState(post.mcap6h);
   const [localIsWin, setLocalIsWin] = useState(post.isWin);
-  const latestMarketStateVersionRef = useRef<number>(getPostMarketStateVersion(post));
+  const latestMarketStateVersionRef = useRef<number>(getPostDynamicStateVersion(post));
 
   // Sync state when post prop changes
   useEffect(() => {
-    const incomingVersion = getPostMarketStateVersion(post);
+    const incomingVersion = getPostDynamicStateVersion(post);
     const currentVersion = latestMarketStateVersionRef.current;
     const shouldAdoptIncomingMarketState = incomingVersion >= currentVersion;
 
@@ -1350,7 +1436,7 @@ export function PostCard({
 
         syncRealtimeSnapshotToCachedPosts(queryClient, post.id, data);
 
-        const snapshotVersion = getSnapshotMarketStateVersion(data);
+        const snapshotVersion = getSnapshotDynamicStateVersion(data);
         if (snapshotVersion > latestMarketStateVersionRef.current) {
           latestMarketStateVersionRef.current = snapshotVersion;
         }
@@ -1891,7 +1977,7 @@ export function PostCard({
       });
       if (!latest) return null;
 
-      const snapshotVersion = getSnapshotMarketStateVersion(latest);
+      const snapshotVersion = getSnapshotDynamicStateVersion(latest);
       if (snapshotVersion > latestMarketStateVersionRef.current) {
         latestMarketStateVersionRef.current = snapshotVersion;
       }

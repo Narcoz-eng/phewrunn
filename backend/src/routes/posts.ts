@@ -45,7 +45,13 @@ import {
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
-import { getEnrichedCallById } from "../services/intelligence/engine.js";
+import {
+  computeRealtimeIntelligenceSnapshots,
+  getEnrichedCallById,
+  INTELLIGENCE_CALL_SELECT,
+  type IntelligenceCallRecord,
+  type RealtimePostIntelligenceSnapshot,
+} from "../services/intelligence/engine.js";
 import { fanoutPostedAlphaAlert } from "../services/intelligence/alerts.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
@@ -130,6 +136,22 @@ type PostPriceResponsePayload = {
   mcap1h: number | null;
   mcap6h: number | null;
   percentChange: number | null;
+  confidenceScore: number | null;
+  hotAlphaScore: number | null;
+  earlyRunnerScore: number | null;
+  highConvictionScore: number | null;
+  roiCurrentPct: number | null;
+  timingTier: string | null;
+  bundleRiskLabel: string | null;
+  tokenRiskScore: number | null;
+  liquidity: number | null;
+  volume24h: number | null;
+  holderCount: number | null;
+  largestHolderPct: number | null;
+  top10HolderPct: number | null;
+  bundledWalletCount: number | null;
+  estimatedBundledSupplyPct: number | null;
+  lastIntelligenceAt: string | null;
   trackingMode: string | null;
   lastMcapUpdate: string | null;
   settled: boolean;
@@ -596,6 +618,37 @@ function normalizePostPricePayload(value: unknown): PostPriceResponsePayload | n
   const mcap6h = typeof candidate.mcap6h === "number" ? candidate.mcap6h : null;
   const percentChange =
     typeof candidate.percentChange === "number" ? candidate.percentChange : null;
+  const confidenceScore =
+    typeof candidate.confidenceScore === "number" ? candidate.confidenceScore : null;
+  const hotAlphaScore =
+    typeof candidate.hotAlphaScore === "number" ? candidate.hotAlphaScore : null;
+  const earlyRunnerScore =
+    typeof candidate.earlyRunnerScore === "number" ? candidate.earlyRunnerScore : null;
+  const highConvictionScore =
+    typeof candidate.highConvictionScore === "number" ? candidate.highConvictionScore : null;
+  const roiCurrentPct =
+    typeof candidate.roiCurrentPct === "number" ? candidate.roiCurrentPct : null;
+  const timingTier =
+    typeof candidate.timingTier === "string" ? candidate.timingTier : null;
+  const bundleRiskLabel =
+    typeof candidate.bundleRiskLabel === "string" ? candidate.bundleRiskLabel : null;
+  const tokenRiskScore =
+    typeof candidate.tokenRiskScore === "number" ? candidate.tokenRiskScore : null;
+  const liquidity = typeof candidate.liquidity === "number" ? candidate.liquidity : null;
+  const volume24h = typeof candidate.volume24h === "number" ? candidate.volume24h : null;
+  const holderCount = typeof candidate.holderCount === "number" ? candidate.holderCount : null;
+  const largestHolderPct =
+    typeof candidate.largestHolderPct === "number" ? candidate.largestHolderPct : null;
+  const top10HolderPct =
+    typeof candidate.top10HolderPct === "number" ? candidate.top10HolderPct : null;
+  const bundledWalletCount =
+    typeof candidate.bundledWalletCount === "number" ? candidate.bundledWalletCount : null;
+  const estimatedBundledSupplyPct =
+    typeof candidate.estimatedBundledSupplyPct === "number"
+      ? candidate.estimatedBundledSupplyPct
+      : null;
+  const lastIntelligenceAt =
+    typeof candidate.lastIntelligenceAt === "string" ? candidate.lastIntelligenceAt : null;
   const trackingMode =
     typeof candidate.trackingMode === "string" ? candidate.trackingMode : null;
   const lastMcapUpdate =
@@ -608,6 +661,22 @@ function normalizePostPricePayload(value: unknown): PostPriceResponsePayload | n
     mcap1h,
     mcap6h,
     percentChange,
+    confidenceScore,
+    hotAlphaScore,
+    earlyRunnerScore,
+    highConvictionScore,
+    roiCurrentPct,
+    timingTier,
+    bundleRiskLabel,
+    tokenRiskScore,
+    liquidity,
+    volume24h,
+    holderCount,
+    largestHolderPct,
+    top10HolderPct,
+    bundledWalletCount,
+    estimatedBundledSupplyPct,
+    lastIntelligenceAt,
     trackingMode,
     lastMcapUpdate,
     settled: candidate.settled === true,
@@ -799,8 +868,13 @@ function toNullableNumber(value: unknown): number | null {
 
 function getPostPricePayloadVersion(
   payload:
-    | Pick<PostPriceResponsePayload, "lastMcapUpdate" | "settledAt">
-    | { lastMcapUpdate?: string | null; settledAt?: string | null; createdAt?: string | Date | null }
+    | Pick<PostPriceResponsePayload, "lastMcapUpdate" | "settledAt" | "lastIntelligenceAt">
+    | {
+        lastMcapUpdate?: string | null;
+        settledAt?: string | null;
+        lastIntelligenceAt?: string | null;
+        createdAt?: string | Date | null;
+      }
     | null
     | undefined
 ): number {
@@ -812,16 +886,17 @@ function getPostPricePayloadVersion(
   return Math.max(
     parseCachedDate(payload.lastMcapUpdate)?.getTime() ?? 0,
     parseCachedDate(payload.settledAt)?.getTime() ?? 0,
+    parseCachedDate(payload.lastIntelligenceAt)?.getTime() ?? 0,
     createdAt
   );
 }
 
-function preserveNewerMarketStateFields(
+function preserveNewerDynamicStateFields(
   target: Record<string, unknown>,
   source: Record<string, unknown>
 ): Record<string, unknown> {
   const merged = { ...target };
-  const marketStateKeys = [
+  const dynamicStateKeys = [
     "currentMcap",
     "settled",
     "settledAt",
@@ -830,9 +905,25 @@ function preserveNewerMarketStateFields(
     "isWin",
     "lastMcapUpdate",
     "trackingMode",
+    "confidenceScore",
+    "hotAlphaScore",
+    "earlyRunnerScore",
+    "highConvictionScore",
+    "roiCurrentPct",
+    "timingTier",
+    "bundleRiskLabel",
+    "tokenRiskScore",
+    "liquidity",
+    "volume24h",
+    "holderCount",
+    "largestHolderPct",
+    "top10HolderPct",
+    "bundledWalletCount",
+    "estimatedBundledSupplyPct",
+    "lastIntelligenceAt",
   ] as const;
 
-  for (const key of marketStateKeys) {
+  for (const key of dynamicStateKeys) {
     if (key in source) {
       merged[key] = source[key];
     }
@@ -857,7 +948,7 @@ function mergeFeedCardSnapshotRecords(
   const nextVersion = getPostPricePayloadVersion(nextSnapshot);
 
   if (existingVersion > nextVersion) {
-    return preserveNewerMarketStateFields(merged, existingSnapshot);
+    return preserveNewerDynamicStateFields(merged, existingSnapshot);
   }
 
   return merged;
@@ -885,6 +976,22 @@ function mergePostPricePayloadWithFresherState(
       trackingMode: existingPayload.trackingMode,
       lastMcapUpdate: existingPayload.lastMcapUpdate,
       percentChange: existingPayload.percentChange,
+      confidenceScore: existingPayload.confidenceScore,
+      hotAlphaScore: existingPayload.hotAlphaScore,
+      earlyRunnerScore: existingPayload.earlyRunnerScore,
+      highConvictionScore: existingPayload.highConvictionScore,
+      roiCurrentPct: existingPayload.roiCurrentPct,
+      timingTier: existingPayload.timingTier,
+      bundleRiskLabel: existingPayload.bundleRiskLabel,
+      tokenRiskScore: existingPayload.tokenRiskScore,
+      liquidity: existingPayload.liquidity,
+      volume24h: existingPayload.volume24h,
+      holderCount: existingPayload.holderCount,
+      largestHolderPct: existingPayload.largestHolderPct,
+      top10HolderPct: existingPayload.top10HolderPct,
+      bundledWalletCount: existingPayload.bundledWalletCount,
+      estimatedBundledSupplyPct: existingPayload.estimatedBundledSupplyPct,
+      lastIntelligenceAt: existingPayload.lastIntelligenceAt,
     };
   }
 
@@ -933,6 +1040,22 @@ function buildPostPricePayloadFromRecord(post: PriceRoutePostRecord): PostPriceR
     mcap1h: post.mcap1h,
     mcap6h: post.mcap6h,
     percentChange: percentChange !== null ? Math.round(percentChange * 100) / 100 : null,
+    confidenceScore: post.confidenceScore ?? null,
+    hotAlphaScore: post.hotAlphaScore ?? null,
+    earlyRunnerScore: post.earlyRunnerScore ?? null,
+    highConvictionScore: post.highConvictionScore ?? null,
+    roiCurrentPct: post.roiCurrentPct ?? null,
+    timingTier: post.timingTier ?? null,
+    bundleRiskLabel: post.bundleRiskLabel ?? null,
+    tokenRiskScore: post.tokenRiskScore ?? null,
+    liquidity: post.liquidity ?? null,
+    volume24h: post.volume24h ?? null,
+    holderCount: post.holderCount ?? null,
+    largestHolderPct: post.largestHolderPct ?? null,
+    top10HolderPct: post.top10HolderPct ?? null,
+    bundledWalletCount: post.bundledWalletCount ?? null,
+    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct ?? null,
+    lastIntelligenceAt: post.lastIntelligenceAt?.toISOString() ?? null,
     trackingMode: post.trackingMode ?? determineTrackingMode(post.createdAt),
     lastMcapUpdate: post.lastMcapUpdate?.toISOString() ?? null,
     settled: post.settled,
@@ -967,6 +1090,23 @@ function findCachedFeedPostPriceRecord(postId: string): PriceRoutePostRecord | n
     currentMcap: toNullableNumber(candidate.currentMcap),
     mcap1h: toNullableNumber(candidate.mcap1h),
     mcap6h: toNullableNumber(candidate.mcap6h),
+    confidenceScore: toNullableNumber(candidate.confidenceScore),
+    hotAlphaScore: toNullableNumber(candidate.hotAlphaScore),
+    earlyRunnerScore: toNullableNumber(candidate.earlyRunnerScore),
+    highConvictionScore: toNullableNumber(candidate.highConvictionScore),
+    roiCurrentPct: toNullableNumber(candidate.roiCurrentPct),
+    timingTier: typeof candidate.timingTier === "string" ? candidate.timingTier : null,
+    bundleRiskLabel:
+      typeof candidate.bundleRiskLabel === "string" ? candidate.bundleRiskLabel : null,
+    tokenRiskScore: toNullableNumber(candidate.tokenRiskScore),
+    liquidity: toNullableNumber(candidate.liquidity),
+    volume24h: toNullableNumber(candidate.volume24h),
+    holderCount: toNullableNumber(candidate.holderCount),
+    largestHolderPct: toNullableNumber(candidate.largestHolderPct),
+    top10HolderPct: toNullableNumber(candidate.top10HolderPct),
+    bundledWalletCount: toNullableNumber(candidate.bundledWalletCount),
+    estimatedBundledSupplyPct: toNullableNumber(candidate.estimatedBundledSupplyPct),
+    lastIntelligenceAt: parseCachedDate(candidate.lastIntelligenceAt),
     settled: candidate.settled === true,
     settledAt: parseCachedDate(candidate.settledAt),
     createdAt,
@@ -3753,6 +3893,35 @@ function createSkippedSettlementResult(reason: string): SettlementRunResult {
   };
 }
 
+function mergeRealtimeIntelligenceIntoPostPricePayload(
+  payload: PostPriceResponsePayload,
+  snapshot: RealtimePostIntelligenceSnapshot | null | undefined
+): PostPriceResponsePayload {
+  if (!snapshot) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    confidenceScore: snapshot.confidenceScore,
+    hotAlphaScore: snapshot.hotAlphaScore,
+    earlyRunnerScore: snapshot.earlyRunnerScore,
+    highConvictionScore: snapshot.highConvictionScore,
+    roiCurrentPct: snapshot.roiCurrentPct,
+    timingTier: snapshot.timingTier,
+    bundleRiskLabel: snapshot.bundleRiskLabel,
+    tokenRiskScore: snapshot.tokenRiskScore,
+    liquidity: snapshot.liquidity,
+    volume24h: snapshot.volume24h,
+    holderCount: snapshot.holderCount,
+    largestHolderPct: snapshot.largestHolderPct,
+    top10HolderPct: snapshot.top10HolderPct,
+    bundledWalletCount: snapshot.bundledWalletCount,
+    estimatedBundledSupplyPct: snapshot.estimatedBundledSupplyPct,
+    lastIntelligenceAt: snapshot.lastIntelligenceAt,
+  };
+}
+
 async function tryAcquireSettlementRunLock(reason: string): Promise<{
   acquired: boolean;
   ownerToken: string;
@@ -6477,27 +6646,33 @@ type PriceRoutePostRecord = {
   currentMcap: number | null;
   mcap1h: number | null;
   mcap6h: number | null;
+  confidenceScore?: number | null;
+  hotAlphaScore?: number | null;
+  earlyRunnerScore?: number | null;
+  highConvictionScore?: number | null;
+  roiCurrentPct?: number | null;
+  timingTier?: string | null;
+  bundleRiskLabel?: string | null;
+  tokenRiskScore?: number | null;
+  liquidity?: number | null;
+  volume24h?: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
+  lastIntelligenceAt?: Date | null;
   settled: boolean;
   settledAt: Date | null;
   createdAt: Date;
   lastMcapUpdate: Date | null;
-  trackingMode: string | null;
+  trackingMode?: string | null;
 };
 
 async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   // If no contract address, return current values
   if (!post.contractAddress) {
-    return {
-      currentMcap: post.currentMcap,
-      entryMcap: post.entryMcap,
-      mcap1h: post.mcap1h,
-      mcap6h: post.mcap6h,
-      percentChange: null,
-      trackingMode: post.trackingMode,
-      lastMcapUpdate: post.lastMcapUpdate?.toISOString() ?? null,
-      settled: post.settled,
-      settledAt: post.settledAt?.toISOString() ?? null,
-    };
+    return buildPostPricePayloadFromRecord(post);
   }
 
   // Live post polling can still nudge settlement forward when cron is unavailable, but it
@@ -6544,16 +6719,60 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     : null;
 
   return {
+    ...buildPostPricePayloadFromRecord(post),
     currentMcap: finalMcap,
-    entryMcap: post.entryMcap,
-    mcap1h: post.mcap1h,
-    mcap6h: post.mcap6h,
     percentChange: percentChange !== null ? Math.round(percentChange * 100) / 100 : null,
-    trackingMode: trackingMode,
+    trackingMode,
     lastMcapUpdate: responseUpdatedAt.toISOString(),
-    settled: post.settled,
-    settledAt: post.settledAt?.toISOString() ?? null,
   };
+}
+
+async function attachRealtimeIntelligenceToPostPricePayloads(
+  posts: IntelligenceCallRecord[],
+  payloadsById: Map<string, PostPriceResponsePayload>,
+  context: "batch" | "single"
+): Promise<void> {
+  if (posts.length === 0 || payloadsById.size === 0) {
+    return;
+  }
+
+  const overrides = new Map(
+    posts.flatMap((post) => {
+      const payload = payloadsById.get(post.id);
+      if (!payload) {
+        return [];
+      }
+
+      return [[
+        post.id,
+        {
+          currentMcap: payload.currentMcap,
+          lastMcapUpdate: parseCachedDate(payload.lastMcapUpdate),
+          settled: payload.settled,
+          settledAt: parseCachedDate(payload.settledAt),
+        },
+      ] as const];
+    })
+  );
+
+  if (overrides.size === 0) {
+    return;
+  }
+
+  try {
+    const snapshotsById = await computeRealtimeIntelligenceSnapshots(posts, overrides);
+    for (const [postId, payload] of payloadsById) {
+      payloadsById.set(
+        postId,
+        mergeRealtimeIntelligenceIntoPostPricePayload(payload, snapshotsById.get(postId))
+      );
+    }
+  } catch (error) {
+    console.warn(`[posts/price] live intelligence refresh skipped for ${context} payload`, {
+      message: getErrorMessage(error),
+      postCount: posts.length,
+    });
+  }
 }
 
 async function forwardJupiterRequest(
@@ -8052,26 +8271,13 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
     });
   }
 
-  let posts: PriceRoutePostRecord[] = [];
+  let posts: IntelligenceCallRecord[] = [];
   let databaseLookupError: unknown = null;
   try {
     posts = await withPrismaRetry(
       () => prisma.post.findMany({
         where: { id: { in: missingIds } },
-        select: {
-          id: true,
-          contractAddress: true,
-          chainType: true,
-          entryMcap: true,
-          currentMcap: true,
-          mcap1h: true,
-          mcap6h: true,
-          settled: true,
-          settledAt: true,
-          createdAt: true,
-          lastMcapUpdate: true,
-          trackingMode: true,
-        },
+        select: INTELLIGENCE_CALL_SELECT,
       }),
       { label: "posts:prices:batch" }
     );
@@ -8087,14 +8293,17 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
 
   if (posts.length > 0) {
     triggerMaintenanceForStaleCandidates("prices:batch", posts);
-    const resolved = await Promise.all(
+    const resolvedPayloadById = new Map(
+      await Promise.all(
       posts.map(async (post) => {
         const payload = await resolvePostPricePayload(post);
-        writePostPriceCache(post.id, payload);
         return [post.id, payload] as const;
       })
+    )
     );
-    for (const [id, payload] of resolved) {
+    await attachRealtimeIntelligenceToPostPricePayloads(posts, resolvedPayloadById, "batch");
+    for (const [id, payload] of resolvedPayloadById) {
+      writePostPriceCache(id, payload);
       payloadById.set(id, payload);
     }
   }
@@ -8136,25 +8345,12 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
 postsRouter.get("/:id/price", async (c) => {
   const postId = c.req.param("id");
 
-  let post: PriceRoutePostRecord | null = null;
+  let post: IntelligenceCallRecord | null = null;
   let lookupError: unknown = null;
   try {
     post = await prisma.post.findUnique({
       where: { id: postId },
-      select: {
-        id: true,
-        contractAddress: true,
-        chainType: true,
-        entryMcap: true,
-        currentMcap: true,
-        mcap1h: true,
-        mcap6h: true,
-        settled: true,
-        settledAt: true,
-        createdAt: true,
-        lastMcapUpdate: true,
-        trackingMode: true,
-      },
+      select: INTELLIGENCE_CALL_SELECT,
     });
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
@@ -8187,7 +8383,9 @@ postsRouter.get("/:id/price", async (c) => {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
 
-  const data = await resolvePostPricePayload(post);
+  const payloadById = new Map([[post.id, await resolvePostPricePayload(post)]]);
+  await attachRealtimeIntelligenceToPostPricePayloads([post], payloadById, "single");
+  const data = payloadById.get(post.id)!;
   writePostPriceCache(post.id, data);
   return c.json({ data });
 });

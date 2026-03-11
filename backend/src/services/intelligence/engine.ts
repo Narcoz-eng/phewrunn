@@ -189,6 +189,8 @@ type TokenRecord = Prisma.TokenGetPayload<{ select: typeof TOKEN_SELECT }>;
 type CallRecord = Prisma.PostGetPayload<{ select: typeof CALL_SELECT }>;
 type ThreadCommentRecord = Prisma.CommentGetPayload<{ select: typeof THREAD_COMMENT_SELECT }>;
 type AuthorRecord = CallRecord["author"];
+export const INTELLIGENCE_CALL_SELECT = CALL_SELECT;
+export type IntelligenceCallRecord = CallRecord;
 
 export type FeedKind =
   | "latest"
@@ -241,6 +243,34 @@ export type EnrichedCall = CallRecord & {
     evidenceJson: unknown;
   }>;
   radarReasons: string[];
+};
+
+export type RealtimePostIntelligenceSnapshot = Pick<
+  EnrichedCall,
+  | "confidenceScore"
+  | "hotAlphaScore"
+  | "earlyRunnerScore"
+  | "highConvictionScore"
+  | "timingTier"
+  | "roiCurrentPct"
+  | "bundleRiskLabel"
+  | "tokenRiskScore"
+  | "liquidity"
+  | "volume24h"
+  | "holderCount"
+  | "largestHolderPct"
+  | "top10HolderPct"
+  | "bundledWalletCount"
+  | "estimatedBundledSupplyPct"
+> & {
+  lastIntelligenceAt: string | null;
+};
+
+type RealtimeIntelligenceOverride = {
+  currentMcap?: number | null;
+  lastMcapUpdate?: Date | null;
+  settled?: boolean;
+  settledAt?: Date | null;
 };
 
 type FeedListResult = {
@@ -2423,7 +2453,18 @@ async function refreshPriorityFeedSlice(
     return hydrated;
   }
 
-  const priorityRecords = records.slice(0, FEED_PRIORITY_POST_COUNT);
+  const rankedPriorityCount = Math.min(
+    hydrated.length,
+    Math.max(
+      FEED_PRIORITY_POST_COUNT,
+      Math.min(30, Math.max(1, args.limit ?? DEFAULT_FEED_LIMIT) * 2)
+    )
+  );
+  const recordsById = new Map(records.map((record) => [record.id, record] as const));
+  const priorityRecords = hydrated
+    .slice(0, rankedPriorityCount)
+    .map((call) => recordsById.get(call.id) ?? null)
+    .filter((record): record is CallRecord => Boolean(record));
   if (priorityRecords.length === 0) {
     return hydrated;
   }
@@ -2447,6 +2488,67 @@ async function refreshPriorityFeedSlice(
   return sortCalls(
     args.kind,
     hydrated.map((call) => refreshedById.get(call.id) ?? call)
+  );
+}
+
+export async function computeRealtimeIntelligenceSnapshots(
+  records: CallRecord[],
+  overrides?: Map<string, RealtimeIntelligenceOverride>
+): Promise<Map<string, RealtimePostIntelligenceSnapshot>> {
+  if (records.length === 0) {
+    return new Map();
+  }
+
+  const hydrated = await hydrateCalls(
+    records.map((record) => {
+      const override = overrides?.get(record.id);
+      if (!override) {
+        return record;
+      }
+
+      return {
+        ...record,
+        currentMcap:
+          override.currentMcap === undefined ? record.currentMcap : override.currentMcap,
+        lastMcapUpdate:
+          override.lastMcapUpdate === undefined ? record.lastMcapUpdate : override.lastMcapUpdate,
+        settled: override.settled === undefined ? record.settled : override.settled,
+        settledAt: override.settledAt === undefined ? record.settledAt : override.settledAt,
+      };
+    }),
+    null,
+    {
+      refreshTraders: false,
+      refreshTokens: false,
+      ensureTokenLinks: false,
+      persistComputed: false,
+      preferStoredIntelligence: false,
+    }
+  );
+
+  const computedAtIso = new Date().toISOString();
+  return new Map(
+    hydrated.map((call) => [
+      call.id,
+      {
+        confidenceScore: call.confidenceScore,
+        hotAlphaScore: call.hotAlphaScore,
+        earlyRunnerScore: call.earlyRunnerScore,
+        highConvictionScore: call.highConvictionScore,
+        timingTier: call.timingTier,
+        roiCurrentPct: call.roiCurrentPct,
+        bundleRiskLabel: call.bundleRiskLabel,
+        tokenRiskScore: call.tokenRiskScore,
+        liquidity: call.liquidity,
+        volume24h: call.volume24h,
+        holderCount: call.holderCount,
+        largestHolderPct: call.largestHolderPct,
+        top10HolderPct: call.top10HolderPct,
+        bundledWalletCount: call.bundledWalletCount,
+        estimatedBundledSupplyPct: call.estimatedBundledSupplyPct,
+        lastIntelligenceAt: computedAtIso,
+      } satisfies RealtimePostIntelligenceSnapshot,
+    ])
   );
 }
 

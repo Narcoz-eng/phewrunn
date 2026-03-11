@@ -95,6 +95,7 @@ export interface Post {
   settledAt: string | null;
   isWin: boolean | null;
   lastMcapUpdate?: string | null;
+  lastIntelligenceAt?: string | null;
   trackingMode?: string | null;
   createdAt: string;
   // Social features

@@ -6,6 +6,22 @@ export type BatchedPostPriceSnapshot = {
   mcap1h: number | null;
   mcap6h: number | null;
   percentChange: number | null;
+  confidenceScore: number | null;
+  hotAlphaScore: number | null;
+  earlyRunnerScore: number | null;
+  highConvictionScore: number | null;
+  roiCurrentPct: number | null;
+  timingTier?: string | null;
+  bundleRiskLabel?: string | null;
+  tokenRiskScore?: number | null;
+  liquidity?: number | null;
+  volume24h?: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
+  lastIntelligenceAt: string | null;
   trackingMode?: string | null;
   lastMcapUpdate: string | null;
   settled: boolean;
@@ -32,7 +48,8 @@ function getSnapshotVersion(snapshot: BatchedPostPriceSnapshot | null | undefine
   if (!snapshot) return 0;
   return Math.max(
     parseSnapshotTimestamp(snapshot.lastMcapUpdate),
-    parseSnapshotTimestamp(snapshot.settledAt)
+    parseSnapshotTimestamp(snapshot.settledAt),
+    parseSnapshotTimestamp(snapshot.lastIntelligenceAt)
   );
 }
 
@@ -61,6 +78,22 @@ function mergeSnapshotWithFresherState(
       trackingMode: existing.trackingMode,
       lastMcapUpdate: existing.lastMcapUpdate,
       percentChange: existing.percentChange,
+      confidenceScore: existing.confidenceScore,
+      hotAlphaScore: existing.hotAlphaScore,
+      earlyRunnerScore: existing.earlyRunnerScore,
+      highConvictionScore: existing.highConvictionScore,
+      roiCurrentPct: existing.roiCurrentPct,
+      timingTier: existing.timingTier,
+      bundleRiskLabel: existing.bundleRiskLabel,
+      tokenRiskScore: existing.tokenRiskScore,
+      liquidity: existing.liquidity,
+      volume24h: existing.volume24h,
+      holderCount: existing.holderCount,
+      largestHolderPct: existing.largestHolderPct,
+      top10HolderPct: existing.top10HolderPct,
+      bundledWalletCount: existing.bundledWalletCount,
+      estimatedBundledSupplyPct: existing.estimatedBundledSupplyPct,
+      lastIntelligenceAt: existing.lastIntelligenceAt,
     };
   }
 
