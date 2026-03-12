@@ -137,8 +137,8 @@ const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000
 const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
 const FRESH_WALLET_DAYS_THRESHOLD = 30;
 const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 100;
-const WHALE_SUPPLY_PCT_THRESHOLD = 1.5;
-const WHALE_PORTFOLIO_USD_THRESHOLD = 100_000;
+const WHALE_SUPPLY_PCT_THRESHOLD = 4;
+const WHALE_PORTFOLIO_USD_THRESHOLD = 500_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
 const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -428,6 +428,39 @@ function buildHolderBadges(params: {
   return [...new Set(badges)];
 }
 
+function aggregateTopHoldersByWallet(holders: TokenHolderSnapshot[]): TokenHolderSnapshot[] {
+  const grouped = new Map<string, TokenHolderSnapshot>();
+
+  for (const holder of holders) {
+    const walletAddress = holder.ownerAddress ?? holder.address;
+    const existing = grouped.get(walletAddress);
+    if (!existing) {
+      grouped.set(walletAddress, {
+        ...holder,
+        address: walletAddress,
+        ownerAddress: walletAddress,
+      });
+      continue;
+    }
+
+    existing.amount =
+      holder.amount !== null || existing.amount !== null
+        ? (existing.amount ?? 0) + (holder.amount ?? 0)
+        : null;
+    existing.supplyPct = Math.round((existing.supplyPct + holder.supplyPct) * 100) / 100;
+    existing.valueUsd =
+      holder.valueUsd !== null || existing.valueUsd !== null
+        ? (existing.valueUsd ?? 0) + (holder.valueUsd ?? 0)
+        : null;
+    existing.tokenAccountAddress =
+      existing.tokenAccountAddress && holder.tokenAccountAddress && existing.tokenAccountAddress === holder.tokenAccountAddress
+        ? existing.tokenAccountAddress
+        : null;
+  }
+
+  return [...grouped.values()].sort((left, right) => right.supplyPct - left.supplyPct);
+}
+
 async function getRpcTokenAccountOwners(tokenAccountAddresses: string[]): Promise<Map<string, string>> {
   const uniqueAddresses = [...new Set(
     tokenAccountAddresses
@@ -596,7 +629,9 @@ export async function analyzeSolanaTokenDistribution(
             .filter((holder): holder is TokenHolderSnapshot => holder !== null)
         : [];
 
-    const topHoldersBase = solscanTopHolders.length > 0 ? solscanTopHolders : rpcTopHolders;
+    const topHoldersBase = aggregateTopHoldersByWallet(
+      solscanTopHolders.length > 0 ? solscanTopHolders : rpcTopHolders
+    );
     const devWalletRoles = new Map<string, TokenHolderSnapshot["devRole"]>();
     if (isLikelySolanaWallet(solscanMeta?.creator)) {
       devWalletRoles.set(solscanMeta.creator, "creator");
@@ -771,6 +806,8 @@ export async function analyzeSolanaTokenDistribution(
 
     let holderCount: number | null = null;
     let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
+    const minimumObservedHolderCount = topHoldersBase.length;
+    const normalizedObservedHolderCount = minimumObservedHolderCount > 0 ? minimumObservedHolderCount : 0;
     const solscanHolderCount =
       solscanHolders?.total && solscanHolders.total > 0
         ? Math.round(solscanHolders.total)
@@ -790,24 +827,27 @@ export async function analyzeSolanaTokenDistribution(
       topHolders.length >= 20 &&
       rpcHolderCount <= topHolders.length;
 
-    if (solscanHolderCount > 0) {
+    const isPlausibleHolderCount = (value: number): boolean =>
+      value > 0 && value >= normalizedObservedHolderCount;
+
+    if (isPlausibleHolderCount(solscanHolderCount)) {
       holderCount = solscanHolderCount;
       holderCountSource = "solscan";
-    } else if (heliusHolderCount > 0) {
+    } else if (isPlausibleHolderCount(heliusHolderCount)) {
       holderCount = heliusHolderCount;
       holderCountSource = "helius";
-    } else if (!rpcCountLooksTruncated && rpcHolderCount > 0) {
+    } else if (!rpcCountLooksTruncated && isPlausibleHolderCount(rpcHolderCount)) {
       holderCount = rpcHolderCount;
       holderCountSource = "rpc_scan";
     } else if (
       typeof birdeyeHolderCount === "number" &&
       Number.isFinite(birdeyeHolderCount) &&
-      birdeyeHolderCount > 0
+      isPlausibleHolderCount(Math.round(birdeyeHolderCount))
     ) {
       holderCount = Math.round(birdeyeHolderCount);
       holderCountSource = "birdeye";
-    } else if (topHolders.length > 0) {
-      holderCount = topHolders.length;
+    } else if (normalizedObservedHolderCount > 0) {
+      holderCount = normalizedObservedHolderCount;
       holderCountSource = "largest_accounts";
     }
 
