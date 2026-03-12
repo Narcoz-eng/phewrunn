@@ -395,6 +395,32 @@ function getDevRoleSourceLabel(devRole: TokenHolder["devRole"] | null | undefine
   return "On-chain authority";
 }
 
+function getDevPositionStatus(holder: Pick<TokenHolder, "amount" | "supplyPct" | "valueUsd"> | null | undefined): {
+  label: string;
+  toneClass: string;
+} | null {
+  if (!holder) {
+    return null;
+  }
+
+  const isStillIn =
+    (typeof holder.amount === "number" && Number.isFinite(holder.amount) && holder.amount > 0) ||
+    (typeof holder.supplyPct === "number" && Number.isFinite(holder.supplyPct) && holder.supplyPct > 0) ||
+    (typeof holder.valueUsd === "number" && Number.isFinite(holder.valueUsd) && holder.valueUsd > 0);
+
+  return isStillIn
+    ? {
+        label: "Dev still in",
+        toneClass:
+          "border-emerald-300/80 bg-[linear-gradient(135deg,rgba(16,185,129,0.26),rgba(5,150,105,0.18))] text-emerald-950 dark:border-emerald-300/70 dark:bg-[linear-gradient(135deg,rgba(16,185,129,0.24),rgba(4,120,87,0.18))] dark:text-emerald-50",
+      }
+    : {
+        label: "Dev out",
+        toneClass:
+          "border-rose-300/80 bg-[linear-gradient(135deg,rgba(244,63,94,0.18),rgba(239,68,68,0.14))] text-rose-950 dark:border-rose-300/70 dark:bg-[linear-gradient(135deg,rgba(244,63,94,0.2),rgba(190,24,93,0.16))] dark:text-rose-50",
+      };
+}
+
 function formatTimelineEventLabel(eventType: string): string {
   switch (eventType) {
     case "alpha_call":
@@ -1026,6 +1052,7 @@ export default function TokenPage() {
     ? token.topHolders
     : (token?.risk.topHolders ?? []);
   const devWallet = token?.devWallet ?? token?.risk.devWallet ?? null;
+  const devPositionStatus = getDevPositionStatus(devWallet);
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
   const isStoredLowerBoundHolderCount =
@@ -1584,6 +1611,16 @@ export default function TokenPage() {
                               >
                                 {formatHolderBadge(getPrimaryHolderBadge(devWallet)!)}
                               </span>
+                              {devPositionStatus ? (
+                                <span
+                                  className={cn(
+                                    "ml-2 inline-flex items-center rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm",
+                                    devPositionStatus.toneClass
+                                  )}
+                                >
+                                  {devPositionStatus.label}
+                                </span>
+                              ) : null}
                             </div>
                           ) : null}
                           {buildHolderScanSummary(devWallet) ? (
@@ -1629,6 +1666,9 @@ export default function TokenPage() {
                         </div>
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
                           Funded by <span className="ml-1 font-mono text-foreground">{devWallet.fundedBy ? formatHolderAddress(devWallet.fundedBy) : "N/A"}</span>
+                        </div>
+                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
+                          Current position <span className="ml-1 font-semibold text-foreground">{devPositionStatus?.label ?? "Unknown"}</span>
                         </div>
                       </div>
                     </div>

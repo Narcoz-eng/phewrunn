@@ -658,6 +658,44 @@ function isRugLikeMarketSnapshot(snapshot: Awaited<ReturnType<typeof getCachedMa
   return false;
 }
 
+function isLikelyLiquidityPoolHolder(params: {
+  holder: TokenHolderSnapshot;
+  referenceLiquidityUsd: number | null | undefined;
+}): boolean {
+  const referenceLiquidityUsd =
+    typeof params.referenceLiquidityUsd === "number" && Number.isFinite(params.referenceLiquidityUsd)
+      ? params.referenceLiquidityUsd
+      : null;
+  const holderValueUsd =
+    typeof params.holder.valueUsd === "number" && Number.isFinite(params.holder.valueUsd)
+      ? params.holder.valueUsd
+      : typeof params.holder.totalValueUsd === "number" && Number.isFinite(params.holder.totalValueUsd)
+        ? params.holder.totalValueUsd
+        : null;
+
+  if (!referenceLiquidityUsd || referenceLiquidityUsd <= 0 || !holderValueUsd || holderValueUsd <= 0) {
+    return false;
+  }
+
+  if (params.holder.devRole) {
+    return false;
+  }
+
+  const liquidityMatchRatio = holderValueUsd / referenceLiquidityUsd;
+  const lacksWalletSignals =
+    (params.holder.tradeVolume90dSol ?? 0) <= 0 &&
+    (params.holder.solBalance ?? 0) <= 2 &&
+    (params.holder.activeAgeDays ?? 0) <= 0 &&
+    !params.holder.fundedBy;
+
+  return (
+    params.holder.supplyPct >= 2 &&
+    liquidityMatchRatio >= 0.18 &&
+    liquidityMatchRatio <= 1.2 &&
+    lacksWalletSignals
+  );
+}
+
 function aggregateTopHoldersByWallet(holders: TokenHolderSnapshot[]): TokenHolderSnapshot[] {
   const grouped = new Map<string, TokenHolderSnapshot>();
 
@@ -1031,7 +1069,7 @@ export async function analyzeSolanaTokenDistribution(
       authorityHeuristicEntries
     );
 
-    const topHolders = topHoldersBase.map((holder) => {
+    const hydratedTopHolders = topHoldersBase.map((holder) => {
       const walletAddress = holder.ownerAddress ?? holder.address;
       const activity = walletActivityMap.get(walletAddress) ?? null;
       const devProfile = devWalletProfileMap.get(walletAddress) ?? null;
@@ -1084,6 +1122,19 @@ export async function analyzeSolanaTokenDistribution(
         devRole,
       };
     });
+
+    const referenceLiquidityUsd =
+      typeof marketSnapshot.liquidityUsd === "number" && Number.isFinite(marketSnapshot.liquidityUsd) && marketSnapshot.liquidityUsd > 0
+        ? marketSnapshot.liquidityUsd
+        : typeof fallbackLiquidityUsd === "number" && Number.isFinite(fallbackLiquidityUsd) && fallbackLiquidityUsd > 0
+          ? fallbackLiquidityUsd
+          : null;
+    const topHolders = hydratedTopHolders.filter((holder) =>
+      !isLikelyLiquidityPoolHolder({
+        holder,
+        referenceLiquidityUsd,
+      })
+    );
 
     const devWallet =
       topHolders.find((holder) => holder.devRole !== null) ??
@@ -1183,7 +1234,7 @@ export async function analyzeSolanaTokenDistribution(
 
     let holderCount: number | null = null;
     let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
-    const minimumObservedHolderCount = topHoldersBase.length;
+    const minimumObservedHolderCount = topHolders.length;
     const normalizedObservedHolderCount = minimumObservedHolderCount > 0 ? minimumObservedHolderCount : 0;
     const heliusHolderCount =
       typeof heliusHolderSummary === "number" &&
