@@ -2253,20 +2253,36 @@ export function PostCard({
     }
 
     const promise = (async () => {
-      try {
-        const response = await fetch("/phew-logo.svg", { cache: "force-cache" });
-        if (!response.ok) {
-          return null;
-        }
-        const svgMarkup = await response.text();
-        const bytes = new TextEncoder().encode(svgMarkup);
-        let binary = "";
-        bytes.forEach((byte) => {
-          binary += String.fromCharCode(byte);
+      const blobToDataUrl = (blob: Blob) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (typeof reader.result === "string") {
+              resolve(reader.result);
+              return;
+            }
+            reject(new Error("Invalid logo reader result"));
+          };
+          reader.onerror = () => reject(reader.error ?? new Error("Failed to read logo blob"));
+          reader.readAsDataURL(blob);
         });
-        const dataUrl = `data:image/svg+xml;base64,${window.btoa(binary)}`;
-        winCardLogoDataUrlRef.current = dataUrl;
-        return dataUrl;
+
+      const candidateSources = [exactLogoImageSrc, "/phew-mark.svg"];
+      try {
+        for (const source of candidateSources) {
+          try {
+            const response = await fetch(source, { cache: "force-cache" });
+            if (!response.ok) {
+              continue;
+            }
+            const dataUrl = await blobToDataUrl(await response.blob());
+            winCardLogoDataUrlRef.current = dataUrl;
+            return dataUrl;
+          } catch {
+            continue;
+          }
+        }
+        return null;
       } catch {
         return null;
       } finally {

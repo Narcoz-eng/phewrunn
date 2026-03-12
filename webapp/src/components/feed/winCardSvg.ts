@@ -1,30 +1,30 @@
 export const WIN_CARD_EXPORT_WIDTH = 1200;
 export const WIN_CARD_EXPORT_HEIGHT = 1280;
 
-export type WinCardTone = "gain" | "loss" | "neutral";
+type WinCardTone = "gain" | "loss" | "plain";
 
-export type WinCardMetric = {
+type WinCardMetric = {
   label: string;
   value: string;
   hint: string;
+  tone: WinCardTone;
   highlight?: boolean;
-  tone?: WinCardTone | "plain";
 };
 
-export type WinCardSnapshot = {
+type WinCardSnapshot = {
   label: string;
   shortLabel: string;
   percentText: string;
   profitText: string;
-  positive: boolean | null;
   magnitudeRatio: number;
+  positive: boolean | null;
 };
 
 export type WinCardSummaryItem = {
   label: string;
   value: string;
   hint: string;
-  tone?: WinCardTone | "plain";
+  tone: WinCardTone;
 };
 
 export type WinCardRenderModel = {
@@ -53,8 +53,12 @@ export type WinCardRenderModel = {
   summaryItems: WinCardSummaryItem[];
 };
 
-function escapeXml(value: string): string {
-  return value
+type BuildWinCardSvgOptions = {
+  logoDataUrl?: string | null;
+};
+
+function escapeXml(value: string | null | undefined): string {
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -62,401 +66,376 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function wrapText(value: string, maxCharsPerLine: number, maxLines: number): string[] {
-  const source = value.replace(/\s+/g, " ").trim();
-  if (!source) return [];
+function clampText(value: string, maxLength: number): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
 
-  const words = source.split(" ");
+function wrapText(value: string, maxChars: number, maxLines: number): string[] {
+  const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
+  if (words.length === 0) {
+    return [""];
+  }
+
   const lines: string[] = [];
   let current = "";
 
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
-    if (next.length <= maxCharsPerLine) {
+    if (next.length <= maxChars) {
       current = next;
       continue;
     }
     if (current) {
       lines.push(current);
+      current = word;
+    } else {
+      lines.push(clampText(word, maxChars));
+      current = "";
     }
-    current = word;
     if (lines.length === maxLines) {
-      break;
+      return lines.map((line, index) =>
+        index === maxLines - 1 ? clampText(line, maxChars) : line
+      );
     }
   }
 
-  if (current && lines.length < maxLines) {
+  if (current) {
     lines.push(current);
   }
 
   if (lines.length > maxLines) {
-    return lines.slice(0, maxLines);
-  }
-
-  if (
-    lines.length === maxLines &&
-    words.join(" ").length > lines.join(" ").length &&
-    !lines[maxLines - 1].endsWith("...")
-  ) {
-    lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, Math.max(0, maxCharsPerLine - 3))}...`;
+    return lines.slice(0, maxLines).map((line, index) =>
+      index === maxLines - 1 ? clampText(line, maxChars) : line
+    );
   }
 
   return lines;
 }
 
-function tonePalette(tone: WinCardTone) {
-  switch (tone) {
-    case "gain":
-      return {
-        accent: "#9eff4c",
-        accentStrong: "#3ee7d4",
-        accentSoft: "rgba(126,255,73,0.18)",
-        accentBorder: "rgba(126,255,73,0.34)",
-        text: "#f5fff9",
-        textMuted: "#cde4db",
-        value: "#c6ff7a",
-        valueSoft: "#dfffc0",
-      };
-    case "loss":
-      return {
-        accent: "#ff758b",
-        accentStrong: "#ffb166",
-        accentSoft: "rgba(255,117,139,0.18)",
-        accentBorder: "rgba(255,117,139,0.34)",
-        text: "#fff6f7",
-        textMuted: "#ecd6d9",
-        value: "#ff9cac",
-        valueSoft: "#ffd4d9",
-      };
-    default:
-      return {
-        accent: "#9fb4d0",
-        accentStrong: "#d9e2ec",
-        accentSoft: "rgba(159,180,208,0.16)",
-        accentBorder: "rgba(159,180,208,0.28)",
-        text: "#f4f7fb",
-        textMuted: "#ced8e7",
-        value: "#d6e0ef",
-        valueSoft: "#eef4fb",
-      };
-  }
-}
-
-function metricToneColor(tone: WinCardMetric["tone"], palette: ReturnType<typeof tonePalette>) {
-  if (tone === "gain") return "#b9ff7e";
-  if (tone === "loss") return "#ff9dac";
-  return palette.valueSoft;
-}
-
-function summaryToneColor(tone: WinCardSummaryItem["tone"], palette: ReturnType<typeof tonePalette>) {
-  if (tone === "gain") return "#b9ff7e";
-  if (tone === "loss") return "#ff9dac";
-  return palette.valueSoft;
-}
-
-function snapshotBarColor(positive: boolean | null, palette: ReturnType<typeof tonePalette>) {
-  if (positive === null) return "#8091a7";
-  return positive ? palette.accent : "#ff8fa3";
-}
-
-export function buildWinCardSvg(model: WinCardRenderModel, options?: { logoDataUrl?: string | null }) {
-  const palette = tonePalette(model.tone);
-  const noteLines = wrapText(model.noteText, 42, 6);
-  const introLines = wrapText(model.shareIntro, 46, 2);
-  const summaryItems = model.summaryItems.slice(0, 4);
-  const summaryRowHeight = 68;
-  const summaryBaseY = 902;
-
-  const metricCards = model.metrics.slice(0, 4).map((metric, index) => {
-    const x = 72 + index * 264;
-    const highlightFill = metric.highlight
-      ? `fill="url(#metricHighlight)"`
-      : `fill="rgba(255,255,255,0.05)"`;
-    const stroke = metric.highlight ? palette.accentBorder : "rgba(255,255,255,0.1)";
-    const toneColor = metricToneColor(metric.tone, palette);
-    return `
-      <g>
-        <rect x="${x}" y="596" width="240" height="122" rx="28" ${highlightFill} stroke="${stroke}" />
-        <text x="${x + 22}" y="628" fill="rgba(236,242,248,0.62)" font-size="12" font-weight="700" letter-spacing="2.2">
-          ${escapeXml(metric.label.toUpperCase())}
-        </text>
-        <text x="${x + 22}" y="672" fill="${toneColor}" font-size="28" font-weight="800">
-          ${escapeXml(metric.value)}
-        </text>
-        <text x="${x + 22}" y="698" fill="rgba(236,242,248,0.52)" font-size="14" font-weight="500">
-          ${escapeXml(metric.hint)}
-        </text>
-      </g>
-    `;
-  });
-
-  const snapshotCards = model.snapshots.slice(0, 3).map((snapshot, index) => {
-    const y = 882 + index * 106;
-    const width = Math.max(30, Math.round(184 * snapshot.magnitudeRatio));
-    const toneColor = snapshot.positive === null ? "#d6e0ef" : snapshot.positive ? "#c8ff8c" : "#ffafba";
-    return `
-      <g>
-        <rect x="650" y="${y}" width="228" height="86" rx="24" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.08)" />
-        <text x="674" y="${y + 24}" fill="rgba(236,242,248,0.58)" font-size="12" font-weight="700" letter-spacing="1.8">
-          ${escapeXml(snapshot.label.toUpperCase())}
-        </text>
-        <rect x="674" y="${y + 38}" width="184" height="10" rx="5" fill="rgba(255,255,255,0.08)" />
-        <rect x="674" y="${y + 38}" width="${width}" height="10" rx="5" fill="${snapshotBarColor(snapshot.positive, palette)}" />
-        <text x="674" y="${y + 70}" fill="${toneColor}" font-size="24" font-weight="800">
-          ${escapeXml(snapshot.percentText)}
-        </text>
-        <text x="858" y="${y + 70}" fill="${toneColor}" font-size="16" font-weight="600" text-anchor="end">
-          ${escapeXml(snapshot.profitText)}
-        </text>
-      </g>
-    `;
-  });
-
-  const summaryRows = summaryItems.map((item, index) => {
-    const y = summaryBaseY + index * summaryRowHeight;
-    const toneColor = summaryToneColor(item.tone, palette);
-    return `
-      <g>
-        <rect x="906" y="${y}" width="222" height="54" rx="20" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.08)" />
-        <text x="926" y="${y + 21}" fill="rgba(236,242,248,0.54)" font-size="11" font-weight="700" letter-spacing="1.8">
-          ${escapeXml(item.label.toUpperCase())}
-        </text>
-        <text x="926" y="${y + 42}" fill="${toneColor}" font-size="18" font-weight="700">
-          ${escapeXml(item.value)}
-        </text>
-        <text x="1110" y="${y + 42}" fill="rgba(236,242,248,0.48)" font-size="12" font-weight="500" text-anchor="end">
-          ${escapeXml(item.hint)}
-        </text>
-      </g>
-    `;
-  });
-
-  const introMarkup = introLines
+function renderTextLines(
+  lines: string[],
+  x: number,
+  y: number,
+  lineHeight: number,
+  className: string
+): string {
+  return `<text x="${x}" y="${y}" class="${className}">${lines
     .map(
-      (line, index) => `
-        <text x="94" y="${182 + index * 26}" fill="rgba(241,247,252,0.82)" font-size="18" font-weight="500">
-          ${escapeXml(line)}
-        </text>
-      `
+      (line, index) =>
+        `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
     )
+    .join("")}</text>`;
+}
+
+function metricToneColors(tone: WinCardTone): { value: string; border: string } {
+  if (tone === "gain") {
+    return { value: "#b8ff73", border: "rgba(169,255,52,0.25)" };
+  }
+  if (tone === "loss") {
+    return { value: "#ff8f9d", border: "rgba(255,121,143,0.24)" };
+  }
+  return { value: "#f8fafc", border: "rgba(255,255,255,0.12)" };
+}
+
+function snapshotFill(snapshot: WinCardSnapshot): string {
+  if (snapshot.positive === null) {
+    return "#6b7280";
+  }
+  return snapshot.positive ? "#7dff5a" : "#ff7f90";
+}
+
+function summaryToneColor(tone: WinCardTone): string {
+  if (tone === "gain") return "#b8ff73";
+  if (tone === "loss") return "#ff8f9d";
+  return "#f8fafc";
+}
+
+export function buildWinCardSvg(
+  model: WinCardRenderModel,
+  options?: BuildWinCardSvgOptions
+): string {
+  const accent =
+    model.tone === "loss"
+      ? {
+          primary: "#ff7b90",
+          secondary: "#ff4d6d",
+          glow: "rgba(255,90,118,0.22)",
+          soft: "rgba(255,111,135,0.12)",
+        }
+      : model.tone === "gain"
+        ? {
+            primary: "#a9ff34",
+            secondary: "#41e8cf",
+            glow: "rgba(92,255,144,0.24)",
+            soft: "rgba(110,255,120,0.12)",
+          }
+        : {
+            primary: "#d6dde8",
+            secondary: "#78dcea",
+            glow: "rgba(120,220,234,0.16)",
+            soft: "rgba(214,221,232,0.1)",
+          };
+
+  const metricCards = model.metrics.slice(0, 4);
+  const snapshotCards = model.snapshots.slice(0, 3);
+  const summaryItems = model.summaryItems.slice(0, 4);
+  const noteLines = wrapText(model.noteText, 42, 6);
+  const introLines = wrapText(model.shareIntro, 48, 2);
+  const statusLines = wrapText(model.statusDetail, 23, 2);
+  const tokenSecondary = wrapText(model.tokenSecondary, 38, 2);
+  const authorName = wrapText(model.authorName, 30, 2);
+  const footerLabel = clampText(model.footerLabel, 42);
+  const pillLabel = clampText(model.resultLabel, 14);
+
+  const metricRects = metricCards
+    .map((metric, index) => {
+      const x = 80 + index * 260;
+      const tone = metricToneColors(metric.tone);
+      const fill = metric.highlight
+        ? `fill="url(#metricHighlightGradient)"`
+        : `fill="rgba(255,255,255,0.04)"`;
+      return `
+        <g transform="translate(${x},430)">
+          <rect width="240" height="142" rx="26" ${fill} stroke="${metric.highlight ? "rgba(169,255,52,0.28)" : tone.border}" />
+          <text x="24" y="34" class="eyebrow">${escapeXml(metric.label)}</text>
+          ${renderTextLines(wrapText(metric.value, 14, 2), 24, 76, 40, "metricValue")}
+          <text x="24" y="118" class="metricHint">${escapeXml(clampText(metric.hint, 24))}</text>
+        </g>
+      `;
+    })
     .join("");
 
-  const noteMarkup = noteLines
-    .map(
-      (line, index) => `
-        <text x="96" y="${914 + index * 30}" fill="#f5f8fb" font-size="20" font-weight="500">
-          ${escapeXml(line)}
-        </text>
-      `
-    )
+  const snapshotRects = snapshotCards
+    .map((snapshot, index) => {
+      const x = 650 + index * 152;
+      const ratio = Math.max(0.06, Math.min(1, snapshot.magnitudeRatio || 0));
+      const fillWidth = Math.round(104 * ratio);
+      const tone = snapshot.positive === null ? "#d6dde8" : snapshot.positive ? "#b8ff73" : "#ff8f9d";
+      return `
+        <g transform="translate(${x},654)">
+          <rect width="136" height="150" rx="24" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+          <text x="20" y="32" class="eyebrow">${escapeXml(snapshot.shortLabel)}</text>
+          <text x="20" y="68" class="snapshotPercent" fill="${tone}">${escapeXml(snapshot.percentText)}</text>
+          <text x="20" y="92" class="snapshotHint">${escapeXml(clampText(snapshot.label, 16))}</text>
+          <text x="20" y="114" class="snapshotHint">${escapeXml(clampText(snapshot.profitText, 16))}</text>
+          <rect x="20" y="126" width="104" height="8" rx="4" fill="rgba(255,255,255,0.08)" />
+          <rect x="20" y="126" width="${fillWidth}" height="8" rx="4" fill="${snapshotFill(snapshot)}" />
+        </g>
+      `;
+    })
+    .join("");
+
+  const summaryRects = summaryItems
+    .map((item, index) => {
+      const column = index % 2;
+      const row = Math.floor(index / 2);
+      const x = 650 + column * 228;
+      const y = 844 + row * 104;
+      const tone = summaryToneColor(item.tone);
+      return `
+        <g transform="translate(${x},${y})">
+          <rect width="208" height="84" rx="22" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+          <text x="20" y="28" class="eyebrow">${escapeXml(item.label)}</text>
+          <text x="20" y="54" class="summaryValue" fill="${tone}">${escapeXml(clampText(item.value, 18))}</text>
+          <text x="20" y="72" class="summaryHint">${escapeXml(clampText(item.hint, 24))}</text>
+        </g>
+      `;
+    })
     .join("");
 
   const logoMarkup = options?.logoDataUrl
-    ? `<image href="${options.logoDataUrl}" x="70" y="64" width="318" height="92" preserveAspectRatio="xMinYMin meet" />`
+    ? `
+      <rect x="82" y="80" width="64" height="64" rx="18" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" />
+      <image href="${escapeXml(options.logoDataUrl)}" x="86" y="84" width="56" height="56" preserveAspectRatio="xMidYMid slice" />
+    `
     : `
-      <text x="72" y="112" fill="#ffffff" font-size="42" font-weight="800">PHEW</text>
-      <text x="218" y="112" fill="url(#brandWord)" font-size="42" font-weight="800">.RUN</text>
+      <rect x="82" y="80" width="64" height="64" rx="18" fill="url(#brandMarkGlow)" stroke="rgba(255,255,255,0.1)" />
+      <text x="114" y="121" text-anchor="middle" class="brandMarkFallback">P</text>
     `;
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" viewBox="0 0 ${WIN_CARD_EXPORT_WIDTH} ${WIN_CARD_EXPORT_HEIGHT}" fill="none">
   <defs>
-    <linearGradient id="pageBg" x1="40" y1="40" x2="1120" y2="1240" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#071119" />
-      <stop offset="0.44" stop-color="#091521" />
-      <stop offset="1" stop-color="#04070d" />
+    <linearGradient id="frameGradient" x1="80" y1="70" x2="1100" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="rgba(169,255,52,0.28)" />
+      <stop offset="0.4" stop-color="rgba(65,232,207,0.18)" />
+      <stop offset="1" stop-color="rgba(255,255,255,0.08)" />
     </linearGradient>
-    <linearGradient id="panelFill" x1="60" y1="60" x2="1140" y2="1220" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#0b1823" />
-      <stop offset="0.58" stop-color="#08121b" />
-      <stop offset="1" stop-color="#050910" />
+    <linearGradient id="heroGradient" x1="80" y1="160" x2="1120" y2="1020" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#071019" />
+      <stop offset="0.55" stop-color="#08141f" />
+      <stop offset="1" stop-color="#050b13" />
     </linearGradient>
-    <linearGradient id="brandWord" x1="218" y1="78" x2="334" y2="78" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#a9ff34" />
-      <stop offset="0.55" stop-color="#76ff44" />
-      <stop offset="1" stop-color="#41e8cf" />
-    </linearGradient>
-    <linearGradient id="accentLine" x1="72" y1="0" x2="1128" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="${palette.accent}" />
-      <stop offset="1" stop-color="${palette.accentStrong}" />
-    </linearGradient>
-    <linearGradient id="metricHighlight" x1="72" y1="596" x2="312" y2="718" gradientUnits="userSpaceOnUse">
-      <stop stop-color="${palette.accentSoft}" />
-      <stop offset="0.62" stop-color="rgba(255,255,255,0.06)" />
+    <linearGradient id="metricHighlightGradient" x1="0" y1="0" x2="240" y2="142" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="rgba(169,255,52,0.16)" />
       <stop offset="1" stop-color="rgba(65,232,207,0.12)" />
     </linearGradient>
-    <radialGradient id="glowLeft" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(250 320) rotate(90) scale(340 380)">
-      <stop offset="0" stop-color="${palette.accentSoft}" />
-      <stop offset="0.54" stop-color="rgba(255,255,255,0.04)" />
-      <stop offset="1" stop-color="rgba(255,255,255,0)" />
+    <radialGradient id="brandMarkGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(114 112) rotate(90) scale(36)">
+      <stop offset="0" stop-color="#a9ff34" stop-opacity="0.95" />
+      <stop offset="0.65" stop-color="#41e8cf" stop-opacity="0.24" />
+      <stop offset="1" stop-color="#41e8cf" stop-opacity="0" />
     </radialGradient>
-    <radialGradient id="glowRight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(980 220) rotate(90) scale(320 340)">
-      <stop offset="0" stop-color="rgba(65,232,207,0.14)" />
-      <stop offset="1" stop-color="rgba(255,255,255,0)" />
+    <radialGradient id="heroGlowLeft" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(220 220) rotate(90) scale(360)">
+      <stop offset="0" stop-color="${accent.glow}" />
+      <stop offset="1" stop-color="rgba(0,0,0,0)" />
     </radialGradient>
+    <radialGradient id="heroGlowRight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1020 170) rotate(90) scale(300)">
+      <stop offset="0" stop-color="rgba(65,232,207,0.16)" />
+      <stop offset="1" stop-color="rgba(0,0,0,0)" />
+    </radialGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#020617" flood-opacity="0.5" />
+    </filter>
+    <style>
+      .sans { font-family: Inter, "Segoe UI", Arial, sans-serif; }
+      .eyebrow { font: 700 12px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.24em; text-transform: uppercase; fill: rgba(226,232,240,0.72); }
+      .body { font: 500 22px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.86); }
+      .brandName { font: 900 34px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.03em; }
+      .brandTag { font: 600 12px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; fill: rgba(226,232,240,0.62); }
+      .pillText { font: 800 16px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; fill: #f8fafc; }
+      .heroToken { font: 800 60px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.04em; fill: #ffffff; }
+      .heroSecondary { font: 500 24px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.72); }
+      .heroAuthor { font: 700 30px Inter, "Segoe UI", Arial, sans-serif; fill: #ffffff; }
+      .heroMeta { font: 600 14px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; fill: rgba(226,232,240,0.56); }
+      .heroResult { font: 900 96px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.06em; }
+      .heroStatusTitle { font: 700 22px Inter, "Segoe UI", Arial, sans-serif; fill: #ffffff; }
+      .heroStatusBody { font: 500 18px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.78); }
+      .metricValue { font: 800 36px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.04em; fill: #ffffff; }
+      .metricHint { font: 500 14px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.66); }
+      .snapshotPercent { font: 800 30px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.04em; }
+      .snapshotHint { font: 500 13px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.66); }
+      .summaryValue { font: 800 24px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.03em; }
+      .summaryHint { font: 500 13px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.66); }
+      .noteText { font: 500 28px Inter, "Segoe UI", Arial, sans-serif; line-height: 1.45; fill: rgba(248,250,252,0.95); }
+      .footerText { font: 600 16px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.72); }
+      .brandMarkFallback { font: 900 36px Inter, "Segoe UI", Arial, sans-serif; fill: #061018; }
+    </style>
   </defs>
 
-  <rect width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" fill="#050911" />
-  <rect width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" fill="url(#pageBg)" />
-  <rect x="0" y="0" width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" fill="url(#glowLeft)" />
-  <rect x="0" y="0" width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" fill="url(#glowRight)" />
+  <rect width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" rx="42" fill="#030712" />
+  <rect x="40" y="40" width="1120" height="1200" rx="42" fill="url(#heroGradient)" stroke="url(#frameGradient)" />
+  <rect x="40" y="40" width="1120" height="1200" rx="42" fill="url(#heroGlowLeft)" />
+  <rect x="40" y="40" width="1120" height="1200" rx="42" fill="url(#heroGlowRight)" />
 
-  <g opacity="0.055">
-    <path d="M0 104 H1200" stroke="#fff" />
-    <path d="M0 208 H1200" stroke="#fff" />
-    <path d="M0 312 H1200" stroke="#fff" />
-    <path d="M0 416 H1200" stroke="#fff" />
-    <path d="M0 520 H1200" stroke="#fff" />
-    <path d="M0 624 H1200" stroke="#fff" />
-    <path d="M0 728 H1200" stroke="#fff" />
-    <path d="M0 832 H1200" stroke="#fff" />
-    <path d="M0 936 H1200" stroke="#fff" />
-    <path d="M0 1040 H1200" stroke="#fff" />
-    <path d="M0 1144 H1200" stroke="#fff" />
-    <path d="M80 0 V1280" stroke="#fff" />
-    <path d="M200 0 V1280" stroke="#fff" />
-    <path d="M320 0 V1280" stroke="#fff" />
-    <path d="M440 0 V1280" stroke="#fff" />
-    <path d="M560 0 V1280" stroke="#fff" />
-    <path d="M680 0 V1280" stroke="#fff" />
-    <path d="M800 0 V1280" stroke="#fff" />
-    <path d="M920 0 V1280" stroke="#fff" />
-    <path d="M1040 0 V1280" stroke="#fff" />
+  <g opacity="0.08">
+    <path d="M80 236H1120" stroke="#ffffff" />
+    <path d="M80 602H1120" stroke="#ffffff" />
+    <path d="M80 1038H1120" stroke="#ffffff" />
+    <path d="M646 620V1038" stroke="#ffffff" />
   </g>
 
-  <rect x="40" y="40" width="1120" height="1200" rx="42" fill="url(#panelFill)" stroke="rgba(255,255,255,0.1)" />
-  <rect x="72" y="72" width="1056" height="6" rx="3" fill="url(#accentLine)" opacity="0.88" />
+  <g filter="url(#softShadow)">
+    ${logoMarkup}
+  </g>
+  <text x="164" y="108" class="brandName" fill="#ffffff">PHEW<tspan fill="${accent.primary}">.</tspan><tspan fill="${accent.secondary}">RUN</tspan></text>
+  <text x="166" y="130" class="brandTag">Phew Running The Internet</text>
 
-  ${logoMarkup}
+  <g transform="translate(904,80)">
+    <rect width="216" height="60" rx="30" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)" />
+    <rect x="8" y="8" width="200" height="44" rx="22" fill="${accent.soft}" />
+    <text x="108" y="39" text-anchor="middle" class="pillText">${escapeXml(pillLabel)}</text>
+  </g>
 
-  <rect x="914" y="72" width="214" height="56" rx="28" fill="${palette.accentSoft}" stroke="${palette.accentBorder}" />
-  <text x="1021" y="107" fill="${palette.text}" font-size="16" font-weight="800" text-anchor="middle" letter-spacing="2.8">
-    ${escapeXml(model.resultLabel)}
-  </text>
+  <g transform="translate(80,170)">
+    <rect width="600" height="210" rx="30" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+    <circle cx="62" cy="66" r="34" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" />
+    <text x="62" y="78" text-anchor="middle" class="heroAuthor">${escapeXml(model.authorInitial)}</text>
+    ${renderTextLines(authorName, 118, 66, 34, "heroAuthor")}
+    <text x="118" y="108" class="heroMeta">${escapeXml(model.authorMeta)}</text>
+    <rect x="118" y="126" width="184" height="34" rx="17" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" />
+    <text x="138" y="148" class="body">${escapeXml(`${model.authorLevelLabel} ${model.authorLevelText}`)}</text>
+    <text x="36" y="198" class="eyebrow">Token Call</text>
+    <text x="36" y="250" class="heroToken">${escapeXml(clampText(model.tokenPrimary, 18))}</text>
+    ${renderTextLines(tokenSecondary, 36, 286, 28, "heroSecondary")}
+  </g>
 
-  <rect x="72" y="150" width="1056" height="72" rx="28" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" />
-  ${introMarkup}
+  <g transform="translate(710,170)">
+    <rect width="410" height="210" rx="30" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+    <text x="34" y="44" class="eyebrow">${escapeXml(model.statusTitle)}</text>
+    <text x="34" y="134" class="heroResult" fill="${accent.primary}">${escapeXml(model.resultText)}</text>
+    ${renderTextLines(statusLines, 34, 168, 24, "heroStatusBody")}
+    <g transform="translate(274,34)">
+      <rect width="102" height="54" rx="18" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" />
+      <text x="18" y="23" class="eyebrow">${escapeXml(model.performanceLabel)}</text>
+      <text x="18" y="42" class="summaryValue" fill="${accent.primary}">${escapeXml(clampText(model.performanceValue, 12))}</text>
+    </g>
+    <g transform="translate(274,104)">
+      <rect width="102" height="54" rx="18" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" />
+      <text x="18" y="23" class="eyebrow">${escapeXml(model.marketMoveLabel)}</text>
+      <text x="18" y="42" class="summaryValue" fill="#ffffff">${escapeXml(clampText(model.marketMoveText, 14))}</text>
+    </g>
+  </g>
 
-  <rect x="72" y="250" width="630" height="304" rx="36" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.1)" />
-  <circle cx="136" cy="330" r="42" fill="${palette.accentSoft}" stroke="${palette.accentBorder}" />
-  <text x="136" y="345" fill="${palette.text}" font-size="34" font-weight="800" text-anchor="middle">
-    ${escapeXml(model.authorInitial)}
-  </text>
-  <text x="198" y="312" fill="${palette.text}" font-size="18" font-weight="600" letter-spacing="2">
-    ${escapeXml(model.authorMeta.toUpperCase())}
-  </text>
-  <text x="198" y="368" fill="${palette.valueSoft}" font-size="58" font-weight="800">
-    ${escapeXml(model.tokenPrimary)}
-  </text>
-  <text x="198" y="404" fill="rgba(236,242,248,0.72)" font-size="22" font-weight="500">
-    ${escapeXml(model.tokenSecondary)}
-  </text>
-  <text x="198" y="444" fill="${palette.text}" font-size="28" font-weight="700">
-    ${escapeXml(model.authorName)}
-  </text>
-  <rect x="198" y="470" width="214" height="42" rx="21" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.08)" />
-  <text x="305" y="497" fill="${palette.value}" font-size="16" font-weight="700" text-anchor="middle">
-    ${escapeXml(`${model.authorLevelLabel} / ${model.authorLevelText}`)}
-  </text>
+  <g transform="translate(80,612)">
+    <rect width="540" height="364" rx="30" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+    <text x="34" y="42" class="eyebrow">Alpha Notes</text>
+    ${renderTextLines(noteLines, 34, 94, 38, "noteText")}
+    <rect x="34" y="300" width="472" height="38" rx="19" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" />
+    ${renderTextLines(introLines, 52, 324, 20, "footerText")}
+  </g>
 
-  <rect x="726" y="250" width="402" height="304" rx="36" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.1)" />
-  <text x="756" y="298" fill="rgba(236,242,248,0.66)" font-size="14" font-weight="700" letter-spacing="2.4">
-    ${escapeXml(model.statusTitle.toUpperCase())}
-  </text>
-  <text x="756" y="398" fill="${palette.value}" font-size="92" font-weight="800">
-    ${escapeXml(model.resultText)}
-  </text>
-  <text x="756" y="434" fill="rgba(236,242,248,0.74)" font-size="24" font-weight="500">
-    ${escapeXml(model.statusDetail)}
-  </text>
+  <g transform="translate(650,612)">
+    <rect width="470" height="220" rx="30" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+    <text x="28" y="42" class="eyebrow">Snapshot Ladder</text>
+    ${snapshotRects}
+  </g>
 
-  <rect x="756" y="462" width="160" height="62" rx="22" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" />
-  <text x="776" y="488" fill="rgba(236,242,248,0.54)" font-size="11" font-weight="700" letter-spacing="1.8">
-    ${escapeXml(model.performanceLabel.toUpperCase())}
-  </text>
-  <text x="776" y="514" fill="${palette.value}" font-size="24" font-weight="700">
-    ${escapeXml(model.performanceValue)}
-  </text>
+  <g transform="translate(650,844)">
+    <rect width="470" height="184" rx="30" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+    <text x="28" y="42" class="eyebrow">Trade Summary</text>
+    ${summaryRects}
+  </g>
 
-  <rect x="936" y="462" width="162" height="62" rx="22" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" />
-  <text x="956" y="488" fill="rgba(236,242,248,0.54)" font-size="11" font-weight="700" letter-spacing="1.8">
-    ${escapeXml(model.marketMoveLabel.toUpperCase())}
-  </text>
-  <text x="956" y="514" fill="${palette.value}" font-size="24" font-weight="700">
-    ${escapeXml(model.marketMoveText)}
-  </text>
+  ${metricRects}
 
-  ${metricCards.join("")}
-
-  <rect x="72" y="792" width="548" height="324" rx="34" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.09)" />
-  <text x="96" y="836" fill="rgba(236,242,248,0.62)" font-size="13" font-weight="700" letter-spacing="2.2">
-    ALPHA NOTES
-  </text>
-  ${noteMarkup}
-  <text x="96" y="1082" fill="rgba(236,242,248,0.52)" font-size="14" font-weight="600">
-    ${escapeXml(model.postIdText)}
-  </text>
-
-  <rect x="650" y="792" width="228" height="324" rx="34" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.09)" />
-  <text x="674" y="836" fill="rgba(236,242,248,0.62)" font-size="13" font-weight="700" letter-spacing="2.2">
-    SNAPSHOT LADDER
-  </text>
-  ${snapshotCards.join("")}
-
-  <rect x="906" y="792" width="222" height="324" rx="34" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.09)" />
-  <text x="926" y="836" fill="rgba(236,242,248,0.62)" font-size="13" font-weight="700" letter-spacing="2.2">
-    MARKET READOUT
-  </text>
-  ${summaryRows.join("")}
-
-  <rect x="72" y="1142" width="1056" height="66" rx="28" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.08)" />
-  <text x="96" y="1183" fill="rgba(236,242,248,0.74)" font-size="16" font-weight="600">
-    Generated on PHEW.RUN
-  </text>
-  <text x="1104" y="1183" fill="rgba(236,242,248,0.74)" font-size="16" font-weight="600" text-anchor="end">
-    ${escapeXml(model.footerLabel)}
-  </text>
-</svg>
-  `.trim();
+  <g transform="translate(80,1080)">
+    <rect width="1040" height="104" rx="28" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" />
+    <text x="34" y="48" class="eyebrow">Reference</text>
+    <text x="34" y="76" class="footerText">${escapeXml(footerLabel)}</text>
+    <text x="760" y="48" class="eyebrow">Post</text>
+    <text x="760" y="76" class="footerText">${escapeXml(model.postIdText)}</text>
+  </g>
+</svg>`.trim();
 }
 
-export async function renderSvgToPngBlob(svg: string) {
-  const image = new Image();
-  image.decoding = "sync";
-
-  const svgBlob = new Blob([svg], {
-    type: "image/svg+xml;charset=utf-8",
-  });
-  const svgUrl = URL.createObjectURL(svgBlob);
+export async function renderSvgToPngBlob(svg: string): Promise<Blob> {
+  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const objectUrl = URL.createObjectURL(svgBlob);
 
   try {
-    await new Promise<void>((resolve, reject) => {
+    const image = new Image();
+    const loaded = new Promise<void>((resolve, reject) => {
       image.onload = () => resolve();
-      image.onerror = () => reject(new Error("Failed to load win card image"));
-      image.src = svgUrl;
+      image.onerror = () => reject(new Error("Failed to load share card SVG"));
     });
+    image.decoding = "async";
+    image.src = objectUrl;
+    await loaded;
 
     const canvas = document.createElement("canvas");
     canvas.width = WIN_CARD_EXPORT_WIDTH;
     canvas.height = WIN_CARD_EXPORT_HEIGHT;
-
     const context = canvas.getContext("2d");
     if (!context) {
-      throw new Error("Failed to create win card canvas");
+      throw new Error("Canvas context unavailable");
     }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    context.drawImage(image, 0, 0, WIN_CARD_EXPORT_WIDTH, WIN_CARD_EXPORT_HEIGHT);
-
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject(new Error("Failed to render win card PNG"));
-          return;
-        }
-        resolve(blob);
-      }, "image/png");
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/png", 1);
     });
+    if (!blob) {
+      throw new Error("Failed to encode PNG");
+    }
+    return blob;
   } finally {
-    URL.revokeObjectURL(svgUrl);
+    URL.revokeObjectURL(objectUrl);
   }
 }
