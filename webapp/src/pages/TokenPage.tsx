@@ -366,7 +366,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v5:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v6:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -632,6 +632,9 @@ export default function TokenPage() {
   }, [hasConsumedTradeDeepLink, primaryTradeCall, shouldAutoOpenTradePanel]);
 
   const showTokenLoading = !token && isLoading;
+  const topHolders = token?.topHolders.length
+    ? token.topHolders
+    : (token?.risk.topHolders ?? []);
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
         emptyLabel: isFetching ? "Scanning" : "Unavailable",
@@ -1060,12 +1063,12 @@ export default function TokenPage() {
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 20 holders</div>
                       <div className="text-[11px] text-muted-foreground">
-                        {token.topHolders.length > 0 ? `${Math.min(token.topHolders.length, 20)} wallets` : "Live scan"}
+                        {topHolders.length > 0 ? `${Math.min(topHolders.length, 20)} wallets` : "Live scan"}
                       </div>
                     </div>
                     <div className="mt-3 space-y-2">
-                      {token.topHolders.length > 0 ? (
-                        token.topHolders.slice(0, 20).map((holder, index) => (
+                      {topHolders.length > 0 ? (
+                        topHolders.slice(0, 20).map((holder, index) => (
                           <div
                             key={holder.address}
                             className="flex items-center justify-between gap-3 rounded-[16px] border border-border/60 bg-secondary px-3 py-2 text-sm"

@@ -51,6 +51,8 @@ const FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:first-c
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_500 : 2_250;
+const TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS =
+  process.env.NODE_ENV === "production" ? 12_000 : 15_000;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
 const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
@@ -848,10 +850,14 @@ function logTokenOverviewSectionFallback(label: string, error: unknown): void {
 async function resolveTokenOverviewSection<T>(
   label: string,
   loader: () => Promise<T>,
-  fallback: T
+  fallback: T,
+  options?: { timeoutMs?: number }
 ): Promise<T> {
   try {
-    const result = await withSoftTimeout(loader(), TOKEN_OVERVIEW_SECTION_TIMEOUT_MS);
+    const result = await withSoftTimeout(
+      loader(),
+      options?.timeoutMs ?? TOKEN_OVERVIEW_SECTION_TIMEOUT_MS
+    );
     if (result === null) {
       logTokenOverviewSectionFallback(label, new Error("timed_out"));
       return cloneCachedValue(fallback);
@@ -3062,7 +3068,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         ? resolveTokenOverviewSection(
             "distribution_query",
             () => analyzeSolanaTokenDistribution(currentToken.address, currentToken.liquidity),
-            null
+            null,
+            { timeoutMs: TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS }
           )
         : Promise.resolve(null),
     ]);
@@ -3134,21 +3141,44 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         staleToken?.marketCap
       )
     );
+    const staleTopHolders =
+      staleToken?.topHolders && staleToken.topHolders.length > 0
+        ? cloneCachedValue(staleToken.topHolders)
+        : [];
+    const hasFreshDistributionTelemetry = Boolean(distributionFallback);
+    const canTrustStoredSolanaHolderTelemetry =
+      currentToken.chainType !== "solana" || staleTopHolders.length > 0;
     const resolvedHolderCount = Math.round(
-      pickFirstPositiveMetric(currentToken.holderCount, distributionFallback?.holderCount, staleToken?.holderCount) ?? 0
+      pickFirstPositiveMetric(
+        distributionFallback?.holderCount,
+        canTrustStoredSolanaHolderTelemetry ? currentToken.holderCount : null,
+        canTrustStoredSolanaHolderTelemetry ? staleToken?.holderCount : null
+      ) ?? 0
     ) || null;
     const resolvedHolderCountSource =
       distributionFallback?.holderCountSource ??
-      staleToken?.holderCountSource ??
-      (resolvedHolderCount !== null ? "stored" : null);
+      (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null) ??
+      (currentToken.chainType !== "solana" && resolvedHolderCount !== null ? "stored" : null);
     const resolvedLargestHolderPct = roundMetric(
-      pickFirstFiniteMetric(currentToken.largestHolderPct, distributionFallback?.largestHolderPct, staleToken?.largestHolderPct)
+      pickFirstFiniteMetric(
+        distributionFallback?.largestHolderPct,
+        currentToken.largestHolderPct,
+        staleToken?.largestHolderPct
+      )
     );
     const resolvedTop10HolderPct = roundMetric(
-      pickFirstFiniteMetric(currentToken.top10HolderPct, distributionFallback?.top10HolderPct, staleToken?.top10HolderPct)
+      pickFirstFiniteMetric(
+        distributionFallback?.top10HolderPct,
+        currentToken.top10HolderPct,
+        staleToken?.top10HolderPct
+      )
     );
     const resolvedDeployerSupplyPct = roundMetric(
-      pickFirstFiniteMetric(currentToken.deployerSupplyPct, distributionFallback?.deployerSupplyPct, staleToken?.deployerSupplyPct)
+      pickFirstFiniteMetric(
+        distributionFallback?.deployerSupplyPct,
+        currentToken.deployerSupplyPct,
+        staleToken?.deployerSupplyPct
+      )
     );
     const resolvedBundledWalletCount =
       distributionFallback?.bundledWalletCount ??
@@ -3157,23 +3187,29 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       null;
     const resolvedEstimatedBundledSupplyPct = roundMetric(
       pickFirstFiniteMetric(
-        currentToken.estimatedBundledSupplyPct,
         distributionFallback?.estimatedBundledSupplyPct,
+        currentToken.estimatedBundledSupplyPct,
         staleToken?.estimatedBundledSupplyPct
       )
     );
     const resolvedTokenRiskScore = roundMetric(
-      pickFirstFiniteMetric(currentToken.tokenRiskScore, distributionFallback?.tokenRiskScore, staleToken?.tokenRiskScore)
+      pickFirstFiniteMetric(
+        distributionFallback?.tokenRiskScore,
+        currentToken.tokenRiskScore,
+        staleToken?.tokenRiskScore
+      )
     );
     const resolvedBundleRiskLabel =
-      currentToken.bundleRiskLabel ??
       distributionFallback?.bundleRiskLabel ??
+      currentToken.bundleRiskLabel ??
       staleToken?.bundleRiskLabel ??
       (resolvedTokenRiskScore !== null ? determineBundleRiskLabel(resolvedTokenRiskScore) : null);
     const resolvedTopHolders =
-      distributionFallback?.topHolders && distributionFallback.topHolders.length > 0
+      hasFreshDistributionTelemetry &&
+      distributionFallback?.topHolders &&
+      distributionFallback.topHolders.length > 0
         ? cloneCachedValue(distributionFallback.topHolders)
-        : cloneCachedValue(staleToken?.topHolders ?? []);
+        : staleTopHolders;
     const resolvedConfidenceScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.confidenceScore,

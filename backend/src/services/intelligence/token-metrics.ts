@@ -116,6 +116,7 @@ type RpcProgramAccountResult = Array<unknown>;
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
+const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_500 : 4_000;
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
   process.env.HELIUS_RPC_ENDPOINT?.trim() || null,
@@ -433,7 +434,7 @@ export async function analyzeSolanaTokenDistribution(
         ],
         dataSlice: { offset: 0, length: 0 },
       },
-    ], { timeoutMs: 11_000 }),
+    ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
     fetchBirdeyeHolderCount(mintAddress),
   ]);
 

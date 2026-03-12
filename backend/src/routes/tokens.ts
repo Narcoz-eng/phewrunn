@@ -19,6 +19,7 @@ type TokenRouteCacheEntry<T> = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
+const TOKEN_ROUTE_CACHE_VERSION = 2;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 
 const TokenAddressParamSchema = z.object({
@@ -26,7 +27,7 @@ const TokenAddressParamSchema = z.object({
 });
 
 function buildTokenRouteCacheKey(tokenAddress: string, viewerId: string | null): string {
-  return `route:token:${viewerId ?? "anonymous"}:${tokenAddress.trim().toLowerCase()}`;
+  return `route:token:v${TOKEN_ROUTE_CACHE_VERSION}:${viewerId ?? "anonymous"}:${tokenAddress.trim().toLowerCase()}`;
 }
 
 function shouldUseTokenRouteCache(viewerId: string | null | undefined): boolean {
@@ -77,6 +78,13 @@ function invalidateTokenRouteCache(tokenAddress: string): void {
 }
 
 function isMeaningfulTokenRoutePayload(token: TokenRoutePayload): boolean {
+  const hasHolderTelemetry =
+    token.chainType !== "solana" ||
+    token.topHolders.length > 0 ||
+    (token.holderCountSource !== "stored" &&
+      typeof token.holderCount === "number" &&
+      Number.isFinite(token.holderCount) &&
+      token.holderCount > 0);
   const hasSignals = [
     token.confidenceScore,
     token.hotAlphaScore,
@@ -92,7 +100,10 @@ function isMeaningfulTokenRoutePayload(token: TokenRoutePayload): boolean {
     )
   );
 
-  return hasSignals || hasMarketData || hasChart || token.recentCalls.length > 0 || token.timeline.length > 0;
+  return (
+    hasHolderTelemetry &&
+    (hasSignals || hasMarketData || hasChart || token.recentCalls.length > 0 || token.timeline.length > 0)
+  );
 }
 
 function buildTokenRouteHeaders(isPersonalized: boolean): Record<string, string> {
