@@ -713,14 +713,18 @@ async function readPostPriceCache(
   const nowMs = Date.now();
   const cached = postPriceResponseCache.get(postId);
   if (cached) {
-    if (cached.expiresAtMs > nowMs) {
-      return cached.data;
-    }
-    if (opts?.allowStale && cached.staleUntilMs > nowMs) {
-      return cached.data;
-    }
-    if (cached.staleUntilMs <= nowMs) {
+    if (!opts?.allowStale && hasSuspiciousSettledBaselineCurrentMcap(cached.data)) {
       postPriceResponseCache.delete(postId);
+    } else {
+      if (cached.expiresAtMs > nowMs) {
+        return cached.data;
+      }
+      if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+        return cached.data;
+      }
+      if (cached.staleUntilMs <= nowMs) {
+        postPriceResponseCache.delete(postId);
+      }
     }
   }
 
@@ -728,6 +732,9 @@ async function readPostPriceCache(
   const redisEnvelope = normalizePostPriceCacheEnvelope(redisRaw);
   const redisCached = redisEnvelope?.data ?? normalizePostPricePayload(redisRaw);
   if (!redisCached) {
+    return null;
+  }
+  if (!opts?.allowStale && hasSuspiciousSettledBaselineCurrentMcap(redisCached)) {
     return null;
   }
   if (
@@ -6722,6 +6729,20 @@ type PriceRoutePostRecord = {
   trackingMode?: string | null;
 };
 
+function hasSuspiciousSettledBaselineCurrentMcap(
+  payload: Pick<PriceRoutePostRecord, "entryMcap" | "currentMcap" | "mcap1h" | "mcap6h" | "settled"> |
+    Pick<PostPriceResponsePayload, "entryMcap" | "currentMcap" | "mcap1h" | "mcap6h" | "settled">
+): boolean {
+  if (!payload.settled) return false;
+  if (payload.entryMcap === null || payload.currentMcap === null) return false;
+  if (payload.currentMcap !== payload.entryMcap) return false;
+
+  return (
+    (payload.mcap1h !== null && payload.mcap1h !== payload.entryMcap) ||
+    (payload.mcap6h !== null && payload.mcap6h !== payload.entryMcap)
+  );
+}
+
 function isPinnedToEntryBaseline(post: Pick<
   PriceRoutePostRecord,
   "createdAt" | "settled" | "entryMcap" | "currentMcap" | "lastMcapUpdate"
@@ -6761,6 +6782,7 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   const shouldRefresh =
     needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled) ||
     isPinnedToEntryBaseline(post) ||
+    hasSuspiciousSettledBaselineCurrentMcap(post) ||
     looksPinnedToSnapshot;
 
   if (shouldRefresh) {

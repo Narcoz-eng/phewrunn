@@ -721,6 +721,23 @@ function getSnapshotDynamicStateVersion(
   );
 }
 
+function hasSuspiciousSettledBaselineCurrentMcap(payload: {
+  entryMcap: number | null;
+  currentMcap: number | null;
+  mcap1h: number | null;
+  mcap6h: number | null;
+  settled: boolean;
+}): boolean {
+  if (!payload.settled) return false;
+  if (payload.entryMcap === null || payload.currentMcap === null) return false;
+  if (payload.currentMcap !== payload.entryMcap) return false;
+
+  return (
+    (payload.mcap1h !== null && payload.mcap1h !== payload.entryMcap) ||
+    (payload.mcap6h !== null && payload.mcap6h !== payload.entryMcap)
+  );
+}
+
 function resolveSnapshotCurrentMcap(
   existingCurrentMcap: number | null,
   entryMcap: number | null,
@@ -1376,6 +1393,22 @@ export function PostCard({
   const [localMcap6h, setLocalMcap6h] = useState(post.mcap6h);
   const [localIsWin, setLocalIsWin] = useState(post.isWin);
   const latestMarketStateVersionRef = useRef<number>(getPostDynamicStateVersion(post));
+  const isPinnedBaselineCurrentMcap =
+    !localSettled &&
+    post.entryMcap !== null &&
+    currentMcap !== null &&
+    currentMcap === post.entryMcap;
+  const hasSuspiciousSettledCurrentMcap = hasSuspiciousSettledBaselineCurrentMcap({
+    entryMcap: post.entryMcap,
+    currentMcap,
+    mcap1h: localMcap1h,
+    mcap6h: localMcap6h,
+    settled: localSettled,
+  });
+  const needsPriorityLiveRefresh =
+    post.currentMcap == null ||
+    isPinnedBaselineCurrentMcap ||
+    hasSuspiciousSettledCurrentMcap;
 
   // Sync state when post prop changes
   useEffect(() => {
@@ -1435,7 +1468,15 @@ export function PostCard({
         return;
       }
       try {
-        const data = await getPostPriceSnapshotBatched(post.id);
+        let data: BatchedPostPriceSnapshot | null = null;
+        if (hasSuspiciousSettledCurrentMcap) {
+          data = await api.get<BatchedPostPriceSnapshot>(`/api/posts/${post.id}/price`, {
+            cache: "no-store",
+          });
+        }
+        if (!data) {
+          data = await getPostPriceSnapshotBatched(post.id);
+        }
         if (!data) return;
 
         syncRealtimeSnapshotToCachedPosts(queryClient, post.id, data);
@@ -1492,9 +1533,15 @@ export function PostCard({
     const postAgeMs = Date.now() - new Date(post.createdAt).getTime();
     const waitingForSixHourSnapshot =
       localSettled && localMcap6h === null && postAgeMs >= 6 * 60 * 60 * 1000;
-    const baseInterval = waitingForSixHourSnapshot ? 45_000 : localSettled ? 5 * 60 * 1000 : 30_000;
+    const baseInterval = waitingForSixHourSnapshot
+      ? 45_000
+      : needsPriorityLiveRefresh
+        ? 12_000
+        : localSettled
+          ? 5 * 60 * 1000
+          : 30_000;
     const initialDelay =
-      post.currentMcap == null
+      needsPriorityLiveRefresh
         ? 0
         : Math.min(10_000, Math.floor(Math.random() * 4_000) + 1_000);
 
@@ -1515,6 +1562,8 @@ export function PostCard({
     localSettled,
     localMcap1h,
     localMcap6h,
+    hasSuspiciousSettledCurrentMcap,
+    needsPriorityLiveRefresh,
     isInViewport,
     queryClient,
   ]);
