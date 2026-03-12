@@ -3759,7 +3759,9 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
       const contractAddress = post.contractAddress;
       if (!contractAddress) continue;
 
-      const shouldUpdateMcap = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+      const shouldUpdateMcap =
+        needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled) ||
+        isPinnedToEntryBaseline(post);
       const needsTokenMetadata = !post.tokenName || !post.tokenSymbol || !post.tokenImage;
       if (!shouldUpdateMcap && !needsTokenMetadata) continue;
 
@@ -3852,7 +3854,9 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
 
       for (const post of posts) {
         try {
-          const shouldUpdateMcap = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+          const shouldUpdateMcap =
+            needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled) ||
+            isPinnedToEntryBaseline(post);
           const trackingMode = determineTrackingMode(post.createdAt);
           const updateData: {
             entryMcap?: number;
@@ -6718,6 +6722,19 @@ type PriceRoutePostRecord = {
   trackingMode?: string | null;
 };
 
+function isPinnedToEntryBaseline(post: Pick<
+  PriceRoutePostRecord,
+  "createdAt" | "settled" | "entryMcap" | "currentMcap" | "lastMcapUpdate"
+>): boolean {
+  if (post.settled) return false;
+  if (determineTrackingMode(post.createdAt) !== TRACKING_MODE_ACTIVE) return false;
+  if (post.entryMcap === null || post.currentMcap === null) return false;
+  if (post.currentMcap !== post.entryMcap) return false;
+
+  const lastUpdateAgeMs = post.lastMcapUpdate ? Date.now() - post.lastMcapUpdate.getTime() : Number.POSITIVE_INFINITY;
+  return lastUpdateAgeMs >= 5_000;
+}
+
 async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   // If no contract address, return current values
   if (!post.contractAddress) {
@@ -6743,6 +6760,7 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     );
   const shouldRefresh =
     needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled) ||
+    isPinnedToEntryBaseline(post) ||
     looksPinnedToSnapshot;
 
   if (shouldRefresh) {
