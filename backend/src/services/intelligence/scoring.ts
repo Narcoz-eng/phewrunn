@@ -24,7 +24,12 @@ export type ConfidenceInputs = {
   mcapGrowthPct?: number | null;
   momentumPct: number | null;
   trustedTraderCount: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
   top10HolderPct: number | null;
+  deployerSupplyPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
   tokenRiskScore: number | null;
   marketBreadthScore?: number | null;
   roiCurrentPct?: number | null;
@@ -39,6 +44,12 @@ export type HotAlphaInputs = {
   liquidityUsd: number | null;
   sentimentScore: number | null;
   momentumPct: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  deployerSupplyPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
   tokenRiskScore: number | null;
 };
 
@@ -49,6 +60,12 @@ export type EarlyRunnerInputs = {
   holderGrowth1hPct: number | null;
   momentumPct: number | null;
   sentimentScore: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  deployerSupplyPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
   tokenRiskScore: number | null;
 };
 
@@ -59,11 +76,21 @@ export type HighConvictionInputs = {
   liquidityUsd: number | null;
   sentimentScore: number | null;
   trustedTraderCount: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  deployerSupplyPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
   tokenRiskScore: number | null;
 };
 
 function finite(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function hasFiniteMetric(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 export function clampScore(value: number): number {
@@ -83,6 +110,18 @@ export function logScore(value: number | null | undefined, pivot: number): numbe
   const normalizedValue = Math.max(0, finite(value));
   if (pivot <= 0) return 0;
   return clampScore((Math.log1p(normalizedValue) / Math.log1p(pivot)) * 100);
+}
+
+function neutralPct(value: number | null | undefined, max: number, neutral = 50): number {
+  return hasFiniteMetric(value) ? pct(value, max) : neutral;
+}
+
+function neutralInversePct(value: number | null | undefined, max: number, neutral = 50): number {
+  return hasFiniteMetric(value) ? inversePct(value, max) : neutral;
+}
+
+function neutralLogScore(value: number | null | undefined, pivot: number, neutral = 50): number {
+  return hasFiniteMetric(value) ? logScore(value, pivot) : neutral;
 }
 
 export function buildReactionCounts(types: Array<string | null | undefined>): ReactionCounts {
@@ -148,6 +187,44 @@ export function computeTokenRiskScore(inputs: TokenRiskInputs): number {
     0.15 * top10HolderRisk +
     0.10 * deployerRisk +
     0.10 * concentrationRisk
+  );
+}
+
+export function computeHolderBreadthScore(args: {
+  holderCount: number | null | undefined;
+  largestHolderPct?: number | null | undefined;
+  top10HolderPct?: number | null | undefined;
+}): number {
+  const holderCountScore = neutralLogScore(args.holderCount, 2_500, 45);
+  const largestHolderHealth = neutralInversePct(args.largestHolderPct, 20, 50);
+  const top10Health = neutralInversePct(args.top10HolderPct, 75, 50);
+
+  return clampScore(
+    0.58 * holderCountScore +
+      0.18 * largestHolderHealth +
+      0.24 * top10Health
+  );
+}
+
+export function computeOnchainStructureHealthScore(args: {
+  largestHolderPct?: number | null | undefined;
+  top10HolderPct?: number | null | undefined;
+  deployerSupplyPct?: number | null | undefined;
+  bundledWalletCount?: number | null | undefined;
+  estimatedBundledSupplyPct?: number | null | undefined;
+}): number {
+  const largestHolderHealth = neutralInversePct(args.largestHolderPct, 20, 50);
+  const top10Health = neutralInversePct(args.top10HolderPct, 75, 50);
+  const deployerHealth = neutralInversePct(args.deployerSupplyPct, 15, 50);
+  const bundledWalletHealth = neutralInversePct(args.bundledWalletCount, 10, 50);
+  const bundledSupplyHealth = neutralInversePct(args.estimatedBundledSupplyPct, 40, 50);
+
+  return clampScore(
+    0.24 * largestHolderHealth +
+      0.24 * top10Health +
+      0.18 * deployerHealth +
+      0.12 * bundledWalletHealth +
+      0.22 * bundledSupplyHealth
   );
 }
 
@@ -301,20 +378,32 @@ export function computeConfidenceScore(inputs: ConfidenceInputs): number {
     momentumPct: inputs.momentumPct,
   });
   const confirmationScore = pct(inputs.trustedTraderCount, 5);
-  const holderHealthScore = inversePct(inputs.top10HolderPct, 70);
+  const holderBreadthScore = computeHolderBreadthScore({
+    holderCount: inputs.holderCount,
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+  });
+  const onchainStructureHealthScore = computeOnchainStructureHealthScore({
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+    deployerSupplyPct: inputs.deployerSupplyPct,
+    bundledWalletCount: inputs.bundledWalletCount,
+    estimatedBundledSupplyPct: inputs.estimatedBundledSupplyPct,
+  });
   const marketBreadthScore = clampScore(finite(inputs.marketBreadthScore, 50));
 
   const confidenceScoreRaw =
     0.15 * traderTrustScore +
     0.10 * traderWinRateScore +
     0.07 * traderRoiScore +
-    0.13 * entryQualityScore +
-    0.09 * liquidityScore +
-    0.10 * volumeGrowthScore +
-    0.16 * accelerationScore +
-    0.07 * confirmationScore +
-    0.07 * holderHealthScore +
-    0.06 * marketBreadthScore;
+    0.12 * entryQualityScore +
+    0.08 * liquidityScore +
+    0.09 * volumeGrowthScore +
+    0.15 * accelerationScore +
+    0.06 * confirmationScore +
+    0.05 * holderBreadthScore +
+    0.08 * onchainStructureHealthScore +
+    0.05 * marketBreadthScore;
 
   return applyConfidenceGuardrails({
     baseScore: confidenceScoreRaw,
@@ -333,16 +422,30 @@ export function computeHotAlphaScore(inputs: HotAlphaInputs): number {
   const liquidityScore = logScore(inputs.liquidityUsd, 250_000);
   const sentimentScore = clampScore(finite(inputs.sentimentScore));
   const momentumScore = pct(inputs.momentumPct, 120);
+  const holderBreadthScore = computeHolderBreadthScore({
+    holderCount: inputs.holderCount,
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+  });
+  const onchainStructureHealthScore = computeOnchainStructureHealthScore({
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+    deployerSupplyPct: inputs.deployerSupplyPct,
+    bundledWalletCount: inputs.bundledWalletCount,
+    estimatedBundledSupplyPct: inputs.estimatedBundledSupplyPct,
+  });
   const bundlePenalty = pct(inputs.tokenRiskScore, 100);
 
   const raw =
-    0.22 * confidenceScore +
-    0.18 * engagementVelocityScore +
+    0.20 * confidenceScore +
+    0.16 * engagementVelocityScore +
     0.14 * earlyGainsScore +
-    0.10 * traderTrustScore +
-    0.12 * liquidityScore +
-    0.10 * sentimentScore +
-    0.14 * momentumScore;
+    0.09 * traderTrustScore +
+    0.10 * liquidityScore +
+    0.08 * sentimentScore +
+    0.11 * momentumScore +
+    0.06 * holderBreadthScore +
+    0.06 * onchainStructureHealthScore;
 
   return clampScore(raw - (0.18 * bundlePenalty));
 }
@@ -354,16 +457,30 @@ export function computeEarlyRunnerScore(inputs: EarlyRunnerInputs): number {
   const holderGrowthScore = pct(inputs.holderGrowth1hPct, 80);
   const momentumScore = pct(inputs.momentumPct, 100);
   const sentimentScore = clampScore(finite(inputs.sentimentScore));
+  const holderBreadthScore = computeHolderBreadthScore({
+    holderCount: inputs.holderCount,
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+  });
+  const onchainStructureHealthScore = computeOnchainStructureHealthScore({
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+    deployerSupplyPct: inputs.deployerSupplyPct,
+    bundledWalletCount: inputs.bundledWalletCount,
+    estimatedBundledSupplyPct: inputs.estimatedBundledSupplyPct,
+  });
   const riskGate = inversePct(inputs.tokenRiskScore, 100);
 
   return clampScore(
-    0.22 * trustedTraderClusterScore +
-    0.18 * liquidityRiseScore +
-    0.22 * volumeSpikeScore +
-    0.14 * holderGrowthScore +
-    0.12 * momentumScore +
-    0.07 * sentimentScore +
-    0.05 * riskGate
+    0.20 * trustedTraderClusterScore +
+    0.16 * liquidityRiseScore +
+    0.20 * volumeSpikeScore +
+    0.12 * holderGrowthScore +
+    0.10 * momentumScore +
+    0.06 * sentimentScore +
+    0.04 * riskGate +
+    0.07 * holderBreadthScore +
+    0.05 * onchainStructureHealthScore
   );
 }
 
@@ -374,16 +491,30 @@ export function computeHighConvictionScore(inputs: HighConvictionInputs): number
   const liquidityScore = logScore(inputs.liquidityUsd, 250_000);
   const sentimentScore = clampScore(finite(inputs.sentimentScore));
   const confirmationScore = pct(inputs.trustedTraderCount, 5);
+  const holderBreadthScore = computeHolderBreadthScore({
+    holderCount: inputs.holderCount,
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+  });
+  const onchainStructureHealthScore = computeOnchainStructureHealthScore({
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+    deployerSupplyPct: inputs.deployerSupplyPct,
+    bundledWalletCount: inputs.bundledWalletCount,
+    estimatedBundledSupplyPct: inputs.estimatedBundledSupplyPct,
+  });
   const healthScore = inversePct(inputs.tokenRiskScore, 100);
 
   return clampScore(
-    0.32 * confidenceScore +
-    0.18 * traderTrustScore +
-    0.10 * entryQualityScore +
-    0.12 * liquidityScore +
+    0.28 * confidenceScore +
+    0.16 * traderTrustScore +
+    0.09 * entryQualityScore +
+    0.10 * liquidityScore +
     0.08 * sentimentScore +
-    0.10 * confirmationScore +
-    0.10 * healthScore
+    0.08 * confirmationScore +
+    0.09 * healthScore +
+    0.05 * holderBreadthScore +
+    0.07 * onchainStructureHealthScore
   );
 }
 

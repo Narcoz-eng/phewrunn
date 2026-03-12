@@ -49,7 +49,7 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 7;
+const TOKEN_ROUTE_CACHE_VERSION = 8;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const TOKEN_LIVE_SELECT = {
   id: true,
@@ -195,6 +195,27 @@ function hasResolvedHolderCount(
   return isFiniteNumber(value) && value > 0 && source !== "largest_accounts" && source !== null;
 }
 
+function looksLikeLowerBoundStoredHolderCount(args: {
+  chainType: string;
+  storedHolderCount: number | null | undefined;
+  observedTopHolderCount: number;
+  liveHolderCountSource: TokenRoutePayload["holderCountSource"] | TokenLivePayload["holderCountSource"];
+}): boolean {
+  if (args.chainType !== "solana" || !isFiniteNumber(args.storedHolderCount) || args.storedHolderCount <= 0) {
+    return false;
+  }
+  if (args.liveHolderCountSource !== "largest_accounts" && args.liveHolderCountSource !== null) {
+    return false;
+  }
+
+  const normalizedStoredCount = Math.round(args.storedHolderCount);
+  if (args.observedTopHolderCount >= 20) {
+    return normalizedStoredCount <= args.observedTopHolderCount;
+  }
+
+  return args.observedTopHolderCount >= 10 && normalizedStoredCount <= 20;
+}
+
 function pickFirstPositiveMetric(...values: Array<number | null | undefined>): number | null {
   for (const value of values) {
     if (isFiniteNumber(value) && value > 0) {
@@ -255,10 +276,12 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
   const observedTopHolderCount = distributionSnapshot?.topHolders.length ?? 0;
   const rawStoredHolderCount = roundCount(pickFirstPositiveMetric(token.holderCount));
   const storedHolderCount =
-    token.chainType === "solana" &&
-    observedTopHolderCount >= 20 &&
-    isFiniteNumber(rawStoredHolderCount) &&
-    rawStoredHolderCount <= observedTopHolderCount
+    looksLikeLowerBoundStoredHolderCount({
+      chainType: token.chainType,
+      storedHolderCount: rawStoredHolderCount,
+      observedTopHolderCount,
+      liveHolderCountSource: distributionHolderCountSource,
+    })
       ? null
       : rawStoredHolderCount;
   const holderCount =

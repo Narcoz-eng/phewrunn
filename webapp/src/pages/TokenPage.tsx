@@ -91,6 +91,7 @@ type TokenHolder = {
     "fresh_wallet" |
     "high_volume_trader" |
     "whale" |
+    "ultra_degen" |
     "serial_deployer" |
     "serial_rugger"
   >;
@@ -291,6 +292,12 @@ function getHolderBadgeMeta(badge: TokenHolder["badges"][number]): HolderBadgeMe
         emoji: "🐋",
         className: "border-indigo-300/50 bg-indigo-100/80 text-indigo-800 dark:border-indigo-400/35 dark:bg-indigo-500/10 dark:text-indigo-200",
       };
+    case "ultra_degen":
+      return {
+        label: "Ultra degen",
+        emoji: "🧨",
+        className: "border-fuchsia-300/55 bg-fuchsia-100/85 text-fuchsia-800 dark:border-fuchsia-400/35 dark:bg-fuchsia-500/12 dark:text-fuchsia-200",
+      };
     case "serial_deployer":
       return {
         label: "Serial deployer",
@@ -319,6 +326,15 @@ function formatHolderBadge(badge: TokenHolder["badges"][number]): string {
 
 function getPrimaryHolderBadge(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"][number] | null {
   return holder?.badges?.[0] ?? null;
+}
+
+function getSecondaryHolderBadges(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"] {
+  if (!holder?.badges?.length) {
+    return [];
+  }
+
+  const primary = getPrimaryHolderBadge(holder);
+  return holder.badges.filter((badge) => badge !== primary);
 }
 
 function buildHolderScanSummary(holder: TokenHolder | null | undefined): string {
@@ -653,7 +669,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v11:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v12:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -982,7 +998,15 @@ export default function TokenPage() {
   const devWallet = token?.devWallet ?? token?.risk.devWallet ?? null;
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
-  const isHolderCountLowerBound = token?.holderCountSource === "largest_accounts";
+  const isStoredLowerBoundHolderCount =
+    token?.holderCountSource === "stored" &&
+    hasLiveHolderDistribution &&
+    topHolderRows.length >= 10 &&
+    typeof token.holderCount === "number" &&
+    Number.isFinite(token.holderCount) &&
+    token.holderCount <= 20;
+  const isHolderCountLowerBound =
+    token?.holderCountSource === "largest_accounts" || isStoredLowerBoundHolderCount;
   const hasVerifiedHolderCount = hasResolvedHolderCount(token?.holderCount, token?.holderCountSource);
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
@@ -1541,8 +1565,8 @@ export default function TokenPage() {
                         ) : null}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {devWallet.badges.length > 0
-                          ? devWallet.badges.map((badge) => (
+                        {getSecondaryHolderBadges(devWallet).length > 0
+                          ? getSecondaryHolderBadges(devWallet).map((badge) => (
                               <span
                                 key={badge}
                                 className={cn(
@@ -1617,8 +1641,8 @@ export default function TokenPage() {
                                   ) : null}
                                 </div>
                                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                  {holder.badges.length > 0 ? (
-                                    holder.badges.map((badge) => (
+                                  {getSecondaryHolderBadges(holder).length > 0 ? (
+                                    getSecondaryHolderBadges(holder).map((badge) => (
                                       <span
                                         key={badge}
                                         className={cn(

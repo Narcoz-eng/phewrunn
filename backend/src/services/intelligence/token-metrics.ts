@@ -39,6 +39,7 @@ export type TokenHolderBadge =
   | "fresh_wallet"
   | "high_volume_trader"
   | "whale"
+  | "ultra_degen"
   | "serial_deployer"
   | "serial_rugger";
 
@@ -133,14 +134,16 @@ const FRESH_WALLET_DAYS_THRESHOLD = 30;
 const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 60;
 const LOW_HISTORY_MINT_THRESHOLD = 2;
 const LOW_HISTORY_TX_THRESHOLD = 12;
-const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 100;
-const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 25;
+const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 120;
+const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 40;
 const HIGH_ACTIVITY_MINTS_THRESHOLD = 6;
 const HIGH_ACTIVITY_TX_THRESHOLD = 18;
-const WHALE_SUPPLY_PCT_THRESHOLD = 4;
-const WHALE_PORTFOLIO_USD_THRESHOLD = 500_000;
-const SOFT_WHALE_SUPPLY_PCT_THRESHOLD = 0.8;
-const SOFT_WHALE_VALUE_USD_THRESHOLD = 75_000;
+const WHALE_BALANCE_SOL_THRESHOLD = 250;
+const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 180;
+const WHALE_BALANCE_USD_THRESHOLD = 50_000;
+const SOFT_WHALE_BALANCE_USD_THRESHOLD = 35_000;
+const ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 50_000;
+const SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 25_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -389,8 +392,10 @@ function isLikelySolanaWallet(value: string | null | undefined): value is string
 function buildHolderBadges(params: {
   supplyPct: number;
   totalValueUsd: number | null;
+  balanceUsd: number | null;
   activeAgeDays: number | null;
   tradeVolume90dSol: number | null;
+  balanceSol: number | null;
   distinctMintsTraded: number;
   observedTxCount: number;
   lastSeenHours: number | null;
@@ -400,19 +405,12 @@ function buildHolderBadges(params: {
 }): TokenHolderBadge[] {
   const badges: TokenHolderBadge[] = [];
   if (params.devRole) badges.push("dev_wallet");
-  if (params.activeAgeDays !== null && params.activeAgeDays <= FRESH_WALLET_DAYS_THRESHOLD) {
-    badges.push("fresh_wallet");
-  }
   if (
-    (params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD)
+    params.authorityAssetCount !== null &&
+    params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD &&
+    params.ruggedDeploymentCount >= SERIAL_RUGGER_DEPLOYMENT_THRESHOLD
   ) {
-    badges.push("high_volume_trader");
-  }
-  if (
-    params.supplyPct >= WHALE_SUPPLY_PCT_THRESHOLD ||
-    (params.totalValueUsd !== null && params.totalValueUsd >= WHALE_PORTFOLIO_USD_THRESHOLD)
-  ) {
-    badges.push("whale");
+    badges.push("serial_rugger");
   }
   if (
     (params.authorityAssetCount !== null && params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD) ||
@@ -421,26 +419,39 @@ function buildHolderBadges(params: {
     badges.push("serial_deployer");
   }
   if (
-    params.authorityAssetCount !== null &&
-    params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD &&
-    params.ruggedDeploymentCount >= SERIAL_RUGGER_DEPLOYMENT_THRESHOLD
+    (params.totalValueUsd !== null && params.totalValueUsd >= ULTRA_DEGEN_TOKEN_USD_THRESHOLD) ||
+    (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD && params.supplyPct >= 4)
   ) {
-    badges.push("serial_rugger");
+    badges.push("ultra_degen");
+  }
+  if (
+    (params.balanceSol !== null && params.balanceSol >= WHALE_BALANCE_SOL_THRESHOLD) ||
+    (params.balanceUsd !== null && params.balanceUsd >= WHALE_BALANCE_USD_THRESHOLD)
+  ) {
+    badges.push("whale");
+  }
+  if (
+    params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD
+  ) {
+    badges.push("high_volume_trader");
+  }
+  if (params.activeAgeDays !== null && params.activeAgeDays <= FRESH_WALLET_DAYS_THRESHOLD) {
+    badges.push("fresh_wallet");
   }
 
   if (badges.length === 0) {
-    if (
-      params.activeAgeDays !== null &&
-      params.activeAgeDays <= OBSERVED_FRESH_WALLET_DAYS_THRESHOLD &&
-      params.distinctMintsTraded <= LOW_HISTORY_MINT_THRESHOLD &&
-      params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
-    ) {
-      badges.push("fresh_wallet");
-    } else if (
-      params.authorityAssetCount !== null &&
-      params.authorityAssetCount >= 2
-    ) {
+    if (params.authorityAssetCount !== null && params.authorityAssetCount >= 2) {
       badges.push("serial_deployer");
+    } else if (
+      (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD) ||
+      (params.totalValueUsd !== null && params.totalValueUsd >= 12_500 && params.supplyPct >= 5)
+    ) {
+      badges.push("ultra_degen");
+    } else if (
+      (params.balanceSol !== null && params.balanceSol >= SOFT_WHALE_BALANCE_SOL_THRESHOLD) ||
+      (params.balanceUsd !== null && params.balanceUsd >= SOFT_WHALE_BALANCE_USD_THRESHOLD)
+    ) {
+      badges.push("whale");
     } else if (
       (params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD) ||
       params.distinctMintsTraded >= HIGH_ACTIVITY_MINTS_THRESHOLD ||
@@ -448,10 +459,12 @@ function buildHolderBadges(params: {
     ) {
       badges.push("high_volume_trader");
     } else if (
-      params.supplyPct >= SOFT_WHALE_SUPPLY_PCT_THRESHOLD ||
-      (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_WHALE_VALUE_USD_THRESHOLD)
+      params.activeAgeDays !== null &&
+      params.activeAgeDays <= OBSERVED_FRESH_WALLET_DAYS_THRESHOLD &&
+      params.distinctMintsTraded <= LOW_HISTORY_MINT_THRESHOLD &&
+      params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
     ) {
-      badges.push("whale");
+      badges.push("fresh_wallet");
     } else if (
       params.lastSeenHours !== null &&
       params.lastSeenHours <= 24 &&
@@ -459,7 +472,7 @@ function buildHolderBadges(params: {
     ) {
       badges.push("fresh_wallet");
     } else {
-      badges.push("whale");
+      badges.push("high_volume_trader");
     }
   }
 
@@ -467,9 +480,10 @@ function buildHolderBadges(params: {
     dev_wallet: 0,
     serial_rugger: 1,
     serial_deployer: 2,
-    whale: 3,
-    high_volume_trader: 4,
-    fresh_wallet: 5,
+    ultra_degen: 3,
+    whale: 4,
+    high_volume_trader: 5,
+    fresh_wallet: 6,
   };
 
   return [...new Set(badges)].sort((left, right) => priority[left] - priority[right]);
@@ -792,8 +806,10 @@ export async function analyzeSolanaTokenDistribution(
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
           totalValueUsd,
+          balanceUsd: activity?.balanceUsd ?? null,
           activeAgeDays: activity?.observedAgeDays ?? null,
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+          balanceSol: activity?.balanceSol ?? null,
           distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
           observedTxCount: activity?.observedTxCount ?? 0,
           lastSeenHours: activity?.lastSeenHours ?? null,
@@ -844,8 +860,10 @@ export async function analyzeSolanaTokenDistribution(
           badges: buildHolderBadges({
             supplyPct,
             totalValueUsd: devHolding?.holdingUsd ?? null,
+            balanceUsd: activity?.balanceUsd ?? null,
             activeAgeDays: activity?.observedAgeDays ?? null,
             tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+            balanceSol: activity?.balanceSol ?? null,
             distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
             observedTxCount: activity?.observedTxCount ?? 0,
             lastSeenHours: activity?.lastSeenHours ?? null,
