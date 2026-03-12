@@ -78,6 +78,14 @@ import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { BrandLogo } from "@/components/BrandLogo";
 import { EXACT_LOGO_IMAGE_SRC } from "@/lib/brand";
 import {
+  buildWinCardSvg,
+  renderSvgToPngBlob,
+  WIN_CARD_EXPORT_HEIGHT,
+  WIN_CARD_EXPORT_WIDTH,
+  type WinCardRenderModel,
+  type WinCardSummaryItem,
+} from "./winCardSvg";
+import {
   PhewChartIcon,
   PhewCommentIcon,
   PhewFollowIcon,
@@ -1035,6 +1043,9 @@ export function PostCard({
   const [isInViewport, setIsInViewport] = useState(false);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
+  const [isWinCardRendering, setIsWinCardRendering] = useState(false);
+  const [winCardPreviewUrl, setWinCardPreviewUrl] = useState<string | null>(null);
+  const [winCardPreviewError, setWinCardPreviewError] = useState<string | null>(null);
   const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
@@ -1088,6 +1099,9 @@ export function PostCard({
   const walletConnectAttemptRef = useRef<Promise<boolean> | null>(null);
   const walletConnectCooldownUntilRef = useRef(0);
   const exactLogoImageSrc = EXACT_LOGO_IMAGE_SRC;
+  const winCardLogoDataUrlRef = useRef<string | null>(null);
+  const winCardLogoDataUrlPromiseRef = useRef<Promise<string | null> | null>(null);
+  const winCardPreviewUrlRef = useRef<string | null>(null);
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
     () => (heliusReadRpcUrl ? new Connection(heliusReadRpcUrl, "confirmed") : connection),
@@ -1806,57 +1820,14 @@ export function PostCard({
       notation: Math.abs(value) >= 1000 ? "compact" : "standard",
       maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 2,
     }).format(value);
-  const winCardSettledWin = localSettled && localIsWin === true;
-  const winCardSettledLoss = localSettled && localIsWin === false;
-  const winCardAccentClass =
-    winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
-      ? "text-gain"
-      : winCardSettledLoss
-        ? "text-loss"
-        : "text-muted-foreground";
-  const winCardResultLabel = localSettled ? (winCardSettledWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD";
-  const winCardResultText =
-    percentChange !== null ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%` : "N/A";
-  const winCardVerifiedPnlLabel =
-    verifiedTotalPnlUsd === null
-      ? null
-      : verifiedTotalPnlUsd >= 0
-        ? "Wallet Profit"
-        : "Wallet Loss";
   const winCardVerifiedPnlText =
     verifiedTotalPnlUsd === null ? null : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdStat(Math.abs(verifiedTotalPnlUsd))}`;
-  const winCardMarketMoveLabel =
-    winCardProfitLossValue === null
-      ? "MCAP Delta"
-      : winCardProfitLossValue >= 0
-        ? "MCAP Gain"
-        : "MCAP Drop";
-  const winCardMarketMoveText =
-    winCardProfitLossValue === null
-      ? "N/A"
-      : `${winCardProfitLossValue >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(winCardProfitLossValue))}`;
-  const winCardTokenPrimary = post.tokenSymbol || post.tokenName || "TOKEN";
-  const winCardTokenSecondary =
-    post.tokenName && post.tokenSymbol
-      ? post.tokenName
-      : post.contractAddress
-        ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}`
-        : "No contract";
-  const winCardPostPreview = (stripContractAddress(post.content) || post.content || "No description").slice(0, 220);
-  const winCardChainLabel = post.chainType?.toUpperCase() || "CHAIN";
-  const winCardAuthorName = post.author.username ? `@${post.author.username}` : post.author.name;
-  const winCardAuthorMeta = `Level ${post.author.level > 0 ? `+${post.author.level}` : post.author.level} | ${formatTimeAgo(post.createdAt)} | ${winCardChainLabel}`;
-  const winCardShareIntro = "Share-ready alpha receipt with settlement snapshots and engagement proof.";
-  const winCardPerformanceEyebrow = localSettled ? "Settled performance" : "Live performance";
-  const winCardPerformanceSupport = localSettled ? "Benchmark locked" : "Live market snapshot";
-  const winCardFooterRightLabel = localSettled ? "Settlement verified snapshot" : "Live snapshot at export time";
   const buildWinCardSnapshotMetric = (label: string, snapshotMcap: number | null) => {
     if (post.entryMcap === null || snapshotMcap === null) {
       return {
         label,
         percentText: "Pending",
         profitText: "N/A",
-        toneClass: "text-muted-foreground",
         positive: null as boolean | null,
         magnitudeRatio: 0,
       };
@@ -1870,30 +1841,232 @@ export function PostCard({
       percentText:
         snapshotPercent === null ? "N/A" : `${snapshotPercent >= 0 ? "+" : ""}${snapshotPercent.toFixed(2)}%`,
       profitText: `${snapshotProfit >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(snapshotProfit))}`,
-      toneClass: isPositive ? "text-gain" : "text-loss",
       positive: isPositive,
       magnitudeRatio: Math.max(0.12, Math.min(1, absPercent / 250)),
     };
   };
-  const winCardSnapshotMetrics = [
-    buildWinCardSnapshotMetric("1H Snapshot", localMcap1h),
-    buildWinCardSnapshotMetric("6H Snapshot", localMcap6h),
-    buildWinCardSnapshotMetric("Current", currentMcap),
-  ];
+  const buildWinCardRenderModel = useCallback(
+    (latestSnapshot?: BatchedPostPriceSnapshot | null): WinCardRenderModel => {
+      const resolvedCurrentMcap =
+        latestSnapshot && typeof latestSnapshot.currentMcap === "number"
+          ? latestSnapshot.currentMcap
+          : currentMcap;
+      const resolvedMcap1h =
+        latestSnapshot && typeof latestSnapshot.mcap1h === "number"
+          ? latestSnapshot.mcap1h
+          : localMcap1h;
+      const resolvedMcap6h =
+        latestSnapshot && typeof latestSnapshot.mcap6h === "number"
+          ? latestSnapshot.mcap6h
+          : localMcap6h;
+      const resolvedSettled = latestSnapshot ? Boolean(latestSnapshot.settled) : localSettled;
+      const resolvedOfficialMcap = resolvedSettled ? (resolvedMcap1h ?? resolvedCurrentMcap) : resolvedCurrentMcap;
+      const resolvedPercentChange = calculatePercentChange(post.entryMcap, resolvedOfficialMcap);
+      const resolvedProfitLossValue =
+        post.entryMcap !== null && resolvedOfficialMcap !== null ? resolvedOfficialMcap - post.entryMcap : null;
+      const resolvedIsWin =
+        post.entryMcap !== null && resolvedOfficialMcap !== null
+          ? resolvedOfficialMcap > post.entryMcap
+          : localIsWin === true;
+      const trendTone =
+        resolvedSettled && resolvedIsWin
+          ? "gain"
+          : resolvedSettled && !resolvedIsWin
+            ? "loss"
+            : (resolvedProfitLossValue ?? 0) >= 0
+              ? "gain"
+              : "loss";
+      const authorLevelLabel =
+        post.author.level >= 8
+          ? "Elite"
+          : post.author.level >= 4
+            ? "Veteran"
+            : post.author.level >= 1
+              ? "Rising"
+              : post.author.level >= -2
+                ? "Neutral"
+                : "Danger";
+      const verifiedPnlLabel =
+        verifiedTotalPnlUsd === null
+          ? null
+          : verifiedTotalPnlUsd >= 0
+            ? "Wallet Profit"
+            : "Wallet Loss";
+      const marketMoveLabel =
+        resolvedProfitLossValue === null
+          ? "MCAP Delta"
+          : resolvedProfitLossValue >= 0
+            ? "MCAP Gain"
+            : "MCAP Drop";
+      const marketMoveText =
+        resolvedProfitLossValue === null
+          ? "N/A"
+          : `${resolvedProfitLossValue >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(resolvedProfitLossValue))}`;
+
+      const summaryItems: WinCardSummaryItem[] = [];
+      if (verifiedTotalPnlUsd !== null && winCardVerifiedPnlText) {
+        summaryItems.push({
+          label: "Wallet P/L",
+          value: winCardVerifiedPnlText,
+          hint: verifiedTotalPnlUsd >= 0 ? "Verified profit" : "Verified loss",
+          tone: verifiedTotalPnlUsd >= 0 ? "gain" : "loss",
+        });
+      }
+      if (boughtUsd !== null || boughtAmount !== null) {
+        summaryItems.push({
+          label: "Bought",
+          value: boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A",
+          hint:
+            boughtAmount !== null
+              ? `Qty ${boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+              : "No amount",
+          tone: "plain",
+        });
+      }
+      if (soldUsd !== null || soldAmount !== null) {
+        summaryItems.push({
+          label: "Sold",
+          value: soldUsd !== null ? formatUsdStat(soldUsd) : "N/A",
+          hint:
+            soldAmount !== null
+              ? `Qty ${soldAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+              : "No amount",
+          tone: "plain",
+        });
+      }
+      if (holdingUsd !== null || holdingAmount !== null) {
+        summaryItems.push({
+          label: "Holding",
+          value: holdingUsd !== null ? formatUsdStat(holdingUsd) : "N/A",
+          hint:
+            holdingAmount !== null
+              ? `Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+              : "No position",
+          tone: "plain",
+        });
+      }
+      if (summaryItems.length === 0) {
+        summaryItems.push(
+          {
+            label: "Engagement",
+            value: `${likeCount} likes`,
+            hint: `${commentCount} comments / ${repostCount} reposts`,
+            tone: "plain",
+          },
+          {
+            label: "Status",
+            value: resolvedSettled ? "Benchmark locked" : "Live updates on",
+            hint: resolvedSettled ? "Settled reference" : "Live market route",
+            tone: trendTone,
+          }
+        );
+      }
+
+      return {
+        tone: trendTone,
+        resultLabel: resolvedSettled ? (resolvedIsWin ? "WIN CARD" : "RESULT CARD") : "LIVE CARD",
+        resultText:
+          resolvedPercentChange !== null
+            ? `${resolvedPercentChange >= 0 ? "+" : ""}${resolvedPercentChange.toFixed(2)}%`
+            : "N/A",
+        statusTitle: resolvedSettled ? (resolvedIsWin ? "Settled winner" : "Settled result") : "Live tracking",
+        statusDetail: resolvedSettled ? "1H benchmark locked" : "Current market route",
+        shareIntro: "Signal, settlement, and live market state on one export-ready card.",
+        footerLabel: resolvedSettled ? "Settlement verified snapshot" : "Live snapshot at export time",
+        authorName: post.author.username ? `@${post.author.username}` : post.author.name,
+        authorMeta: `${post.chainType?.toUpperCase() || "CHAIN"} / ${formatTimeAgo(post.createdAt)}`,
+        authorLevelLabel,
+        authorLevelText: `LVL ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}`,
+        authorInitial: (post.author.username || post.author.name || "?").charAt(0).toUpperCase(),
+        tokenPrimary: post.tokenSymbol || post.tokenName || "TOKEN",
+        tokenSecondary:
+          post.tokenName && post.tokenSymbol
+            ? post.tokenName
+            : post.contractAddress
+              ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}`
+              : "No contract",
+        noteText: (stripContractAddress(post.content) || post.content || "No description").slice(0, 240),
+        postIdText: `Post ${post.id.slice(0, 10)}...`,
+        performanceLabel: verifiedPnlLabel ?? "Reference",
+        performanceValue:
+          verifiedPnlLabel && winCardVerifiedPnlText
+            ? winCardVerifiedPnlText
+            : resolvedSettled
+              ? "1H locked"
+              : "Live route",
+        marketMoveLabel,
+        marketMoveText,
+        metrics: [
+          {
+            label: "Entry MCAP",
+            value: formatMarketCap(post.entryMcap),
+            hint: "Position opened",
+            tone: "plain",
+          },
+          {
+            label: resolvedSettled ? "1H Settled MCAP" : "Reference MCAP",
+            value: formatMarketCap(resolvedOfficialMcap),
+            hint: resolvedSettled ? "Official benchmark" : "Current benchmark",
+            tone: "plain",
+          },
+          {
+            label: resolvedSettled ? "Current MCAP (Live)" : "Current MCAP",
+            value: formatMarketCap(resolvedCurrentMcap),
+            hint: "Latest tracked MCAP",
+            highlight: true,
+            tone: trendTone,
+          },
+          {
+            label: marketMoveLabel,
+            value: marketMoveText,
+            hint: "Versus entry",
+            tone: trendTone,
+          },
+        ],
+        snapshots: [
+          { shortLabel: "1H", ...buildWinCardSnapshotMetric("1H Snapshot", resolvedMcap1h) },
+          { shortLabel: "6H", ...buildWinCardSnapshotMetric("6H Snapshot", resolvedMcap6h) },
+          { shortLabel: "NOW", ...buildWinCardSnapshotMetric("Current", resolvedCurrentMcap) },
+        ],
+        summaryItems: summaryItems.slice(0, 4),
+      };
+    },
+    [
+      boughtAmount,
+      boughtUsd,
+      commentCount,
+      currentMcap,
+      likeCount,
+      localIsWin,
+      localMcap1h,
+      localMcap6h,
+      localSettled,
+      holdingAmount,
+      holdingUsd,
+      post.author.level,
+      post.author.name,
+      post.author.username,
+      post.chainType,
+      post.content,
+      post.contractAddress,
+      post.createdAt,
+      post.entryMcap,
+      post.id,
+      post.tokenName,
+      post.tokenSymbol,
+      repostCount,
+      soldAmount,
+      soldUsd,
+      verifiedTotalPnlUsd,
+      winCardVerifiedPnlText,
+    ]
+  );
+  const currentWinCardModel = useMemo(() => buildWinCardRenderModel(), [buildWinCardRenderModel]);
   const winCardLevelProgressRatio = Math.max(
     0,
     Math.min(1, (post.author.level - MIN_LEVEL) / (MAX_LEVEL - MIN_LEVEL))
   );
-  const winCardLevelLabel =
-    post.author.level >= 8
-      ? "Elite"
-      : post.author.level >= 4
-        ? "Veteran"
-        : post.author.level >= 1
-          ? "Rising"
-          : post.author.level >= -2
-            ? "Neutral"
-            : "Danger";
+  const winCardLevelLabel = currentWinCardModel.authorLevelLabel;
   const winCardLevelToneClass =
     post.author.level >= 8
       ? "text-amber-300"
@@ -1901,93 +2074,49 @@ export function PostCard({
         ? "text-slate-200"
         : post.author.level >= 1
           ? "text-orange-300"
-        : post.author.level >= -2
-          ? "text-rose-200"
-          : "text-red-300";
-  const winCardTrendTone =
-    winCardSettledWin || (!localSettled && (winCardProfitLossValue ?? 0) >= 0)
-      ? "gain"
-      : winCardSettledLoss
-        ? "loss"
-        : "neutral";
-  const winCardStatusTitle =
-    localSettled ? (winCardSettledWin ? "Settled Winner" : "Settled Result") : "Live Tracking";
-  const winCardStatusDetail = localSettled ? "1H benchmark locked" : "Live market snapshot";
-  const winCardMetricCards = [
-    {
-      label: "Entry MCAP",
-      value: formatMarketCap(post.entryMcap),
-      hint: "Position opened",
-      emphasis: false,
-    },
-    {
-      label: winCardSettledMcapLabel,
-      value: formatMarketCap(officialMcap),
-      hint: localSettled ? "Official benchmark" : "Current benchmark",
-      emphasis: false,
-    },
-    {
-      label: winCardCurrentMcapLabel,
-      value: formatMarketCap(winCardCurrentMcap),
-      hint: "Latest tracked MCAP",
-      emphasis: true,
-    },
-    {
-      label: winCardMarketMoveLabel,
-      value: winCardMarketMoveText,
-      hint: "Versus entry",
-      emphasis: false,
-      toneClass: winCardAccentClass,
-    },
-  ];
-  const winCardSnapshotRows = [
-    { shortLabel: "1H", ...winCardSnapshotMetrics[0] },
-    { shortLabel: "6H", ...winCardSnapshotMetrics[1] },
-    { shortLabel: "NOW", ...winCardSnapshotMetrics[2] },
-  ];
-  const winCardWalletSummaryCards = [
-    verifiedTotalPnlUsd !== null
-      ? {
-          label: "Wallet P/L",
-          value: winCardVerifiedPnlText ?? "N/A",
-          hint: verifiedTotalPnlUsd >= 0 ? "Verified profit" : "Verified loss",
-          toneClass: verifiedTotalPnlUsd >= 0 ? "text-gain" : "text-loss",
-        }
-      : null,
-    boughtUsd !== null || boughtAmount !== null
-      ? {
-          label: "Bought",
-          value: boughtUsd !== null ? formatUsdStat(boughtUsd) : "N/A",
-          hint:
-            boughtAmount !== null
-              ? `Qty ${boughtAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
-              : "No amount",
-          toneClass: "text-foreground",
-        }
-      : null,
-    soldUsd !== null || soldAmount !== null
-      ? {
-          label: "Sold",
-          value: soldUsd !== null ? formatUsdStat(soldUsd) : "N/A",
-          hint:
-            soldAmount !== null
-              ? `Qty ${soldAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
-              : "No amount",
-          toneClass: "text-foreground",
-        }
-      : null,
-    holdingUsd !== null || holdingAmount !== null
-      ? {
-          label: "Holding",
-          value: holdingUsd !== null ? formatUsdStat(holdingUsd) : "N/A",
-          hint:
-            holdingAmount !== null
-              ? `Qty ${holdingAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
-              : "No position",
-          toneClass: "text-foreground",
-        }
-      : null,
-  ].filter(Boolean);
+          : post.author.level >= -2
+            ? "text-rose-200"
+            : "text-red-300";
+  const winCardTrendTone = currentWinCardModel.tone;
+  const winCardAccentClass =
+    winCardTrendTone === "gain" ? "text-gain" : winCardTrendTone === "loss" ? "text-loss" : "text-muted-foreground";
+  const winCardResultLabel = currentWinCardModel.resultLabel;
+  const winCardResultText = currentWinCardModel.resultText;
+  const winCardVerifiedPnlLabel =
+    currentWinCardModel.performanceLabel === "Reference" ? null : currentWinCardModel.performanceLabel;
+  const winCardMarketMoveLabel = currentWinCardModel.marketMoveLabel;
+  const winCardMarketMoveText = currentWinCardModel.marketMoveText;
+  const winCardTokenPrimary = currentWinCardModel.tokenPrimary;
+  const winCardTokenSecondary = currentWinCardModel.tokenSecondary;
+  const winCardPostPreview = currentWinCardModel.noteText;
+  const winCardAuthorName = currentWinCardModel.authorName;
+  const winCardAuthorMeta = currentWinCardModel.authorMeta;
+  const winCardShareIntro = currentWinCardModel.shareIntro;
+  const winCardPerformanceEyebrow = localSettled ? "Settled performance" : "Live performance";
+  const winCardPerformanceSupport = currentWinCardModel.statusDetail;
+  const winCardFooterRightLabel = currentWinCardModel.footerLabel;
+  const winCardStatusTitle = currentWinCardModel.statusTitle;
+  const winCardStatusDetail = currentWinCardModel.statusDetail;
+  const winCardMetricCards = currentWinCardModel.metrics.map((metric) => ({
+    ...metric,
+    emphasis: Boolean(metric.highlight),
+    toneClass:
+      metric.tone === "gain" ? "text-gain" : metric.tone === "loss" ? "text-loss" : "text-white",
+  }));
+  const winCardSnapshotMetrics = currentWinCardModel.snapshots.map((metric) => ({
+    ...metric,
+    toneClass:
+      metric.positive === null ? "text-slate-300" : metric.positive ? "text-gain" : "text-loss",
+  }));
+  const winCardSnapshotRows = winCardSnapshotMetrics.map((metric, index) => ({
+    shortLabel: currentWinCardModel.snapshots[index]?.shortLabel ?? metric.label,
+    ...metric,
+  }));
+  const winCardWalletSummaryCards = currentWinCardModel.summaryItems.map((item) => ({
+    ...item,
+    toneClass:
+      item.tone === "gain" ? "text-gain" : item.tone === "loss" ? "text-loss" : "text-foreground",
+  }));
 
   // Calculate multiplier displays for each mcap field
   const multiplierLive = formatMultiplier(post.entryMcap, currentMcap);
@@ -2090,6 +2219,65 @@ export function PostCard({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const setWinCardPreviewBlob = useCallback((blob: Blob | null) => {
+    if (winCardPreviewUrlRef.current) {
+      URL.revokeObjectURL(winCardPreviewUrlRef.current);
+      winCardPreviewUrlRef.current = null;
+    }
+
+    if (!blob) {
+      setWinCardPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+    winCardPreviewUrlRef.current = objectUrl;
+    setWinCardPreviewUrl(objectUrl);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (winCardPreviewUrlRef.current) {
+        URL.revokeObjectURL(winCardPreviewUrlRef.current);
+        winCardPreviewUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  const loadWinCardLogoDataUrl = useCallback(async () => {
+    if (winCardLogoDataUrlRef.current) {
+      return winCardLogoDataUrlRef.current;
+    }
+    if (winCardLogoDataUrlPromiseRef.current) {
+      return winCardLogoDataUrlPromiseRef.current;
+    }
+
+    const promise = (async () => {
+      try {
+        const response = await fetch("/phew-logo.svg", { cache: "force-cache" });
+        if (!response.ok) {
+          return null;
+        }
+        const svgMarkup = await response.text();
+        const bytes = new TextEncoder().encode(svgMarkup);
+        let binary = "";
+        bytes.forEach((byte) => {
+          binary += String.fromCharCode(byte);
+        });
+        const dataUrl = `data:image/svg+xml;base64,${window.btoa(binary)}`;
+        winCardLogoDataUrlRef.current = dataUrl;
+        return dataUrl;
+      } catch {
+        return null;
+      } finally {
+        winCardLogoDataUrlPromiseRef.current = null;
+      }
+    })();
+
+    winCardLogoDataUrlPromiseRef.current = promise;
+    return promise;
+  }, []);
+
   const refreshWinCardLiveData = useCallback(async () => {
     try {
       const latest = await api.get<BatchedPostPriceSnapshot>(`/api/posts/${post.id}/price`, {
@@ -2125,27 +2313,98 @@ export function PostCard({
     }
   }, [post.entryMcap, post.id]);
 
+  const createWinCardAssetBundle = useCallback(
+    async (latestSnapshot?: BatchedPostPriceSnapshot | null) => {
+      const [logoDataUrl] = await Promise.all([loadWinCardLogoDataUrl()]);
+      const model = buildWinCardRenderModel(latestSnapshot);
+      const svg = buildWinCardSvg(model, { logoDataUrl });
+      const pngBlob = await renderSvgToPngBlob(svg);
+      return { model, pngBlob };
+    },
+    [buildWinCardRenderModel, loadWinCardLogoDataUrl]
+  );
+
+  const renderWinCardPreview = useCallback(
+    async (latestSnapshot?: BatchedPostPriceSnapshot | null) => {
+      setIsWinCardRendering(true);
+      setWinCardPreviewError(null);
+      try {
+        const rendered = await createWinCardAssetBundle(latestSnapshot);
+        setWinCardPreviewBlob(rendered.pngBlob);
+        return rendered;
+      } catch (error) {
+        console.error("[wincard] Failed to render preview", error);
+        setWinCardPreviewError("Preview render failed. Try again.");
+        return null;
+      } finally {
+        setIsWinCardRendering(false);
+      }
+    },
+    [createWinCardAssetBundle, setWinCardPreviewBlob]
+  );
+
   const handleOpenWinCardPreview = () => {
     setIsWinCardPreviewOpen(true);
-    void refreshWinCardLiveData();
+    void (async () => {
+      const latestSnapshot = await refreshWinCardLiveData();
+      await renderWinCardPreview(latestSnapshot);
+    })();
   };
 
   useEffect(() => {
     if (!isWinCardPreviewOpen) return;
     if (typeof window === "undefined") return;
 
-    void refreshWinCardLiveData();
+    let cancelled = false;
+    const refreshAndRender = async () => {
+      const latestSnapshot = await refreshWinCardLiveData();
+      if (cancelled) return;
+      await renderWinCardPreview(latestSnapshot);
+    };
+
+    void refreshAndRender();
     const timerId = window.setInterval(() => {
-      void refreshWinCardLiveData();
+      void refreshAndRender();
     }, 12_000);
 
     return () => {
+      cancelled = true;
       window.clearInterval(timerId);
     };
-  }, [isWinCardPreviewOpen, refreshWinCardLiveData]);
+  }, [isWinCardPreviewOpen, refreshWinCardLiveData, renderWinCardPreview]);
 
   const handleDownloadWinCard = async () => {
     if (isWinCardDownloading) return;
+
+    setIsWinCardDownloading(true);
+    try {
+      const latestSnapshot = await refreshWinCardLiveData();
+      const rendered = await createWinCardAssetBundle(latestSnapshot);
+      setWinCardPreviewBlob(rendered.pngBlob);
+
+      const filenameBase = (post.tokenSymbol || post.author.username || post.author.name || "phew-post")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32) || "phew-post";
+      const filename = `phew-${rendered.model.resultLabel === "WIN CARD" ? "wincard" : "result-card"}-${filenameBase}.png`;
+      const objectUrl = URL.createObjectURL(rendered.pngBlob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+
+      toast.success(rendered.model.resultLabel === "WIN CARD" ? "Wincard downloaded" : "Result card downloaded");
+    } catch (error) {
+      console.error("[wincard] Failed to generate card", error);
+      toast.error("Failed to generate win card");
+    } finally {
+      setIsWinCardDownloading(false);
+    }
+    return;
 
     const latestSnapshot = await refreshWinCardLiveData();
     const liveCurrentMcap =
@@ -5513,7 +5772,7 @@ export function PostCard({
                 </div>
               </div>
 
-              {walletDisplayName !== undefined ? (
+              {true ? (
               <div className="rounded-2xl border border-slate-900/10 bg-slate-900/[0.03] p-4 shadow-[0_18px_44px_-36px_rgba(148,163,184,0.65)] dark:border-white/10 dark:bg-black/20 dark:shadow-none">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -6254,17 +6513,44 @@ export function PostCard({
             <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-border/50">
               <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
                 <Sparkles className="h-4 w-4 text-primary" />
-                Wincard Preview
+                Share Card Preview
               </DialogTitle>
               <DialogDescription className="text-xs sm:text-sm">
-                Review a share-ready card, then export a PNG built for fast attention.
+                Preview and download use the exact same rendered PNG.
               </DialogDescription>
             </DialogHeader>
 
           <div className="p-3 sm:p-5">
             <div className="mx-auto max-w-[980px]">
-              {(
-              <div className="relative overflow-hidden rounded-[26px] border border-white/10 bg-[#071019] shadow-[0_34px_120px_-52px_rgba(0,0,0,0.92)] ring-1 ring-white/5">
+              <div className="overflow-hidden rounded-[28px] border border-border/60 bg-black/80 shadow-[0_34px_120px_-54px_rgba(0,0,0,0.92)]">
+                {winCardPreviewUrl ? (
+                  <img
+                    src={winCardPreviewUrl}
+                    alt="Share card preview"
+                    className="block h-auto w-full"
+                    width={WIN_CARD_EXPORT_WIDTH}
+                    height={WIN_CARD_EXPORT_HEIGHT}
+                  />
+                ) : (
+                  <div className="flex min-h-[420px] items-center justify-center bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.18),transparent_45%),linear-gradient(180deg,rgba(6,10,16,0.98),rgba(4,8,12,1))] px-6 py-12 text-center">
+                    <div className="space-y-3">
+                      {(isWinCardRendering || isWinCardDownloading) ? (
+                        <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                      ) : (
+                        <Sparkles className="mx-auto h-8 w-8 text-primary" />
+                      )}
+                      <div className="text-lg font-semibold text-white">
+                        {isWinCardRendering || isWinCardDownloading ? "Rendering share card" : "Share card preview unavailable"}
+                      </div>
+                      <div className="max-w-md text-sm text-slate-300">
+                        {winCardPreviewError ?? "Open the preview again or download once to generate the new card."}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {false && (
+              <div className="hidden">
                 <div className="absolute inset-0 bg-[linear-gradient(135deg,#071019_0%,#07111a_44%,#04080f_100%)]" />
                 <div
                   className="absolute inset-0 opacity-[0.06]"
@@ -6566,10 +6852,10 @@ export function PostCard({
             <Button
               type="button"
               onClick={handleDownloadWinCard}
-              disabled={isWinCardDownloading}
+              disabled={isWinCardDownloading || isWinCardRendering}
               className="w-full sm:w-auto gap-2"
             >
-              {isWinCardDownloading ? (
+              {isWinCardDownloading || isWinCardRendering ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Download className="h-4 w-4" />
