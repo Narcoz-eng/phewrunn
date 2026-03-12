@@ -781,19 +781,15 @@ export default function TokenPage() {
   const topHolders = token?.topHolders.length
     ? token.topHolders
     : (token?.risk.topHolders ?? []);
+  const topHolderRows = topHolders.slice(0, 10);
+  const isHolderCountLowerBound = token?.holderCountSource === "largest_accounts";
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
         emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
       })
     : "Scanning";
-  const holderCountLabel =
-    token?.holderCountSource === "largest_accounts" &&
-    typeof token.holderCount === "number" &&
-    Number.isFinite(token.holderCount) &&
-    token.holderCount > 0
-      ? `${holderCountValue}+`
-      : holderCountValue;
-  const holderMetricTitle = token?.holderCountSource === "largest_accounts" ? "Holder scan" : "Holders";
+  const holderCountLabel = isHolderCountLowerBound ? "Scanning" : holderCountValue;
+  const holderMetricTitle = "Holders";
 
   return (
     <div className="min-h-screen bg-background">
@@ -867,20 +863,57 @@ export default function TokenPage() {
                         ))}
                       </div>
                     ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {[
-                        { label: "Current MCAP", value: formatMarketMetric(token.marketCap) },
-                        { label: "Liquidity", value: formatMarketMetric(token.liquidity) },
-                        { label: holderMetricTitle, value: holderCountLabel },
-                      ].map((metric) => (
-                        <div
-                          key={metric.label}
-                          className="rounded-full border border-border/60 bg-secondary px-3 py-1.5 text-[11px] text-muted-foreground"
-                        >
-                          <span className="font-semibold uppercase tracking-[0.14em]">{metric.label}</span>
-                          <span className="ml-2 font-semibold text-foreground">{metric.value}</span>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,0.8fr))]">
+                      <div className="rounded-[26px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-4 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/80">
+                              Current MCAP
+                            </div>
+                            <div className="mt-2 break-words text-3xl font-black tracking-[-0.04em] text-foreground sm:text-[2.35rem]">
+                              {formatMarketMetric(token.marketCap)}
+                            </div>
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              Live market route with shared postcard pricing.
+                            </div>
+                          </div>
+                          <span className="rounded-full border border-primary/25 bg-white/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary dark:bg-white/[0.05]">
+                            Live
+                          </span>
                         </div>
-                      ))}
+                        <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                          <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
+                            Volume 24h <span className="ml-1 font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
+                          </span>
+                          <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
+                            {isRefreshingLive ? "Refreshing now" : "Live snapshot active"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Liquidity
+                        </div>
+                        <div className="mt-2 text-2xl font-bold text-foreground">
+                          {formatMarketMetric(token.liquidity)}
+                        </div>
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          Current pool depth across the selected market pair.
+                        </div>
+                      </div>
+                      <div className="rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          {holderMetricTitle}
+                        </div>
+                        <div className="mt-2 text-2xl font-bold text-foreground">
+                          {holderCountLabel}
+                        </div>
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          {isHolderCountLowerBound
+                            ? "Top-holder scan is live while the full holder count resolves."
+                            : "Verified live holder count for this token."}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1205,30 +1238,53 @@ export default function TokenPage() {
                       )}
                     </div>
                   </div>
-                  <div className="mt-4 rounded-[20px] border border-border/60 bg-white/55 p-3 dark:bg-white/[0.03]">
+                  <div className="mt-4 rounded-[22px] border border-border/60 bg-white/55 p-4 dark:bg-white/[0.03]">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 20 holders</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {topHolders.length > 0 ? `${Math.min(topHolders.length, 20)} wallets` : "Live scan"}
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Largest wallets by live circulating supply share.
+                        </div>
+                      </div>
+                      <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                        {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
                       </div>
                     </div>
-                    <div className="mt-3 space-y-2">
-                      {topHolders.length > 0 ? (
-                        topHolders.slice(0, 20).map((holder, index) => (
+                    <div className="mt-4 space-y-2.5">
+                      {topHolderRows.length > 0 ? (
+                        topHolderRows.map((holder, index) => (
                           <div
                             key={holder.address}
-                            className="flex items-center justify-between gap-3 rounded-[16px] border border-border/60 bg-secondary px-3 py-2 text-sm"
+                            className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
                           >
-                            <div className="min-w-0">
-                              <div className="font-mono text-[12px] font-semibold text-foreground">
-                                #{index + 1} {formatHolderAddress(holder.address)}
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-3">
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
+                                  {index + 1}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="font-mono text-[12px] font-semibold text-foreground">
+                                    {formatHolderAddress(holder.address)}
+                                  </div>
+                                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                    {formatHolderAmount(holder.amount)} tokens
+                                  </div>
+                                </div>
                               </div>
-                              <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                {formatHolderAmount(holder.amount)} tokens
+                              <div className="shrink-0 text-right">
+                                <div className="font-mono text-sm font-semibold text-foreground">
+                                  {formatPct(holder.supplyPct)}
+                                </div>
+                                <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                                  of supply
+                                </div>
                               </div>
                             </div>
-                            <div className="font-mono text-sm font-semibold text-foreground">
-                              {formatPct(holder.supplyPct)}
+                            <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
+                              <div
+                                className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
+                                style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
+                              />
                             </div>
                           </div>
                         ))
@@ -1334,9 +1390,9 @@ export default function TokenPage() {
                   <p className="mt-3 text-xs text-muted-foreground">
                     Sentiment starts neutral, then moves with community reactions, 24h price trend, and buy versus sell pressure.
                   </p>
-                  {token.holderCountSource === "largest_accounts" ? (
+                  {isHolderCountLowerBound ? (
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                      Holder count is shown as a lower bound from the live largest-holder scan while the full distribution refresh completes.
+                      Full holder count is still resolving through RPC. Top-holder distribution is live below.
                     </p>
                   ) : null}
                   <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">

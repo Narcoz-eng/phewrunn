@@ -70,7 +70,7 @@ type RpcProgramAccountResult = Array<unknown>;
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
-const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_500 : 4_000;
+const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
 const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
