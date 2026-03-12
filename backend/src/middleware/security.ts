@@ -25,6 +25,9 @@ export interface SecurityHeadersConfig {
   frameAncestors?: string;
 }
 
+const AUTH_COOKIE_HEADER_PATTERN =
+  /(?:^|;\s*)(?:phew\.session_token|better-auth\.session_token|auth\.session_token|session_token)=/i;
+
 /**
  * Security headers middleware
  * Adds standard security headers to all responses
@@ -50,9 +53,12 @@ export function securityHeaders(config: SecurityHeadersConfig = {}) {
     // Prevent DNS prefetching
     c.header("X-DNS-Prefetch-Control", "off");
 
-    // Don't allow the browser to cache sensitive responses
-    // Specifically useful for authenticated API responses
-    if (c.req.header("Authorization")) {
+    // Default authenticated responses to private/no-store unless the route has already
+    // declared a more specific cache policy.
+    const hasExplicitCachePolicy = c.res.headers.has("Cache-Control");
+    const hasAuthorizationHeader = Boolean(c.req.header("Authorization"));
+    const hasAuthCookie = AUTH_COOKIE_HEADER_PATTERN.test(c.req.header("Cookie") ?? "");
+    if (!hasExplicitCachePolicy && (hasAuthorizationHeader || hasAuthCookie)) {
       c.header("Cache-Control", "no-store, no-cache, must-revalidate, private");
       c.header("Pragma", "no-cache");
     }

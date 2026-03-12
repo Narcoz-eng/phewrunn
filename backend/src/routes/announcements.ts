@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { prisma, withPrismaRetry } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { type Announcement } from "../types.js";
-import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 
 // Public announcement routes for feed display and view tracking
 export const announcementsRouter = new Hono<{ Variables: AuthVariables }>();
@@ -62,6 +62,11 @@ function writeAnnouncementsCache(data: CachedAnnouncement[]): void {
   void cacheSetJson(ANNOUNCEMENTS_CACHE_KEY, data, ANNOUNCEMENTS_CACHE_TTL_MS);
 }
 
+export function invalidateAnnouncementsCache(): void {
+  announcementsCache = null;
+  void redisDelete(ANNOUNCEMENTS_CACHE_KEY);
+}
+
 async function readAnnouncementsCache(): Promise<CachedAnnouncement[] | null> {
   const local = readAnnouncementsCacheLocal();
   if (local) return local;
@@ -110,6 +115,15 @@ function toCachedAnnouncement(input: {
  */
 announcementsRouter.get("/", async (c) => {
   const user = c.get("user");
+  c.header("Vary", "Cookie");
+  c.header(
+    "Cache-Control",
+    user
+      ? "private, no-store"
+      : process.env.NODE_ENV === "production"
+        ? "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
+        : "no-store"
+  );
 
   let announcements = await readAnnouncementsCache();
   if (!announcements) {

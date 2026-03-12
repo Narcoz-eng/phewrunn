@@ -16,10 +16,10 @@ import { buildProfilePath } from "@/lib/profile-path";
 import { PhewBellIcon } from "@/components/icons/PhewIcons";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
-const NOTIFICATIONS_CACHE_TTL_MS = 30 * 60_000;
+const NOTIFICATIONS_CACHE_TTL_MS = 60_000;
 const NOTIFICATION_MERGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
-const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 
 type AlertPreference = {
   minConfidenceScore: number | null;

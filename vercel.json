@@ -26,11 +26,24 @@
       "dest": "/backend/src/index.ts"
     },
     {
+      "src": "/assets/(.*)",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      },
+      "dest": "/webapp/assets/$1"
+    },
+    {
       "src": "/(.*\\..*)",
+      "headers": {
+        "Cache-Control": "public, max-age=300, must-revalidate"
+      },
       "dest": "/webapp/$1"
     },
     {
       "src": "/(.*)",
+      "headers": {
+        "Cache-Control": "no-cache, max-age=0, must-revalidate"
+      },
       "dest": "/webapp/index.html"
     }
   ],

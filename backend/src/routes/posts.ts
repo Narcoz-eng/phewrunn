@@ -1865,7 +1865,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
   }));
 }
 
-function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
+export function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedResponseCache.clear();
   feedSharedResponseCache.clear();
   feedMcapCache.clear();
@@ -4341,6 +4341,14 @@ postsRouter.get("/", async (c) => {
   const { sort, following, limit, cursor, search } = parsed.success
     ? parsed.data
     : { sort: "latest" as const, following: false, limit: 10, cursor: undefined, search: undefined };
+  const shouldUsePublicResponseCaching = !user && !following && !cursor && !search?.trim();
+  c.header("Vary", "Cookie");
+  c.header(
+    "Cache-Control",
+    shouldUsePublicResponseCaching
+      ? "public, max-age=15, stale-while-revalidate=45"
+      : "private, no-store"
+  );
   const feedCacheKey = buildFeedResponseCacheKey({
     userId: user?.id ?? null,
     sort,
@@ -6469,6 +6477,7 @@ postsRouter.post("/:id/view", async (c) => {
 
 // Get users who reposted a post
 postsRouter.get("/:id/reposters", async (c) => {
+  c.header("Cache-Control", "no-store");
   const postId = c.req.param("id");
 
   // Check if post exists
@@ -6502,6 +6511,7 @@ postsRouter.get("/:id/reposters", async (c) => {
 
 // Get users who posted the same CA within 48 hours (Shared Alpha)
 postsRouter.get("/:id/shared-alpha", async (c) => {
+  c.header("Cache-Control", "no-store");
   const postId = c.req.param("id");
   const freshCached = readSharedAlphaResponseCache(postId);
   if (freshCached) {
@@ -8366,6 +8376,7 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
 });
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {
+  c.header("Cache-Control", "no-store");
   const { ids } = c.req.valid("json");
   const uniqueIds = [...new Set(ids)].slice(0, 50);
   const freshCachedEntries = await Promise.all(
@@ -8462,6 +8473,7 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
 });
 
 postsRouter.get("/:id/price", async (c) => {
+  c.header("Cache-Control", "no-store");
   const postId = c.req.param("id");
 
   let post: IntelligenceCallRecord | null = null;

@@ -41,7 +41,7 @@ const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: str
   { id: "following", label: "Following" },
 ];
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
-const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 
 export function FeedHeader({
   user,

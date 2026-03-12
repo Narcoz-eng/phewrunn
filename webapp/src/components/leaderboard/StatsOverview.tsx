@@ -50,49 +50,6 @@ interface PlatformStats {
   }>;
 }
 
-const PLATFORM_STATS_CACHE_KEY = "phew.leaderboard.stats";
-const PLATFORM_STATS_CACHE_TTL_MS = 30 * 60_000;
-
-function isEmptyPlatformStats(stats: PlatformStats): boolean {
-  return (
-    stats.alphas.total === 0 &&
-    stats.totalUsers === 0 &&
-    stats.topUsersThisWeek.length === 0 &&
-    stats.levelDistribution.every((item) => item.count === 0)
-  );
-}
-
-function readCachedPlatformStats(): PlatformStats | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(PLATFORM_STATS_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { cachedAt?: number; data?: PlatformStats };
-    if (
-      typeof parsed?.cachedAt !== "number" ||
-      !parsed.data ||
-      Date.now() - parsed.cachedAt > PLATFORM_STATS_CACHE_TTL_MS
-    ) {
-      return null;
-    }
-    return parsed.data;
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedPlatformStats(data: PlatformStats): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(
-      PLATFORM_STATS_CACHE_KEY,
-      JSON.stringify({ cachedAt: Date.now(), data })
-    );
-  } catch {
-    // ignore storage failures
-  }
-}
-
 function StatCard({
   title,
   value,
@@ -147,21 +104,12 @@ function StatCardSkeleton() {
 
 export function StatsOverview() {
   const navigate = useNavigate();
-  const cachedStats = readCachedPlatformStats();
   const { data: stats, isLoading, error, refetch } = useQuery({
     queryKey: ["leaderboard", "stats"],
     queryFn: async () => {
       const data = await api.get<PlatformStats>("/api/leaderboard/stats");
-      if (!isEmptyPlatformStats(data)) {
-        writeCachedPlatformStats(data);
-        return data;
-      }
-      if (cachedStats) {
-        return cachedStats;
-      }
       return data;
     },
-    initialData: cachedStats ?? undefined,
     refetchOnWindowFocus: false,
     retry: 1,
     staleTime: 10 * 60 * 1000, // Consider data stale after 10 minutes

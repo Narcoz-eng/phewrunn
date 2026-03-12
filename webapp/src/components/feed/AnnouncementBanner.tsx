@@ -17,7 +17,7 @@ interface Announcement {
 }
 
 const ANNOUNCEMENTS_SESSION_CACHE_KEY = "phew.feed.announcements.pinned";
-const ANNOUNCEMENTS_SESSION_CACHE_TTL_MS = 2 * 60_000;
+const ANNOUNCEMENTS_SESSION_CACHE_TTL_MS = 60_000;
 
 interface AnnouncementBannerProps {
   enabled?: boolean;

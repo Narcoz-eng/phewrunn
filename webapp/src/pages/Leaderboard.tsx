@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
-const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 
 export default function Leaderboard() {
   const navigate = useNavigate();

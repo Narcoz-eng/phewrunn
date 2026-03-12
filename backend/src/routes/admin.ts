@@ -5,6 +5,10 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma.js";
 import type { AuthVariables } from "../auth.js";
+import { invalidateAnnouncementsCache } from "./announcements.js";
+import { invalidatePostReadCaches } from "./posts.js";
+import { invalidatePublicUserRouteCachesForUser } from "./users.js";
+import { clearCachedMeResponse } from "../lib/me-response-cache.js";
 import {
   AdminUsersQuerySchema,
   AdminPostsQuerySchema,
@@ -29,6 +33,24 @@ import {
 const adminRouter = new Hono<{ Variables: AuthVariables }>();
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const ACTIVE_REPORT_STATUSES = ["open", "reviewing"] as const;
+
+function invalidateAdminUserReadCaches(
+  user: { id: string; username?: string | null },
+  previousUsername?: string | null
+): void {
+  clearCachedMeResponse(user.id);
+  invalidatePublicUserRouteCachesForUser({
+    userId: user.id,
+    username: user.username ?? null,
+  });
+  if (previousUsername && previousUsername !== user.username) {
+    invalidatePublicUserRouteCachesForUser({
+      userId: user.id,
+      username: previousUsername,
+    });
+  }
+  invalidatePostReadCaches({ leaderboard: true });
+}
 
 function isPrismaSchemaDriftError(error: unknown): boolean {
   const code =
@@ -560,7 +582,7 @@ adminRouter.patch(
 
     const existing = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, username: true },
     });
 
     if (!existing) {
@@ -598,6 +620,8 @@ adminRouter.patch(
           createdAt: true,
         },
       });
+
+      invalidateAdminUserReadCaches(updated, existing.username);
 
       return c.json({
         data: {
@@ -780,7 +804,7 @@ adminRouter.post("/users/:id/ban", async (c) => {
   // Check if user exists
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, isBanned: true },
+    select: { id: true, name: true, username: true, isBanned: true },
   });
 
   if (!user) {
@@ -794,8 +818,9 @@ adminRouter.post("/users/:id/ban", async (c) => {
   const updatedUser = await prisma.user.update({
     where: { id: userId },
     data: { isBanned: !user.isBanned },
-    select: { id: true, name: true, isBanned: true },
+    select: { id: true, name: true, username: true, isBanned: true },
   });
+  invalidateAdminUserReadCaches(updatedUser, user.username);
 
   return c.json({
     data: {
@@ -822,7 +847,7 @@ adminRouter.patch(
     // Check if user exists
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, username: true },
     });
 
     if (!user) {
@@ -836,8 +861,9 @@ adminRouter.patch(
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { isVerified },
-      select: { id: true, name: true, isVerified: true },
+      select: { id: true, name: true, username: true, isVerified: true },
     });
+    invalidateAdminUserReadCaches(updatedUser, user.username);
 
     return c.json({
       data: {
@@ -1174,6 +1200,8 @@ adminRouter.post(
       },
     });
 
+    invalidateAnnouncementsCache();
+
     return c.json({
       data: {
         id: announcement.id,
@@ -1227,6 +1255,8 @@ adminRouter.patch(
       },
     });
 
+    invalidateAnnouncementsCache();
+
     return c.json({
       data: {
         id: announcement.id,
@@ -1264,6 +1294,8 @@ adminRouter.delete("/announcements/:id", async (c) => {
   await prisma.announcement.delete({
     where: { id: announcementId },
   });
+
+  invalidateAnnouncementsCache();
 
   return c.json({
     data: {
@@ -1306,6 +1338,8 @@ adminRouter.post("/announcements/:id/pin", async (c) => {
       },
     },
   });
+
+  invalidateAnnouncementsCache();
 
   return c.json({
     data: {

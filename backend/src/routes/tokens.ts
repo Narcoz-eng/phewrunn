@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
-import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { prisma } from "../prisma.js";
 import {
   getTokenOverviewByAddress,
@@ -27,6 +27,10 @@ const TokenAddressParamSchema = z.object({
 
 function buildTokenRouteCacheKey(tokenAddress: string, viewerId: string | null): string {
   return `route:token:${viewerId ?? "anonymous"}:${tokenAddress.trim().toLowerCase()}`;
+}
+
+function shouldUseTokenRouteCache(viewerId: string | null | undefined): boolean {
+  return !viewerId;
 }
 
 function readTokenRouteCache(key: string): TokenRoutePayload | null {
@@ -66,6 +70,12 @@ function writeBestEffortTokenRouteCache(key: string, data: TokenRoutePayload): v
   void cacheSetJson(key, data, TOKEN_ROUTE_CACHE_TTL_MS);
 }
 
+function invalidateTokenRouteCache(tokenAddress: string): void {
+  const anonymousKey = buildTokenRouteCacheKey(tokenAddress, null);
+  tokenRouteCache.delete(anonymousKey);
+  void redisDelete(anonymousKey);
+}
+
 function isMeaningfulTokenRoutePayload(token: TokenRoutePayload): boolean {
   const hasSignals = [
     token.confidenceScore,
@@ -99,8 +109,10 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   const { tokenAddress } = c.req.valid("param");
   const viewer = c.get("user");
   const isPersonalized = Boolean(viewer?.id);
-  const cacheKey = buildTokenRouteCacheKey(tokenAddress, viewer?.id ?? null);
-  const cached = await readBestEffortTokenRouteCache(cacheKey);
+  const shouldUseCache = shouldUseTokenRouteCache(viewer?.id ?? null);
+  const cacheKey = shouldUseCache ? buildTokenRouteCacheKey(tokenAddress, null) : null;
+  const cached = cacheKey ? await readBestEffortTokenRouteCache(cacheKey) : null;
+  c.header("Vary", "Cookie");
 
   let overview;
   try {
@@ -122,7 +134,7 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   }
 
   const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : cached ?? overview.token;
-  if (isMeaningfulTokenRoutePayload(data)) {
+  if (cacheKey && isMeaningfulTokenRoutePayload(data)) {
     writeBestEffortTokenRouteCache(cacheKey, data);
   }
 
@@ -138,7 +150,7 @@ tokensRouter.get("/:tokenAddress/chart", zValidator("param", TokenAddressParamSc
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ data: overview.token.chart });
+  return c.json({ data: overview.token.chart }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.get("/:tokenAddress/timeline", zValidator("param", TokenAddressParamSchema), async (c) => {
@@ -150,14 +162,15 @@ tokensRouter.get("/:tokenAddress/timeline", zValidator("param", TokenAddressPara
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ data: overview.token.timeline });
+  return c.json({ data: overview.token.timeline }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.get("/:tokenAddress/calls", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");
   const viewer = c.get("user");
   const calls = await listTokenCallsByAddress(tokenAddress, viewer?.id ?? null);
-  return c.json({ data: calls });
+  c.header("Vary", "Cookie");
+  return c.json({ data: calls }, 200, buildTokenRouteHeaders(Boolean(viewer?.id)));
 });
 
 tokensRouter.get("/:tokenAddress/risk", zValidator("param", TokenAddressParamSchema), async (c) => {
@@ -169,7 +182,7 @@ tokensRouter.get("/:tokenAddress/risk", zValidator("param", TokenAddressParamSch
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ data: overview.token.risk });
+  return c.json({ data: overview.token.risk }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.get("/:tokenAddress/sentiment", zValidator("param", TokenAddressParamSchema), async (c) => {
@@ -181,7 +194,7 @@ tokensRouter.get("/:tokenAddress/sentiment", zValidator("param", TokenAddressPar
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ data: overview.token.sentiment });
+  return c.json({ data: overview.token.sentiment }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.post("/:tokenAddress/follow", requireNotBanned, zValidator("param", TokenAddressParamSchema), async (c) => {
@@ -210,6 +223,7 @@ tokensRouter.post("/:tokenAddress/follow", requireNotBanned, zValidator("param",
     update: {},
   });
   invalidateViewerSocialCaches(user.id);
+  invalidateTokenRouteCache(tokenAddress);
 
   return c.json({ data: { following: true, tokenId: overview.token.id } });
 });
@@ -235,6 +249,7 @@ tokensRouter.delete("/:tokenAddress/follow", requireAuth, zValidator("param", To
     },
   }).catch(() => undefined);
   invalidateViewerSocialCaches(user.id);
+  invalidateTokenRouteCache(tokenAddress);
 
   return c.json({ data: { following: false, tokenId: overview.token.id } });
 });

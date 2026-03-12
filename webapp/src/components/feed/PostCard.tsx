@@ -98,6 +98,7 @@ const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
+const SHARED_ALPHA_QUERY_STALE_TIME_MS = 60_000;
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const MAX_CREATOR_ROUTE_FEE_BPS = 50;
 const DEFAULT_TOTAL_ROUTE_FEE_BPS = 100;
@@ -1319,6 +1320,7 @@ export function PostCard({
     fetch("/api/posts/portfolio", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({ walletAddress: walletAddr, tokenMints: [post.contractAddress] }),
     })
@@ -1541,7 +1543,7 @@ export function PostCard({
     queryKey: ["sharedAlpha", post.id],
     queryFn: () => api.get<SharedAlphaResponse>(`/api/posts/${post.id}/shared-alpha`),
     enabled: Boolean(post.contractAddress) && (isSharedAlphaOpen || shouldPrefetchSharedAlphaPreview),
-    staleTime: 5 * 60_000,
+    staleTime: SHARED_ALPHA_QUERY_STALE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -2997,6 +2999,7 @@ export function PostCard({
       const response = await fetch("/api/posts/chart/candles", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        cache: "no-store",
         credentials: "same-origin",
         body: JSON.stringify({
           poolAddress: resolvedPairAddress ?? undefined,

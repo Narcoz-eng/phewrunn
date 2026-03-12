@@ -61,6 +61,7 @@ callsRouter.get("/:id/quality", zValidator("param", CallIdParamSchema), async (c
 });
 
 callsRouter.get("/:id/thread", zValidator("param", CallIdParamSchema), async (c) => {
+  c.header("Cache-Control", "no-store");
   const { id } = c.req.valid("param");
   const thread = await listThreadForCall(id);
   return c.json({ data: thread });

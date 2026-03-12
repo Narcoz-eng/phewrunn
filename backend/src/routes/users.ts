@@ -6,9 +6,10 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { prisma, withPrismaRetry } from "../prisma.js";
-import { invalidateLeaderboardCaches } from "./leaderboard.js";
+import { invalidatePostReadCaches } from "./posts.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
-import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
+import { clearCachedMeResponse } from "../lib/me-response-cache.js";
 import {
   UpdateProfileSchema,
   USERNAME_UPDATE_COOLDOWN_DAYS,
@@ -85,6 +86,20 @@ const userProfileRouteCache = new Map<string, TimedUserRouteCacheEntry<UserProfi
 const userPostsRouteCache = new Map<string, TimedUserRouteCacheEntry<UserPostsRoutePayload>>();
 const userRepostsRouteCache = new Map<string, TimedUserRouteCacheEntry<UserPostsRoutePayload>>();
 
+function shouldUseUserRouteCache(viewerId: string | null | undefined): boolean {
+  return !viewerId;
+}
+
+function buildUserRouteResponseHeaders(isPublicCacheable: boolean): Record<string, string> {
+  return {
+    "Cache-Control": isPublicCacheable
+      ? process.env.NODE_ENV === "production"
+        ? "public, max-age=30, s-maxage=45, stale-while-revalidate=300"
+        : "no-store"
+      : "private, no-store",
+  };
+}
+
 function trimUserRouteCache<T>(cache: Map<string, TimedUserRouteCacheEntry<T>>): void {
   while (cache.size >= USERS_ROUTE_CACHE_MAX_ENTRIES) {
     const oldestKey = cache.keys().next().value;
@@ -101,6 +116,35 @@ function buildUserRouteCacheKey(identifier: string, viewerId: string | null | un
 
 function buildUserRouteRedisKey(prefix: string, cacheKey: string): string {
   return `${prefix}:${cacheKey}`;
+}
+
+function deleteUserRouteCacheEntry<T>(
+  cache: Map<string, TimedUserRouteCacheEntry<T>>,
+  prefix: string,
+  identifier: string
+): void {
+  const cacheKey = buildUserRouteCacheKey(identifier, null);
+  cache.delete(cacheKey);
+  void redisDelete(buildUserRouteRedisKey(prefix, cacheKey));
+}
+
+export function invalidatePublicUserRouteCachesForUser(params: {
+  userId: string;
+  username?: string | null;
+}): void {
+  const identifiers = new Set<string>();
+  if (params.userId?.trim()) {
+    identifiers.add(params.userId.trim());
+  }
+  if (params.username?.trim()) {
+    identifiers.add(params.username.trim());
+  }
+
+  for (const identifier of identifiers) {
+    deleteUserRouteCacheEntry(userProfileRouteCache, USERS_PROFILE_REDIS_KEY_PREFIX, identifier);
+    deleteUserRouteCacheEntry(userPostsRouteCache, USERS_POSTS_REDIS_KEY_PREFIX, identifier);
+    deleteUserRouteCacheEntry(userRepostsRouteCache, USERS_REPOSTS_REDIS_KEY_PREFIX, identifier);
+  }
 }
 
 function normalizeUserRouteCacheEnvelope<T>(
@@ -1224,6 +1268,8 @@ usersRouter.post("/me/wallet", requireAuth, zValidator("json", ConnectWalletSche
     };
   }
 
+  clearCachedMeResponse(sessionUser.id);
+
   return c.json({ data: updatedUser });
 });
 
@@ -1372,6 +1418,8 @@ usersRouter.delete("/me/wallet", requireAuth, async (c) => {
       walletConnectedAt: null,
     };
   }
+
+  clearCachedMeResponse(sessionUser.id);
 
   return c.json({ data: updatedUser });
 });
@@ -1929,6 +1977,7 @@ usersRouter.patch(
       if (!user) {
         return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
       }
+      clearCachedMeResponse(sessionUser.id);
       return c.json({ data: buildFeeSettingsResponse(user) });
     }
 
@@ -1972,6 +2021,8 @@ usersRouter.patch(
     if (!user) {
       return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
     }
+
+    clearCachedMeResponse(sessionUser.id);
 
     return c.json({ data: buildFeeSettingsResponse(user) });
   }
@@ -2076,18 +2127,23 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
 usersRouter.get("/:identifier", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
-  const profileCacheKey = buildUserRouteCacheKey(identifier, currentUser?.id);
-  const profileRedisKey = buildUserRouteRedisKey(USERS_PROFILE_REDIS_KEY_PREFIX, profileCacheKey);
-  const cachedProfileResponse = await readUserRouteCache(
-    userProfileRouteCache,
-    profileCacheKey,
-    profileRedisKey
-  );
+  const shouldUseCache = shouldUseUserRouteCache(currentUser?.id);
+  const profileCacheKey = shouldUseCache ? buildUserRouteCacheKey(identifier, null) : null;
+  const profileRedisKey =
+    profileCacheKey ? buildUserRouteRedisKey(USERS_PROFILE_REDIS_KEY_PREFIX, profileCacheKey) : null;
+  c.header("Vary", "Cookie");
+  c.header("Cache-Control", buildUserRouteResponseHeaders(shouldUseCache)["Cache-Control"]);
+  const cachedProfileResponse =
+    profileCacheKey && profileRedisKey
+      ? await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey)
+      : null;
   const staleCachedProfileResponse =
     cachedProfileResponse ??
-    (await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey, {
-      allowStale: true,
-    }));
+    (profileCacheKey && profileRedisKey
+      ? await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey, {
+          allowStale: true,
+        })
+      : null);
   if (cachedProfileResponse) {
     return c.json(cachedProfileResponse);
   }
@@ -2173,12 +2229,14 @@ usersRouter.get("/:identifier", async (c) => {
   const responsePayload: UserProfileRoutePayload = {
     data: buildPublicUserProfileDto({ user, isFollowing, stats }),
   };
-  writeUserRouteCache(
-    userProfileRouteCache,
-    profileCacheKey,
-    profileRedisKey,
-    responsePayload
-  );
+  if (profileCacheKey && profileRedisKey) {
+    writeUserRouteCache(
+      userProfileRouteCache,
+      profileCacheKey,
+      profileRedisKey,
+      responsePayload
+    );
+  }
 
   return c.json(responsePayload);
 });
@@ -2460,8 +2518,19 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
       : null;
   }
 
-  // Username/image updates affect leaderboard profile chips and cached stats.
-  invalidateLeaderboardCaches();
+  clearCachedMeResponse(sessionUser.id);
+  invalidateViewerSocialCaches(sessionUser.id);
+  if (currentNormalizedUsername) {
+    invalidatePublicUserRouteCachesForUser({
+      userId: sessionUser.id,
+      username: currentNormalizedUsername,
+    });
+  }
+  invalidatePublicUserRouteCachesForUser({
+    userId: sessionUser.id,
+    username: user?.username ?? currentNormalizedUsername,
+  });
+  invalidatePostReadCaches({ leaderboard: true });
 
   return c.json({ data: user });
 });
@@ -2470,18 +2539,23 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
 usersRouter.get("/:identifier/posts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
-  const postsCacheKey = buildUserRouteCacheKey(identifier, currentUser?.id);
-  const postsRedisKey = buildUserRouteRedisKey(USERS_POSTS_REDIS_KEY_PREFIX, postsCacheKey);
-  const cachedPostsResponse = await readUserRouteCache(
-    userPostsRouteCache,
-    postsCacheKey,
-    postsRedisKey
-  );
+  const shouldUseCache = shouldUseUserRouteCache(currentUser?.id);
+  const postsCacheKey = shouldUseCache ? buildUserRouteCacheKey(identifier, null) : null;
+  const postsRedisKey =
+    postsCacheKey ? buildUserRouteRedisKey(USERS_POSTS_REDIS_KEY_PREFIX, postsCacheKey) : null;
+  c.header("Vary", "Cookie");
+  c.header("Cache-Control", buildUserRouteResponseHeaders(shouldUseCache)["Cache-Control"]);
+  const cachedPostsResponse =
+    postsCacheKey && postsRedisKey
+      ? await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey)
+      : null;
   const staleCachedPostsResponse =
     cachedPostsResponse ??
-    (await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, {
-      allowStale: true,
-    }));
+    (postsCacheKey && postsRedisKey
+      ? await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, {
+          allowStale: true,
+        })
+      : null);
   if (cachedPostsResponse) {
     return c.json(cachedPostsResponse);
   }
@@ -2614,7 +2688,9 @@ usersRouter.get("/:identifier/posts", async (c) => {
     isFollowingAuthor,
   }));
   const responsePayload: UserPostsRoutePayload = { data: postsWithSocial };
-  writeUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, responsePayload);
+  if (postsCacheKey && postsRedisKey) {
+    writeUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, responsePayload);
+  }
 
   return c.json(responsePayload);
 });
@@ -2623,18 +2699,23 @@ usersRouter.get("/:identifier/posts", async (c) => {
 usersRouter.get("/:identifier/reposts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
-  const repostsCacheKey = buildUserRouteCacheKey(identifier, currentUser?.id);
-  const repostsRedisKey = buildUserRouteRedisKey(USERS_REPOSTS_REDIS_KEY_PREFIX, repostsCacheKey);
-  const cachedRepostsResponse = await readUserRouteCache(
-    userRepostsRouteCache,
-    repostsCacheKey,
-    repostsRedisKey
-  );
+  const shouldUseCache = shouldUseUserRouteCache(currentUser?.id);
+  const repostsCacheKey = shouldUseCache ? buildUserRouteCacheKey(identifier, null) : null;
+  const repostsRedisKey =
+    repostsCacheKey ? buildUserRouteRedisKey(USERS_REPOSTS_REDIS_KEY_PREFIX, repostsCacheKey) : null;
+  c.header("Vary", "Cookie");
+  c.header("Cache-Control", buildUserRouteResponseHeaders(shouldUseCache)["Cache-Control"]);
+  const cachedRepostsResponse =
+    repostsCacheKey && repostsRedisKey
+      ? await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey)
+      : null;
   const staleCachedRepostsResponse =
     cachedRepostsResponse ??
-    (await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey, {
-      allowStale: true,
-    }));
+    (repostsCacheKey && repostsRedisKey
+      ? await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey, {
+          allowStale: true,
+        })
+      : null);
   if (cachedRepostsResponse) {
     return c.json(cachedRepostsResponse);
   }
@@ -2775,32 +2856,37 @@ usersRouter.get("/:identifier/reposts", async (c) => {
     isFollowingAuthor: currentUser ? followingAuthorIds.has(post.authorId) : false,
   }));
   const responsePayload: UserPostsRoutePayload = { data: postsWithSocial };
-  writeUserRouteCache(
-    userRepostsRouteCache,
-    repostsCacheKey,
-    repostsRedisKey,
-    responsePayload
-  );
+  if (repostsCacheKey && repostsRedisKey) {
+    writeUserRouteCache(
+      userRepostsRouteCache,
+      repostsCacheKey,
+      repostsRedisKey,
+      responsePayload
+    );
+  }
 
   return c.json(responsePayload);
 });
 
-async function resolveUserIdFromIdentifier(identifier: string): Promise<string | null> {
+async function resolveUserIdentityFromIdentifier(identifier: string): Promise<{
+  id: string;
+  username: string | null;
+} | null> {
   const normalizedIdentifier = normalizeUsernameHandle(identifier);
 
   const byUsername = await prisma.user.findUnique({
     where: { username: normalizedIdentifier },
-    select: { id: true },
+    select: { id: true, username: true },
   });
   if (byUsername?.id) {
-    return byUsername.id;
+    return byUsername;
   }
 
   const byId = await prisma.user.findUnique({
     where: { id: identifier },
-    select: { id: true },
+    select: { id: true, username: true },
   });
-  return byId?.id ?? null;
+  return byId ?? null;
 }
 
 // Follow a user
@@ -2812,11 +2898,12 @@ usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const targetUserId = await resolveUserIdFromIdentifier(targetIdentifier);
+  const targetUser = await resolveUserIdentityFromIdentifier(targetIdentifier);
 
-  if (!targetUserId) {
+  if (!targetUser) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
+  const targetUserId = targetUser.id;
 
   // Cannot follow yourself
   if (currentUser.id === targetUserId) {
@@ -2848,6 +2935,13 @@ usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
   // Get updated counts
   const followerCount = await prisma.follow.count({ where: { followingId: targetUserId } });
   invalidateViewerSocialCaches(currentUser.id);
+  invalidatePublicUserRouteCachesForUser({
+    userId: currentUser.id,
+  });
+  invalidatePublicUserRouteCachesForUser({
+    userId: targetUser.id,
+    username: targetUser.username,
+  });
 
   return c.json({ data: { following: true, followerCount } });
 });
@@ -2861,10 +2955,11 @@ usersRouter.delete("/:id/follow", requireNotBanned, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const targetUserId = await resolveUserIdFromIdentifier(targetIdentifier);
-  if (!targetUserId) {
+  const targetUser = await resolveUserIdentityFromIdentifier(targetIdentifier);
+  if (!targetUser) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
+  const targetUserId = targetUser.id;
 
   // Delete follow idempotently so stale UI can safely reconcile to the final state.
   try {
@@ -2893,6 +2988,13 @@ usersRouter.delete("/:id/follow", requireNotBanned, async (c) => {
   // Get updated counts
   const followerCount = await prisma.follow.count({ where: { followingId: targetUserId } });
   invalidateViewerSocialCaches(currentUser.id);
+  invalidatePublicUserRouteCachesForUser({
+    userId: currentUser.id,
+  });
+  invalidatePublicUserRouteCachesForUser({
+    userId: targetUser.id,
+    username: targetUser.username,
+  });
 
   return c.json({ data: { following: false, followerCount } });
 });

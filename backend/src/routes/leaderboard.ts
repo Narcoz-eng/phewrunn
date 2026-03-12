@@ -171,6 +171,14 @@ export function invalidateLeaderboardCaches() {
   void redisDelete(buildLeaderboardRedisKey("stats", leaderboardCacheVersionMemory));
 }
 
+function buildLeaderboardRouteHeaders(): Record<string, string> {
+  return {
+    "Cache-Control": process.env.NODE_ENV === "production"
+      ? "public, max-age=30, s-maxage=300, stale-while-revalidate=600"
+      : "no-store",
+  };
+}
+
 function readCache<T>(entry: CacheEntry<T> | null): T | null {
   if (!entry) return null;
   if (entry.expiresAtMs <= Date.now()) return null;
@@ -1104,6 +1112,7 @@ async function getTopUsersResponseRaw(
  * Filter: Only settled posts with positive percent change
  */
 leaderboardRouter.get("/daily-gainers", async (c) => {
+  c.header("Cache-Control", buildLeaderboardRouteHeaders()["Cache-Control"]);
   const trace = {
     endpoint: "/api/leaderboard/daily-gainers",
     requestId: c.get("requestId") ?? null,
@@ -1190,6 +1199,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
  * Query params: page, limit (default 20), sortBy (level, activity, winrate)
  */
 leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema), async (c) => {
+  c.header("Cache-Control", buildLeaderboardRouteHeaders()["Cache-Control"]);
   const { page, limit, sortBy } = c.req.valid("query");
   const trace = {
     endpoint: `/api/leaderboard/top-users?sortBy=${sortBy}`,
@@ -1264,6 +1274,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
  * Platform-wide statistics
  */
 leaderboardRouter.get("/stats", async (c) => {
+  c.header("Cache-Control", buildLeaderboardRouteHeaders()["Cache-Control"]);
   const trace = {
     endpoint: "/api/leaderboard/stats",
     requestId: c.get("requestId") ?? null,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ComponentType, type ReactNode } from "react";
+import { type ComponentType, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -8,7 +8,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getAvatarUrl, type Post, formatMarketCap, formatTimeAgo } from "@/types";
 import { buildProfilePath } from "@/lib/profile-path";
 import { cn } from "@/lib/utils";
-import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   Award,
   Flame,
@@ -17,10 +16,6 @@ import {
   TrendingUp,
   Trophy,
 } from "lucide-react";
-
-const DAILY_LEADERBOARD_CACHE_KEY = "phew.leaderboards.daily-intelligence.v2";
-const FIRST_CALLER_CACHE_KEY = "phew.leaderboards.first-callers.v2";
-const LEADERBOARD_CACHE_TTL_MS = 2 * 60_000;
 
 type DailyLeaderboards = {
   topTradersToday: Array<{
@@ -299,14 +294,6 @@ function FirstCallerRow({
 }
 
 export function IntelligenceLeaderboards() {
-  const cachedDaily = useMemo(
-    () => readSessionCache<DailyLeaderboards>(DAILY_LEADERBOARD_CACHE_KEY, LEADERBOARD_CACHE_TTL_MS),
-    []
-  );
-  const cachedFirstCallers = useMemo(
-    () => readSessionCache<FirstCallerRow[]>(FIRST_CALLER_CACHE_KEY, LEADERBOARD_CACHE_TTL_MS),
-    []
-  );
   const {
     data: daily,
     isLoading: isLoadingDaily,
@@ -315,17 +302,12 @@ export function IntelligenceLeaderboards() {
     refetch: refetchDaily,
   } = useQuery({
     queryKey: ["leaderboards", "daily"],
-    queryFn: async () => {
-      const data = await api.get<DailyLeaderboards>("/api/leaderboards/daily");
-      return hasMeaningfulDailyLeaderboards(data) ? data : cachedDaily ?? data;
-    },
-    initialData: cachedDaily ?? undefined,
+    queryFn: () => api.get<DailyLeaderboards>("/api/leaderboards/daily"),
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
     retry: 1,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
-    refetchOnMount: cachedDaily ? false : "always",
   });
 
   const {
@@ -336,28 +318,13 @@ export function IntelligenceLeaderboards() {
     refetch: refetchFirstCallers,
   } = useQuery({
     queryKey: ["leaderboards", "first-callers"],
-    queryFn: async () => {
-      const data = await api.get<FirstCallerRow[]>("/api/leaderboards/first-callers");
-      return hasMeaningfulFirstCallerRows(data) ? data : cachedFirstCallers ?? data;
-    },
-    initialData: cachedFirstCallers ?? undefined,
+    queryFn: () => api.get<FirstCallerRow[]>("/api/leaderboards/first-callers"),
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
     retry: 1,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
-    refetchOnMount: cachedFirstCallers ? false : "always",
   });
-
-  useEffect(() => {
-    if (!hasMeaningfulDailyLeaderboards(daily)) return;
-    writeSessionCache(DAILY_LEADERBOARD_CACHE_KEY, daily);
-  }, [daily]);
-
-  useEffect(() => {
-    if (!hasMeaningfulFirstCallerRows(firstCallers)) return;
-    writeSessionCache(FIRST_CALLER_CACHE_KEY, firstCallers);
-  }, [firstCallers]);
 
   return (
     <div className="space-y-6">

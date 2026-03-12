@@ -30,40 +30,6 @@ interface DailyGainer {
   settledAt: string;
 }
 
-const DAILY_GAINERS_CACHE_KEY = "phew.leaderboard.daily-gainers";
-const DAILY_GAINERS_CACHE_TTL_MS = 30 * 60_000;
-
-function readCachedDailyGainers(): DailyGainer[] | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(DAILY_GAINERS_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { cachedAt?: number; data?: DailyGainer[] };
-    if (
-      typeof parsed?.cachedAt !== "number" ||
-      !Array.isArray(parsed.data) ||
-      Date.now() - parsed.cachedAt > DAILY_GAINERS_CACHE_TTL_MS
-    ) {
-      return null;
-    }
-    return parsed.data;
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedDailyGainers(data: DailyGainer[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(
-      DAILY_GAINERS_CACHE_KEY,
-      JSON.stringify({ cachedAt: Date.now(), data })
-    );
-  } catch {
-    // ignore storage failures
-  }
-}
-
 function getRankIcon(rank: number) {
   if (rank === 1) {
     return <Trophy className="h-5 w-5 text-yellow-500 drop-shadow-[0_0_8px_rgba(234,179,8,0.6)]" />;
@@ -95,22 +61,10 @@ function DailyGainerSkeleton() {
 
 export function DailyGainersTable() {
   const navigate = useNavigate();
-  const cachedDailyGainers = readCachedDailyGainers();
 
   const { data: gainers = [], isLoading, error } = useQuery({
     queryKey: ["leaderboard", "daily-gainers"],
-    queryFn: async () => {
-      const data = await api.get<DailyGainer[]>("/api/leaderboard/daily-gainers");
-      if (Array.isArray(data) && data.length > 0) {
-        writeCachedDailyGainers(data);
-        return data;
-      }
-      if (cachedDailyGainers?.length) {
-        return cachedDailyGainers;
-      }
-      return data;
-    },
-    initialData: cachedDailyGainers ?? undefined,
+    queryFn: async () => await api.get<DailyGainer[]>("/api/leaderboard/daily-gainers"),
     refetchOnWindowFocus: false,
     retry: 1,
     refetchInterval: () => {
