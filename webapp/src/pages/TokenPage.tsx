@@ -71,6 +71,12 @@ type TokenTrader = PostAuthor & {
   bestRoiPct: number;
 };
 
+type TokenHolder = {
+  address: string;
+  amount: number | null;
+  supplyPct: number;
+};
+
 type TokenRisk = {
   tokenRiskScore: number | null;
   bundleRiskLabel: string | null;
@@ -80,6 +86,7 @@ type TokenRisk = {
   estimatedBundledSupplyPct: number | null;
   deployerSupplyPct: number | null;
   holderCount: number | null;
+  topHolders: TokenHolder[];
 };
 
 type TokenBundleCluster = {
@@ -116,6 +123,7 @@ type TokenPageData = {
   imageUrl: string | null;
   dexscreenerUrl: string | null;
   pairAddress?: string | null;
+  marketCap: number | null;
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
@@ -136,6 +144,7 @@ type TokenPageData = {
   isEarlyRunner: boolean;
   isFollowing: boolean;
   earlyRunnerReasons?: string[];
+  topHolders: TokenHolder[];
   bundleClusters: TokenBundleCluster[];
   chart: TokenChartPoint[];
   callsCount: number;
@@ -178,6 +187,20 @@ function formatTokenPrice(value: number): string {
   if (Math.abs(value) < 0.01) return `$${value.toFixed(6)}`;
   if (Math.abs(value) < 1) return `$${value.toFixed(4)}`;
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+function formatHolderAmount(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Amount unavailable";
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: value >= 1000 ? 1 : 2,
+  }).format(value);
+}
+
+function formatHolderAddress(address: string): string {
+  const trimmed = address.trim();
+  if (trimmed.length <= 12) return trimmed;
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
 }
 
 function formatTimelineEventLabel(eventType: string): string {
@@ -272,6 +295,7 @@ function mergeTokenPageDataWithCached(
 
   return {
     ...live,
+    marketCap: pickMergedMetric(live.marketCap, cached.marketCap, { positive: true }),
     liquidity: pickMergedMetric(live.liquidity, cached.liquidity, { positive: true }),
     volume24h: pickMergedMetric(live.volume24h, cached.volume24h, { positive: true }),
     holderCount: pickMergedMetric(live.holderCount, cached.holderCount, { positive: true }),
@@ -289,6 +313,7 @@ function mergeTokenPageDataWithCached(
     highConvictionScore: pickMergedMetric(live.highConvictionScore, cached.highConvictionScore),
     bundleRiskLabel: live.bundleRiskLabel ?? cached.bundleRiskLabel,
     holderCountSource: live.holderCountSource ?? cached.holderCountSource,
+    topHolders: live.topHolders.length > 0 ? live.topHolders : cached.topHolders,
     bundleClusters: live.bundleClusters.length > 0 ? live.bundleClusters : cached.bundleClusters,
     chart: live.chart.length > 1 ? live.chart : cached.chart,
     callsCount: live.callsCount > 0 ? live.callsCount : cached.callsCount,
@@ -309,6 +334,7 @@ function mergeTokenPageDataWithCached(
           ),
           deployerSupplyPct: pickMergedMetric(live.risk.deployerSupplyPct, cached.risk.deployerSupplyPct),
           holderCount: pickMergedMetric(live.risk.holderCount, cached.risk.holderCount, { positive: true }),
+          topHolders: live.risk.topHolders.length > 0 ? live.risk.topHolders : cached.risk.topHolders,
         },
     timeline: live.timeline.length > 0 ? live.timeline : cached.timeline,
     recentCalls: live.recentCalls.length > 0 ? live.recentCalls : cached.recentCalls,
@@ -340,7 +366,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v4:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v5:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -618,6 +644,7 @@ export default function TokenPage() {
     token.holderCount > 0
       ? `${holderCountValue}+`
       : holderCountValue;
+  const holderMetricTitle = token?.holderCountSource === "largest_accounts" ? "Holder scan" : "Holders";
 
   return (
     <div className="min-h-screen bg-background">
@@ -691,6 +718,21 @@ export default function TokenPage() {
                         ))}
                       </div>
                     ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {[
+                        { label: "Current MCAP", value: formatMarketMetric(token.marketCap) },
+                        { label: "Liquidity", value: formatMarketMetric(token.liquidity) },
+                        { label: holderMetricTitle, value: holderCountLabel },
+                      ].map((metric) => (
+                        <div
+                          key={metric.label}
+                          className="rounded-full border border-border/60 bg-secondary px-3 py-1.5 text-[11px] text-muted-foreground"
+                        >
+                          <span className="font-semibold uppercase tracking-[0.14em]">{metric.label}</span>
+                          <span className="ml-2 font-semibold text-foreground">{metric.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -948,6 +990,10 @@ export default function TokenPage() {
                       </div>
                       <div className="mt-4 space-y-2 text-xs text-muted-foreground">
                         <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                          <span>Current MCAP</span>
+                          <span className="font-semibold text-foreground">{formatMarketMetric(token.marketCap)}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
                           <span>Current liquidity</span>
                           <span className="font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</span>
                         </div>
@@ -1006,6 +1052,40 @@ export default function TokenPage() {
                       ) : (
                         <p className="text-sm text-muted-foreground">
                           {token.risk.bundleRiskLabel ? "No clustered bundlers detected yet." : "Scanning holder clusters and linked bundlers."}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-[20px] border border-border/60 bg-white/55 p-3 dark:bg-white/[0.03]">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 20 holders</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {token.topHolders.length > 0 ? `${Math.min(token.topHolders.length, 20)} wallets` : "Live scan"}
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {token.topHolders.length > 0 ? (
+                        token.topHolders.slice(0, 20).map((holder, index) => (
+                          <div
+                            key={holder.address}
+                            className="flex items-center justify-between gap-3 rounded-[16px] border border-border/60 bg-secondary px-3 py-2 text-sm"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-mono text-[12px] font-semibold text-foreground">
+                                #{index + 1} {formatHolderAddress(holder.address)}
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                {formatHolderAmount(holder.amount)} tokens
+                              </div>
+                            </div>
+                            <div className="font-mono text-sm font-semibold text-foreground">
+                              {formatPct(holder.supplyPct)}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Scanning the live largest-holder distribution for this token.
                         </p>
                       )}
                     </div>
@@ -1094,7 +1174,7 @@ export default function TokenPage() {
                       <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Holders</div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{holderMetricTitle}</div>
                       <div className="mt-2 text-xl font-semibold text-foreground">{holderCountLabel}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">

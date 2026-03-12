@@ -3,9 +3,9 @@ import { Navigate, useLocation } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   getAuthUiState,
-  getExplicitLogoutAt,
   isPrivyAuthBootstrapStatePending,
   isExplicitLogoutCoolingDown,
+  isRecentExplicitLogoutSuppressed,
   readCachedAuthUserSnapshot,
   useAuth,
   usePrivyAuthBootstrapSnapshot,
@@ -196,12 +196,8 @@ function ProtectedRouteWithPrivy({
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
   const logoutCooldownActive = isExplicitLogoutCoolingDown();
-  // Suppress Privy auto-bootstrap for a longer window after explicit logout
-  // so the user isn't stuck on a loading screen while the Privy SDK settles.
-  const RECENT_LOGOUT_SUPPRESS_MS = 15_000;
   const recentlyLoggedOut =
-    logoutCooldownActive ||
-    (getExplicitLogoutAt() > 0 && Date.now() - getExplicitLogoutAt() < RECENT_LOGOUT_SUPPRESS_MS);
+    logoutCooldownActive || isRecentExplicitLogoutSuppressed();
   const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
   const activeLoginIntent =
     !effectiveUser && !recentlyLoggedOut ? readPrivyLoginIntent() : null;

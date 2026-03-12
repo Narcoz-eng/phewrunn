@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken, useUser } from "@privy-io/react-auth";
 import {
   hasValidatedAuthSession,
+  isRecentExplicitLogoutSuppressed,
   isPrivyAuthBootstrapStatePending,
   registerPreLogoutHook,
   readCachedAuthUserSnapshot,
@@ -195,6 +196,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       return;
     }
 
+    const recentLogoutSuppressed = isRecentExplicitLogoutSuppressed();
     const snapshot = readPrivyAuthBootstrapSnapshot();
     const authoritativeBackendUser = readCachedAuthUserSnapshot();
     const hasAuthoritativeBackendSession =
@@ -222,6 +224,17 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       hasAuthoritativeBackendSession ||
       hasLiveSession ||
       (snapshot?.state === "authenticated" && hasRecoveredBackendUser);
+
+    if (recentLogoutSuppressed && !hasLiveSession && !hasRecoveredBackendUser) {
+      console.info("[AuthFlow] AuthInitializer suppressing auto-bootstrap after explicit logout", {
+        userId: user.id,
+        state: currentState,
+        providerInstanceId,
+        hookIdentityTokenPresent,
+        snapshotOwner: snapshot?.owner ?? null,
+      });
+      return;
+    }
 
     if (shouldPreserveSettledAuth) {
       if (snapshot?.state !== "authenticated") {

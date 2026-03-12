@@ -19,6 +19,7 @@ import {
   analyzeSolanaTokenDistribution,
   fetchDexTokenStats,
   type DexTokenStats,
+  type TokenHolderSnapshot,
 } from "./token-metrics.js";
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
@@ -297,8 +298,10 @@ type HydrateCallOptions = {
 
 export type TokenOverview = {
   token: TokenRecord & {
+    marketCap: number | null;
     isFollowing: boolean;
     holderCountSource: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+    topHolders: TokenHolderSnapshot[];
     bundleClusters: Array<{
       id: string;
       clusterLabel: string;
@@ -345,6 +348,7 @@ export type TokenOverview = {
       estimatedBundledSupplyPct: number | null;
       deployerSupplyPct: number | null;
       holderCount: number | null;
+      topHolders: TokenHolderSnapshot[];
     };
     timeline: Array<{
       id: string;
@@ -3118,6 +3122,18 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const resolvedVolume24h = roundMetric(
       pickFirstPositiveMetric(currentToken.volume24h, dexStatsFallback?.volume24hUsd, staleToken?.volume24h)
     );
+    const latestSnapshotMarketCap =
+      snapshots.length > 0 ? snapshots[snapshots.length - 1]?.marketCap ?? null : null;
+    const resolvedMarketCap = roundMetric(
+      pickFirstPositiveMetric(
+        dexStatsFallback?.marketCap,
+        latestSnapshotMarketCap,
+        recentCalls[0]?.currentMcap,
+        recentCalls[0]?.entryMcap,
+        events.find((event) => hasFiniteMetric(event.marketCap))?.marketCap,
+        staleToken?.marketCap
+      )
+    );
     const resolvedHolderCount = Math.round(
       pickFirstPositiveMetric(currentToken.holderCount, distributionFallback?.holderCount, staleToken?.holderCount) ?? 0
     ) || null;
@@ -3154,6 +3170,10 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       distributionFallback?.bundleRiskLabel ??
       staleToken?.bundleRiskLabel ??
       (resolvedTokenRiskScore !== null ? determineBundleRiskLabel(resolvedTokenRiskScore) : null);
+    const resolvedTopHolders =
+      distributionFallback?.topHolders && distributionFallback.topHolders.length > 0
+        ? cloneCachedValue(distributionFallback.topHolders)
+        : cloneCachedValue(staleToken?.topHolders ?? []);
     const resolvedConfidenceScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.confidenceScore,
@@ -3295,12 +3315,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             timestamp:
               currentToken.lastIntelligenceAt?.toISOString() ??
               currentToken.updatedAt.toISOString(),
-            marketCap: pickFirstPositiveMetric(
-              dexStatsFallback?.marketCap,
-              recentCalls[0]?.currentMcap,
-              recentCalls[0]?.entryMcap,
-              events.find((event) => hasFiniteMetric(event.marketCap))?.marketCap
-            ),
+            marketCap: resolvedMarketCap,
             liquidity: resolvedLiquidity,
             volume24h: resolvedVolume24h,
             holderCount: resolvedHolderCount,
@@ -3341,12 +3356,14 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     return {
       token: {
         ...currentToken,
+        marketCap: resolvedMarketCap,
         liquidity: resolvedLiquidity,
         volume24h: resolvedVolume24h,
         holderCount: resolvedHolderCount,
         holderCountSource: resolvedHolderCountSource,
         largestHolderPct: resolvedLargestHolderPct,
         top10HolderPct: resolvedTop10HolderPct,
+        topHolders: resolvedTopHolders,
         deployerSupplyPct: resolvedDeployerSupplyPct,
         bundledWalletCount: resolvedBundledWalletCount,
         estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
@@ -3378,6 +3395,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
           deployerSupplyPct: resolvedDeployerSupplyPct,
           holderCount: resolvedHolderCount,
+          topHolders: resolvedTopHolders,
         },
         timeline: timeline.length > 0 ? timeline : cloneCachedValue(staleToken?.timeline ?? []),
         recentCalls: recentCalls.length > 0 ? recentCalls : cloneCachedValue(staleToken?.recentCalls ?? []),

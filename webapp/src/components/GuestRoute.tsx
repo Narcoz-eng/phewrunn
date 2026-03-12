@@ -3,9 +3,9 @@ import { Navigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   getAuthUiState,
-  getExplicitLogoutAt,
   isPrivyAuthBootstrapStatePending,
   isExplicitLogoutCoolingDown,
+  isRecentExplicitLogoutSuppressed,
   readCachedAuthUserSnapshot,
   useAuth,
   usePrivyAuthBootstrapSnapshot,
@@ -67,13 +67,8 @@ function GuestRouteWithPrivy({ children }: { children: React.ReactNode }) {
   const effectiveUser = session?.user ?? cachedUser;
   const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
   const logoutCooldownActive = isExplicitLogoutCoolingDown();
-  // After explicit logout, suppress Privy auto-bootstrap for longer than the
-  // hard cooldown so the user isn't trapped in "Signing you in..." when the
-  // Privy SDK is slow to de-authenticate.
-  const RECENT_LOGOUT_SUPPRESS_MS = 15_000;
   const recentlyLoggedOut =
-    logoutCooldownActive ||
-    (getExplicitLogoutAt() > 0 && Date.now() - getExplicitLogoutAt() < RECENT_LOGOUT_SUPPRESS_MS);
+    logoutCooldownActive || isRecentExplicitLogoutSuppressed();
   const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
   const activeLoginIntent =
     !effectiveUser && !recentlyLoggedOut ? readPrivyLoginIntent() : null;

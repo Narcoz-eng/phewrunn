@@ -26,11 +26,18 @@ export type BundleClusterSnapshot = {
   };
 };
 
+export type TokenHolderSnapshot = {
+  address: string;
+  amount: number | null;
+  supplyPct: number;
+};
+
 export type TokenDistributionSnapshot = {
   holderCount: number | null;
   holderCountSource: "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
+  topHolders: TokenHolderSnapshot[];
   deployerSupplyPct: number | null;
   bundledWalletCount: number;
   bundledClusterCount: number;
@@ -436,15 +443,22 @@ export async function analyzeSolanaTokenDistribution(
   });
 
   const largestAccounts = largestAccountsResult?.value ?? [];
-  const holderPcts = totalSupply && totalSupply > 0
-    ? largestAccounts
-        .map((holder) => {
-          const uiAmount = uiAmountToNumber(holder);
-          if (uiAmount === null || uiAmount <= 0) return null;
-          return (uiAmount / totalSupply) * 100;
-        })
-        .filter((pct): pct is number => pct !== null)
-    : [];
+  const topHolders: TokenHolderSnapshot[] =
+    totalSupply && totalSupply > 0
+      ? largestAccounts
+          .map((holder): TokenHolderSnapshot | null => {
+            const address = typeof holder.address === "string" ? holder.address.trim() : "";
+            const uiAmount = uiAmountToNumber(holder);
+            if (!address || uiAmount === null || uiAmount <= 0) return null;
+            return {
+              address,
+              amount: uiAmount,
+              supplyPct: Math.round(((uiAmount / totalSupply) * 100) * 100) / 100,
+            };
+          })
+          .filter((holder): holder is TokenHolderSnapshot => holder !== null)
+      : [];
+  const holderPcts = topHolders.map((holder) => holder.supplyPct);
 
   const largestHolderPct =
     holderPcts.length > 0 ? Math.round(holderPcts[0]! * 100) / 100 : null;
@@ -475,15 +489,23 @@ export async function analyzeSolanaTokenDistribution(
 
   let holderCount: number | null = null;
   let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
+  const rpcHolderCount =
+    Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0
+      ? holderAccountsResult.length
+      : 0;
+  const rpcCountLooksTruncated =
+    rpcHolderCount > 0 &&
+    topHolders.length >= 20 &&
+    rpcHolderCount <= topHolders.length;
 
-  if (Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0) {
-    holderCount = holderAccountsResult.length;
+  if (!rpcCountLooksTruncated && rpcHolderCount > 0) {
+    holderCount = rpcHolderCount;
     holderCountSource = "rpc_scan";
   } else if (typeof birdeyeHolderCount === "number" && Number.isFinite(birdeyeHolderCount) && birdeyeHolderCount > 0) {
     holderCount = Math.round(birdeyeHolderCount);
     holderCountSource = "birdeye";
-  } else if (holderPcts.length > 0) {
-    holderCount = holderPcts.length;
+  } else if (topHolders.length > 0) {
+    holderCount = topHolders.length;
     holderCountSource = "largest_accounts";
   }
 
@@ -492,6 +514,7 @@ export async function analyzeSolanaTokenDistribution(
     holderCountSource,
     largestHolderPct,
     top10HolderPct,
+    topHolders,
     deployerSupplyPct: largestHolderPct,
     bundledWalletCount: suspiciousHolderPcts.length,
     bundledClusterCount: clusters.length,

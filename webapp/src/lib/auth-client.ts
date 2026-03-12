@@ -87,6 +87,7 @@ const PRIVY_BOOTSTRAP_LOCK_TTL_MS = 12_000;
 const PRIVY_BOOTSTRAP_TAB_ID_STORAGE_KEY = "phew.auth.tab-id.v1";
 const AUTH_PRIVY_BOOTSTRAP_EVENT = "phew:auth-privy-bootstrap";
 const EXPLICIT_LOGOUT_COOLDOWN_MS = 8_000;
+const RECENT_EXPLICIT_LOGOUT_SUPPRESS_MS = 15_000;
 const AUTH_BOOTSTRAPPED_SESSION_GRACE_MS = 20_000;
 
 type PrivySyncFailureSnapshot = {
@@ -177,6 +178,13 @@ export function getExplicitLogoutAt(): number {
 
 export function isExplicitLogoutCoolingDown(referenceTime = Date.now()): boolean {
   return explicitLogoutAt > 0 && referenceTime - explicitLogoutAt < EXPLICIT_LOGOUT_COOLDOWN_MS;
+}
+
+export function isRecentExplicitLogoutSuppressed(referenceTime = Date.now()): boolean {
+  return (
+    explicitLogoutAt > 0 &&
+    referenceTime - explicitLogoutAt < RECENT_EXPLICIT_LOGOUT_SUPPRESS_MS
+  );
 }
 
 export function hasRecentPrivySyncGrace(referenceTime = Date.now()): boolean {
@@ -1525,6 +1533,16 @@ export async function startPrivyAuthBootstrap({
   triggerSource = "system",
 }: StartPrivyAuthBootstrapOptions): Promise<AuthUser | null> {
   const now = Date.now();
+  if (mode !== "manual" && isRecentExplicitLogoutSuppressed(now)) {
+    console.info("[AuthFlow] bootstrap auto-suppressed after explicit logout", {
+      owner,
+      mode,
+      userId: user.id,
+      triggerSource,
+      msSinceLogout: now - explicitLogoutAt,
+    });
+    return null;
+  }
   const existingSnapshot = readPrivyAuthBootstrapSnapshot();
   const sameUserSnapshot = existingSnapshot?.userId === user.id ? existingSnapshot : null;
   const currentState = sameUserSnapshot?.state ?? existingSnapshot?.state ?? "idle";
