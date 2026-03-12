@@ -239,6 +239,8 @@ const FEED_CARD_SNAPSHOT_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 1
 const FEED_DEGRADED_CIRCUIT_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 15_000;
 const FEED_TOTAL_POST_COUNT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
+const POST_PRICE_LIVE_INTELLIGENCE_REFRESH_INTERVAL_MS =
+  process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
 const POST_PRICE_ACTIVE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 75_000 : 20_000;
 const POST_PRICE_SETTLED_STALE_FALLBACK_MS =
@@ -889,6 +891,101 @@ function getPostPricePayloadVersion(
     parseCachedDate(payload.lastIntelligenceAt)?.getTime() ?? 0,
     createdAt
   );
+}
+
+function getPostPriceIntelligenceVersion(
+  payload: Pick<
+    PostPriceResponsePayload,
+    | "lastIntelligenceAt"
+    | "confidenceScore"
+    | "hotAlphaScore"
+    | "earlyRunnerScore"
+    | "highConvictionScore"
+    | "roiCurrentPct"
+    | "timingTier"
+    | "bundleRiskLabel"
+    | "tokenRiskScore"
+    | "liquidity"
+    | "volume24h"
+    | "holderCount"
+    | "largestHolderPct"
+    | "top10HolderPct"
+    | "bundledWalletCount"
+    | "estimatedBundledSupplyPct"
+  > | null | undefined
+): number {
+  if (!payload) return 0;
+  const timestamp = parseCachedDate(payload.lastIntelligenceAt)?.getTime() ?? 0;
+  if (timestamp > 0) {
+    return timestamp;
+  }
+
+  const hasResolvedIntelligence =
+    payload.confidenceScore !== null ||
+    payload.hotAlphaScore !== null ||
+    payload.earlyRunnerScore !== null ||
+    payload.highConvictionScore !== null ||
+    payload.roiCurrentPct !== null ||
+    payload.timingTier !== null ||
+    payload.bundleRiskLabel !== null ||
+    payload.tokenRiskScore !== null ||
+    payload.liquidity !== null ||
+    payload.volume24h !== null ||
+    payload.holderCount !== null ||
+    payload.largestHolderPct !== null ||
+    payload.top10HolderPct !== null ||
+    payload.bundledWalletCount !== null ||
+    payload.estimatedBundledSupplyPct !== null;
+
+  return hasResolvedIntelligence ? Date.now() : 0;
+}
+
+function mergePostPricePayloadWithFresherIntelligence(
+  payload: PostPriceResponsePayload,
+  cachedPayload: PostPriceResponsePayload | null | undefined
+): PostPriceResponsePayload {
+  if (!cachedPayload) {
+    return payload;
+  }
+
+  const payloadIntelligenceVersion = getPostPriceIntelligenceVersion(payload);
+  const cachedIntelligenceVersion = getPostPriceIntelligenceVersion(cachedPayload);
+
+  if (cachedIntelligenceVersion <= payloadIntelligenceVersion) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    confidenceScore: cachedPayload.confidenceScore,
+    hotAlphaScore: cachedPayload.hotAlphaScore,
+    earlyRunnerScore: cachedPayload.earlyRunnerScore,
+    highConvictionScore: cachedPayload.highConvictionScore,
+    roiCurrentPct: cachedPayload.roiCurrentPct,
+    timingTier: cachedPayload.timingTier,
+    bundleRiskLabel: cachedPayload.bundleRiskLabel,
+    tokenRiskScore: cachedPayload.tokenRiskScore,
+    liquidity: cachedPayload.liquidity,
+    volume24h: cachedPayload.volume24h,
+    holderCount: cachedPayload.holderCount,
+    largestHolderPct: cachedPayload.largestHolderPct,
+    top10HolderPct: cachedPayload.top10HolderPct,
+    bundledWalletCount: cachedPayload.bundledWalletCount,
+    estimatedBundledSupplyPct: cachedPayload.estimatedBundledSupplyPct,
+    lastIntelligenceAt: cachedPayload.lastIntelligenceAt,
+  };
+}
+
+function shouldRefreshPostPriceIntelligence(
+  payload: PostPriceResponsePayload | null | undefined,
+  nowMs: number
+): boolean {
+  const intelligenceVersion = getPostPriceIntelligenceVersion(payload);
+  if (intelligenceVersion <= 0) {
+    return true;
+  }
+
+  return nowMs - intelligenceVersion >= POST_PRICE_LIVE_INTELLIGENCE_REFRESH_INTERVAL_MS;
 }
 
 function preserveNewerDynamicStateFields(
@@ -6736,32 +6833,54 @@ async function attachRealtimeIntelligenceToPostPricePayloads(
     return;
   }
 
-  const overrides = new Map(
-    posts.flatMap((post) => {
-      const payload = payloadsById.get(post.id);
-      if (!payload) {
-        return [];
-      }
-
-      return [[
-        post.id,
-        {
-          currentMcap: payload.currentMcap,
-          lastMcapUpdate: parseCachedDate(payload.lastMcapUpdate),
-          settled: payload.settled,
-          settledAt: parseCachedDate(payload.settledAt),
-        },
-      ] as const];
-    })
+  const staleCachedPayloadEntries = await Promise.all(
+    posts.map(async (post) => [post.id, await resolveCachedPostPricePayload(post.id, { allowStale: true })] as const)
   );
+  const staleCachedPayloadById = new Map(staleCachedPayloadEntries);
+  const nowMs = Date.now();
+  const stalePosts: IntelligenceCallRecord[] = [];
+  const overrides = new Map<string, {
+    currentMcap: number | null;
+    lastMcapUpdate: Date | null;
+    settled: boolean;
+    settledAt: Date | null;
+  }>();
 
-  if (overrides.size === 0) {
+  for (const post of posts) {
+    const payload = payloadsById.get(post.id);
+    if (!payload) {
+      continue;
+    }
+
+    const freshestPayload = mergePostPricePayloadWithFresherIntelligence(
+      payload,
+      staleCachedPayloadById.get(post.id) ?? null
+    );
+    payloadsById.set(post.id, freshestPayload);
+
+    if (!shouldRefreshPostPriceIntelligence(freshestPayload, nowMs)) {
+      continue;
+    }
+
+    stalePosts.push(post);
+    overrides.set(post.id, {
+      currentMcap: freshestPayload.currentMcap,
+      lastMcapUpdate: parseCachedDate(freshestPayload.lastMcapUpdate),
+      settled: freshestPayload.settled,
+      settledAt: parseCachedDate(freshestPayload.settledAt),
+    });
+  }
+
+  if (stalePosts.length === 0 || overrides.size === 0) {
     return;
   }
 
   try {
-    const snapshotsById = await computeRealtimeIntelligenceSnapshots(posts, overrides);
+    const snapshotsById = await computeRealtimeIntelligenceSnapshots(stalePosts, overrides);
     for (const [postId, payload] of payloadsById) {
+      if (!overrides.has(postId)) {
+        continue;
+      }
       payloadsById.set(
         postId,
         mergeRealtimeIntelligenceIntoPostPricePayload(payload, snapshotsById.get(postId))
@@ -6770,7 +6889,7 @@ async function attachRealtimeIntelligenceToPostPricePayloads(
   } catch (error) {
     console.warn(`[posts/price] live intelligence refresh skipped for ${context} payload`, {
       message: getErrorMessage(error),
-      postCount: posts.length,
+      postCount: stalePosts.length,
     });
   }
 }
