@@ -49,6 +49,7 @@ const DAILY_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:daily:v${LEADE
 const FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:first-callers:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
+const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_500 : 2_250;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-10T00:00:00.000Z");
 const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
@@ -831,6 +832,42 @@ async function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number): Promi
       clearTimeout(timeoutId);
     }
   }
+}
+
+function logTokenOverviewSectionFallback(label: string, error: unknown): void {
+  console.warn("[intelligence/token] serving fallback section", {
+    label,
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
+
+async function resolveTokenOverviewSection<T>(
+  label: string,
+  loader: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  try {
+    const result = await withSoftTimeout(loader(), TOKEN_OVERVIEW_SECTION_TIMEOUT_MS);
+    if (result === null) {
+      logTokenOverviewSectionFallback(label, new Error("timed_out"));
+      return cloneCachedValue(fallback);
+    }
+    return result;
+  } catch (error) {
+    logTokenOverviewSectionFallback(label, error);
+    return cloneCachedValue(fallback);
+  }
+}
+
+function hasMeaningfulTokenOverviewChart(
+  chart: TokenOverview["token"]["chart"] | null | undefined
+): chart is TokenOverview["token"]["chart"] {
+  return Array.isArray(chart) && chart.some((point) =>
+    hasPositiveMetric(point.marketCap) ||
+    hasPositiveMetric(point.liquidity) ||
+    hasPositiveMetric(point.volume24h) ||
+    hasPositiveMetric(point.holderCount)
+  );
 }
 
 function growthPct(current: number | null | undefined, previous: number | null | undefined): number {
@@ -2868,13 +2905,28 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
   const normalizedAddress = address.trim();
   const cacheKey = `token:${viewerId ?? "anonymous"}:${sanitizeCacheKeyPart(normalizedAddress)}`;
   const ttlMs = viewerId ? PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS : TOKEN_OVERVIEW_CACHE_TTL_MS;
+  const staleOverview = peekCacheValue(tokenOverviewCache, cacheKey);
 
   return memoizeCached(tokenOverviewCache, tokenOverviewInFlight, cacheKey, ttlMs, async () => {
-    const token = await findTokenByAddress(normalizedAddress);
+    let token: TokenRecord | null = null;
+    try {
+      token = await findTokenByAddress(normalizedAddress);
+    } catch (error) {
+      if (staleOverview) {
+        console.warn("[intelligence/token] base token lookup failed; serving stale overview", {
+          address: normalizedAddress,
+          viewerId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return staleOverview;
+      }
+      throw error;
+    }
     if (!token) return null;
 
+    const staleToken = staleOverview?.token ?? null;
     const forceHydration = tokenNeedsCoreHydration(token);
-    const refreshPromise = shouldRefreshToken(token)
+    const refreshPromise = !staleOverview && shouldRefreshToken(token)
       ? refreshTokenIntelligence(token.id).catch(() => null)
       : null;
     const refreshed = refreshPromise
@@ -2894,73 +2946,138 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           !hasFiniteMetric(currentToken.largestHolderPct)));
 
     const [callsRaw, clusters, snapshots, events, tokenFollow, dexStatsFallback, distributionFallback] = await Promise.all([
-      listTokenRelatedCallRecords(currentToken, normalizedAddress, 80),
-      prisma.tokenBundleCluster.findMany({
-        where: { tokenId: currentToken.id },
-        select: {
-          id: true,
-          clusterLabel: true,
-          walletCount: true,
-          estimatedSupplyPct: true,
-          evidenceJson: true,
-        },
-        orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
-      }),
-      prisma.tokenMetricSnapshot.findMany({
-        where: { tokenId: currentToken.id },
-        select: {
-          capturedAt: true,
-          marketCap: true,
-          liquidity: true,
-          volume24h: true,
-          holderCount: true,
-          sentimentScore: true,
-          confidenceScore: true,
-        },
-        orderBy: { capturedAt: "asc" },
-        take: 96,
-      }),
-      prisma.tokenEvent.findMany({
-        where: { tokenId: currentToken.id },
-        select: {
-          id: true,
-          eventType: true,
-          timestamp: true,
-          marketCap: true,
-          liquidity: true,
-          volume: true,
-          traderId: true,
-          postId: true,
-          metadata: true,
-        },
-        orderBy: { timestamp: "desc" },
-        take: 48,
-      }),
-      viewerId
-        ? prisma.tokenFollow.findUnique({
-            where: {
-              userId_tokenId: {
-                userId: viewerId,
-                tokenId: currentToken.id,
-              },
+      resolveTokenOverviewSection(
+        "related_calls_query",
+        () => listTokenRelatedCallRecords(currentToken, normalizedAddress, 80),
+        [] as CallRecord[]
+      ),
+      resolveTokenOverviewSection(
+        "bundle_clusters_query",
+        () =>
+          prisma.tokenBundleCluster.findMany({
+            where: { tokenId: currentToken.id },
+            select: {
+              id: true,
+              clusterLabel: true,
+              walletCount: true,
+              estimatedSupplyPct: true,
+              evidenceJson: true,
             },
-            select: { id: true },
-          })
+            orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
+          }),
+        [] as Array<{
+          id: string;
+          clusterLabel: string;
+          walletCount: number;
+          estimatedSupplyPct: number;
+          evidenceJson: unknown;
+        }>
+      ),
+      resolveTokenOverviewSection(
+        "metric_snapshots_query",
+        () =>
+          prisma.tokenMetricSnapshot.findMany({
+            where: { tokenId: currentToken.id },
+            select: {
+              capturedAt: true,
+              marketCap: true,
+              liquidity: true,
+              volume24h: true,
+              holderCount: true,
+              sentimentScore: true,
+              confidenceScore: true,
+            },
+            orderBy: { capturedAt: "asc" },
+            take: 96,
+          }),
+        [] as Array<{
+          capturedAt: Date;
+          marketCap: number | null;
+          liquidity: number | null;
+          volume24h: number | null;
+          holderCount: number | null;
+          sentimentScore: number | null;
+          confidenceScore: number | null;
+        }>
+      ),
+      resolveTokenOverviewSection(
+        "timeline_events_query",
+        () =>
+          prisma.tokenEvent.findMany({
+            where: { tokenId: currentToken.id },
+            select: {
+              id: true,
+              eventType: true,
+              timestamp: true,
+              marketCap: true,
+              liquidity: true,
+              volume: true,
+              traderId: true,
+              postId: true,
+              metadata: true,
+            },
+            orderBy: { timestamp: "desc" },
+            take: 48,
+          }),
+        [] as Array<{
+          id: string;
+          eventType: string;
+          timestamp: Date;
+          marketCap: number | null;
+          liquidity: number | null;
+          volume: number | null;
+          traderId: string | null;
+          postId: string | null;
+          metadata: Prisma.JsonValue | null;
+        }>
+      ),
+      viewerId
+        ? resolveTokenOverviewSection(
+            "viewer_follow_query",
+            () =>
+              prisma.tokenFollow.findUnique({
+                where: {
+                  userId_tokenId: {
+                    userId: viewerId,
+                    tokenId: currentToken.id,
+                  },
+                },
+                select: { id: true },
+              }),
+            staleToken?.isFollowing ? ({ id: "__stale__" } as { id: string }) : null
+          )
         : Promise.resolve(null),
       needsFallbackTokenData
-        ? fetchDexTokenStats(currentToken.address, currentToken.chainType).catch(() => null)
+        ? resolveTokenOverviewSection(
+            "dex_stats_query",
+            () => fetchDexTokenStats(currentToken.address, currentToken.chainType),
+            null as DexTokenStats | null
+          )
         : Promise.resolve(null),
       needsFallbackTokenData && currentToken.chainType === "solana"
-        ? analyzeSolanaTokenDistribution(currentToken.address, currentToken.liquidity).catch(() => null)
+        ? resolveTokenOverviewSection(
+            "distribution_query",
+            () => analyzeSolanaTokenDistribution(currentToken.address, currentToken.liquidity),
+            null
+          )
         : Promise.resolve(null),
     ]);
 
-    const recentCalls = sortTokenCallsForDisplay(await hydrateCalls(callsRaw, viewerId, {
-      refreshTraders: false,
-      refreshTokens: false,
-      ensureTokenLinks: false,
-      persistComputed: false,
-    }));
+    const hydratedCalls =
+      callsRaw.length > 0
+        ? await resolveTokenOverviewSection(
+            "hydrate_calls",
+            () =>
+              hydrateCalls(callsRaw, viewerId, {
+                refreshTraders: false,
+                refreshTokens: false,
+                ensureTokenLinks: false,
+                persistComputed: false,
+              }),
+            staleToken?.recentCalls ?? ([] as EnrichedCall[])
+          )
+        : staleToken?.recentCalls ?? [];
+    const recentCalls = sortTokenCallsForDisplay(hydratedCalls);
     const allReactionCounts = recentCalls.reduce(
       (acc, call) => {
         acc.alpha += call.reactionCounts.alpha;
@@ -2977,52 +3094,70 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed;
     const bearishReactions = allReactionCounts.rug;
     const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(dexStatsFallback);
-    const sentimentScore = roundMetricOrZero(
+    const hasLiveSentimentInputs =
+      totalSentimentReactions > 0 ||
+      hasFiniteMetric(currentToken.sentimentScore) ||
+      sentimentTrendAdjustment !== 0;
+    const computedSentimentScore = roundMetricOrZero(
       computeSentimentScore({
         reactions: allReactionCounts,
         sentimentTrendAdjustment:
           sentimentTrendAdjustment + (currentToken.sentimentScore !== null ? (currentToken.sentimentScore - 50) * 0.2 : 0),
       })
     );
+    const sentimentScore = roundMetricOrZero(
+      pickFirstFiniteMetric(
+        hasLiveSentimentInputs ? computedSentimentScore : null,
+        currentToken.sentimentScore,
+        staleToken?.sentiment?.score
+      ) ?? 0
+    );
     const resolvedLiquidity = roundMetric(
-      pickFirstPositiveMetric(currentToken.liquidity, dexStatsFallback?.liquidityUsd)
+      pickFirstPositiveMetric(currentToken.liquidity, dexStatsFallback?.liquidityUsd, staleToken?.liquidity)
     );
     const resolvedVolume24h = roundMetric(
-      pickFirstPositiveMetric(currentToken.volume24h, dexStatsFallback?.volume24hUsd)
+      pickFirstPositiveMetric(currentToken.volume24h, dexStatsFallback?.volume24hUsd, staleToken?.volume24h)
     );
     const resolvedHolderCount = Math.round(
-      pickFirstPositiveMetric(currentToken.holderCount, distributionFallback?.holderCount) ?? 0
+      pickFirstPositiveMetric(currentToken.holderCount, distributionFallback?.holderCount, staleToken?.holderCount) ?? 0
     ) || null;
     const resolvedHolderCountSource =
       distributionFallback?.holderCountSource ??
+      staleToken?.holderCountSource ??
       (resolvedHolderCount !== null ? "stored" : null);
     const resolvedLargestHolderPct = roundMetric(
-      pickFirstFiniteMetric(currentToken.largestHolderPct, distributionFallback?.largestHolderPct)
+      pickFirstFiniteMetric(currentToken.largestHolderPct, distributionFallback?.largestHolderPct, staleToken?.largestHolderPct)
     );
     const resolvedTop10HolderPct = roundMetric(
-      pickFirstFiniteMetric(currentToken.top10HolderPct, distributionFallback?.top10HolderPct)
+      pickFirstFiniteMetric(currentToken.top10HolderPct, distributionFallback?.top10HolderPct, staleToken?.top10HolderPct)
     );
     const resolvedDeployerSupplyPct = roundMetric(
-      pickFirstFiniteMetric(currentToken.deployerSupplyPct, distributionFallback?.deployerSupplyPct)
+      pickFirstFiniteMetric(currentToken.deployerSupplyPct, distributionFallback?.deployerSupplyPct, staleToken?.deployerSupplyPct)
     );
     const resolvedBundledWalletCount =
-      distributionFallback?.bundledWalletCount ?? currentToken.bundledWalletCount;
+      distributionFallback?.bundledWalletCount ??
+      currentToken.bundledWalletCount ??
+      staleToken?.bundledWalletCount ??
+      null;
     const resolvedEstimatedBundledSupplyPct = roundMetric(
       pickFirstFiniteMetric(
         currentToken.estimatedBundledSupplyPct,
-        distributionFallback?.estimatedBundledSupplyPct
+        distributionFallback?.estimatedBundledSupplyPct,
+        staleToken?.estimatedBundledSupplyPct
       )
     );
     const resolvedTokenRiskScore = roundMetric(
-      pickFirstFiniteMetric(currentToken.tokenRiskScore, distributionFallback?.tokenRiskScore)
+      pickFirstFiniteMetric(currentToken.tokenRiskScore, distributionFallback?.tokenRiskScore, staleToken?.tokenRiskScore)
     );
     const resolvedBundleRiskLabel =
       currentToken.bundleRiskLabel ??
       distributionFallback?.bundleRiskLabel ??
+      staleToken?.bundleRiskLabel ??
       (resolvedTokenRiskScore !== null ? determineBundleRiskLabel(resolvedTokenRiskScore) : null);
     const resolvedConfidenceScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.confidenceScore,
+        staleToken?.confidenceScore,
         recentCalls.length > 0
           ? recentCalls.reduce((sum, call) => sum + finite(call.confidenceScore), 0) / recentCalls.length
           : null
@@ -3031,6 +3166,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const resolvedHotAlphaScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.hotAlphaScore,
+        staleToken?.hotAlphaScore,
         recentCalls.length > 0
           ? recentCalls.reduce((sum, call) => sum + finite(call.hotAlphaScore), 0) / recentCalls.length
           : null
@@ -3039,6 +3175,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const resolvedEarlyRunnerScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.earlyRunnerScore,
+        staleToken?.earlyRunnerScore,
         recentCalls.length > 0
           ? Math.max(...recentCalls.map((call) => finite(call.earlyRunnerScore)))
           : null
@@ -3047,6 +3184,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const resolvedHighConvictionScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.highConvictionScore,
+        staleToken?.highConvictionScore,
         recentCalls.length > 0
           ? recentCalls.reduce((sum, call) => sum + finite(call.highConvictionScore), 0) / recentCalls.length
           : null
@@ -3129,8 +3267,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         confidenceScore: call.confidenceScore,
       },
     }));
-    const chart = snapshots.length > 0
-      ? snapshots.map((snapshot) => ({
+    const snapshotChart = snapshots.map((snapshot) => ({
           timestamp: snapshot.capturedAt.toISOString(),
           marketCap: snapshot.marketCap,
           liquidity: snapshot.liquidity,
@@ -3138,8 +3275,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           holderCount: snapshot.holderCount,
           sentimentScore: snapshot.sentimentScore,
           confidenceScore: snapshot.confidenceScore,
-        }))
-      : [
+        }));
+    const derivedChart = [
           recentCalls[recentCalls.length - 1]
             ? {
                 timestamp: recentCalls[recentCalls.length - 1]!.createdAt.toISOString(),
@@ -3171,10 +3308,18 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             confidenceScore: resolvedConfidenceScore,
           },
         ].filter((point): point is NonNullable<typeof point> => point !== null);
+    const chart =
+      snapshotChart.length > 1
+        ? snapshotChart
+        : hasMeaningfulTokenOverviewChart(staleToken?.chart)
+          ? cloneCachedValue(staleToken.chart)
+          : derivedChart;
 
     const bundleClusters =
       clusters.length > 0
         ? clusters
+        : staleToken?.bundleClusters && staleToken.bundleClusters.length > 0
+          ? cloneCachedValue(staleToken.bundleClusters)
         : (distributionFallback?.clusters ?? []).map((cluster) => ({
             id: `derived:${currentToken.id}:${cluster.clusterLabel}`,
             clusterLabel: cluster.clusterLabel,
@@ -3182,6 +3327,16 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             estimatedSupplyPct: cluster.estimatedSupplyPct,
             evidenceJson: cluster.evidenceJson,
           }));
+
+    const timeline = [
+      ...events.map((event) => ({
+        ...event,
+        timestamp: event.timestamp.toISOString(),
+      })),
+      ...derivedTimeline,
+    ]
+      .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
+      .slice(0, 48);
 
     return {
       token: {
@@ -3202,12 +3357,12 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         hotAlphaScore: resolvedHotAlphaScore,
         earlyRunnerScore: resolvedEarlyRunnerScore,
         highConvictionScore: resolvedHighConvictionScore,
-        isFollowing: Boolean(tokenFollow),
+        isFollowing: viewerId ? Boolean(tokenFollow) : false,
         bundleClusters,
         chart,
-        callsCount: recentCalls.length,
-        distinctTraders: topTraderMap.size,
-        topTraders,
+        callsCount: recentCalls.length > 0 ? recentCalls.length : staleToken?.callsCount ?? 0,
+        distinctTraders: topTraderMap.size > 0 ? topTraderMap.size : staleToken?.distinctTraders ?? 0,
+        topTraders: topTraders.length > 0 ? topTraders : cloneCachedValue(staleToken?.topTraders ?? []),
         sentiment: {
           score: sentimentScore,
           reactions: allReactionCounts,
@@ -3224,16 +3379,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           deployerSupplyPct: resolvedDeployerSupplyPct,
           holderCount: resolvedHolderCount,
         },
-        timeline: [
-          ...events.map((event) => ({
-            ...event,
-            timestamp: event.timestamp.toISOString(),
-          })),
-          ...derivedTimeline,
-        ]
-          .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
-          .slice(0, 48),
-        recentCalls,
+        timeline: timeline.length > 0 ? timeline : cloneCachedValue(staleToken?.timeline ?? []),
+        recentCalls: recentCalls.length > 0 ? recentCalls : cloneCachedValue(staleToken?.recentCalls ?? []),
       },
     };
   });
@@ -3454,6 +3601,7 @@ async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
 
 export async function listDailyLeaderboards(_viewerId: string | null): Promise<LeaderboardsPayload> {
   const cacheKey = "leaderboards:daily:global";
+  const staleCached = peekCacheValue(dailyLeaderboardsCache, cacheKey);
   return memoizeCached(
     dailyLeaderboardsCache,
     dailyLeaderboardsInFlight,
@@ -3480,6 +3628,12 @@ export async function listDailyLeaderboards(_viewerId: string | null): Promise<L
         );
         return payload;
       } catch (error) {
+        if (staleCached) {
+          console.warn("[intelligence] serving stale in-memory daily leaderboard cache", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return staleCached;
+        }
         if (snapshot.stale) {
           console.warn("[intelligence] serving stale daily leaderboard snapshot", {
             message: error instanceof Error ? error.message : String(error),
@@ -3566,6 +3720,7 @@ async function computeFirstCallerLeaderboardsPayload(): Promise<FirstCallerLeade
 
 export async function listFirstCallerLeaderboards(_viewerId: string | null): Promise<FirstCallerLeaderboardRow[]> {
   const cacheKey = "leaderboards:first-callers:global";
+  const staleCached = peekCacheValue(firstCallerLeaderboardsCache, cacheKey);
   return memoizeCached(
     firstCallerLeaderboardsCache,
     firstCallerLeaderboardsInFlight,
@@ -3592,6 +3747,12 @@ export async function listFirstCallerLeaderboards(_viewerId: string | null): Pro
         );
         return payload;
       } catch (error) {
+        if (staleCached) {
+          console.warn("[intelligence] serving stale in-memory first-caller leaderboard cache", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return staleCached;
+        }
         if (snapshot.stale) {
           console.warn("[intelligence] serving stale first-caller leaderboard snapshot", {
             message: error instanceof Error ? error.message : String(error),

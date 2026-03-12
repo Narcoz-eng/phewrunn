@@ -49,6 +49,24 @@ type FirstCallerRow = {
   avgConfidenceScore: number;
 };
 
+function hasMeaningfulDailyLeaderboards(data: DailyLeaderboards | null | undefined): data is DailyLeaderboards {
+  return Boolean(
+    data &&
+    (
+      data.topTradersToday.length > 0 ||
+      data.topAlphaToday.length > 0 ||
+      data.biggestRoiToday.length > 0 ||
+      data.bestEntryToday.length > 0
+    )
+  );
+}
+
+function hasMeaningfulFirstCallerRows(
+  rows: FirstCallerRow[] | null | undefined
+): rows is FirstCallerRow[] {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 function BoardSkeleton({ rows = 4 }: { rows?: number }) {
   return (
     <div className="rounded-[28px] border border-border/65 bg-card/80 p-5 shadow-[0_18px_36px_-32px_hsl(var(--foreground)/0.18)]">
@@ -297,13 +315,17 @@ export function IntelligenceLeaderboards() {
     refetch: refetchDaily,
   } = useQuery({
     queryKey: ["leaderboards", "daily"],
-    queryFn: () => api.get<DailyLeaderboards>("/api/leaderboards/daily"),
+    queryFn: async () => {
+      const data = await api.get<DailyLeaderboards>("/api/leaderboards/daily");
+      return hasMeaningfulDailyLeaderboards(data) ? data : cachedDaily ?? data;
+    },
     initialData: cachedDaily ?? undefined,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
+    retry: 1,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
-    refetchOnMount: "always",
+    refetchOnMount: cachedDaily ? false : "always",
   });
 
   const {
@@ -314,21 +336,26 @@ export function IntelligenceLeaderboards() {
     refetch: refetchFirstCallers,
   } = useQuery({
     queryKey: ["leaderboards", "first-callers"],
-    queryFn: () => api.get<FirstCallerRow[]>("/api/leaderboards/first-callers"),
+    queryFn: async () => {
+      const data = await api.get<FirstCallerRow[]>("/api/leaderboards/first-callers");
+      return hasMeaningfulFirstCallerRows(data) ? data : cachedFirstCallers ?? data;
+    },
     initialData: cachedFirstCallers ?? undefined,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
+    retry: 1,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
-    refetchOnMount: "always",
+    refetchOnMount: cachedFirstCallers ? false : "always",
   });
 
   useEffect(() => {
-    if (!daily) return;
+    if (!hasMeaningfulDailyLeaderboards(daily)) return;
     writeSessionCache(DAILY_LEADERBOARD_CACHE_KEY, daily);
   }, [daily]);
 
   useEffect(() => {
+    if (!hasMeaningfulFirstCallerRows(firstCallers)) return;
     writeSessionCache(FIRST_CALLER_CACHE_KEY, firstCallers);
   }, [firstCallers]);
 

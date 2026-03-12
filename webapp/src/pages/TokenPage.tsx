@@ -240,6 +240,81 @@ function isTokenPageDataCacheable(token: TokenPageData | null | undefined): toke
   return hasSignals || hasMarketData || hasChart || token.recentCalls.length > 0;
 }
 
+function pickMergedMetric(
+  live: number | null | undefined,
+  cached: number | null | undefined,
+  options?: { positive?: boolean }
+): number | null {
+  if (typeof live === "number" && Number.isFinite(live) && (!options?.positive || live > 0)) {
+    return live;
+  }
+  if (typeof cached === "number" && Number.isFinite(cached) && (!options?.positive || cached > 0)) {
+    return cached;
+  }
+  return live ?? cached ?? null;
+}
+
+function mergeTokenPageDataWithCached(
+  live: TokenPageData,
+  cached: TokenPageData | null | undefined
+): TokenPageData {
+  if (!cached) {
+    return live;
+  }
+
+  const liveSentimentHasSignals =
+    live.sentiment.score > 0 ||
+    Object.values(live.sentiment.reactions).some((value) => value > 0);
+  const liveRiskHasSignals =
+    (typeof live.risk.tokenRiskScore === "number" && Number.isFinite(live.risk.tokenRiskScore)) ||
+    (typeof live.risk.holderCount === "number" && Number.isFinite(live.risk.holderCount) && live.risk.holderCount > 0) ||
+    typeof live.risk.bundleRiskLabel === "string";
+
+  return {
+    ...live,
+    liquidity: pickMergedMetric(live.liquidity, cached.liquidity, { positive: true }),
+    volume24h: pickMergedMetric(live.volume24h, cached.volume24h, { positive: true }),
+    holderCount: pickMergedMetric(live.holderCount, cached.holderCount, { positive: true }),
+    largestHolderPct: pickMergedMetric(live.largestHolderPct, cached.largestHolderPct),
+    top10HolderPct: pickMergedMetric(live.top10HolderPct, cached.top10HolderPct),
+    deployerSupplyPct: pickMergedMetric(live.deployerSupplyPct, cached.deployerSupplyPct),
+    bundledWalletCount: pickMergedMetric(live.bundledWalletCount, cached.bundledWalletCount, { positive: true }),
+    estimatedBundledSupplyPct: pickMergedMetric(live.estimatedBundledSupplyPct, cached.estimatedBundledSupplyPct),
+    tokenRiskScore: pickMergedMetric(live.tokenRiskScore, cached.tokenRiskScore),
+    sentimentScore: pickMergedMetric(live.sentimentScore, cached.sentimentScore),
+    radarScore: pickMergedMetric(live.radarScore, cached.radarScore),
+    confidenceScore: pickMergedMetric(live.confidenceScore, cached.confidenceScore),
+    hotAlphaScore: pickMergedMetric(live.hotAlphaScore, cached.hotAlphaScore),
+    earlyRunnerScore: pickMergedMetric(live.earlyRunnerScore, cached.earlyRunnerScore),
+    highConvictionScore: pickMergedMetric(live.highConvictionScore, cached.highConvictionScore),
+    bundleRiskLabel: live.bundleRiskLabel ?? cached.bundleRiskLabel,
+    holderCountSource: live.holderCountSource ?? cached.holderCountSource,
+    bundleClusters: live.bundleClusters.length > 0 ? live.bundleClusters : cached.bundleClusters,
+    chart: live.chart.length > 1 ? live.chart : cached.chart,
+    callsCount: live.callsCount > 0 ? live.callsCount : cached.callsCount,
+    distinctTraders: live.distinctTraders > 0 ? live.distinctTraders : cached.distinctTraders,
+    topTraders: live.topTraders.length > 0 ? live.topTraders : cached.topTraders,
+    sentiment: liveSentimentHasSignals ? live.sentiment : cached.sentiment,
+    risk: liveRiskHasSignals
+      ? live.risk
+      : {
+          tokenRiskScore: pickMergedMetric(live.risk.tokenRiskScore, cached.risk.tokenRiskScore),
+          bundleRiskLabel: live.risk.bundleRiskLabel ?? cached.risk.bundleRiskLabel,
+          largestHolderPct: pickMergedMetric(live.risk.largestHolderPct, cached.risk.largestHolderPct),
+          top10HolderPct: pickMergedMetric(live.risk.top10HolderPct, cached.risk.top10HolderPct),
+          bundledWalletCount: pickMergedMetric(live.risk.bundledWalletCount, cached.risk.bundledWalletCount, { positive: true }),
+          estimatedBundledSupplyPct: pickMergedMetric(
+            live.risk.estimatedBundledSupplyPct,
+            cached.risk.estimatedBundledSupplyPct
+          ),
+          deployerSupplyPct: pickMergedMetric(live.risk.deployerSupplyPct, cached.risk.deployerSupplyPct),
+          holderCount: pickMergedMetric(live.risk.holderCount, cached.risk.holderCount, { positive: true }),
+        },
+    timeline: live.timeline.length > 0 ? live.timeline : cached.timeline,
+    recentCalls: live.recentCalls.length > 0 ? live.recentCalls : cached.recentCalls,
+  };
+}
+
 function scoreTone(value: number | null | undefined): string {
   const score = typeof value === "number" && Number.isFinite(value) ? value : 0;
   if (score >= 75) return "text-gain";
@@ -287,7 +362,8 @@ export default function TokenPage() {
     queryKey: tokenQueryKey,
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
-      return api.get<TokenPageData>(`/api/tokens/${tokenAddress}`);
+      const data = await api.get<TokenPageData>(`/api/tokens/${tokenAddress}`);
+      return mergeTokenPageDataWithCached(data, cachedToken);
     },
     initialData: cachedToken ?? undefined,
     placeholderData: (previousData) => previousData,
@@ -296,6 +372,7 @@ export default function TokenPage() {
     gcTime: 8 * 60_000,
     refetchOnMount: cachedToken ? false : "always",
     refetchOnWindowFocus: false,
+    retry: 1,
   });
 
   useEffect(() => {

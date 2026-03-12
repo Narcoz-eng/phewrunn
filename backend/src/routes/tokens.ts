@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
+import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 import { prisma } from "../prisma.js";
 import {
   getTokenOverviewByAddress,
@@ -11,20 +12,121 @@ import {
 
 export const tokensRouter = new Hono<{ Variables: AuthVariables }>();
 
+type TokenRoutePayload = NonNullable<Awaited<ReturnType<typeof getTokenOverviewByAddress>>>["token"];
+type TokenRouteCacheEntry<T> = {
+  data: T;
+  expiresAtMs: number;
+};
+
+const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
+const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
+
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
 });
 
+function buildTokenRouteCacheKey(tokenAddress: string, viewerId: string | null): string {
+  return `route:token:${viewerId ?? "anonymous"}:${tokenAddress.trim().toLowerCase()}`;
+}
+
+function readTokenRouteCache(key: string): TokenRoutePayload | null {
+  const cached = tokenRouteCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAtMs <= Date.now()) {
+    tokenRouteCache.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+
+function writeTokenRouteCache(key: string, data: TokenRoutePayload): void {
+  tokenRouteCache.set(key, {
+    data,
+    expiresAtMs: Date.now() + TOKEN_ROUTE_CACHE_TTL_MS,
+  });
+}
+
+async function readBestEffortTokenRouteCache(key: string): Promise<TokenRoutePayload | null> {
+  const local = readTokenRouteCache(key);
+  if (local) {
+    return local;
+  }
+
+  const redisCached = await cacheGetJson<TokenRoutePayload>(key);
+  if (redisCached) {
+    writeTokenRouteCache(key, redisCached);
+    return redisCached;
+  }
+
+  return null;
+}
+
+function writeBestEffortTokenRouteCache(key: string, data: TokenRoutePayload): void {
+  writeTokenRouteCache(key, data);
+  void cacheSetJson(key, data, TOKEN_ROUTE_CACHE_TTL_MS);
+}
+
+function isMeaningfulTokenRoutePayload(token: TokenRoutePayload): boolean {
+  const hasSignals = [
+    token.confidenceScore,
+    token.hotAlphaScore,
+    token.earlyRunnerScore,
+    token.highConvictionScore,
+  ].some((value) => typeof value === "number" && Number.isFinite(value));
+  const hasMarketData = [token.liquidity, token.volume24h, token.holderCount].some(
+    (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+  );
+  const hasChart = token.chart.some((point) =>
+    [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
+      (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+    )
+  );
+
+  return hasSignals || hasMarketData || hasChart || token.recentCalls.length > 0 || token.timeline.length > 0;
+}
+
+function buildTokenRouteHeaders(isPersonalized: boolean): Record<string, string> {
+  return {
+    "cache-control": isPersonalized
+      ? "private, no-store"
+      : process.env.NODE_ENV === "production"
+        ? "public, max-age=20, s-maxage=45, stale-while-revalidate=240"
+        : "no-store",
+  };
+}
+
 tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");
   const viewer = c.get("user");
-  const overview = await getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null);
+  const isPersonalized = Boolean(viewer?.id);
+  const cacheKey = buildTokenRouteCacheKey(tokenAddress, viewer?.id ?? null);
+  const cached = await readBestEffortTokenRouteCache(cacheKey);
+
+  let overview;
+  try {
+    overview = await getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null);
+  } catch (error) {
+    if (cached) {
+      console.warn("[tokens] serving stale cached token overview", {
+        tokenAddress,
+        viewerId: viewer?.id ?? null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return c.json({ data: cached }, 200, buildTokenRouteHeaders(isPersonalized));
+    }
+    throw error;
+  }
 
   if (!overview) {
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ data: overview.token });
+  const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : cached ?? overview.token;
+  if (isMeaningfulTokenRoutePayload(data)) {
+    writeBestEffortTokenRouteCache(cacheKey, data);
+  }
+
+  return c.json({ data }, 200, buildTokenRouteHeaders(isPersonalized));
 });
 
 tokensRouter.get("/:tokenAddress/chart", zValidator("param", TokenAddressParamSchema), async (c) => {
