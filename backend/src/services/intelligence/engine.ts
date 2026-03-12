@@ -19,12 +19,11 @@ import {
 } from "./scoring.js";
 import {
   analyzeSolanaTokenDistribution,
-  fetchDexTokenStats,
-  type DexTokenStats,
   type TokenHolderSnapshot,
 } from "./token-metrics.js";
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
+import { getCachedMarketCapSnapshot, type MarketCapResult } from "../marketcap.js";
 
 const TOKEN_INTELLIGENCE_STALE_MS = 15 * 60 * 1000;
 const TRADER_METRICS_STALE_MS = 6 * 60 * 60 * 1000;
@@ -55,7 +54,7 @@ const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_500 : 2_250;
 const TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS =
-  process.env.NODE_ENV === "production" ? 12_000 : 15_000;
+  process.env.NODE_ENV === "production" ? 5_000 : 7_500;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-12T00:00:00.000Z");
 const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
@@ -570,10 +569,12 @@ function pickFirstPositiveMetric(...values: Array<number | null | undefined>): n
   return null;
 }
 
-function computeDexSentimentTrendAdjustment(dexStats: DexTokenStats | null | undefined): number {
-  const priceChangePct = finite(dexStats?.priceChange24hPct);
-  const buys24h = Math.max(0, finite(dexStats?.buys24h));
-  const sells24h = Math.max(0, finite(dexStats?.sells24h));
+function computeDexSentimentTrendAdjustment(
+  marketSnapshot: Pick<MarketCapResult, "priceChange24hPct" | "buys24h" | "sells24h"> | null | undefined
+): number {
+  const priceChangePct = finite(marketSnapshot?.priceChange24hPct);
+  const buys24h = Math.max(0, finite(marketSnapshot?.buys24h));
+  const sells24h = Math.max(0, finite(marketSnapshot?.sells24h));
   const totalTrades = buys24h + sells24h;
   const orderFlowImbalancePct = totalTrades > 0 ? ((buys24h - sells24h) / totalTrades) * 100 : 0;
   const priceAdjustment = Math.max(-14, Math.min(14, priceChangePct / 3));
@@ -1278,7 +1279,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     };
   }
 
-  const [latestSnapshot, recentCalls, reactions, dexStats, distribution, clusters] = await Promise.all([
+  const [latestSnapshot, recentCalls, reactions, marketSnapshot, distribution, clusters] = await Promise.all([
     prisma.tokenMetricSnapshot.findFirst({
       where: { tokenId },
       orderBy: { capturedAt: "desc" },
@@ -1332,7 +1333,9 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
         type: true,
       },
     }),
-    fetchDexTokenStats(existing.address, existing.chainType).catch(() => null),
+    getCachedMarketCapSnapshot(existing.address, existing.chainType).catch(
+      () => ({ mcap: null } as MarketCapResult)
+    ),
     existing.chainType === "solana"
       ? analyzeSolanaTokenDistribution(existing.address, existing.liquidity).catch(() => null)
       : Promise.resolve(null),
@@ -1350,22 +1353,21 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
   ]);
 
   const reactionCounts = buildReactionCounts(reactions.map((reaction) => reaction.type));
-  const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(dexStats);
+  const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(marketSnapshot);
   const sentimentScore = computeSentimentScore({
     reactions: reactionCounts,
     sentimentTrendAdjustment,
   });
   const liquidity = roundMetric(
-    pickFirstPositiveMetric(dexStats?.liquidityUsd, existing.liquidity)
+    pickFirstPositiveMetric(marketSnapshot?.liquidityUsd, existing.liquidity)
   );
   const volume24h = roundMetric(
-    pickFirstPositiveMetric(dexStats?.volume24hUsd, existing.volume24h)
+    pickFirstPositiveMetric(marketSnapshot?.volume24hUsd, existing.volume24h)
   );
   const marketCap = roundMetric(
     pickFirstPositiveMetric(
-      dexStats?.marketCap,
+      marketSnapshot?.mcap,
       recentCalls[0]?.currentMcap,
-      recentCalls[0]?.entryMcap,
       latestSnapshot?.marketCap
     )
   );
@@ -1416,7 +1418,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
   const liquidityGrowthPct = growthPct(liquidity, latestSnapshot?.liquidity ?? null);
   const holderGrowthPct = growthPct(holderCount, latestSnapshot?.holderCount ?? null);
   const mcapGrowthPct = growthPct(marketCap, latestSnapshot?.marketCap ?? null);
-  const momentumPct = finite(dexStats?.priceChange24hPct);
+  const momentumPct = finite(marketSnapshot?.priceChange24hPct);
   const marketContext = await getMarketContextSnapshot();
   const marketAdjustedMomentumPct = Math.max(0, momentumPct) * marketContext.accelerationMultiplier;
   const marketAdjustedVolumeGrowthPct = Math.max(0, volumeGrowthPct) * marketContext.accelerationMultiplier;
@@ -1550,12 +1552,12 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     await tx.token.update({
       where: { id: tokenId },
       data: {
-        symbol: dexStats?.symbol ?? existing.symbol,
-        name: dexStats?.name ?? existing.name,
-        imageUrl: dexStats?.imageUrl ?? existing.imageUrl,
-        dexscreenerUrl: dexStats?.dexscreenerUrl ?? existing.dexscreenerUrl,
-        pairAddress: dexStats?.pairAddress ?? existing.pairAddress,
-        dexId: dexStats?.dexId ?? existing.dexId,
+        symbol: marketSnapshot?.tokenSymbol ?? existing.symbol,
+        name: marketSnapshot?.tokenName ?? existing.name,
+        imageUrl: marketSnapshot?.tokenImage ?? existing.imageUrl,
+        dexscreenerUrl: marketSnapshot?.dexscreenerUrl ?? existing.dexscreenerUrl,
+        pairAddress: marketSnapshot?.pairAddress ?? existing.pairAddress,
+        dexId: marketSnapshot?.dexId ?? existing.dexId,
         liquidity,
         volume24h,
         holderCount,
@@ -2962,7 +2964,7 @@ export async function listThreadForCall(postId: string): Promise<ThreadCommentRe
   });
 }
 
-async function findTokenByAddress(address: string): Promise<TokenRecord | null> {
+export async function findTokenByAddress(address: string): Promise<TokenRecord | null> {
   const normalizedAddress = address.trim();
   const token = await prisma.token.findFirst({
     where: {
@@ -3076,7 +3078,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           !hasFiniteMetric(currentToken.top10HolderPct) ||
           !hasFiniteMetric(currentToken.largestHolderPct)));
 
-    const [callsRaw, clusters, snapshots, events, tokenFollow, dexStatsFallback, distributionFallback] = await Promise.all([
+    const [callsRaw, clusters, snapshots, events, tokenFollow, marketSnapshotFallback, distributionFallback] = await Promise.all([
       resolveTokenOverviewSection(
         "related_calls_query",
         () => listTokenRelatedCallRecords(currentToken, normalizedAddress, 80),
@@ -3178,13 +3180,11 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             staleToken?.isFollowing ? ({ id: "__stale__" } as { id: string }) : null
           )
         : Promise.resolve(null),
-      needsFallbackTokenData
-        ? resolveTokenOverviewSection(
-            "dex_stats_query",
-            () => fetchDexTokenStats(currentToken.address, currentToken.chainType),
-            null as DexTokenStats | null
-          )
-        : Promise.resolve(null),
+      resolveTokenOverviewSection(
+        "market_snapshot_query",
+        () => getCachedMarketCapSnapshot(currentToken.address, currentToken.chainType),
+        { mcap: null } as MarketCapResult
+      ),
       needsFallbackTokenData && currentToken.chainType === "solana"
         ? resolveTokenOverviewSection(
             "distribution_query",
@@ -3225,7 +3225,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const bullishReactions =
       allReactionCounts.alpha + allReactionCounts.based + allReactionCounts.printed;
     const bearishReactions = allReactionCounts.rug;
-    const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(dexStatsFallback);
+    const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(marketSnapshotFallback);
     const hasLiveSentimentInputs =
       totalSentimentReactions > 0 ||
       hasFiniteMetric(currentToken.sentimentScore) ||
@@ -3245,19 +3245,26 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       ) ?? 0
     );
     const resolvedLiquidity = roundMetric(
-      pickFirstPositiveMetric(currentToken.liquidity, dexStatsFallback?.liquidityUsd, staleToken?.liquidity)
+      pickFirstPositiveMetric(
+        marketSnapshotFallback?.liquidityUsd,
+        currentToken.liquidity,
+        staleToken?.liquidity
+      )
     );
     const resolvedVolume24h = roundMetric(
-      pickFirstPositiveMetric(currentToken.volume24h, dexStatsFallback?.volume24hUsd, staleToken?.volume24h)
+      pickFirstPositiveMetric(
+        marketSnapshotFallback?.volume24hUsd,
+        currentToken.volume24h,
+        staleToken?.volume24h
+      )
     );
     const latestSnapshotMarketCap =
       snapshots.length > 0 ? snapshots[snapshots.length - 1]?.marketCap ?? null : null;
     const resolvedMarketCap = roundMetric(
       pickFirstPositiveMetric(
-        dexStatsFallback?.marketCap,
-        latestSnapshotMarketCap,
+        marketSnapshotFallback?.mcap,
         recentCalls[0]?.currentMcap,
-        recentCalls[0]?.entryMcap,
+        latestSnapshotMarketCap,
         events.find((event) => hasFiniteMetric(event.marketCap))?.marketCap,
         staleToken?.marketCap
       )
@@ -3548,6 +3555,12 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     return {
       token: {
         ...currentToken,
+        symbol: marketSnapshotFallback?.tokenSymbol ?? currentToken.symbol,
+        name: marketSnapshotFallback?.tokenName ?? currentToken.name,
+        imageUrl: marketSnapshotFallback?.tokenImage ?? currentToken.imageUrl,
+        dexscreenerUrl: marketSnapshotFallback?.dexscreenerUrl ?? currentToken.dexscreenerUrl,
+        pairAddress: marketSnapshotFallback?.pairAddress ?? currentToken.pairAddress,
+        dexId: marketSnapshotFallback?.dexId ?? currentToken.dexId,
         marketCap: resolvedMarketCap,
         liquidity: resolvedLiquidity,
         volume24h: resolvedVolume24h,

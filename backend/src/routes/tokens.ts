@@ -7,6 +7,7 @@ import { prisma } from "../prisma.js";
 import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
 import { analyzeSolanaTokenDistribution } from "../services/intelligence/token-metrics.js";
 import {
+  findTokenByAddress,
   getTokenOverviewByAddress,
   invalidateViewerSocialCaches,
   listTokenCallsByAddress,
@@ -51,29 +52,6 @@ type TokenLivePayload = {
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_ROUTE_CACHE_VERSION = 8;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
-const TOKEN_LIVE_SELECT = {
-  id: true,
-  address: true,
-  chainType: true,
-  symbol: true,
-  name: true,
-  imageUrl: true,
-  dexscreenerUrl: true,
-  pairAddress: true,
-  dexId: true,
-  liquidity: true,
-  volume24h: true,
-  holderCount: true,
-  largestHolderPct: true,
-  top10HolderPct: true,
-  deployerSupplyPct: true,
-  bundledWalletCount: true,
-  estimatedBundledSupplyPct: true,
-  bundleRiskLabel: true,
-  tokenRiskScore: true,
-  updatedAt: true,
-} as const;
-
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
 });
@@ -238,13 +216,7 @@ function pickFirstFiniteMetric(...values: Array<number | null | undefined>): num
 
 tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");
-  const token = await prisma.token.findFirst({
-    where: {
-      address: tokenAddress.trim(),
-    },
-    select: TOKEN_LIVE_SELECT,
-    orderBy: { updatedAt: "desc" },
-  });
+  const token = await findTokenByAddress(tokenAddress);
 
   if (!token) {
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
