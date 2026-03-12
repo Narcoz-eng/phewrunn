@@ -148,7 +148,7 @@ type TokenPageData = {
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
-  holderCountSource?: "stored" | "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  holderCountSource?: "stored" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   deployerSupplyPct: number | null;
@@ -188,7 +188,7 @@ type TokenLiveData = {
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
-  holderCountSource?: "stored" | "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  holderCountSource?: "stored" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   deployerSupplyPct: number | null;
@@ -525,7 +525,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v8:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v9:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -870,15 +870,13 @@ export default function TokenPage() {
       : holderCountValue;
   const holderMetricTitle = "Total holders";
   const holderMetricBadge = hasVerifiedHolderCount
-    ? token?.holderCountSource === "solscan"
-      ? "Solscan"
-      : token?.holderCountSource === "helius"
-        ? "Helius"
+    ? token?.holderCountSource === "helius"
+      ? "Helius"
       : token?.holderCountSource === "birdeye"
-      ? "Birdeye"
-      : token?.holderCountSource === "rpc_scan"
-        ? "RPC verified"
-        : "Live count"
+        ? "Birdeye"
+        : token?.holderCountSource === "rpc_scan"
+          ? "RPC verified"
+          : "Live count"
     : isHolderCountLowerBound
       ? hasLiveHolderDistribution
         ? "Top 10 ready"
@@ -892,12 +890,10 @@ export default function TokenPage() {
         : "Fetching the full holder count for this token."
       : "Refreshing holder telemetry from the live route.";
   const topHolderSectionCopy = hasVerifiedHolderCount
-    ? token?.holderCountSource === "solscan"
-      ? "Solscan owner wallets with dev and wallet-profile badges."
-      : token?.holderCountSource === "helius"
-        ? "Helius holder scan with owner wallets, dev roles, and wallet activity badges."
-      : "Largest wallets by live circulating supply share."
-    : "Top wallets are ready first. Total holder count follows after the full RPC scan finishes.";
+    ? token?.holderCountSource === "helius"
+      ? "Helius holder count with RPC wallet ownership, dev roles, and swap activity badges."
+      : "RPC top wallets with live circulating supply share."
+    : "Top wallets are ready first. Full holder count follows after the RPC or Helius scan finishes.";
   const recentCallsEmptyCopy =
     recentCallsQuery.isLoading || recentCallsQuery.isFetching
       ? "Recent token calls are still loading for this address."
@@ -1390,7 +1386,7 @@ export default function TokenPage() {
                             {formatHolderAddress(devWallet.address)}
                           </div>
                           <div className="mt-1 text-xs text-muted-foreground">
-                            {devWallet.label ?? devWallet.domain ?? "Wallet intelligence from Solscan and Helius."}
+                            {devWallet.label ?? devWallet.domain ?? "Wallet intelligence from Solana RPC and Helius."}
                           </div>
                         </div>
                         {devWallet.supplyPct > 0 ? (
@@ -1490,7 +1486,7 @@ export default function TokenPage() {
                       ))
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        Scanning Solscan holder wallets and dev-wallet intelligence for this token.
+                        Scanning RPC holder wallets and dev-wallet intelligence for this token.
                       </p>
                     )}
                   </div>

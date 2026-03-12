@@ -152,6 +152,9 @@ type HeliusTokenAccountsResponse = {
 
 type HeliusAssetsByAuthorityResponse = {
   total?: number | string | null;
+  items?: Array<{
+    id?: string | null;
+  }> | null;
 };
 
 export type HeliusTokenAccountSummary = {
@@ -164,6 +167,13 @@ export type HeliusTokenAccountSummary = {
     owner: string | null;
     amount: number | null;
   }>;
+};
+
+export type HeliusAuthorityAssetSummary = {
+  source: "helius";
+  authorityAddress: string;
+  total: number | null;
+  mintAddresses: string[];
 };
 
 export type ParsedSolanaInstruction = {
@@ -222,8 +232,8 @@ const heliusTokenMetadataCache = new Map<string, { value: HeliusTokenMetadata | 
 const heliusTokenMetadataInFlight = new Map<string, Promise<HeliusTokenMetadata | null>>();
 const heliusMintHolderCache = new Map<string, { value: HeliusTokenAccountSummary | null; expiresAtMs: number }>();
 const heliusMintHolderInFlight = new Map<string, Promise<HeliusTokenAccountSummary | null>>();
-const heliusAuthorityAssetCountCache = new Map<string, { value: number | null; expiresAtMs: number }>();
-const heliusAuthorityAssetCountInFlight = new Map<string, Promise<number | null>>();
+const heliusAuthorityAssetSummaryCache = new Map<string, { value: HeliusAuthorityAssetSummary | null; expiresAtMs: number }>();
+const heliusAuthorityAssetSummaryInFlight = new Map<string, Promise<HeliusAuthorityAssetSummary | null>>();
 
 function isLikelySolanaAddress(value: string | null | undefined): value is string {
   return typeof value === "string" && SOLANA_WALLET_REGEX.test(value);
@@ -1066,34 +1076,54 @@ export async function getHeliusTokenAccountsForMint(params: {
 }
 
 export async function getHeliusAuthorityAssetCount(authorityAddress: string): Promise<number | null> {
-  if (!HELIUS_RPC_URL) return null;
-  if (!isLikelySolanaAddress(authorityAddress)) return null;
+  const summary = await getHeliusAuthorityAssetSummary({ authorityAddress, limit: 1 });
+  return summary?.total ?? null;
+}
 
-  const cacheKey = authorityAddress;
+export async function getHeliusAuthorityAssetSummary(params: {
+  authorityAddress: string | null | undefined;
+  limit?: number | null | undefined;
+}): Promise<HeliusAuthorityAssetSummary | null> {
+  if (!HELIUS_RPC_URL) return null;
+  if (!isLikelySolanaAddress(params.authorityAddress)) return null;
+
+  const authorityAddress = params.authorityAddress;
+  const limit = Math.max(1, Math.min(Math.round(params.limit ?? 12), 50));
+  const cacheKey = `${authorityAddress}:${limit}`;
   const now = Date.now();
-  const cached = heliusAuthorityAssetCountCache.get(cacheKey);
+  const cached = heliusAuthorityAssetSummaryCache.get(cacheKey);
   if (cached && cached.expiresAtMs > now) return cached.value;
-  const inFlight = heliusAuthorityAssetCountInFlight.get(cacheKey);
+  const inFlight = heliusAuthorityAssetSummaryInFlight.get(cacheKey);
   if (inFlight) return inFlight;
 
-  const request = (async (): Promise<number | null> => {
+  const request = (async (): Promise<HeliusAuthorityAssetSummary | null> => {
     const response = await heliusRpcCall<HeliusAssetsByAuthorityResponse>(
       "getAssetsByAuthority",
       {
         authorityAddress,
         page: 1,
-        limit: 1,
+        limit,
       },
       `assets-authority-${authorityAddress.slice(0, 8)}`
     );
-    return response ? parseFiniteNumber(response.total) : null;
+    if (!response) return null;
+    return {
+      source: "helius",
+      authorityAddress,
+      total: parseFiniteNumber(response.total),
+      mintAddresses: [...new Set(
+        (response.items ?? [])
+          .map((item) => readNonEmptyString(item?.id))
+          .filter((mint): mint is string => isLikelySolanaAddress(mint))
+      )],
+    };
   })().finally(() => {
-    heliusAuthorityAssetCountInFlight.delete(cacheKey);
+    heliusAuthorityAssetSummaryInFlight.delete(cacheKey);
   });
 
-  heliusAuthorityAssetCountInFlight.set(cacheKey, request);
+  heliusAuthorityAssetSummaryInFlight.set(cacheKey, request);
   const value = await request;
-  heliusAuthorityAssetCountCache.set(cacheKey, {
+  heliusAuthorityAssetSummaryCache.set(cacheKey, {
     value,
     expiresAtMs: now + HELIUS_METADATA_CACHE_TTL_MS,
   });

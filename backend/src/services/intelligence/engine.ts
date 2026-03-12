@@ -302,7 +302,7 @@ export type TokenOverview = {
   token: TokenRecord & {
     marketCap: number | null;
     isFollowing: boolean;
-    holderCountSource: "stored" | "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+    holderCountSource: "stored" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
     topHolders: TokenHolderSnapshot[];
     devWallet: TokenHolderSnapshot | null;
     bundleClusters: Array<{

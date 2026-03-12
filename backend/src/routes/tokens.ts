@@ -49,7 +49,7 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 4;
+const TOKEN_ROUTE_CACHE_VERSION = 5;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const TOKEN_LIVE_SELECT = {
   id: true,

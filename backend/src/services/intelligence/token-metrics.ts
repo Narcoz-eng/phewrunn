@@ -1,17 +1,11 @@
 import { getCachedMarketCapSnapshot } from "../marketcap.js";
 import {
-  getHeliusAuthorityAssetCount,
+  getHeliusAuthorityAssetSummary,
   getHeliusTokenAccountsForMint,
   getHeliusTokenMetadataForMint,
+  getWalletTradeSnapshotForSolanaToken,
   getWalletActivityProfile,
 } from "../helius.js";
-import {
-  getSolscanTokenHolders,
-  getSolscanTokenMeta,
-  getSolscanWalletMetadataMulti,
-  getSolscanWalletTotalValueUsd,
-  isSolscanConfigured,
-} from "../solscan.js";
 import { computeTokenRiskScore, determineBundleRiskLabel } from "./scoring.js";
 
 export type DexTokenStats = {
@@ -69,7 +63,7 @@ export type TokenHolderSnapshot = {
 
 export type TokenDistributionSnapshot = {
   holderCount: number | null;
-  holderCountSource: "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  holderCountSource: "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   topHolders: TokenHolderSnapshot[];
@@ -140,6 +134,7 @@ const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 100;
 const WHALE_SUPPLY_PCT_THRESHOLD = 4;
 const WHALE_PORTFOLIO_USD_THRESHOLD = 500_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
+const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
 const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SOLANA_RPC_URLS = [
@@ -383,22 +378,14 @@ function isLikelySolanaWallet(value: string | null | undefined): value is string
   return typeof value === "string" && SOLANA_WALLET_REGEX.test(value.trim());
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function containsAny(source: string, patterns: string[]): boolean {
-  return patterns.some((pattern) => source.includes(pattern));
-}
-
 function buildHolderBadges(params: {
   supplyPct: number;
   totalValueUsd: number | null;
   activeAgeDays: number | null;
   tradeVolume90dSol: number | null;
-  metadataText: string;
   devRole: TokenHolderSnapshot["devRole"];
   authorityAssetCount: number | null;
+  ruggedDeploymentCount: number;
 }): TokenHolderBadge[] {
   const badges: TokenHolderBadge[] = [];
   if (params.devRole) badges.push("dev_wallet");
@@ -418,14 +405,46 @@ function buildHolderBadges(params: {
   }
   if (
     (params.authorityAssetCount !== null && params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD) ||
-    containsAny(params.metadataText, ["serial deployer", "deployer", "launcher", "creator", "issuer"])
+    false
   ) {
     badges.push("serial_deployer");
   }
-  if (containsAny(params.metadataText, ["serial rugger", "rug", "scam", "malicious", "drainer", "phishing"])) {
+  if (
+    params.authorityAssetCount !== null &&
+    params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD &&
+    params.ruggedDeploymentCount >= SERIAL_RUGGER_DEPLOYMENT_THRESHOLD
+  ) {
     badges.push("serial_rugger");
   }
   return [...new Set(badges)];
+}
+
+function isRugLikeMarketSnapshot(snapshot: Awaited<ReturnType<typeof getCachedMarketCapSnapshot>> | null): boolean {
+  if (!snapshot) return false;
+  if (
+    typeof snapshot.liquidityUsd === "number" &&
+    Number.isFinite(snapshot.liquidityUsd) &&
+    snapshot.liquidityUsd > 0 &&
+    snapshot.liquidityUsd < 1_500
+  ) {
+    return true;
+  }
+  if (
+    typeof snapshot.mcap === "number" &&
+    Number.isFinite(snapshot.mcap) &&
+    snapshot.mcap > 0 &&
+    snapshot.mcap < 20_000
+  ) {
+    return true;
+  }
+  if (
+    typeof snapshot.priceChange24hPct === "number" &&
+    Number.isFinite(snapshot.priceChange24hPct) &&
+    snapshot.priceChange24hPct <= -95
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function aggregateTopHoldersByWallet(holders: TokenHolderSnapshot[]): TokenHolderSnapshot[] {
@@ -536,11 +555,10 @@ export async function analyzeSolanaTokenDistribution(
       largestAccountsResult,
       holderAccountsResult,
       birdeyeHolderCount,
-      solscanMeta,
-      solscanHolders,
       heliusTokenMeta,
       heliusHolderSummary,
       rpcMintAuthorities,
+      marketSnapshot,
     ] = await Promise.all([
       rpcCall<RpcTokenSupplyResult>("getTokenSupply", [mintAddress]),
       rpcCall<RpcLargestAccountsResult>("getTokenLargestAccounts", [mintAddress]),
@@ -556,17 +574,20 @@ export async function analyzeSolanaTokenDistribution(
         },
       ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
       fetchBirdeyeHolderCount(mintAddress),
-      isSolscanConfigured() ? getSolscanTokenMeta(mintAddress) : Promise.resolve(null),
-      isSolscanConfigured() ? getSolscanTokenHolders(mintAddress, 20) : Promise.resolve(null),
       getHeliusTokenMetadataForMint({ mint: mintAddress, chainType: "solana" }),
       getHeliusTokenAccountsForMint({ mint: mintAddress, limit: 1 }),
       getRpcMintAuthorities(mintAddress),
+      getCachedMarketCapSnapshot(mintAddress, "solana"),
     ]);
 
     const totalSupply = uiAmountToNumber({
       amount: supplyResult?.value?.amount ?? null,
       decimals: supplyResult?.value?.decimals ?? null,
     });
+    const tokenPriceUsd =
+      typeof marketSnapshot.priceUsd === "number" && Number.isFinite(marketSnapshot.priceUsd) && marketSnapshot.priceUsd > 0
+        ? marketSnapshot.priceUsd
+        : null;
 
     const largestAccounts = largestAccountsResult?.value ?? [];
     const tokenAccountOwners = await getRpcTokenAccountOwners(
@@ -587,33 +608,7 @@ export async function analyzeSolanaTokenDistribution(
                 tokenAccountAddress: address,
                 amount: uiAmount,
                 supplyPct: Math.round(((uiAmount / totalSupply) * 100) * 100) / 100,
-                valueUsd: null,
-                label: null,
-                domain: null,
-                accountType: null,
-                activeAgeDays: null,
-                fundedBy: null,
-                totalValueUsd: null,
-                tradeVolume90dSol: null,
-                solBalance: null,
-                badges: [],
-                devRole: null,
-              };
-            })
-            .filter((holder): holder is TokenHolderSnapshot => holder !== null)
-        : [];
-    const solscanTopHolders: TokenHolderSnapshot[] =
-      solscanHolders?.holders.length
-        ? solscanHolders.holders
-            .map((holder): TokenHolderSnapshot | null => {
-              if (!holder.address || holder.supplyPct === null || holder.supplyPct <= 0) return null;
-              return {
-                address: holder.address,
-                ownerAddress: holder.ownerAddress ?? holder.address,
-                tokenAccountAddress: holder.tokenAccountAddress,
-                amount: holder.amount,
-                supplyPct: Math.round(holder.supplyPct * 100) / 100,
-                valueUsd: holder.valueUsd,
+                valueUsd: tokenPriceUsd !== null ? Math.round(uiAmount * tokenPriceUsd * 100) / 100 : null,
                 label: null,
                 domain: null,
                 accountType: null,
@@ -629,30 +624,19 @@ export async function analyzeSolanaTokenDistribution(
             .filter((holder): holder is TokenHolderSnapshot => holder !== null)
         : [];
 
-    const topHoldersBase = aggregateTopHoldersByWallet(
-      solscanTopHolders.length > 0 ? solscanTopHolders : rpcTopHolders
-    );
+    const topHoldersBase = aggregateTopHoldersByWallet(rpcTopHolders);
     const devWalletRoles = new Map<string, TokenHolderSnapshot["devRole"]>();
-    if (isLikelySolanaWallet(solscanMeta?.creator)) {
-      devWalletRoles.set(solscanMeta.creator, "creator");
-    }
     if (isLikelySolanaWallet(heliusTokenMeta?.creator) && !devWalletRoles.has(heliusTokenMeta.creator)) {
       devWalletRoles.set(heliusTokenMeta.creator, "creator");
     }
     if (isLikelySolanaWallet(heliusTokenMeta?.updateAuthority) && !devWalletRoles.has(heliusTokenMeta.updateAuthority)) {
       devWalletRoles.set(heliusTokenMeta.updateAuthority, "creator");
     }
-    if (isLikelySolanaWallet(solscanMeta?.mintAuthority) && !devWalletRoles.has(solscanMeta.mintAuthority)) {
-      devWalletRoles.set(solscanMeta.mintAuthority, "mint_authority");
-    }
     if (isLikelySolanaWallet(heliusTokenMeta?.mintAuthority) && !devWalletRoles.has(heliusTokenMeta.mintAuthority)) {
       devWalletRoles.set(heliusTokenMeta.mintAuthority, "mint_authority");
     }
     if (isLikelySolanaWallet(rpcMintAuthorities.mintAuthority) && !devWalletRoles.has(rpcMintAuthorities.mintAuthority)) {
       devWalletRoles.set(rpcMintAuthorities.mintAuthority, "mint_authority");
-    }
-    if (isLikelySolanaWallet(solscanMeta?.freezeAuthority) && !devWalletRoles.has(solscanMeta.freezeAuthority)) {
-      devWalletRoles.set(solscanMeta.freezeAuthority, "freeze_authority");
     }
     if (isLikelySolanaWallet(heliusTokenMeta?.freezeAuthority) && !devWalletRoles.has(heliusTokenMeta.freezeAuthority)) {
       devWalletRoles.set(heliusTokenMeta.freezeAuthority, "freeze_authority");
@@ -673,11 +657,7 @@ export async function analyzeSolanaTokenDistribution(
         ...devWalletRoles.keys(),
       ].filter((address): address is string => isLikelySolanaWallet(address))
     )];
-    const [walletMetadataMap, walletPortfolioEntries, walletActivityEntries, authorityAssetCountEntries] = await Promise.all([
-      getSolscanWalletMetadataMulti(candidateWallets),
-      Promise.all(
-        candidateWallets.map(async (address) => [address, await getSolscanWalletTotalValueUsd(address)] as const)
-      ),
+    const [walletActivityEntries, authorityAssetSummaryEntries, devHoldingEntries] = await Promise.all([
       Promise.all(
         candidateWallets.map(async (address) => [
           address,
@@ -688,45 +668,79 @@ export async function analyzeSolanaTokenDistribution(
         ] as const)
       ),
       Promise.all(
-        authorityScanWallets.map(async (address) => [address, await getHeliusAuthorityAssetCount(address)] as const)
+        authorityScanWallets.map(async (address) => [address, await getHeliusAuthorityAssetSummary({
+          authorityAddress: address,
+          limit: 12,
+        })] as const)
+      ),
+      Promise.all(
+        [...devWalletRoles.keys()].map(async (address) => [
+          address,
+          await getWalletTradeSnapshotForSolanaToken({
+            walletAddress: address,
+            tokenMint: mintAddress,
+            chainType: "solana",
+          }),
+        ] as const)
       ),
     ]);
-    const walletPortfolioMap = new Map<string, number | null>(walletPortfolioEntries);
     const walletActivityMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(walletActivityEntries);
-    const authorityAssetCountMap = new Map<string, number | null>(authorityAssetCountEntries);
+    const authorityAssetSummaryMap = new Map<string, Awaited<ReturnType<typeof getHeliusAuthorityAssetSummary>>>(authorityAssetSummaryEntries);
+    const devHoldingMap = new Map<string, Awaited<ReturnType<typeof getWalletTradeSnapshotForSolanaToken>>>(devHoldingEntries);
+    const authorityHeuristicEntries = await Promise.all(
+      authorityScanWallets.map(async (address) => {
+        const summary = authorityAssetSummaryMap.get(address) ?? null;
+        const historicalMints =
+          summary?.mintAddresses
+            .filter((candidate) => candidate !== mintAddress)
+            .slice(0, 8) ?? [];
+        const snapshots = await Promise.all(
+          historicalMints.map((candidateMint) => getCachedMarketCapSnapshot(candidateMint, "solana"))
+        );
+        return [
+          address,
+          {
+            authorityAssetCount: summary?.total ?? null,
+            ruggedDeploymentCount: snapshots.filter((snapshot) => isRugLikeMarketSnapshot(snapshot)).length,
+          },
+        ] as const;
+      })
+    );
+    const authorityHeuristicMap = new Map<string, { authorityAssetCount: number | null; ruggedDeploymentCount: number }>(
+      authorityHeuristicEntries
+    );
 
     const topHolders = topHoldersBase.map((holder) => {
       const walletAddress = holder.ownerAddress ?? holder.address;
-      const metadata = walletMetadataMap.get(walletAddress);
-      const totalValueUsd = walletPortfolioMap.get(walletAddress) ?? null;
       const activity = walletActivityMap.get(walletAddress) ?? null;
       const devRole = devWalletRoles.get(walletAddress) ?? null;
-      const authorityAssetCount = authorityAssetCountMap.get(walletAddress) ?? null;
-      const metadataText = [
-        normalizeText(metadata?.label),
-        normalizeText(metadata?.type),
-        normalizeText(metadata?.domain),
-        ...(metadata?.tags ?? []).map((tag) => normalizeText(tag)),
-      ].join(" ");
+      const authorityHeuristic = authorityHeuristicMap.get(walletAddress) ?? {
+        authorityAssetCount: null,
+        ruggedDeploymentCount: 0,
+      };
+      const totalValueUsd = holder.valueUsd ?? null;
 
       return {
         ...holder,
-        label: metadata?.label ?? null,
-        domain: metadata?.domain ?? null,
-        accountType: metadata?.type ?? null,
-        activeAgeDays: metadata?.activeAgeDays ?? null,
-        fundedBy: metadata?.fundedBy ?? null,
+        label:
+          activity && activity.distinctMintsTraded > 0
+            ? `${activity.distinctMintsTraded} mints traded`
+            : null,
+        domain: null,
+        accountType: null,
+        activeAgeDays: null,
+        fundedBy: null,
         totalValueUsd,
         tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
         solBalance: activity?.balanceSol ?? null,
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
           totalValueUsd,
-          activeAgeDays: metadata?.activeAgeDays ?? null,
+          activeAgeDays: null,
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-          metadataText,
           devRole,
-          authorityAssetCount,
+          authorityAssetCount: authorityHeuristic.authorityAssetCount,
+          ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,
         }),
         devRole,
       };
@@ -737,39 +751,45 @@ export async function analyzeSolanaTokenDistribution(
       (() => {
         const [walletAddress, devRole] = devWalletRoles.entries().next().value ?? [];
         if (!isLikelySolanaWallet(walletAddress) || !devRole) return null;
-        const metadata = walletMetadataMap.get(walletAddress);
-        const totalValueUsd = walletPortfolioMap.get(walletAddress) ?? null;
         const activity = walletActivityMap.get(walletAddress) ?? null;
-        const authorityAssetCount = authorityAssetCountMap.get(walletAddress) ?? null;
-        const metadataText = [
-          normalizeText(metadata?.label),
-          normalizeText(metadata?.type),
-          normalizeText(metadata?.domain),
-          ...(metadata?.tags ?? []).map((tag) => normalizeText(tag)),
-        ].join(" ");
+        const devHolding = devHoldingMap.get(walletAddress) ?? null;
+        const authorityHeuristic = authorityHeuristicMap.get(walletAddress) ?? {
+          authorityAssetCount: null,
+          ruggedDeploymentCount: 0,
+        };
+        const holdingAmount = devHolding?.holdingAmount ?? null;
+        const supplyPct =
+          holdingAmount !== null && totalSupply && totalSupply > 0
+            ? Math.round(((holdingAmount / totalSupply) * 100) * 100) / 100
+            : 0;
         return {
           address: walletAddress,
           ownerAddress: walletAddress,
           tokenAccountAddress: null,
-          amount: null,
-          supplyPct: 0,
-          valueUsd: null,
-          label: metadata?.label ?? null,
-          domain: metadata?.domain ?? null,
-          accountType: metadata?.type ?? null,
-          activeAgeDays: metadata?.activeAgeDays ?? null,
-          fundedBy: metadata?.fundedBy ?? null,
-          totalValueUsd,
+          amount: holdingAmount,
+          supplyPct,
+          valueUsd: devHolding?.holdingUsd ?? null,
+          label:
+            devRole === "creator"
+              ? "Detected from token creation authority"
+              : devRole === "mint_authority"
+                ? "Detected from mint authority on-chain"
+                : "Detected from freeze authority on-chain",
+          domain: null,
+          accountType: null,
+          activeAgeDays: null,
+          fundedBy: null,
+          totalValueUsd: devHolding?.holdingUsd ?? null,
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
           solBalance: activity?.balanceSol ?? null,
           badges: buildHolderBadges({
-            supplyPct: 0,
-            totalValueUsd,
-            activeAgeDays: metadata?.activeAgeDays ?? null,
+            supplyPct,
+            totalValueUsd: devHolding?.holdingUsd ?? null,
+            activeAgeDays: null,
             tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-            metadataText,
             devRole,
-            authorityAssetCount,
+            authorityAssetCount: authorityHeuristic.authorityAssetCount,
+            ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,
           }),
           devRole,
         } satisfies TokenHolderSnapshot;
@@ -808,12 +828,6 @@ export async function analyzeSolanaTokenDistribution(
     let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
     const minimumObservedHolderCount = topHoldersBase.length;
     const normalizedObservedHolderCount = minimumObservedHolderCount > 0 ? minimumObservedHolderCount : 0;
-    const solscanHolderCount =
-      solscanHolders?.total && solscanHolders.total > 0
-        ? Math.round(solscanHolders.total)
-        : solscanMeta?.holderCount && solscanMeta.holderCount > 0
-          ? Math.round(solscanMeta.holderCount)
-          : 0;
     const heliusHolderCount =
       heliusHolderSummary?.total && heliusHolderSummary.total > 0
         ? Math.round(heliusHolderSummary.total)
@@ -830,10 +844,7 @@ export async function analyzeSolanaTokenDistribution(
     const isPlausibleHolderCount = (value: number): boolean =>
       value > 0 && value >= normalizedObservedHolderCount;
 
-    if (isPlausibleHolderCount(solscanHolderCount)) {
-      holderCount = solscanHolderCount;
-      holderCountSource = "solscan";
-    } else if (isPlausibleHolderCount(heliusHolderCount)) {
+    if (isPlausibleHolderCount(heliusHolderCount)) {
       holderCount = heliusHolderCount;
       holderCountSource = "helius";
     } else if (!rpcCountLooksTruncated && isPlausibleHolderCount(rpcHolderCount)) {
