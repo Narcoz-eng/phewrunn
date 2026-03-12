@@ -3444,7 +3444,6 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 settledAt,
                 isWin: isWin1h,
                 isWin1h: isWin1h,
-                currentMcap: mcap1h,
                 mcap1h: mcap1h,
                 percentChange1h: percentChange1h,
                 recoveryEligible: effectiveRecoveryEligible,
@@ -3469,7 +3468,7 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
           // Use raw SQL to update - works regardless of which columns exist
           try {
             await prisma.$executeRaw`
-              UPDATE "Post" SET settled = true, "settledAt" = ${settledAt}, "isWin" = ${isWin1h}, "currentMcap" = ${mcap1h}
+              UPDATE "Post" SET settled = true, "settledAt" = ${settledAt}, "isWin" = ${isWin1h}
               WHERE id = ${post.id}
             `;
           } catch (rawPostErr) {
@@ -3591,7 +3590,6 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
                 where: { id: post.id },
                 data: {
                   mcap6h: mcap6h,
-                  currentMcap: mcap6h,
                   isWin6h: isWin6h,
                   percentChange6h: percentChange6h,
                   settled6h: true,
@@ -3613,12 +3611,6 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             }
 
             await prisma.$transaction([
-              prisma.post.updateMany({
-                where: { id: post.id },
-                data: {
-                  currentMcap: mcap6h,
-                },
-              }),
               prisma.user.updateMany({
                 where: { id: post.authorId },
                 data: {
@@ -3677,7 +3669,6 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
               where: { id: post.id },
               data: {
                 mcap6h: mcap6h,
-                currentMcap: mcap6h,
                 isWin6h: isWin6h,
                 percentChange6h: percentChange6h,
                 settled6h: true,
@@ -3688,12 +3679,6 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
             if (!isPrismaSchemaDriftError(error)) {
               throw error;
             }
-            await prisma.post.updateMany({
-              where: { id: post.id },
-              data: {
-                currentMcap: mcap6h,
-              },
-            });
           }
 
           snapshot6hCount++;
@@ -5342,7 +5327,6 @@ postsRouter.post("/settle", async (c) => {
             settledAt,
             isWin: isWin1h,
             isWin1h: isWin1h,
-            currentMcap: mcap1h,
             mcap1h: mcap1h,
             percentChange1h: percentChange1h,
             recoveryEligible: effectiveRecoveryEligible,
@@ -5371,7 +5355,6 @@ postsRouter.post("/settle", async (c) => {
             settled: true,
             settledAt,
             isWin: isWin1h,
-            currentMcap: mcap1h,
           },
         }),
         prisma.user.updateMany({
@@ -5462,7 +5445,6 @@ postsRouter.post("/settle", async (c) => {
             where: { id: post.id },
             data: {
               mcap6h: mcap6h,
-              currentMcap: mcap6h,
               isWin6h: isWin6h,
               percentChange6h: percentChange6h,
               settled6h: true,
@@ -5484,12 +5466,6 @@ postsRouter.post("/settle", async (c) => {
         }
 
         await prisma.$transaction([
-          prisma.post.updateMany({
-            where: { id: post.id },
-            data: {
-              currentMcap: mcap6h,
-            },
-          }),
           prisma.user.updateMany({
             where: { id: post.authorId },
             data: {
@@ -5506,7 +5482,6 @@ postsRouter.post("/settle", async (c) => {
           where: { id: post.id },
           data: {
             mcap6h: mcap6h,
-            currentMcap: mcap6h,
             isWin6h: isWin6h,
             percentChange6h: percentChange6h,
             settled6h: true,
@@ -5518,12 +5493,6 @@ postsRouter.post("/settle", async (c) => {
         if (!isPrismaSchemaDriftError(error)) {
           throw error;
         }
-        await prisma.post.updateMany({
-          where: { id: post.id },
-          data: {
-            currentMcap: mcap6h,
-          },
-        });
       }
     }
 
@@ -6766,7 +6735,15 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
   let responseUpdatedAt = post.lastMcapUpdate ?? new Date();
 
   // Avoid a thundering herd: only refresh if the cached value is stale.
-  const shouldRefresh = needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled);
+  const looksPinnedToSnapshot =
+    finalMcap !== null &&
+    (
+      (post.mcap6h !== null && finalMcap === post.mcap6h) ||
+      (post.mcap1h !== null && finalMcap === post.mcap1h)
+    );
+  const shouldRefresh =
+    needsMcapUpdate(post.createdAt, post.lastMcapUpdate, post.settled) ||
+    looksPinnedToSnapshot;
 
   if (shouldRefresh) {
     let refreshPromise = priceRefreshInFlight.get(post.id);

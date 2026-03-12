@@ -782,14 +782,32 @@ export default function TokenPage() {
     ? token.topHolders
     : (token?.risk.topHolders ?? []);
   const topHolderRows = topHolders.slice(0, 10);
+  const hasLiveHolderDistribution = topHolderRows.length > 0;
   const isHolderCountLowerBound = token?.holderCountSource === "largest_accounts";
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
         emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
       })
     : "Scanning";
-  const holderCountLabel = isHolderCountLowerBound ? "Scanning" : holderCountValue;
-  const holderMetricTitle = "Holders";
+  const holderCountLabel = isHolderCountLowerBound
+    ? hasLiveHolderDistribution
+      ? "Pending"
+      : "Scanning"
+    : holderCountValue;
+  const holderMetricTitle = "Total holders";
+  const holderMetricBadge = isHolderCountLowerBound
+    ? hasLiveHolderDistribution
+      ? "Top 10 ready"
+      : "Scanning"
+    : "Live count";
+  const holderMetricCopy = isHolderCountLowerBound
+    ? hasLiveHolderDistribution
+      ? "Top 10 wallets are live. Total holder count is still resolving."
+      : "Fetching the full holder count for this token."
+    : "Verified holder total from the latest live telemetry.";
+  const topHolderSectionCopy = isHolderCountLowerBound
+    ? "Top holder wallets are live while the total wallet count finishes resolving."
+    : "Largest wallets by live circulating supply share.";
 
   return (
     <div className="min-h-screen bg-background">
@@ -863,18 +881,18 @@ export default function TokenPage() {
                         ))}
                       </div>
                     ) : null}
-                    <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,0.8fr))]">
-                      <div className="rounded-[26px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-4 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
+                    <div className="mt-4 grid gap-3 md:grid-cols-[minmax(240px,1.45fr)_repeat(2,minmax(175px,1fr))]">
+                      <div className="min-w-0 rounded-[26px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-4 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/80">
                               Current MCAP
                             </div>
-                            <div className="mt-2 break-words text-3xl font-black tracking-[-0.04em] text-foreground sm:text-[2.35rem]">
+                            <div className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(2.55rem,5vw,4rem)] font-black leading-none tracking-[-0.05em] text-foreground">
                               {formatMarketMetric(token.marketCap)}
                             </div>
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              Live market route with shared postcard pricing.
+                            <div className="mt-3 text-xs leading-5 text-muted-foreground">
+                              Shared with postcard pricing, updated from the live market route.
                             </div>
                           </div>
                           <span className="rounded-full border border-primary/25 bg-white/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary dark:bg-white/[0.05]">
@@ -890,28 +908,36 @@ export default function TokenPage() {
                           </span>
                         </div>
                       </div>
-                      <div className="rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Liquidity
+                      <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            Liquidity
+                          </div>
+                          <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            Live
+                          </span>
                         </div>
-                        <div className="mt-2 text-2xl font-bold text-foreground">
+                        <div className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.9rem,3vw,2.5rem)] font-bold leading-none text-foreground">
                           {formatMarketMetric(token.liquidity)}
                         </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Current pool depth across the selected market pair.
+                        <div className="mt-3 text-xs leading-5 text-muted-foreground">
+                          Current pool depth across the selected trading pair.
                         </div>
                       </div>
-                      <div className="rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          {holderMetricTitle}
+                      <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            {holderMetricTitle}
+                          </div>
+                          <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            {holderMetricBadge}
+                          </span>
                         </div>
-                        <div className="mt-2 text-2xl font-bold text-foreground">
+                        <div className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.9rem,3vw,2.5rem)] font-bold leading-none text-foreground">
                           {holderCountLabel}
                         </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          {isHolderCountLowerBound
-                            ? "Top-holder scan is live while the full holder count resolves."
-                            : "Verified live holder count for this token."}
+                        <div className="mt-3 text-xs leading-5 text-muted-foreground">
+                          {holderMetricCopy}
                         </div>
                       </div>
                     </div>
@@ -1238,63 +1264,6 @@ export default function TokenPage() {
                       )}
                     </div>
                   </div>
-                  <div className="mt-4 rounded-[22px] border border-border/60 bg-white/55 p-4 dark:bg-white/[0.03]">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Largest wallets by live circulating supply share.
-                        </div>
-                      </div>
-                      <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                        {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
-                      </div>
-                    </div>
-                    <div className="mt-4 space-y-2.5">
-                      {topHolderRows.length > 0 ? (
-                        topHolderRows.map((holder, index) => (
-                          <div
-                            key={holder.address}
-                            className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex min-w-0 items-center gap-3">
-                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
-                                  {index + 1}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="font-mono text-[12px] font-semibold text-foreground">
-                                    {formatHolderAddress(holder.address)}
-                                  </div>
-                                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                    {formatHolderAmount(holder.amount)} tokens
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="shrink-0 text-right">
-                                <div className="font-mono text-sm font-semibold text-foreground">
-                                  {formatPct(holder.supplyPct)}
-                                </div>
-                                <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                                  of supply
-                                </div>
-                              </div>
-                            </div>
-                            <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
-                              <div
-                                className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
-                                style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-sm text-muted-foreground">
-                          Scanning the live largest-holder distribution for this token.
-                        </p>
-                      )}
-                    </div>
-                  </div>
                 </section>
 
                 <section className="app-surface p-5">
@@ -1332,32 +1301,92 @@ export default function TokenPage() {
               </div>
             </section>
 
-            <section className="grid gap-5 lg:items-start lg:grid-cols-[0.8fr_1.2fr]">
-              <div className="app-surface self-start p-5">
-                <div className="mb-4 flex items-center gap-2">
-                  <TrendingUp className="h-4.5 w-4.5 text-primary" />
-                  <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
-                </div>
-                <div className="space-y-3">
-                  {token.timeline.length > 0 ? (
-                    token.timeline.map((event) => {
-                      const timelineCopy = buildTimelineCopy(event);
-                      return (
-                        <div key={event.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium text-foreground">{timelineCopy.title}</div>
-                            <div className="text-xs text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
+            <section className="grid gap-5 lg:items-start lg:grid-cols-[0.85fr_1.15fr]">
+              <div className="space-y-5">
+                <div className="app-surface self-start p-5">
+                  <div className="mb-4 flex items-center gap-2">
+                    <TrendingUp className="h-4.5 w-4.5 text-primary" />
+                    <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
+                  </div>
+                  <div className="space-y-3">
+                    {token.timeline.length > 0 ? (
+                      token.timeline.map((event) => {
+                        const timelineCopy = buildTimelineCopy(event);
+                        return (
+                          <div key={event.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-medium text-foreground">{timelineCopy.title}</div>
+                              <div className="text-xs text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
+                            </div>
+                            <div className="mt-1 text-sm text-muted-foreground">{timelineCopy.description}</div>
                           </div>
-                          <div className="mt-1 text-sm text-muted-foreground">{timelineCopy.description}</div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
-                      Timeline events are being assembled from calls and token signals.
-                    </div>
-                  )}
+                        );
+                      })
+                    ) : (
+                      <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
+                        Timeline events are being assembled from calls and token signals.
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                <section className="app-surface self-start p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {topHolderSectionCopy}
+                      </div>
+                    </div>
+                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                      {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
+                    </div>
+                  </div>
+                  <div className="space-y-2.5">
+                    {topHolderRows.length > 0 ? (
+                      topHolderRows.map((holder, index) => (
+                        <div
+                          key={holder.address}
+                          className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
+                                {index + 1}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-mono text-[12px] font-semibold text-foreground">
+                                  {formatHolderAddress(holder.address)}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {formatHolderAmount(holder.amount)} tokens
+                                </div>
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div className="font-mono text-sm font-semibold text-foreground">
+                                {formatPct(holder.supplyPct)}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                                of supply
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
+                            <div
+                              className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
+                              style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Scanning the live largest-holder distribution for this token.
+                      </p>
+                    )}
+                  </div>
+                </section>
               </div>
 
               <div className="space-y-4">
