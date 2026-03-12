@@ -94,6 +94,7 @@ const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
+const PASSIVE_VISIBLE_PRICE_REFRESH_COOLDOWN_MS = 90_000;
 const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
@@ -607,6 +608,8 @@ async function fetchDexscreenerTokenData(args: {
   return null;
 }
 
+export type PostCardRealtimePriceMode = "active" | "passive" | "off";
+
 interface PostCardProps {
   post: Post;
   className?: string;
@@ -616,6 +619,7 @@ interface PostCardProps {
   onRepost?: (postId: string) => void;
   onComment?: (postId: string, content: string) => Promise<void> | void;
   enableRealtimePricePolling?: boolean;
+  realtimePriceMode?: PostCardRealtimePriceMode;
   enableSharedAlphaPreviewPrefetch?: boolean;
   autoOpenTradePanel?: boolean;
   autoPrefillBuyAmountSol?: string | null;
@@ -968,6 +972,7 @@ export function PostCard({
   onReact,
   onRepost,
   enableRealtimePricePolling = true,
+  realtimePriceMode = "active",
   enableSharedAlphaPreviewPrefetch = true,
   autoOpenTradePanel = false,
   autoPrefillBuyAmountSol = null,
@@ -983,6 +988,7 @@ export function PostCard({
     wallet.publicKey ?? wallet.wallet?.adapter?.publicKey ?? wallet.adapter?.publicKey ?? null;
   const tradeWalletAddress = tradeWalletPublicKey?.toBase58() ?? null;
   const cardRef = useRef<HTMLDivElement>(null);
+  const passiveVisibleRefreshAtRef = useRef(0);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [replyingToComment, setReplyingToComment] = useState<Comment | null>(null);
@@ -1005,7 +1011,7 @@ export function PostCard({
   const [isFollowing, setIsFollowing] = useState(post.isFollowingAuthor ?? false);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [commentCount, setCommentCount] = useState(post._count?.comments ?? 0);
-  const [isInViewport, setIsInViewport] = useState(true);
+  const [isInViewport, setIsInViewport] = useState(false);
   const [isWinCardDownloading, setIsWinCardDownloading] = useState(false);
   const [isWinCardPreviewOpen, setIsWinCardPreviewOpen] = useState(false);
   const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
@@ -1092,6 +1098,9 @@ export function PostCard({
     const activePostId = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
     return Boolean(activePostId);
   }, []);
+  const effectiveRealtimePriceMode: PostCardRealtimePriceMode = enableRealtimePricePolling
+    ? realtimePriceMode
+    : "off";
 
   const clearPotentialScrollLock = useCallback(() => {
     if (typeof document === "undefined") return;
@@ -1355,35 +1364,50 @@ export function PostCard({
       .finally(() => setIsPortfolioLoading(false));
   }, [isBuyDialogOpen, tradeWalletPublicKey, post.contractAddress]);
 
-  // Only live-poll prices for visible/nearby cards to reduce load on initial feed render.
   useEffect(() => {
-    if (!enableRealtimePricePolling) {
+    passiveVisibleRefreshAtRef.current = 0;
+  }, [post.id]);
+
+  // Only refresh market data for cards that are actually on screen.
+  useEffect(() => {
+    if (effectiveRealtimePriceMode === "off") {
       setIsInViewport(false);
       return;
     }
     if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
+      setIsInViewport(true);
       return;
     }
     const node = cardRef.current;
     if (!node) return;
+    const syncViewportState = () => {
+      const rect = node.getBoundingClientRect();
+      const viewportHeight =
+        window.innerHeight || document.documentElement.clientHeight || 0;
+      const visibleHeight = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
+      const visibleRatio = rect.height > 0 ? visibleHeight / rect.height : 0;
+      setIsInViewport(visibleRatio >= 0.15);
+    };
+
+    syncViewportState();
 
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
         if (entry) {
-          setIsInViewport(entry.isIntersecting);
+          setIsInViewport(entry.isIntersecting && entry.intersectionRatio >= 0.15);
         }
       },
       {
         root: null,
-        rootMargin: "300px 0px",
-        threshold: 0,
+        rootMargin: "0px",
+        threshold: [0, 0.15],
       }
     );
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [enableRealtimePricePolling]);
+  }, [effectiveRealtimePriceMode]);
 
   // Real-time price state
   const [currentMcap, setCurrentMcap] = useState(post.currentMcap);
@@ -1459,7 +1483,7 @@ export function PostCard({
   // - Settled posts (>= 1 hour): Update every 5 minutes
   // Also auto-refresh when post settles to show final 1H result
   useEffect(() => {
-    if (!enableRealtimePricePolling) return;
+    if (effectiveRealtimePriceMode === "off") return;
     if (!post.contractAddress) return;
     if (!isInViewport) return;
 
@@ -1529,6 +1553,18 @@ export function PostCard({
       }
     };
 
+    if (effectiveRealtimePriceMode === "passive") {
+      const nowMs = Date.now();
+      if (
+        passiveVisibleRefreshAtRef.current === 0 ||
+        nowMs - passiveVisibleRefreshAtRef.current >= PASSIVE_VISIBLE_PRICE_REFRESH_COOLDOWN_MS
+      ) {
+        passiveVisibleRefreshAtRef.current = nowMs;
+        void fetchPrice();
+      }
+      return;
+    }
+
     // Faster cadence for visible cards to reflect settlement/snapshot changes in near real time.
     const postAgeMs = Date.now() - new Date(post.createdAt).getTime();
     const waitingForSixHourSnapshot =
@@ -1553,7 +1589,7 @@ export function PostCard({
       clearInterval(intervalTimer);
     };
   }, [
-    enableRealtimePricePolling,
+    effectiveRealtimePriceMode,
     post.id,
     post.contractAddress,
     post.entryMcap,

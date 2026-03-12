@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import { Post, User } from "@/types";
-import { PostCard } from "@/components/feed/PostCard";
+import { PostCard, type PostCardRealtimePriceMode } from "@/components/feed/PostCard";
 import { PostCardSkeleton, ProfileCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { CreatePost } from "@/components/feed/CreatePost";
 import { LevelBar } from "@/components/feed/LevelBar";
@@ -46,7 +46,7 @@ const FEED_TAB_PREFETCH_ENABLED = false;
 const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 2_500 : 1_200;
 const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 550 : 300;
 const FEED_AUXILIARY_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 1_500 : 500;
-const FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS = import.meta.env.PROD ? 4_000 : 1_200;
+const FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS = import.meta.env.PROD ? 900 : 250;
 const FEED_BACKGROUND_REFRESH_STARTUP_DELAY_MS = import.meta.env.PROD ? 12_000 : 3_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
@@ -54,8 +54,6 @@ const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
 const FEED_CURRENT_USER_CACHE_TTL_MS = 5 * 60_000;
 const FEED_LATEST_ACK_CACHE_KEY = "phew.feed.latest.ack.v1";
 const FEED_LATEST_ACK_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS = 500;
-const FEED_OLDER_POST_REFETCH_AGE_MS = 6 * 60 * 60 * 1000;
 const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
 const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
 const FEED_QUERY_GC_TIME_MS = 5 * 60_000;
@@ -841,17 +839,15 @@ function mergePostWithCachedRealtimeState(
   };
 }
 
-function shouldEnableFeedCardRealtimePolling(post: Post, totalPosts: number | null): boolean {
-  if (totalPosts === null || totalPosts < FEED_OLDER_POST_REFETCH_MIN_TOTAL_POSTS) {
-    return true;
-  }
-
+function resolveFeedCardRealtimePriceMode(post: Post): PostCardRealtimePriceMode {
   const createdAtMs = new Date(post.createdAt).getTime();
   if (!Number.isFinite(createdAtMs)) {
-    return true;
+    return "active";
   }
-
-  return Date.now() - createdAtMs < FEED_OLDER_POST_REFETCH_AGE_MS;
+  if (!post.settled) {
+    return "active";
+  }
+  return Date.now() - createdAtMs < FEED_RECENT_POST_CACHE_BYPASS_AGE_MS ? "active" : "passive";
 }
 
 function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: string): string {
@@ -1486,13 +1482,6 @@ export default function Feed() {
     }
     return sortPostsNewestFirst(mergedPosts);
   }, [activeTab, postsPages?.pages]);
-  const feedTotalPosts = useMemo(
-    () =>
-      postsPages?.pages.find((page) => typeof page.totalPosts === "number")?.totalPosts ??
-      cachedFirstPage?.totalPosts ??
-      null,
-    [cachedFirstPage?.totalPosts, postsPages?.pages]
-  );
   const hasLiveOverlay = useCallback(
     () => isOverlayOpen || hasActiveTradeDialogMarker(),
     [isOverlayOpen]
@@ -2451,10 +2440,8 @@ export default function Feed() {
                             onLike={handleLike}
                             onRepost={handleRepost}
                             onComment={handleComment}
-                            enableRealtimePricePolling={
-                              feedRealtimeEnrichmentReady &&
-                              shouldEnableFeedCardRealtimePolling(post, feedTotalPosts)
-                            }
+                            enableRealtimePricePolling={feedRealtimeEnrichmentReady}
+                            realtimePriceMode={resolveFeedCardRealtimePriceMode(post)}
                             enableSharedAlphaPreviewPrefetch={feedRealtimeEnrichmentReady}
                           />
                     </div>
