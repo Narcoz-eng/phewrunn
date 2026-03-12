@@ -608,7 +608,7 @@ export default function UserProfile() {
   const profileDisplayName =
     user?.username?.trim() || user?.name?.trim() || normalizedProfileIdentifier || "Trader";
   const profileAvatarSeed =
-    user?.username ?? user?.id ?? (normalizedProfileIdentifier || "trader");
+    user?.id ?? (normalizedProfileIdentifier || "trader");
 
   return (
     <div className="min-h-screen bg-background">
