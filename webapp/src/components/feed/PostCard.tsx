@@ -1527,12 +1527,20 @@ export function PostCard({
   });
 
   // Fetch shared alpha users (other traders who called the same token)
+  const shouldPrefetchSharedAlphaPreview =
+    Boolean(post.contractAddress) &&
+    isInViewport &&
+    typeof post.sharedAlphaCount === "number" &&
+    post.sharedAlphaCount > 0 &&
+    post.sharedAlphaCount <= 3;
+
   const { data: sharedAlphaData } = useQuery({
     queryKey: ["sharedAlpha", post.id],
     queryFn: () => api.get<SharedAlphaResponse>(`/api/posts/${post.id}/shared-alpha`),
-    enabled: Boolean(post.contractAddress) && (isInViewport || isSharedAlphaOpen),
-    staleTime: 60000,
+    enabled: Boolean(post.contractAddress) && (isSharedAlphaOpen || shouldPrefetchSharedAlphaPreview),
+    staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const sharedAlphaUsers = sharedAlphaData?.users ?? [];
   const sharedAlphaTotalCount = Math.max(post.sharedAlphaCount ?? 0, sharedAlphaData?.count ?? 0);

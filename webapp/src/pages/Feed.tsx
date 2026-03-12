@@ -42,7 +42,7 @@ const FEED_FIRST_PAGE_CACHE_TTL_MS = 30 * 60_000;
 const FEED_PUBLIC_CACHE_SCOPE = "public";
 const FEED_NEW_POSTS_POLL_MS = 15_000;
 const FEED_ACTIVE_TAB_POLL_MS = 90_000;
-const FEED_TAB_PREFETCH_ENABLED = true;
+const FEED_TAB_PREFETCH_ENABLED = false;
 const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 2_500 : 1_200;
 const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 550 : 300;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
@@ -869,6 +869,28 @@ function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: strin
   return `/api/posts?${params.toString()}`;
 }
 
+function isBackendPoolPressureError(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    if (error.status === 429 || error.status === 503) {
+      return true;
+    }
+
+    const message = error.message.toLowerCase();
+    if (error.status >= 500) {
+      return (
+        message.includes("database") ||
+        message.includes("connection pool") ||
+        message.includes("pool timeout") ||
+        message.includes("timed out") ||
+        message.includes("temporarily unavailable") ||
+        message.includes("unable to check out connection")
+      );
+    }
+  }
+
+  return false;
+}
+
 // Error Boundary Component for Feed
 function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
   return (
@@ -1211,6 +1233,12 @@ export default function Feed() {
         page = await readLegacyFeedPayload();
       }
     } catch (error) {
+      if (isBackendPoolPressureError(error)) {
+        if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
+          return fallbackFirstPage;
+        }
+        throw error;
+      }
       try {
         page = await readLegacyFeedPayload();
       } catch {
@@ -1383,7 +1411,10 @@ export default function Feed() {
     initialDataUpdatedAt: hydrationCachedFirstPageEntry?.cachedAt,
     enabled: activeTab !== "following" || hasLiveSession,
     retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 429) {
+      if (error instanceof ApiError && (error.status === 429 || error.status === 503)) {
+        return false;
+      }
+      if (isBackendPoolPressureError(error)) {
         return false;
       }
       return failureCount < 2;

@@ -50,17 +50,13 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const desiredConnectionLimit =
-      configuredConnectionLimit ??
-      (isServerlessRuntime
-        ? 1
-        : (isProduction ? 10 : 5));
+    const desiredConnectionLimit = isServerlessRuntime
+      ? 1
+      : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
-    const desiredPoolTimeout =
-      configuredPoolTimeout ??
-      (isServerlessRuntime
-        ? (isProduction ? 10 : 8)
-        : (isProduction ? 8 : 10));
+    const desiredPoolTimeout = isServerlessRuntime
+      ? Math.min(configuredPoolTimeout ?? (isProduction ? 10 : 8), 10)
+      : (configuredPoolTimeout ?? (isProduction ? 8 : 10));
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
