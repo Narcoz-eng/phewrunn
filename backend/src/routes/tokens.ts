@@ -49,7 +49,7 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 5;
+const TOKEN_ROUTE_CACHE_VERSION = 7;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const TOKEN_LIVE_SELECT = {
   id: true,
@@ -188,6 +188,13 @@ function roundCount(value: number | null | undefined): number | null {
   return Math.round(value);
 }
 
+function hasResolvedHolderCount(
+  value: number | null | undefined,
+  source: TokenRoutePayload["holderCountSource"] | TokenLivePayload["holderCountSource"]
+): value is number {
+  return isFiniteNumber(value) && value > 0 && source !== "largest_accounts" && source !== null;
+}
+
 function pickFirstPositiveMetric(...values: Array<number | null | undefined>): number | null {
   for (const value of values) {
     if (isFiniteNumber(value) && value > 0) {
@@ -237,43 +244,62 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
       estimatedSupplyPct: cluster.estimatedSupplyPct,
       evidenceJson: cluster.evidenceJson,
     })) ?? [];
+  const distributionHolderCount =
+    token.chainType === "solana"
+      ? roundCount(distributionSnapshot?.holderCount)
+      : null;
+  const distributionHolderCountSource =
+    token.chainType === "solana"
+      ? distributionSnapshot?.holderCountSource ?? null
+      : null;
+  const storedHolderCount = roundCount(pickFirstPositiveMetric(token.holderCount));
   const holderCount =
     token.chainType === "solana"
-      ? distributionSnapshot?.holderCount ?? null
+      ? hasResolvedHolderCount(distributionHolderCount, distributionHolderCountSource)
+        ? distributionHolderCount
+        : pickFirstPositiveMetric(storedHolderCount, distributionHolderCount)
       : roundCount(pickFirstPositiveMetric(token.holderCount));
   const holderCountSource =
     token.chainType === "solana"
-      ? distributionSnapshot?.holderCountSource ?? null
+      ? hasResolvedHolderCount(distributionHolderCount, distributionHolderCountSource)
+        ? distributionHolderCountSource
+        : holderCount !== null
+          ? storedHolderCount !== null
+            ? "stored"
+            : distributionHolderCountSource ?? null
+          : null
       : holderCount !== null
         ? "stored"
         : null;
   const largestHolderPct =
     token.chainType === "solana"
-      ? roundMetric(distributionSnapshot?.largestHolderPct)
+      ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.largestHolderPct, token.largestHolderPct))
       : roundMetric(pickFirstFiniteMetric(token.largestHolderPct));
   const top10HolderPct =
     token.chainType === "solana"
-      ? roundMetric(distributionSnapshot?.top10HolderPct)
+      ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.top10HolderPct, token.top10HolderPct))
       : roundMetric(pickFirstFiniteMetric(token.top10HolderPct));
   const deployerSupplyPct =
     token.chainType === "solana"
-      ? roundMetric(distributionSnapshot?.deployerSupplyPct)
+      ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.deployerSupplyPct, token.deployerSupplyPct))
       : roundMetric(pickFirstFiniteMetric(token.deployerSupplyPct));
   const bundledWalletCount =
     token.chainType === "solana"
-      ? distributionSnapshot?.bundledWalletCount ?? null
+      ? roundCount(pickFirstFiniteMetric(distributionSnapshot?.bundledWalletCount, token.bundledWalletCount))
       : roundCount(pickFirstFiniteMetric(token.bundledWalletCount));
   const estimatedBundledSupplyPct =
     token.chainType === "solana"
-      ? roundMetric(distributionSnapshot?.estimatedBundledSupplyPct)
+      ? roundMetric(
+          pickFirstFiniteMetric(distributionSnapshot?.estimatedBundledSupplyPct, token.estimatedBundledSupplyPct)
+        )
       : roundMetric(pickFirstFiniteMetric(token.estimatedBundledSupplyPct));
   const tokenRiskScore =
     token.chainType === "solana"
-      ? roundMetric(distributionSnapshot?.tokenRiskScore)
+      ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.tokenRiskScore, token.tokenRiskScore))
       : roundMetric(pickFirstFiniteMetric(token.tokenRiskScore));
   const bundleRiskLabel =
     token.chainType === "solana"
-      ? distributionSnapshot?.bundleRiskLabel ?? null
+      ? distributionSnapshot?.bundleRiskLabel ?? token.bundleRiskLabel ?? null
       : token.bundleRiskLabel ?? null;
   const payload: TokenLivePayload = {
     marketCap: roundMetric(pickFirstPositiveMetric(marketSnapshot.mcap)),

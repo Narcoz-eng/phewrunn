@@ -278,6 +278,24 @@ function formatHolderBadge(badge: TokenHolder["badges"][number]): string {
   }
 }
 
+function getPrimaryHolderBadge(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"][number] | null {
+  return holder?.badges?.[0] ?? null;
+}
+
+function buildHolderScanSummary(holder: TokenHolder | null | undefined): string {
+  if (!holder) {
+    return "Live wallet classification is still resolving.";
+  }
+
+  const details = [
+    holder.label,
+    holder.activeAgeDays !== null ? `Seen ${formatDaysMetric(holder.activeAgeDays)}` : null,
+    holder.tradeVolume90dSol !== null ? `${formatSolMetric(holder.tradeVolume90dSol)} 90d flow` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return details.join(" | ") || "Role assigned from live RPC and Helius scan.";
+}
+
 function formatDaysMetric(value: number | null | undefined): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
   return value < 1 ? "<1d" : `${Math.round(value)}d`;
@@ -371,6 +389,77 @@ function hasResolvedHolderCount(
   );
 }
 
+function holderSnapshotKey(holder: Pick<TokenHolder, "address" | "ownerAddress">): string {
+  return (holder.ownerAddress ?? holder.address).trim().toLowerCase();
+}
+
+function mergeHolderBadges(
+  primary: TokenHolder["badges"] | null | undefined,
+  fallback: TokenHolder["badges"] | null | undefined
+): TokenHolder["badges"] {
+  return [...new Set([...(primary ?? []), ...(fallback ?? [])])];
+}
+
+function mergeHolderSnapshot(
+  primary: TokenHolder,
+  fallback: TokenHolder | null | undefined
+): TokenHolder {
+  if (!fallback) {
+    return primary;
+  }
+
+  return {
+    address: primary.address || fallback.address,
+    ownerAddress: primary.ownerAddress ?? fallback.ownerAddress ?? null,
+    tokenAccountAddress: primary.tokenAccountAddress ?? fallback.tokenAccountAddress ?? null,
+    amount: pickMergedMetric(primary.amount, fallback.amount, { positive: true }),
+    supplyPct: pickMergedMetric(primary.supplyPct, fallback.supplyPct) ?? 0,
+    valueUsd: pickMergedMetric(primary.valueUsd, fallback.valueUsd, { positive: true }),
+    label: primary.label ?? fallback.label ?? null,
+    domain: primary.domain ?? fallback.domain ?? null,
+    accountType: primary.accountType ?? fallback.accountType ?? null,
+    activeAgeDays: pickMergedMetric(primary.activeAgeDays, fallback.activeAgeDays, { positive: true }),
+    fundedBy: primary.fundedBy ?? fallback.fundedBy ?? null,
+    totalValueUsd: pickMergedMetric(primary.totalValueUsd, fallback.totalValueUsd, { positive: true }),
+    tradeVolume90dSol: pickMergedMetric(primary.tradeVolume90dSol, fallback.tradeVolume90dSol, { positive: true }),
+    solBalance: pickMergedMetric(primary.solBalance, fallback.solBalance, { positive: true }),
+    badges: mergeHolderBadges(primary.badges, fallback.badges),
+    devRole: primary.devRole ?? fallback.devRole ?? null,
+  };
+}
+
+function mergeTopHolderSnapshots(
+  primary: TokenHolder[] | null | undefined,
+  fallback: TokenHolder[] | null | undefined
+): TokenHolder[] {
+  const primaryRows = primary ?? [];
+  const fallbackRows = fallback ?? [];
+  if (primaryRows.length === 0) {
+    return fallbackRows;
+  }
+  if (fallbackRows.length === 0) {
+    return primaryRows;
+  }
+
+  const fallbackByKey = new Map(fallbackRows.map((holder) => [holderSnapshotKey(holder), holder] as const));
+  const merged: TokenHolder[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const holder of primaryRows) {
+    const key = holderSnapshotKey(holder);
+    seenKeys.add(key);
+    merged.push(mergeHolderSnapshot(holder, fallbackByKey.get(key)));
+  }
+
+  for (const holder of fallbackRows) {
+    const key = holderSnapshotKey(holder);
+    if (seenKeys.has(key)) continue;
+    merged.push(holder);
+  }
+
+  return merged;
+}
+
 function mergeTokenPageDataWithCached(
   live: TokenPageData,
   cached: TokenPageData | null | undefined
@@ -382,11 +471,6 @@ function mergeTokenPageDataWithCached(
   const liveSentimentHasSignals =
     live.sentiment.score > 0 ||
     Object.values(live.sentiment.reactions).some((value) => value > 0);
-  const liveRiskHasSignals =
-    (typeof live.risk.tokenRiskScore === "number" && Number.isFinite(live.risk.tokenRiskScore)) ||
-    (typeof live.risk.holderCount === "number" && Number.isFinite(live.risk.holderCount) && live.risk.holderCount > 0) ||
-    typeof live.risk.bundleRiskLabel === "string";
-
   return {
     ...live,
     marketCap: pickMergedMetric(live.marketCap, cached.marketCap, { positive: true }),
@@ -406,32 +490,37 @@ function mergeTokenPageDataWithCached(
     earlyRunnerScore: pickMergedMetric(live.earlyRunnerScore, cached.earlyRunnerScore),
     highConvictionScore: pickMergedMetric(live.highConvictionScore, cached.highConvictionScore),
     bundleRiskLabel: live.bundleRiskLabel ?? cached.bundleRiskLabel,
-    holderCountSource: live.holderCountSource ?? cached.holderCountSource,
-    topHolders: live.topHolders.length > 0 ? live.topHolders : cached.topHolders,
-    devWallet: live.devWallet ?? cached.devWallet,
+    holderCountSource:
+      hasResolvedHolderCount(live.holderCount, live.holderCountSource)
+        ? live.holderCountSource ?? cached.holderCountSource
+        : hasResolvedHolderCount(cached.holderCount, cached.holderCountSource)
+          ? cached.holderCountSource
+          : live.holderCountSource ?? cached.holderCountSource,
+    topHolders: mergeTopHolderSnapshots(live.topHolders, cached.topHolders),
+    devWallet: live.devWallet ? mergeHolderSnapshot(live.devWallet, cached.devWallet) : cached.devWallet,
     bundleClusters: live.bundleClusters.length > 0 ? live.bundleClusters : cached.bundleClusters,
     chart: live.chart.length > 1 ? live.chart : cached.chart,
     callsCount: live.callsCount > 0 ? live.callsCount : cached.callsCount,
     distinctTraders: live.distinctTraders > 0 ? live.distinctTraders : cached.distinctTraders,
     topTraders: live.topTraders.length > 0 ? live.topTraders : cached.topTraders,
     sentiment: liveSentimentHasSignals ? live.sentiment : cached.sentiment,
-    risk: liveRiskHasSignals
-      ? live.risk
-      : {
-          tokenRiskScore: pickMergedMetric(live.risk.tokenRiskScore, cached.risk.tokenRiskScore),
-          bundleRiskLabel: live.risk.bundleRiskLabel ?? cached.risk.bundleRiskLabel,
-          largestHolderPct: pickMergedMetric(live.risk.largestHolderPct, cached.risk.largestHolderPct),
-          top10HolderPct: pickMergedMetric(live.risk.top10HolderPct, cached.risk.top10HolderPct),
-          bundledWalletCount: pickMergedMetric(live.risk.bundledWalletCount, cached.risk.bundledWalletCount, { positive: true }),
-          estimatedBundledSupplyPct: pickMergedMetric(
-            live.risk.estimatedBundledSupplyPct,
-            cached.risk.estimatedBundledSupplyPct
-          ),
-          deployerSupplyPct: pickMergedMetric(live.risk.deployerSupplyPct, cached.risk.deployerSupplyPct),
-          holderCount: pickMergedMetric(live.risk.holderCount, cached.risk.holderCount, { positive: true }),
-          topHolders: live.risk.topHolders.length > 0 ? live.risk.topHolders : cached.risk.topHolders,
-          devWallet: live.risk.devWallet ?? cached.risk.devWallet,
-        },
+    risk: {
+      tokenRiskScore: pickMergedMetric(live.risk.tokenRiskScore, cached.risk.tokenRiskScore),
+      bundleRiskLabel: live.risk.bundleRiskLabel ?? cached.risk.bundleRiskLabel,
+      largestHolderPct: pickMergedMetric(live.risk.largestHolderPct, cached.risk.largestHolderPct),
+      top10HolderPct: pickMergedMetric(live.risk.top10HolderPct, cached.risk.top10HolderPct),
+      bundledWalletCount: pickMergedMetric(live.risk.bundledWalletCount, cached.risk.bundledWalletCount, { positive: true }),
+      estimatedBundledSupplyPct: pickMergedMetric(
+        live.risk.estimatedBundledSupplyPct,
+        cached.risk.estimatedBundledSupplyPct
+      ),
+      deployerSupplyPct: pickMergedMetric(live.risk.deployerSupplyPct, cached.risk.deployerSupplyPct),
+      holderCount: pickMergedMetric(live.risk.holderCount, cached.risk.holderCount, { positive: true }),
+      topHolders: mergeTopHolderSnapshots(live.risk.topHolders, cached.risk.topHolders),
+      devWallet: live.risk.devWallet
+        ? mergeHolderSnapshot(live.risk.devWallet, cached.risk.devWallet)
+        : cached.risk.devWallet,
+    },
     timeline: live.timeline.length > 0 ? live.timeline : cached.timeline,
     recentCalls: live.recentCalls.length > 0 ? live.recentCalls : cached.recentCalls,
   };
@@ -458,8 +547,8 @@ function mergeTokenPageDataWithLiveSnapshot(
   const estimatedBundledSupplyPct = pickMergedMetric(live.estimatedBundledSupplyPct, current.estimatedBundledSupplyPct);
   const tokenRiskScore = pickMergedMetric(live.tokenRiskScore, current.tokenRiskScore);
   const bundleRiskLabel = live.bundleRiskLabel ?? current.bundleRiskLabel;
-  const topHolders = live.topHolders.length > 0 ? live.topHolders : current.topHolders;
-  const devWallet = live.devWallet ?? current.devWallet;
+  const topHolders = mergeTopHolderSnapshots(live.topHolders, current.topHolders);
+  const devWallet = live.devWallet ? mergeHolderSnapshot(live.devWallet, current.devWallet) : current.devWallet;
   const bundleClusters = live.bundleClusters.length > 0 ? live.bundleClusters : current.bundleClusters;
 
   return {
@@ -525,7 +614,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v9:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v11:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -1385,8 +1474,13 @@ export default function TokenPage() {
                           <div className="mt-2 font-mono text-sm font-semibold text-foreground">
                             {formatHolderAddress(devWallet.address)}
                           </div>
+                          <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary/80">
+                            {getPrimaryHolderBadge(devWallet)
+                              ? `Primary role: ${formatHolderBadge(getPrimaryHolderBadge(devWallet)!)}` 
+                              : "Primary role: Resolving"}
+                          </div>
                           <div className="mt-1 text-xs text-muted-foreground">
-                            {devWallet.label ?? devWallet.domain ?? "Wallet intelligence from Solana RPC and Helius."}
+                            {buildHolderScanSummary(devWallet)}
                           </div>
                         </div>
                         {devWallet.supplyPct > 0 ? (
@@ -1405,13 +1499,13 @@ export default function TokenPage() {
                             ))
                           : (
                               <span className="rounded-full border border-border/60 bg-white/75 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground dark:bg-white/[0.05]">
-                                Wallet scan active
+                                Role resolving
                               </span>
                             )}
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Age <span className="ml-1 font-semibold text-foreground">{formatDaysMetric(devWallet.activeAgeDays) ?? "N/A"}</span>
+                          Observed age <span className="ml-1 font-semibold text-foreground">{formatDaysMetric(devWallet.activeAgeDays) ?? "N/A"}</span>
                         </div>
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
                           90d volume <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.tradeVolume90dSol) ?? "N/A"}</span>
@@ -1441,7 +1535,15 @@ export default function TokenPage() {
                                 <div className="font-mono text-[12px] font-semibold text-foreground">
                                   {formatHolderAddress(holder.address)}
                                 </div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary/80">
+                                  {getPrimaryHolderBadge(holder)
+                                    ? `Role: ${formatHolderBadge(getPrimaryHolderBadge(holder)!)}` 
+                                    : "Role: Resolving"}
+                                </div>
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  {buildHolderScanSummary(holder)}
+                                </div>
+                                <div className="mt-1 text-[11px] text-muted-foreground">
                                   {formatHolderAmount(holder.amount)} tokens
                                   {holder.valueUsd ? (
                                     <span className="ml-1 text-foreground/80">| {formatMarketCap(holder.valueUsd)}</span>
@@ -1456,7 +1558,7 @@ export default function TokenPage() {
                                     ))
                                   ) : (
                                     <span className="rounded-full border border-border/60 bg-white/80 px-2 py-0.5 text-[10px] uppercase tracking-[0.11em] text-muted-foreground dark:bg-white/[0.05]">
-                                      Wallet scanned
+                                      Role resolving
                                     </span>
                                   )}
                                 </div>

@@ -130,9 +130,17 @@ const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
 const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
 const FRESH_WALLET_DAYS_THRESHOLD = 30;
+const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 60;
+const LOW_HISTORY_MINT_THRESHOLD = 2;
+const LOW_HISTORY_TX_THRESHOLD = 12;
 const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 100;
+const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 25;
+const HIGH_ACTIVITY_MINTS_THRESHOLD = 6;
+const HIGH_ACTIVITY_TX_THRESHOLD = 18;
 const WHALE_SUPPLY_PCT_THRESHOLD = 4;
 const WHALE_PORTFOLIO_USD_THRESHOLD = 500_000;
+const SOFT_WHALE_SUPPLY_PCT_THRESHOLD = 0.8;
+const SOFT_WHALE_VALUE_USD_THRESHOLD = 75_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -383,6 +391,9 @@ function buildHolderBadges(params: {
   totalValueUsd: number | null;
   activeAgeDays: number | null;
   tradeVolume90dSol: number | null;
+  distinctMintsTraded: number;
+  observedTxCount: number;
+  lastSeenHours: number | null;
   devRole: TokenHolderSnapshot["devRole"];
   authorityAssetCount: number | null;
   ruggedDeploymentCount: number;
@@ -416,7 +427,52 @@ function buildHolderBadges(params: {
   ) {
     badges.push("serial_rugger");
   }
-  return [...new Set(badges)];
+
+  if (badges.length === 0) {
+    if (
+      params.activeAgeDays !== null &&
+      params.activeAgeDays <= OBSERVED_FRESH_WALLET_DAYS_THRESHOLD &&
+      params.distinctMintsTraded <= LOW_HISTORY_MINT_THRESHOLD &&
+      params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
+    ) {
+      badges.push("fresh_wallet");
+    } else if (
+      params.authorityAssetCount !== null &&
+      params.authorityAssetCount >= 2
+    ) {
+      badges.push("serial_deployer");
+    } else if (
+      (params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD) ||
+      params.distinctMintsTraded >= HIGH_ACTIVITY_MINTS_THRESHOLD ||
+      params.observedTxCount >= HIGH_ACTIVITY_TX_THRESHOLD
+    ) {
+      badges.push("high_volume_trader");
+    } else if (
+      params.supplyPct >= SOFT_WHALE_SUPPLY_PCT_THRESHOLD ||
+      (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_WHALE_VALUE_USD_THRESHOLD)
+    ) {
+      badges.push("whale");
+    } else if (
+      params.lastSeenHours !== null &&
+      params.lastSeenHours <= 24 &&
+      params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
+    ) {
+      badges.push("fresh_wallet");
+    } else {
+      badges.push("whale");
+    }
+  }
+
+  const priority: Record<TokenHolderBadge, number> = {
+    dev_wallet: 0,
+    serial_rugger: 1,
+    serial_deployer: 2,
+    whale: 3,
+    high_volume_trader: 4,
+    fresh_wallet: 5,
+  };
+
+  return [...new Set(badges)].sort((left, right) => priority[left] - priority[right]);
 }
 
 function isRugLikeMarketSnapshot(snapshot: Awaited<ReturnType<typeof getCachedMarketCapSnapshot>> | null): boolean {
@@ -728,7 +784,7 @@ export async function analyzeSolanaTokenDistribution(
             : null,
         domain: null,
         accountType: null,
-        activeAgeDays: null,
+        activeAgeDays: activity?.observedAgeDays ?? null,
         fundedBy: null,
         totalValueUsd,
         tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
@@ -736,8 +792,11 @@ export async function analyzeSolanaTokenDistribution(
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
           totalValueUsd,
-          activeAgeDays: null,
+          activeAgeDays: activity?.observedAgeDays ?? null,
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+          distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
+          observedTxCount: activity?.observedTxCount ?? 0,
+          lastSeenHours: activity?.lastSeenHours ?? null,
           devRole,
           authorityAssetCount: authorityHeuristic.authorityAssetCount,
           ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,
@@ -777,7 +836,7 @@ export async function analyzeSolanaTokenDistribution(
                 : "Detected from freeze authority on-chain",
           domain: null,
           accountType: null,
-          activeAgeDays: null,
+          activeAgeDays: activity?.observedAgeDays ?? null,
           fundedBy: null,
           totalValueUsd: devHolding?.holdingUsd ?? null,
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
@@ -785,8 +844,11 @@ export async function analyzeSolanaTokenDistribution(
           badges: buildHolderBadges({
             supplyPct,
             totalValueUsd: devHolding?.holdingUsd ?? null,
-            activeAgeDays: null,
+            activeAgeDays: activity?.observedAgeDays ?? null,
             tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+            distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
+            observedTxCount: activity?.observedTxCount ?? 0,
+            lastSeenHours: activity?.lastSeenHours ?? null,
             devRole,
             authorityAssetCount: authorityHeuristic.authorityAssetCount,
             ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,

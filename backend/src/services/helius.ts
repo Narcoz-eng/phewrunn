@@ -45,6 +45,9 @@ export type WalletActivityProfile = {
   balanceUsd: number | null;
   totalTradeVolumeSol: number | null;
   distinctMintsTraded: number;
+  observedAgeDays: number | null;
+  observedTxCount: number;
+  lastSeenHours: number | null;
 };
 
 type HeliusTokenHolding = {
@@ -64,6 +67,9 @@ type WalletBaseSnapshot = {
   solPriceUsd: number | null;
   holdingsByMint: Map<string, HeliusTokenHolding>;
   tradeByMint: Map<string, TokenTradeAggregate>;
+  observedFirstActivityAtMs: number | null;
+  observedLastActivityAtMs: number | null;
+  observedTxCount: number;
 };
 
 type PortfolioTokenInput = {
@@ -701,6 +707,14 @@ async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?
     txs,
     sinceMs: params.sinceMs,
   });
+  const observedTxTimestamps = txs
+    .map((tx) => normalizeTsToMs(tx.timestamp))
+    .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp))
+    .sort((left, right) => left - right);
+  const observedFirstActivityAtMs = observedTxTimestamps[0] ?? null;
+  const observedLastActivityAtMs = observedTxTimestamps.length > 0
+    ? observedTxTimestamps[observedTxTimestamps.length - 1] ?? null
+    : null;
 
   return {
     walletAddress: params.walletAddress,
@@ -708,6 +722,9 @@ async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?
     solPriceUsd,
     holdingsByMint: holdingsByMint ?? new Map<string, HeliusTokenHolding>(),
     tradeByMint,
+    observedFirstActivityAtMs,
+    observedLastActivityAtMs,
+    observedTxCount: txs.length,
   };
 }
 
@@ -862,6 +879,15 @@ export async function getWalletActivityProfile(params: {
   const balanceUsd = base.balanceSol !== null && base.solPriceUsd !== null
     ? roundMoney(base.balanceSol * base.solPriceUsd)
     : null;
+  const now = Date.now();
+  const observedAgeDays =
+    base.observedFirstActivityAtMs !== null
+      ? Math.max(0, Math.round(((now - base.observedFirstActivityAtMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
+      : null;
+  const lastSeenHours =
+    base.observedLastActivityAtMs !== null
+      ? Math.max(0, Math.round(((now - base.observedLastActivityAtMs) / (60 * 60 * 1000)) * 10) / 10)
+      : null;
 
   return {
     source: "helius",
@@ -870,6 +896,9 @@ export async function getWalletActivityProfile(params: {
     balanceUsd,
     totalTradeVolumeSol: totalTradeVolumeSol > 0 ? roundMoney(totalTradeVolumeSol) : null,
     distinctMintsTraded: base.tradeByMint.size,
+    observedAgeDays,
+    observedTxCount: base.observedTxCount,
+    lastSeenHours,
   };
 }
 

@@ -3152,19 +3152,40 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         ? cloneCachedValue(staleToken.devWallet)
         : null;
     const hasFreshDistributionTelemetry = Boolean(distributionFallback);
-    const canTrustStoredSolanaHolderTelemetry =
-      currentToken.chainType !== "solana" || staleTopHolders.length > 0;
+    const minimumObservedHolderCount = Math.max(
+      distributionFallback?.topHolders.length ?? 0,
+      staleTopHolders.length
+    );
+    const isPlausibleStoredHolderCount = (value: number | null | undefined): value is number =>
+      hasPositiveMetric(value) && Math.round(value) >= minimumObservedHolderCount;
+    const storedSolanaHolderCount = isPlausibleStoredHolderCount(currentToken.holderCount)
+      ? Math.round(currentToken.holderCount)
+      : isPlausibleStoredHolderCount(staleToken?.holderCount)
+        ? Math.round(staleToken!.holderCount!)
+        : null;
+    const hasResolvedDistributionHolderCount =
+      distributionFallback?.holderCountSource !== "largest_accounts" &&
+      distributionFallback?.holderCountSource !== null &&
+      hasPositiveMetric(distributionFallback?.holderCount);
     const resolvedHolderCount = Math.round(
       pickFirstPositiveMetric(
-        distributionFallback?.holderCount,
-        canTrustStoredSolanaHolderTelemetry ? currentToken.holderCount : null,
-        canTrustStoredSolanaHolderTelemetry ? staleToken?.holderCount : null
+        hasResolvedDistributionHolderCount ? distributionFallback?.holderCount : null,
+        currentToken.chainType === "solana" ? storedSolanaHolderCount : currentToken.holderCount,
+        currentToken.chainType === "solana" ? null : staleToken?.holderCount,
+        !hasResolvedDistributionHolderCount ? distributionFallback?.holderCount : null
       ) ?? 0
     ) || null;
     const resolvedHolderCountSource =
-      distributionFallback?.holderCountSource ??
-      (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null) ??
-      (currentToken.chainType !== "solana" && resolvedHolderCount !== null ? "stored" : null);
+      hasResolvedDistributionHolderCount
+        ? distributionFallback?.holderCountSource ?? null
+        : currentToken.chainType === "solana"
+          ? storedSolanaHolderCount !== null
+            ? "stored"
+            : distributionFallback?.holderCountSource ??
+              (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null)
+          : resolvedHolderCount !== null
+            ? "stored"
+            : null;
     const resolvedLargestHolderPct = roundMetric(
       pickFirstFiniteMetric(
         distributionFallback?.largestHolderPct,
