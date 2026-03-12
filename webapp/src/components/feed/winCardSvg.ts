@@ -40,6 +40,7 @@ export type WinCardRenderModel = {
   authorLevelLabel: string;
   authorLevelText: string;
   authorInitial: string;
+  authorLevel: number;
   tokenPrimary: string;
   tokenSecondary: string;
   noteText: string;
@@ -55,6 +56,7 @@ export type WinCardRenderModel = {
 
 type BuildWinCardSvgOptions = {
   logoDataUrl?: string | null;
+  avatarDataUrl?: string | null;
 };
 
 function escapeXml(value: string | null | undefined): string {
@@ -148,6 +150,24 @@ function snapshotFill(snapshot: WinCardSnapshot): string {
   return snapshot.positive ? "#7dff5a" : "#ff7f90";
 }
 
+function getLevelBarColors(level: number): { fill: string; label: string; textColor: string } {
+  if (level >= 8) return { fill: "linear-gradient(90deg, #f59e0b, #fbbf24)", label: "Elite", textColor: "#fbbf24" };
+  if (level >= 5) return { fill: "linear-gradient(90deg, #94a3b8, #cbd5e1)", label: "Veteran", textColor: "#cbd5e1" };
+  if (level >= 4) return { fill: "linear-gradient(90deg, #71717a, #d4d4d8)", label: "Credible", textColor: "#d4d4d8" };
+  if (level >= 1) return { fill: "linear-gradient(90deg, #c2410c, #ea580c)", label: "Rising", textColor: "#ea580c" };
+  if (level >= -2) return { fill: "linear-gradient(90deg, #dc2626, #f87171)", label: "At Risk", textColor: "#f87171" };
+  return { fill: "linear-gradient(90deg, #991b1b, #dc2626)", label: "Liquidated", textColor: "#dc2626" };
+}
+
+function getLevelBarFillStops(level: number): { c1: string; c2: string } {
+  if (level >= 8) return { c1: "#f59e0b", c2: "#fbbf24" };
+  if (level >= 5) return { c1: "#94a3b8", c2: "#cbd5e1" };
+  if (level >= 4) return { c1: "#71717a", c2: "#d4d4d8" };
+  if (level >= 1) return { c1: "#c2410c", c2: "#ea580c" };
+  if (level >= -2) return { c1: "#dc2626", c2: "#f87171" };
+  return { c1: "#991b1b", c2: "#dc2626" };
+}
+
 function summaryToneColor(tone: WinCardTone): string {
   if (tone === "gain") return "#b8ff73";
   if (tone === "loss") return "#ff8f9d";
@@ -202,47 +222,54 @@ export function buildWinCardSvg(
   const footerLabel = clampText(model.footerLabel, 48);
   const pillLabel = clampText(model.resultLabel, 14);
 
-  /* ── Metric cards: 2x2 grid below hero ── */
-  const metricRects = metricCards
+  /* ── Split metrics: highlighted (Current MCAP) gets a big callout, rest in row ── */
+  const highlightedMetric = metricCards.find((m) => m.highlight) || null;
+  const regularMetrics = metricCards.filter((m) => !m.highlight);
+
+  const regularMetricRects = regularMetrics
     .map((metric, index) => {
-      const col = index % 2;
-      const row = Math.floor(index / 2);
-      const x = 64 + col * 272;
-      const y = 700 + row * 132;
+      const x = 64 + index * 186;
       const tone = metricToneColors(metric.tone);
-      const bgFill = metric.highlight
-        ? `fill="url(#metricHighlight)"`
-        : `fill="rgba(255,255,255,0.035)"`;
-      const borderColor = metric.highlight ? "rgba(169,255,52,0.32)" : tone.border;
       return `
-        <g transform="translate(${x},${y})">
-          <rect width="252" height="116" rx="20" ${bgFill} stroke="${borderColor}" stroke-width="1.5" />
-          <text x="20" y="30" class="eyebrow">${escapeXml(metric.label)}</text>
-          <text x="20" y="68" class="metricValue" fill="${tone.value}">${escapeXml(clampText(metric.value, 14))}</text>
-          <text x="20" y="96" class="metricHint">${escapeXml(clampText(metric.hint, 28))}</text>
+        <g transform="translate(${x},700)">
+          <rect width="170" height="106" rx="18" fill="rgba(255,255,255,0.035)" stroke="${tone.border}" stroke-width="1" />
+          <text x="16" y="26" class="eyebrow">${escapeXml(metric.label)}</text>
+          <text x="16" y="60" class="metricValue" fill="${tone.value}">${escapeXml(clampText(metric.value, 14))}</text>
+          <text x="16" y="84" class="metricHint">${escapeXml(clampText(metric.hint, 22))}</text>
         </g>
       `;
     })
     .join("");
 
+  /* ── Highlighted Current MCAP callout ── */
+  const currentMcapCallout = highlightedMetric
+    ? `
+    <g transform="translate(64,828)">
+      <rect width="524" height="108" rx="22" fill="url(#mcapCalloutBg)" stroke="url(#mcapCalloutBorder)" stroke-width="2" />
+      <text x="26" y="30" class="eyebrow" style="fill:${accent.primary};opacity:0.9">${escapeXml(highlightedMetric.label)}</text>
+      <text x="26" y="78" class="currentMcapValue" fill="${accent.primary}">${escapeXml(clampText(highlightedMetric.value, 18))}</text>
+      <text x="26" y="98" class="metricHint" style="fill:rgba(226,232,240,0.65)">${escapeXml(clampText(highlightedMetric.hint, 32))}</text>
+      <text x="498" y="68" text-anchor="end" class="mcapLive" fill="${accent.primary}">LIVE</text>
+    </g>`
+    : "";
+
   /* ── Snapshots: horizontal bars ── */
   const snapshotRects = snapshotCards
     .map((snapshot, index) => {
-      const y = 700 + index * 90;
+      const y = 700 + index * 80;
       const ratio = Math.max(0.06, Math.min(1, snapshot.magnitudeRatio || 0));
-      const fillWidth = Math.round(200 * ratio);
       const tone = snapshot.positive === null ? "#d6dde8" : snapshot.positive ? "#b8ff73" : "#ff8f9d";
       return `
         <g transform="translate(620,${y})">
-          <rect width="516" height="74" rx="18" fill="rgba(255,255,255,0.035)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-          <text x="22" y="28" class="eyebrow">${escapeXml(snapshot.shortLabel)}</text>
-          <text x="22" y="56" class="snapshotPercent" fill="${tone}">${escapeXml(snapshot.percentText)}</text>
-          <text x="180" y="28" class="snapshotHint">${escapeXml(clampText(snapshot.label, 20))}</text>
-          <text x="180" y="56" class="snapshotProfit">${escapeXml(clampText(snapshot.profitText, 20))}</text>
-          <rect x="340" y="26" width="154" height="8" rx="4" fill="rgba(255,255,255,0.08)" />
-          <rect x="340" y="26" width="${Math.round(154 * ratio)}" height="8" rx="4" fill="${snapshotFill(snapshot)}" />
-          <rect x="340" y="44" width="154" height="8" rx="4" fill="rgba(255,255,255,0.04)" />
-          <rect x="340" y="44" width="${fillWidth > 154 ? 154 : fillWidth}" height="8" rx="4" fill="${snapshotFill(snapshot)}" opacity="0.4" />
+          <rect width="516" height="66" rx="16" fill="rgba(255,255,255,0.035)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
+          <text x="22" y="26" class="eyebrow">${escapeXml(snapshot.shortLabel)}</text>
+          <text x="22" y="52" class="snapshotPercent" fill="${tone}">${escapeXml(snapshot.percentText)}</text>
+          <text x="180" y="26" class="snapshotHint">${escapeXml(clampText(snapshot.label, 20))}</text>
+          <text x="180" y="52" class="snapshotProfit">${escapeXml(clampText(snapshot.profitText, 20))}</text>
+          <rect x="350" y="24" width="144" height="8" rx="4" fill="rgba(255,255,255,0.08)" />
+          <rect x="350" y="24" width="${Math.round(144 * ratio)}" height="8" rx="4" fill="${snapshotFill(snapshot)}" />
+          <rect x="350" y="42" width="144" height="8" rx="4" fill="rgba(255,255,255,0.04)" />
+          <rect x="350" y="42" width="${Math.min(144, Math.round(144 * ratio))}" height="8" rx="4" fill="${snapshotFill(snapshot)}" opacity="0.4" />
         </g>
       `;
     })
@@ -254,14 +281,14 @@ export function buildWinCardSvg(
       const col = index % 2;
       const row = Math.floor(index / 2);
       const x = 620 + col * 264;
-      const y = 986 + row * 88;
+      const y = 960 + row * 84;
       const tone = summaryToneColor(item.tone);
       return `
         <g transform="translate(${x},${y})">
-          <rect width="244" height="74" rx="18" fill="rgba(255,255,255,0.035)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-          <text x="18" y="26" class="eyebrow">${escapeXml(item.label)}</text>
-          <text x="18" y="52" class="summaryValue" fill="${tone}">${escapeXml(clampText(item.value, 18))}</text>
-          <text x="18" y="68" class="summaryHint">${escapeXml(clampText(item.hint, 26))}</text>
+          <rect width="244" height="70" rx="16" fill="rgba(255,255,255,0.035)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
+          <text x="16" y="24" class="eyebrow">${escapeXml(item.label)}</text>
+          <text x="16" y="48" class="summaryValue" fill="${tone}">${escapeXml(clampText(item.value, 18))}</text>
+          <text x="16" y="64" class="summaryHint">${escapeXml(clampText(item.hint, 26))}</text>
         </g>
       `;
     })
@@ -272,6 +299,32 @@ export function buildWinCardSvg(
     ? `<image href="${escapeXml(options.logoDataUrl)}" x="6" y="6" width="48" height="48" preserveAspectRatio="xMidYMid slice" clip-path="inset(0 round 14px)" />`
     : `<rect x="6" y="6" width="48" height="48" rx="14" fill="url(#brandMarkGlow)" />
        <text x="30" y="39" text-anchor="middle" class="brandMarkFallback">P</text>`;
+
+  /* ── Avatar ── */
+  const avatarMarkup = options?.avatarDataUrl
+    ? `<clipPath id="avatarClip"><circle cx="50" cy="50" r="30" /></clipPath>
+       <circle cx="50" cy="50" r="31" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="2" />
+       <image href="${escapeXml(options.avatarDataUrl)}" x="20" y="20" width="60" height="60" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)" />`
+    : `<circle cx="50" cy="50" r="30" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5" />
+       <text x="50" y="60" text-anchor="middle" class="heroAuthor" style="font-size:24px">${escapeXml(model.authorInitial)}</text>`;
+
+  /* ── Level bar (matches profile LevelBar component) ── */
+  const levelInfo = getLevelBarColors(model.authorLevel);
+  const levelStops = getLevelBarFillStops(model.authorLevel);
+  const levelNorm = Math.max(3, ((model.authorLevel - (-5)) / 15) * 100); // -5 to 10 → 0-100
+  const levelBarWidth = Math.round((380 * levelNorm) / 100);
+  // 15 segments for the bar background (matching LevelBar.tsx)
+  const levelSegments = Array.from({ length: 15 }, (_, i) => {
+    let segColor = "rgba(220,38,38,0.12)"; // -5 to -1 (red)
+    if (i >= 5 && i < 6) segColor = "rgba(234,88,12,0.12)"; // 0 (orange)
+    if (i >= 6 && i < 9) segColor = "rgba(234,88,12,0.10)"; // 1-3 (orange)
+    if (i >= 9 && i < 10) segColor = "rgba(161,161,170,0.10)"; // 4 (zinc)
+    if (i >= 10 && i < 13) segColor = "rgba(148,163,184,0.10)"; // 5-7 (slate)
+    if (i >= 13) segColor = "rgba(245,158,11,0.12)"; // 8-10 (amber)
+    const segW = Math.floor(380 / 15);
+    const segX = i * segW;
+    return `<rect x="${segX}" y="0" width="${segW - 1}" height="12" rx="0" fill="${segColor}" />`;
+  }).join("");
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="${WIN_CARD_EXPORT_WIDTH}" height="${WIN_CARD_EXPORT_HEIGHT}" viewBox="0 0 ${WIN_CARD_EXPORT_WIDTH} ${WIN_CARD_EXPORT_HEIGHT}" fill="none">
@@ -330,6 +383,24 @@ export function buildWinCardSvg(
       <stop offset="0.65" stop-color="#41e8cf" stop-opacity="0.24" />
       <stop offset="1" stop-color="#41e8cf" stop-opacity="0" />
     </radialGradient>
+    <linearGradient id="mcapCalloutBg" x1="0" y1="0" x2="524" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="${accent.gradient1}" stop-opacity="0.14" />
+      <stop offset="0.5" stop-color="${accent.gradient2}" stop-opacity="0.08" />
+      <stop offset="1" stop-color="${accent.gradient3}" stop-opacity="0.12" />
+    </linearGradient>
+    <linearGradient id="mcapCalloutBorder" x1="0" y1="0" x2="524" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="${accent.gradient1}" stop-opacity="0.45" />
+      <stop offset="0.5" stop-color="${accent.gradient2}" stop-opacity="0.55" />
+      <stop offset="1" stop-color="${accent.gradient3}" stop-opacity="0.45" />
+    </linearGradient>
+    <radialGradient id="mcapGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(326 882) scale(300 80)">
+      <stop offset="0" stop-color="${accent.glow}" />
+      <stop offset="1" stop-color="rgba(0,0,0,0)" />
+    </radialGradient>
+    <linearGradient id="levelBarFill" x1="0" y1="0" x2="380" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="${levelStops.c1}" />
+      <stop offset="1" stop-color="${levelStops.c2}" />
+    </linearGradient>
     <mask id="beamMask">
       <rect x="0" y="290" width="1200" height="110" fill="url(#accentBeamFade)" />
     </mask>
@@ -368,6 +439,10 @@ export function buildWinCardSvg(
       .brandMarkFallback { font: 900 30px Inter, "Segoe UI", Arial, sans-serif; fill: #061018; }
       .perfLabel { font: 700 13px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; fill: rgba(226,232,240,0.58); }
       .perfValue { font: 800 22px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.02em; }
+      .currentMcapValue { font: 900 48px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.04em; }
+      .mcapLive { font: 800 14px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.20em; text-transform: uppercase; }
+      .levelLabel { font: 700 12px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
+      .levelValue { font: 800 13px Inter, "Segoe UI", Arial, sans-serif; font-variant-numeric: tabular-nums; }
     </style>
   </defs>
 
@@ -456,12 +531,28 @@ export function buildWinCardSvg(
     <g transform="translate(64,506)">
       <!-- Author card -->
       <rect width="520" height="160" rx="22" fill="rgba(255,255,255,0.035)" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-      <circle cx="50" cy="50" r="28" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-      <text x="50" y="60" text-anchor="middle" class="heroAuthor" style="font-size:22px">${escapeXml(model.authorInitial)}</text>
-      <text x="92" y="44" class="heroAuthor">${escapeXml(authorName)}</text>
-      <text x="92" y="66" class="heroMeta">${escapeXml(model.authorMeta)}</text>
-      <rect x="92" y="82" width="160" height="28" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-      <text x="108" y="101" class="heroMeta" style="fill:rgba(226,232,240,0.72)">${escapeXml(`${model.authorLevelLabel} ${model.authorLevelText}`)}</text>
+      <!-- Avatar (circular, same as profile) -->
+      <g transform="translate(20,16)">
+        ${avatarMarkup}
+      </g>
+      <text x="100" y="42" class="heroAuthor">${escapeXml(authorName)}</text>
+      <text x="100" y="62" class="heroMeta">${escapeXml(model.authorMeta)}</text>
+      <!-- Level bar (matches profile) -->
+      <g transform="translate(100,78)">
+        <text x="0" y="0" class="levelLabel" fill="${levelInfo.textColor}">${escapeXml(levelInfo.label)}</text>
+        <text x="384" y="0" text-anchor="end" class="levelValue" fill="${levelInfo.textColor}">LVL ${model.authorLevel > 0 ? `+${model.authorLevel}` : model.authorLevel}</text>
+        <!-- Segmented track -->
+        <g transform="translate(0,8)">
+          <rect width="380" height="12" rx="6" fill="rgba(255,255,255,0.06)" />
+          <g opacity="0.6">${levelSegments}</g>
+          <!-- Fill -->
+          <rect width="${levelBarWidth}" height="12" rx="6" fill="url(#levelBarFill)" />
+          <!-- Shine -->
+          <rect width="${levelBarWidth}" height="6" rx="3" fill="rgba(255,255,255,0.18)" />
+          <!-- Center marker at level 0 (1/3 from left) -->
+          <rect x="126" y="0" width="1.5" height="12" fill="rgba(255,255,255,0.25)" />
+        </g>
+      </g>
       <text x="20" y="144" class="footerText">${escapeXml(model.shareIntro)}</text>
     </g>
 
@@ -478,16 +569,20 @@ export function buildWinCardSvg(
     <!-- ═══════════════ DATA ZONE: METRICS + SNAPSHOTS ═══════════════ -->
 
     <!-- Section label: Key Metrics -->
-    <text x="64" y="680" class="eyebrow">Key Metrics</text>
-    ${metricRects}
+    <text x="64" y="686" class="eyebrow">Key Metrics</text>
+    ${regularMetricRects}
+
+    <!-- Current MCAP callout with glow -->
+    <ellipse cx="326" cy="882" rx="300" ry="70" fill="url(#mcapGlow)" />
+    ${currentMcapCallout}
 
     <!-- Section label: Snapshot Ladder -->
-    <text x="620" y="680" class="eyebrow">Snapshot Ladder</text>
+    <text x="620" y="686" class="eyebrow">Snapshot Ladder</text>
     ${snapshotRects}
 
     <!-- ═══════════════ SUMMARY ZONE ═══════════════ -->
     ${summaryItems.length > 0 ? `
-    <text x="620" y="972" class="eyebrow">Trade Summary</text>
+    <text x="620" y="948" class="eyebrow">Trade Summary</text>
     ${summaryRects}
     ` : ""}
 
