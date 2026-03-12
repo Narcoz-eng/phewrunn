@@ -302,8 +302,9 @@ export type TokenOverview = {
   token: TokenRecord & {
     marketCap: number | null;
     isFollowing: boolean;
-    holderCountSource: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+    holderCountSource: "stored" | "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
     topHolders: TokenHolderSnapshot[];
+    devWallet: TokenHolderSnapshot | null;
     bundleClusters: Array<{
       id: string;
       clusterLabel: string;
@@ -351,6 +352,7 @@ export type TokenOverview = {
       deployerSupplyPct: number | null;
       holderCount: number | null;
       topHolders: TokenHolderSnapshot[];
+      devWallet: TokenHolderSnapshot | null;
     };
     timeline: Array<{
       id: string;
@@ -3145,6 +3147,10 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       staleToken?.topHolders && staleToken.topHolders.length > 0
         ? cloneCachedValue(staleToken.topHolders)
         : [];
+    const staleDevWallet =
+      staleToken?.devWallet
+        ? cloneCachedValue(staleToken.devWallet)
+        : null;
     const hasFreshDistributionTelemetry = Boolean(distributionFallback);
     const canTrustStoredSolanaHolderTelemetry =
       currentToken.chainType !== "solana" || staleTopHolders.length > 0;
@@ -3210,6 +3216,10 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       distributionFallback.topHolders.length > 0
         ? cloneCachedValue(distributionFallback.topHolders)
         : staleTopHolders;
+    const resolvedDevWallet =
+      hasFreshDistributionTelemetry && distributionFallback?.devWallet
+        ? cloneCachedValue(distributionFallback.devWallet)
+        : staleDevWallet;
     const resolvedConfidenceScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.confidenceScore,
@@ -3400,6 +3410,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         largestHolderPct: resolvedLargestHolderPct,
         top10HolderPct: resolvedTop10HolderPct,
         topHolders: resolvedTopHolders,
+        devWallet: resolvedDevWallet,
         deployerSupplyPct: resolvedDeployerSupplyPct,
         bundledWalletCount: resolvedBundledWalletCount,
         estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
@@ -3432,6 +3443,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           deployerSupplyPct: resolvedDeployerSupplyPct,
           holderCount: resolvedHolderCount,
           topHolders: resolvedTopHolders,
+          devWallet: resolvedDevWallet,
         },
         timeline: timeline.length > 0 ? timeline : cloneCachedValue(staleToken?.timeline ?? []),
         recentCalls: recentCalls.length > 0 ? recentCalls : cloneCachedValue(staleToken?.recentCalls ?? []),

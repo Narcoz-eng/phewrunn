@@ -33,6 +33,7 @@ type TokenLivePayload = {
   bundleRiskLabel: string | null;
   tokenRiskScore: number | null;
   topHolders: TokenRoutePayload["topHolders"];
+  devWallet: TokenRoutePayload["devWallet"];
   bundleClusters: TokenRoutePayload["bundleClusters"];
   dexscreenerUrl: string | null;
   pairAddress: string | null;
@@ -48,7 +49,7 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 2;
+const TOKEN_ROUTE_CACHE_VERSION = 4;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const TOKEN_LIVE_SELECT = {
   id: true,
@@ -288,6 +289,7 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
     bundleRiskLabel,
     tokenRiskScore,
     topHolders: distributionSnapshot?.topHolders ?? [],
+    devWallet: distributionSnapshot?.devWallet ?? null,
     bundleClusters: liveBundleClusters,
     dexscreenerUrl: marketSnapshot.dexscreenerUrl ?? token.dexscreenerUrl ?? null,
     pairAddress: marketSnapshot.pairAddress ?? token.pairAddress ?? null,

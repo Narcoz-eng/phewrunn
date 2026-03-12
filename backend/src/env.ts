@@ -73,6 +73,10 @@ const envSchema = z.object({
   HELIUS_RPC_URL: z
     .preprocess(normalizeOptionalStringEnv, z.string().url("HELIUS_RPC_URL must be a valid URL").optional()),
 
+  // Optional: Solscan Pro API key (holder intelligence / dev wallet enrichment)
+  SOLSCAN_API_KEY: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "SOLSCAN_API_KEY cannot be empty").optional()),
+
   // Optional: Jupiter integrator fee settings
   JUPITER_PLATFORM_FEE_BPS: z
     .preprocess(normalizeOptionalStringEnv, z.string()
@@ -185,6 +189,7 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     LOG_LEVEL: parsed.LOG_LEVEL,
     CRON_SECRET: parsed.CRON_SECRET ? "configured" : "not set",
     HELIUS_RPC_URL: parsed.HELIUS_RPC_URL ? "configured" : "not set",
+    SOLSCAN_API_KEY: parsed.SOLSCAN_API_KEY ? "configured" : "not set",
     JUPITER_PLATFORM_FEE_BPS: parsed.JUPITER_PLATFORM_FEE_BPS ?? "0",
     JUPITER_PLATFORM_FEE_ACCOUNT: parsed.JUPITER_PLATFORM_FEE_ACCOUNT ? "configured" : "not set",
     AUTH_SESSION_REVOCATION_DB_ENABLED: parsed.AUTH_SESSION_REVOCATION_DB_ENABLED,

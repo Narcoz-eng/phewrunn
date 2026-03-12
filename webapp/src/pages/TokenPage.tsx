@@ -73,8 +73,28 @@ type TokenTrader = PostAuthor & {
 
 type TokenHolder = {
   address: string;
+  ownerAddress: string | null;
+  tokenAccountAddress: string | null;
   amount: number | null;
   supplyPct: number;
+  valueUsd: number | null;
+  label: string | null;
+  domain: string | null;
+  accountType: string | null;
+  activeAgeDays: number | null;
+  fundedBy: string | null;
+  totalValueUsd: number | null;
+  tradeVolume90dSol: number | null;
+  solBalance: number | null;
+  badges: Array<
+    "dev_wallet" |
+    "fresh_wallet" |
+    "high_volume_trader" |
+    "whale" |
+    "serial_deployer" |
+    "serial_rugger"
+  >;
+  devRole: "creator" | "mint_authority" | "freeze_authority" | null;
 };
 
 type TokenRisk = {
@@ -87,6 +107,7 @@ type TokenRisk = {
   deployerSupplyPct: number | null;
   holderCount: number | null;
   topHolders: TokenHolder[];
+  devWallet: TokenHolder | null;
 };
 
 type TokenBundleCluster = {
@@ -127,7 +148,7 @@ type TokenPageData = {
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
-  holderCountSource?: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  holderCountSource?: "stored" | "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   deployerSupplyPct: number | null;
@@ -145,6 +166,7 @@ type TokenPageData = {
   isFollowing: boolean;
   earlyRunnerReasons?: string[];
   topHolders: TokenHolder[];
+  devWallet: TokenHolder | null;
   bundleClusters: TokenBundleCluster[];
   chart: TokenChartPoint[];
   callsCount: number;
@@ -166,7 +188,7 @@ type TokenLiveData = {
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
-  holderCountSource?: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  holderCountSource?: "stored" | "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   deployerSupplyPct: number | null;
@@ -175,6 +197,7 @@ type TokenLiveData = {
   bundleRiskLabel: string | null;
   tokenRiskScore: number | null;
   topHolders: TokenHolder[];
+  devWallet: TokenHolder | null;
   bundleClusters: TokenBundleCluster[];
   dexscreenerUrl: string | null;
   pairAddress: string | null;
@@ -225,10 +248,39 @@ function formatHolderAmount(value: number | null | undefined): string {
   }).format(value);
 }
 
+function formatSolMetric(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: value >= 100 ? 0 : 1 }).format(value)} SOL`;
+}
+
 function formatHolderAddress(address: string): string {
   const trimmed = address.trim();
   if (trimmed.length <= 12) return trimmed;
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+
+function formatHolderBadge(badge: TokenHolder["badges"][number]): string {
+  switch (badge) {
+    case "dev_wallet":
+      return "Dev wallet";
+    case "fresh_wallet":
+      return "Fresh";
+    case "high_volume_trader":
+      return "High volume";
+    case "whale":
+      return "Whale";
+    case "serial_deployer":
+      return "Serial deployer";
+    case "serial_rugger":
+      return "Serial rugger";
+    default:
+      return badge;
+  }
+}
+
+function formatDaysMetric(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return value < 1 ? "<1d" : `${Math.round(value)}d`;
 }
 
 function formatTimelineEventLabel(eventType: string): string {
@@ -356,6 +408,7 @@ function mergeTokenPageDataWithCached(
     bundleRiskLabel: live.bundleRiskLabel ?? cached.bundleRiskLabel,
     holderCountSource: live.holderCountSource ?? cached.holderCountSource,
     topHolders: live.topHolders.length > 0 ? live.topHolders : cached.topHolders,
+    devWallet: live.devWallet ?? cached.devWallet,
     bundleClusters: live.bundleClusters.length > 0 ? live.bundleClusters : cached.bundleClusters,
     chart: live.chart.length > 1 ? live.chart : cached.chart,
     callsCount: live.callsCount > 0 ? live.callsCount : cached.callsCount,
@@ -377,6 +430,7 @@ function mergeTokenPageDataWithCached(
           deployerSupplyPct: pickMergedMetric(live.risk.deployerSupplyPct, cached.risk.deployerSupplyPct),
           holderCount: pickMergedMetric(live.risk.holderCount, cached.risk.holderCount, { positive: true }),
           topHolders: live.risk.topHolders.length > 0 ? live.risk.topHolders : cached.risk.topHolders,
+          devWallet: live.risk.devWallet ?? cached.risk.devWallet,
         },
     timeline: live.timeline.length > 0 ? live.timeline : cached.timeline,
     recentCalls: live.recentCalls.length > 0 ? live.recentCalls : cached.recentCalls,
@@ -405,6 +459,7 @@ function mergeTokenPageDataWithLiveSnapshot(
   const tokenRiskScore = pickMergedMetric(live.tokenRiskScore, current.tokenRiskScore);
   const bundleRiskLabel = live.bundleRiskLabel ?? current.bundleRiskLabel;
   const topHolders = live.topHolders.length > 0 ? live.topHolders : current.topHolders;
+  const devWallet = live.devWallet ?? current.devWallet;
   const bundleClusters = live.bundleClusters.length > 0 ? live.bundleClusters : current.bundleClusters;
 
   return {
@@ -427,6 +482,7 @@ function mergeTokenPageDataWithLiveSnapshot(
     bundleRiskLabel,
     tokenRiskScore,
     topHolders,
+    devWallet,
     bundleClusters,
     risk: {
       ...current.risk,
@@ -439,6 +495,7 @@ function mergeTokenPageDataWithLiveSnapshot(
       deployerSupplyPct,
       holderCount,
       topHolders,
+      devWallet,
     },
   };
 }
@@ -468,7 +525,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v6:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v7:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -794,6 +851,7 @@ export default function TokenPage() {
   const topHolders = token?.topHolders.length
     ? token.topHolders
     : (token?.risk.topHolders ?? []);
+  const devWallet = token?.devWallet ?? token?.risk.devWallet ?? null;
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
   const isHolderCountLowerBound = token?.holderCountSource === "largest_accounts";
@@ -812,7 +870,11 @@ export default function TokenPage() {
       : holderCountValue;
   const holderMetricTitle = "Total holders";
   const holderMetricBadge = hasVerifiedHolderCount
-    ? token?.holderCountSource === "birdeye"
+    ? token?.holderCountSource === "solscan"
+      ? "Solscan"
+      : token?.holderCountSource === "helius"
+        ? "Helius"
+      : token?.holderCountSource === "birdeye"
       ? "Birdeye"
       : token?.holderCountSource === "rpc_scan"
         ? "RPC verified"
@@ -830,7 +892,11 @@ export default function TokenPage() {
         : "Fetching the full holder count for this token."
       : "Refreshing holder telemetry from the live route.";
   const topHolderSectionCopy = hasVerifiedHolderCount
-    ? "Largest wallets by live circulating supply share."
+    ? token?.holderCountSource === "solscan"
+      ? "Solscan owner wallets with dev and wallet-profile badges."
+      : token?.holderCountSource === "helius"
+        ? "Helius holder scan with owner wallets, dev roles, and wallet activity badges."
+      : "Largest wallets by live circulating supply share."
     : "Top wallets are ready first. Total holder count follows after the full RPC scan finishes.";
   const recentCallsEmptyCopy =
     recentCallsQuery.isLoading || recentCallsQuery.isFetching
@@ -1298,34 +1364,134 @@ export default function TokenPage() {
                 </section>
 
                 <section className="app-surface p-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <Users className="h-4.5 w-4.5 text-primary" />
-                    <h3 className="text-base font-semibold text-foreground">Top traders</h3>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Holder intelligence</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {topHolderSectionCopy}
+                      </div>
+                    </div>
+                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                      {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
+                    </div>
                   </div>
-                  <div className="space-y-3">
-                    {token.topTraders.length > 0 ? (
-                      token.topTraders.map((trader) => (
-                        <div key={trader.id} className="flex items-center gap-3 rounded-[18px] border border-border/60 bg-secondary p-3">
-                          <Avatar className="h-10 w-10 border border-border">
-                            <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
-                            <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-semibold text-foreground">{trader.username || trader.name}</div>
-                            <div className="line-clamp-2 break-words text-xs text-muted-foreground">
-                              {trader.reputationTier || "Unranked"} | {trader.callsCount} calls | {trader.avgConfidenceScore.toFixed(0)}% avg confidence
+                  {devWallet ? (
+                    <div className="mb-3 rounded-[20px] border border-primary/20 bg-[linear-gradient(180deg,rgba(236,248,241,0.95),rgba(248,251,249,0.94))] p-4 dark:bg-[linear-gradient(180deg,rgba(12,20,17,0.98),rgba(9,14,13,0.98))]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
+                            {devWallet.devRole === "creator"
+                              ? "Creator wallet"
+                              : devWallet.devRole === "mint_authority"
+                                ? "Mint authority"
+                                : "Freeze authority"}
+                          </div>
+                          <div className="mt-2 font-mono text-sm font-semibold text-foreground">
+                            {formatHolderAddress(devWallet.address)}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {devWallet.label ?? devWallet.domain ?? "Wallet intelligence from Solscan and Helius."}
+                          </div>
+                        </div>
+                        {devWallet.supplyPct > 0 ? (
+                          <div className="shrink-0 text-right">
+                            <div className="text-sm font-semibold text-foreground">{formatPct(devWallet.supplyPct)}</div>
+                            <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">of supply</div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {devWallet.badges.length > 0
+                          ? devWallet.badges.map((badge) => (
+                              <span key={badge} className="rounded-full border border-primary/18 bg-white/75 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary dark:bg-white/[0.05]">
+                                {formatHolderBadge(badge)}
+                              </span>
+                            ))
+                          : (
+                              <span className="rounded-full border border-border/60 bg-white/75 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground dark:bg-white/[0.05]">
+                                Wallet scan active
+                              </span>
+                            )}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
+                          Age <span className="ml-1 font-semibold text-foreground">{formatDaysMetric(devWallet.activeAgeDays) ?? "N/A"}</span>
+                        </div>
+                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
+                          90d volume <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.tradeVolume90dSol) ?? "N/A"}</span>
+                        </div>
+                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
+                          SOL balance <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.solBalance) ?? "N/A"}</span>
+                        </div>
+                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
+                          Funded by <span className="ml-1 font-mono text-foreground">{devWallet.fundedBy ? formatHolderAddress(devWallet.fundedBy) : "N/A"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="max-h-[360px] space-y-2.5 overflow-y-auto pr-1">
+                    {topHolderRows.length > 0 ? (
+                      topHolderRows.map((holder, index) => (
+                        <div
+                          key={`${holder.address}:${index}`}
+                          className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
+                                {index + 1}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-mono text-[12px] font-semibold text-foreground">
+                                  {formatHolderAddress(holder.address)}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {formatHolderAmount(holder.amount)} tokens
+                                  {holder.valueUsd ? (
+                                    <span className="ml-1 text-foreground/80">| {formatMarketCap(holder.valueUsd)}</span>
+                                  ) : null}
+                                </div>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {holder.badges.length > 0 ? (
+                                    holder.badges.map((badge) => (
+                                      <span key={badge} className="rounded-full border border-primary/18 bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.11em] text-primary dark:bg-white/[0.05]">
+                                        {formatHolderBadge(badge)}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="rounded-full border border-border/60 bg-white/80 px-2 py-0.5 text-[10px] uppercase tracking-[0.11em] text-muted-foreground dark:bg-white/[0.05]">
+                                      Wallet scanned
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                                  {holder.activeAgeDays !== null ? <span>Age {formatDaysMetric(holder.activeAgeDays)}</span> : null}
+                                  {holder.tradeVolume90dSol !== null ? <span>90d {formatSolMetric(holder.tradeVolume90dSol)}</span> : null}
+                                  {holder.label ? <span>{holder.label}</span> : null}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div className="font-mono text-sm font-semibold text-foreground">
+                                {formatPct(holder.supplyPct)}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                                of supply
+                              </div>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="text-sm font-semibold text-gain">{trader.bestRoiPct.toFixed(1)}%</div>
-                            <div className="text-[11px] text-muted-foreground">best ROI</div>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
+                            <div
+                              className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
+                              style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
+                            />
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
-                        We are still ranking trader quality for this token.
-                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Scanning Solscan holder wallets and dev-wallet intelligence for this token.
+                      </p>
                     )}
                   </div>
                 </section>
@@ -1395,7 +1561,7 @@ export default function TokenPage() {
                   </p>
                   {isHolderCountLowerBound ? (
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                      Full holder count is still resolving through RPC. Top-holder distribution is live below.
+                      Full holder count is still resolving. Holder intelligence is already live in the right column.
                     </p>
                   ) : null}
                   <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -1435,59 +1601,34 @@ export default function TokenPage() {
                 </section>
 
                 <section className="app-surface p-5">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {topHolderSectionCopy}
-                      </div>
-                    </div>
-                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                      {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
-                    </div>
+                  <div className="mb-4 flex items-center gap-2">
+                    <Users className="h-4.5 w-4.5 text-primary" />
+                    <h3 className="text-base font-semibold text-foreground">Top traders</h3>
                   </div>
-                  <div className="max-h-[460px] space-y-2.5 overflow-y-auto pr-1">
-                    {topHolderRows.length > 0 ? (
-                      topHolderRows.map((holder, index) => (
-                        <div
-                          key={holder.address}
-                          className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
-                                {index + 1}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-mono text-[12px] font-semibold text-foreground">
-                                  {formatHolderAddress(holder.address)}
-                                </div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {formatHolderAmount(holder.amount)} tokens
-                                </div>
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div className="font-mono text-sm font-semibold text-foreground">
-                                {formatPct(holder.supplyPct)}
-                              </div>
-                              <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                                of supply
-                              </div>
+                  <div className="space-y-3">
+                    {token.topTraders.length > 0 ? (
+                      token.topTraders.map((trader) => (
+                        <div key={trader.id} className="flex items-center gap-3 rounded-[18px] border border-border/60 bg-secondary p-3">
+                          <Avatar className="h-10 w-10 border border-border">
+                            <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
+                            <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-semibold text-foreground">{trader.username || trader.name}</div>
+                            <div className="line-clamp-2 break-words text-xs text-muted-foreground">
+                              {trader.reputationTier || "Unranked"} | {trader.callsCount} calls | {trader.avgConfidenceScore.toFixed(0)}% avg confidence
                             </div>
                           </div>
-                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
-                            <div
-                              className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
-                              style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
-                            />
+                          <div className="text-right">
+                            <div className="text-sm font-semibold text-gain">{trader.bestRoiPct.toFixed(1)}%</div>
+                            <div className="text-[11px] text-muted-foreground">best ROI</div>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Scanning the live largest-holder distribution for this token.
-                      </p>
+                      <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
+                        We are still ranking trader quality for this token.
+                      </div>
                     )}
                   </div>
                 </section>

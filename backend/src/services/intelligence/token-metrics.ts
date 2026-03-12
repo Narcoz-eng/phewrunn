@@ -1,4 +1,17 @@
 import { getCachedMarketCapSnapshot } from "../marketcap.js";
+import {
+  getHeliusAuthorityAssetCount,
+  getHeliusTokenAccountsForMint,
+  getHeliusTokenMetadataForMint,
+  getWalletActivityProfile,
+} from "../helius.js";
+import {
+  getSolscanTokenHolders,
+  getSolscanTokenMeta,
+  getSolscanWalletMetadataMulti,
+  getSolscanWalletTotalValueUsd,
+  isSolscanConfigured,
+} from "../solscan.js";
 import { computeTokenRiskScore, determineBundleRiskLabel } from "./scoring.js";
 
 export type DexTokenStats = {
@@ -27,18 +40,40 @@ export type BundleClusterSnapshot = {
   };
 };
 
+export type TokenHolderBadge =
+  | "dev_wallet"
+  | "fresh_wallet"
+  | "high_volume_trader"
+  | "whale"
+  | "serial_deployer"
+  | "serial_rugger";
+
 export type TokenHolderSnapshot = {
   address: string;
+  ownerAddress: string | null;
+  tokenAccountAddress: string | null;
   amount: number | null;
   supplyPct: number;
+  valueUsd: number | null;
+  label: string | null;
+  domain: string | null;
+  accountType: string | null;
+  activeAgeDays: number | null;
+  fundedBy: string | null;
+  totalValueUsd: number | null;
+  tradeVolume90dSol: number | null;
+  solBalance: number | null;
+  badges: TokenHolderBadge[];
+  devRole: "creator" | "mint_authority" | "freeze_authority" | null;
 };
 
 export type TokenDistributionSnapshot = {
   holderCount: number | null;
-  holderCountSource: "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  holderCountSource: "solscan" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
   largestHolderPct: number | null;
   top10HolderPct: number | null;
   topHolders: TokenHolderSnapshot[];
+  devWallet: TokenHolderSnapshot | null;
   deployerSupplyPct: number | null;
   bundledWalletCount: number;
   bundledClusterCount: number;
@@ -67,11 +102,46 @@ type RpcLargestAccountsResult = {
 
 type RpcProgramAccountResult = Array<unknown>;
 
+type RpcTokenAccountInfoResult = {
+  value?: Array<
+    | {
+        data?: {
+          parsed?: {
+            info?: {
+              owner?: string | null;
+            };
+          };
+        } | null;
+      }
+    | null
+  > | null;
+};
+
+type RpcMintAccountInfoResult = {
+  value?: {
+    data?: {
+      parsed?: {
+        info?: {
+          mintAuthority?: string | null;
+          freezeAuthority?: string | null;
+        };
+      };
+    } | null;
+  } | null;
+};
+
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
 const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
+const FRESH_WALLET_DAYS_THRESHOLD = 30;
+const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 100;
+const WHALE_SUPPLY_PCT_THRESHOLD = 1.5;
+const WHALE_PORTFOLIO_USD_THRESHOLD = 100_000;
+const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
+const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
+const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
   process.env.HELIUS_RPC_ENDPOINT?.trim() || null,
@@ -106,7 +176,10 @@ function cloneDistributionSnapshot(
 
   return {
     ...snapshot,
-    topHolders: snapshot.topHolders.map((holder) => ({ ...holder })),
+    topHolders: snapshot.topHolders.map((holder) => ({ ...holder, badges: [...holder.badges] })),
+    devWallet: snapshot.devWallet
+      ? { ...snapshot.devWallet, badges: [...snapshot.devWallet.badges] }
+      : null,
     clusters: snapshot.clusters.map((cluster) => ({
       ...cluster,
       evidenceJson: {
@@ -306,6 +379,108 @@ function buildBundleClusters(holderPcts: number[]): BundleClusterSnapshot[] {
   return clusters;
 }
 
+function isLikelySolanaWallet(value: string | null | undefined): value is string {
+  return typeof value === "string" && SOLANA_WALLET_REGEX.test(value.trim());
+}
+
+function normalizeText(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function containsAny(source: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => source.includes(pattern));
+}
+
+function buildHolderBadges(params: {
+  supplyPct: number;
+  totalValueUsd: number | null;
+  activeAgeDays: number | null;
+  tradeVolume90dSol: number | null;
+  metadataText: string;
+  devRole: TokenHolderSnapshot["devRole"];
+  authorityAssetCount: number | null;
+}): TokenHolderBadge[] {
+  const badges: TokenHolderBadge[] = [];
+  if (params.devRole) badges.push("dev_wallet");
+  if (params.activeAgeDays !== null && params.activeAgeDays <= FRESH_WALLET_DAYS_THRESHOLD) {
+    badges.push("fresh_wallet");
+  }
+  if (
+    (params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD)
+  ) {
+    badges.push("high_volume_trader");
+  }
+  if (
+    params.supplyPct >= WHALE_SUPPLY_PCT_THRESHOLD ||
+    (params.totalValueUsd !== null && params.totalValueUsd >= WHALE_PORTFOLIO_USD_THRESHOLD)
+  ) {
+    badges.push("whale");
+  }
+  if (
+    (params.authorityAssetCount !== null && params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD) ||
+    containsAny(params.metadataText, ["serial deployer", "deployer", "launcher", "creator", "issuer"])
+  ) {
+    badges.push("serial_deployer");
+  }
+  if (containsAny(params.metadataText, ["serial rugger", "rug", "scam", "malicious", "drainer", "phishing"])) {
+    badges.push("serial_rugger");
+  }
+  return [...new Set(badges)];
+}
+
+async function getRpcTokenAccountOwners(tokenAccountAddresses: string[]): Promise<Map<string, string>> {
+  const uniqueAddresses = [...new Set(
+    tokenAccountAddresses
+      .map((address) => (typeof address === "string" ? address.trim() : ""))
+      .filter((address) => address.length > 0)
+  )];
+  const ownerMap = new Map<string, string>();
+  if (uniqueAddresses.length === 0) return ownerMap;
+
+  const response = await rpcCall<RpcTokenAccountInfoResult>(
+    "getMultipleAccounts",
+    [
+      uniqueAddresses,
+      {
+        encoding: "jsonParsed",
+        commitment: "confirmed",
+      },
+    ],
+    { timeoutMs: Math.min(HOLDER_SCAN_RPC_TIMEOUT_MS, 7_500) }
+  );
+  const values = response?.value ?? [];
+  uniqueAddresses.forEach((address, index) => {
+    const owner = values[index]?.data?.parsed?.info?.owner;
+    if (isLikelySolanaWallet(owner)) {
+      ownerMap.set(address, owner);
+    }
+  });
+  return ownerMap;
+}
+
+async function getRpcMintAuthorities(mintAddress: string): Promise<{
+  mintAuthority: string | null;
+  freezeAuthority: string | null;
+}> {
+  const response = await rpcCall<RpcMintAccountInfoResult>(
+    "getAccountInfo",
+    [
+      mintAddress,
+      {
+        encoding: "jsonParsed",
+        commitment: "confirmed",
+      },
+    ],
+    { timeoutMs: Math.min(HOLDER_SCAN_RPC_TIMEOUT_MS, 6_500) }
+  );
+
+  const info = response?.value?.data?.parsed?.info;
+  return {
+    mintAuthority: isLikelySolanaWallet(info?.mintAuthority) ? info.mintAuthority : null,
+    freezeAuthority: isLikelySolanaWallet(info?.freezeAuthority) ? info.freezeAuthority : null,
+  };
+}
+
 export async function analyzeSolanaTokenDistribution(
   mintAddress: string,
   fallbackLiquidityUsd?: number | null
@@ -323,7 +498,17 @@ export async function analyzeSolanaTokenDistribution(
   }
 
   const request = (async (): Promise<TokenDistributionSnapshot | null> => {
-    const [supplyResult, largestAccountsResult, holderAccountsResult, birdeyeHolderCount] = await Promise.all([
+    const [
+      supplyResult,
+      largestAccountsResult,
+      holderAccountsResult,
+      birdeyeHolderCount,
+      solscanMeta,
+      solscanHolders,
+      heliusTokenMeta,
+      heliusHolderSummary,
+      rpcMintAuthorities,
+    ] = await Promise.all([
       rpcCall<RpcTokenSupplyResult>("getTokenSupply", [mintAddress]),
       rpcCall<RpcLargestAccountsResult>("getTokenLargestAccounts", [mintAddress]),
       rpcCall<RpcProgramAccountResult>("getProgramAccounts", [
@@ -338,6 +523,11 @@ export async function analyzeSolanaTokenDistribution(
         },
       ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
       fetchBirdeyeHolderCount(mintAddress),
+      isSolscanConfigured() ? getSolscanTokenMeta(mintAddress) : Promise.resolve(null),
+      isSolscanConfigured() ? getSolscanTokenHolders(mintAddress, 20) : Promise.resolve(null),
+      getHeliusTokenMetadataForMint({ mint: mintAddress, chainType: "solana" }),
+      getHeliusTokenAccountsForMint({ mint: mintAddress, limit: 1 }),
+      getRpcMintAuthorities(mintAddress),
     ]);
 
     const totalSupply = uiAmountToNumber({
@@ -346,7 +536,12 @@ export async function analyzeSolanaTokenDistribution(
     });
 
     const largestAccounts = largestAccountsResult?.value ?? [];
-    const topHolders: TokenHolderSnapshot[] =
+    const tokenAccountOwners = await getRpcTokenAccountOwners(
+      largestAccounts
+        .map((holder) => (typeof holder.address === "string" ? holder.address.trim() : ""))
+        .filter((address) => address.length > 0)
+    );
+    const rpcTopHolders: TokenHolderSnapshot[] =
       totalSupply && totalSupply > 0
         ? largestAccounts
             .map((holder): TokenHolderSnapshot | null => {
@@ -355,12 +550,196 @@ export async function analyzeSolanaTokenDistribution(
               if (!address || uiAmount === null || uiAmount <= 0) return null;
               return {
                 address,
+                ownerAddress: tokenAccountOwners.get(address) ?? null,
+                tokenAccountAddress: address,
                 amount: uiAmount,
                 supplyPct: Math.round(((uiAmount / totalSupply) * 100) * 100) / 100,
+                valueUsd: null,
+                label: null,
+                domain: null,
+                accountType: null,
+                activeAgeDays: null,
+                fundedBy: null,
+                totalValueUsd: null,
+                tradeVolume90dSol: null,
+                solBalance: null,
+                badges: [],
+                devRole: null,
               };
             })
             .filter((holder): holder is TokenHolderSnapshot => holder !== null)
         : [];
+    const solscanTopHolders: TokenHolderSnapshot[] =
+      solscanHolders?.holders.length
+        ? solscanHolders.holders
+            .map((holder): TokenHolderSnapshot | null => {
+              if (!holder.address || holder.supplyPct === null || holder.supplyPct <= 0) return null;
+              return {
+                address: holder.address,
+                ownerAddress: holder.ownerAddress ?? holder.address,
+                tokenAccountAddress: holder.tokenAccountAddress,
+                amount: holder.amount,
+                supplyPct: Math.round(holder.supplyPct * 100) / 100,
+                valueUsd: holder.valueUsd,
+                label: null,
+                domain: null,
+                accountType: null,
+                activeAgeDays: null,
+                fundedBy: null,
+                totalValueUsd: null,
+                tradeVolume90dSol: null,
+                solBalance: null,
+                badges: [],
+                devRole: null,
+              };
+            })
+            .filter((holder): holder is TokenHolderSnapshot => holder !== null)
+        : [];
+
+    const topHoldersBase = solscanTopHolders.length > 0 ? solscanTopHolders : rpcTopHolders;
+    const devWalletRoles = new Map<string, TokenHolderSnapshot["devRole"]>();
+    if (isLikelySolanaWallet(solscanMeta?.creator)) {
+      devWalletRoles.set(solscanMeta.creator, "creator");
+    }
+    if (isLikelySolanaWallet(heliusTokenMeta?.creator) && !devWalletRoles.has(heliusTokenMeta.creator)) {
+      devWalletRoles.set(heliusTokenMeta.creator, "creator");
+    }
+    if (isLikelySolanaWallet(heliusTokenMeta?.updateAuthority) && !devWalletRoles.has(heliusTokenMeta.updateAuthority)) {
+      devWalletRoles.set(heliusTokenMeta.updateAuthority, "creator");
+    }
+    if (isLikelySolanaWallet(solscanMeta?.mintAuthority) && !devWalletRoles.has(solscanMeta.mintAuthority)) {
+      devWalletRoles.set(solscanMeta.mintAuthority, "mint_authority");
+    }
+    if (isLikelySolanaWallet(heliusTokenMeta?.mintAuthority) && !devWalletRoles.has(heliusTokenMeta.mintAuthority)) {
+      devWalletRoles.set(heliusTokenMeta.mintAuthority, "mint_authority");
+    }
+    if (isLikelySolanaWallet(rpcMintAuthorities.mintAuthority) && !devWalletRoles.has(rpcMintAuthorities.mintAuthority)) {
+      devWalletRoles.set(rpcMintAuthorities.mintAuthority, "mint_authority");
+    }
+    if (isLikelySolanaWallet(solscanMeta?.freezeAuthority) && !devWalletRoles.has(solscanMeta.freezeAuthority)) {
+      devWalletRoles.set(solscanMeta.freezeAuthority, "freeze_authority");
+    }
+    if (isLikelySolanaWallet(heliusTokenMeta?.freezeAuthority) && !devWalletRoles.has(heliusTokenMeta.freezeAuthority)) {
+      devWalletRoles.set(heliusTokenMeta.freezeAuthority, "freeze_authority");
+    }
+    if (isLikelySolanaWallet(rpcMintAuthorities.freezeAuthority) && !devWalletRoles.has(rpcMintAuthorities.freezeAuthority)) {
+      devWalletRoles.set(rpcMintAuthorities.freezeAuthority, "freeze_authority");
+    }
+
+    const candidateWallets = [...new Set(
+      [
+        ...topHoldersBase.map((holder) => holder.ownerAddress ?? holder.address),
+        ...devWalletRoles.keys(),
+      ].filter((address): address is string => isLikelySolanaWallet(address))
+    )];
+    const authorityScanWallets = [...new Set(
+      [
+        ...topHoldersBase.slice(0, 10).map((holder) => holder.ownerAddress ?? holder.address),
+        ...devWalletRoles.keys(),
+      ].filter((address): address is string => isLikelySolanaWallet(address))
+    )];
+    const [walletMetadataMap, walletPortfolioEntries, walletActivityEntries, authorityAssetCountEntries] = await Promise.all([
+      getSolscanWalletMetadataMulti(candidateWallets),
+      Promise.all(
+        candidateWallets.map(async (address) => [address, await getSolscanWalletTotalValueUsd(address)] as const)
+      ),
+      Promise.all(
+        candidateWallets.map(async (address) => [
+          address,
+          await getWalletActivityProfile({
+            walletAddress: address,
+            sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
+          }),
+        ] as const)
+      ),
+      Promise.all(
+        authorityScanWallets.map(async (address) => [address, await getHeliusAuthorityAssetCount(address)] as const)
+      ),
+    ]);
+    const walletPortfolioMap = new Map<string, number | null>(walletPortfolioEntries);
+    const walletActivityMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(walletActivityEntries);
+    const authorityAssetCountMap = new Map<string, number | null>(authorityAssetCountEntries);
+
+    const topHolders = topHoldersBase.map((holder) => {
+      const walletAddress = holder.ownerAddress ?? holder.address;
+      const metadata = walletMetadataMap.get(walletAddress);
+      const totalValueUsd = walletPortfolioMap.get(walletAddress) ?? null;
+      const activity = walletActivityMap.get(walletAddress) ?? null;
+      const devRole = devWalletRoles.get(walletAddress) ?? null;
+      const authorityAssetCount = authorityAssetCountMap.get(walletAddress) ?? null;
+      const metadataText = [
+        normalizeText(metadata?.label),
+        normalizeText(metadata?.type),
+        normalizeText(metadata?.domain),
+        ...(metadata?.tags ?? []).map((tag) => normalizeText(tag)),
+      ].join(" ");
+
+      return {
+        ...holder,
+        label: metadata?.label ?? null,
+        domain: metadata?.domain ?? null,
+        accountType: metadata?.type ?? null,
+        activeAgeDays: metadata?.activeAgeDays ?? null,
+        fundedBy: metadata?.fundedBy ?? null,
+        totalValueUsd,
+        tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+        solBalance: activity?.balanceSol ?? null,
+        badges: buildHolderBadges({
+          supplyPct: holder.supplyPct,
+          totalValueUsd,
+          activeAgeDays: metadata?.activeAgeDays ?? null,
+          tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+          metadataText,
+          devRole,
+          authorityAssetCount,
+        }),
+        devRole,
+      };
+    });
+
+    const devWallet =
+      topHolders.find((holder) => holder.devRole !== null) ??
+      (() => {
+        const [walletAddress, devRole] = devWalletRoles.entries().next().value ?? [];
+        if (!isLikelySolanaWallet(walletAddress) || !devRole) return null;
+        const metadata = walletMetadataMap.get(walletAddress);
+        const totalValueUsd = walletPortfolioMap.get(walletAddress) ?? null;
+        const activity = walletActivityMap.get(walletAddress) ?? null;
+        const authorityAssetCount = authorityAssetCountMap.get(walletAddress) ?? null;
+        const metadataText = [
+          normalizeText(metadata?.label),
+          normalizeText(metadata?.type),
+          normalizeText(metadata?.domain),
+          ...(metadata?.tags ?? []).map((tag) => normalizeText(tag)),
+        ].join(" ");
+        return {
+          address: walletAddress,
+          ownerAddress: walletAddress,
+          tokenAccountAddress: null,
+          amount: null,
+          supplyPct: 0,
+          valueUsd: null,
+          label: metadata?.label ?? null,
+          domain: metadata?.domain ?? null,
+          accountType: metadata?.type ?? null,
+          activeAgeDays: metadata?.activeAgeDays ?? null,
+          fundedBy: metadata?.fundedBy ?? null,
+          totalValueUsd,
+          tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+          solBalance: activity?.balanceSol ?? null,
+          badges: buildHolderBadges({
+            supplyPct: 0,
+            totalValueUsd,
+            activeAgeDays: metadata?.activeAgeDays ?? null,
+            tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+            metadataText,
+            devRole,
+            authorityAssetCount,
+          }),
+          devRole,
+        } satisfies TokenHolderSnapshot;
+      })();
+
     const holderPcts = topHolders.map((holder) => holder.supplyPct);
 
     const largestHolderPct =
@@ -387,11 +766,21 @@ export async function analyzeSolanaTokenDistribution(
       bundledClusterCount: clusters.length,
       largestHolderPct,
       top10HolderPct,
-      deployerSupplyPct: largestHolderPct,
+      deployerSupplyPct: devWallet?.supplyPct ?? largestHolderPct,
     });
 
     let holderCount: number | null = null;
     let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
+    const solscanHolderCount =
+      solscanHolders?.total && solscanHolders.total > 0
+        ? Math.round(solscanHolders.total)
+        : solscanMeta?.holderCount && solscanMeta.holderCount > 0
+          ? Math.round(solscanMeta.holderCount)
+          : 0;
+    const heliusHolderCount =
+      heliusHolderSummary?.total && heliusHolderSummary.total > 0
+        ? Math.round(heliusHolderSummary.total)
+        : 0;
     const rpcHolderCount =
       Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0
         ? holderAccountsResult.length
@@ -401,7 +790,13 @@ export async function analyzeSolanaTokenDistribution(
       topHolders.length >= 20 &&
       rpcHolderCount <= topHolders.length;
 
-    if (!rpcCountLooksTruncated && rpcHolderCount > 0) {
+    if (solscanHolderCount > 0) {
+      holderCount = solscanHolderCount;
+      holderCountSource = "solscan";
+    } else if (heliusHolderCount > 0) {
+      holderCount = heliusHolderCount;
+      holderCountSource = "helius";
+    } else if (!rpcCountLooksTruncated && rpcHolderCount > 0) {
       holderCount = rpcHolderCount;
       holderCountSource = "rpc_scan";
     } else if (
@@ -422,7 +817,8 @@ export async function analyzeSolanaTokenDistribution(
       largestHolderPct,
       top10HolderPct,
       topHolders,
-      deployerSupplyPct: largestHolderPct,
+      devWallet,
+      deployerSupplyPct: devWallet?.supplyPct ?? largestHolderPct,
       bundledWalletCount: suspiciousHolderPcts.length,
       bundledClusterCount: clusters.length,
       estimatedBundledSupplyPct,
