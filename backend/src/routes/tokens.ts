@@ -252,7 +252,15 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
     token.chainType === "solana"
       ? distributionSnapshot?.holderCountSource ?? null
       : null;
-  const storedHolderCount = roundCount(pickFirstPositiveMetric(token.holderCount));
+  const observedTopHolderCount = distributionSnapshot?.topHolders.length ?? 0;
+  const rawStoredHolderCount = roundCount(pickFirstPositiveMetric(token.holderCount));
+  const storedHolderCount =
+    token.chainType === "solana" &&
+    observedTopHolderCount >= 20 &&
+    isFiniteNumber(rawStoredHolderCount) &&
+    rawStoredHolderCount <= observedTopHolderCount
+      ? null
+      : rawStoredHolderCount;
   const holderCount =
     token.chainType === "solana"
       ? hasResolvedHolderCount(distributionHolderCount, distributionHolderCountSource)

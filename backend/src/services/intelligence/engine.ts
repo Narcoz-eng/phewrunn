@@ -1338,8 +1338,21 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
       latestSnapshot?.marketCap
     )
   );
+  const hasResolvedDistributionHolderCount =
+    distribution?.holderCountSource !== "largest_accounts" &&
+    distribution?.holderCountSource !== null &&
+    hasPositiveMetric(distribution?.holderCount);
+  const observedDistributionTopHolderCount = distribution?.topHolders.length ?? 0;
+  const existingHolderCountLooksLowerBound =
+    existing.chainType === "solana" &&
+    observedDistributionTopHolderCount >= 20 &&
+    hasPositiveMetric(existing.holderCount) &&
+    Math.round(existing.holderCount) <= observedDistributionTopHolderCount;
   const holderCount = Math.round(
-    pickFirstPositiveMetric(distribution?.holderCount, existing.holderCount) ?? 0
+    pickFirstPositiveMetric(
+      hasResolvedDistributionHolderCount ? distribution?.holderCount : null,
+      !existingHolderCountLooksLowerBound ? existing.holderCount : null
+    ) ?? 0
   ) || null;
   const tokenRiskScore = roundMetric(
     pickFirstFiniteMetric(distribution?.tokenRiskScore, existing.tokenRiskScore)
@@ -3157,7 +3170,9 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       staleTopHolders.length
     );
     const isPlausibleStoredHolderCount = (value: number | null | undefined): value is number =>
-      hasPositiveMetric(value) && Math.round(value) >= minimumObservedHolderCount;
+      hasPositiveMetric(value) &&
+      Math.round(value) >= minimumObservedHolderCount &&
+      !(minimumObservedHolderCount >= 20 && Math.round(value) <= minimumObservedHolderCount);
     const storedSolanaHolderCount = isPlausibleStoredHolderCount(currentToken.holderCount)
       ? Math.round(currentToken.holderCount)
       : isPlausibleStoredHolderCount(staleToken?.holderCount)

@@ -259,23 +259,62 @@ function formatHolderAddress(address: string): string {
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
 }
 
-function formatHolderBadge(badge: TokenHolder["badges"][number]): string {
+type HolderBadgeMeta = {
+  label: string;
+  emoji: string;
+  className: string;
+};
+
+function getHolderBadgeMeta(badge: TokenHolder["badges"][number]): HolderBadgeMeta {
   switch (badge) {
     case "dev_wallet":
-      return "Dev wallet";
+      return {
+        label: "Dev wallet",
+        emoji: "🛠",
+        className: "border-amber-300/50 bg-amber-100/80 text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200",
+      };
     case "fresh_wallet":
-      return "Fresh";
+      return {
+        label: "Fresh wallet",
+        emoji: "🌱",
+        className: "border-emerald-300/50 bg-emerald-100/80 text-emerald-800 dark:border-emerald-400/35 dark:bg-emerald-500/10 dark:text-emerald-200",
+      };
     case "high_volume_trader":
-      return "High volume";
+      return {
+        label: "High volume trader",
+        emoji: "⚡",
+        className: "border-sky-300/50 bg-sky-100/80 text-sky-800 dark:border-sky-400/35 dark:bg-sky-500/10 dark:text-sky-200",
+      };
     case "whale":
-      return "Whale";
+      return {
+        label: "Whale",
+        emoji: "🐋",
+        className: "border-indigo-300/50 bg-indigo-100/80 text-indigo-800 dark:border-indigo-400/35 dark:bg-indigo-500/10 dark:text-indigo-200",
+      };
     case "serial_deployer":
-      return "Serial deployer";
+      return {
+        label: "Serial deployer",
+        emoji: "🏗",
+        className: "border-violet-300/50 bg-violet-100/80 text-violet-800 dark:border-violet-400/35 dark:bg-violet-500/10 dark:text-violet-200",
+      };
     case "serial_rugger":
-      return "Serial rugger";
+      return {
+        label: "Serial rugger",
+        emoji: "☠",
+        className: "border-rose-300/55 bg-rose-100/85 text-rose-800 dark:border-rose-400/35 dark:bg-rose-500/12 dark:text-rose-200",
+      };
     default:
-      return badge;
+      return {
+        label: badge,
+        emoji: "•",
+        className: "border-border/60 bg-white/80 text-muted-foreground dark:bg-white/[0.05]",
+      };
   }
+}
+
+function formatHolderBadge(badge: TokenHolder["badges"][number]): string {
+  const meta = getHolderBadgeMeta(badge);
+  return `${meta.emoji} ${meta.label}`;
 }
 
 function getPrimaryHolderBadge(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"][number] | null {
@@ -1474,11 +1513,22 @@ export default function TokenPage() {
                           <div className="mt-2 font-mono text-sm font-semibold text-foreground">
                             {formatHolderAddress(devWallet.address)}
                           </div>
-                          <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary/80">
-                            {getPrimaryHolderBadge(devWallet)
-                              ? `Primary role: ${formatHolderBadge(getPrimaryHolderBadge(devWallet)!)}` 
-                              : "Primary role: Resolving"}
-                          </div>
+                          {getPrimaryHolderBadge(devWallet) ? (
+                            <div className="mt-1">
+                              <span
+                                className={cn(
+                                  "inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                                  getHolderBadgeMeta(getPrimaryHolderBadge(devWallet)!).className
+                                )}
+                              >
+                                {formatHolderBadge(getPrimaryHolderBadge(devWallet)!)}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                              Primary role resolving
+                            </div>
+                          )}
                           <div className="mt-1 text-xs text-muted-foreground">
                             {buildHolderScanSummary(devWallet)}
                           </div>
@@ -1493,7 +1543,13 @@ export default function TokenPage() {
                       <div className="mt-3 flex flex-wrap gap-2">
                         {devWallet.badges.length > 0
                           ? devWallet.badges.map((badge) => (
-                              <span key={badge} className="rounded-full border border-primary/18 bg-white/75 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary dark:bg-white/[0.05]">
+                              <span
+                                key={badge}
+                                className={cn(
+                                  "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                                  getHolderBadgeMeta(badge).className
+                                )}
+                              >
                                 {formatHolderBadge(badge)}
                               </span>
                             ))
@@ -1535,11 +1591,22 @@ export default function TokenPage() {
                                 <div className="font-mono text-[12px] font-semibold text-foreground">
                                   {formatHolderAddress(holder.address)}
                                 </div>
-                                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary/80">
-                                  {getPrimaryHolderBadge(holder)
-                                    ? `Role: ${formatHolderBadge(getPrimaryHolderBadge(holder)!)}` 
-                                    : "Role: Resolving"}
-                                </div>
+                                {getPrimaryHolderBadge(holder) ? (
+                                  <div className="mt-1">
+                                    <span
+                                      className={cn(
+                                        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.11em]",
+                                        getHolderBadgeMeta(getPrimaryHolderBadge(holder)!).className
+                                      )}
+                                    >
+                                      {formatHolderBadge(getPrimaryHolderBadge(holder)!)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                                    Role resolving
+                                  </div>
+                                )}
                                 <div className="mt-1 text-[11px] text-muted-foreground">
                                   {buildHolderScanSummary(holder)}
                                 </div>
@@ -1552,7 +1619,13 @@ export default function TokenPage() {
                                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                                   {holder.badges.length > 0 ? (
                                     holder.badges.map((badge) => (
-                                      <span key={badge} className="rounded-full border border-primary/18 bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.11em] text-primary dark:bg-white/[0.05]">
+                                      <span
+                                        key={badge}
+                                        className={cn(
+                                          "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.11em]",
+                                          getHolderBadgeMeta(badge).className
+                                        )}
+                                      >
                                         {formatHolderBadge(badge)}
                                       </span>
                                     ))
