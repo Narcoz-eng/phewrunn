@@ -88,6 +88,17 @@ const tokenDistributionCache = new Map<
 >();
 const tokenDistributionInFlight = new Map<string, Promise<TokenDistributionSnapshot | null>>();
 
+function hasResolvedHolderCount(snapshot: TokenDistributionSnapshot | null | undefined): boolean {
+  return Boolean(
+    snapshot &&
+    typeof snapshot.holderCount === "number" &&
+    Number.isFinite(snapshot.holderCount) &&
+    snapshot.holderCount > 0 &&
+    snapshot.holderCountSource !== "largest_accounts" &&
+    snapshot.holderCountSource !== null
+  );
+}
+
 function cloneDistributionSnapshot(
   snapshot: TokenDistributionSnapshot | null
 ): TokenDistributionSnapshot | null {
@@ -405,7 +416,7 @@ export async function analyzeSolanaTokenDistribution(
       holderCountSource = "largest_accounts";
     }
 
-    return {
+    const nextSnapshot: TokenDistributionSnapshot = {
       holderCount,
       holderCountSource,
       largestHolderPct,
@@ -419,6 +430,14 @@ export async function analyzeSolanaTokenDistribution(
       bundleRiskLabel: determineBundleRiskLabel(tokenRiskScore),
       clusters,
     };
+
+    const previousSnapshot = cached?.value ?? null;
+    if (hasResolvedHolderCount(previousSnapshot) && !hasResolvedHolderCount(nextSnapshot)) {
+      nextSnapshot.holderCount = previousSnapshot?.holderCount ?? null;
+      nextSnapshot.holderCountSource = previousSnapshot?.holderCountSource ?? null;
+    }
+
+    return nextSnapshot;
   })()
     .then((snapshot) => {
       tokenDistributionCache.set(cacheKey, {

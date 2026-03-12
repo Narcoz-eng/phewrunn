@@ -305,6 +305,20 @@ function pickMergedMetric(
   return live ?? cached ?? null;
 }
 
+function hasResolvedHolderCount(
+  holderCount: number | null | undefined,
+  holderCountSource: TokenPageData["holderCountSource"] | TokenLiveData["holderCountSource"]
+): boolean {
+  return (
+    typeof holderCount === "number" &&
+    Number.isFinite(holderCount) &&
+    holderCount > 0 &&
+    holderCountSource !== "largest_accounts" &&
+    holderCountSource !== null &&
+    holderCountSource !== undefined
+  );
+}
+
 function mergeTokenPageDataWithCached(
   live: TokenPageData,
   cached: TokenPageData | null | undefined
@@ -373,44 +387,25 @@ function mergeTokenPageDataWithLiveSnapshot(
   current: TokenPageData,
   live: TokenLiveData
 ): TokenPageData {
-  const isSolana = current.chainType === "solana";
-  const holderCount = isSolana
-    ? live.holderCount ?? null
-    : pickMergedMetric(live.holderCount, current.holderCount, { positive: true });
-  const holderCountSource = isSolana
-    ? live.holderCountSource ?? null
-    : live.holderCountSource ?? current.holderCountSource;
-  const largestHolderPct = isSolana
-    ? live.largestHolderPct ?? null
-    : pickMergedMetric(live.largestHolderPct, current.largestHolderPct);
-  const top10HolderPct = isSolana
-    ? live.top10HolderPct ?? null
-    : pickMergedMetric(live.top10HolderPct, current.top10HolderPct);
-  const deployerSupplyPct = isSolana
-    ? live.deployerSupplyPct ?? null
-    : pickMergedMetric(live.deployerSupplyPct, current.deployerSupplyPct);
-  const bundledWalletCount = isSolana
-    ? live.bundledWalletCount ?? null
-    : pickMergedMetric(live.bundledWalletCount, current.bundledWalletCount, { positive: true });
-  const estimatedBundledSupplyPct = isSolana
-    ? live.estimatedBundledSupplyPct ?? null
-    : pickMergedMetric(live.estimatedBundledSupplyPct, current.estimatedBundledSupplyPct);
-  const tokenRiskScore = isSolana
-    ? live.tokenRiskScore ?? null
-    : pickMergedMetric(live.tokenRiskScore, current.tokenRiskScore);
-  const bundleRiskLabel = isSolana
-    ? live.bundleRiskLabel ?? null
-    : live.bundleRiskLabel ?? current.bundleRiskLabel;
-  const topHolders = isSolana
-    ? live.topHolders
-    : live.topHolders.length > 0
-      ? live.topHolders
-      : current.topHolders;
-  const bundleClusters = isSolana
-    ? live.bundleClusters
-    : live.bundleClusters.length > 0
-      ? live.bundleClusters
-      : current.bundleClusters;
+  const holderCount = hasResolvedHolderCount(live.holderCount, live.holderCountSource)
+    ? live.holderCount
+    : hasResolvedHolderCount(current.holderCount, current.holderCountSource)
+      ? current.holderCount
+      : pickMergedMetric(live.holderCount, current.holderCount, { positive: true });
+  const holderCountSource = hasResolvedHolderCount(live.holderCount, live.holderCountSource)
+    ? live.holderCountSource ?? current.holderCountSource
+    : hasResolvedHolderCount(current.holderCount, current.holderCountSource)
+      ? current.holderCountSource
+      : live.holderCountSource ?? current.holderCountSource;
+  const largestHolderPct = pickMergedMetric(live.largestHolderPct, current.largestHolderPct);
+  const top10HolderPct = pickMergedMetric(live.top10HolderPct, current.top10HolderPct);
+  const deployerSupplyPct = pickMergedMetric(live.deployerSupplyPct, current.deployerSupplyPct);
+  const bundledWalletCount = pickMergedMetric(live.bundledWalletCount, current.bundledWalletCount, { positive: true });
+  const estimatedBundledSupplyPct = pickMergedMetric(live.estimatedBundledSupplyPct, current.estimatedBundledSupplyPct);
+  const tokenRiskScore = pickMergedMetric(live.tokenRiskScore, current.tokenRiskScore);
+  const bundleRiskLabel = live.bundleRiskLabel ?? current.bundleRiskLabel;
+  const topHolders = live.topHolders.length > 0 ? live.topHolders : current.topHolders;
+  const bundleClusters = live.bundleClusters.length > 0 ? live.bundleClusters : current.bundleClusters;
 
   return {
     ...current,
@@ -536,6 +531,20 @@ export default function TokenPage() {
       }
 
       return payload.data;
+    },
+  });
+
+  const recentCallsQuery = useQuery<Post[]>({
+    queryKey: ["token-calls", viewerScope, tokenAddress],
+    enabled: Boolean(tokenAddress),
+    staleTime: 20_000,
+    gcTime: 8 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    queryFn: async () => {
+      if (!tokenAddress) throw new Error("Token address is required");
+      return api.get<Post[]>(`/api/tokens/${tokenAddress}/calls`);
     },
   });
 
@@ -677,10 +686,14 @@ export default function TokenPage() {
     };
   }, [liveChartData]);
 
+  const recentCalls = useMemo(
+    () => (recentCallsQuery.data && recentCallsQuery.data.length > 0 ? recentCallsQuery.data : (token?.recentCalls ?? [])),
+    [recentCallsQuery.data, token?.recentCalls]
+  );
+  const recentCallsCount = Math.max(token?.callsCount ?? 0, recentCalls.length);
   const primaryTradeCall = useMemo(
-    () =>
-      token?.recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
-    [token?.recentCalls]
+    () => recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
+    [recentCalls]
   );
   const isRefreshingLive = isFetching || liveTokenQuery.isFetching;
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
@@ -784,30 +797,45 @@ export default function TokenPage() {
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
   const isHolderCountLowerBound = token?.holderCountSource === "largest_accounts";
+  const hasVerifiedHolderCount = hasResolvedHolderCount(token?.holderCount, token?.holderCountSource);
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
         emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
       })
     : "Scanning";
-  const holderCountLabel = isHolderCountLowerBound
-    ? hasLiveHolderDistribution
-      ? "Pending"
-      : "Scanning"
-    : holderCountValue;
+  const holderCountLabel = hasVerifiedHolderCount
+    ? holderCountValue
+    : isHolderCountLowerBound
+      ? hasLiveHolderDistribution
+        ? "Pending"
+        : "Scanning"
+      : holderCountValue;
   const holderMetricTitle = "Total holders";
-  const holderMetricBadge = isHolderCountLowerBound
-    ? hasLiveHolderDistribution
-      ? "Top 10 ready"
-      : "Scanning"
-    : "Live count";
-  const holderMetricCopy = isHolderCountLowerBound
-    ? hasLiveHolderDistribution
-      ? "Top 10 wallets are live. Total holder count is still resolving."
-      : "Fetching the full holder count for this token."
-    : "Verified holder total from the latest live telemetry.";
-  const topHolderSectionCopy = isHolderCountLowerBound
-    ? "Top holder wallets are live while the total wallet count finishes resolving."
-    : "Largest wallets by live circulating supply share.";
+  const holderMetricBadge = hasVerifiedHolderCount
+    ? token?.holderCountSource === "birdeye"
+      ? "Birdeye"
+      : token?.holderCountSource === "rpc_scan"
+        ? "RPC verified"
+        : "Live count"
+    : isHolderCountLowerBound
+      ? hasLiveHolderDistribution
+        ? "Top 10 ready"
+        : "Scanning"
+      : "Refreshing";
+  const holderMetricCopy = hasVerifiedHolderCount
+    ? "Verified holder total from the latest live telemetry."
+    : isHolderCountLowerBound
+      ? hasLiveHolderDistribution
+        ? "Largest wallets are loaded now. Full holder count is still resolving."
+        : "Fetching the full holder count for this token."
+      : "Refreshing holder telemetry from the live route.";
+  const topHolderSectionCopy = hasVerifiedHolderCount
+    ? "Largest wallets by live circulating supply share."
+    : "Top wallets are ready first. Total holder count follows after the full RPC scan finishes.";
+  const recentCallsEmptyCopy =
+    recentCallsQuery.isLoading || recentCallsQuery.isFetching
+      ? "Recent token calls are still loading for this address."
+      : "No recent calls are available for this token yet.";
 
   return (
     <div className="min-h-screen bg-background">
@@ -848,104 +876,44 @@ export default function TokenPage() {
         ) : (
           <div className="space-y-5">
             <section className="app-surface p-5 sm:p-6">
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-                <div className="min-w-0 flex items-start gap-4">
-                  <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-border/60 bg-secondary">
-                    {token.imageUrl ? (
-                      <img src={token.imageUrl} alt={token.symbol ?? token.name ?? "Token"} className="h-full w-full object-cover" />
-                    ) : (
-                      <Coins className="h-7 w-7 text-primary" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="break-words text-2xl font-bold text-foreground">
-                        {token.symbol || token.name || token.address.slice(0, 8)}
-                      </h2>
-                      <span className={cn("rounded-full border px-3 py-1 text-xs font-semibold", riskTone(token.bundleRiskLabel))}>
-                        {token.bundleRiskLabel || "Unknown Risk"}
-                      </span>
-                      {token.isEarlyRunner ? (
-                        <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                          Early Runner
+              <div className="space-y-5">
+                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0 flex items-start gap-4">
+                    <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-border/60 bg-secondary">
+                      {token.imageUrl ? (
+                        <img src={token.imageUrl} alt={token.symbol ?? token.name ?? "Token"} className="h-full w-full object-cover" />
+                      ) : (
+                        <Coins className="h-7 w-7 text-primary" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="break-words text-2xl font-bold text-foreground">
+                          {token.symbol || token.name || token.address.slice(0, 8)}
+                        </h2>
+                        <span className={cn("rounded-full border px-3 py-1 text-xs font-semibold", riskTone(token.bundleRiskLabel))}>
+                          {token.bundleRiskLabel || "Unknown Risk"}
                         </span>
+                        {token.isEarlyRunner ? (
+                          <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                            Early Runner
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 break-all text-xs text-muted-foreground">{token.address}</p>
+                      {token.earlyRunnerReasons?.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {token.earlyRunnerReasons.map((reason) => (
+                            <span key={reason} className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
                       ) : null}
                     </div>
-                    <p className="mt-1 break-all text-xs text-muted-foreground">{token.address}</p>
-                    {token.earlyRunnerReasons?.length ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {token.earlyRunnerReasons.map((reason) => (
-                          <span key={reason} className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                            {reason}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="mt-4 grid gap-3 md:grid-cols-[minmax(240px,1.45fr)_repeat(2,minmax(175px,1fr))]">
-                      <div className="min-w-0 rounded-[26px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-4 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/80">
-                              Current MCAP
-                            </div>
-                            <div className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(2.55rem,5vw,4rem)] font-black leading-none tracking-[-0.05em] text-foreground">
-                              {formatMarketMetric(token.marketCap)}
-                            </div>
-                            <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                              Shared with postcard pricing, updated from the live market route.
-                            </div>
-                          </div>
-                          <span className="rounded-full border border-primary/25 bg-white/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary dark:bg-white/[0.05]">
-                            Live
-                          </span>
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                          <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
-                            Volume 24h <span className="ml-1 font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
-                          </span>
-                          <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
-                            {isRefreshingLive ? "Refreshing now" : "Live snapshot active"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                            Liquidity
-                          </div>
-                          <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                            Live
-                          </span>
-                        </div>
-                        <div className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.9rem,3vw,2.5rem)] font-bold leading-none text-foreground">
-                          {formatMarketMetric(token.liquidity)}
-                        </div>
-                        <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                          Current pool depth across the selected trading pair.
-                        </div>
-                      </div>
-                      <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                            {holderMetricTitle}
-                          </div>
-                          <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                            {holderMetricBadge}
-                          </span>
-                        </div>
-                        <div className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.9rem,3vw,2.5rem)] font-bold leading-none text-foreground">
-                          {holderCountLabel}
-                        </div>
-                        <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                          {holderMetricCopy}
-                        </div>
-                      </div>
-                    </div>
                   </div>
-                </div>
 
-                <div className="min-w-0 space-y-3">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <div className="grid w-full gap-3 sm:grid-cols-2 xl:w-[420px] xl:grid-cols-4">
                     {[
                       { label: "Confidence", value: token.confidenceScore },
                       { label: "Hot Alpha", value: token.hotAlphaScore },
@@ -960,12 +928,75 @@ export default function TokenPage() {
                       </div>
                     ))}
                   </div>
+                </div>
 
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-stretch">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_repeat(2,minmax(0,1fr))]">
+                  <div className="min-w-0 rounded-[28px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-5 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/80">
+                          Live market cap
+                        </div>
+                        <div className="mt-3 min-w-0 text-[clamp(2.9rem,6vw,4.6rem)] font-black leading-[0.88] tracking-[-0.06em] text-foreground tabular-nums">
+                          {formatMarketMetric(token.marketCap)}
+                        </div>
+                        <div className="mt-3 text-sm text-muted-foreground">
+                          Shared with postcard pricing and refreshed from the live market route.
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-full border border-primary/25 bg-white/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary dark:bg-white/[0.05]">
+                        Live
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                      <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
+                        24h volume <span className="ml-1 font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
+                      </span>
+                      <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
+                        {isRefreshingLive ? "Refreshing now" : "Live snapshot active"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Liquidity
+                      </div>
+                      <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Live
+                      </span>
+                    </div>
+                    <div className="mt-3 min-w-0 text-[clamp(2.1rem,4vw,2.95rem)] font-bold leading-none text-foreground tabular-nums">
+                      {formatMarketMetric(token.liquidity)}
+                    </div>
+                    <div className="mt-3 text-sm text-muted-foreground">
+                      Pool depth on the active trading pair.
+                    </div>
+                  </div>
+                  <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        {holderMetricTitle}
+                      </div>
+                      <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        {holderMetricBadge}
+                      </span>
+                    </div>
+                    <div className="mt-3 min-w-0 text-[clamp(2rem,4vw,2.8rem)] font-bold leading-none text-foreground tabular-nums">
+                      {holderCountLabel}
+                    </div>
+                    <div className="mt-3 text-sm text-muted-foreground">
+                      {holderMetricCopy}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(190px,auto)] lg:max-w-[560px] lg:flex-1">
                     <Button
                       onClick={handleOpenTradePanel}
                       disabled={!primaryTradeCall}
-                      className="group min-h-[58px] min-w-0 justify-start gap-3 rounded-[22px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 py-3 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="group min-h-[60px] min-w-0 justify-start gap-3 rounded-[22px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 py-3 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white/20 text-slate-950">
                         <PhewTradeIcon className="h-4 w-4" />
@@ -973,7 +1004,7 @@ export default function TokenPage() {
                       <span className="min-w-0 flex flex-col items-start text-left">
                         <span className="text-sm font-semibold text-slate-950">Open trade panel</span>
                         <span className="mt-1 whitespace-normal text-[11px] leading-[1.25] text-slate-900/75">
-                          Open the full live trade setup for this token.
+                          Jump straight to the latest trade-ready post for this token.
                         </span>
                       </span>
                     </Button>
@@ -981,7 +1012,7 @@ export default function TokenPage() {
                       variant={token.isFollowing ? "outline" : "default"}
                       onClick={() => followMutation.mutate()}
                       disabled={followMutation.isPending}
-                      className="h-full min-h-[58px] rounded-[22px] px-5 sm:min-w-[190px]"
+                      className="min-h-[60px] rounded-[22px] px-5"
                     >
                       {followMutation.isPending ? (
                         <>
@@ -1330,63 +1361,6 @@ export default function TokenPage() {
                   </div>
                 </div>
 
-                <section className="app-surface self-start p-5">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {topHolderSectionCopy}
-                      </div>
-                    </div>
-                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                      {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
-                    </div>
-                  </div>
-                  <div className="space-y-2.5">
-                    {topHolderRows.length > 0 ? (
-                      topHolderRows.map((holder, index) => (
-                        <div
-                          key={holder.address}
-                          className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
-                                {index + 1}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-mono text-[12px] font-semibold text-foreground">
-                                  {formatHolderAddress(holder.address)}
-                                </div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {formatHolderAmount(holder.amount)} tokens
-                                </div>
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div className="font-mono text-sm font-semibold text-foreground">
-                                {formatPct(holder.supplyPct)}
-                              </div>
-                              <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                                of supply
-                              </div>
-                            </div>
-                          </div>
-                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
-                            <div
-                              className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
-                              style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Scanning the live largest-holder distribution for this token.
-                      </p>
-                    )}
-                  </div>
-                </section>
               </div>
 
               <div className="space-y-4">
@@ -1437,21 +1411,85 @@ export default function TokenPage() {
                 <section ref={recentCallsRef} className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-foreground">Recent calls</h3>
-                    <span className="text-sm text-muted-foreground">{token.callsCount} calls</span>
+                    <span className="text-sm text-muted-foreground">{recentCallsCount} calls</span>
                   </div>
-                  {token.recentCalls.map((post) => (
-                    <PostCard
-                      key={post.id}
-                      post={post}
-                      currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
-                      autoOpenTradePanel={pendingTradeCallId === post.id}
-                      autoPrefillBuyAmountSol={pendingTradeCallId === post.id ? pendingQuickBuyAmountSol : null}
-                      onTradePanelAutoOpened={() => {
-                        setPendingTradeCallId((current) => (current === post.id ? null : current));
-                        setPendingQuickBuyAmountSol(null);
-                      }}
-                    />
-                  ))}
+                  {recentCalls.length > 0 ? (
+                    recentCalls.map((post) => (
+                      <PostCard
+                        key={post.id}
+                        post={post}
+                        currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
+                        autoOpenTradePanel={pendingTradeCallId === post.id}
+                        autoPrefillBuyAmountSol={pendingTradeCallId === post.id ? pendingQuickBuyAmountSol : null}
+                        onTradePanelAutoOpened={() => {
+                          setPendingTradeCallId((current) => (current === post.id ? null : current));
+                          setPendingQuickBuyAmountSol(null);
+                        }}
+                      />
+                    ))
+                  ) : (
+                    <div className="rounded-[20px] border border-dashed border-border/60 bg-secondary/60 p-5 text-sm text-muted-foreground">
+                      {recentCallsEmptyCopy}
+                    </div>
+                  )}
+                </section>
+
+                <section className="app-surface p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {topHolderSectionCopy}
+                      </div>
+                    </div>
+                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                      {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
+                    </div>
+                  </div>
+                  <div className="max-h-[460px] space-y-2.5 overflow-y-auto pr-1">
+                    {topHolderRows.length > 0 ? (
+                      topHolderRows.map((holder, index) => (
+                        <div
+                          key={holder.address}
+                          className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
+                                {index + 1}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-mono text-[12px] font-semibold text-foreground">
+                                  {formatHolderAddress(holder.address)}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {formatHolderAmount(holder.amount)} tokens
+                                </div>
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div className="font-mono text-sm font-semibold text-foreground">
+                                {formatPct(holder.supplyPct)}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                                of supply
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
+                            <div
+                              className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
+                              style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Scanning the live largest-holder distribution for this token.
+                      </p>
+                    )}
+                  </div>
                 </section>
               </div>
             </section>
