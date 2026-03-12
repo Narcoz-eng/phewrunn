@@ -296,7 +296,7 @@ function getHolderBadgeMeta(badge: TokenHolder["badges"][number]): HolderBadgeMe
       return {
         label: "Ultra degen",
         emoji: "🧨",
-        className: "border-fuchsia-300/55 bg-fuchsia-100/85 text-fuchsia-800 dark:border-fuchsia-400/35 dark:bg-fuchsia-500/12 dark:text-fuchsia-200",
+        className: "border-orange-300/75 bg-orange-100/95 text-orange-900 shadow-[0_12px_28px_-24px_rgba(249,115,22,0.75)] dark:border-orange-400/60 dark:bg-orange-500/22 dark:text-orange-100",
       };
     case "serial_deployer":
       return {
@@ -337,9 +337,9 @@ function getSecondaryHolderBadges(holder: Pick<TokenHolder, "badges"> | null | u
   return holder.badges.filter((badge) => badge !== primary);
 }
 
-function buildHolderScanSummary(holder: TokenHolder | null | undefined): string {
+function buildHolderScanSummary(holder: TokenHolder | null | undefined): string | null {
   if (!holder) {
-    return "Live wallet classification is still resolving.";
+    return null;
   }
 
   const details = [
@@ -348,7 +348,7 @@ function buildHolderScanSummary(holder: TokenHolder | null | undefined): string 
     holder.tradeVolume90dSol !== null ? `${formatSolMetric(holder.tradeVolume90dSol)} 90d flow` : null,
   ].filter((value): value is string => Boolean(value));
 
-  return details.join(" | ") || "Role assigned from live RPC and Helius scan.";
+  return details.length > 0 ? details.join(" | ") : null;
 }
 
 function formatDaysMetric(value: number | null | undefined): string | null {
@@ -1527,6 +1527,9 @@ export default function TokenPage() {
                     <div className="mb-3 rounded-[20px] border border-primary/20 bg-[linear-gradient(180deg,rgba(236,248,241,0.95),rgba(248,251,249,0.94))] p-4 dark:bg-[linear-gradient(180deg,rgba(12,20,17,0.98),rgba(9,14,13,0.98))]">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
+                          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Dev wallet intelligence
+                          </div>
                           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
                             {devWallet.devRole === "creator"
                               ? "Creator wallet"
@@ -1553,9 +1556,11 @@ export default function TokenPage() {
                               Primary role resolving
                             </div>
                           )}
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {buildHolderScanSummary(devWallet)}
-                          </div>
+                          {buildHolderScanSummary(devWallet) ? (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {buildHolderScanSummary(devWallet)}
+                            </div>
+                          ) : null}
                         </div>
                         {devWallet.supplyPct > 0 ? (
                           <div className="shrink-0 text-right">
@@ -1585,6 +1590,9 @@ export default function TokenPage() {
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
+                          Authority source <span className="ml-1 font-semibold text-foreground">{devWallet.label ?? "On-chain authority"}</span>
+                        </div>
+                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
                           Observed age <span className="ml-1 font-semibold text-foreground">{formatDaysMetric(devWallet.activeAgeDays) ?? "N/A"}</span>
                         </div>
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
@@ -1598,7 +1606,19 @@ export default function TokenPage() {
                         </div>
                       </div>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="mb-3 rounded-[20px] border border-dashed border-border/60 bg-white/45 p-4 dark:bg-white/[0.03]">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                        Dev wallet intelligence
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-foreground">
+                        Dev wallet still resolving
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        Scanning creator, update authority, mint authority, and freeze authority from Solana RPC and Helius.
+                      </div>
+                    </div>
+                  )}
                   <div className="max-h-[360px] space-y-2.5 overflow-y-auto pr-1">
                     {topHolderRows.length > 0 ? (
                       topHolderRows.map((holder, index) => (
@@ -1631,9 +1651,11 @@ export default function TokenPage() {
                                     Role resolving
                                   </div>
                                 )}
-                                <div className="mt-1 text-[11px] text-muted-foreground">
-                                  {buildHolderScanSummary(holder)}
-                                </div>
+                                {buildHolderScanSummary(holder) ? (
+                                  <div className="mt-1 text-[11px] text-muted-foreground">
+                                    {buildHolderScanSummary(holder)}
+                                  </div>
+                                ) : null}
                                 <div className="mt-1 text-[11px] text-muted-foreground">
                                   {formatHolderAmount(holder.amount)} tokens
                                   {holder.valueUsd ? (

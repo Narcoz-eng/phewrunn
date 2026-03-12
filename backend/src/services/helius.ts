@@ -1048,13 +1048,15 @@ export async function getHeliusTokenMetadataForMint(params: {
 export async function getHeliusTokenAccountsForMint(params: {
   mint: string | null | undefined;
   limit?: number | null | undefined;
+  cursor?: string | null | undefined;
 }): Promise<HeliusTokenAccountSummary | null> {
   if (!HELIUS_RPC_URL) return null;
   if (!isLikelySolanaAddress(params.mint)) return null;
 
   const mint = params.mint;
   const limit = Math.max(1, Math.min(Math.round(params.limit ?? 1), 1000));
-  const cacheKey = `${mint}:${limit}`;
+  const cursor = readNonEmptyString(params.cursor) ?? null;
+  const cacheKey = `${mint}:${limit}:${cursor ?? "start"}`;
   const now = Date.now();
   const cached = heliusMintHolderCache.get(cacheKey);
   if (cached && cached.expiresAtMs > now) return cached.value;
@@ -1067,6 +1069,7 @@ export async function getHeliusTokenAccountsForMint(params: {
       {
         mint,
         limit,
+        ...(cursor ? { cursor } : {}),
         options: {
           showZeroBalance: false,
         },
@@ -1102,6 +1105,64 @@ export async function getHeliusTokenAccountsForMint(params: {
     expiresAtMs: now + HELIUS_CACHE_TTL_MS,
   });
   return value;
+}
+
+export async function getHeliusCurrentHolderOwnerCount(params: {
+  mint: string | null | undefined;
+  maxPages?: number | null | undefined;
+}): Promise<number | null> {
+  if (!HELIUS_RPC_URL) return null;
+  if (!isLikelySolanaAddress(params.mint)) return null;
+
+  const mint = params.mint;
+  const limit = 1000;
+  const maxPages = Math.max(1, Math.min(Math.round(params.maxPages ?? (process.env.NODE_ENV === "production" ? 24 : 40)), 80));
+  const uniqueOwners = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+  let processedAccounts = 0;
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const page = await getHeliusTokenAccountsForMint({
+      mint,
+      limit,
+      cursor,
+    });
+    if (!page) {
+      return uniqueOwners.size > 0 ? uniqueOwners.size : null;
+    }
+
+    for (const account of page.tokenAccounts) {
+      if (
+        account.owner &&
+        typeof account.amount === "number" &&
+        Number.isFinite(account.amount) &&
+        account.amount > 0
+      ) {
+        uniqueOwners.add(account.owner);
+      }
+    }
+
+    processedAccounts += page.tokenAccounts.length;
+    const nextCursor = page.cursor ?? null;
+    const reachedKnownEnd =
+      typeof page.total === "number" &&
+      Number.isFinite(page.total) &&
+      page.total > 0 &&
+      processedAccounts >= page.total;
+
+    if (!nextCursor || page.tokenAccounts.length === 0 || reachedKnownEnd) {
+      return uniqueOwners.size;
+    }
+    if (seenCursors.has(nextCursor)) {
+      return reachedKnownEnd ? uniqueOwners.size : null;
+    }
+
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return null;
 }
 
 export async function getHeliusAuthorityAssetCount(authorityAddress: string): Promise<number | null> {

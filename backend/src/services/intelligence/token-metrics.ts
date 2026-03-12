@@ -1,6 +1,8 @@
+import bs58 from "bs58";
 import { getCachedMarketCapSnapshot } from "../marketcap.js";
 import {
   getHeliusAuthorityAssetSummary,
+  getHeliusCurrentHolderOwnerCount,
   getHeliusTokenAccountsForMint,
   getHeliusTokenMetadataForMint,
   getWalletTradeSnapshotForSolanaToken,
@@ -95,7 +97,14 @@ type RpcLargestAccountsResult = {
   }>;
 };
 
-type RpcProgramAccountResult = Array<unknown>;
+type RpcProgramAccountResult = Array<
+  | {
+      account?: {
+        data?: [string, string] | string | null;
+      } | null;
+    }
+  | null
+>;
 
 type RpcTokenAccountInfoResult = {
   value?: Array<
@@ -353,6 +362,57 @@ function uiAmountToNumber(input: {
     }
   }
   return null;
+}
+
+function decodeProgramAccountSlice(data: [string, string] | string | null | undefined): Uint8Array | null {
+  const encoded =
+    typeof data === "string"
+      ? data
+      : Array.isArray(data) && typeof data[0] === "string"
+        ? data[0]
+        : null;
+  if (!encoded) return null;
+
+  try {
+    return Uint8Array.from(Buffer.from(encoded, "base64"));
+  } catch {
+    return null;
+  }
+}
+
+function parseSliceOwnerAddress(bytes: Uint8Array): string | null {
+  if (bytes.length < 32) return null;
+  const ownerBytes = bytes.slice(0, 32);
+  const allZero = ownerBytes.every((value) => value === 0);
+  if (allZero) return null;
+
+  const address = bs58.encode(ownerBytes);
+  return isLikelySolanaWallet(address) ? address : null;
+}
+
+function parseSliceAmount(bytes: Uint8Array): bigint | null {
+  if (bytes.length < 40) return null;
+  let amount = 0n;
+  for (let index = 0; index < 8; index += 1) {
+    amount += BigInt(bytes[32 + index] ?? 0) << (8n * BigInt(index));
+  }
+  return amount;
+}
+
+function countCurrentHolderWalletsFromProgramAccounts(accounts: RpcProgramAccountResult | null | undefined): number {
+  if (!Array.isArray(accounts) || accounts.length === 0) return 0;
+
+  const owners = new Set<string>();
+  for (const account of accounts) {
+    const bytes = decodeProgramAccountSlice(account?.account?.data);
+    if (!bytes) continue;
+    const owner = parseSliceOwnerAddress(bytes);
+    const amount = parseSliceAmount(bytes);
+    if (!owner || amount === null || amount <= 0n) continue;
+    owners.add(owner);
+  }
+
+  return owners.size;
 }
 
 function buildBundleClusters(holderPcts: number[]): BundleClusterSnapshot[] {
@@ -640,12 +700,13 @@ export async function analyzeSolanaTokenDistribution(
             { dataSize: 165 },
             { memcmp: { offset: 0, bytes: mintAddress } },
           ],
-          dataSlice: { offset: 0, length: 0 },
+          // SPL token account layout: owner at offset 32, amount at offset 64.
+          dataSlice: { offset: 32, length: 40 },
         },
       ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
       fetchBirdeyeHolderCount(mintAddress),
       getHeliusTokenMetadataForMint({ mint: mintAddress, chainType: "solana" }),
-      getHeliusTokenAccountsForMint({ mint: mintAddress, limit: 1 }),
+      getHeliusCurrentHolderOwnerCount({ mint: mintAddress }),
       getRpcMintAuthorities(mintAddress),
       getCachedMarketCapSnapshot(mintAddress, "solana"),
     ]);
@@ -909,17 +970,12 @@ export async function analyzeSolanaTokenDistribution(
     const minimumObservedHolderCount = topHoldersBase.length;
     const normalizedObservedHolderCount = minimumObservedHolderCount > 0 ? minimumObservedHolderCount : 0;
     const heliusHolderCount =
-      heliusHolderSummary?.total && heliusHolderSummary.total > 0
-        ? Math.round(heliusHolderSummary.total)
+      typeof heliusHolderSummary === "number" &&
+      Number.isFinite(heliusHolderSummary) &&
+      heliusHolderSummary > 0
+        ? Math.round(heliusHolderSummary)
         : 0;
-    const rpcHolderCount =
-      Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0
-        ? holderAccountsResult.length
-        : 0;
-    const rpcCountLooksTruncated =
-      rpcHolderCount > 0 &&
-      topHolders.length >= 20 &&
-      rpcHolderCount <= topHolders.length;
+    const rpcHolderCount = countCurrentHolderWalletsFromProgramAccounts(holderAccountsResult);
 
     const isPlausibleHolderCount = (value: number): boolean =>
       value > 0 && value >= normalizedObservedHolderCount;
@@ -927,7 +983,7 @@ export async function analyzeSolanaTokenDistribution(
     if (isPlausibleHolderCount(heliusHolderCount)) {
       holderCount = heliusHolderCount;
       holderCountSource = "helius";
-    } else if (!rpcCountLooksTruncated && isPlausibleHolderCount(rpcHolderCount)) {
+    } else if (isPlausibleHolderCount(rpcHolderCount)) {
       holderCount = rpcHolderCount;
       holderCountSource = "rpc_scan";
     } else if (
