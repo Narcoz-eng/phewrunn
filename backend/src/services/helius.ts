@@ -1145,14 +1145,28 @@ export async function getHeliusCurrentHolderOwnerCount(params: {
 
     processedAccounts += page.tokenAccounts.length;
     const nextCursor = page.cursor ?? null;
-    const reachedKnownEnd =
+    const hasKnownTotal =
       typeof page.total === "number" &&
       Number.isFinite(page.total) &&
-      page.total > 0 &&
-      processedAccounts >= page.total;
+      page.total > 0;
+    const knownTotal = hasKnownTotal ? page.total : null;
+    const reachedKnownEnd =
+      hasKnownTotal &&
+      processedAccounts >= knownTotal!;
+    const looksTruncatedWithoutCursor =
+      !nextCursor &&
+      page.tokenAccounts.length >= limit &&
+      (!hasKnownTotal || processedAccounts < knownTotal!);
 
-    if (!nextCursor || page.tokenAccounts.length === 0 || reachedKnownEnd) {
+    if (looksTruncatedWithoutCursor) {
+      return null;
+    }
+
+    if (page.tokenAccounts.length === 0 || reachedKnownEnd) {
       return uniqueOwners.size;
+    }
+    if (!nextCursor) {
+      return hasKnownTotal && processedAccounts < knownTotal! ? null : uniqueOwners.size;
     }
     if (seenCursors.has(nextCursor)) {
       return reachedKnownEnd ? uniqueOwners.size : null;

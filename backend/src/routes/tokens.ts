@@ -50,7 +50,7 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 8;
+const TOKEN_ROUTE_CACHE_VERSION = 9;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
@@ -187,6 +187,9 @@ function looksLikeLowerBoundStoredHolderCount(args: {
   }
 
   const normalizedStoredCount = Math.round(args.storedHolderCount);
+  if (normalizedStoredCount === 1000) {
+    return true;
+  }
   if (args.observedTopHolderCount >= 20) {
     return normalizedStoredCount <= args.observedTopHolderCount;
   }

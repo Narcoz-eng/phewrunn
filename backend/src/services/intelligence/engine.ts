@@ -41,7 +41,7 @@ const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
-const TOKEN_OVERVIEW_CACHE_VERSION = 2;
+const TOKEN_OVERVIEW_CACHE_VERSION = 3;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
@@ -975,6 +975,9 @@ function looksLikeLowerBoundSolanaHolderCount(args: {
   }
 
   const normalizedStoredCount = Math.round(args.storedHolderCount);
+  if (normalizedStoredCount === 1000) {
+    return true;
+  }
   if (args.observedTopHolderCount >= 20) {
     return normalizedStoredCount <= args.observedTopHolderCount;
   }

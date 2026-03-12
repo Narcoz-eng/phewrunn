@@ -290,13 +290,13 @@ function getHolderBadgeMeta(badge: TokenHolder["badges"][number]): HolderBadgeMe
       return {
         label: "Whale",
         emoji: "🐋",
-        className: "border-indigo-300/50 bg-indigo-100/80 text-indigo-800 dark:border-indigo-400/35 dark:bg-indigo-500/10 dark:text-indigo-200",
+        className: "border-indigo-400/65 bg-indigo-100 text-indigo-900 shadow-[0_12px_24px_-22px_rgba(99,102,241,0.85)] dark:border-indigo-400/45 dark:bg-indigo-500/14 dark:text-indigo-100",
       };
     case "ultra_degen":
       return {
         label: "Ultra degen",
         emoji: "🧨",
-        className: "border-orange-300/75 bg-orange-100/95 text-orange-900 shadow-[0_12px_28px_-24px_rgba(249,115,22,0.75)] dark:border-orange-400/60 dark:bg-orange-500/22 dark:text-orange-100",
+        className: "border-fuchsia-400/75 bg-[linear-gradient(135deg,rgba(244,114,182,0.18),rgba(249,115,22,0.16))] text-fuchsia-900 shadow-[0_18px_34px_-24px_rgba(217,70,239,0.85)] dark:border-fuchsia-400/65 dark:bg-[linear-gradient(135deg,rgba(217,70,239,0.22),rgba(249,115,22,0.18))] dark:text-fuchsia-100",
       };
     case "serial_deployer":
       return {
@@ -342,10 +342,12 @@ function buildHolderScanSummary(holder: TokenHolder | null | undefined): string 
     return null;
   }
 
+  const ageLabel = formatDaysMetric(holder.activeAgeDays);
+  const flowLabel = formatSolMetric(holder.tradeVolume90dSol);
   const details = [
     holder.label,
-    holder.activeAgeDays !== null ? `Seen ${formatDaysMetric(holder.activeAgeDays)}` : null,
-    holder.tradeVolume90dSol !== null ? `${formatSolMetric(holder.tradeVolume90dSol)} 90d flow` : null,
+    ageLabel ? `Age ${ageLabel}` : null,
+    flowLabel ? `${flowLabel} traded` : null,
   ].filter((value): value is string => Boolean(value));
 
   return details.length > 0 ? details.join(" | ") : null;
@@ -354,6 +356,20 @@ function buildHolderScanSummary(holder: TokenHolder | null | undefined): string 
 function formatDaysMetric(value: number | null | undefined): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
   return value < 1 ? "<1d" : `${Math.round(value)}d`;
+}
+
+function getDevRoleLabel(devRole: TokenHolder["devRole"] | null | undefined): string {
+  if (devRole === "creator") return "Creator wallet";
+  if (devRole === "mint_authority") return "Mint authority";
+  if (devRole === "freeze_authority") return "Freeze authority";
+  return "Developer wallet";
+}
+
+function getDevRoleSourceLabel(devRole: TokenHolder["devRole"] | null | undefined): string {
+  if (devRole === "creator") return "Token creator";
+  if (devRole === "mint_authority") return "Mint authority";
+  if (devRole === "freeze_authority") return "Freeze authority";
+  return "On-chain authority";
 }
 
 function formatTimelineEventLabel(eventType: string): string {
@@ -669,7 +685,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v12:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v13:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -1005,8 +1021,15 @@ export default function TokenPage() {
     typeof token.holderCount === "number" &&
     Number.isFinite(token.holderCount) &&
     token.holderCount <= 20;
+  const isStoredCappedHolderCount =
+    token?.holderCountSource === "stored" &&
+    typeof token.holderCount === "number" &&
+    Number.isFinite(token.holderCount) &&
+    token.holderCount === 1000;
   const isHolderCountLowerBound =
-    token?.holderCountSource === "largest_accounts" || isStoredLowerBoundHolderCount;
+    token?.holderCountSource === "largest_accounts" ||
+    isStoredLowerBoundHolderCount ||
+    isStoredCappedHolderCount;
   const hasVerifiedHolderCount = hasResolvedHolderCount(token?.holderCount, token?.holderCountSource);
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
@@ -1022,30 +1045,22 @@ export default function TokenPage() {
       : holderCountValue;
   const holderMetricTitle = "Total holders";
   const holderMetricBadge = hasVerifiedHolderCount
-    ? token?.holderCountSource === "helius"
-      ? "Helius"
-      : token?.holderCountSource === "birdeye"
-        ? "Birdeye"
-        : token?.holderCountSource === "rpc_scan"
-          ? "RPC verified"
-          : "Live count"
+    ? "Verified"
     : isHolderCountLowerBound
       ? hasLiveHolderDistribution
         ? "Top 10 ready"
         : "Scanning"
       : "Refreshing";
   const holderMetricCopy = hasVerifiedHolderCount
-    ? "Verified holder total from the latest live telemetry."
+    ? "Verified holder total from the latest live chain scan."
     : isHolderCountLowerBound
       ? hasLiveHolderDistribution
         ? "Largest wallets are loaded now. Full holder count is still resolving."
         : "Fetching the full holder count for this token."
-      : "Refreshing holder telemetry from the live route.";
+      : "Refreshing holder count from the live route.";
   const topHolderSectionCopy = hasVerifiedHolderCount
-    ? token?.holderCountSource === "helius"
-      ? "Helius holder count with RPC wallet ownership, dev roles, and swap activity badges."
-      : "RPC top wallets with live circulating supply share."
-    : "Top wallets are ready first. Full holder count follows after the RPC or Helius scan finishes.";
+    ? "Top wallets, developer wallet, and role tags from the current chain scan."
+    : "Top wallets are ready first. Full holder count follows after the chain scan finishes.";
   const recentCallsEmptyCopy =
     recentCallsQuery.isLoading || recentCallsQuery.isFetching
       ? "Recent token calls are still loading for this address."
@@ -1528,14 +1543,10 @@ export default function TokenPage() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                            Dev wallet intelligence
+                            Developer wallet
                           </div>
                           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
-                            {devWallet.devRole === "creator"
-                              ? "Creator wallet"
-                              : devWallet.devRole === "mint_authority"
-                                ? "Mint authority"
-                                : "Freeze authority"}
+                            {getDevRoleLabel(devWallet.devRole)}
                           </div>
                           <div className="mt-2 font-mono text-sm font-semibold text-foreground">
                             {formatHolderAddress(devWallet.address)}
@@ -1551,11 +1562,7 @@ export default function TokenPage() {
                                 {formatHolderBadge(getPrimaryHolderBadge(devWallet)!)}
                               </span>
                             </div>
-                          ) : (
-                            <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                              Primary role resolving
-                            </div>
-                          )}
+                          ) : null}
                           {buildHolderScanSummary(devWallet) ? (
                             <div className="mt-1 text-xs text-muted-foreground">
                               {buildHolderScanSummary(devWallet)}
@@ -1582,21 +1589,17 @@ export default function TokenPage() {
                                 {formatHolderBadge(badge)}
                               </span>
                             ))
-                          : (
-                              <span className="rounded-full border border-border/60 bg-white/75 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground dark:bg-white/[0.05]">
-                                Role resolving
-                              </span>
-                            )}
+                          : null}
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Authority source <span className="ml-1 font-semibold text-foreground">{devWallet.label ?? "On-chain authority"}</span>
+                          Authority source <span className="ml-1 font-semibold text-foreground">{getDevRoleSourceLabel(devWallet.devRole)}</span>
                         </div>
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
                           Observed age <span className="ml-1 font-semibold text-foreground">{formatDaysMetric(devWallet.activeAgeDays) ?? "N/A"}</span>
                         </div>
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          90d volume <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.tradeVolume90dSol) ?? "N/A"}</span>
+                          Trade flow <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.tradeVolume90dSol) ?? "N/A"}</span>
                         </div>
                         <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
                           SOL balance <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.solBalance) ?? "N/A"}</span>
@@ -1609,13 +1612,13 @@ export default function TokenPage() {
                   ) : (
                     <div className="mb-3 rounded-[20px] border border-dashed border-border/60 bg-white/45 p-4 dark:bg-white/[0.03]">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Dev wallet intelligence
+                        Developer wallet
                       </div>
                       <div className="mt-2 text-sm font-semibold text-foreground">
-                        Dev wallet still resolving
+                        Developer wallet not detected yet
                       </div>
                       <div className="mt-1 text-sm text-muted-foreground">
-                        Scanning creator, update authority, mint authority, and freeze authority from Solana RPC and Helius.
+                        The current on-chain authority scan has not mapped a creator, mint authority, or freeze authority wallet for this token yet.
                       </div>
                     </div>
                   )}
@@ -1647,9 +1650,7 @@ export default function TokenPage() {
                                     </span>
                                   </div>
                                 ) : (
-                                  <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                                    Role resolving
-                                  </div>
+                                  null
                                 )}
                                 {buildHolderScanSummary(holder) ? (
                                   <div className="mt-1 text-[11px] text-muted-foreground">
@@ -1675,11 +1676,7 @@ export default function TokenPage() {
                                         {formatHolderBadge(badge)}
                                       </span>
                                     ))
-                                  ) : (
-                                    <span className="rounded-full border border-border/60 bg-white/80 px-2 py-0.5 text-[10px] uppercase tracking-[0.11em] text-muted-foreground dark:bg-white/[0.05]">
-                                      Role resolving
-                                    </span>
-                                  )}
+                                  ) : null}
                                 </div>
                                 <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                                   {holder.activeAgeDays !== null ? <span>Age {formatDaysMetric(holder.activeAgeDays)}</span> : null}
@@ -1707,7 +1704,7 @@ export default function TokenPage() {
                       ))
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        Scanning RPC holder wallets and dev-wallet intelligence for this token.
+                        Scanning holder wallets and developer-wallet intelligence for this token.
                       </p>
                     )}
                   </div>

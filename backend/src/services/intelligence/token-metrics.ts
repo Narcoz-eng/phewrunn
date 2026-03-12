@@ -139,19 +139,19 @@ const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
 const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
-const FRESH_WALLET_DAYS_THRESHOLD = 30;
-const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 60;
+const FRESH_WALLET_DAYS_THRESHOLD = 5;
+const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 5;
 const LOW_HISTORY_MINT_THRESHOLD = 2;
 const LOW_HISTORY_TX_THRESHOLD = 12;
-const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 120;
-const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 40;
+const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 180;
+const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 75;
 const HIGH_ACTIVITY_MINTS_THRESHOLD = 6;
 const HIGH_ACTIVITY_TX_THRESHOLD = 18;
-const WHALE_BALANCE_SOL_THRESHOLD = 250;
-const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 180;
-const WHALE_BALANCE_USD_THRESHOLD = 50_000;
-const SOFT_WHALE_BALANCE_USD_THRESHOLD = 35_000;
-const ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 50_000;
+const WHALE_BALANCE_SOL_THRESHOLD = 200;
+const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 160;
+const WHALE_BALANCE_USD_THRESHOLD = 35_000;
+const SOFT_WHALE_BALANCE_USD_THRESHOLD = 28_000;
+const ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 35_000;
 const SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 25_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
@@ -464,6 +464,15 @@ function buildHolderBadges(params: {
   ruggedDeploymentCount: number;
 }): TokenHolderBadge[] {
   const badges: TokenHolderBadge[] = [];
+  const observedTradingDays =
+    params.activeAgeDays !== null && Number.isFinite(params.activeAgeDays)
+      ? Math.max(1, Math.min(params.activeAgeDays, 90))
+      : 90;
+  const avgDailyTradeSol =
+    params.tradeVolume90dSol !== null && Number.isFinite(params.tradeVolume90dSol)
+      ? params.tradeVolume90dSol / observedTradingDays
+      : null;
+
   if (params.devRole) badges.push("dev_wallet");
   if (
     params.authorityAssetCount !== null &&
@@ -491,7 +500,16 @@ function buildHolderBadges(params: {
     badges.push("whale");
   }
   if (
-    params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD
+    (
+      params.tradeVolume90dSol !== null &&
+      params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD
+    ) ||
+    (
+      avgDailyTradeSol !== null &&
+      avgDailyTradeSol >= 2 &&
+      params.tradeVolume90dSol !== null &&
+      params.tradeVolume90dSol >= 30
+    )
   ) {
     badges.push("high_volume_trader");
   }
@@ -513,7 +531,16 @@ function buildHolderBadges(params: {
     ) {
       badges.push("whale");
     } else if (
-      (params.tradeVolume90dSol !== null && params.tradeVolume90dSol >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD) ||
+      (
+        params.tradeVolume90dSol !== null &&
+        params.tradeVolume90dSol >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD
+      ) ||
+      (
+        avgDailyTradeSol !== null &&
+        avgDailyTradeSol >= 1.1 &&
+        params.tradeVolume90dSol !== null &&
+        params.tradeVolume90dSol >= 15
+      ) ||
       params.distinctMintsTraded >= HIGH_ACTIVITY_MINTS_THRESHOLD ||
       params.observedTxCount >= HIGH_ACTIVITY_TX_THRESHOLD
     ) {
@@ -531,8 +558,6 @@ function buildHolderBadges(params: {
       params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
     ) {
       badges.push("fresh_wallet");
-    } else {
-      badges.push("high_volume_trader");
     }
   }
 
@@ -980,12 +1005,12 @@ export async function analyzeSolanaTokenDistribution(
     const isPlausibleHolderCount = (value: number): boolean =>
       value > 0 && value >= normalizedObservedHolderCount;
 
-    if (isPlausibleHolderCount(heliusHolderCount)) {
-      holderCount = heliusHolderCount;
-      holderCountSource = "helius";
-    } else if (isPlausibleHolderCount(rpcHolderCount)) {
+    if (isPlausibleHolderCount(rpcHolderCount)) {
       holderCount = rpcHolderCount;
       holderCountSource = "rpc_scan";
+    } else if (isPlausibleHolderCount(heliusHolderCount)) {
+      holderCount = heliusHolderCount;
+      holderCountSource = "helius";
     } else if (
       typeof birdeyeHolderCount === "number" &&
       Number.isFinite(birdeyeHolderCount) &&
