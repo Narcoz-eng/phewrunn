@@ -1,3 +1,4 @@
+import { getCachedMarketCapSnapshot } from "../marketcap.js";
 import { computeTokenRiskScore, determineBundleRiskLabel } from "./scoring.js";
 
 export type DexTokenStats = {
@@ -47,53 +48,6 @@ export type TokenDistributionSnapshot = {
   clusters: BundleClusterSnapshot[];
 };
 
-type DexTokenRef = {
-  address?: string;
-  name?: string;
-  symbol?: string;
-  icon?: string;
-  logoURI?: string;
-};
-
-type DexPair = {
-  chainId?: string;
-  dexId?: string;
-  url?: string;
-  pairAddress?: string;
-  baseToken?: DexTokenRef;
-  quoteToken?: DexTokenRef;
-  priceUsd?: string | number;
-  fdv?: string | number;
-  marketCap?: string | number;
-  liquidity?: {
-    usd?: string | number;
-  };
-  volume?: {
-    h24?: string | number;
-  };
-  priceChange?: {
-    h24?: string | number;
-  };
-  txns?: {
-    h24?: {
-      buys?: string | number;
-      sells?: string | number;
-    };
-  };
-  info?: {
-    imageUrl?: string;
-    header?: string;
-    openGraph?: string;
-  };
-};
-
-type DexPayload =
-  | DexPair[]
-  | {
-      pairs?: DexPair[] | null;
-    }
-  | null;
-
 type RpcTokenSupplyResult = {
   value?: {
     amount?: string;
@@ -117,6 +71,7 @@ const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_500 : 4_000;
+const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
   process.env.HELIUS_RPC_ENDPOINT?.trim() || null,
@@ -127,137 +82,60 @@ const SOLANA_RPC_URLS = [
   value.length > 0 &&
   collection.indexOf(value) === index
 );
+const tokenDistributionCache = new Map<
+  string,
+  { value: TokenDistributionSnapshot | null; expiresAtMs: number }
+>();
+const tokenDistributionInFlight = new Map<string, Promise<TokenDistributionSnapshot | null>>();
 
-function normalizeDexAddress(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
-}
+function cloneDistributionSnapshot(
+  snapshot: TokenDistributionSnapshot | null
+): TokenDistributionSnapshot | null {
+  if (!snapshot) return null;
 
-function normalizeDexChain(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized === "eth" || normalized === "evm") return "ethereum";
-  if (normalized === "sol") return "solana";
-  return normalized;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function pickDexTokenFromPair(pair: DexPair | null, address: string): DexTokenRef | null {
-  if (!pair) return null;
-  const normalizedAddress = normalizeDexAddress(address);
-  if (normalizedAddress && normalizeDexAddress(pair.baseToken?.address) === normalizedAddress) {
-    return pair.baseToken ?? null;
-  }
-  if (normalizedAddress && normalizeDexAddress(pair.quoteToken?.address) === normalizedAddress) {
-    return pair.quoteToken ?? null;
-  }
-  return pair.baseToken ?? pair.quoteToken ?? null;
-}
-
-function pickDexPair(payload: DexPayload, address: string, chainType: string | null): DexPair | null {
-  const pairs = Array.isArray(payload) ? payload : (payload?.pairs ?? []);
-  if (!pairs.length) return null;
-
-  const normalizedAddress = normalizeDexAddress(address);
-  const expectedChain = normalizeDexChain(chainType);
-
-  const ranked = [...pairs].sort((left, right) => {
-    const scorePair = (pair: DexPair): number => {
-      let score = 0;
-      const baseMatch = normalizeDexAddress(pair.baseToken?.address) === normalizedAddress;
-      const quoteMatch = normalizeDexAddress(pair.quoteToken?.address) === normalizedAddress;
-      const chainMatch = expectedChain !== null && normalizeDexChain(pair.chainId) === expectedChain;
-      if (baseMatch && chainMatch) score += 120;
-      else if (quoteMatch && chainMatch) score += 100;
-      else if (baseMatch) score += 75;
-      else if (quoteMatch) score += 55;
-      if (chainMatch) score += 20;
-      if (pair.url?.trim()) score += 5;
-      return score;
-    };
-
-    const scoreDelta = scorePair(right) - scorePair(left);
-    if (scoreDelta !== 0) return scoreDelta;
-    return (toFiniteNumber(right.liquidity?.usd) ?? 0) - (toFiniteNumber(left.liquidity?.usd) ?? 0);
-  });
-
-  return ranked[0] ?? null;
-}
-
-function pickDexImageUrl(pair: DexPair | null, token: DexTokenRef | null): string | null {
-  const candidates = [
-    token?.icon,
-    token?.logoURI,
-    pair?.info?.imageUrl,
-    pair?.info?.header,
-    pair?.info?.openGraph,
-  ];
-
-  for (const candidate of candidates) {
-    const trimmed = candidate?.trim();
-    if (trimmed) return trimmed;
-  }
-
-  return null;
+  return {
+    ...snapshot,
+    topHolders: snapshot.topHolders.map((holder) => ({ ...holder })),
+    clusters: snapshot.clusters.map((cluster) => ({
+      ...cluster,
+      evidenceJson: {
+        bucket: cluster.evidenceJson.bucket,
+        holderPcts: [...cluster.evidenceJson.holderPcts],
+      },
+    })),
+  };
 }
 
 export async function fetchDexTokenStats(
   address: string,
   chainType: string | null
 ): Promise<DexTokenStats | null> {
-  const chain = chainType === "solana" ? "solana" : "ethereum";
-  const endpoints = [
-    `https://api.dexscreener.com/tokens/v1/${chain}/${address}`,
-    `https://api.dexscreener.com/latest/dex/tokens/${address}`,
-  ];
-
-  for (const endpoint of endpoints) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4_500);
-    try {
-      const response = await fetch(endpoint, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-      if (!response.ok) continue;
-      const payload = (await response.json()) as DexPayload;
-      const pair = pickDexPair(payload, address, chainType);
-      if (!pair) continue;
-      const token = pickDexTokenFromPair(pair, address);
-
-      return {
-        symbol: token?.symbol?.trim() || pair.baseToken?.symbol?.trim() || null,
-        name: token?.name?.trim() || pair.baseToken?.name?.trim() || null,
-        imageUrl: pickDexImageUrl(pair, token),
-        dexscreenerUrl: pair.url?.trim() || null,
-        pairAddress: pair.pairAddress?.trim() || null,
-        dexId: pair.dexId?.trim() || null,
-        priceUsd: toFiniteNumber(pair.priceUsd),
-        marketCap: toFiniteNumber(pair.marketCap) ?? toFiniteNumber(pair.fdv),
-        liquidityUsd: toFiniteNumber(pair.liquidity?.usd),
-        volume24hUsd: toFiniteNumber(pair.volume?.h24),
-        priceChange24hPct: toFiniteNumber(pair.priceChange?.h24),
-        buys24h: toFiniteNumber(pair.txns?.h24?.buys),
-        sells24h: toFiniteNumber(pair.txns?.h24?.sells),
-      };
-    } catch {
-      continue;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+  const snapshot = await getCachedMarketCapSnapshot(address, chainType);
+  if (
+    snapshot.mcap === null &&
+    !snapshot.tokenName &&
+    !snapshot.tokenSymbol &&
+    !snapshot.tokenImage &&
+    !snapshot.dexscreenerUrl
+  ) {
+    return null;
   }
 
-  return null;
+  return {
+    symbol: snapshot.tokenSymbol ?? null,
+    name: snapshot.tokenName ?? null,
+    imageUrl: snapshot.tokenImage ?? null,
+    dexscreenerUrl: snapshot.dexscreenerUrl ?? null,
+    pairAddress: snapshot.pairAddress ?? null,
+    dexId: snapshot.dexId ?? null,
+    priceUsd: snapshot.priceUsd ?? null,
+    marketCap: snapshot.mcap,
+    liquidityUsd: snapshot.liquidityUsd ?? null,
+    volume24hUsd: snapshot.volume24hUsd ?? null,
+    priceChange24hPct: snapshot.priceChange24hPct ?? null,
+    buys24h: snapshot.buys24h ?? null,
+    sells24h: snapshot.sells24h ?? null,
+  };
 }
 
 async function rpcCall<T>(
@@ -421,107 +299,138 @@ export async function analyzeSolanaTokenDistribution(
   mintAddress: string,
   fallbackLiquidityUsd?: number | null
 ): Promise<TokenDistributionSnapshot | null> {
-  const [supplyResult, largestAccountsResult, holderAccountsResult, birdeyeHolderCount] = await Promise.all([
-    rpcCall<RpcTokenSupplyResult>("getTokenSupply", [mintAddress]),
-    rpcCall<RpcLargestAccountsResult>("getTokenLargestAccounts", [mintAddress]),
-    rpcCall<RpcProgramAccountResult>("getProgramAccounts", [
-      SOLANA_TOKEN_PROGRAM_ID,
-      {
-        encoding: "base64",
-        filters: [
-          { dataSize: 165 },
-          { memcmp: { offset: 0, bytes: mintAddress } },
-        ],
-        dataSlice: { offset: 0, length: 0 },
-      },
-    ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
-    fetchBirdeyeHolderCount(mintAddress),
-  ]);
-
-  const totalSupply = uiAmountToNumber({
-    amount: supplyResult?.value?.amount ?? null,
-    decimals: supplyResult?.value?.decimals ?? null,
-  });
-
-  const largestAccounts = largestAccountsResult?.value ?? [];
-  const topHolders: TokenHolderSnapshot[] =
-    totalSupply && totalSupply > 0
-      ? largestAccounts
-          .map((holder): TokenHolderSnapshot | null => {
-            const address = typeof holder.address === "string" ? holder.address.trim() : "";
-            const uiAmount = uiAmountToNumber(holder);
-            if (!address || uiAmount === null || uiAmount <= 0) return null;
-            return {
-              address,
-              amount: uiAmount,
-              supplyPct: Math.round(((uiAmount / totalSupply) * 100) * 100) / 100,
-            };
-          })
-          .filter((holder): holder is TokenHolderSnapshot => holder !== null)
-      : [];
-  const holderPcts = topHolders.map((holder) => holder.supplyPct);
-
-  const largestHolderPct =
-    holderPcts.length > 0 ? Math.round(holderPcts[0]! * 100) / 100 : null;
-  const top10HolderPct =
-    holderPcts.length > 0
-      ? Math.round(holderPcts.slice(0, 10).reduce((sum, pct) => sum + pct, 0) * 100) / 100
-      : null;
-
-  const suspiciousHolderPcts = holderPcts.filter((pct, index) => {
-    if (index === 0 && fallbackLiquidityUsd && fallbackLiquidityUsd > 0 && pct > 12) {
-      return false;
-    }
-    return pct >= 1.5;
-  });
-
-  const clusters = buildBundleClusters(suspiciousHolderPcts);
-  const estimatedBundledSupplyPct = Math.round(
-    clusters.reduce((sum, cluster) => sum + cluster.estimatedSupplyPct, 0) * 100
-  ) / 100;
-
-  const tokenRiskScore = computeTokenRiskScore({
-    estimatedBundledSupplyPct,
-    bundledClusterCount: clusters.length,
-    largestHolderPct,
-    top10HolderPct,
-    deployerSupplyPct: largestHolderPct,
-  });
-
-  let holderCount: number | null = null;
-  let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
-  const rpcHolderCount =
-    Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0
-      ? holderAccountsResult.length
-      : 0;
-  const rpcCountLooksTruncated =
-    rpcHolderCount > 0 &&
-    topHolders.length >= 20 &&
-    rpcHolderCount <= topHolders.length;
-
-  if (!rpcCountLooksTruncated && rpcHolderCount > 0) {
-    holderCount = rpcHolderCount;
-    holderCountSource = "rpc_scan";
-  } else if (typeof birdeyeHolderCount === "number" && Number.isFinite(birdeyeHolderCount) && birdeyeHolderCount > 0) {
-    holderCount = Math.round(birdeyeHolderCount);
-    holderCountSource = "birdeye";
-  } else if (topHolders.length > 0) {
-    holderCount = topHolders.length;
-    holderCountSource = "largest_accounts";
+  const cacheKey = mintAddress.trim();
+  const now = Date.now();
+  const cached = tokenDistributionCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    return cloneDistributionSnapshot(cached.value);
   }
 
-  return {
-    holderCount,
-    holderCountSource,
-    largestHolderPct,
-    top10HolderPct,
-    topHolders,
-    deployerSupplyPct: largestHolderPct,
-    bundledWalletCount: suspiciousHolderPcts.length,
-    bundledClusterCount: clusters.length,
-    estimatedBundledSupplyPct,
-    tokenRiskScore,
-    bundleRiskLabel: determineBundleRiskLabel(tokenRiskScore),
-    clusters,
-  };
+  const inFlight = tokenDistributionInFlight.get(cacheKey);
+  if (inFlight) {
+    return cloneDistributionSnapshot(await inFlight);
+  }
+
+  const request = (async (): Promise<TokenDistributionSnapshot | null> => {
+    const [supplyResult, largestAccountsResult, holderAccountsResult, birdeyeHolderCount] = await Promise.all([
+      rpcCall<RpcTokenSupplyResult>("getTokenSupply", [mintAddress]),
+      rpcCall<RpcLargestAccountsResult>("getTokenLargestAccounts", [mintAddress]),
+      rpcCall<RpcProgramAccountResult>("getProgramAccounts", [
+        SOLANA_TOKEN_PROGRAM_ID,
+        {
+          encoding: "base64",
+          filters: [
+            { dataSize: 165 },
+            { memcmp: { offset: 0, bytes: mintAddress } },
+          ],
+          dataSlice: { offset: 0, length: 0 },
+        },
+      ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
+      fetchBirdeyeHolderCount(mintAddress),
+    ]);
+
+    const totalSupply = uiAmountToNumber({
+      amount: supplyResult?.value?.amount ?? null,
+      decimals: supplyResult?.value?.decimals ?? null,
+    });
+
+    const largestAccounts = largestAccountsResult?.value ?? [];
+    const topHolders: TokenHolderSnapshot[] =
+      totalSupply && totalSupply > 0
+        ? largestAccounts
+            .map((holder): TokenHolderSnapshot | null => {
+              const address = typeof holder.address === "string" ? holder.address.trim() : "";
+              const uiAmount = uiAmountToNumber(holder);
+              if (!address || uiAmount === null || uiAmount <= 0) return null;
+              return {
+                address,
+                amount: uiAmount,
+                supplyPct: Math.round(((uiAmount / totalSupply) * 100) * 100) / 100,
+              };
+            })
+            .filter((holder): holder is TokenHolderSnapshot => holder !== null)
+        : [];
+    const holderPcts = topHolders.map((holder) => holder.supplyPct);
+
+    const largestHolderPct =
+      holderPcts.length > 0 ? Math.round(holderPcts[0]! * 100) / 100 : null;
+    const top10HolderPct =
+      holderPcts.length > 0
+        ? Math.round(holderPcts.slice(0, 10).reduce((sum, pct) => sum + pct, 0) * 100) / 100
+        : null;
+
+    const suspiciousHolderPcts = holderPcts.filter((pct, index) => {
+      if (index === 0 && fallbackLiquidityUsd && fallbackLiquidityUsd > 0 && pct > 12) {
+        return false;
+      }
+      return pct >= 1.5;
+    });
+
+    const clusters = buildBundleClusters(suspiciousHolderPcts);
+    const estimatedBundledSupplyPct = Math.round(
+      clusters.reduce((sum, cluster) => sum + cluster.estimatedSupplyPct, 0) * 100
+    ) / 100;
+
+    const tokenRiskScore = computeTokenRiskScore({
+      estimatedBundledSupplyPct,
+      bundledClusterCount: clusters.length,
+      largestHolderPct,
+      top10HolderPct,
+      deployerSupplyPct: largestHolderPct,
+    });
+
+    let holderCount: number | null = null;
+    let holderCountSource: TokenDistributionSnapshot["holderCountSource"] = null;
+    const rpcHolderCount =
+      Array.isArray(holderAccountsResult) && holderAccountsResult.length > 0
+        ? holderAccountsResult.length
+        : 0;
+    const rpcCountLooksTruncated =
+      rpcHolderCount > 0 &&
+      topHolders.length >= 20 &&
+      rpcHolderCount <= topHolders.length;
+
+    if (!rpcCountLooksTruncated && rpcHolderCount > 0) {
+      holderCount = rpcHolderCount;
+      holderCountSource = "rpc_scan";
+    } else if (
+      typeof birdeyeHolderCount === "number" &&
+      Number.isFinite(birdeyeHolderCount) &&
+      birdeyeHolderCount > 0
+    ) {
+      holderCount = Math.round(birdeyeHolderCount);
+      holderCountSource = "birdeye";
+    } else if (topHolders.length > 0) {
+      holderCount = topHolders.length;
+      holderCountSource = "largest_accounts";
+    }
+
+    return {
+      holderCount,
+      holderCountSource,
+      largestHolderPct,
+      top10HolderPct,
+      topHolders,
+      deployerSupplyPct: largestHolderPct,
+      bundledWalletCount: suspiciousHolderPcts.length,
+      bundledClusterCount: clusters.length,
+      estimatedBundledSupplyPct,
+      tokenRiskScore,
+      bundleRiskLabel: determineBundleRiskLabel(tokenRiskScore),
+      clusters,
+    };
+  })()
+    .then((snapshot) => {
+      tokenDistributionCache.set(cacheKey, {
+        value: cloneDistributionSnapshot(snapshot),
+        expiresAtMs: Date.now() + TOKEN_DISTRIBUTION_CACHE_TTL_MS,
+      });
+      return snapshot;
+    })
+    .finally(() => {
+      tokenDistributionInFlight.delete(cacheKey);
+    });
+
+  tokenDistributionInFlight.set(cacheKey, request);
+  return cloneDistributionSnapshot(await request);
 }

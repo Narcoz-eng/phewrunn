@@ -25,7 +25,8 @@ import {
   SETTLEMENT_6H_MS,
 } from "../types.js";
 import {
-  fetchMarketCap as fetchMarketCapService,
+  getCachedMarketCapSnapshot,
+  clearMarketCapSnapshotCache,
   needsMcapUpdate,
   determineTrackingMode,
   isReadyFor1HSettlement,
@@ -226,7 +227,6 @@ const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 1
 const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 25 : 15;
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
-const FEED_MCAP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15_000 : 5_000;
 const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 9_000 : 3_000;
 const FEED_RESPONSE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
@@ -305,8 +305,6 @@ const FOLLOWER_BIG_GAIN_ALERT_THRESHOLD_PCT = 50;
 const FEED_HELIUS_ENRICH_MAX_POSTS_PER_REQUEST = process.env.NODE_ENV === "production" ? 6 : 3;
 const SHARED_ALPHA_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
-const feedMcapCache = new Map<string, { result: MarketCapResult; expiresAtMs: number }>();
-const feedMcapInFlight = new Map<string, Promise<MarketCapResult>>();
 const sharedAlphaAuthorCache = new Map<string, { authorIds: Set<string>; expiresAtMs: number }>();
 const sharedAlphaWarmInFlight = new Map<string, Promise<void>>();
 const sharedAlphaResponseCache = new Map<
@@ -1868,7 +1866,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
 export function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedResponseCache.clear();
   feedSharedResponseCache.clear();
-  feedMcapCache.clear();
+  clearMarketCapSnapshotCache();
   sharedAlphaAuthorCache.clear();
   sharedAlphaWarmInFlight.clear();
   sharedAlphaResponseCache.clear();
@@ -2501,7 +2499,7 @@ async function resolveCreatePostMarketContext(params: {
 
   const [marketCapResult, heliusTokenMetadata] = await Promise.all([
     withTimeoutFallback(
-      fetchMarketCapService(params.address, params.chainType).catch((error) => {
+      getCachedMarketCapSnapshot(params.address, params.chainType).catch((error) => {
         console.warn("[posts/create] market cap lookup failed; continuing without market context", {
           message: getErrorMessage(error),
         });
@@ -3132,7 +3130,7 @@ async function fetchMarketCap(
   address: string,
   chainType?: string | null
 ): Promise<number | null> {
-  const result = await fetchMarketCapService(address, chainType);
+  const result = await getCachedMarketCapSnapshot(address, chainType);
   return result.mcap;
 }
 
@@ -3140,32 +3138,7 @@ async function getFeedMarketCapSnapshot(
   address: string,
   chainType?: string | null
 ): Promise<MarketCapResult> {
-  const cacheKey = `${chainType ?? "unknown"}:${address}`;
-  const now = Date.now();
-  const cached = feedMcapCache.get(cacheKey);
-  if (cached && cached.expiresAtMs > now) {
-    return cached.result;
-  }
-
-  const existingInFlight = feedMcapInFlight.get(cacheKey);
-  if (existingInFlight) {
-    return existingInFlight;
-  }
-
-  const request = fetchMarketCapService(address, chainType)
-    .then((result) => {
-      feedMcapCache.set(cacheKey, {
-        result,
-        expiresAtMs: Date.now() + FEED_MCAP_CACHE_TTL_MS,
-      });
-      return result;
-    })
-    .finally(() => {
-      feedMcapInFlight.delete(cacheKey);
-    });
-
-  feedMcapInFlight.set(cacheKey, request);
-  return request;
+  return getCachedMarketCapSnapshot(address, chainType);
 }
 
 async function notifyFollowersOfBigGain(params: {

@@ -161,6 +161,34 @@ type TokenPageData = {
   recentCalls: Post[];
 };
 
+type TokenLiveData = {
+  marketCap: number | null;
+  liquidity: number | null;
+  volume24h: number | null;
+  holderCount: number | null;
+  holderCountSource?: "stored" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  largestHolderPct: number | null;
+  top10HolderPct: number | null;
+  deployerSupplyPct: number | null;
+  bundledWalletCount: number | null;
+  estimatedBundledSupplyPct: number | null;
+  bundleRiskLabel: string | null;
+  tokenRiskScore: number | null;
+  topHolders: TokenHolder[];
+  bundleClusters: TokenBundleCluster[];
+  dexscreenerUrl: string | null;
+  pairAddress: string | null;
+  dexId: string | null;
+  imageUrl: string | null;
+  symbol: string | null;
+  name: string | null;
+  priceUsd: number | null;
+  priceChange24hPct: number | null;
+  buys24h: number | null;
+  sells24h: number | null;
+  updatedAt: string;
+};
+
 function formatPct(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
   return `${value.toFixed(1)}%`;
@@ -341,6 +369,85 @@ function mergeTokenPageDataWithCached(
   };
 }
 
+function mergeTokenPageDataWithLiveSnapshot(
+  current: TokenPageData,
+  live: TokenLiveData
+): TokenPageData {
+  const isSolana = current.chainType === "solana";
+  const holderCount = isSolana
+    ? live.holderCount ?? null
+    : pickMergedMetric(live.holderCount, current.holderCount, { positive: true });
+  const holderCountSource = isSolana
+    ? live.holderCountSource ?? null
+    : live.holderCountSource ?? current.holderCountSource;
+  const largestHolderPct = isSolana
+    ? live.largestHolderPct ?? null
+    : pickMergedMetric(live.largestHolderPct, current.largestHolderPct);
+  const top10HolderPct = isSolana
+    ? live.top10HolderPct ?? null
+    : pickMergedMetric(live.top10HolderPct, current.top10HolderPct);
+  const deployerSupplyPct = isSolana
+    ? live.deployerSupplyPct ?? null
+    : pickMergedMetric(live.deployerSupplyPct, current.deployerSupplyPct);
+  const bundledWalletCount = isSolana
+    ? live.bundledWalletCount ?? null
+    : pickMergedMetric(live.bundledWalletCount, current.bundledWalletCount, { positive: true });
+  const estimatedBundledSupplyPct = isSolana
+    ? live.estimatedBundledSupplyPct ?? null
+    : pickMergedMetric(live.estimatedBundledSupplyPct, current.estimatedBundledSupplyPct);
+  const tokenRiskScore = isSolana
+    ? live.tokenRiskScore ?? null
+    : pickMergedMetric(live.tokenRiskScore, current.tokenRiskScore);
+  const bundleRiskLabel = isSolana
+    ? live.bundleRiskLabel ?? null
+    : live.bundleRiskLabel ?? current.bundleRiskLabel;
+  const topHolders = isSolana
+    ? live.topHolders
+    : live.topHolders.length > 0
+      ? live.topHolders
+      : current.topHolders;
+  const bundleClusters = isSolana
+    ? live.bundleClusters
+    : live.bundleClusters.length > 0
+      ? live.bundleClusters
+      : current.bundleClusters;
+
+  return {
+    ...current,
+    symbol: live.symbol ?? current.symbol,
+    name: live.name ?? current.name,
+    imageUrl: live.imageUrl ?? current.imageUrl,
+    dexscreenerUrl: live.dexscreenerUrl ?? current.dexscreenerUrl,
+    pairAddress: live.pairAddress ?? current.pairAddress,
+    marketCap: pickMergedMetric(live.marketCap, current.marketCap, { positive: true }),
+    liquidity: pickMergedMetric(live.liquidity, current.liquidity, { positive: true }),
+    volume24h: pickMergedMetric(live.volume24h, current.volume24h, { positive: true }),
+    holderCount,
+    holderCountSource,
+    largestHolderPct,
+    top10HolderPct,
+    deployerSupplyPct,
+    bundledWalletCount,
+    estimatedBundledSupplyPct,
+    bundleRiskLabel,
+    tokenRiskScore,
+    topHolders,
+    bundleClusters,
+    risk: {
+      ...current.risk,
+      tokenRiskScore,
+      bundleRiskLabel,
+      largestHolderPct,
+      top10HolderPct,
+      bundledWalletCount,
+      estimatedBundledSupplyPct,
+      deployerSupplyPct,
+      holderCount,
+      topHolders,
+    },
+  };
+}
+
 function scoreTone(value: number | null | undefined): string {
   const score = typeof value === "number" && Number.isFinite(value) ? value : 0;
   if (score >= 75) return "text-gain";
@@ -400,6 +507,44 @@ export default function TokenPage() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+
+  const liveTokenQuery = useQuery<TokenLiveData>({
+    queryKey: ["token-live", tokenAddress],
+    enabled: Boolean(tokenAddress && token?.id),
+    staleTime: 4_000,
+    gcTime: 5 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    refetchInterval: 10_000,
+    queryFn: async () => {
+      if (!tokenAddress) throw new Error("Token address is required");
+      const response = await api.raw(`/api/tokens/${tokenAddress}/live`, {
+        method: "GET",
+        cache: "no-store",
+        timeout: 15_000,
+      });
+
+      if (!response.ok) {
+        const payload = await response.text().catch(() => "");
+        throw new Error(payload || `Live token request failed (${response.status})`);
+      }
+
+      const payload = (await response.json().catch(() => null)) as { data?: TokenLiveData } | null;
+      if (!payload?.data) {
+        throw new Error("Live token payload missing");
+      }
+
+      return payload.data;
+    },
+  });
+
+  useEffect(() => {
+    if (!liveTokenQuery.data) return;
+    queryClient.setQueryData<TokenPageData | undefined>(tokenQueryKey, (current) =>
+      current ? mergeTokenPageDataWithLiveSnapshot(current, liveTokenQuery.data) : current
+    );
+  }, [liveTokenQuery.data, queryClient, tokenQueryKey]);
 
   useEffect(() => {
     if (!tokenCacheKey || !isTokenPageDataCacheable(token)) return;
@@ -537,6 +682,7 @@ export default function TokenPage() {
       token?.recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
     [token?.recentCalls]
   );
+  const isRefreshingLive = isFetching || liveTokenQuery.isFetching;
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
     (point) =>
@@ -637,7 +783,7 @@ export default function TokenPage() {
     : (token?.risk.topHolders ?? []);
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
-        emptyLabel: isFetching ? "Scanning" : "Unavailable",
+        emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
       })
     : "Scanning";
   const holderCountLabel =
@@ -800,7 +946,7 @@ export default function TokenPage() {
                       Open Dexscreener
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
-                    {isFetching ? (
+                    {isRefreshingLive ? (
                       <span className="inline-flex h-9 items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         Refreshing live intelligence

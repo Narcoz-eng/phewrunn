@@ -28,28 +28,55 @@ const MAX_RETRIES = 1;
 const BASE_DELAY_MS = 350;
 const MAX_DELAY_MS = 3000;
 const REQUEST_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1400 : 1800;
+const MARKETCAP_SNAPSHOT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 3_000;
 
 // Simple in-memory rate limiter
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL_MS = 200; // Min 200ms between requests
+const marketSnapshotCache = new Map<
+  string,
+  { result: MarketCapResult; expiresAtMs: number }
+>();
+const marketSnapshotInFlight = new Map<string, Promise<MarketCapResult>>();
 
 /**
  * DexScreener API response types
  */
 interface DexscreenerPair {
   chainId?: string;
+  dexId?: string;
+  pairAddress?: string;
   fdv?: number | string;
   marketCap?: number | string;
   priceUsd?: string;
+  liquidity?: {
+    usd?: number | string;
+  };
+  volume?: {
+    h24?: number | string;
+  };
+  priceChange?: {
+    h24?: number | string;
+  };
+  txns?: {
+    h24?: {
+      buys?: number | string;
+      sells?: number | string;
+    };
+  };
   baseToken?: {
     address?: string;
     name?: string;
     symbol?: string;
+    icon?: string;
+    logoURI?: string;
   };
   quoteToken?: {
     address?: string;
     name?: string;
     symbol?: string;
+    icon?: string;
+    logoURI?: string;
   };
   url?: string;
   info?: {
@@ -64,8 +91,11 @@ interface DexscreenerPair {
 type DexscreenerResponse = DexscreenerPair[] | { pairs?: DexscreenerPair[] | null };
 
 interface DexMatchedTokenRef {
+  address?: string;
   name?: string;
   symbol?: string;
+  icon?: string;
+  logoURI?: string;
 }
 
 interface DexscreenerSelectedPair {
@@ -82,6 +112,14 @@ export interface MarketCapResult {
   tokenSymbol?: string;
   tokenImage?: string;
   dexscreenerUrl?: string;
+  pairAddress?: string;
+  dexId?: string;
+  priceUsd?: number | null;
+  liquidityUsd?: number | null;
+  volume24hUsd?: number | null;
+  priceChange24hPct?: number | null;
+  buys24h?: number | null;
+  sells24h?: number | null;
   error?: string;
 }
 
@@ -196,8 +234,13 @@ function selectBestDexPair(
   };
 }
 
-function pickDexImageUrl(pair: DexscreenerPair | undefined): string | undefined {
+function pickDexImageUrl(
+  pair: DexscreenerPair | undefined,
+  matchedToken?: DexMatchedTokenRef
+): string | undefined {
   const candidates = [
+    matchedToken?.icon,
+    matchedToken?.logoURI,
     pair?.info?.imageUrl,
     pair?.info?.header,
     pair?.info?.openGraph,
@@ -226,6 +269,20 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+function buildMarketSnapshotCacheKey(address: string, chainType?: string | null): string {
+  const normalizedChain = normalizeDexChain(chainType) ?? inferDexChainFromAddress(address) ?? "unknown";
+  return `${normalizedChain}:${address.trim().toLowerCase()}`;
+}
+
+function cloneMarketCapResult(result: MarketCapResult): MarketCapResult {
+  return { ...result };
+}
+
+export function clearMarketCapSnapshotCache(): void {
+  marketSnapshotCache.clear();
+  marketSnapshotInFlight.clear();
 }
 
 /**
@@ -312,8 +369,16 @@ export async function fetchMarketCap(
           mcap: marketCap ?? fdv ?? null,
           tokenName: selectedPair.matchedToken?.name ?? selectedPair.pair.baseToken?.name,
           tokenSymbol: selectedPair.matchedToken?.symbol ?? selectedPair.pair.baseToken?.symbol,
-          tokenImage: pickDexImageUrl(selectedPair.pair),
+          tokenImage: pickDexImageUrl(selectedPair.pair, selectedPair.matchedToken),
           dexscreenerUrl: selectedPair.pair.url?.trim() || undefined,
+          pairAddress: selectedPair.pair.pairAddress?.trim() || undefined,
+          dexId: selectedPair.pair.dexId?.trim() || undefined,
+          priceUsd: toFiniteNumber(selectedPair.pair.priceUsd),
+          liquidityUsd: toFiniteNumber(selectedPair.pair.liquidity?.usd),
+          volume24hUsd: toFiniteNumber(selectedPair.pair.volume?.h24),
+          priceChange24hPct: toFiniteNumber(selectedPair.pair.priceChange?.h24),
+          buys24h: toFiniteNumber(selectedPair.pair.txns?.h24?.buys),
+          sells24h: toFiniteNumber(selectedPair.pair.txns?.h24?.sells),
         };
       }
 
@@ -335,6 +400,38 @@ export async function fetchMarketCap(
     mcap: null,
     error: lastError?.message || "Failed to fetch market cap after retries"
   };
+}
+
+export async function getCachedMarketCapSnapshot(
+  address: string,
+  chainType?: string | null
+): Promise<MarketCapResult> {
+  const cacheKey = buildMarketSnapshotCacheKey(address, chainType);
+  const now = Date.now();
+  const cached = marketSnapshotCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    return cloneMarketCapResult(cached.result);
+  }
+
+  const inFlight = marketSnapshotInFlight.get(cacheKey);
+  if (inFlight) {
+    return cloneMarketCapResult(await inFlight);
+  }
+
+  const request = fetchMarketCap(address, chainType)
+    .then((result) => {
+      marketSnapshotCache.set(cacheKey, {
+        result: cloneMarketCapResult(result),
+        expiresAtMs: Date.now() + MARKETCAP_SNAPSHOT_CACHE_TTL_MS,
+      });
+      return result;
+    })
+    .finally(() => {
+      marketSnapshotInFlight.delete(cacheKey);
+    });
+
+  marketSnapshotInFlight.set(cacheKey, request);
+  return cloneMarketCapResult(await request);
 }
 
 /**
