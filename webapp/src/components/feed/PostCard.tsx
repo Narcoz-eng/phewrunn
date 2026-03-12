@@ -1101,6 +1101,8 @@ export function PostCard({
   const exactLogoImageSrc = EXACT_LOGO_IMAGE_SRC;
   const winCardLogoDataUrlRef = useRef<string | null>(null);
   const winCardLogoDataUrlPromiseRef = useRef<Promise<string | null> | null>(null);
+  const winCardAvatarDataUrlRef = useRef<string | null>(null);
+  const winCardAvatarDataUrlPromiseRef = useRef<Promise<string | null> | null>(null);
   const winCardPreviewUrlRef = useRef<string | null>(null);
   const heliusReadRpcUrl = (import.meta.env.VITE_HELIUS_RPC_URL as string | undefined)?.trim() || null;
   const tradeReadConnection = useMemo(
@@ -1978,6 +1980,7 @@ export function PostCard({
         authorLevelLabel,
         authorLevelText: `LVL ${post.author.level > 0 ? `+${post.author.level}` : post.author.level}`,
         authorInitial: (post.author.username || post.author.name || "?").charAt(0).toUpperCase(),
+        authorLevel: post.author.level,
         tokenPrimary: post.tokenSymbol || post.tokenName || "TOKEN",
         tokenSecondary:
           post.tokenName && post.tokenSymbol
@@ -2294,6 +2297,47 @@ export function PostCard({
     return promise;
   }, []);
 
+  const loadWinCardAvatarDataUrl = useCallback(async () => {
+    if (winCardAvatarDataUrlRef.current) {
+      return winCardAvatarDataUrlRef.current;
+    }
+    if (winCardAvatarDataUrlPromiseRef.current) {
+      return winCardAvatarDataUrlPromiseRef.current;
+    }
+
+    const promise = (async () => {
+      const blobToDataUrl = (blob: Blob) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (typeof reader.result === "string") {
+              resolve(reader.result);
+              return;
+            }
+            reject(new Error("Invalid avatar reader result"));
+          };
+          reader.onerror = () => reject(reader.error ?? new Error("Failed to read avatar blob"));
+          reader.readAsDataURL(blob);
+        });
+
+      const avatarSrc = getAvatarUrl(post.author.id, post.author.image);
+      try {
+        const response = await fetch(avatarSrc, { cache: "force-cache", mode: "cors" });
+        if (!response.ok) return null;
+        const dataUrl = await blobToDataUrl(await response.blob());
+        winCardAvatarDataUrlRef.current = dataUrl;
+        return dataUrl;
+      } catch {
+        return null;
+      } finally {
+        winCardAvatarDataUrlPromiseRef.current = null;
+      }
+    })();
+
+    winCardAvatarDataUrlPromiseRef.current = promise;
+    return promise;
+  }, [post.author.id, post.author.image]);
+
   const refreshWinCardLiveData = useCallback(async () => {
     try {
       const latest = await api.get<BatchedPostPriceSnapshot>(`/api/posts/${post.id}/price`, {
@@ -2331,13 +2375,13 @@ export function PostCard({
 
   const createWinCardAssetBundle = useCallback(
     async (latestSnapshot?: BatchedPostPriceSnapshot | null) => {
-      const [logoDataUrl] = await Promise.all([loadWinCardLogoDataUrl()]);
+      const [logoDataUrl, avatarDataUrl] = await Promise.all([loadWinCardLogoDataUrl(), loadWinCardAvatarDataUrl()]);
       const model = buildWinCardRenderModel(latestSnapshot);
-      const svg = buildWinCardSvg(model, { logoDataUrl });
+      const svg = buildWinCardSvg(model, { logoDataUrl, avatarDataUrl });
       const pngBlob = await renderSvgToPngBlob(svg);
       return { model, pngBlob };
     },
-    [buildWinCardRenderModel, loadWinCardLogoDataUrl]
+    [buildWinCardRenderModel, loadWinCardLogoDataUrl, loadWinCardAvatarDataUrl]
   );
 
   const renderWinCardPreview = useCallback(
