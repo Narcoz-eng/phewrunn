@@ -615,6 +615,7 @@ interface PostCardProps {
   onRepost?: (postId: string) => void;
   onComment?: (postId: string, content: string) => Promise<void> | void;
   enableRealtimePricePolling?: boolean;
+  enableSharedAlphaPreviewPrefetch?: boolean;
   autoOpenTradePanel?: boolean;
   autoPrefillBuyAmountSol?: string | null;
   onTradePanelAutoOpened?: () => void;
@@ -949,6 +950,7 @@ export function PostCard({
   onReact,
   onRepost,
   enableRealtimePricePolling = true,
+  enableSharedAlphaPreviewPrefetch = true,
   autoOpenTradePanel = false,
   autoPrefillBuyAmountSol = null,
   onTradePanelAutoOpened,
@@ -1528,6 +1530,7 @@ export function PostCard({
 
   // Fetch shared alpha users (other traders who called the same token)
   const shouldPrefetchSharedAlphaPreview =
+    enableSharedAlphaPreviewPrefetch &&
     Boolean(post.contractAddress) &&
     isInViewport &&
     typeof post.sharedAlphaCount === "number" &&

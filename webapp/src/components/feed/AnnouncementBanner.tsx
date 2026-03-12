@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Megaphone, X, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 
 interface Announcement {
   id: string;
@@ -15,20 +16,37 @@ interface Announcement {
   isViewed?: boolean;
 }
 
-export function AnnouncementBanner() {
+const ANNOUNCEMENTS_SESSION_CACHE_KEY = "phew.feed.announcements.pinned";
+const ANNOUNCEMENTS_SESSION_CACHE_TTL_MS = 2 * 60_000;
+
+interface AnnouncementBannerProps {
+  enabled?: boolean;
+}
+
+export function AnnouncementBanner({ enabled = true }: AnnouncementBannerProps) {
   const queryClient = useQueryClient();
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const viewedIdsRef = useRef<Set<string>>(new Set());
+  const cachedAnnouncements = readSessionCache<Announcement[]>(
+    ANNOUNCEMENTS_SESSION_CACHE_KEY,
+    ANNOUNCEMENTS_SESSION_CACHE_TTL_MS
+  );
 
   // Fetch pinned announcements
   const { data: announcements = [], isLoading } = useQuery({
     queryKey: ["announcements", "pinned"],
     queryFn: async () => {
       const data = await api.get<Announcement[]>("/api/announcements");
-      return data.filter((a) => a.isPinned);
+      const pinnedAnnouncements = data.filter((a) => a.isPinned);
+      writeSessionCache(ANNOUNCEMENTS_SESSION_CACHE_KEY, pinnedAnnouncements);
+      return pinnedAnnouncements;
     },
+    initialData: cachedAnnouncements ?? undefined,
+    enabled,
     staleTime: 60000, // 1 minute
     refetchInterval: 120000, // 2 minutes
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // Mark as viewed mutation
@@ -60,13 +78,14 @@ export function AnnouncementBanner() {
 
   // Auto-mark as viewed when announcements load (with ref to prevent infinite loops)
   useEffect(() => {
+    if (!enabled) return;
     visibleAnnouncements.forEach((a) => {
       if (!a.isViewed && !viewedIdsRef.current.has(a.id)) {
         viewedIdsRef.current.add(a.id);
         viewMutation.mutate(a.id);
       }
     });
-  }, [visibleAnnouncements, viewMutation]);
+  }, [enabled, visibleAnnouncements, viewMutation]);
 
   if (isLoading || visibleAnnouncements.length === 0) {
     return null;

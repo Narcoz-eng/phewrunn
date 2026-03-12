@@ -30,6 +30,7 @@ interface FeedHeaderProps {
   activeTab: FeedTab;
   onTabChange: (tab: FeedTab) => void;
   onLogout: () => void;
+  enableUnreadCountQuery?: boolean;
 }
 
 const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: string }> }[] = [
@@ -42,7 +43,13 @@ const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: str
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 10 * 60_000;
 
-export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeaderProps) {
+export function FeedHeader({
+  user,
+  activeTab,
+  onTabChange,
+  onLogout,
+  enableUnreadCountQuery = true,
+}: FeedHeaderProps) {
   const navigate = useNavigate();
   const { hasLiveSession } = useAuth();
   const tabRefs = useRef<Map<FeedTab, HTMLButtonElement>>(new Map());
@@ -61,7 +68,7 @@ export function FeedHeader({ user, activeTab, onTabChange, onLogout }: FeedHeade
       return response;
     },
     initialData: cachedUnreadCount !== null ? { count: cachedUnreadCount } : undefined,
-    enabled: !!user && hasLiveSession,
+    enabled: !!user && hasLiveSession && enableUnreadCountQuery,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     refetchInterval: () => {

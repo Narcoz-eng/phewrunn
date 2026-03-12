@@ -278,6 +278,7 @@ type FeedListResult = {
   hasMore: boolean;
   nextCursor: string | null;
   totalItems: number;
+  degraded?: boolean;
 };
 
 type FeedCursorBoundary = {
@@ -2760,6 +2761,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         hasMore: false,
         nextCursor: null,
         totalItems: 0,
+        degraded: true,
       };
     }
   });

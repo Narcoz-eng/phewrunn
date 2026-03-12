@@ -56,6 +56,7 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
       hasMore: result.hasMore,
       nextCursor: result.nextCursor,
       totalPosts: result.totalItems,
+      degraded: result.degraded === true,
     },
   });
 });

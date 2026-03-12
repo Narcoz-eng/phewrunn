@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSession, useAuth } from "@/lib/auth-client";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, TimeoutError } from "@/lib/api";
 import { Post, User } from "@/types";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton, ProfileCardSkeleton } from "@/components/feed/PostCardSkeleton";
@@ -45,6 +45,9 @@ const FEED_ACTIVE_TAB_POLL_MS = 90_000;
 const FEED_TAB_PREFETCH_ENABLED = false;
 const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 2_500 : 1_200;
 const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 550 : 300;
+const FEED_AUXILIARY_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 1_500 : 500;
+const FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS = import.meta.env.PROD ? 4_000 : 1_200;
+const FEED_BACKGROUND_REFRESH_STARTUP_DELAY_MS = import.meta.env.PROD ? 12_000 : 3_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
 const FEED_CURRENT_USER_CACHE_KEY = "phew.feed.current-user";
@@ -65,6 +68,7 @@ type AiFeedResponse = {
     nextCursor?: string | null;
     hasMore?: boolean;
     totalPosts?: number | null;
+    degraded?: boolean;
   };
 };
 
@@ -870,6 +874,10 @@ function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: strin
 }
 
 function isBackendPoolPressureError(error: unknown): boolean {
+  if (error instanceof TimeoutError) {
+    return true;
+  }
+
   if (error instanceof ApiError) {
     if (error.status === 429 || error.status === 503) {
       return true;
@@ -886,6 +894,17 @@ function isBackendPoolPressureError(error: unknown): boolean {
         message.includes("unable to check out connection")
       );
     }
+  }
+
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("connection pool") ||
+      message.includes("pool timeout") ||
+      message.includes("timed out") ||
+      message.includes("temporarily unavailable") ||
+      message.includes("unable to check out connection")
+    );
   }
 
   return false;
@@ -927,6 +946,9 @@ export default function Feed() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
+  const [feedAuxiliaryQueriesReady, setFeedAuxiliaryQueriesReady] = useState(false);
+  const [feedRealtimeEnrichmentReady, setFeedRealtimeEnrichmentReady] = useState(false);
+  const [feedBackgroundRefreshReady, setFeedBackgroundRefreshReady] = useState(false);
   const [latestAcknowledgedTopId, setLatestAcknowledgedTopId] = useState<string | null>(() =>
     readSessionCache<string>(FEED_LATEST_ACK_CACHE_KEY, FEED_LATEST_ACK_CACHE_TTL_MS)
   );
@@ -1177,6 +1199,9 @@ export default function Feed() {
       if (!data || !Array.isArray(data.items)) {
         throw new ApiError("Feed payload was invalid. Please retry.", response.status, json);
       }
+      if (data.degraded === true) {
+        throw new ApiError("Feed is temporarily degraded. Please retry shortly.", 503, json);
+      }
 
       return {
         items: data.items,
@@ -1389,6 +1414,7 @@ export default function Feed() {
   const {
     data: postsPages,
     isLoading: isLoadingPosts,
+    isFetched: isPostsFetched,
     error: postsError,
     refetch: refetchPosts,
     isFetching,
@@ -1426,6 +1452,32 @@ export default function Feed() {
     refetchOnReconnect: false,
     refetchInterval: false,
   });
+
+  const hasInitialFeedResult = isPostsFetched || Boolean(postsError);
+
+  useEffect(() => {
+    if (feedAuxiliaryQueriesReady || !hasInitialFeedResult) return;
+    const timer = window.setTimeout(() => {
+      setFeedAuxiliaryQueriesReady(true);
+    }, FEED_AUXILIARY_QUERY_STARTUP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [feedAuxiliaryQueriesReady, hasInitialFeedResult]);
+
+  useEffect(() => {
+    if (feedBackgroundRefreshReady || !hasInitialFeedResult) return;
+    const timer = window.setTimeout(() => {
+      setFeedBackgroundRefreshReady(true);
+    }, FEED_BACKGROUND_REFRESH_STARTUP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [feedBackgroundRefreshReady, hasInitialFeedResult]);
+
+  useEffect(() => {
+    if (feedRealtimeEnrichmentReady || !hasInitialFeedResult) return;
+    const timer = window.setTimeout(() => {
+      setFeedRealtimeEnrichmentReady(true);
+    }, FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [feedRealtimeEnrichmentReady, hasInitialFeedResult]);
 
   const posts = useMemo(() => {
     const mergedPosts = postsPages?.pages.flatMap((page) => page.items) ?? [];
@@ -1722,6 +1774,7 @@ export default function Feed() {
   // X-style lightweight new-post detection on Latest:
   // poll only the first page every 30s, then show a "new posts" button (or auto-apply near top).
   useEffect(() => {
+    if (!feedBackgroundRefreshReady) return;
     if (activeTab !== "latest") return;
     if (effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
@@ -1816,8 +1869,6 @@ export default function Feed() {
       }
     };
 
-    void checkForNewPosts();
-
     const intervalId = window.setInterval(() => {
       void checkForNewPosts();
     }, FEED_NEW_POSTS_POLL_MS);
@@ -1847,11 +1898,13 @@ export default function Feed() {
     queryClient,
     refetchUser,
     setPendingLatestState,
+    feedBackgroundRefreshReady,
   ]);
 
   // Keep non-latest tabs (and searched latest) fresh with lightweight first-page sync.
   // This stays visibility-aware and online-aware to reduce unnecessary traffic.
   useEffect(() => {
+    if (!feedBackgroundRefreshReady) return;
     if (!hasLiveSession) return;
     if (activeTab === "latest" && !effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
@@ -1904,8 +1957,6 @@ export default function Feed() {
       }
     };
 
-    void refreshActiveTabFirstPage();
-
     const intervalId = window.setInterval(() => {
       void refreshActiveTabFirstPage();
     }, FEED_ACTIVE_TAB_POLL_MS);
@@ -1932,6 +1983,7 @@ export default function Feed() {
     hasLiveOverlay,
     queryClient,
     hasLiveSession,
+    feedBackgroundRefreshReady,
   ]);
 
   // Create post mutation
@@ -2170,16 +2222,17 @@ export default function Feed() {
         activeTab={activeTab}
         onTabChange={handleTabChange}
         onLogout={handleSignOut}
+        enableUnreadCountQuery={feedAuxiliaryQueriesReady}
       />
 
       <main className="app-page-shell">
         {/* 1. Pinned Announcements (at very top) */}
-        <AnnouncementBanner />
+        <AnnouncementBanner enabled={feedAuxiliaryQueriesReady} />
 
         {/* 2. Trending Now Section */}
         {showTrendingSection ? (
           <QueryErrorBoundary sectionName="Trending">
-            <TrendingSection />
+            <TrendingSection enabled={feedAuxiliaryQueriesReady} />
           </QueryErrorBoundary>
         ) : null}
 
@@ -2398,7 +2451,11 @@ export default function Feed() {
                             onLike={handleLike}
                             onRepost={handleRepost}
                             onComment={handleComment}
-                            enableRealtimePricePolling={shouldEnableFeedCardRealtimePolling(post, feedTotalPosts)}
+                            enableRealtimePricePolling={
+                              feedRealtimeEnrichmentReady &&
+                              shouldEnableFeedCardRealtimePolling(post, feedTotalPosts)
+                            }
+                            enableSharedAlphaPreviewPrefetch={feedRealtimeEnrichmentReady}
                           />
                     </div>
                   </div>

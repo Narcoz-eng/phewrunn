@@ -7,6 +7,7 @@ import { formatMarketCap, getAvatarUrl, PostAuthor } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Flame, Users, TrendingUp, TrendingDown, Trophy } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 
 interface TrendingToken {
   contractAddress: string;
@@ -25,16 +26,30 @@ interface TrendingToken {
   topCallers: PostAuthor[];
 }
 
-export function TrendingSection() {
+const TRENDING_TOKENS_SESSION_CACHE_KEY = "phew.feed.trending.tokens";
+const TRENDING_TOKENS_SESSION_CACHE_TTL_MS = 2 * 60_000;
+
+interface TrendingSectionProps {
+  enabled?: boolean;
+}
+
+export function TrendingSection({ enabled = true }: TrendingSectionProps) {
   const navigate = useNavigate();
+  const cachedTrendingTokens = readSessionCache<TrendingToken[]>(
+    TRENDING_TOKENS_SESSION_CACHE_KEY,
+    TRENDING_TOKENS_SESSION_CACHE_TTL_MS
+  );
 
   // Fetch trending tokens
   const { data: trendingTokens = [], isLoading } = useQuery({
     queryKey: ["trending-tokens"],
     queryFn: async () => {
       const data = await api.get<TrendingToken[]>("/api/posts/trending");
+      writeSessionCache(TRENDING_TOKENS_SESSION_CACHE_KEY, data);
       return data;
     },
+    initialData: cachedTrendingTokens ?? undefined,
+    enabled,
     staleTime: 60000, // 1 minute
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
