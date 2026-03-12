@@ -272,43 +272,43 @@ function getHolderBadgeMeta(badge: TokenHolder["badges"][number]): HolderBadgeMe
       return {
         label: "Dev wallet",
         emoji: "🛠",
-        className: "border-amber-300/50 bg-amber-100/80 text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200",
+        className: "border-amber-300/85 bg-[linear-gradient(135deg,rgba(251,191,36,0.26),rgba(249,115,22,0.22))] text-amber-950 shadow-[0_18px_34px_-26px_rgba(245,158,11,0.9)] dark:border-amber-300/70 dark:bg-[linear-gradient(135deg,rgba(245,158,11,0.28),rgba(249,115,22,0.18))] dark:text-amber-50",
       };
     case "fresh_wallet":
       return {
         label: "Fresh wallet",
         emoji: "🌱",
-        className: "border-emerald-300/50 bg-emerald-100/80 text-emerald-800 dark:border-emerald-400/35 dark:bg-emerald-500/10 dark:text-emerald-200",
+        className: "border-emerald-300/85 bg-[linear-gradient(135deg,rgba(52,211,153,0.26),rgba(16,185,129,0.22))] text-emerald-950 shadow-[0_16px_32px_-24px_rgba(16,185,129,0.9)] dark:border-emerald-300/70 dark:bg-[linear-gradient(135deg,rgba(16,185,129,0.3),rgba(5,150,105,0.2))] dark:text-emerald-50",
       };
     case "high_volume_trader":
       return {
         label: "High volume trader",
         emoji: "⚡",
-        className: "border-sky-300/50 bg-sky-100/80 text-sky-800 dark:border-sky-400/35 dark:bg-sky-500/10 dark:text-sky-200",
+        className: "border-sky-300/85 bg-[linear-gradient(135deg,rgba(56,189,248,0.26),rgba(59,130,246,0.22))] text-sky-950 shadow-[0_16px_32px_-24px_rgba(37,99,235,0.9)] dark:border-sky-300/70 dark:bg-[linear-gradient(135deg,rgba(56,189,248,0.28),rgba(59,130,246,0.18))] dark:text-sky-50",
       };
     case "whale":
       return {
         label: "Whale",
         emoji: "🐋",
-        className: "border-indigo-400/65 bg-indigo-100 text-indigo-900 shadow-[0_12px_24px_-22px_rgba(99,102,241,0.85)] dark:border-indigo-400/45 dark:bg-indigo-500/14 dark:text-indigo-100",
+        className: "border-indigo-400/85 bg-[linear-gradient(135deg,rgba(99,102,241,0.22),rgba(56,189,248,0.18))] text-indigo-950 shadow-[0_18px_36px_-24px_rgba(79,70,229,0.95)] dark:border-indigo-300/75 dark:bg-[linear-gradient(135deg,rgba(99,102,241,0.28),rgba(14,165,233,0.18))] dark:text-indigo-50",
       };
     case "ultra_degen":
       return {
         label: "Ultra degen",
         emoji: "🧨",
-        className: "border-fuchsia-400/75 bg-[linear-gradient(135deg,rgba(244,114,182,0.18),rgba(249,115,22,0.16))] text-fuchsia-900 shadow-[0_18px_34px_-24px_rgba(217,70,239,0.85)] dark:border-fuchsia-400/65 dark:bg-[linear-gradient(135deg,rgba(217,70,239,0.22),rgba(249,115,22,0.18))] dark:text-fuchsia-100",
+        className: "border-fuchsia-400/90 bg-[linear-gradient(135deg,rgba(217,70,239,0.28),rgba(249,115,22,0.22))] text-fuchsia-950 shadow-[0_22px_40px_-24px_rgba(217,70,239,0.98)] dark:border-fuchsia-300/80 dark:bg-[linear-gradient(135deg,rgba(217,70,239,0.34),rgba(249,115,22,0.22))] dark:text-fuchsia-50",
       };
     case "serial_deployer":
       return {
         label: "Serial deployer",
         emoji: "🏗",
-        className: "border-violet-300/50 bg-violet-100/80 text-violet-800 dark:border-violet-400/35 dark:bg-violet-500/10 dark:text-violet-200",
+        className: "border-violet-300/85 bg-[linear-gradient(135deg,rgba(167,139,250,0.24),rgba(139,92,246,0.2))] text-violet-950 shadow-[0_16px_32px_-24px_rgba(124,58,237,0.88)] dark:border-violet-300/70 dark:bg-[linear-gradient(135deg,rgba(139,92,246,0.28),rgba(109,40,217,0.18))] dark:text-violet-50",
       };
     case "serial_rugger":
       return {
         label: "Serial rugger",
         emoji: "☠",
-        className: "border-rose-300/55 bg-rose-100/85 text-rose-800 dark:border-rose-400/35 dark:bg-rose-500/12 dark:text-rose-200",
+        className: "border-rose-300/85 bg-[linear-gradient(135deg,rgba(251,113,133,0.24),rgba(239,68,68,0.18))] text-rose-950 shadow-[0_16px_32px_-24px_rgba(225,29,72,0.92)] dark:border-rose-300/70 dark:bg-[linear-gradient(135deg,rgba(244,63,94,0.28),rgba(190,24,93,0.18))] dark:text-rose-50",
       };
     default:
       return {
@@ -322,6 +322,29 @@ function getHolderBadgeMeta(badge: TokenHolder["badges"][number]): HolderBadgeMe
 function formatHolderBadge(badge: TokenHolder["badges"][number]): string {
   const meta = getHolderBadgeMeta(badge);
   return `${meta.emoji} ${meta.label}`;
+}
+
+function getHolderRoleSurfaceClass(
+  badge: TokenHolder["badges"][number] | null | undefined
+): string {
+  switch (badge) {
+    case "ultra_degen":
+      return "border-fuchsia-400/40 bg-[linear-gradient(180deg,rgba(217,70,239,0.12),rgba(249,115,22,0.08),rgba(15,23,42,0.72))] shadow-[0_24px_48px_-34px_rgba(217,70,239,0.95)]";
+    case "whale":
+      return "border-indigo-400/38 bg-[linear-gradient(180deg,rgba(79,70,229,0.12),rgba(56,189,248,0.08),rgba(15,23,42,0.72))] shadow-[0_24px_48px_-34px_rgba(79,70,229,0.95)]";
+    case "fresh_wallet":
+      return "border-emerald-400/34 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(6,95,70,0.06),rgba(15,23,42,0.72))] shadow-[0_22px_44px_-34px_rgba(16,185,129,0.88)]";
+    case "high_volume_trader":
+      return "border-sky-400/34 bg-[linear-gradient(180deg,rgba(56,189,248,0.12),rgba(37,99,235,0.06),rgba(15,23,42,0.72))] shadow-[0_22px_44px_-34px_rgba(37,99,235,0.88)]";
+    case "serial_rugger":
+      return "border-rose-400/34 bg-[linear-gradient(180deg,rgba(244,63,94,0.12),rgba(190,24,93,0.08),rgba(15,23,42,0.72))] shadow-[0_22px_44px_-34px_rgba(225,29,72,0.9)]";
+    case "serial_deployer":
+      return "border-violet-400/34 bg-[linear-gradient(180deg,rgba(139,92,246,0.12),rgba(91,33,182,0.06),rgba(15,23,42,0.72))] shadow-[0_22px_44px_-34px_rgba(124,58,237,0.88)]";
+    case "dev_wallet":
+      return "border-amber-400/34 bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(249,115,22,0.06),rgba(15,23,42,0.72))] shadow-[0_22px_44px_-34px_rgba(245,158,11,0.88)]";
+    default:
+      return "border-border/60 bg-secondary";
+  }
 }
 
 function getPrimaryHolderBadge(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"][number] | null {
@@ -1533,7 +1556,13 @@ export default function TokenPage() {
                     </div>
                   </div>
                   {devWallet ? (
-                    <div className="mb-3 rounded-[20px] border border-primary/20 bg-[linear-gradient(180deg,rgba(236,248,241,0.95),rgba(248,251,249,0.94))] p-4 dark:bg-[linear-gradient(180deg,rgba(12,20,17,0.98),rgba(9,14,13,0.98))]">
+                    <div
+                      className={cn(
+                        "mb-3 rounded-[20px] border p-4",
+                        "bg-[linear-gradient(180deg,rgba(236,248,241,0.95),rgba(248,251,249,0.94))] dark:bg-[linear-gradient(180deg,rgba(12,20,17,0.98),rgba(9,14,13,0.98))]",
+                        getHolderRoleSurfaceClass(getPrimaryHolderBadge(devWallet))
+                      )}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
@@ -1549,7 +1578,7 @@ export default function TokenPage() {
                             <div className="mt-1">
                               <span
                                 className={cn(
-                                  "inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                                  "inline-flex items-center rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm",
                                   getHolderBadgeMeta(getPrimaryHolderBadge(devWallet)!).className
                                 )}
                               >
@@ -1576,7 +1605,7 @@ export default function TokenPage() {
                               <span
                                 key={badge}
                                 className={cn(
-                                  "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                                  "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] shadow-sm",
                                   getHolderBadgeMeta(badge).className
                                 )}
                               >
@@ -1621,7 +1650,10 @@ export default function TokenPage() {
                       topHolderRows.map((holder, index) => (
                         <div
                           key={`${holder.address}:${index}`}
-                          className="rounded-[18px] border border-border/60 bg-secondary px-3 py-3 text-sm"
+                          className={cn(
+                            "rounded-[18px] border px-3 py-3 text-sm",
+                            getHolderRoleSurfaceClass(getPrimaryHolderBadge(holder))
+                          )}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-3">
@@ -1636,7 +1668,7 @@ export default function TokenPage() {
                                   <div className="mt-1">
                                     <span
                                       className={cn(
-                                        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.11em]",
+                                        "inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] shadow-sm",
                                         getHolderBadgeMeta(getPrimaryHolderBadge(holder)!).className
                                       )}
                                     >
@@ -1663,7 +1695,7 @@ export default function TokenPage() {
                                       <span
                                         key={badge}
                                         className={cn(
-                                          "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.11em]",
+                                          "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] shadow-sm",
                                           getHolderBadgeMeta(badge).className
                                         )}
                                       >
@@ -1675,6 +1707,7 @@ export default function TokenPage() {
                                 <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                                   {holder.activeAgeDays !== null ? <span>Age {formatDaysMetric(holder.activeAgeDays)}</span> : null}
                                   {holder.tradeVolume90dSol !== null ? <span>90d {formatSolMetric(holder.tradeVolume90dSol)}</span> : null}
+                                  {holder.solBalance !== null ? <span>Balance {formatSolMetric(holder.solBalance)}</span> : null}
                                   {holder.label ? <span>{holder.label}</span> : null}
                                 </div>
                               </div>

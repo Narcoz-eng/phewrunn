@@ -48,6 +48,7 @@ export type WalletActivityProfile = {
   observedAgeDays: number | null;
   observedTxCount: number;
   lastSeenHours: number | null;
+  fundedBy: string | null;
 };
 
 type HeliusTokenHolding = {
@@ -70,6 +71,7 @@ type WalletBaseSnapshot = {
   observedFirstActivityAtMs: number | null;
   observedLastActivityAtMs: number | null;
   observedTxCount: number;
+  fundedBy: string | null;
 };
 
 type PortfolioTokenInput = {
@@ -101,6 +103,11 @@ type HeliusEnhancedTx = {
   signature?: string;
   timestamp?: number;
   type?: string;
+  nativeTransfers?: Array<{
+    fromUserAccount?: string | null;
+    toUserAccount?: string | null;
+    amount?: number | string | null;
+  }> | null;
   tokenTransfers?: Array<{
     mint?: string;
     tokenAmount?: number | string;
@@ -845,6 +852,37 @@ function aggregateWalletTradesFromEnhancedTx(params: {
   return tradeByMint;
 }
 
+function inferWalletFundingSource(params: {
+  walletAddress: string;
+  txs: HeliusEnhancedTx[];
+}): string | null {
+  const wallet = params.walletAddress;
+  const orderedTxs = [...params.txs].sort((left, right) => {
+    const leftTs = normalizeTsToMs(left.timestamp) ?? Number.POSITIVE_INFINITY;
+    const rightTs = normalizeTsToMs(right.timestamp) ?? Number.POSITIVE_INFINITY;
+    return leftTs - rightTs;
+  });
+
+  for (const tx of orderedTxs) {
+    for (const transfer of tx.nativeTransfers ?? []) {
+      const fromUserAccount = readNonEmptyString(transfer?.fromUserAccount);
+      const toUserAccount = readNonEmptyString(transfer?.toUserAccount);
+      const amount = readAmount(transfer?.amount);
+      if (
+        toUserAccount === wallet &&
+        fromUserAccount &&
+        fromUserAccount !== wallet &&
+        amount !== null &&
+        amount > 0
+      ) {
+        return fromUserAccount;
+      }
+    }
+  }
+
+  return null;
+}
+
 async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?: number | null }): Promise<WalletBaseSnapshot | null> {
   const [balanceSol, holdingsByMint, solPriceUsd, txs] = await Promise.all([
     fetchWalletSolBalance(params.walletAddress),
@@ -880,6 +918,7 @@ async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?
     observedFirstActivityAtMs,
     observedLastActivityAtMs,
     observedTxCount: txs.length,
+    fundedBy: inferWalletFundingSource({ walletAddress: params.walletAddress, txs }),
   };
 }
 
@@ -1054,6 +1093,7 @@ export async function getWalletActivityProfile(params: {
     observedAgeDays,
     observedTxCount: base.observedTxCount,
     lastSeenHours,
+    fundedBy: base.fundedBy,
   };
 }
 

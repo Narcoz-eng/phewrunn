@@ -164,12 +164,12 @@ const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 180;
 const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 75;
 const HIGH_ACTIVITY_MINTS_THRESHOLD = 6;
 const HIGH_ACTIVITY_TX_THRESHOLD = 18;
-const WHALE_BALANCE_SOL_THRESHOLD = 200;
-const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 160;
-const WHALE_BALANCE_USD_THRESHOLD = 35_000;
-const SOFT_WHALE_BALANCE_USD_THRESHOLD = 28_000;
+const WHALE_BALANCE_SOL_THRESHOLD = 250;
+const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 200;
+const WHALE_BALANCE_USD_THRESHOLD = 45_000;
+const SOFT_WHALE_BALANCE_USD_THRESHOLD = 35_000;
 const ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 35_000;
-const SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 25_000;
+const SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD = 30_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -545,7 +545,7 @@ function buildHolderBadges(params: {
   }
   if (
     (params.totalValueUsd !== null && params.totalValueUsd >= ULTRA_DEGEN_TOKEN_USD_THRESHOLD) ||
-    (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD && params.supplyPct >= 4)
+    (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD && params.supplyPct >= 6)
   ) {
     badges.push("ultra_degen");
   }
@@ -577,8 +577,8 @@ function buildHolderBadges(params: {
     if (params.authorityAssetCount !== null && params.authorityAssetCount >= 2) {
       badges.push("serial_deployer");
     } else if (
-      (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD) ||
-      (params.totalValueUsd !== null && params.totalValueUsd >= 12_500 && params.supplyPct >= 5)
+      (params.totalValueUsd !== null && params.totalValueUsd >= SOFT_ULTRA_DEGEN_TOKEN_USD_THRESHOLD && params.supplyPct >= 5.5) ||
+      (params.totalValueUsd !== null && params.totalValueUsd >= ULTRA_DEGEN_TOKEN_USD_THRESHOLD)
     ) {
       badges.push("ultra_degen");
     } else if (
@@ -944,10 +944,12 @@ export async function analyzeSolanaTokenDistribution(
       devWalletRoles.set(rpcMintAuthorities.freezeAuthority, "freeze_authority");
     }
     let creatorHistoryWalletAddress: string | null = null;
+    let creatorHistoryBlockTimeMs: number | null = null;
     if (![...devWalletRoles.values()].includes("creator")) {
       const creatorResolution = await getLikelyMintCreatorWallet(mintAddress);
       if (isLikelySolanaWallet(creatorResolution?.walletAddress)) {
         creatorHistoryWalletAddress = creatorResolution.walletAddress;
+        creatorHistoryBlockTimeMs = creatorResolution.blockTimeMs ?? null;
         if (!devWalletRoles.has(creatorResolution.walletAddress)) {
           devWalletRoles.set(creatorResolution.walletAddress, "creator");
         }
@@ -966,13 +968,22 @@ export async function analyzeSolanaTokenDistribution(
         ...devWalletRoles.keys(),
       ].filter((address): address is string => isLikelySolanaWallet(address))
     )];
-    const [walletActivityEntries, authorityAssetSummaryEntries, devHoldingEntries] = await Promise.all([
+    const [walletActivityEntries, devWalletProfileEntries, authorityAssetSummaryEntries, devHoldingEntries] = await Promise.all([
       Promise.all(
         candidateWallets.map(async (address) => [
           address,
           await getWalletActivityProfile({
             walletAddress: address,
             sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
+          }),
+        ] as const)
+      ),
+      Promise.all(
+        [...devWalletRoles.keys()].map(async (address) => [
+          address,
+          await getWalletActivityProfile({
+            walletAddress: address,
+            sinceMs: null,
           }),
         ] as const)
       ),
@@ -994,6 +1005,7 @@ export async function analyzeSolanaTokenDistribution(
       ),
     ]);
     const walletActivityMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(walletActivityEntries);
+    const devWalletProfileMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(devWalletProfileEntries);
     const authorityAssetSummaryMap = new Map<string, Awaited<ReturnType<typeof getHeliusAuthorityAssetSummary>>>(authorityAssetSummaryEntries);
     const devHoldingMap = new Map<string, Awaited<ReturnType<typeof getWalletTradeSnapshotForSolanaToken>>>(devHoldingEntries);
     const authorityHeuristicEntries = await Promise.all(
@@ -1022,6 +1034,7 @@ export async function analyzeSolanaTokenDistribution(
     const topHolders = topHoldersBase.map((holder) => {
       const walletAddress = holder.ownerAddress ?? holder.address;
       const activity = walletActivityMap.get(walletAddress) ?? null;
+      const devProfile = devWalletProfileMap.get(walletAddress) ?? null;
       const devRole = devWalletRoles.get(walletAddress) ?? null;
       const authorityHeuristic = authorityHeuristicMap.get(walletAddress) ?? {
         authorityAssetCount: null,
@@ -1034,23 +1047,33 @@ export async function analyzeSolanaTokenDistribution(
         label:
           devRole === "creator" && walletAddress === creatorHistoryWalletAddress
             ? "Detected from earliest mint signer"
-            : activity && activity.distinctMintsTraded > 0
-              ? `${activity.distinctMintsTraded} mints traded`
+            : (activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0) > 0
+              ? `${activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0} mints traded`
               : null,
         domain: null,
         accountType: null,
-        activeAgeDays: activity?.observedAgeDays ?? null,
-        fundedBy: null,
+        activeAgeDays:
+          activity?.observedAgeDays ??
+          devProfile?.observedAgeDays ??
+          (devRole === "creator" && creatorHistoryBlockTimeMs
+            ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
+            : null),
+        fundedBy: devProfile?.fundedBy ?? activity?.fundedBy ?? null,
         totalValueUsd,
-        tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-        solBalance: activity?.balanceSol ?? null,
+        tradeVolume90dSol: activity?.totalTradeVolumeSol ?? devProfile?.totalTradeVolumeSol ?? null,
+        solBalance: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
           totalValueUsd,
-          balanceUsd: activity?.balanceUsd ?? null,
-          activeAgeDays: activity?.observedAgeDays ?? null,
+          balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
+          activeAgeDays:
+            activity?.observedAgeDays ??
+            devProfile?.observedAgeDays ??
+            (devRole === "creator" && creatorHistoryBlockTimeMs
+              ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
+              : null),
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-          balanceSol: activity?.balanceSol ?? null,
+          balanceSol: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
           distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
           observedTxCount: activity?.observedTxCount ?? 0,
           lastSeenHours: activity?.lastSeenHours ?? null,
@@ -1068,6 +1091,7 @@ export async function analyzeSolanaTokenDistribution(
         const [walletAddress, devRole] = devWalletRoles.entries().next().value ?? [];
         if (!isLikelySolanaWallet(walletAddress) || !devRole) return null;
         const activity = walletActivityMap.get(walletAddress) ?? null;
+        const devProfile = devWalletProfileMap.get(walletAddress) ?? null;
         const devHolding = devHoldingMap.get(walletAddress) ?? null;
         const authorityHeuristic = authorityHeuristicMap.get(walletAddress) ?? {
           authorityAssetCount: null,
@@ -1095,18 +1119,28 @@ export async function analyzeSolanaTokenDistribution(
                 : "Detected from freeze authority on-chain",
           domain: null,
           accountType: null,
-          activeAgeDays: activity?.observedAgeDays ?? null,
-          fundedBy: null,
+          activeAgeDays:
+            activity?.observedAgeDays ??
+            devProfile?.observedAgeDays ??
+            (devRole === "creator" && creatorHistoryBlockTimeMs
+              ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
+              : null),
+          fundedBy: devProfile?.fundedBy ?? activity?.fundedBy ?? null,
           totalValueUsd: devHolding?.holdingUsd ?? null,
-          tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-          solBalance: activity?.balanceSol ?? null,
+          tradeVolume90dSol: activity?.totalTradeVolumeSol ?? devProfile?.totalTradeVolumeSol ?? null,
+          solBalance: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
           badges: buildHolderBadges({
             supplyPct,
             totalValueUsd: devHolding?.holdingUsd ?? null,
-            balanceUsd: activity?.balanceUsd ?? null,
-            activeAgeDays: activity?.observedAgeDays ?? null,
+            balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
+            activeAgeDays:
+              activity?.observedAgeDays ??
+              devProfile?.observedAgeDays ??
+              (devRole === "creator" && creatorHistoryBlockTimeMs
+                ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
+                : null),
             tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-            balanceSol: activity?.balanceSol ?? null,
+            balanceSol: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
             distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
             observedTxCount: activity?.observedTxCount ?? 0,
             lastSeenHours: activity?.lastSeenHours ?? null,
