@@ -670,6 +670,12 @@ function syncFollowStateAcrossPostCaches(
   queryClient.setQueriesData<Post[]>({ queryKey: ["userReposts"] }, (current) =>
     current?.map(syncPost) ?? current
   );
+  queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "posts"] }, (current) =>
+    current?.map(syncPost) ?? current
+  );
+  queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "reposts"] }, (current) =>
+    current?.map(syncPost) ?? current
+  );
   queryClient.setQueriesData<TokenPageCacheLike>({ queryKey: ["token-page"] }, (current) => {
     if (!current) return current;
     return {
@@ -960,6 +966,21 @@ function syncRealtimeSnapshotToCachedPosts(
 
   queryClient.setQueriesData({ queryKey: ["userPosts"] }, syncPostArray);
   queryClient.setQueriesData({ queryKey: ["userReposts"] }, syncPostArray);
+  queryClient.setQueriesData({ queryKey: ["profile", "posts"] }, syncPostArray);
+  queryClient.setQueriesData({ queryKey: ["profile", "reposts"] }, syncPostArray);
+  queryClient.setQueriesData<TokenPageCacheLike>({ queryKey: ["token-page"] }, (existing) => {
+    if (!existing?.recentCalls?.length) {
+      return existing;
+    }
+
+    const nextRecentCalls = syncPostArray(existing.recentCalls);
+    return nextRecentCalls === existing.recentCalls
+      ? existing
+      : {
+          ...existing,
+          recentCalls: nextRecentCalls ?? existing.recentCalls,
+        };
+  });
   queryClient.setQueryData<Post>(["post", postId], (existing) =>
     existing ? applyRealtimeSnapshotToPost(existing, snapshot) : existing
   );
@@ -2979,11 +3000,11 @@ export function PostCard({
     enabled:
       hasContractAddress &&
       (isBuyDialogOpen ||
-        isInViewport ||
-        !post.tokenImage ||
-        !post.tokenName ||
-        !post.tokenSymbol ||
-        !post.dexscreenerUrl),
+        (isInViewport &&
+          (!post.tokenImage ||
+            !post.tokenName ||
+            !post.tokenSymbol ||
+            !post.dexscreenerUrl))),
     staleTime: 3 * 60 * 1000,
     retry: 1,
     refetchOnWindowFocus: false,

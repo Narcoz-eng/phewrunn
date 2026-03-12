@@ -3,7 +3,7 @@ import { getCachedMarketCapSnapshot } from "../marketcap.js";
 import {
   getHeliusAuthorityAssetSummary,
   getHeliusCurrentHolderOwnerCount,
-  getHeliusTokenAccountsForMint,
+  getLikelyMintCreatorWallet,
   getHeliusTokenMetadataForMint,
   getWalletTradeSnapshotForSolanaToken,
   getWalletActivityProfile,
@@ -121,6 +121,16 @@ type RpcTokenAccountInfoResult = {
   > | null;
 };
 
+type RpcOwnerAccountInfoResult = {
+  value?: Array<
+    | {
+        executable?: boolean | null;
+        owner?: string | null;
+      }
+    | null
+  > | null;
+};
+
 type RpcMintAccountInfoResult = {
   value?: {
     data?: {
@@ -134,7 +144,14 @@ type RpcMintAccountInfoResult = {
   } | null;
 };
 
+type OwnerAccountClassification = {
+  ownerProgram: string | null;
+  executable: boolean;
+  isSystemOwned: boolean;
+};
+
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
@@ -172,6 +189,35 @@ const tokenDistributionCache = new Map<
   { value: TokenDistributionSnapshot | null; expiresAtMs: number }
 >();
 const tokenDistributionInFlight = new Map<string, Promise<TokenDistributionSnapshot | null>>();
+const AMBIGUOUS_HOLDER_COUNT_PAGE_SIZE = 1000;
+
+function isSuspiciousResolvedHolderCount(args: {
+  holderCount: number | null | undefined;
+  holderCountSource: TokenDistributionSnapshot["holderCountSource"];
+  minimumObservedHolderCount?: number | null | undefined;
+}): boolean {
+  if (
+    args.holderCountSource === null ||
+    args.holderCountSource === "largest_accounts" ||
+    typeof args.holderCount !== "number" ||
+    !Number.isFinite(args.holderCount) ||
+    args.holderCount <= 0
+  ) {
+    return false;
+  }
+
+  const normalizedHolderCount = Math.round(args.holderCount);
+  if (normalizedHolderCount !== AMBIGUOUS_HOLDER_COUNT_PAGE_SIZE) {
+    return false;
+  }
+
+  const minimumObservedHolderCount =
+    typeof args.minimumObservedHolderCount === "number" && Number.isFinite(args.minimumObservedHolderCount)
+      ? Math.max(0, Math.round(args.minimumObservedHolderCount))
+      : 0;
+
+  return minimumObservedHolderCount < normalizedHolderCount;
+}
 
 function hasResolvedHolderCount(snapshot: TokenDistributionSnapshot | null | undefined): boolean {
   return Boolean(
@@ -180,7 +226,12 @@ function hasResolvedHolderCount(snapshot: TokenDistributionSnapshot | null | und
     Number.isFinite(snapshot.holderCount) &&
     snapshot.holderCount > 0 &&
     snapshot.holderCountSource !== "largest_accounts" &&
-    snapshot.holderCountSource !== null
+    snapshot.holderCountSource !== null &&
+    !isSuspiciousResolvedHolderCount({
+      holderCount: snapshot.holderCount,
+      holderCountSource: snapshot.holderCountSource,
+      minimumObservedHolderCount: snapshot.topHolders.length,
+    })
   );
 }
 
@@ -399,8 +450,13 @@ function parseSliceAmount(bytes: Uint8Array): bigint | null {
   return amount;
 }
 
-function countCurrentHolderWalletsFromProgramAccounts(accounts: RpcProgramAccountResult | null | undefined): number {
+function countCurrentHolderWalletsFromProgramAccounts(
+  accounts: RpcProgramAccountResult | null | undefined
+): number | null {
   if (!Array.isArray(accounts) || accounts.length === 0) return 0;
+  if (accounts.length === AMBIGUOUS_HOLDER_COUNT_PAGE_SIZE) {
+    return null;
+  }
 
   const owners = new Set<string>();
   for (const account of accounts) {
@@ -665,6 +721,80 @@ async function getRpcTokenAccountOwners(tokenAccountAddresses: string[]): Promis
   return ownerMap;
 }
 
+async function getRpcOwnerAccountClassifications(
+  ownerAddresses: string[]
+): Promise<Map<string, OwnerAccountClassification>> {
+  const uniqueAddresses = [...new Set(
+    ownerAddresses
+      .map((address) => (typeof address === "string" ? address.trim() : ""))
+      .filter((address) => address.length > 0)
+  )];
+  const classificationMap = new Map<string, OwnerAccountClassification>();
+  if (uniqueAddresses.length === 0) {
+    return classificationMap;
+  }
+
+  const response = await rpcCall<RpcOwnerAccountInfoResult>(
+    "getMultipleAccounts",
+    [
+      uniqueAddresses,
+      {
+        encoding: "base64",
+        commitment: "confirmed",
+      },
+    ],
+    { timeoutMs: Math.min(HOLDER_SCAN_RPC_TIMEOUT_MS, 7_500) }
+  );
+  const values = response?.value ?? [];
+  uniqueAddresses.forEach((address, index) => {
+    const account = values[index];
+    const ownerProgram =
+      typeof account?.owner === "string" && account.owner.trim().length > 0
+        ? account.owner.trim()
+        : null;
+    classificationMap.set(address, {
+      ownerProgram,
+      executable: account?.executable === true,
+      isSystemOwned: ownerProgram === SYSTEM_PROGRAM_ID,
+    });
+  });
+
+  return classificationMap;
+}
+
+function isProgramOwnedHolder(params: {
+  holder: TokenHolderSnapshot;
+  ownerClassification: OwnerAccountClassification | null | undefined;
+  pairAddress: string | null | undefined;
+}): boolean {
+  const normalizedPairAddress = params.pairAddress?.trim() ?? null;
+  const holderAddress = params.holder.address.trim();
+  const ownerAddress = params.holder.ownerAddress?.trim() ?? null;
+  const tokenAccountAddress = params.holder.tokenAccountAddress?.trim() ?? null;
+
+  if (
+    normalizedPairAddress &&
+    (normalizedPairAddress === holderAddress ||
+      normalizedPairAddress === ownerAddress ||
+      normalizedPairAddress === tokenAccountAddress)
+  ) {
+    return true;
+  }
+
+  if (!params.ownerClassification) {
+    return false;
+  }
+
+  if (params.ownerClassification.executable) {
+    return true;
+  }
+
+  return (
+    params.ownerClassification.ownerProgram !== null &&
+    params.ownerClassification.ownerProgram !== SYSTEM_PROGRAM_ID
+  );
+}
+
 async function getRpcMintAuthorities(mintAddress: string): Promise<{
   mintAuthority: string | null;
   freezeAuthority: string | null;
@@ -780,7 +910,20 @@ export async function analyzeSolanaTokenDistribution(
             .filter((holder): holder is TokenHolderSnapshot => holder !== null)
         : [];
 
-    const topHoldersBase = aggregateTopHoldersByWallet(rpcTopHolders);
+    const rawTopHoldersByWallet = aggregateTopHoldersByWallet(rpcTopHolders);
+    const ownerAccountClassifications = await getRpcOwnerAccountClassifications(
+      rawTopHoldersByWallet
+        .map((holder) => holder.ownerAddress ?? holder.address)
+        .filter((address): address is string => isLikelySolanaWallet(address))
+    );
+    const topHoldersBase = rawTopHoldersByWallet.filter((holder) => {
+      const walletAddress = holder.ownerAddress ?? holder.address;
+      return !isProgramOwnedHolder({
+        holder,
+        ownerClassification: ownerAccountClassifications.get(walletAddress) ?? null,
+        pairAddress: marketSnapshot.pairAddress ?? null,
+      });
+    });
     const devWalletRoles = new Map<string, TokenHolderSnapshot["devRole"]>();
     if (isLikelySolanaWallet(heliusTokenMeta?.creator) && !devWalletRoles.has(heliusTokenMeta.creator)) {
       devWalletRoles.set(heliusTokenMeta.creator, "creator");
@@ -799,6 +942,16 @@ export async function analyzeSolanaTokenDistribution(
     }
     if (isLikelySolanaWallet(rpcMintAuthorities.freezeAuthority) && !devWalletRoles.has(rpcMintAuthorities.freezeAuthority)) {
       devWalletRoles.set(rpcMintAuthorities.freezeAuthority, "freeze_authority");
+    }
+    let creatorHistoryWalletAddress: string | null = null;
+    if (![...devWalletRoles.values()].includes("creator")) {
+      const creatorResolution = await getLikelyMintCreatorWallet(mintAddress);
+      if (isLikelySolanaWallet(creatorResolution?.walletAddress)) {
+        creatorHistoryWalletAddress = creatorResolution.walletAddress;
+        if (!devWalletRoles.has(creatorResolution.walletAddress)) {
+          devWalletRoles.set(creatorResolution.walletAddress, "creator");
+        }
+      }
     }
 
     const candidateWallets = [...new Set(
@@ -879,9 +1032,11 @@ export async function analyzeSolanaTokenDistribution(
       return {
         ...holder,
         label:
-          activity && activity.distinctMintsTraded > 0
-            ? `${activity.distinctMintsTraded} mints traded`
-            : null,
+          devRole === "creator" && walletAddress === creatorHistoryWalletAddress
+            ? "Detected from earliest mint signer"
+            : activity && activity.distinctMintsTraded > 0
+              ? `${activity.distinctMintsTraded} mints traded`
+              : null,
         domain: null,
         accountType: null,
         activeAgeDays: activity?.observedAgeDays ?? null,
@@ -932,7 +1087,9 @@ export async function analyzeSolanaTokenDistribution(
           valueUsd: devHolding?.holdingUsd ?? null,
           label:
             devRole === "creator"
-              ? "Detected from token creation authority"
+              ? walletAddress === creatorHistoryWalletAddress
+                ? "Detected from earliest mint signer"
+                : "Detected from token creation authority"
               : devRole === "mint_authority"
                 ? "Detected from mint authority on-chain"
                 : "Detected from freeze authority on-chain",
@@ -1000,23 +1157,40 @@ export async function analyzeSolanaTokenDistribution(
       heliusHolderSummary > 0
         ? Math.round(heliusHolderSummary)
         : 0;
+    const isSuspiciousHeliusHolderCount = isSuspiciousResolvedHolderCount({
+      holderCount: heliusHolderCount,
+      holderCountSource: "helius",
+      minimumObservedHolderCount: normalizedObservedHolderCount,
+    });
     const rpcHolderCount = countCurrentHolderWalletsFromProgramAccounts(holderAccountsResult);
+    const normalizedBirdeyeHolderCount =
+      typeof birdeyeHolderCount === "number" && Number.isFinite(birdeyeHolderCount)
+        ? Math.round(birdeyeHolderCount)
+        : null;
+    const isSuspiciousBirdeyeHolderCount = isSuspiciousResolvedHolderCount({
+      holderCount: normalizedBirdeyeHolderCount,
+      holderCountSource: "birdeye",
+      minimumObservedHolderCount: normalizedObservedHolderCount,
+    });
 
-    const isPlausibleHolderCount = (value: number): boolean =>
-      value > 0 && value >= normalizedObservedHolderCount;
+    const isPlausibleHolderCount = (value: number | null | undefined): value is number =>
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      value > 0 &&
+      value >= normalizedObservedHolderCount;
 
     if (isPlausibleHolderCount(rpcHolderCount)) {
       holderCount = rpcHolderCount;
       holderCountSource = "rpc_scan";
-    } else if (isPlausibleHolderCount(heliusHolderCount)) {
+    } else if (!isSuspiciousHeliusHolderCount && isPlausibleHolderCount(heliusHolderCount)) {
       holderCount = heliusHolderCount;
       holderCountSource = "helius";
     } else if (
-      typeof birdeyeHolderCount === "number" &&
-      Number.isFinite(birdeyeHolderCount) &&
-      isPlausibleHolderCount(Math.round(birdeyeHolderCount))
+      normalizedBirdeyeHolderCount !== null &&
+      !isSuspiciousBirdeyeHolderCount &&
+      isPlausibleHolderCount(normalizedBirdeyeHolderCount)
     ) {
-      holderCount = Math.round(birdeyeHolderCount);
+      holderCount = normalizedBirdeyeHolderCount;
       holderCountSource = "birdeye";
     } else if (normalizedObservedHolderCount > 0) {
       holderCount = normalizedObservedHolderCount;

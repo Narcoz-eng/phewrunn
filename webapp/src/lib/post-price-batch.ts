@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 
 export type BatchedPostPriceSnapshot = {
   currentMcap: number | null;
@@ -33,10 +34,15 @@ type PendingResolver = (value: BatchedPostPriceSnapshot | null) => void;
 const BATCH_WINDOW_MS = 24;
 const MAX_BATCH_SIZE = 40;
 const PRICE_CACHE_TTL_MS = 12_000;
+const POST_PRICE_SESSION_CACHE_PREFIX = "phew.post-price.v1";
 
 const pendingById = new Map<string, PendingResolver[]>();
 const cacheById = new Map<string, { data: BatchedPostPriceSnapshot | null; expiresAtMs: number }>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function buildPostPriceSessionCacheKey(postId: string): string {
+  return `${POST_PRICE_SESSION_CACHE_PREFIX}:${postId}`;
+}
 
 function parseSnapshotTimestamp(value: string | null | undefined): number {
   if (!value) return 0;
@@ -110,6 +116,14 @@ function readCached(postId: string): BatchedPostPriceSnapshot | null | undefined
   return cached.data;
 }
 
+function readSessionCached(postId: string): BatchedPostPriceSnapshot | null | undefined {
+  const cached = readSessionCache<BatchedPostPriceSnapshot>(
+    buildPostPriceSessionCacheKey(postId),
+    PRICE_CACHE_TTL_MS
+  );
+  return cached ?? undefined;
+}
+
 function resolvePending(ids: string[], payloadById: Record<string, BatchedPostPriceSnapshot>) {
   const now = Date.now();
   for (const id of ids) {
@@ -118,6 +132,7 @@ function resolvePending(ids: string[], payloadById: Record<string, BatchedPostPr
     const existingCached = cacheById.get(id)?.data ?? null;
     const data = mergeSnapshotWithFresherState(existingCached, payloadById[id] ?? null);
     cacheById.set(id, { data, expiresAtMs: now + PRICE_CACHE_TTL_MS });
+    writeSessionCache(buildPostPriceSessionCacheKey(id), data);
     resolvers.forEach((resolve) => resolve(data));
   }
 }
@@ -151,6 +166,15 @@ export function getPostPriceSnapshotBatched(postId: string): Promise<BatchedPost
   const cached = readCached(postId);
   if (cached !== undefined) {
     return Promise.resolve(cached);
+  }
+
+  const sessionCached = readSessionCached(postId);
+  if (sessionCached !== undefined) {
+    cacheById.set(postId, {
+      data: sessionCached,
+      expiresAtMs: Date.now() + PRICE_CACHE_TTL_MS,
+    });
+    return Promise.resolve(sessionCached);
   }
 
   return new Promise<BatchedPostPriceSnapshot | null>((resolve) => {

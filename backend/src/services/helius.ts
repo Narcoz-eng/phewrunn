@@ -213,12 +213,27 @@ export type ParsedSolanaTransaction = {
   } | null;
 };
 
+type RpcSignatureForAddressResult = Array<{
+  signature?: string | null;
+  blockTime?: number | null;
+  err?: unknown;
+}>;
+
+export type MintCreatorResolution = {
+  source: "helius";
+  walletAddress: string;
+  reason: "mint_initialize_signer" | "mint_history_signer";
+  signature: string | null;
+  blockTimeMs: number | null;
+};
+
 const HELIUS_RPC_URL =
   process.env.HELIUS_RPC_URL?.trim() ||
   process.env.HELIUS_RPC_ENDPOINT?.trim() ||
   null;
 
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const HELIUS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 10_000;
@@ -240,6 +255,8 @@ const heliusMintHolderCache = new Map<string, { value: HeliusTokenAccountSummary
 const heliusMintHolderInFlight = new Map<string, Promise<HeliusTokenAccountSummary | null>>();
 const heliusAuthorityAssetSummaryCache = new Map<string, { value: HeliusAuthorityAssetSummary | null; expiresAtMs: number }>();
 const heliusAuthorityAssetSummaryInFlight = new Map<string, Promise<HeliusAuthorityAssetSummary | null>>();
+const heliusMintCreatorCache = new Map<string, { value: MintCreatorResolution | null; expiresAtMs: number }>();
+const heliusMintCreatorInFlight = new Map<string, Promise<MintCreatorResolution | null>>();
 
 function isLikelySolanaAddress(value: string | null | undefined): value is string {
   return typeof value === "string" && SOLANA_WALLET_REGEX.test(value);
@@ -333,10 +350,148 @@ export async function getParsedSolanaTransaction(
   );
 }
 
+function readParsedInstructionType(instruction: ParsedSolanaInstruction | null | undefined): string | null {
+  if (!instruction?.parsed || typeof instruction.parsed !== "object") return null;
+  const type = (instruction.parsed as Record<string, unknown>).type;
+  return typeof type === "string" && type.trim().length > 0 ? type.trim() : null;
+}
+
+function readInstructionMintAddress(
+  instruction: ParsedSolanaInstruction | null | undefined
+): string | null {
+  if (!instruction?.parsed || typeof instruction.parsed !== "object") return null;
+  const info = (instruction.parsed as Record<string, unknown>).info;
+  if (!info || typeof info !== "object") return null;
+  const candidate =
+    readNonEmptyString((info as Record<string, unknown>).mint) ??
+    readNonEmptyString((info as Record<string, unknown>).account);
+  return isLikelySolanaAddress(candidate) ? candidate : null;
+}
+
+function readTransactionSignerKeys(transaction: ParsedSolanaTransaction): string[] {
+  const accountKeys = transaction.transaction?.message?.accountKeys ?? [];
+  const explicitSigners = accountKeys
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      if (record.signer !== true) return null;
+      return readNonEmptyString(record.pubkey);
+    })
+    .filter((entry): entry is string => isLikelySolanaAddress(entry));
+  if (explicitSigners.length > 0) {
+    return explicitSigners;
+  }
+
+  const legacyFeePayer = accountKeys[0];
+  return typeof legacyFeePayer === "string" && isLikelySolanaAddress(legacyFeePayer)
+    ? [legacyFeePayer]
+    : [];
+}
+
+function readTransactionInstructions(transaction: ParsedSolanaTransaction): ParsedSolanaInstruction[] {
+  const outer = transaction.transaction?.message?.instructions ?? [];
+  const inner = transaction.meta?.innerInstructions ?? [];
+  return [
+    ...outer.filter((instruction): instruction is ParsedSolanaInstruction => Boolean(instruction)),
+    ...inner.flatMap((entry) => (entry?.instructions ?? []).filter((instruction): instruction is ParsedSolanaInstruction => Boolean(instruction))),
+  ];
+}
+
+function isMintLifecycleInstruction(
+  instruction: ParsedSolanaInstruction,
+  mintAddress: string
+): boolean {
+  const type = readParsedInstructionType(instruction);
+  if (!type) return false;
+  if (!["initializeMint", "initializeMint2", "mintTo", "mintToChecked", "setAuthority"].includes(type)) {
+    return false;
+  }
+  return readInstructionMintAddress(instruction) === mintAddress;
+}
+
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export async function getLikelyMintCreatorWallet(
+  mintAddress: string | null | undefined
+): Promise<MintCreatorResolution | null> {
+  if (!HELIUS_RPC_URL) return null;
+  if (!isLikelySolanaAddress(mintAddress)) return null;
+
+  const mint = mintAddress;
+  const now = Date.now();
+  const cached = heliusMintCreatorCache.get(mint);
+  if (cached && cached.expiresAtMs > now) return cached.value;
+  const inFlight = heliusMintCreatorInFlight.get(mint);
+  if (inFlight) return inFlight;
+
+  const request = (async (): Promise<MintCreatorResolution | null> => {
+    const signatures = await heliusRpcCall<RpcSignatureForAddressResult>(
+      "getSignaturesForAddress",
+      [mint, { limit: 12, commitment: "confirmed" }],
+      `mint-sigs-${mint.slice(0, 8)}`
+    );
+    if (!Array.isArray(signatures) || signatures.length === 0) {
+      return null;
+    }
+
+    const orderedSignatures = signatures
+      .filter((entry) => typeof entry?.signature === "string" && entry.signature.trim().length > 0)
+      .reverse();
+    let fallback: MintCreatorResolution | null = null;
+
+    for (const entry of orderedSignatures) {
+      const signature = entry.signature?.trim() ?? "";
+      if (!signature || entry.err) continue;
+      const transaction = await getParsedSolanaTransaction(signature);
+      if (!transaction || transaction.meta?.err) continue;
+
+      const signerKeys = readTransactionSignerKeys(transaction).filter(
+        (address) => address !== mint && address !== SYSTEM_PROGRAM_ID
+      );
+      if (signerKeys.length === 0) continue;
+
+      const primarySigner = signerKeys[0]!;
+      const blockTimeMs = normalizeTsToMs(entry.blockTime ?? transaction.blockTime ?? undefined);
+      if (!fallback) {
+        fallback = {
+          source: "helius",
+          walletAddress: primarySigner,
+          reason: "mint_history_signer",
+          signature,
+          blockTimeMs,
+        };
+      }
+
+      const hasMintLifecycleInstruction = readTransactionInstructions(transaction).some((instruction) =>
+        isMintLifecycleInstruction(instruction, mint)
+      );
+      if (hasMintLifecycleInstruction) {
+        return {
+          source: "helius",
+          walletAddress: primarySigner,
+          reason: "mint_initialize_signer",
+          signature,
+          blockTimeMs,
+        };
+      }
+    }
+
+    return fallback;
+  })().finally(() => {
+    heliusMintCreatorInFlight.delete(mint);
+  });
+
+  heliusMintCreatorInFlight.set(mint, request);
+  const value = await request;
+  heliusMintCreatorCache.set(mint, {
+    value,
+    expiresAtMs: now + HELIUS_METADATA_CACHE_TTL_MS,
+  });
+  return value;
 }
 
 function readHeliusAssetImage(payload: unknown): string | null {
@@ -1159,6 +1314,16 @@ export async function getHeliusCurrentHolderOwnerCount(params: {
       (!hasKnownTotal || processedAccounts < knownTotal!);
 
     if (looksTruncatedWithoutCursor) {
+      return null;
+    }
+    const ambiguousExactPageBoundary =
+      !nextCursor &&
+      page.tokenAccounts.length === limit &&
+      hasKnownTotal &&
+      knownTotal === processedAccounts &&
+      knownTotal % limit === 0;
+
+    if (ambiguousExactPageBoundary) {
       return null;
     }
 

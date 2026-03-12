@@ -1396,7 +1396,7 @@ export default function Feed() {
     },
     staleTime: 5 * 60 * 1000,
     refetchInterval: false,
-    refetchOnMount: sessionBackedUser || cachedFeedUser ? false : "always",
+    refetchOnMount: sessionBackedUser || cachedFeedUser ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -1443,7 +1443,7 @@ export default function Feed() {
     },
     gcTime: FEED_QUERY_GC_TIME_MS,
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
-    refetchOnMount: hydrationCachedFirstPage ? false : "always",
+    refetchOnMount: hydrationCachedFirstPage ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: false,

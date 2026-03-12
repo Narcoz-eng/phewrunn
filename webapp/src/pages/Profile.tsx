@@ -55,6 +55,7 @@ import {
   getProfileHandleValidationMessage,
   normalizeProfileHandleInput,
 } from "@/lib/profile-path";
+import { getCachedPostsForAuthor } from "@/lib/post-query-cache";
 import { PhewEditIcon } from "@/components/icons/PhewIcons";
 import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 
@@ -227,6 +228,16 @@ export default function Profile() {
         : null,
     [session?.user?.id]
   );
+  const profilePostFallbackIdentifier =
+    sessionBackedProfile?.id ??
+    session?.user?.id ??
+    sessionBackedProfile?.username ??
+    session?.user?.username ??
+    null;
+  const feedFallbackPosts = useMemo(
+    () => getCachedPostsForAuthor(queryClient, profilePostFallbackIdentifier),
+    [profilePostFallbackIdentifier, queryClient]
+  );
 
   // Fetch user data with React Query
   const {
@@ -267,7 +278,7 @@ export default function Profile() {
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
     refetchInterval: false,
-    refetchOnMount: sessionBackedProfile ? false : "always",
+    refetchOnMount: sessionBackedProfile ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: (failureCount, error) => {
@@ -301,16 +312,36 @@ export default function Profile() {
   } = useQuery({
     queryKey: ["profile", "posts", user?.id],
     queryFn: async () => {
-      if (!user?.id) return [];
-      const postsData = await api.get<Post[]>(`/api/users/${user.id}/posts`);
-      return postsData;
+      const fallbackPosts =
+        cachedPosts && cachedPosts.length > 0
+          ? cachedPosts
+          : feedFallbackPosts.length > 0
+            ? feedFallbackPosts
+            : null;
+      if (!user?.id) {
+        return fallbackPosts ?? [];
+      }
+      try {
+        const postsData = await api.get<Post[]>(`/api/users/${user.id}/posts`);
+        if (postsData.length === 0 && fallbackPosts) {
+          return fallbackPosts;
+        }
+        return postsData;
+      } catch (error) {
+        if (fallbackPosts) {
+          return fallbackPosts;
+        }
+        throw error;
+      }
     },
-    initialData: user?.id ? (cachedPosts ?? undefined) : undefined,
+    initialData:
+      cachedPosts ??
+      (feedFallbackPosts.length > 0 ? feedFallbackPosts : undefined),
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchInterval: false,
-    refetchOnMount: cachedPosts ? false : "always",
+    refetchOnMount: cachedPosts || feedFallbackPosts.length > 0 ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -351,7 +382,7 @@ export default function Profile() {
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchInterval: false,
-    refetchOnMount: cachedReposts ? false : "always",
+    refetchOnMount: cachedReposts ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,

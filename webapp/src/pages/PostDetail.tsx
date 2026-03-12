@@ -1,5 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Post } from "@/types";
 import { PostCard } from "@/components/feed/PostCard";
@@ -8,11 +9,17 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { toast } from "sonner";
+import { findCachedPost } from "@/lib/post-query-cache";
 
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: session, canPerformAuthenticatedWrites } = useSession();
+  const cachedPost = useMemo(
+    () => findCachedPost(queryClient, postId),
+    [postId, queryClient]
+  );
 
   const {
     data: post,
@@ -26,6 +33,8 @@ export default function PostDetail() {
       return data;
     },
     enabled: !!postId,
+    initialData: cachedPost ?? undefined,
+    initialDataUpdatedAt: cachedPost ? Date.now() : undefined,
     staleTime: 30000,
     retry: 1,
   });

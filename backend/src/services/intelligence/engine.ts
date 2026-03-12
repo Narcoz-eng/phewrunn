@@ -42,6 +42,7 @@ const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
 const TOKEN_OVERVIEW_CACHE_VERSION = 3;
+const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
@@ -417,6 +418,8 @@ const followingSnapshotCache = new Map<
   string,
   CacheEntry<{ followedTraderIds: string[]; followedTokenIds: string[] }>
 >();
+const tokenLookupCache = new Map<string, CacheEntry<TokenRecord | null>>();
+const tokenLookupInFlight = new Map<string, Promise<TokenRecord | null>>();
 const tokenOverviewCache = new Map<string, CacheEntry<TokenOverview | null>>();
 const tokenOverviewInFlight = new Map<string, Promise<TokenOverview | null>>();
 const radarCache = new Map<
@@ -521,6 +524,17 @@ type MarketContextSnapshot = {
   confidenceBias: number;
   accelerationMultiplier: number;
 };
+
+function buildTokenLookupCacheKey(address: string): string {
+  return `token:lookup:${sanitizeCacheKeyPart(address.trim().toLowerCase())}`;
+}
+
+function writeTokenLookupCacheValue(address: string, value: TokenRecord | null): void {
+  tokenLookupCache.set(buildTokenLookupCacheKey(address), {
+    value: cloneCachedValue(value),
+    expiresAt: Date.now() + TOKEN_LOOKUP_CACHE_TTL_MS,
+  });
+}
 
 function finite(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -961,15 +975,13 @@ function shouldUseStoredPostIntelligence(
 function looksLikeLowerBoundSolanaHolderCount(args: {
   storedHolderCount: number | null | undefined;
   observedTopHolderCount: number;
+  liveHolderCount: number | null | undefined;
   liveHolderCountSource: TokenOverview["token"]["holderCountSource"] | "stored" | null | undefined;
 }): boolean {
   if (!hasPositiveMetric(args.storedHolderCount)) {
     return false;
   }
-  const hasVerifiedLiveCountSource =
-    args.liveHolderCountSource === "helius" ||
-    args.liveHolderCountSource === "rpc_scan" ||
-    args.liveHolderCountSource === "birdeye";
+  const hasVerifiedLiveCountSource = hasVerifiedSolanaHolderCount(args.liveHolderCount, args.liveHolderCountSource);
   if (hasVerifiedLiveCountSource) {
     return false;
   }
@@ -983,6 +995,24 @@ function looksLikeLowerBoundSolanaHolderCount(args: {
   }
 
   return args.observedTopHolderCount >= 10 && normalizedStoredCount <= 20;
+}
+
+function hasVerifiedSolanaHolderCount(
+  holderCount: number | null | undefined,
+  holderCountSource: TokenOverview["token"]["holderCountSource"] | "stored" | null | undefined
+): boolean {
+  return (
+    holderCountSource !== "largest_accounts" &&
+    holderCountSource !== null &&
+    hasPositiveMetric(holderCount) &&
+    !(
+      (holderCountSource === "stored" ||
+        holderCountSource === "helius" ||
+        holderCountSource === "rpc_scan" ||
+        holderCountSource === "birdeye") &&
+      Math.round(holderCount) === 1000
+    )
+  );
 }
 
 function toNumber(value: number | bigint | string | null | undefined): number | null {
@@ -1222,6 +1252,7 @@ async function ensureTokensForCalls(records: CallRecord[]): Promise<Map<string, 
   const tokenMap = new Map<string, TokenRecord>();
   for (const token of existingTokens) {
     tokenMap.set(buildTokenKey(token.chainType, token.address), token);
+    writeTokenLookupCacheValue(token.address, token);
   }
 
   for (const candidate of uniqueCandidates) {
@@ -1246,6 +1277,7 @@ async function ensureTokensForCalls(records: CallRecord[]): Promise<Map<string, 
 
     if (created) {
       tokenMap.set(candidate.key, created);
+      writeTokenLookupCacheValue(created.address, created);
     }
   }
 
@@ -1275,6 +1307,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
 
   if (!existing) return null;
   if (!shouldRefreshToken(existing)) {
+    writeTokenLookupCacheValue(existing.address, existing);
     return {
       token: existing,
       previousToken: existing,
@@ -1374,16 +1407,17 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
       latestSnapshot?.marketCap
     )
   );
-  const hasResolvedDistributionHolderCount =
-    distribution?.holderCountSource !== "largest_accounts" &&
-    distribution?.holderCountSource !== null &&
-    hasPositiveMetric(distribution?.holderCount);
+  const hasResolvedDistributionHolderCount = hasVerifiedSolanaHolderCount(
+    distribution?.holderCount,
+    distribution?.holderCountSource ?? null
+  );
   const observedDistributionTopHolderCount = distribution?.topHolders.length ?? 0;
   const existingHolderCountLooksLowerBound =
     existing.chainType === "solana" &&
     looksLikeLowerBoundSolanaHolderCount({
       storedHolderCount: existing.holderCount,
       observedTopHolderCount: observedDistributionTopHolderCount,
+      liveHolderCount: distribution?.holderCount,
       liveHolderCountSource: distribution?.holderCountSource ?? null,
     });
   const holderCount = Math.round(
@@ -1674,6 +1708,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
   });
 
   if (!refreshedToken) return null;
+  writeTokenLookupCacheValue(refreshedToken.address, refreshedToken);
 
   await fanoutTokenSignalAlerts({
     token: refreshedToken,
@@ -2969,30 +3004,34 @@ export async function listThreadForCall(postId: string): Promise<ThreadCommentRe
 
 export async function findTokenByAddress(address: string): Promise<TokenRecord | null> {
   const normalizedAddress = address.trim();
-  const token = await prisma.token.findFirst({
-    where: {
-      address: normalizedAddress,
-    },
-    select: TOKEN_SELECT,
-    orderBy: { updatedAt: "desc" },
+  const cacheKey = buildTokenLookupCacheKey(normalizedAddress);
+
+  return memoizeCached(tokenLookupCache, tokenLookupInFlight, cacheKey, TOKEN_LOOKUP_CACHE_TTL_MS, async () => {
+    const token = await prisma.token.findFirst({
+      where: {
+        address: normalizedAddress,
+      },
+      select: TOKEN_SELECT,
+      orderBy: { updatedAt: "desc" },
+    });
+
+    if (token) {
+      return token;
+    }
+
+    const post = await prisma.post.findFirst({
+      where: {
+        contractAddress: normalizedAddress,
+      },
+      select: CALL_SELECT,
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!post) return null;
+    const tokenMap = await ensureTokensForCalls([post]);
+    const key = buildTokenKey(post.chainType, normalizedAddress);
+    return tokenMap.get(key) ?? null;
   });
-
-  if (token) {
-    return token;
-  }
-
-  const post = await prisma.post.findFirst({
-    where: {
-      contractAddress: normalizedAddress,
-    },
-    select: CALL_SELECT,
-    orderBy: { createdAt: "desc" },
-  });
-
-  if (!post) return null;
-  const tokenMap = await ensureTokensForCalls([post]);
-  const key = buildTokenKey(post.chainType, normalizedAddress);
-  return tokenMap.get(key) ?? null;
 }
 
 async function listTokenRelatedCallRecords(
@@ -3291,6 +3330,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       !looksLikeLowerBoundSolanaHolderCount({
         storedHolderCount: value,
         observedTopHolderCount: minimumObservedHolderCount,
+        liveHolderCount: distributionFallback?.holderCount,
         liveHolderCountSource: distributionFallback?.holderCountSource ?? staleToken?.holderCountSource ?? null,
       });
     const storedSolanaHolderCount = isPlausibleStoredHolderCount(currentToken.holderCount)
@@ -3298,16 +3338,20 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       : isPlausibleStoredHolderCount(staleToken?.holderCount)
         ? Math.round(staleToken!.holderCount!)
         : null;
-    const hasResolvedDistributionHolderCount =
-      distributionFallback?.holderCountSource !== "largest_accounts" &&
-      distributionFallback?.holderCountSource !== null &&
-      hasPositiveMetric(distributionFallback?.holderCount);
+    const hasResolvedDistributionHolderCount = hasVerifiedSolanaHolderCount(
+      distributionFallback?.holderCount,
+      distributionFallback?.holderCountSource ?? null
+    );
+    const unresolvedDistributionHolderCount =
+      distributionFallback?.holderCountSource === "largest_accounts"
+        ? distributionFallback?.holderCount
+        : null;
     const resolvedHolderCount = Math.round(
       pickFirstPositiveMetric(
         hasResolvedDistributionHolderCount ? distributionFallback?.holderCount : null,
         currentToken.chainType === "solana" ? storedSolanaHolderCount : currentToken.holderCount,
         currentToken.chainType === "solana" ? null : staleToken?.holderCount,
-        !hasResolvedDistributionHolderCount ? distributionFallback?.holderCount : null
+        !hasResolvedDistributionHolderCount ? unresolvedDistributionHolderCount : null
       ) ?? 0
     ) || null;
     const resolvedHolderCountSource =
@@ -3316,8 +3360,10 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         : currentToken.chainType === "solana"
           ? storedSolanaHolderCount !== null
             ? "stored"
-            : distributionFallback?.holderCountSource ??
-              (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null)
+            : unresolvedDistributionHolderCount !== null
+              ? distributionFallback?.holderCountSource ??
+                (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null)
+              : (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null)
           : resolvedHolderCount !== null
             ? "stored"
             : null;
@@ -3372,10 +3418,9 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       distributionFallback.topHolders.length > 0
         ? cloneCachedValue(distributionFallback.topHolders)
         : staleTopHolders;
-    const resolvedDevWallet =
-      hasFreshDistributionTelemetry && distributionFallback?.devWallet
-        ? cloneCachedValue(distributionFallback.devWallet)
-        : staleDevWallet;
+    const resolvedDevWallet = distributionFallback?.devWallet
+      ? cloneCachedValue(distributionFallback.devWallet)
+      : staleDevWallet;
     const resolvedConfidenceScore = roundMetric(
       pickFirstFiniteMetric(
         currentToken.confidenceScore,

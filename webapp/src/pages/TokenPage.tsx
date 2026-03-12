@@ -456,7 +456,14 @@ function hasResolvedHolderCount(
     holderCount > 0 &&
     holderCountSource !== "largest_accounts" &&
     holderCountSource !== null &&
-    holderCountSource !== undefined
+    holderCountSource !== undefined &&
+    !(
+      (holderCountSource === "stored" ||
+        holderCountSource === "helius" ||
+        holderCountSource === "rpc_scan" ||
+        holderCountSource === "birdeye") &&
+      Math.round(holderCount) === 1000
+    )
   );
 }
 
@@ -685,7 +692,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v13:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v15:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedToken = useMemo(
@@ -715,7 +722,7 @@ export default function TokenPage() {
     enabled: !!tokenAddress,
     staleTime: 45_000,
     gcTime: 8 * 60_000,
-    refetchOnMount: cachedToken ? false : "always",
+    refetchOnMount: cachedToken ? false : true,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -723,17 +730,18 @@ export default function TokenPage() {
   const liveTokenQuery = useQuery<TokenLiveData>({
     queryKey: ["token-live", tokenAddress],
     enabled: Boolean(tokenAddress && token?.id),
-    staleTime: 4_000,
+    staleTime: 6_000,
     gcTime: 5 * 60_000,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
     retry: 1,
+    refetchIntervalInBackground: false,
     refetchInterval: 10_000,
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
       const response = await api.raw(`/api/tokens/${tokenAddress}/live`, {
         method: "GET",
-        cache: "no-store",
+        cache: "default",
         timeout: 15_000,
       });
 
@@ -748,20 +756,6 @@ export default function TokenPage() {
       }
 
       return payload.data;
-    },
-  });
-
-  const recentCallsQuery = useQuery<Post[]>({
-    queryKey: ["token-calls", viewerScope, tokenAddress],
-    enabled: Boolean(tokenAddress),
-    staleTime: 20_000,
-    gcTime: 8 * 60_000,
-    placeholderData: (previousData) => previousData,
-    refetchOnWindowFocus: false,
-    retry: 1,
-    queryFn: async () => {
-      if (!tokenAddress) throw new Error("Token address is required");
-      return api.get<Post[]>(`/api/tokens/${tokenAddress}/calls`);
     },
   });
 
@@ -903,10 +897,7 @@ export default function TokenPage() {
     };
   }, [liveChartData]);
 
-  const recentCalls = useMemo(
-    () => (recentCallsQuery.data && recentCallsQuery.data.length > 0 ? recentCallsQuery.data : (token?.recentCalls ?? [])),
-    [recentCallsQuery.data, token?.recentCalls]
-  );
+  const recentCalls = useMemo(() => token?.recentCalls ?? [], [token?.recentCalls]);
   const recentCallsCount = Math.max(token?.callsCount ?? 0, recentCalls.length);
   const primaryTradeCall = useMemo(
     () => recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
@@ -1021,15 +1012,18 @@ export default function TokenPage() {
     typeof token.holderCount === "number" &&
     Number.isFinite(token.holderCount) &&
     token.holderCount <= 20;
-  const isStoredCappedHolderCount =
-    token?.holderCountSource === "stored" &&
+  const isSuspiciousCappedHolderCount =
+    (token?.holderCountSource === "stored" ||
+      token?.holderCountSource === "helius" ||
+      token?.holderCountSource === "rpc_scan" ||
+      token?.holderCountSource === "birdeye") &&
     typeof token.holderCount === "number" &&
     Number.isFinite(token.holderCount) &&
     token.holderCount === 1000;
   const isHolderCountLowerBound =
     token?.holderCountSource === "largest_accounts" ||
     isStoredLowerBoundHolderCount ||
-    isStoredCappedHolderCount;
+    isSuspiciousCappedHolderCount;
   const hasVerifiedHolderCount = hasResolvedHolderCount(token?.holderCount, token?.holderCountSource);
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
@@ -1062,7 +1056,7 @@ export default function TokenPage() {
     ? "Top wallets, developer wallet, and role tags from the current chain scan."
     : "Top wallets are ready first. Full holder count follows after the chain scan finishes.";
   const recentCallsEmptyCopy =
-    recentCallsQuery.isLoading || recentCallsQuery.isFetching
+    isLoading || isFetching
       ? "Recent token calls are still loading for this address."
       : "No recent calls are available for this token yet.";
 
@@ -1618,7 +1612,7 @@ export default function TokenPage() {
                         Developer wallet not detected yet
                       </div>
                       <div className="mt-1 text-sm text-muted-foreground">
-                        The current on-chain authority scan has not mapped a creator, mint authority, or freeze authority wallet for this token yet.
+                        The current chain scan has not confirmed a creator, authority, or earliest mint signer wallet for this token yet.
                       </div>
                     </div>
                   )}
