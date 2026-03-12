@@ -42,7 +42,10 @@ const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
 const TOKEN_OVERVIEW_CACHE_VERSION = 3;
-const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
+const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
+const TOKEN_CORE_HYDRATION_RETRY_MS = process.env.NODE_ENV === "production" ? 45_000 : 12_000;
+const TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
+const TOKEN_REFRESH_REQUEST_COOLDOWN_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
@@ -52,7 +55,6 @@ const LEADERBOARD_SNAPSHOT_VERSION = 2;
 const DAILY_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:daily:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:first-callers:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
-const TOKEN_REFRESH_SOFT_TIMEOUT_MS = 1_200;
 const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_500 : 2_250;
 const TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS =
   process.env.NODE_ENV === "production" ? 5_000 : 7_500;
@@ -422,6 +424,8 @@ const tokenLookupCache = new Map<string, CacheEntry<TokenRecord | null>>();
 const tokenLookupInFlight = new Map<string, Promise<TokenRecord | null>>();
 const tokenOverviewCache = new Map<string, CacheEntry<TokenOverview | null>>();
 const tokenOverviewInFlight = new Map<string, Promise<TokenOverview | null>>();
+const tokenRefreshInFlight = new Map<string, Promise<TokenRefreshResult | null>>();
+const tokenRefreshAttemptAt = new Map<string, number>();
 const radarCache = new Map<
   string,
   CacheEntry<Array<{ token: TokenOverview["token"]; score: number }>>
@@ -1144,11 +1148,38 @@ async function getMarketContextSnapshot(): Promise<MarketContextSnapshot> {
 }
 
 function shouldRefreshToken(token: TokenRecord | null): boolean {
+  if (!token) return false;
   if (tokenNeedsCoreHydration(token)) return true;
-  if (!token?.lastIntelligenceAt) return true;
+  if (!token.lastIntelligenceAt) return true;
   if (token.lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) return true;
-  if (finite(token.tokenRiskScore) >= 60 && finite(token.confidenceScore) >= 35) return true;
-  return Date.now() - token.lastIntelligenceAt.getTime() > TOKEN_INTELLIGENCE_STALE_MS;
+
+  const hasHighSignal =
+    finite(token.hotAlphaScore) >= HOT_ALPHA_THRESHOLD ||
+    finite(token.earlyRunnerScore) >= EARLY_RUNNER_THRESHOLD ||
+    finite(token.highConvictionScore) >= HIGH_CONVICTION_THRESHOLD;
+  const staleAfterMs = hasHighSignal
+    ? TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS
+    : TOKEN_INTELLIGENCE_STALE_MS;
+
+  return Date.now() - token.lastIntelligenceAt.getTime() > staleAfterMs;
+}
+
+function scheduleTokenIntelligenceRefresh(token: TokenRecord | null): void {
+  if (!token || !shouldRefreshToken(token)) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  const minIntervalMs = tokenNeedsCoreHydration(token)
+    ? TOKEN_CORE_HYDRATION_RETRY_MS
+    : TOKEN_REFRESH_REQUEST_COOLDOWN_MS;
+  const lastAttemptAt = tokenRefreshAttemptAt.get(token.id) ?? 0;
+  if (tokenRefreshInFlight.has(token.id) || nowMs - lastAttemptAt < minIntervalMs) {
+    return;
+  }
+
+  tokenRefreshAttemptAt.set(token.id, nowMs);
+  void refreshTokenIntelligence(token.id).catch(() => undefined);
 }
 
 function buildRadarReasons(args: {
@@ -1300,93 +1331,99 @@ async function ensureTokensForCalls(records: CallRecord[]): Promise<Map<string, 
 }
 
 export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRefreshResult | null> {
-  const existing = await prisma.token.findUnique({
-    where: { id: tokenId },
-    select: TOKEN_SELECT,
-  });
-
-  if (!existing) return null;
-  if (!shouldRefreshToken(existing)) {
-    writeTokenLookupCacheValue(existing.address, existing);
-    return {
-      token: existing,
-      previousToken: existing,
-      refreshed: false,
-    };
+  const existingRequest = tokenRefreshInFlight.get(tokenId);
+  if (existingRequest) {
+    return existingRequest;
   }
 
-  const [latestSnapshot, recentCalls, reactions, marketSnapshot, distribution, clusters] = await Promise.all([
-    prisma.tokenMetricSnapshot.findFirst({
-      where: { tokenId },
-      orderBy: { capturedAt: "desc" },
-      select: {
-        id: true,
-        capturedAt: true,
-        marketCap: true,
-        liquidity: true,
-        volume24h: true,
-        holderCount: true,
-        sentimentScore: true,
-        confidenceScore: true,
-      },
-    }),
-    prisma.post.findMany({
-      where: {
-        tokenId,
-        createdAt: {
-          gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
+  const request = (async () => {
+    const existing = await prisma.token.findUnique({
+      where: { id: tokenId },
+      select: TOKEN_SELECT,
+    });
+
+    if (!existing) return null;
+    if (!shouldRefreshToken(existing)) {
+      writeTokenLookupCacheValue(existing.address, existing);
+      return {
+        token: existing,
+        previousToken: existing,
+        refreshed: false,
+      };
+    }
+
+    const [latestSnapshot, recentCalls, reactions, marketSnapshot, distribution, clusters] = await Promise.all([
+      prisma.tokenMetricSnapshot.findFirst({
+        where: { tokenId },
+        orderBy: { capturedAt: "desc" },
+        select: {
+          id: true,
+          capturedAt: true,
+          marketCap: true,
+          liquidity: true,
+          volume24h: true,
+          holderCount: true,
+          sentimentScore: true,
+          confidenceScore: true,
         },
-      },
-      select: {
-        id: true,
-        authorId: true,
-        createdAt: true,
-        confidenceScore: true,
-        hotAlphaScore: true,
-        highConvictionScore: true,
-        lastIntelligenceAt: true,
-        entryMcap: true,
-        currentMcap: true,
-        author: {
-          select: {
-            id: true,
-            trustScore: true,
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.reaction.findMany({
-      where: {
-        post: {
+      }),
+      prisma.post.findMany({
+        where: {
           tokenId,
           createdAt: {
-            gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
           },
         },
-      },
-      select: {
-        type: true,
-      },
-    }),
-    getCachedMarketCapSnapshot(existing.address, existing.chainType).catch(
-      () => ({ mcap: null } as MarketCapResult)
-    ),
-    existing.chainType === "solana"
-      ? analyzeSolanaTokenDistribution(existing.address, existing.liquidity).catch(() => null)
-      : Promise.resolve(null),
-    prisma.tokenBundleCluster.findMany({
-      where: { tokenId },
-      select: {
-        id: true,
-        clusterLabel: true,
-        walletCount: true,
-        estimatedSupplyPct: true,
-        evidenceJson: true,
-      },
-      orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
-    }),
-  ]);
+        select: {
+          id: true,
+          authorId: true,
+          createdAt: true,
+          confidenceScore: true,
+          hotAlphaScore: true,
+          highConvictionScore: true,
+          lastIntelligenceAt: true,
+          entryMcap: true,
+          currentMcap: true,
+          author: {
+            select: {
+              id: true,
+              trustScore: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.reaction.findMany({
+        where: {
+          post: {
+            tokenId,
+            createdAt: {
+              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            },
+          },
+        },
+        select: {
+          type: true,
+        },
+      }),
+      getCachedMarketCapSnapshot(existing.address, existing.chainType).catch(
+        () => ({ mcap: null } as MarketCapResult)
+      ),
+      existing.chainType === "solana"
+        ? analyzeSolanaTokenDistribution(existing.address, existing.liquidity).catch(() => null)
+        : Promise.resolve(null),
+      prisma.tokenBundleCluster.findMany({
+        where: { tokenId },
+        select: {
+          id: true,
+          clusterLabel: true,
+          walletCount: true,
+          estimatedSupplyPct: true,
+          evidenceJson: true,
+        },
+        orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
+      }),
+    ]);
 
   const reactionCounts = buildReactionCounts(reactions.map((reaction) => reaction.type));
   const sentimentTrendAdjustment = computeDexSentimentTrendAdjustment(marketSnapshot);
@@ -1585,8 +1622,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     tokenRiskScore,
   });
 
-  await prisma.$transaction(async (tx) => {
-    await tx.token.update({
+    const refreshedToken = await prisma.token.update({
       where: { id: tokenId },
       data: {
         symbol: marketSnapshot?.tokenSymbol ?? existing.symbol,
@@ -1616,110 +1652,143 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
         earlyRunnerReasons: radarReasons,
         lastIntelligenceAt: new Date(),
       },
+      select: TOKEN_SELECT,
     });
 
+    const deferredWrites: Promise<unknown>[] = [];
     if (distribution?.clusters) {
-      await tx.tokenBundleCluster.deleteMany({ where: { tokenId } });
-      if (distribution.clusters.length > 0) {
-        await tx.tokenBundleCluster.createMany({
-          data: distribution.clusters.map((cluster) => ({
-            tokenId,
-            clusterLabel: cluster.clusterLabel,
-            walletCount: cluster.walletCount,
-            estimatedSupplyPct: roundMetricOrZero(cluster.estimatedSupplyPct),
-            evidenceJson: cluster.evidenceJson,
-          })),
-        });
-      }
+      deferredWrites.push(
+        prisma.tokenBundleCluster.deleteMany({ where: { tokenId } })
+          .then(() => (
+            distribution.clusters.length > 0
+              ? prisma.tokenBundleCluster.createMany({
+                  data: distribution.clusters.map((cluster) => ({
+                    tokenId,
+                    clusterLabel: cluster.clusterLabel,
+                    walletCount: cluster.walletCount,
+                    estimatedSupplyPct: roundMetricOrZero(cluster.estimatedSupplyPct),
+                    evidenceJson: cluster.evidenceJson,
+                  })),
+                })
+              : null
+          ))
+          .catch((error) => {
+            console.warn("[intelligence/token] bundle cluster write skipped", {
+              tokenId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          })
+      );
     }
 
     if (
       !latestSnapshot ||
       Date.now() - latestSnapshot.capturedAt.getTime() >= TOKEN_SNAPSHOT_MIN_INTERVAL_MS
     ) {
-      await tx.tokenMetricSnapshot.create({
-        data: {
-          tokenId,
-          marketCap,
-          liquidity,
-          volume24h,
-          holderCount,
-          largestHolderPct: resolvedLargestHolderPct,
-          top10HolderPct: resolvedTop10HolderPct,
-          bundledWalletCount: resolvedBundledWalletCount,
-          estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
-          tokenRiskScore,
-          sentimentScore: roundMetric(sentimentScore),
-          confidenceScore,
-          radarScore,
-        },
-      });
+      deferredWrites.push(
+        prisma.tokenMetricSnapshot.create({
+          data: {
+            tokenId,
+            marketCap,
+            liquidity,
+            volume24h,
+            holderCount,
+            largestHolderPct: resolvedLargestHolderPct,
+            top10HolderPct: resolvedTop10HolderPct,
+            bundledWalletCount: resolvedBundledWalletCount,
+            estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
+            tokenRiskScore,
+            sentimentScore: roundMetric(sentimentScore),
+            confidenceScore,
+            radarScore,
+          },
+        }).catch((error) => {
+          console.warn("[intelligence/token] metric snapshot write skipped", {
+            tokenId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        })
+      );
     }
 
     if (finite(earlyRunnerScore) >= EARLY_RUNNER_THRESHOLD && finite(existing.earlyRunnerScore) < EARLY_RUNNER_THRESHOLD) {
-      await tx.tokenEvent.create({
-        data: {
-          tokenId,
-          eventType: "early_runner_detected",
-          timestamp: new Date(),
-          marketCap,
-          liquidity,
-          volume: volume24h,
-          metadata: { reasons: radarReasons },
-        },
-      }).catch(() => undefined);
+      deferredWrites.push(
+        prisma.tokenEvent.create({
+          data: {
+            tokenId,
+            eventType: "early_runner_detected",
+            timestamp: new Date(),
+            marketCap,
+            liquidity,
+            volume: volume24h,
+            metadata: { reasons: radarReasons },
+          },
+        }).catch(() => undefined)
+      );
     }
 
     if (finite(hotAlphaScore) >= HOT_ALPHA_THRESHOLD && finite(existing.hotAlphaScore) < HOT_ALPHA_THRESHOLD) {
-      await tx.tokenEvent.create({
-        data: {
-          tokenId,
-          eventType: "hot_alpha_detected",
-          timestamp: new Date(),
-          marketCap,
-          liquidity,
-          volume: volume24h,
-          metadata: { score: hotAlphaScore },
-        },
-      }).catch(() => undefined);
+      deferredWrites.push(
+        prisma.tokenEvent.create({
+          data: {
+            tokenId,
+            eventType: "hot_alpha_detected",
+            timestamp: new Date(),
+            marketCap,
+            liquidity,
+            volume: volume24h,
+            metadata: { score: hotAlphaScore },
+          },
+        }).catch(() => undefined)
+      );
     }
 
     if (
       finite(highConvictionScore) >= HIGH_CONVICTION_THRESHOLD &&
       finite(existing.highConvictionScore) < HIGH_CONVICTION_THRESHOLD
     ) {
-      await tx.tokenEvent.create({
-        data: {
-          tokenId,
-          eventType: "high_conviction_detected",
-          timestamp: new Date(),
-          marketCap,
-          liquidity,
-          volume: volume24h,
-          metadata: { score: highConvictionScore },
-        },
-      }).catch(() => undefined);
+      deferredWrites.push(
+        prisma.tokenEvent.create({
+          data: {
+            tokenId,
+            eventType: "high_conviction_detected",
+            timestamp: new Date(),
+            marketCap,
+            liquidity,
+            volume: volume24h,
+            metadata: { score: highConvictionScore },
+          },
+        }).catch(() => undefined)
+      );
     }
-  });
 
-  const refreshedToken = await prisma.token.findUnique({
-    where: { id: tokenId },
-    select: TOKEN_SELECT,
-  });
+    if (deferredWrites.length > 0) {
+      void Promise.allSettled(deferredWrites);
+    }
 
-  if (!refreshedToken) return null;
-  writeTokenLookupCacheValue(refreshedToken.address, refreshedToken);
+    writeTokenLookupCacheValue(refreshedToken.address, refreshedToken);
+    void fanoutTokenSignalAlerts({
+      token: refreshedToken,
+      previousToken: existing,
+    }).catch(() => undefined);
 
-  await fanoutTokenSignalAlerts({
-    token: refreshedToken,
-    previousToken: existing,
-  }).catch(() => undefined);
+    return {
+      token: refreshedToken,
+      previousToken: existing,
+      refreshed: true,
+    };
+  })();
 
-  return {
-    token: refreshedToken,
-    previousToken: existing,
-    refreshed: true,
-  };
+  tokenRefreshInFlight.set(tokenId, request);
+
+  try {
+    return await request;
+  } finally {
+    if (tokenRefreshInFlight.get(tokenId) === request) {
+      tokenRefreshInFlight.delete(tokenId);
+    }
+    tokenRefreshAttemptAt.set(tokenId, Date.now());
+  }
 }
 
 async function refreshTokenIntelligenceForMap(tokenMap: Map<string, TokenRecord>): Promise<Map<string, TokenRecord>> {
@@ -2681,8 +2750,8 @@ async function refreshPriorityFeedSlice(
   const refreshed = await withSoftTimeout(
     hydrateCalls(priorityRecords, args.viewerId, {
       refreshTraders: false,
-      refreshTokens: true,
-      ensureTokenLinks: true,
+      refreshTokens: false,
+      ensureTokenLinks: false,
       persistComputed: false,
       preferStoredIntelligence: false,
     }),
@@ -3005,32 +3074,44 @@ export async function listThreadForCall(postId: string): Promise<ThreadCommentRe
 export async function findTokenByAddress(address: string): Promise<TokenRecord | null> {
   const normalizedAddress = address.trim();
   const cacheKey = buildTokenLookupCacheKey(normalizedAddress);
+  const staleCachedToken = peekCacheValue(tokenLookupCache, cacheKey);
 
   return memoizeCached(tokenLookupCache, tokenLookupInFlight, cacheKey, TOKEN_LOOKUP_CACHE_TTL_MS, async () => {
-    const token = await prisma.token.findFirst({
-      where: {
-        address: normalizedAddress,
-      },
-      select: TOKEN_SELECT,
-      orderBy: { updatedAt: "desc" },
-    });
+    try {
+      const token = await prisma.token.findFirst({
+        where: {
+          address: normalizedAddress,
+        },
+        select: TOKEN_SELECT,
+        orderBy: { updatedAt: "desc" },
+      });
 
-    if (token) {
-      return token;
+      if (token) {
+        return token;
+      }
+
+      const post = await prisma.post.findFirst({
+        where: {
+          contractAddress: normalizedAddress,
+        },
+        select: CALL_SELECT,
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (!post) return null;
+      const tokenMap = await ensureTokensForCalls([post]);
+      const key = buildTokenKey(post.chainType, normalizedAddress);
+      return tokenMap.get(key) ?? null;
+    } catch (error) {
+      if (staleCachedToken) {
+        console.warn("[intelligence/token] serving stale token lookup after transient prisma failure", {
+          address: normalizedAddress,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return staleCachedToken;
+      }
+      throw error;
     }
-
-    const post = await prisma.post.findFirst({
-      where: {
-        contractAddress: normalizedAddress,
-      },
-      select: CALL_SELECT,
-      orderBy: { createdAt: "desc" },
-    });
-
-    if (!post) return null;
-    const tokenMap = await ensureTokensForCalls([post]);
-    const key = buildTokenKey(post.chainType, normalizedAddress);
-    return tokenMap.get(key) ?? null;
   });
 }
 
@@ -3100,17 +3181,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     if (!token) return null;
 
     const staleToken = staleOverview?.token ?? null;
-    const forceHydration = tokenNeedsCoreHydration(token);
-    const refreshPromise = !staleOverview && shouldRefreshToken(token)
-      ? refreshTokenIntelligence(token.id).catch(() => null)
-      : null;
-    const refreshed = refreshPromise
-      ? await withSoftTimeout(
-          refreshPromise,
-          forceHydration ? Math.max(TOKEN_REFRESH_SOFT_TIMEOUT_MS, 4_500) : TOKEN_REFRESH_SOFT_TIMEOUT_MS
-        )
-      : null;
-    const currentToken = refreshed?.token ?? token;
+    scheduleTokenIntelligenceRefresh(token);
+    const currentToken = token;
     const needsFallbackTokenData =
       tokenNeedsCoreHydration(currentToken) ||
       !hasFiniteMetric(currentToken.liquidity) ||

@@ -137,7 +137,7 @@ function isTransientPrismaFailure(error: unknown): boolean {
   }
 
   const message = getPrismaErrorMessage(error);
-  return /timed out|connection pool|pool timeout|econnreset|etimedout|connection.*closed|server closed|can't reach database/i.test(
+  return /timed out|connection pool|pool timeout|econnreset|etimedout|connection.*closed|server closed|can't reach database|transaction already closed|expired transaction/i.test(
     message
   );
 }

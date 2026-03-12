@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
-import { prisma } from "../prisma.js";
+import { isTransientPrismaError, prisma } from "../prisma.js";
 import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
 import { analyzeSolanaTokenDistribution } from "../services/intelligence/token-metrics.js";
 import {
@@ -57,6 +57,8 @@ const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
 });
+const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const EVM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
 function buildTokenRouteCacheKey(tokenAddress: string, viewerId: string | null): string {
   return `route:token:v${TOKEN_ROUTE_CACHE_VERSION}:${viewerId ?? "anonymous"}:${tokenAddress.trim().toLowerCase()}`;
@@ -246,6 +248,32 @@ function pickFirstFiniteMetric(...values: Array<number | null | undefined>): num
   return null;
 }
 
+function inferTokenChainType(tokenAddress: string): "solana" | "evm" | null {
+  const normalized = tokenAddress.trim();
+  if (SOLANA_ADDRESS_REGEX.test(normalized)) {
+    return "solana";
+  }
+  if (EVM_ADDRESS_REGEX.test(normalized)) {
+    return "evm";
+  }
+  return null;
+}
+
+function hasUsefulLiveTokenPayload(payload: TokenLivePayload): boolean {
+  return (
+    payload.marketCap !== null ||
+    payload.liquidity !== null ||
+    payload.volume24h !== null ||
+    payload.priceUsd !== null ||
+    payload.symbol !== null ||
+    payload.name !== null ||
+    payload.dexscreenerUrl !== null ||
+    payload.topHolders.length > 0 ||
+    payload.devWallet !== null ||
+    payload.holderCount !== null
+  );
+}
+
 tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");
   const cacheKey = buildTokenLiveRouteCacheKey(tokenAddress);
@@ -257,40 +285,52 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
   let request = tokenLiveRouteInFlight.get(cacheKey);
   if (!request) {
     request = (async () => {
-      const token = await findTokenByAddress(tokenAddress);
+      let token = null;
+      try {
+        token = await findTokenByAddress(tokenAddress);
+      } catch (error) {
+        if (!isTransientPrismaError(error)) {
+          throw error;
+        }
+        console.warn("[tokens/live] token lookup degraded; falling back to address-only live payload", {
+          tokenAddress,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
 
-      if (!token) {
+      const chainType = token?.chainType ?? inferTokenChainType(tokenAddress);
+      if (!chainType) {
         throw new Error("NOT_FOUND");
       }
 
       const [marketSnapshot, distributionSnapshot] = await Promise.all([
-        getCachedMarketCapSnapshot(token.address, token.chainType),
-        token.chainType === "solana"
-          ? analyzeSolanaTokenDistribution(token.address, token.liquidity)
+        getCachedMarketCapSnapshot(tokenAddress, chainType),
+        chainType === "solana"
+          ? analyzeSolanaTokenDistribution(tokenAddress, token?.liquidity ?? null)
           : Promise.resolve(null),
       ]);
 
       const liveBundleClusters =
         distributionSnapshot?.clusters.map((cluster) => ({
-          id: `live:${token.id}:${cluster.clusterLabel}`,
+          id: `live:${token?.id ?? tokenAddress.trim().toLowerCase()}:${cluster.clusterLabel}`,
           clusterLabel: cluster.clusterLabel,
           walletCount: cluster.walletCount,
           estimatedSupplyPct: cluster.estimatedSupplyPct,
           evidenceJson: cluster.evidenceJson,
         })) ?? [];
       const distributionHolderCount =
-        token.chainType === "solana"
+        chainType === "solana"
           ? roundCount(distributionSnapshot?.holderCount)
           : null;
       const distributionHolderCountSource =
-        token.chainType === "solana"
+        chainType === "solana"
           ? distributionSnapshot?.holderCountSource ?? null
           : null;
       const observedTopHolderCount = distributionSnapshot?.topHolders.length ?? 0;
-      const rawStoredHolderCount = roundCount(pickFirstPositiveMetric(token.holderCount));
+      const rawStoredHolderCount = roundCount(pickFirstPositiveMetric(token?.holderCount));
       const storedHolderCount =
         looksLikeLowerBoundStoredHolderCount({
-          chainType: token.chainType,
+          chainType,
           storedHolderCount: rawStoredHolderCount,
           observedTopHolderCount,
           liveHolderCount: distributionHolderCount,
@@ -299,17 +339,17 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
           ? null
           : rawStoredHolderCount;
       const unresolvedDistributionHolderCount =
-        token.chainType === "solana" && distributionHolderCountSource === "largest_accounts"
+        chainType === "solana" && distributionHolderCountSource === "largest_accounts"
           ? distributionHolderCount
           : null;
       const holderCount =
-        token.chainType === "solana"
+        chainType === "solana"
           ? hasResolvedHolderCount(distributionHolderCount, distributionHolderCountSource)
             ? distributionHolderCount
             : pickFirstPositiveMetric(storedHolderCount, unresolvedDistributionHolderCount)
-          : roundCount(pickFirstPositiveMetric(token.holderCount));
+          : roundCount(pickFirstPositiveMetric(token?.holderCount));
       const holderCountSource =
-        token.chainType === "solana"
+        chainType === "solana"
           ? hasResolvedHolderCount(distributionHolderCount, distributionHolderCountSource)
             ? distributionHolderCountSource
             : holderCount !== null
@@ -323,40 +363,40 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
             ? "stored"
             : null;
       const largestHolderPct =
-        token.chainType === "solana"
-          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.largestHolderPct, token.largestHolderPct))
-          : roundMetric(pickFirstFiniteMetric(token.largestHolderPct));
+        chainType === "solana"
+          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.largestHolderPct, token?.largestHolderPct))
+          : roundMetric(pickFirstFiniteMetric(token?.largestHolderPct));
       const top10HolderPct =
-        token.chainType === "solana"
-          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.top10HolderPct, token.top10HolderPct))
-          : roundMetric(pickFirstFiniteMetric(token.top10HolderPct));
+        chainType === "solana"
+          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.top10HolderPct, token?.top10HolderPct))
+          : roundMetric(pickFirstFiniteMetric(token?.top10HolderPct));
       const deployerSupplyPct =
-        token.chainType === "solana"
-          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.deployerSupplyPct, token.deployerSupplyPct))
-          : roundMetric(pickFirstFiniteMetric(token.deployerSupplyPct));
+        chainType === "solana"
+          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.deployerSupplyPct, token?.deployerSupplyPct))
+          : roundMetric(pickFirstFiniteMetric(token?.deployerSupplyPct));
       const bundledWalletCount =
-        token.chainType === "solana"
-          ? roundCount(pickFirstFiniteMetric(distributionSnapshot?.bundledWalletCount, token.bundledWalletCount))
-          : roundCount(pickFirstFiniteMetric(token.bundledWalletCount));
+        chainType === "solana"
+          ? roundCount(pickFirstFiniteMetric(distributionSnapshot?.bundledWalletCount, token?.bundledWalletCount))
+          : roundCount(pickFirstFiniteMetric(token?.bundledWalletCount));
       const estimatedBundledSupplyPct =
-        token.chainType === "solana"
+        chainType === "solana"
           ? roundMetric(
-              pickFirstFiniteMetric(distributionSnapshot?.estimatedBundledSupplyPct, token.estimatedBundledSupplyPct)
+              pickFirstFiniteMetric(distributionSnapshot?.estimatedBundledSupplyPct, token?.estimatedBundledSupplyPct)
             )
-          : roundMetric(pickFirstFiniteMetric(token.estimatedBundledSupplyPct));
+          : roundMetric(pickFirstFiniteMetric(token?.estimatedBundledSupplyPct));
       const tokenRiskScore =
-        token.chainType === "solana"
-          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.tokenRiskScore, token.tokenRiskScore))
-          : roundMetric(pickFirstFiniteMetric(token.tokenRiskScore));
+        chainType === "solana"
+          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.tokenRiskScore, token?.tokenRiskScore))
+          : roundMetric(pickFirstFiniteMetric(token?.tokenRiskScore));
       const bundleRiskLabel =
-        token.chainType === "solana"
-          ? distributionSnapshot?.bundleRiskLabel ?? token.bundleRiskLabel ?? null
-          : token.bundleRiskLabel ?? null;
+        chainType === "solana"
+          ? distributionSnapshot?.bundleRiskLabel ?? token?.bundleRiskLabel ?? null
+          : token?.bundleRiskLabel ?? null;
 
-      return {
+      const payload = {
         marketCap: roundMetric(pickFirstPositiveMetric(marketSnapshot.mcap)),
-        liquidity: roundMetric(pickFirstPositiveMetric(marketSnapshot.liquidityUsd, token.liquidity)),
-        volume24h: roundMetric(pickFirstPositiveMetric(marketSnapshot.volume24hUsd, token.volume24h)),
+        liquidity: roundMetric(pickFirstPositiveMetric(marketSnapshot.liquidityUsd, token?.liquidity)),
+        volume24h: roundMetric(pickFirstPositiveMetric(marketSnapshot.volume24hUsd, token?.volume24h)),
         holderCount,
         holderCountSource,
         largestHolderPct,
@@ -369,18 +409,24 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
         topHolders: distributionSnapshot?.topHolders ?? [],
         devWallet: distributionSnapshot?.devWallet ?? null,
         bundleClusters: liveBundleClusters,
-        dexscreenerUrl: marketSnapshot.dexscreenerUrl ?? token.dexscreenerUrl ?? null,
-        pairAddress: marketSnapshot.pairAddress ?? token.pairAddress ?? null,
-        dexId: marketSnapshot.dexId ?? token.dexId ?? null,
-        imageUrl: marketSnapshot.tokenImage ?? token.imageUrl ?? null,
-        symbol: marketSnapshot.tokenSymbol ?? token.symbol ?? null,
-        name: marketSnapshot.tokenName ?? token.name ?? null,
+        dexscreenerUrl: marketSnapshot.dexscreenerUrl ?? token?.dexscreenerUrl ?? null,
+        pairAddress: marketSnapshot.pairAddress ?? token?.pairAddress ?? null,
+        dexId: marketSnapshot.dexId ?? token?.dexId ?? null,
+        imageUrl: marketSnapshot.tokenImage ?? token?.imageUrl ?? null,
+        symbol: marketSnapshot.tokenSymbol ?? token?.symbol ?? null,
+        name: marketSnapshot.tokenName ?? token?.name ?? null,
         priceUsd: roundMetric(marketSnapshot.priceUsd ?? null),
         priceChange24hPct: roundMetric(marketSnapshot.priceChange24hPct ?? null),
         buys24h: roundCount(marketSnapshot.buys24h ?? null),
         sells24h: roundCount(marketSnapshot.sells24h ?? null),
         updatedAt: new Date().toISOString(),
       } satisfies TokenLivePayload;
+
+      if (!token && !hasUsefulLiveTokenPayload(payload)) {
+        throw new Error("NOT_FOUND");
+      }
+
+      return payload;
     })();
     tokenLiveRouteInFlight.set(cacheKey, request);
   }

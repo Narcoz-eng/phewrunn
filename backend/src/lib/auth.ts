@@ -149,12 +149,12 @@ function isPrismaConnectivityError(error: unknown): boolean {
       ? (error as { code: string }).code
       : "";
 
-  if (code === "P1001" || code === "P1002" || code === "P1008" || code === "P1017") {
+  if (code === "P1001" || code === "P1002" || code === "P1008" || code === "P1017" || code === "P2024") {
     return true;
   }
 
   const message = getErrorMessage(error);
-  return /timed out fetching a new connection|connection pool|error in connector|kind:\s*closed|server closed the connection|connection.*(closed|timed out|timeout|refused|terminated)|econnreset|etimedout|can't reach database/i.test(
+  return /timed out fetching a new connection|connection pool|error in connector|kind:\s*closed|server closed the connection|connection.*(closed|timed out|timeout|refused|terminated)|econnreset|etimedout|can't reach database|transaction already closed|expired transaction/i.test(
     message
   );
 }

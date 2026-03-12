@@ -50,8 +50,9 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
+    const minimumServerlessConnectionLimit = isProduction ? 5 : 2;
     const desiredConnectionLimit = isServerlessRuntime
-      ? (configuredConnectionLimit ?? (isProduction ? 2 : 1))
+      ? Math.max(configuredConnectionLimit ?? minimumServerlessConnectionLimit, minimumServerlessConnectionLimit)
       : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout = isServerlessRuntime
@@ -914,7 +915,7 @@ function isTransientPrismaError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
 
-  return /timed out|connection pool|pool timeout|econnreset|etimedout|connection.*closed|server closed/i.test(
+  return /timed out|connection pool|pool timeout|econnreset|etimedout|connection.*closed|server closed|transaction already closed|expired transaction/i.test(
     message
   );
 }

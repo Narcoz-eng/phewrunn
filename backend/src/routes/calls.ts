@@ -100,18 +100,17 @@ callsRouter.post("/:id/reactions", requireNotBanned, zValidator("param", CallIdP
   });
 
   let currentReactionType: string | null = null;
-  await prisma.$transaction(async (tx) => {
-    if (existing && existing.type === type) {
-      await tx.reaction.delete({ where: { id: existing.id } });
-      currentReactionType = null;
-      return;
-    }
-
-    if (existing) {
-      await tx.reaction.delete({ where: { id: existing.id } });
-    }
-
-    await tx.reaction.create({
+  if (existing && existing.type === type) {
+    await prisma.reaction.delete({ where: { id: existing.id } });
+    currentReactionType = null;
+  } else {
+    await prisma.reaction.deleteMany({
+      where: {
+        postId: id,
+        userId: user.id,
+      },
+    });
+    await prisma.reaction.create({
       data: {
         postId: id,
         userId: user.id,
@@ -119,7 +118,7 @@ callsRouter.post("/:id/reactions", requireNotBanned, zValidator("param", CallIdP
       },
     });
     currentReactionType = type;
-  });
+  }
 
   const call = await getEnrichedCallById(id, user.id);
   if (!call) {
