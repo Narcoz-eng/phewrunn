@@ -329,6 +329,10 @@ function getFeedMarketStateVersion(post: Pick<Post, "lastMcapUpdate" | "settledA
   );
 }
 
+function getFeedIntelligenceVersion(post: Pick<Post, "lastIntelligenceAt">): number {
+  return parseFeedTimestamp(post.lastIntelligenceAt);
+}
+
 function getFeedPostIntelligenceRichness(post: Post): number {
   let score = 0;
   const fields: Array<unknown> = [
@@ -436,6 +440,10 @@ function mergePostWithCachedRealtimeState(
   const cachedMarketStateVersion = getFeedMarketStateVersion(cachedPost);
   const shouldPreferCachedMarketState = cachedMarketStateVersion > fetchedMarketStateVersion;
   const sameOrNewerCachedMarketState = cachedMarketStateVersion >= fetchedMarketStateVersion;
+  const fetchedIntelligenceVersion = getFeedIntelligenceVersion(post);
+  const cachedIntelligenceVersion = getFeedIntelligenceVersion(cachedPost);
+  const sameOrNewerCachedIntelligence =
+    cachedIntelligenceVersion > 0 && cachedIntelligenceVersion >= fetchedIntelligenceVersion;
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -526,13 +534,17 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
-  if (post.confidenceScore == null && cachedPost.confidenceScore != null) {
+  if (
+    sameOrNewerCachedIntelligence &&
+    post.confidenceScore == null &&
+    cachedPost.confidenceScore != null
+  ) {
     nextConfidenceScore = cachedPost.confidenceScore;
     didChange = true;
   }
 
   if (
-    sameOrNewerCachedMarketState &&
+    sameOrNewerCachedIntelligence &&
     typeof cachedPost.confidenceScore === "number" &&
     cachedPost.confidenceScore > 0 &&
     (post.confidenceScore == null || post.confidenceScore <= 0)
@@ -541,13 +553,17 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
-  if (post.hotAlphaScore == null && cachedPost.hotAlphaScore != null) {
+  if (
+    sameOrNewerCachedIntelligence &&
+    post.hotAlphaScore == null &&
+    cachedPost.hotAlphaScore != null
+  ) {
     nextHotAlphaScore = cachedPost.hotAlphaScore;
     didChange = true;
   }
 
   if (
-    sameOrNewerCachedMarketState &&
+    sameOrNewerCachedIntelligence &&
     typeof cachedPost.hotAlphaScore === "number" &&
     cachedPost.hotAlphaScore > 0 &&
     (post.hotAlphaScore == null || post.hotAlphaScore <= 0)
@@ -556,13 +572,17 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
-  if (post.earlyRunnerScore == null && cachedPost.earlyRunnerScore != null) {
+  if (
+    sameOrNewerCachedIntelligence &&
+    post.earlyRunnerScore == null &&
+    cachedPost.earlyRunnerScore != null
+  ) {
     nextEarlyRunnerScore = cachedPost.earlyRunnerScore;
     didChange = true;
   }
 
   if (
-    sameOrNewerCachedMarketState &&
+    sameOrNewerCachedIntelligence &&
     typeof cachedPost.earlyRunnerScore === "number" &&
     cachedPost.earlyRunnerScore > 0 &&
     (post.earlyRunnerScore == null || post.earlyRunnerScore <= 0)
@@ -571,13 +591,17 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
-  if (post.highConvictionScore == null && cachedPost.highConvictionScore != null) {
+  if (
+    sameOrNewerCachedIntelligence &&
+    post.highConvictionScore == null &&
+    cachedPost.highConvictionScore != null
+  ) {
     nextHighConvictionScore = cachedPost.highConvictionScore;
     didChange = true;
   }
 
   if (
-    sameOrNewerCachedMarketState &&
+    sameOrNewerCachedIntelligence &&
     typeof cachedPost.highConvictionScore === "number" &&
     cachedPost.highConvictionScore > 0 &&
     (post.highConvictionScore == null || post.highConvictionScore <= 0)
@@ -1443,7 +1467,7 @@ export default function Feed() {
     },
     gcTime: FEED_QUERY_GC_TIME_MS,
     staleTime: 60_000, // 1 minute; reduces tab-switch reloads
-    refetchOnMount: hydrationCachedFirstPage ? false : true,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: false,

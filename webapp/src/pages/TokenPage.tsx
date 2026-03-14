@@ -11,7 +11,7 @@ import { TokenScanningState } from "@/components/feed/TokenScanningState";
 import { CandlestickChart } from "@/components/feed/CandlestickChart";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
-import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
 import {
   Area,
   AreaChart,
@@ -159,6 +159,7 @@ type TokenPageData = {
   tokenRiskScore: number | null;
   sentimentScore: number | null;
   radarScore: number | null;
+  lastIntelligenceAt: string | null;
   confidenceScore: number | null;
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
@@ -495,6 +496,14 @@ function pickMergedMetric(
   return live ?? cached ?? null;
 }
 
+function getTokenIntelligenceVersion(token: Pick<TokenPageData, "lastIntelligenceAt"> | null | undefined): number {
+  if (!token?.lastIntelligenceAt) {
+    return 0;
+  }
+  const parsed = new Date(token.lastIntelligenceAt).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function hasResolvedHolderCount(
   holderCount: number | null | undefined,
   holderCountSource: TokenPageData["holderCountSource"] | TokenLiveData["holderCountSource"]
@@ -595,6 +604,10 @@ function mergeTokenPageDataWithCached(
     return live;
   }
 
+  const liveIntelligenceVersion = getTokenIntelligenceVersion(live);
+  const cachedIntelligenceVersion = getTokenIntelligenceVersion(cached);
+  const canReuseCachedIntelligence =
+    cachedIntelligenceVersion > 0 && cachedIntelligenceVersion >= liveIntelligenceVersion;
   const liveSentimentHasSignals =
     live.sentiment.score > 0 ||
     Object.values(live.sentiment.reactions).some((value) => value > 0);
@@ -612,10 +625,18 @@ function mergeTokenPageDataWithCached(
     tokenRiskScore: pickMergedMetric(live.tokenRiskScore, cached.tokenRiskScore),
     sentimentScore: pickMergedMetric(live.sentimentScore, cached.sentimentScore),
     radarScore: pickMergedMetric(live.radarScore, cached.radarScore),
-    confidenceScore: pickMergedMetric(live.confidenceScore, cached.confidenceScore),
-    hotAlphaScore: pickMergedMetric(live.hotAlphaScore, cached.hotAlphaScore),
-    earlyRunnerScore: pickMergedMetric(live.earlyRunnerScore, cached.earlyRunnerScore),
-    highConvictionScore: pickMergedMetric(live.highConvictionScore, cached.highConvictionScore),
+    confidenceScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.confidenceScore, cached.confidenceScore)
+      : live.confidenceScore ?? null,
+    hotAlphaScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.hotAlphaScore, cached.hotAlphaScore)
+      : live.hotAlphaScore ?? null,
+    earlyRunnerScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.earlyRunnerScore, cached.earlyRunnerScore)
+      : live.earlyRunnerScore ?? null,
+    highConvictionScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.highConvictionScore, cached.highConvictionScore)
+      : live.highConvictionScore ?? null,
     bundleRiskLabel: live.bundleRiskLabel ?? cached.bundleRiskLabel,
     holderCountSource:
       hasResolvedHolderCount(live.holderCount, live.holderCountSource)
@@ -744,10 +765,11 @@ export default function TokenPage() {
     () => (tokenAddress ? `phew.token-page.v15:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
-  const cachedToken = useMemo(
-    () => (tokenCacheKey ? readSessionCache<TokenPageData>(tokenCacheKey, TOKEN_PAGE_CACHE_TTL_MS) : null),
+  const cachedTokenEntry = useMemo(
+    () => (tokenCacheKey ? readSessionCacheEntry<TokenPageData>(tokenCacheKey, TOKEN_PAGE_CACHE_TTL_MS) : null),
     [tokenCacheKey]
   );
+  const cachedToken = cachedTokenEntry?.data ?? null;
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
   const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
@@ -767,11 +789,12 @@ export default function TokenPage() {
       return mergeTokenPageDataWithCached(data, cachedToken);
     },
     initialData: cachedToken ?? undefined,
+    initialDataUpdatedAt: cachedTokenEntry?.cachedAt,
     placeholderData: (previousData) => previousData,
     enabled: !!tokenAddress,
     staleTime: 45_000,
     gcTime: 8 * 60_000,
-    refetchOnMount: cachedToken ? false : true,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: 1,
   });

@@ -553,6 +553,17 @@ function roundMetricOrZero(value: number | null | undefined): number {
   return roundMetric(value) ?? 0;
 }
 
+function normalizeOptionalDate(value: Date | string | null | undefined): Date | null {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
 function normalizeChainType(chainType: string | null | undefined): string {
   return chainType === "solana" ? "solana" : "evm";
 }
@@ -3696,6 +3707,9 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         bundleRiskLabel: resolvedBundleRiskLabel,
         tokenRiskScore: resolvedTokenRiskScore,
         sentimentScore,
+        lastIntelligenceAt: normalizeOptionalDate(
+          currentToken.lastIntelligenceAt ?? staleToken?.lastIntelligenceAt ?? null
+        ),
         confidenceScore: resolvedConfidenceScore,
         hotAlphaScore: resolvedHotAlphaScore,
         earlyRunnerScore: resolvedEarlyRunnerScore,

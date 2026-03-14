@@ -3,7 +3,9 @@ type SessionCacheEnvelope<T> = {
   data: T;
 };
 
-export function readSessionCache<T>(key: string, ttlMs: number): T | null {
+export type SessionCacheEntry<T> = SessionCacheEnvelope<T>;
+
+export function readSessionCacheEntry<T>(key: string, ttlMs: number): SessionCacheEntry<T> | null {
   if (typeof window === "undefined") return null;
 
   try {
@@ -14,10 +16,14 @@ export function readSessionCache<T>(key: string, ttlMs: number): T | null {
     if (!parsed || typeof parsed.cachedAt !== "number") return null;
     if (Date.now() - parsed.cachedAt > ttlMs) return null;
 
-    return parsed.data ?? null;
+    return parsed;
   } catch {
     return null;
   }
+}
+
+export function readSessionCache<T>(key: string, ttlMs: number): T | null {
+  return readSessionCacheEntry<T>(key, ttlMs)?.data ?? null;
 }
 
 export function writeSessionCache<T>(key: string, data: T): void {
