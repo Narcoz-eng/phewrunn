@@ -2,7 +2,6 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { upgradeWebSocket, websocket } from "hono/bun";
 import "./env.js";
 import {
   betterAuthMiddleware,
@@ -89,6 +88,8 @@ const app = new Hono<{
   Variables: AuthVariables & { requestId?: string; sanitizedBody?: unknown; sanitizedQuery?: Record<string, string[]> };
 }>();
 const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+type BunWebsocketAdapter = (typeof import("hono/bun"))["websocket"];
+let bunWebsocketAdapter: BunWebsocketAdapter | null = null;
 
 // =====================================================
 // Middleware Stack (order matters!)
@@ -330,6 +331,8 @@ app.use("*", betterAuthMiddleware);
 // =====================================================
 
 if (isBunRuntime) {
+  const { upgradeWebSocket, websocket } = await import("hono/bun");
+  bunWebsocketAdapter = websocket;
   app.get(
     "/api/realtime/ws",
     requireAuth,
@@ -3879,7 +3882,7 @@ export default isBunRuntime
       // mid-flight and leave transaction state unhealthy under load.
       idleTimeout: 60,
       fetch: (request: Request, server?: unknown) => app.fetch(request, server),
-      websocket,
+      websocket: bunWebsocketAdapter!,
     }
   : app;
 
