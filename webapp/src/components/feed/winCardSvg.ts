@@ -215,9 +215,11 @@ export function buildWinCardSvg(
   const metricCards = model.metrics.slice(0, 4);
   const snapshotCards = model.snapshots.slice(0, 3);
   const summaryItems = model.summaryItems.slice(0, 4);
-  const noteLines = wrapText(model.noteText, 50, 4);
+  // Strip any residual long unbroken tokens (e.g. partially-matched CAs) before wrapping
+  const sanitizedNote = model.noteText.replace(/[A-Za-z0-9]{30,}/g, (m) => `${m.slice(0, 10)}…`);
+  const noteLines = wrapText(sanitizedNote, 42, 4);
   const statusLines = wrapText(model.statusDetail, 28, 2);
-  const tokenSecondary = wrapText(model.tokenSecondary, 42, 2);
+  const tokenSecondary = wrapText(model.tokenSecondary, 34, 2);
   const authorName = clampText(model.authorName, 20);
   const footerLabel = clampText(model.footerLabel, 48);
   const pillLabel = clampText(model.resultLabel, 14);
@@ -434,7 +436,7 @@ export function buildWinCardSvg(
       .snapshotProfit { font: 600 14px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.72); }
       .summaryValue { font: 800 20px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: -0.02em; }
       .summaryHint { font: 500 11px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.50); }
-      .noteText { font: 500 22px Inter, "Segoe UI", Arial, sans-serif; line-height: 1.5; fill: rgba(248,250,252,0.90); }
+      .noteText { font: 500 17px Inter, "Segoe UI", Arial, sans-serif; line-height: 1.5; fill: rgba(248,250,252,0.90); }
       .footerText { font: 600 13px Inter, "Segoe UI", Arial, sans-serif; fill: rgba(226,232,240,0.56); }
       .brandMarkFallback { font: 900 30px Inter, "Segoe UI", Arial, sans-serif; fill: #061018; }
       .perfLabel { font: 700 13px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; fill: rgba(226,232,240,0.58); }
@@ -560,7 +562,7 @@ export function buildWinCardSvg(
     <g transform="translate(610,506)">
       <rect width="526" height="160" rx="22" fill="rgba(255,255,255,0.035)" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
       <text x="22" y="30" class="eyebrow">Alpha Notes</text>
-      ${renderTextLines(noteLines, 22, 62, 30, "noteText")}
+      ${renderTextLines(noteLines, 22, 58, 26, "noteText")}
     </g>
 
     <!-- ═══════════════ DIVIDER ═══════════════ -->
