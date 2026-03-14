@@ -91,7 +91,11 @@ function TopUserSkeleton() {
   );
 }
 
-export function TopUsersTable() {
+interface TopUsersTableProps {
+  enabled?: boolean;
+}
+
+export function TopUsersTable({ enabled = true }: TopUsersTableProps) {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<SortOption>('level');
@@ -123,8 +127,9 @@ export function TopUsersTable() {
         throw err;
       }
     },
+    enabled,
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: 0,
     staleTime: 2 * 60 * 1000, // Consider data stale after 2 minutes
     gcTime: 10 * 60 * 1000,
     placeholderData: (previousData) => previousData,

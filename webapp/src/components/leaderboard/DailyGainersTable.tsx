@@ -59,14 +59,19 @@ function DailyGainerSkeleton() {
   );
 }
 
-export function DailyGainersTable() {
+interface DailyGainersTableProps {
+  enabled?: boolean;
+}
+
+export function DailyGainersTable({ enabled = true }: DailyGainersTableProps) {
   const navigate = useNavigate();
 
   const { data: gainers = [], isLoading, error } = useQuery({
     queryKey: ["leaderboard", "daily-gainers"],
     queryFn: async () => await api.get<DailyGainer[]>("/api/leaderboard/daily-gainers"),
+    enabled,
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: 0,
     refetchInterval: () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;

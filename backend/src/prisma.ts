@@ -59,7 +59,7 @@ function normalizeDatabaseUrl(
       : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout = isServerlessRuntime
-      ? Math.min(configuredPoolTimeout ?? (isProduction ? 5 : 8), isProduction ? 5 : 8)
+      ? Math.min(configuredPoolTimeout ?? (isProduction ? 3 : 8), isProduction ? 3 : 8)
       : (configuredPoolTimeout ?? (isProduction ? 8 : 10));
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
@@ -848,7 +848,7 @@ async function withPrismaRetry<T>(
   fn: () => Promise<T>,
   opts?: { maxRetries?: number; baseDelayMs?: number; label?: string }
 ): Promise<T> {
-  const maxRetries = opts?.maxRetries ?? 2;
+  const maxRetries = opts?.maxRetries ?? ((isProduction && isServerlessRuntime) ? 0 : 2);
   const baseDelayMs = opts?.baseDelayMs ?? 150;
   let lastError: unknown;
   const startedAtMs = Date.now();

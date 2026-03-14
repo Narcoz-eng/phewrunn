@@ -44,9 +44,11 @@ export function AnnouncementBanner({ enabled = true }: AnnouncementBannerProps) 
     initialData: cachedAnnouncements ?? undefined,
     enabled,
     staleTime: 60000, // 1 minute
+    refetchOnMount: cachedAnnouncements ? false : "always",
     refetchInterval: 120000, // 2 minutes
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    retry: 0,
   });
 
   // Mark as viewed mutation

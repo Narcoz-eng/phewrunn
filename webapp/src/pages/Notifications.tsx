@@ -282,9 +282,10 @@ export default function Notifications() {
         : undefined,
     enabled: isAuthenticated && hasLiveSession,
     staleTime: 60_000,
-    refetchOnMount: "always",
+    refetchOnMount:
+      initialCachedNotifications && initialCachedNotifications.length > 0 ? false : "always",
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
     retry: (failureCount, error) => {
       const status =
         typeof error === "object" && error !== null && "status" in error
@@ -296,7 +297,7 @@ export default function Notifications() {
       if (status === 429) {
         return failureCount < 1;
       }
-      return failureCount < 2;
+      return false;
     },
     retryDelay: (attempt) => Math.min(1200 * 2 ** attempt, 5000),
     refetchInterval: () => {

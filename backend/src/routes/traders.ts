@@ -19,48 +19,76 @@ const EMPTY_TRADER_STATS = {
   firstCallCount: 0,
 };
 
-tradersRouter.get("/:handle/overview", zValidator("param", HandleParamSchema), async (c) => {
-  const { handle } = c.req.valid("param");
-  const viewer = c.get("user");
+function buildDegradedTrader(handle: string) {
+  return {
+    id: handle,
+    name: handle,
+    username: handle,
+    image: null,
+    level: 0,
+    xp: 0,
+    isVerified: false,
+    winRate7d: null,
+    winRate30d: null,
+    avgRoi7d: null,
+    avgRoi30d: null,
+    trustScore: null,
+    reputationTier: null,
+    firstCallCount: 0,
+    firstCallAvgRoi: null,
+  };
+}
 
+async function getTraderOverviewWithFallback(handle: string, viewerId: string | null) {
   try {
-    const overview = await getTraderOverview(handle, viewer?.id ?? null);
-
-    if (!overview) {
-      return c.json({ error: { message: "Trader not found", code: "NOT_FOUND" } }, 404);
-    }
-
-    return c.json({
-      data: {
-        trader: overview.trader,
-        stats: overview.stats,
-        degraded: false,
-      },
-    });
+    const overview = await getTraderOverview(handle, viewerId);
+    return {
+      overview,
+      degraded: false,
+    };
   } catch (error) {
     if (!isTransientPrismaError(error)) {
       throw error;
     }
 
-    console.warn("[traders/overview] transient database pressure; returning degraded trader overview", {
+    console.warn("[traders] transient database pressure; returning degraded trader payload", {
       handle,
       message: error instanceof Error ? error.message : String(error),
     });
 
-    return c.json({
-      data: {
-        trader: null,
+    return {
+      overview: {
+        trader: buildDegradedTrader(handle),
         stats: EMPTY_TRADER_STATS,
-        degraded: true,
+        calls: [],
       },
-    });
+      degraded: true,
+    };
   }
+}
+
+tradersRouter.get("/:handle/overview", zValidator("param", HandleParamSchema), async (c) => {
+  const { handle } = c.req.valid("param");
+  const viewer = c.get("user");
+  const { overview, degraded } = await getTraderOverviewWithFallback(handle, viewer?.id ?? null);
+
+  if (!overview) {
+    return c.json({ error: { message: "Trader not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  return c.json({
+    data: {
+      trader: overview.trader,
+      stats: overview.stats,
+      degraded,
+    },
+  });
 });
 
 tradersRouter.get("/:handle", zValidator("param", HandleParamSchema), async (c) => {
   const { handle } = c.req.valid("param");
   const viewer = c.get("user");
-  const overview = await getTraderOverview(handle, viewer?.id ?? null);
+  const { overview } = await getTraderOverviewWithFallback(handle, viewer?.id ?? null);
 
   if (!overview) {
     return c.json({ error: { message: "Trader not found", code: "NOT_FOUND" } }, 404);
@@ -72,7 +100,7 @@ tradersRouter.get("/:handle", zValidator("param", HandleParamSchema), async (c) 
 tradersRouter.get("/:handle/stats", zValidator("param", HandleParamSchema), async (c) => {
   const { handle } = c.req.valid("param");
   const viewer = c.get("user");
-  const overview = await getTraderOverview(handle, viewer?.id ?? null);
+  const { overview } = await getTraderOverviewWithFallback(handle, viewer?.id ?? null);
 
   if (!overview) {
     return c.json({ error: { message: "Trader not found", code: "NOT_FOUND" } }, 404);
@@ -84,7 +112,7 @@ tradersRouter.get("/:handle/stats", zValidator("param", HandleParamSchema), asyn
 tradersRouter.get("/:handle/calls", zValidator("param", HandleParamSchema), async (c) => {
   const { handle } = c.req.valid("param");
   const viewer = c.get("user");
-  const overview = await getTraderOverview(handle, viewer?.id ?? null);
+  const { overview } = await getTraderOverviewWithFallback(handle, viewer?.id ?? null);
 
   if (!overview) {
     return c.json({ error: { message: "Trader not found", code: "NOT_FOUND" } }, 404);

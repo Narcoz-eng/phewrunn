@@ -1,4 +1,4 @@
-import { type ComponentType, type ReactNode } from "react";
+import { type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -293,7 +293,24 @@ function FirstCallerRow({
   );
 }
 
-export function IntelligenceLeaderboards() {
+interface IntelligenceLeaderboardsProps {
+  enabled?: boolean;
+}
+
+export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderboardsProps) {
+  const [firstCallersReady, setFirstCallersReady] = useState(false);
+
+  useEffect(() => {
+    setFirstCallersReady(false);
+    if (!enabled) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setFirstCallersReady(true);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [enabled]);
+
   const {
     data: daily,
     isLoading: isLoadingDaily,
@@ -303,9 +320,10 @@ export function IntelligenceLeaderboards() {
   } = useQuery({
     queryKey: ["leaderboards", "daily"],
     queryFn: () => api.get<DailyLeaderboards>("/api/leaderboards/daily"),
+    enabled,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: 0,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
   });
@@ -319,9 +337,10 @@ export function IntelligenceLeaderboards() {
   } = useQuery({
     queryKey: ["leaderboards", "first-callers"],
     queryFn: () => api.get<FirstCallerRow[]>("/api/leaderboards/first-callers"),
+    enabled: enabled && firstCallersReady,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: 0,
     staleTime: 90_000,
     gcTime: 10 * 60_000,
   });

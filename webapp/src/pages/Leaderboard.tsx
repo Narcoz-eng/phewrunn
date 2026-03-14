@@ -41,6 +41,8 @@ const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 
 export default function Leaderboard() {
   const navigate = useNavigate();
+  const [intelligenceReady, setIntelligenceReady] = useState(false);
+  const [dailyGainersReady, setDailyGainersReady] = useState(false);
   const [topUsersReady, setTopUsersReady] = useState(false);
   const [statsReady, setStatsReady] = useState(false);
   const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
@@ -103,20 +105,28 @@ export default function Leaderboard() {
       return 90_000;
     },
     staleTime: 45_000,
-    retry: 1,
+    retry: 0,
   });
 
   const unreadCount = hasLiveSession ? (unreadData?.count ?? 0) : 0;
 
   useEffect(() => {
+    const intelligenceTimer = window.setTimeout(() => {
+      setIntelligenceReady(true);
+    }, 150);
+    const dailyGainersTimer = window.setTimeout(() => {
+      setDailyGainersReady(true);
+    }, 800);
     const topUsersTimer = window.setTimeout(() => {
       setTopUsersReady(true);
-    }, 200);
+    }, 1600);
     const statsTimer = window.setTimeout(() => {
       setStatsReady(true);
-    }, 650);
+    }, 2400);
 
     return () => {
+      window.clearTimeout(intelligenceTimer);
+      window.clearTimeout(dailyGainersTimer);
       window.clearTimeout(topUsersTimer);
       window.clearTimeout(statsTimer);
     };
@@ -253,7 +263,14 @@ export default function Leaderboard() {
         {/* Content Grid */}
         <div className="space-y-8">
           <QueryErrorBoundary sectionName="Alpha Race">
-            <IntelligenceLeaderboards />
+            {intelligenceReady ? (
+              <IntelligenceLeaderboards enabled={intelligenceReady} />
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="rounded-xl border border-border bg-card/40 h-72 animate-pulse" />
+                <div className="rounded-xl border border-border bg-card/40 h-72 animate-pulse" />
+              </div>
+            )}
           </QueryErrorBoundary>
 
           {/* Daily Top Gainers Section */}
@@ -265,7 +282,18 @@ export default function Leaderboard() {
               <h2 className="text-xl font-semibold">Daily Top Gainers</h2>
             </div>
             <QueryErrorBoundary sectionName="Daily Gainers">
-              <DailyGainersTable />
+              {dailyGainersReady ? (
+                <DailyGainersTable enabled={dailyGainersReady} />
+              ) : (
+                <div className="space-y-3">
+                  {[...Array(5)].map((_, index) => (
+                    <div
+                      key={index}
+                      className="rounded-lg border border-border bg-card/40 h-20 animate-pulse"
+                    />
+                  ))}
+                </div>
+              )}
             </QueryErrorBoundary>
           </section>
 
@@ -279,7 +307,7 @@ export default function Leaderboard() {
             </div>
             <QueryErrorBoundary sectionName="Top Users">
               {topUsersReady ? (
-                <TopUsersTable />
+                <TopUsersTable enabled={topUsersReady} />
               ) : (
                 <div className="rounded-xl border border-border bg-card/40 h-48 animate-pulse" />
               )}
@@ -296,7 +324,7 @@ export default function Leaderboard() {
             </div>
             <QueryErrorBoundary sectionName="Platform Stats">
               {statsReady ? (
-                <StatsOverview />
+                <StatsOverview enabled={statsReady} />
               ) : (
                 <div className="rounded-xl border border-border bg-card/40 h-64 animate-pulse" />
               )}

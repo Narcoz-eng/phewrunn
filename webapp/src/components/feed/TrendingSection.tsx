@@ -51,6 +51,7 @@ export function TrendingSection({ enabled = true }: TrendingSectionProps) {
     initialData: cachedTrendingTokens ?? undefined,
     enabled,
     staleTime: 60000, // 1 minute
+    refetchOnMount: cachedTrendingTokens ? false : "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: () => {
@@ -59,6 +60,7 @@ export function TrendingSection({ enabled = true }: TrendingSectionProps) {
       }
       return 120000; // 2 minutes
     },
+    retry: 0,
   });
 
   // Backend enforces trending eligibility; keep a matching client-side guard.

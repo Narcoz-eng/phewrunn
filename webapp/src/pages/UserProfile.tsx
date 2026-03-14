@@ -186,7 +186,7 @@ export default function UserProfile() {
     refetchOnMount: cachedUserProfile ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   // Fetch user posts
@@ -238,7 +238,7 @@ export default function UserProfile() {
     refetchOnMount: cachedUserPosts ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   // Fetch user reposts
@@ -283,7 +283,7 @@ export default function UserProfile() {
     refetchOnMount: cachedUserReposts ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   useEffect(() => {

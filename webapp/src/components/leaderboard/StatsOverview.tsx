@@ -102,7 +102,11 @@ function StatCardSkeleton() {
   );
 }
 
-export function StatsOverview() {
+interface StatsOverviewProps {
+  enabled?: boolean;
+}
+
+export function StatsOverview({ enabled = true }: StatsOverviewProps) {
   const navigate = useNavigate();
   const { data: stats, isLoading, error, refetch } = useQuery({
     queryKey: ["leaderboard", "stats"],
@@ -110,8 +114,9 @@ export function StatsOverview() {
       const data = await api.get<PlatformStats>("/api/leaderboard/stats");
       return data;
     },
+    enabled,
     refetchOnWindowFocus: false,
-    retry: 1,
+    retry: 0,
     staleTime: 10 * 60 * 1000, // Consider data stale after 10 minutes
     refetchInterval: () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {

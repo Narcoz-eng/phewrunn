@@ -78,7 +78,7 @@ export function FeedHeader({
       return 90_000;
     },
     staleTime: 45_000,
-    retry: 2,
+    retry: 0,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 

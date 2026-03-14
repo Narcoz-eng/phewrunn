@@ -896,6 +896,29 @@ function buildWalletStatusPayload(params: {
   };
 }
 
+function buildEmptyFeeEarningsResponse() {
+  return {
+    totalTrades: 0,
+    totalPosterShareAtomic: "0",
+    byMint: [] as Array<{
+      mint: string;
+      totalAtomic: string;
+      count: number;
+    }>,
+    recentEvents: [] as Array<{
+      id: string;
+      postId: string;
+      feeMint: string;
+      tradeSide: string;
+      platformFeeAmountAtomic: string;
+      posterShareAmountAtomic: string;
+      txSignature: string | null;
+      traderWalletAddress: string;
+      createdAt: string;
+    }>,
+  };
+}
+
 function buildEmptyWalletOverview(connected: boolean): WalletOverviewPayload {
   return {
     connected,
@@ -1968,6 +1991,10 @@ usersRouter.get("/me/fee-settings", requireAuth, async (c) => {
   if (!sessionUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
+  const sessionFallback = {
+    walletAddress: sessionUser.walletAddress ?? null,
+    ...DEFAULT_FEE_SETTINGS,
+  };
 
   let user:
     | {
@@ -1979,7 +2006,7 @@ usersRouter.get("/me/fee-settings", requireAuth, async (c) => {
     | null = null;
 
   try {
-    user = await prisma.user.findUnique({
+    user = await withPrismaRetry(() => prisma.user.findUnique({
       where: { id: sessionUser.id },
       select: {
         tradeFeeRewardsEnabled: true,
@@ -1987,18 +2014,37 @@ usersRouter.get("/me/fee-settings", requireAuth, async (c) => {
         tradeFeePayoutAddress: true,
         walletAddress: true,
       },
-    });
+    }), { label: "users:fee-settings" });
   } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/fee-settings] transient database pressure; returning session-backed defaults", {
+        userId: sessionUser.id,
+        message: getErrorMessage(error),
+      });
+      return c.json({ data: buildFeeSettingsResponse(sessionFallback) });
+    }
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
 
-    const fallbackUser = await prisma.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        walletAddress: true,
-      },
-    });
+    let fallbackUser: { walletAddress: string | null } | null = null;
+    try {
+      fallbackUser = await withPrismaRetry(() => prisma.user.findUnique({
+        where: { id: sessionUser.id },
+        select: {
+          walletAddress: true,
+        },
+      }), { label: "users:fee-settings.fallback" });
+    } catch (fallbackError) {
+      if (!isTransientPrismaError(fallbackError)) {
+        throw fallbackError;
+      }
+      console.warn("[users/fee-settings] fallback lookup degraded; returning session-backed defaults", {
+        userId: sessionUser.id,
+        message: getErrorMessage(fallbackError),
+      });
+      return c.json({ data: buildFeeSettingsResponse(sessionFallback) });
+    }
     user = fallbackUser
       ? {
           ...fallbackUser,
@@ -2151,7 +2197,7 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
   }> = [];
 
   try {
-    events = await prisma.tradeFeeEvent.findMany({
+    events = await withPrismaRetry(() => prisma.tradeFeeEvent.findMany({
       where: {
         posterUserId: sessionUser.id,
         status: "confirmed",
@@ -2168,20 +2214,20 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
         createdAt: true,
         traderWalletAddress: true,
       },
-    });
+    }), { label: "users:fee-earnings" });
   } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/fee-earnings] transient database pressure; returning empty earnings payload", {
+        userId: sessionUser.id,
+        message: getErrorMessage(error),
+      });
+      return c.json({ data: buildEmptyFeeEarningsResponse() });
+    }
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
 
-    return c.json({
-      data: {
-        totalTrades: 0,
-        totalPosterShareAtomic: "0",
-        byMint: [],
-        recentEvents: [],
-      },
-    });
+    return c.json({ data: buildEmptyFeeEarningsResponse() });
   }
 
   let totalPosterShareAtomic = 0n;
@@ -2665,15 +2711,24 @@ usersRouter.get("/:identifier/posts", async (c) => {
   }
 
   let user: { id: string } | null = null;
-  let userLookupUnavailable = false;
   try {
-    user = await prisma.user.findFirst({
+    user = await withPrismaRetry(() => prisma.user.findFirst({
       where: buildUserIdentifierWhere(identifier),
       select: {
         id: true,
       },
-    });
+    }), { label: "users:profile-posts.user" });
   } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/profile-posts] transient user lookup degraded; returning stale or empty posts", {
+        identifier,
+        message: getErrorMessage(error),
+      });
+      if (staleCachedPostsResponse) {
+        return c.json(staleCachedPostsResponse);
+      }
+      return c.json({ data: [] });
+    }
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
@@ -2681,35 +2736,24 @@ usersRouter.get("/:identifier/posts", async (c) => {
       const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
       user = fallbackUser ? { id: fallbackUser.id } : null;
     } catch (rawError) {
-      userLookupUnavailable = true;
       console.warn("[users/profile-posts] raw user lookup degraded", {
         message: getErrorMessage(rawError),
       });
+      if (staleCachedPostsResponse) {
+        return c.json(staleCachedPostsResponse);
+      }
+      return c.json({ data: [] });
     }
   }
 
   if (!user) {
-    if (userLookupUnavailable) {
-      if (staleCachedPostsResponse) {
-        return c.json(staleCachedPostsResponse);
-      }
-      return c.json(
-        {
-          error: {
-            message: "Profile posts are temporarily unavailable. Please retry shortly.",
-            code: "PROFILE_POSTS_UNAVAILABLE",
-          },
-        },
-        503
-      );
-    }
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let posts: any[] = [];
   try {
-    posts = await prisma.post.findMany({
+    posts = await withPrismaRetry(() => prisma.post.findMany({
       where: { authorId: user.id },
       orderBy: { createdAt: "desc" },
       select: {
@@ -2750,8 +2794,18 @@ usersRouter.get("/:identifier/posts", async (c) => {
           },
         },
       },
-    });
+    }), { label: "users:profile-posts.posts" });
   } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/profile-posts] transient post lookup degraded; returning stale or empty posts", {
+        userId: user.id,
+        message: getErrorMessage(error),
+      });
+      if (staleCachedPostsResponse) {
+        return c.json(staleCachedPostsResponse);
+      }
+      return c.json({ data: [] });
+    }
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
@@ -2767,15 +2821,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
       if (staleCachedPostsResponse) {
         return c.json(staleCachedPostsResponse);
       }
-      return c.json(
-        {
-          error: {
-            message: "Profile posts are temporarily unavailable. Please retry shortly.",
-            code: "PROFILE_POSTS_UNAVAILABLE",
-          },
-        },
-        503
-      );
+      return c.json({ data: [] });
     }
   }
 

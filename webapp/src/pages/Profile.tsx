@@ -144,6 +144,7 @@ export default function Profile() {
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
+  const [enableFeeEarningsQuery, setEnableFeeEarningsQuery] = useState(false);
   const profileViewTab: ProfileViewTab = searchParams.get("tab") === "settings" ? "settings" : "profile";
   const [feeRewardsEnabled, setFeeRewardsEnabled] = useState(true);
   const [feeSharePercentInput, setFeeSharePercentInput] = useState("1.00");
@@ -304,6 +305,13 @@ export default function Profile() {
     return () => window.clearTimeout(timer);
   }, [user?.walletAddress]);
 
+  useEffect(() => {
+    setEnableFeeEarningsQuery(false);
+    if (!hasLiveSession || !user?.id || profileViewTab !== "settings") return;
+    const timer = window.setTimeout(() => setEnableFeeEarningsQuery(true), 1200);
+    return () => window.clearTimeout(timer);
+  }, [hasLiveSession, profileViewTab, user?.id]);
+
   // Fetch user posts with React Query
   const {
     data: posts = [],
@@ -344,7 +352,7 @@ export default function Profile() {
     refetchOnMount: cachedPosts || feedFallbackPosts.length > 0 ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   const {
@@ -362,7 +370,7 @@ export default function Profile() {
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   // Fetch user reposts with React Query
@@ -401,7 +409,7 @@ export default function Profile() {
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   const {
@@ -412,12 +420,12 @@ export default function Profile() {
     queryFn: async () => {
       return await api.get<FeeEarningsData>("/api/users/me/fee-earnings");
     },
-    enabled: hasLiveSession && !!user?.id && profileViewTab === "settings",
+    enabled: hasLiveSession && !!user?.id && profileViewTab === "settings" && enableFeeEarningsQuery,
     staleTime: 20_000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 
   const connectedWalletAddress = connectedWalletPublicKey?.toBase58() ?? null;

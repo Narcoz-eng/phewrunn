@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
-import { prisma, withPrismaRetry } from "../prisma.js";
+import { prisma, withPrismaRetry, isTransientPrismaError } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { NotificationsQuerySchema } from "../types.js";
@@ -700,6 +700,11 @@ notificationsRouter.get("/", requireAuth, async (c) => {
         console.warn("[notifications/list] database unavailable; returning cached or empty notifications", {
           message: getErrorMessage(error),
         });
+        if (isTransientPrismaError(error)) {
+          const fallbackNotifications = staleCachedNotifications ?? [];
+          writeNotificationsListCache(listCacheKey, fallbackNotifications);
+          return c.json({ data: fallbackNotifications });
+        }
         let recoveredFromRaw = false;
         try {
           notifications = await queryNotificationsRaw(user.id, includeDismissed);
@@ -775,6 +780,11 @@ notificationsRouter.get("/", requireAuth, async (c) => {
             console.warn("[notifications/list] minimal fallback unavailable; returning cached or empty notifications", {
               message: getErrorMessage(minimalError),
             });
+            if (isTransientPrismaError(minimalError)) {
+              const fallbackNotifications = staleCachedNotifications ?? [];
+              writeNotificationsListCache(listCacheKey, fallbackNotifications);
+              return c.json({ data: fallbackNotifications });
+            }
             let recoveredFromRaw = false;
             try {
               notifications = await queryNotificationsRaw(user.id, includeDismissed);
