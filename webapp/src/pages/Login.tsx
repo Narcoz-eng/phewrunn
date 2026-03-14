@@ -35,6 +35,7 @@ import {
   VETERAN_THRESHOLD,
 } from "@/types";
 import { AccuracyScoreCard } from "@/components/AccuracyScoreCard";
+import { WeeklyBestSection } from "@/components/login/WeeklyBestSection";
 
 const FeeOrbit = lazy(() =>
   import("@/components/login/FeeOrbit").then((module) => ({
@@ -1167,7 +1168,20 @@ export default function Login() {
           </section>
         </DeferredViewportBlock>
 
-        {/* ━━━━━━ SECTION 5: BOTTOM CTA ━━━━━━ */}
+        {/* ━━━━━━ SECTION 5: WEEKLY BEST ━━━━━━ */}
+        <DeferredViewportBlock
+          disabled={!shouldDeferMarketing}
+          fallback={
+            <MarketingSectionPlaceholder
+              eyebrow="Proof of Alpha"
+              title="This week's best calls."
+            />
+          }
+        >
+          <WeeklyBestSection optimizeMotion={optimizeMotion} />
+        </DeferredViewportBlock>
+
+        {/* ━━━━━━ SECTION 6: BOTTOM CTA ━━━━━━ */}
         <DeferredViewportBlock
           disabled={!shouldDeferMarketing}
           fallback={
