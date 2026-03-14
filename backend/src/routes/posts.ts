@@ -46,11 +46,6 @@ import {
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
-import { publishRealtimeEvent } from "../lib/realtime.js";
-import {
-  publishNotificationCreatedById,
-  publishNotificationsCreatedByDedupeKeys,
-} from "../lib/notification-realtime.js";
 import {
   computeRealtimeIntelligenceSnapshots,
   getEnrichedCallById,
@@ -2247,11 +2242,10 @@ async function createNotificationSafely(params: {
   fallbackData?: Prisma.NotificationCreateManyInput;
 }): Promise<void> {
   try {
-    const created = await prisma.notification.create({
+    await prisma.notification.create({
       data: params.data as Prisma.NotificationUncheckedCreateInput,
     });
     invalidateNotificationsCache(params.data.userId);
-    await publishNotificationCreatedById(created.id).catch(() => undefined);
     return;
   } catch (error) {
     if (isPrismaKnownRequestError(error, "P2002")) {
@@ -2260,11 +2254,10 @@ async function createNotificationSafely(params: {
 
     if (params.fallbackData && isPrismaSchemaDriftError(error)) {
       try {
-        const created = await prisma.notification.create({
+        await prisma.notification.create({
           data: params.fallbackData as Prisma.NotificationUncheckedCreateInput,
         });
         invalidateNotificationsCache(params.fallbackData.userId);
-        await publishNotificationCreatedById(created.id).catch(() => undefined);
         return;
       } catch (fallbackError) {
         if (isPrismaKnownRequestError(fallbackError, "P2002")) {
@@ -2300,13 +2293,6 @@ async function createManyNotificationsSafely(params: {
   try {
     await prisma.notification.createMany({ data: params.data, skipDuplicates: true });
     invalidateUsers(params.data);
-    await publishNotificationsCreatedByDedupeKeys(
-      params.data.flatMap((item) =>
-        typeof item.dedupeKey === "string" && item.dedupeKey.trim().length > 0
-          ? [item.dedupeKey]
-          : []
-      )
-    ).catch(() => undefined);
     return;
   } catch (error) {
     if (
@@ -2596,206 +2582,6 @@ function buildCreatePostResponse(params: {
   };
 }
 
-function toRealtimePostPayload(post: {
-  id: string;
-  content: string;
-  authorId: string;
-  author: {
-    id: string;
-    name: string;
-    username: string | null;
-    image: string | null;
-    level: number;
-    xp: number;
-    isVerified?: boolean;
-  };
-  contractAddress?: string | null;
-  chainType?: string | null;
-  tokenName?: string | null;
-  tokenSymbol?: string | null;
-  tokenImage?: string | null;
-  entryMcap?: number | null;
-  currentMcap?: number | null;
-  mcap1h?: number | null;
-  mcap6h?: number | null;
-  settled?: boolean;
-  settledAt?: Date | string | null;
-  isWin?: boolean | null;
-  createdAt: Date | string;
-  lastMcapUpdate?: Date | string | null;
-  lastIntelligenceAt?: Date | string | null;
-  trackingMode?: string | null;
-  dexscreenerUrl?: string | null;
-  confidenceScore?: number | null;
-  hotAlphaScore?: number | null;
-  earlyRunnerScore?: number | null;
-  highConvictionScore?: number | null;
-  timingTier?: string | null;
-  firstCallerRank?: number | null;
-  roiPeakPct?: number | null;
-  roiCurrentPct?: number | null;
-  trustedTraderCount?: number;
-  entryQualityScore?: number | null;
-  bundlePenaltyScore?: number | null;
-  sentimentScore?: number | null;
-  tokenRiskScore?: number | null;
-  bundleRiskLabel?: string | null;
-  liquidity?: number | null;
-  volume24h?: number | null;
-  holderCount?: number | null;
-  largestHolderPct?: number | null;
-  top10HolderPct?: number | null;
-  bundledWalletCount?: number | null;
-  estimatedBundledSupplyPct?: number | null;
-  reactionCounts?: Record<string, number> | null;
-  currentReactionType?: string | null;
-  threadCount?: number;
-  radarReasons?: string[] | null;
-  viewCount?: number;
-  isLiked?: boolean;
-  isReposted?: boolean;
-  isFollowingAuthor?: boolean;
-  _count?: {
-    likes?: number;
-    comments?: number;
-    reposts?: number;
-  };
-}) {
-  const toIso = (value: Date | string | null | undefined): string | null => {
-    if (!value) return null;
-    return value instanceof Date ? value.toISOString() : value;
-  };
-
-  return {
-    id: post.id,
-    content: post.content,
-    authorId: post.authorId,
-    author: post.author,
-    contractAddress: post.contractAddress ?? null,
-    chainType: post.chainType ?? null,
-    tokenName: post.tokenName ?? null,
-    tokenSymbol: post.tokenSymbol ?? null,
-    tokenImage: post.tokenImage ?? null,
-    entryMcap: post.entryMcap ?? null,
-    currentMcap: post.currentMcap ?? null,
-    mcap1h: post.mcap1h ?? null,
-    mcap6h: post.mcap6h ?? null,
-    settled: post.settled ?? false,
-    settledAt: toIso(post.settledAt),
-    isWin: post.isWin ?? null,
-    createdAt: toIso(post.createdAt) ?? new Date().toISOString(),
-    lastMcapUpdate: toIso(post.lastMcapUpdate),
-    lastIntelligenceAt: toIso(post.lastIntelligenceAt),
-    trackingMode: post.trackingMode ?? null,
-    dexscreenerUrl: post.dexscreenerUrl ?? null,
-    confidenceScore: post.confidenceScore ?? null,
-    hotAlphaScore: post.hotAlphaScore ?? null,
-    earlyRunnerScore: post.earlyRunnerScore ?? null,
-    highConvictionScore: post.highConvictionScore ?? null,
-    timingTier: post.timingTier ?? null,
-    firstCallerRank: post.firstCallerRank ?? null,
-    roiPeakPct: post.roiPeakPct ?? null,
-    roiCurrentPct: post.roiCurrentPct ?? null,
-    trustedTraderCount: post.trustedTraderCount ?? 0,
-    entryQualityScore: post.entryQualityScore ?? null,
-    bundlePenaltyScore: post.bundlePenaltyScore ?? null,
-    sentimentScore: post.sentimentScore ?? null,
-    tokenRiskScore: post.tokenRiskScore ?? null,
-    bundleRiskLabel: post.bundleRiskLabel ?? null,
-    liquidity: post.liquidity ?? null,
-    volume24h: post.volume24h ?? null,
-    holderCount: post.holderCount ?? null,
-    largestHolderPct: post.largestHolderPct ?? null,
-    top10HolderPct: post.top10HolderPct ?? null,
-    bundledWalletCount: post.bundledWalletCount ?? null,
-    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct ?? null,
-    reactionCounts: post.reactionCounts ?? null,
-    currentReactionType: post.currentReactionType ?? null,
-    threadCount: post.threadCount ?? 0,
-    radarReasons: post.radarReasons ?? null,
-    viewCount: post.viewCount ?? 0,
-    isLiked: post.isLiked ?? false,
-    isReposted: post.isReposted ?? false,
-    isFollowingAuthor: post.isFollowingAuthor,
-    _count: {
-      likes: post._count?.likes ?? 0,
-      comments: post._count?.comments ?? 0,
-      reposts: post._count?.reposts ?? 0,
-    },
-  };
-}
-
-async function publishNewPostRealtime(params: {
-  post: Parameters<typeof toRealtimePostPayload>[0];
-  followerIds: string[];
-}): Promise<void> {
-  const payload = toRealtimePostPayload(params.post);
-  await publishRealtimeEvent({
-    topics: ["feed:latest"],
-    event: {
-      type: "feed.latest.new_post",
-      post: payload,
-    },
-  });
-
-  if (params.followerIds.length > 0) {
-    await publishRealtimeEvent({
-      topics: params.followerIds.map((followerId) => `feed:following:${followerId}` as const),
-      event: {
-        type: "feed.following.new_post",
-        userId: params.post.authorId,
-        post: payload,
-      },
-    });
-  }
-}
-
-async function publishPostEngagementRealtime(params: {
-  postId: string;
-  authorId: string;
-  actorUserId?: string | null;
-  counts: {
-    likes: number;
-    comments: number;
-    reposts: number;
-  };
-  viewerState?: {
-    isLiked?: boolean;
-    isReposted?: boolean;
-  };
-}): Promise<void> {
-  const followerIds = await listFollowerIdsSafely({
-    followingId: params.authorId,
-    take: 500,
-    operation: "realtime_engagement_follower_lookup",
-  });
-  const feedTopics = [
-    "feed:latest" as const,
-    ...followerIds.map((followerId) => `feed:following:${followerId}` as const),
-  ];
-
-  await publishRealtimeEvent({
-    topics: feedTopics,
-    event: {
-      type: "post.engagement.updated",
-      postId: params.postId,
-      counts: params.counts,
-    },
-  });
-
-  if (params.actorUserId && params.viewerState) {
-    await publishRealtimeEvent({
-      topics: [`user:${params.actorUserId}`],
-      event: {
-        type: "post.engagement.updated",
-        postId: params.postId,
-        counts: params.counts,
-        viewerState: params.viewerState,
-      },
-    });
-  }
-}
-
 async function createPostRawFallback(params: {
   content: string;
   authorId: string;
@@ -2859,7 +2645,6 @@ function triggerNewPostFollowerFanout(params: {
   authorName: string;
   authorUsername: string | null;
   postId: string;
-  post: Parameters<typeof toRealtimePostPayload>[0];
 }): void {
   setTimeout(() => {
     void (async () => {
@@ -2887,10 +2672,6 @@ function triggerNewPostFollowerFanout(params: {
           .map((pref) => pref.userId)
       );
       const optedInFollowerIds = followerIds.filter((followerId) => !disabledFollowerIds.has(followerId));
-      await publishNewPostRealtime({
-        post: params.post,
-        followerIds: optedInFollowerIds,
-      }).catch(() => undefined);
       if (optedInFollowerIds.length === 0) {
         return;
       }
@@ -5417,11 +5198,6 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     authorName: authorSnapshot.name,
     authorUsername: authorSnapshot.username,
     postId: post.id,
-    post: {
-      ...post,
-      isLiked: false,
-      isReposted: false,
-    },
   });
 
   const enrichedCall = await getEnrichedCallById(post.id, user.id).catch(() => null);
@@ -6299,24 +6075,8 @@ postsRouter.post("/:id/like", requireNotBanned, async (c) => {
     });
   }
 
-  const [likeCount, commentCount, repostCount] = await Promise.all([
-    prisma.like.count({ where: { postId } }),
-    prisma.comment.count({ where: { postId } }),
-    prisma.repost.count({ where: { postId } }),
-  ]);
-  await publishPostEngagementRealtime({
-    postId,
-    authorId: post.authorId,
-    actorUserId: user.id,
-    counts: {
-      likes: likeCount,
-      comments: commentCount,
-      reposts: repostCount,
-    },
-    viewerState: {
-      isLiked: true,
-    },
-  }).catch(() => undefined);
+  // Get updated count
+  const likeCount = await prisma.like.count({ where: { postId } });
 
   return c.json({ data: { liked: true, likeCount } });
 });
@@ -6341,30 +6101,8 @@ postsRouter.delete("/:id/like", requireNotBanned, async (c) => {
     }
   }
 
-  const [post, likeCount, commentCount, repostCount] = await Promise.all([
-    prisma.post.findUnique({
-      where: { id: postId },
-      select: { authorId: true },
-    }),
-    prisma.like.count({ where: { postId } }),
-    prisma.comment.count({ where: { postId } }),
-    prisma.repost.count({ where: { postId } }),
-  ]);
-  if (post) {
-    await publishPostEngagementRealtime({
-      postId,
-      authorId: post.authorId,
-      actorUserId: user.id,
-      counts: {
-        likes: likeCount,
-        comments: commentCount,
-        reposts: repostCount,
-      },
-      viewerState: {
-        isLiked: false,
-      },
-    }).catch(() => undefined);
-  }
+  // Get updated count
+  const likeCount = await prisma.like.count({ where: { postId } });
 
   return c.json({ data: { liked: false, likeCount } });
 });
@@ -6485,24 +6223,8 @@ postsRouter.post("/:id/repost", requireNotBanned, async (c) => {
     });
   }
 
-  const [likeCount, commentCount, repostCount] = await Promise.all([
-    prisma.like.count({ where: { postId } }),
-    prisma.comment.count({ where: { postId } }),
-    prisma.repost.count({ where: { postId } }),
-  ]);
-  await publishPostEngagementRealtime({
-    postId,
-    authorId: post.authorId,
-    actorUserId: user.id,
-    counts: {
-      likes: likeCount,
-      comments: commentCount,
-      reposts: repostCount,
-    },
-    viewerState: {
-      isReposted: true,
-    },
-  }).catch(() => undefined);
+  // Get updated count
+  const repostCount = await prisma.repost.count({ where: { postId } });
 
   return c.json({ data: { reposted: true, repostCount } });
 });
@@ -6527,30 +6249,8 @@ postsRouter.delete("/:id/repost", requireNotBanned, async (c) => {
     }
   }
 
-  const [post, likeCount, commentCount, repostCount] = await Promise.all([
-    prisma.post.findUnique({
-      where: { id: postId },
-      select: { authorId: true },
-    }),
-    prisma.like.count({ where: { postId } }),
-    prisma.comment.count({ where: { postId } }),
-    prisma.repost.count({ where: { postId } }),
-  ]);
-  if (post) {
-    await publishPostEngagementRealtime({
-      postId,
-      authorId: post.authorId,
-      actorUserId: user.id,
-      counts: {
-        likes: likeCount,
-        comments: commentCount,
-        reposts: repostCount,
-      },
-      viewerState: {
-        isReposted: false,
-      },
-    }).catch(() => undefined);
-  }
+  // Get updated count
+  const repostCount = await prisma.repost.count({ where: { postId } });
 
   return c.json({ data: { reposted: false, repostCount } });
 });
@@ -6560,10 +6260,7 @@ postsRouter.get("/:id/comments", async (c) => {
   const postId = c.req.param("id");
 
   // Check if post exists
-  const post = await prisma.post.findUnique({
-    where: { id: postId },
-    select: { id: true, authorId: true },
-  });
+  const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
@@ -6693,48 +6390,6 @@ postsRouter.post("/:id/comments", requireNotBanned, zValidator("json", CreateCom
     },
   });
 
-  if (post.authorId !== user.id) {
-    await createNotificationSafely({
-      operation: "comment_author_notification",
-      data: {
-        userId: post.authorId,
-        type: "comment",
-        message: `${comment.author.name || "Someone"} commented on your Alpha!`,
-        dedupeKey: buildNotificationDedupeKey({
-          type: "comment",
-          userId: post.authorId,
-          fromUserId: user.id,
-          postId: post.id,
-        }),
-        postId: post.id,
-        fromUserId: user.id,
-      },
-      fallbackData: {
-        userId: post.authorId,
-        type: "comment",
-        message: `${comment.author.name || "Someone"} commented on your Alpha!`,
-        postId: post.id,
-        fromUserId: user.id,
-      },
-    });
-  }
-
-  const [likeCount, commentCount, repostCount] = await Promise.all([
-    prisma.like.count({ where: { postId } }),
-    prisma.comment.count({ where: { postId } }),
-    prisma.repost.count({ where: { postId } }),
-  ]);
-  await publishPostEngagementRealtime({
-    postId,
-    authorId: post.authorId,
-    actorUserId: user.id,
-    counts: {
-      likes: likeCount,
-      comments: commentCount,
-      reposts: repostCount,
-    },
-  }).catch(() => undefined);
-
   return c.json({ data: comment });
 });
 
@@ -6768,28 +6423,6 @@ postsRouter.delete("/:id/comments/:commentId", requireNotBanned, async (c) => {
   }
 
   await prisma.comment.delete({ where: { id: commentId } });
-
-  const [post, likeCount, commentCount, repostCount] = await Promise.all([
-    prisma.post.findUnique({
-      where: { id: postId },
-      select: { authorId: true },
-    }),
-    prisma.like.count({ where: { postId } }),
-    prisma.comment.count({ where: { postId } }),
-    prisma.repost.count({ where: { postId } }),
-  ]);
-  if (post) {
-    await publishPostEngagementRealtime({
-      postId,
-      authorId: post.authorId,
-      actorUserId: user.id,
-      counts: {
-        likes: likeCount,
-        comments: commentCount,
-        reposts: repostCount,
-      },
-    }).catch(() => undefined);
-  }
 
   return c.json({ data: { deleted: true } });
 });

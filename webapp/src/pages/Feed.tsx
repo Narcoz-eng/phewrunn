@@ -22,12 +22,6 @@ import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
-import {
-  useRealtime,
-  useRealtimeChannels,
-  useRealtimeEventListener,
-} from "@/lib/realtime/provider";
-import { startPerfMeasure } from "@/lib/performance";
 
 interface FeedPage {
   items: Post[];
@@ -1055,7 +1049,6 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
 export default function Feed() {
   const { data: session } = useSession();
   const { signOut, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
-  const { status: realtimeStatus } = useRealtime();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1071,7 +1064,6 @@ export default function Feed() {
   const [feedAuxiliaryQueriesReady, setFeedAuxiliaryQueriesReady] = useState(false);
   const [feedRealtimeEnrichmentReady, setFeedRealtimeEnrichmentReady] = useState(false);
   const [feedBackgroundRefreshReady, setFeedBackgroundRefreshReady] = useState(false);
-  const feedLoadMeasureRef = useRef<(() => void) | null>(null);
   const [latestAcknowledgedTopId, setLatestAcknowledgedTopId] = useState<string | null>(() =>
     readSessionCache<string>(FEED_LATEST_ACK_CACHE_KEY, FEED_LATEST_ACK_CACHE_TTL_MS)
   );
@@ -1130,7 +1122,6 @@ export default function Feed() {
     };
   }, [cachedFeedUser, session?.user]);
   const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
-  const shouldUseFeedPollingFallback = realtimeStatus !== "connected";
   const persistLatestAcknowledgedTopId = useCallback((nextTopId: string | null) => {
     latestAcknowledgedTopIdRef.current = nextTopId;
     setLatestAcknowledgedTopId(nextTopId);
@@ -1207,17 +1198,6 @@ export default function Feed() {
     () => getFeedQueryKey(activeTab, effectiveSearchQuery, feedViewerScope),
     [activeTab, effectiveSearchQuery, feedViewerScope, getFeedQueryKey]
   );
-
-  useEffect(() => {
-    feedLoadMeasureRef.current?.();
-    feedLoadMeasureRef.current = startPerfMeasure(
-      `feed.load:${activeTab}:${effectiveSearchQuery || "default"}`
-    );
-    return () => {
-      feedLoadMeasureRef.current?.();
-      feedLoadMeasureRef.current = null;
-    };
-  }, [activeTab, effectiveSearchQuery]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") return;
@@ -1591,14 +1571,6 @@ export default function Feed() {
   const hasInitialFeedResult = isPostsFetched || Boolean(postsError);
 
   useEffect(() => {
-    if (!hasInitialFeedResult) {
-      return;
-    }
-    feedLoadMeasureRef.current?.();
-    feedLoadMeasureRef.current = null;
-  }, [hasInitialFeedResult]);
-
-  useEffect(() => {
     if (feedAuxiliaryQueriesReady || !hasInitialFeedResult) return;
     const timer = window.setTimeout(() => {
       setFeedAuxiliaryQueriesReady(true);
@@ -1774,203 +1746,6 @@ export default function Feed() {
     persistLatestAcknowledgedTopId,
   ]);
 
-  const updateCachedFeedQueries = useCallback(
-    (updater: (post: Post) => Post) => {
-      const cachedFeedQueries = queryClient.getQueriesData<InfiniteData<FeedPage>>({
-        queryKey: ["posts", feedViewerScope],
-      });
-
-      for (const [queryKey] of cachedFeedQueries) {
-        const updatedData = queryClient.setQueryData<InfiniteData<FeedPage>>(queryKey, (oldData) => {
-          if (!oldData) {
-            return oldData;
-          }
-          return {
-            ...oldData,
-            pages: oldData.pages.map((page) => ({
-              ...page,
-              items: page.items.map(updater),
-            })),
-          };
-        });
-
-        const nextFirstPage = updatedData?.pages?.[0];
-        const [, , tabValue, searchValue] = Array.isArray(queryKey) ? queryKey : [];
-        if (
-          nextFirstPage?.items.length &&
-          typeof tabValue === "string" &&
-          typeof searchValue === "string"
-        ) {
-          writeCachedFirstFeedPageForScopes(
-            feedViewerScope,
-            tabValue as FeedTab,
-            searchValue,
-            nextFirstPage
-          );
-        }
-      }
-    },
-    [feedViewerScope, queryClient]
-  );
-
-  const prependPostToFeedCache = useCallback(
-    (tab: FeedTab, search: string, nextPost: Post): FeedPage | null => {
-      const queryKey = getFeedQueryKey(tab, search, feedViewerScope);
-      let resolvedFirstPage: FeedPage | null = null;
-
-      queryClient.setQueryData<InfiniteData<FeedPage>>(queryKey, (oldData) => {
-        const baseFirstPage =
-          oldData?.pages?.[0] ?? readPreferredCachedFirstFeedPage(feedViewerScope, tab, search);
-        if (!baseFirstPage) {
-          return oldData;
-        }
-
-        const dedupedItems = baseFirstPage.items.filter((item) => item.id !== nextPost.id);
-        resolvedFirstPage = {
-          ...baseFirstPage,
-          items: [nextPost, ...dedupedItems],
-        };
-
-        if (!oldData) {
-          return {
-            pages: [resolvedFirstPage],
-            pageParams: [undefined],
-          };
-        }
-
-        const [, ...restPages] = oldData.pages;
-        return {
-          ...oldData,
-          pages: [resolvedFirstPage, ...restPages],
-        };
-      });
-
-      if (resolvedFirstPage?.items.length) {
-        writeCachedFirstFeedPageForScopes(feedViewerScope, tab, search, resolvedFirstPage);
-      }
-
-      return resolvedFirstPage;
-    },
-    [feedViewerScope, getFeedQueryKey, queryClient]
-  );
-
-  const handleRealtimeLatestPost = useCallback(
-    (incomingPost: Post) => {
-      const currentLatestPage =
-        pendingLatestFirstPage ??
-        queryClient.getQueryData<InfiniteData<FeedPage>>(getFeedQueryKey("latest", "", feedViewerScope))
-          ?.pages?.[0] ??
-        readPreferredCachedFirstFeedPage(feedViewerScope, "latest", "");
-
-      if (currentLatestPage?.items.some((item) => item.id === incomingPost.id)) {
-        return;
-      }
-
-      const nextFirstPage = currentLatestPage
-        ? {
-            ...currentLatestPage,
-            items: [incomingPost, ...currentLatestPage.items.filter((item) => item.id !== incomingPost.id)],
-          }
-        : null;
-
-      if (!nextFirstPage) {
-        return;
-      }
-
-      if (activeTab !== "latest" || effectiveSearchQuery) {
-        prependPostToFeedCache("latest", "", incomingPost);
-        return;
-      }
-
-      if (hasLiveOverlay()) {
-        setPendingLatestState(nextFirstPage, pendingLatestCount + 1);
-        return;
-      }
-
-      if (typeof window !== "undefined" && window.scrollY < FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX) {
-        applyFirstPageToCache("latest", "", nextFirstPage);
-        writeCachedFirstFeedPageForScopes(feedViewerScope, "latest", "", nextFirstPage);
-        persistLatestAcknowledgedTopId(incomingPost.id);
-        clearPendingLatestState();
-        return;
-      }
-
-      setPendingLatestState(nextFirstPage, pendingLatestCount + 1);
-    },
-    [
-      activeTab,
-      applyFirstPageToCache,
-      clearPendingLatestState,
-      effectiveSearchQuery,
-      feedViewerScope,
-      getFeedQueryKey,
-      hasLiveOverlay,
-      pendingLatestCount,
-      pendingLatestFirstPage,
-      persistLatestAcknowledgedTopId,
-      prependPostToFeedCache,
-      queryClient,
-      setPendingLatestState,
-    ]
-  );
-
-  useRealtimeChannels(
-    activeTab === "latest" && !effectiveSearchQuery
-      ? ["feed.latest"]
-      : activeTab === "following" && !effectiveSearchQuery && hasLiveSession
-        ? ["feed.following"]
-        : [],
-    feedBackgroundRefreshReady && !shouldUseFeedPollingFallback
-  );
-
-  useRealtimeEventListener(
-    useCallback(
-      (event) => {
-        if (event.type === "feed.latest.new_post") {
-          handleRealtimeLatestPost(event.post as Post);
-          return;
-        }
-
-        if (event.type === "feed.following.new_post") {
-          if (hasLiveOverlay()) {
-            return;
-          }
-          prependPostToFeedCache("following", "", event.post as Post);
-          return;
-        }
-
-        if (event.type === "post.engagement.updated") {
-          updateCachedFeedQueries((post) =>
-            post.id === event.postId
-              ? {
-                  ...post,
-                  _count: {
-                    likes: event.counts.likes,
-                    comments: event.counts.comments,
-                    reposts: event.counts.reposts,
-                  },
-                  isLiked:
-                    typeof event.viewerState?.isLiked === "boolean"
-                      ? event.viewerState.isLiked
-                      : post.isLiked,
-                  isReposted:
-                    typeof event.viewerState?.isReposted === "boolean"
-                      ? event.viewerState.isReposted
-                      : post.isReposted,
-                }
-              : post
-          );
-        }
-      },
-      [
-        handleRealtimeLatestPost,
-        hasLiveOverlay,
-        prependPostToFeedCache,
-        updateCachedFeedQueries,
-      ]
-    )
-  );
-
   const visibleLatestTopId =
     activeTab === "latest" && !effectiveSearchQuery
       ? postsPages?.pages?.[0]?.items?.[0]?.id ?? null
@@ -2108,7 +1883,6 @@ export default function Feed() {
   // poll only the first page every 30s, then show a "new posts" button (or auto-apply near top).
   useEffect(() => {
     if (!feedBackgroundRefreshReady) return;
-    if (!shouldUseFeedPollingFallback) return;
     if (activeTab !== "latest") return;
     if (effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
@@ -2233,7 +2007,6 @@ export default function Feed() {
     refetchUser,
     setPendingLatestState,
     feedBackgroundRefreshReady,
-    shouldUseFeedPollingFallback,
   ]);
 
   // Keep non-latest tabs (and searched latest) fresh with lightweight first-page sync.
@@ -2241,11 +2014,7 @@ export default function Feed() {
   useEffect(() => {
     if (!feedBackgroundRefreshReady) return;
     if (!hasLiveSession) return;
-    const usesRealtimePush =
-      !shouldUseFeedPollingFallback &&
-      ((activeTab === "latest" && !effectiveSearchQuery) ||
-        (activeTab === "following" && !effectiveSearchQuery));
-    if (usesRealtimePush) return;
+    if (activeTab === "latest" && !effectiveSearchQuery) return;
     if (hasLiveOverlay()) return;
     if (typeof window === "undefined") return;
 
@@ -2323,19 +2092,13 @@ export default function Feed() {
     queryClient,
     hasLiveSession,
     feedBackgroundRefreshReady,
-    shouldUseFeedPollingFallback,
   ]);
 
   // Create post mutation
   const createPostMutation = useMutation({
     mutationFn: async (content: string) => {
-      const finishMeasure = startPerfMeasure("feed.mutation.create_post");
-      try {
-        const newPost = await api.post<Post>("/api/posts", { content });
-        return newPost;
-      } finally {
-        finishMeasure();
-      }
+      const newPost = await api.post<Post>("/api/posts", { content });
+      return newPost;
     },
     onSuccess: (newPost) => {
       const prependPostToFeed = (tab: FeedTab, search: string) => {
@@ -2386,17 +2149,12 @@ export default function Feed() {
   // Like mutation
   const likeMutation = useMutation({
     mutationFn: async ({ postId, isLiked }: { postId: string; isLiked: boolean }) => {
-      const finishMeasure = startPerfMeasure("feed.mutation.like");
-      try {
-        if (isLiked) {
-          await api.delete(`/api/posts/${postId}/like`);
-        } else {
-          await api.post(`/api/posts/${postId}/like`);
-        }
-        return { postId, isLiked };
-      } finally {
-        finishMeasure();
+      if (isLiked) {
+        await api.delete(`/api/posts/${postId}/like`);
+      } else {
+        await api.post(`/api/posts/${postId}/like`);
       }
+      return { postId, isLiked };
     },
     onSuccess: ({ postId, isLiked }) => {
       updateInfinitePosts((post) =>
@@ -2422,17 +2180,12 @@ export default function Feed() {
   // Repost mutation
   const repostMutation = useMutation({
     mutationFn: async ({ postId, isReposted }: { postId: string; isReposted: boolean }) => {
-      const finishMeasure = startPerfMeasure("feed.mutation.repost");
-      try {
-        if (isReposted) {
-          await api.delete(`/api/posts/${postId}/repost`);
-        } else {
-          await api.post(`/api/posts/${postId}/repost`);
-        }
-        return { postId, isReposted };
-      } finally {
-        finishMeasure();
+      if (isReposted) {
+        await api.delete(`/api/posts/${postId}/repost`);
+      } else {
+        await api.post(`/api/posts/${postId}/repost`);
       }
+      return { postId, isReposted };
     },
     onSuccess: ({ postId, isReposted }) => {
       updateInfinitePosts((post) =>
@@ -2458,13 +2211,8 @@ export default function Feed() {
   // Comment mutation
   const commentMutation = useMutation({
     mutationFn: async ({ postId, content }: { postId: string; content: string }) => {
-      const finishMeasure = startPerfMeasure("feed.mutation.comment");
-      try {
-        await api.post(`/api/posts/${postId}/comments`, { content });
-        return { postId };
-      } finally {
-        finishMeasure();
-      }
+      await api.post(`/api/posts/${postId}/comments`, { content });
+      return { postId };
     },
     onSuccess: ({ postId }) => {
       toast.success("Comment added!");

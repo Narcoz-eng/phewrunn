@@ -17,12 +17,6 @@ import { User, getAvatarUrl } from "@/types";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
-import {
-  buildUnreadCacheKey,
-  buildUnreadQueryKey,
-  NOTIFICATIONS_UNREAD_CACHE_TTL_MS,
-} from "@/lib/realtime/notifications-cache";
-import { useRealtime } from "@/lib/realtime/provider";
 import { LevelBadge } from "./LevelBar";
 import { Flame, LogOut, Radar, Settings, User as UserIcon, BrainCircuit, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -46,6 +40,9 @@ const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: str
   { id: "high-conviction", label: "High Conviction", icon: BrainCircuit },
   { id: "following", label: "Following" },
 ];
+const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
+const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
+
 export function FeedHeader({
   user,
   activeTab,
@@ -55,13 +52,12 @@ export function FeedHeader({
 }: FeedHeaderProps) {
   const navigate = useNavigate();
   const { hasLiveSession } = useAuth();
-  const { status: realtimeStatus } = useRealtime();
   const tabRefs = useRef<Map<FeedTab, HTMLButtonElement>>(new Map());
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
   const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
-  const unreadCacheKey = buildUnreadCacheKey(user?.id);
+  const unreadCacheKey = user ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${user.id}` : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
   const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
-  const unreadQueryKey = buildUnreadQueryKey(user?.id);
+  const unreadQueryKey = ["notifications", "unread-count", user?.id ?? "anonymous"] as const;
 
   // Fetch unread notification count
   const { data: unreadData } = useQuery({
@@ -76,9 +72,6 @@ export function FeedHeader({
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     refetchInterval: () => {
-      if (realtimeStatus === "connected") {
-        return false;
-      }
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
@@ -89,7 +82,7 @@ export function FeedHeader({
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
-  const unreadCount = hasLiveSession ? (unreadData?.count ?? cachedUnreadCount ?? 0) : 0;
+  const unreadCount = hasLiveSession ? (unreadData?.count ?? 0) : 0;
 
   useEffect(() => {
     const activeTabElement = tabRefs.current.get(activeTab);

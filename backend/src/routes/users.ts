@@ -11,7 +11,6 @@ import { invalidateNotificationsCache } from "./notifications.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { clearCachedMeResponse } from "../lib/me-response-cache.js";
-import { publishNotificationCreatedById } from "../lib/notification-realtime.js";
 import {
   UpdateProfileSchema,
   USERNAME_UPDATE_COOLDOWN_DAYS,
@@ -2908,7 +2907,7 @@ async function createFollowNotificationSafely(params: {
       : undefined;
 
   try {
-    const created = await prisma.notification.create({
+    await prisma.notification.create({
       data: {
         userId: params.targetUserId,
         type: "follow",
@@ -2921,7 +2920,6 @@ async function createFollowNotificationSafely(params: {
       },
     });
     invalidateNotificationsCache(params.targetUserId);
-    await publishNotificationCreatedById(created.id).catch(() => undefined);
     return;
   } catch (error) {
     if (!isPrismaSchemaDriftError(error)) {
@@ -2935,7 +2933,7 @@ async function createFollowNotificationSafely(params: {
   }
 
   try {
-    const created = await prisma.notification.create({
+    await prisma.notification.create({
       data: {
         userId: params.targetUserId,
         type: "follow",
@@ -2944,7 +2942,6 @@ async function createFollowNotificationSafely(params: {
       },
     });
     invalidateNotificationsCache(params.targetUserId);
-    await publishNotificationCreatedById(created.id).catch(() => undefined);
   } catch (fallbackError) {
     console.warn("[users] Failed to create follow notification fallback", {
       followerId: params.followerId,

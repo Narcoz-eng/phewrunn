@@ -7,7 +7,6 @@ import {
   betterAuthMiddleware,
   auth,
   invalidateResolvedSessionCache,
-  requireAuth,
   startSessionMaintenance,
   type AuthVariables,
 } from "./auth.js";
@@ -33,15 +32,6 @@ import {
   writeCachedMeResponse,
 } from "./lib/me-response-cache.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
-import { recordRouteTiming } from "./lib/performance.js";
-import {
-  getRealtimeConnectedEvent,
-  getRealtimePingEvent,
-  getRealtimeStateSnapshot,
-  handleRealtimeClientMessage,
-  registerRealtimeConnection,
-  unregisterRealtimeConnection,
-} from "./lib/realtime.js";
 import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
 
 // Security middleware imports
@@ -88,8 +78,6 @@ const app = new Hono<{
   Variables: AuthVariables & { requestId?: string; sanitizedBody?: unknown; sanitizedQuery?: Record<string, string[]> };
 }>();
 const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
-type BunWebsocketAdapter = (typeof import("hono/bun"))["websocket"];
-let bunWebsocketAdapter: BunWebsocketAdapter | null = null;
 
 // =====================================================
 // Middleware Stack (order matters!)
@@ -305,87 +293,11 @@ app.use("*", structuredLogger({
   skipPaths: ["/health"],
 }));
 
-app.use("/api/*", async (c, next) => {
-  const startedAtMs = Date.now();
-  await next();
-  const durationMs = Date.now() - startedAtMs;
-  c.header("Server-Timing", `app;dur=${durationMs}`);
-  c.header("X-Response-Time", `${durationMs}ms`);
-  recordRouteTiming({
-    method: c.req.method,
-    path: c.req.path,
-    status: c.res.status,
-    durationMs,
-    requestId: c.get("requestId") ?? null,
-  });
-});
-
 // 9. Global error handler - doesn't leak stack traces in production
 app.onError(createErrorHandler());
 
 // 10. Better Auth middleware - populates user from session cookie
 app.use("*", betterAuthMiddleware);
-
-// =====================================================
-// Realtime Websocket
-// =====================================================
-
-if (isBunRuntime) {
-  const { upgradeWebSocket, websocket } = await import("hono/bun");
-  bunWebsocketAdapter = websocket;
-  app.get(
-    "/api/realtime/ws",
-    requireAuth,
-    upgradeWebSocket((c) => {
-      const user = c.get("user");
-      const connectionId = crypto.randomUUID();
-      return {
-        onOpen(_event, ws) {
-          registerRealtimeConnection({
-            connectionId,
-            userId: user.id,
-            socket: ws as unknown as {
-              raw: unknown;
-              send(source: string): void;
-              close(code?: number, reason?: string): void;
-            },
-          });
-          ws.send(JSON.stringify(getRealtimeConnectedEvent({ connectionId })));
-        },
-        onMessage(event, ws) {
-          const rawMessage =
-            typeof event.data === "string"
-              ? event.data
-              : event.data instanceof ArrayBuffer
-                ? new TextDecoder().decode(new Uint8Array(event.data))
-                : "";
-          if (!rawMessage) {
-            return;
-          }
-          const message = handleRealtimeClientMessage(connectionId, rawMessage);
-          if (message?.type === "system.ping") {
-            ws.send(JSON.stringify(getRealtimePingEvent(connectionId)));
-          }
-        },
-        onClose() {
-          unregisterRealtimeConnection(connectionId);
-        },
-      };
-    })
-  );
-} else {
-  app.get("/api/realtime/ws", (c) =>
-    c.json(
-      {
-        error: {
-          message: "Realtime websocket transport is only available on Bun",
-          code: "REALTIME_UNAVAILABLE",
-        },
-      },
-      501
-    )
-  );
-}
 
 // =====================================================
 // Health Check
@@ -408,7 +320,6 @@ app.get("/health", (c) => {
       environment: process.env.NODE_ENV || "development",
       database,
       dbConnected: true,
-      realtime: getRealtimeStateSnapshot(),
       // Don't expose version in production for security
       ...(isProduction ? {} : { version: "1.0.0" }),
     })
@@ -421,7 +332,6 @@ app.get("/health", (c) => {
         environment: process.env.NODE_ENV || "development",
         database,
         dbConnected: false,
-        realtime: getRealtimeStateSnapshot(),
       },
       503
     );
@@ -3881,8 +3791,7 @@ export default isBunRuntime
       // Bun defaults to a 10s idle timeout, which can abort long DB/network operations
       // mid-flight and leave transaction state unhealthy under load.
       idleTimeout: 60,
-      fetch: (request: Request, server?: unknown) => app.fetch(request, server),
-      websocket: bunWebsocketAdapter!,
+      fetch: app.fetch,
     }
   : app;
 

@@ -1,6 +1,6 @@
 // In production/custom domains, use same-origin API calls.
 // In local development, use localhost:3000.
-export const API_BASE_URL = (() => {
+const API_BASE_URL = (() => {
   const envBackendUrl = import.meta.env.VITE_BACKEND_URL?.trim();
 
   // Auto-detect deployed environments and custom domains (e.g. phew.run)
