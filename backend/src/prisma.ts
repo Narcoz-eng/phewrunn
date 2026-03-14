@@ -50,11 +50,9 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    // Serverless deployments have been repeatedly destabilized by higher app-side pool
-    // limits left behind in env vars. Clamp to a single connection until a dedicated
-    // worker/read-replica topology exists.
+    const minimumServerlessConnectionLimit = isProduction ? 5 : 2;
     const desiredConnectionLimit = isServerlessRuntime
-      ? 1
+      ? Math.max(configuredConnectionLimit ?? minimumServerlessConnectionLimit, minimumServerlessConnectionLimit)
       : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout = isServerlessRuntime
@@ -78,22 +76,24 @@ function normalizeDatabaseUrl(
       notes.push("added sslmode=require");
     }
 
-    const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
-    if (
-      !Number.isFinite(existingConnectionLimit) ||
-      existingConnectionLimit !== desiredConnectionLimit
-    ) {
-      parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
-      notes.push(`set connection_limit=${desiredConnectionLimit}`);
-    }
+    if (isSupabaseHost) {
+      const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
+      if (
+        !Number.isFinite(existingConnectionLimit) ||
+        existingConnectionLimit !== desiredConnectionLimit
+      ) {
+        parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
+        notes.push(`set connection_limit=${desiredConnectionLimit}`);
+      }
 
-    const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
-    if (
-      !Number.isFinite(existingPoolTimeout) ||
-      existingPoolTimeout !== desiredPoolTimeout
-    ) {
-      parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
-      notes.push(`set pool_timeout=${desiredPoolTimeout}`);
+      const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
+      if (
+        !Number.isFinite(existingPoolTimeout) ||
+        existingPoolTimeout !== desiredPoolTimeout
+      ) {
+        parsed.searchParams.set("pool_timeout", String(desiredPoolTimeout));
+        notes.push(`set pool_timeout=${desiredPoolTimeout}`);
+      }
     }
 
     // Prefer pooled DATABASE_URL by default for runtime stability.

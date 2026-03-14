@@ -3876,74 +3876,58 @@ export async function getTraderOverview(handle: string, viewerId: string | null)
   };
 } | null> {
   const cacheKey = `trader:${viewerId ?? "anonymous"}:${sanitizeCacheKeyPart(handle)}`;
-  const staleCached = peekCacheValue(traderOverviewCache, cacheKey);
   return memoizeCached(traderOverviewCache, traderOverviewInFlight, cacheKey, TRADER_OVERVIEW_CACHE_TTL_MS, async () => {
-    try {
-      const user = await prisma.user.findFirst({
-        where: {
-          OR: [{ id: handle }, { username: handle }],
-        },
-        select: AUTHOR_SELECT,
-      });
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ id: handle }, { username: handle }],
+      },
+      select: AUTHOR_SELECT,
+    });
 
-      if (!user) return null;
-      void maybeRefreshTraderMetrics([user]).catch(() => undefined);
+    if (!user) return null;
+    void maybeRefreshTraderMetrics([user]).catch(() => undefined);
 
-      const callsRaw = await prisma.post.findMany({
-        where: { authorId: user.id },
-        select: CALL_SELECT,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 50,
-      });
-      const calls = await hydrateCalls(callsRaw, viewerId, {
-        refreshTraders: false,
-        refreshTokens: false,
-        ensureTokenLinks: false,
-        persistComputed: false,
-      });
-      const firstCallCount = calls.filter((call) => call.firstCallerRank === 1).length;
+    const callsRaw = await prisma.post.findMany({
+      where: { authorId: user.id },
+      select: CALL_SELECT,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 50,
+    });
+    const calls = await hydrateCalls(callsRaw, viewerId, {
+      refreshTraders: false,
+      refreshTokens: false,
+      ensureTokenLinks: false,
+      persistComputed: false,
+    });
+    const firstCallCount = calls.filter((call) => call.firstCallerRank === 1).length;
 
-      return {
-        trader: {
-          id: user.id,
-          name: user.name,
-          username: user.username,
-          image: user.image,
-          level: user.level,
-          xp: user.xp,
-          isVerified: user.isVerified,
-          winRate7d: user.winRate7d,
-          winRate30d: user.winRate30d,
-          avgRoi7d: user.avgRoi7d,
-          avgRoi30d: user.avgRoi30d,
-          trustScore: user.trustScore,
-          reputationTier: user.reputationTier,
-          firstCallCount: user.firstCallCount,
-          firstCallAvgRoi: user.firstCallAvgRoi,
-        },
-        calls,
-        stats: {
-          callsCount: calls.length,
-          avgConfidenceScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.confidenceScore, 0) / calls.length) : 0,
-          avgHotAlphaScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.hotAlphaScore, 0) / calls.length) : 0,
-          avgHighConvictionScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.highConvictionScore, 0) / calls.length) : 0,
-          firstCallCount,
-        },
-      };
-    } catch (error) {
-      if (!isTransientPrismaError(error)) {
-        throw error;
-      }
-      if (staleCached) {
-        console.warn("[intelligence/trader] serving stale trader overview after transient prisma failure", {
-          handle,
-          viewerId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return staleCached;
-      }
-      throw error;
-    }
+    return {
+      trader: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        image: user.image,
+        level: user.level,
+        xp: user.xp,
+        isVerified: user.isVerified,
+        winRate7d: user.winRate7d,
+        winRate30d: user.winRate30d,
+        avgRoi7d: user.avgRoi7d,
+        avgRoi30d: user.avgRoi30d,
+        trustScore: user.trustScore,
+        reputationTier: user.reputationTier,
+        firstCallCount: user.firstCallCount,
+        firstCallAvgRoi: user.firstCallAvgRoi,
+      },
+      calls,
+      stats: {
+        callsCount: calls.length,
+        avgConfidenceScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.confidenceScore, 0) / calls.length) : 0,
+        avgHotAlphaScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.hotAlphaScore, 0) / calls.length) : 0,
+        avgHighConvictionScore: calls.length > 0 ? roundMetricOrZero(calls.reduce((sum, call) => sum + call.highConvictionScore, 0) / calls.length) : 0,
+        firstCallCount,
+      },
+    };
   });
 }
 
