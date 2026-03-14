@@ -50,9 +50,8 @@ function normalizeDatabaseUrl(
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const minimumServerlessConnectionLimit = isProduction ? 5 : 2;
     const desiredConnectionLimit = isServerlessRuntime
-      ? Math.max(configuredConnectionLimit ?? minimumServerlessConnectionLimit, minimumServerlessConnectionLimit)
+      ? (configuredConnectionLimit ?? 1)
       : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout = isServerlessRuntime
