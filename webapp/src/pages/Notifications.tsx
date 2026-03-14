@@ -301,7 +301,7 @@ export default function Notifications() {
     },
     retryDelay: (attempt) => Math.min(1200 * 2 ** attempt, 5000),
     refetchInterval: () => {
-      if (realtimeStatus !== "degraded") {
+      if (realtimeStatus === "connected") {
         return false;
       }
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {

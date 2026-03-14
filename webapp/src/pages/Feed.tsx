@@ -1130,7 +1130,7 @@ export default function Feed() {
     };
   }, [cachedFeedUser, session?.user]);
   const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
-  const shouldUseFeedPollingFallback = realtimeStatus === "degraded";
+  const shouldUseFeedPollingFallback = realtimeStatus !== "connected";
   const persistLatestAcknowledgedTopId = useCallback((nextTopId: string | null) => {
     latestAcknowledgedTopIdRef.current = nextTopId;
     setLatestAcknowledgedTopId(nextTopId);

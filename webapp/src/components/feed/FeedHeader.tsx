@@ -76,7 +76,7 @@ export function FeedHeader({
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     refetchInterval: () => {
-      if (realtimeStatus !== "degraded") {
+      if (realtimeStatus === "connected") {
         return false;
       }
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {

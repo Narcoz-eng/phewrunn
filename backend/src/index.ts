@@ -374,7 +374,7 @@ if (isBunRuntime) {
     })
   );
 } else {
-  app.get("/api/realtime/ws", requireAuth, (c) =>
+  app.get("/api/realtime/ws", (c) =>
     c.json(
       {
         error: {

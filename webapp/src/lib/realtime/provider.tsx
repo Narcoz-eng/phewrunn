@@ -33,6 +33,27 @@ type RealtimeContextValue = {
 };
 
 const RealtimeContext = createContext<RealtimeContextValue | null>(null);
+const configuredRealtimeFlag = import.meta.env.VITE_REALTIME_ENABLED?.trim().toLowerCase() ?? "";
+
+function isRealtimeTransportEnabled(): boolean {
+  if (configuredRealtimeFlag === "true") {
+    return true;
+  }
+  if (configuredRealtimeFlag === "false") {
+    return false;
+  }
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+
+  const { hostname } = window.location;
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "0.0.0.0"
+  );
+}
 
 function buildRealtimeUrl(): string {
   const baseUrl = new URL(API_BASE_URL);
@@ -47,6 +68,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { hasLiveSession } = useAuth();
+  const realtimeTransportEnabled = isRealtimeTransportEnabled();
   const [status, setStatus] = useState<RealtimeStatus>("idle");
   const listenersRef = useRef(new Set<RealtimeListener>());
   const wsRef = useRef<WebSocket | null>(null);
@@ -131,7 +153,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!hasRealtimeSession || !sessionUserId) {
+    if (!realtimeTransportEnabled || !hasRealtimeSession || !sessionUserId) {
       clearReconnectTimer();
       reconnectAttemptRef.current = 0;
       reconnectSessionKeyRef.current = null;
@@ -216,7 +238,14 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         wsRef.current = null;
       }
     };
-  }, [clearReconnectTimer, dispatchEvent, hasLiveSession, hasRealtimeSession, sessionUserId]);
+  }, [
+    clearReconnectTimer,
+    dispatchEvent,
+    hasLiveSession,
+    hasRealtimeSession,
+    realtimeTransportEnabled,
+    sessionUserId,
+  ]);
 
   useEffect(() => {
     if (status !== "connected") {
