@@ -1189,6 +1189,163 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
   }
 });
 
+// ─── Weekly Best ──────────────────────────────────────────────────────────────
+
+let weeklyBestCache: CacheEntry<Array<unknown>> | null = null;
+let weeklyBestInFlight: Promise<Array<unknown>> | null = null;
+const WEEKLY_BEST_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 20_000;
+
+async function getWeeklyBestRaw(trace: LeaderboardTraceContext): Promise<Array<unknown>> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const rows = await executeLeaderboardRawQuery<Array<{
+    id: string;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    contractAddress: string | null;
+    entryMcap: number | null;
+    currentMcap: number | null;
+    mcap1h: number | null;
+    mcap6h: number | null;
+    percentChange1h: number | null;
+    percentChange6h: number | null;
+    settledAt: Date | null;
+    createdAt: Date;
+    authorId: string;
+    authorName: string | null;
+    authorUsername: string | null;
+    authorImage: string | null;
+    authorLevel: number | null;
+  }>>(
+    trace,
+    "leaderboard.weekly-best.raw",
+    Prisma.sql`
+      ${LEADERBOARD_POSTS_CTE}
+      SELECT
+        p.id,
+        p."tokenName",
+        p."tokenSymbol",
+        p."tokenImage",
+        p."contractAddress",
+        p."entryMcap",
+        p."currentMcap",
+        p."mcap1h",
+        p."mcap6h",
+        p."percentChange1h",
+        p."percentChange6h",
+        p."settledAt",
+        p."createdAt",
+        u.id AS "authorId",
+        u.name AS "authorName",
+        u.username AS "authorUsername",
+        u.image AS "authorImage",
+        u.level AS "authorLevel"
+      FROM leaderboard_posts p
+      JOIN "User" u ON u.id = p."authorId"
+      WHERE p.settled = true
+        AND p."createdAt" >= ${sevenDaysAgo}
+        AND p."contractAddress" IS NOT NULL
+        AND p."entryMcap" IS NOT NULL
+        AND p."currentMcap" IS NOT NULL
+        AND p."settledAt" IS NOT NULL
+    `
+  );
+
+  const mapped = rows
+    .map((row) => {
+      if (!row.contractAddress || !row.entryMcap || !row.currentMcap) return null;
+
+      const candidates: Array<{ gainPercent: number; displayMcap: number }> = [];
+      if (row.mcap1h !== null && row.percentChange1h !== null) {
+        candidates.push({ gainPercent: row.percentChange1h, displayMcap: row.mcap1h });
+      }
+      if (row.mcap6h !== null && row.percentChange6h !== null) {
+        candidates.push({ gainPercent: row.percentChange6h, displayMcap: row.mcap6h });
+      }
+      const currentGainPercent = ((row.currentMcap - row.entryMcap) / row.entryMcap) * 100;
+      candidates.push({ gainPercent: currentGainPercent, displayMcap: row.currentMcap });
+
+      const best = candidates.reduce((a, b) => (b.gainPercent > a.gainPercent ? b : a));
+      if (!(best.gainPercent > 0)) return null;
+
+      return {
+        postId: row.id,
+        tokenName: row.tokenName ?? null,
+        tokenSymbol: row.tokenSymbol ?? null,
+        tokenImage: row.tokenImage ?? null,
+        contractAddress: row.contractAddress,
+        user: {
+          id: row.authorId,
+          name: row.authorName ?? null,
+          username: row.authorUsername ?? null,
+          image: row.authorImage ?? null,
+          level: Math.max(0, Math.round(toSafeNumber(row.authorLevel))),
+        },
+        gainPercent: Math.round(best.gainPercent * 100) / 100,
+        entryMcap: toSafeNumber(row.entryMcap),
+        peakMcap: toSafeNumber(best.displayMcap),
+        createdAt: row.createdAt?.toISOString() ?? new Date(0).toISOString(),
+        settledAt: row.settledAt?.toISOString() ?? new Date(0).toISOString(),
+      };
+    })
+    .filter(Boolean);
+
+  mapped.sort((a, b) => (b as { gainPercent: number }).gainPercent - (a as { gainPercent: number }).gainPercent);
+  return mapped.slice(0, 2);
+}
+
+/**
+ * GET /api/leaderboard/weekly-best
+ * Top 2 alpha calls of the past 7 days by peak gain percent (public, no auth)
+ */
+leaderboardRouter.get("/weekly-best", async (c) => {
+  c.header("Cache-Control", buildLeaderboardRouteHeaders()["Cache-Control"]);
+  const trace = { endpoint: "/api/leaderboard/weekly-best", requestId: c.get("requestId") ?? null };
+
+  const cached = readCache(weeklyBestCache);
+  if (cached) return c.json({ data: cached });
+
+  const staleCached = readStaleCache(weeklyBestCache);
+  const cacheVersion = await getLeaderboardCacheVersion();
+  const redisKey = buildLeaderboardRedisKey("weekly-best", cacheVersion);
+  const redisCached = await cacheGetJson<Array<unknown>>(redisKey);
+  if (redisCached) {
+    weeklyBestCache = { data: redisCached, expiresAtMs: Date.now() + WEEKLY_BEST_CACHE_TTL_MS };
+    return c.json({ data: redisCached });
+  }
+
+  if (weeklyBestInFlight) {
+    try {
+      const data = await weeklyBestInFlight;
+      return c.json({ data });
+    } catch (error) {
+      logLeaderboardFallback("weekly-best/in-flight", error, Boolean(staleCached));
+      if (staleCached) return c.json({ data: staleCached });
+      weeklyBestCache = { data: [], expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS };
+      return c.json({ data: [] });
+    }
+  }
+
+  weeklyBestInFlight = (async () => {
+    const result = await getWeeklyBestRaw(trace);
+    weeklyBestCache = { data: result, expiresAtMs: Date.now() + WEEKLY_BEST_CACHE_TTL_MS };
+    void cacheSetJson(redisKey, result, WEEKLY_BEST_CACHE_TTL_MS);
+    return result;
+  })();
+
+  try {
+    const data = await weeklyBestInFlight;
+    return c.json({ data });
+  } catch (error) {
+    logLeaderboardFallback("weekly-best", error, Boolean(staleCached));
+    if (staleCached) return c.json({ data: staleCached });
+    weeklyBestCache = { data: [], expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS };
+    return c.json({ data: [] });
+  } finally {
+    weeklyBestInFlight = null;
+  }
+});
+
 /**
  * GET /api/leaderboard/top-users
  * Top users ranked by level, activity, or win rate
