@@ -67,6 +67,7 @@ export const PublicUserStatsDTOSchema = z
 
 export const PublicUserProfileDTOSchema = z
   .object({
+    id: z.string().min(1),
     username: z.string().nullable(),
     image: z.string().nullable(),
     level: z.number().int(),

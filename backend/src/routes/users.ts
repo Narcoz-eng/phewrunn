@@ -487,6 +487,7 @@ function buildPublicUserProfileDto(params: {
   };
 }): PublicUserProfileDTO {
   return {
+    id: params.user.id,
     username: params.user.username,
     image: params.user.image,
     level: params.user.level,

@@ -57,6 +57,7 @@ describe("public and profile schemas", () => {
 
   test("rejects sensitive extras in public profile payloads", () => {
     const parsed = PublicUserProfileDTOSchema.safeParse({
+      id: "user_123",
       username: "trader",
       image: null,
       level: 3,

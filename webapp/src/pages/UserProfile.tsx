@@ -108,50 +108,6 @@ function getCachedFeedPostsForProfile(queryClient: QueryClient, identifier: stri
   });
 }
 
-function buildUserProfileFallbackFromFeed(
-  queryClient: QueryClient,
-  identifier: string | undefined
-): UserProfileData | null {
-  const matchingPosts = getCachedFeedPostsForProfile(queryClient, identifier);
-  const latestPost = matchingPosts[0];
-  if (!latestPost) {
-    return null;
-  }
-
-  const settledPosts = matchingPosts.filter(
-    (post) => post.settled && post.isWin !== null && post.entryMcap !== null && post.currentMcap !== null
-  );
-  const wins = settledPosts.filter((post) => post.isWin === true).length;
-  const losses = settledPosts.filter((post) => post.isWin === false).length;
-  const totalCalls = settledPosts.length;
-  const totalProfitPercent = settledPosts.reduce((sum, post) => {
-    if (!post.entryMcap || !post.currentMcap) return sum;
-    return sum + ((post.currentMcap - post.entryMcap) / post.entryMcap) * 100;
-  }, 0);
-
-  return {
-    id: latestPost.author.id,
-    name: latestPost.author.name,
-    image: latestPost.author.image ?? null,
-    username: latestPost.author.username ?? null,
-    level: latestPost.author.level ?? 0,
-    xp: latestPost.author.xp ?? 0,
-    isVerified: latestPost.author.isVerified,
-    createdAt: latestPost.createdAt,
-    isFollowing: Boolean(latestPost.isFollowingAuthor),
-    stats: {
-      posts: matchingPosts.length,
-      followers: 0,
-      following: 0,
-      totalCalls,
-      wins,
-      losses,
-      winRate: totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0,
-      totalProfitPercent: Math.round(totalProfitPercent * 100) / 100,
-    },
-  };
-}
-
 export default function UserProfile() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -174,7 +130,7 @@ export default function UserProfile() {
     [userId, viewerCacheScope]
   );
   const userProfileCacheKey = useMemo(
-    () => (userId ? `phew.user-profile:v2:${viewerCacheScope}:${userId}` : null),
+    () => (userId ? `phew.user-profile:v3:${viewerCacheScope}:${userId}` : null),
     [userId, viewerCacheScope]
   );
   const userPostsCacheKey = useMemo(
@@ -216,25 +172,13 @@ export default function UserProfile() {
   } = useQuery({
     queryKey: userProfileQueryKey,
     queryFn: async () => {
-      const sessionCachedProfile =
-        userProfileCacheKey
-          ? readSessionCache<UserProfileData>(userProfileCacheKey, USER_PROFILE_CACHE_TTL_MS)
-          : null;
-      const currentProfile = queryClient.getQueryData<UserProfileData>(userProfileQueryKey);
-      const feedFallbackProfile = buildUserProfileFallbackFromFeed(queryClient, userId);
-      const fallbackProfile =
-        sessionCachedProfile ?? currentProfile ?? cachedUserProfile ?? feedFallbackProfile ?? null;
-      try {
-        const data = await api.get<UserProfileData>(`/api/users/${userId}`);
-        return data;
-      } catch (error) {
-        if (fallbackProfile) {
-          return fallbackProfile;
-        }
-        throw error;
+      if (!userId) {
+        throw new Error("User not found");
       }
+      return await api.get<UserProfileData>(`/api/users/${userId}`);
     },
-    initialData: cachedUserProfile ?? buildUserProfileFallbackFromFeed(queryClient, userId) ?? undefined,
+    initialData: cachedUserProfile ?? undefined,
+    initialDataUpdatedAt: cachedUserProfile ? Date.now() : undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
@@ -603,12 +547,13 @@ export default function UserProfile() {
   const normalizedProfileIdentifier = userId?.trim().toLowerCase() ?? "";
   const isOwnProfile =
     Boolean(session?.user?.id) &&
-    (session?.user?.id === userId ||
+    (session?.user?.id === user?.id ||
+      session?.user?.id === userId ||
       session?.user?.username?.trim().toLowerCase() === normalizedProfileIdentifier);
   const profileDisplayName =
     user?.username?.trim() || user?.name?.trim() || normalizedProfileIdentifier || "Trader";
   const profileAvatarSeed =
-    user?.id ?? (normalizedProfileIdentifier || "trader");
+    user?.id ?? user?.username ?? (normalizedProfileIdentifier || "trader");
 
   return (
     <div className="min-h-screen bg-background">
