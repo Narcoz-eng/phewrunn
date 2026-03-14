@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatMarketCap } from "@/types";
+import { formatMarketCap, getAvatarUrl } from "@/types";
 import { api } from "@/lib/api";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { LevelBar } from "@/components/feed/LevelBar";
 
 type WeeklyBestEntry = {
   postId: string;
@@ -219,45 +221,20 @@ function WinCard({ entry, rank, optimizeMotion, index }: WinCardProps) {
           </div>
 
           {/* Trader attribution */}
-          <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="space-y-2 pt-1">
             <div className="flex items-center gap-2.5">
-              <div
-                className={cn(
-                  "w-8 h-8 rounded-full border flex items-center justify-center text-xs font-bold shrink-0",
-                  isTopRank
-                    ? "border-gain/30 bg-gain/10 text-gain"
-                    : "border-primary/30 bg-primary/10 text-primary"
-                )}
-              >
-                {entry.user.image ? (
-                  <img
-                    src={entry.user.image}
-                    alt={initial}
-                    className="w-full h-full object-cover rounded-full"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                ) : (
-                  initial
-                )}
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-foreground">{authorHandle}</div>
-                <div className="text-[10px] text-muted-foreground">
-                  Settled WIN
-                </div>
+              <Avatar className="h-8 w-8 shrink-0">
+                <AvatarImage src={getAvatarUrl(entry.user.id, entry.user.image)} />
+                <AvatarFallback className="text-xs font-bold bg-primary/10 text-primary">
+                  {initial}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-foreground truncate">{authorHandle}</div>
+                <div className="text-[10px] text-muted-foreground">Settled WIN</div>
               </div>
             </div>
-
-            <div
-              className={cn(
-                "rounded-full border px-2.5 py-1 text-[10px] font-semibold",
-                levelColor
-              )}
-            >
-              {getLevelLabel(entry.user.level)} · LVL {entry.user.level > 0 ? `+${entry.user.level}` : entry.user.level}
-            </div>
+            <LevelBar level={entry.user.level} size="sm" showLabel={true} />
           </div>
         </div>
       </div>
