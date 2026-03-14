@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Trophy, Medal, Award, TrendingUp } from "lucide-react";
 import { api } from "@/lib/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,9 +8,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl, formatMarketCap } from "@/types";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
-import { Trophy, Medal, Award, TrendingUp } from "lucide-react";
 
-// Type for daily gainer from API
 interface DailyGainer {
   rank: number;
   postId: string;
@@ -26,7 +25,7 @@ interface DailyGainer {
   };
   gainPercent: number;
   entryMcap: number;
-  currentMcap: number;
+  peakMcap: number;
   settledAt: string;
 }
 
@@ -45,9 +44,9 @@ function getRankIcon(rank: number) {
 
 function DailyGainerSkeleton() {
   return (
-    <div className="flex items-center gap-4 p-4 rounded-lg bg-card border border-border">
+    <div className="flex items-center gap-4 rounded-lg border border-border bg-card p-4">
       <Skeleton className="h-5 w-5 rounded" />
-      <div className="flex-1 flex items-center gap-3">
+      <div className="flex flex-1 items-center gap-3">
         <Skeleton className="h-10 w-10 rounded-full" />
         <div className="flex-1 space-y-2">
           <Skeleton className="h-4 w-24" />
@@ -71,9 +70,9 @@ export function DailyGainersTable() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
-      return 5 * 60 * 1000; // Auto-refresh every 5 minutes when tab is visible
+      return 5 * 60 * 1000;
     },
-    staleTime: 5 * 60 * 1000, // Keep in sync with 5-minute refresh cadence
+    staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
   });
 
@@ -89,8 +88,8 @@ export function DailyGainersTable() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
-        <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
+      <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
           <TrendingUp className="h-8 w-8 text-destructive" />
         </div>
         <p className="text-muted-foreground">Failed to load daily gainers</p>
@@ -100,13 +99,13 @@ export function DailyGainersTable() {
 
   if (gainers.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
-        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+      <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
           <TrendingUp className="h-8 w-8 text-muted-foreground" />
         </div>
         <div>
           <p className="font-semibold">No settled trades yet today</p>
-          <p className="text-sm text-muted-foreground mt-1">Check back later for today's top gainers</p>
+          <p className="mt-1 text-sm text-muted-foreground">Check back later for today&apos;s top gainers</p>
         </div>
       </div>
     );
@@ -119,7 +118,7 @@ export function DailyGainersTable() {
           key={gainer.postId}
           onClick={() => navigate(buildProfilePath(gainer.user.id, gainer.user.username))}
           className={cn(
-            "flex items-center gap-4 p-4 rounded-lg bg-card border transition-all cursor-pointer",
+            "flex cursor-pointer items-center gap-4 rounded-lg border bg-card p-4 transition-all",
             "hover:border-primary/50 hover:shadow-md hover:shadow-primary/5",
             index === 0 && "border-yellow-500/30 bg-yellow-500/5",
             index === 1 && "border-slate-400/30 bg-slate-400/5",
@@ -128,54 +127,48 @@ export function DailyGainersTable() {
           )}
           style={{ animationDelay: `${index * 0.05}s` }}
         >
-          {/* Rank */}
-          <div className="flex-shrink-0 w-8 flex justify-center">
+          <div className="flex w-8 flex-shrink-0 justify-center">
             {getRankIcon(gainer.rank)}
           </div>
 
-          {/* Token Info */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <Avatar className="h-7 w-7 border border-border/60 shrink-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <Avatar className="h-7 w-7 shrink-0 border border-border/60">
                 <AvatarImage src={gainer.tokenImage || undefined} />
-                <AvatarFallback className="text-[10px] font-semibold bg-secondary">
+                <AvatarFallback className="bg-secondary text-[10px] font-semibold">
                   {(gainer.tokenSymbol || gainer.tokenName || "?").charAt(0)}
                 </AvatarFallback>
               </Avatar>
-              <span className="font-semibold truncate">
+              <span className="truncate font-semibold">
                 {gainer.tokenSymbol || "Unknown Token"}
               </span>
               {gainer.tokenName && (
-                <span className="text-xs text-muted-foreground truncate">
+                <span className="truncate text-xs text-muted-foreground">
                   ({gainer.tokenName})
                 </span>
               )}
             </div>
-            {/* User Info */}
-            <div className="flex items-center gap-2 mt-1">
+
+            <div className="mt-1 flex items-center gap-2">
               <Avatar className="h-5 w-5">
                 <AvatarImage src={getAvatarUrl(gainer.user.id, gainer.user.image)} />
                 <AvatarFallback className="text-[10px]">
                   {(gainer.user.username || gainer.user.name || "?").charAt(0)}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-sm text-muted-foreground truncate">
+              <span className="truncate text-sm text-muted-foreground">
                 {gainer.user.username ? `@${gainer.user.username}` : (gainer.user.name || "Anonymous")}
               </span>
               <LevelBadge level={gainer.user.level} size="sm" />
             </div>
           </div>
 
-          {/* Market Cap Change */}
           <div className="flex-shrink-0 text-right">
-            <div className={cn(
-              "text-lg font-bold",
-              gainer.gainPercent > 0 ? "text-gain" : "text-loss"
-            )}>
+            <div className={cn("text-lg font-bold", gainer.gainPercent > 0 ? "text-gain" : "text-loss")}>
               +{gainer.gainPercent.toFixed(1)}%
             </div>
             <div className="text-xs text-muted-foreground">
-              {formatMarketCap(gainer.entryMcap)} → {formatMarketCap(gainer.currentMcap)}
+              {formatMarketCap(gainer.entryMcap)} -&gt; {formatMarketCap(gainer.peakMcap)}
             </div>
           </div>
         </div>
