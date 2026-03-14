@@ -198,11 +198,10 @@ export async function runMarketAlertScan(): Promise<MarketAlertScanResult> {
     errors: 0,
   };
 
-  // Get unique contract addresses from all unsettled posts
+  // Get unique contract addresses from the last 200 posts (settled or not)
   // One representative postId per contract (for notification deep link)
   const rows = await prisma.post.findMany({
     where: {
-      settled: false,
       contractAddress: { not: null },
     },
     select: {
@@ -212,7 +211,7 @@ export async function runMarketAlertScan(): Promise<MarketAlertScanResult> {
       tokenSymbol: true,
     },
     orderBy: { createdAt: "desc" },
-    take: 200, // source pool before deduplication
+    take: 400, // source pool before deduplication — wider history, settled or not
   });
 
   // Deduplicate by contractAddress — keep the most recent post per contract
