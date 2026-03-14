@@ -47,16 +47,19 @@ function normalizeDatabaseUrl(
     const notes: string[] = [];
     const preferDirectRuntimeUrl =
       process.env.PRISMA_PREFER_DIRECT_URL?.trim().toLowerCase() === "true";
+    const isPostgresProtocol =
+      parsed.protocol === "postgres:" || parsed.protocol === "postgresql:";
     const isSupabaseHost =
       hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
+    const isPoolerHost =
+      hostname.includes(".pooler.") || hostname.includes("-pooler.") || hostname.includes("pooler");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const minimumServerlessConnectionLimit = isProduction ? 5 : 2;
     const desiredConnectionLimit = isServerlessRuntime
-      ? Math.max(configuredConnectionLimit ?? minimumServerlessConnectionLimit, minimumServerlessConnectionLimit)
+      ? 1
       : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout = isServerlessRuntime
-      ? Math.min(configuredPoolTimeout ?? (isProduction ? 10 : 8), 10)
+      ? Math.min(configuredPoolTimeout ?? (isProduction ? 5 : 8), isProduction ? 5 : 8)
       : (configuredPoolTimeout ?? (isProduction ? 8 : 10));
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
@@ -76,7 +79,7 @@ function normalizeDatabaseUrl(
       notes.push("added sslmode=require");
     }
 
-    if (isSupabaseHost) {
+    if (isPostgresProtocol) {
       const existingConnectionLimit = Number(parsed.searchParams.get("connection_limit") ?? "");
       if (
         !Number.isFinite(existingConnectionLimit) ||
@@ -122,7 +125,13 @@ function normalizeDatabaseUrl(
       }
 
       ensureSessionSafetyOptions(parsed, notes);
-    } else if (isSupabaseHost) {
+    } else if (isSupabaseHost || isPoolerHost) {
+      if (isPoolerHost && !parsed.searchParams.has("pgbouncer")) {
+        parsed.searchParams.set("pgbouncer", "true");
+        notes.push("added pgbouncer=true");
+      }
+      ensureSessionSafetyOptions(parsed, notes);
+    } else if (isPostgresProtocol) {
       ensureSessionSafetyOptions(parsed, notes);
     }
 

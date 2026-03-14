@@ -324,7 +324,7 @@ export default function Notifications() {
   } = useQuery({
     queryKey: ["alert-preferences", session?.user?.id ?? "anonymous"],
     queryFn: () => api.get<AlertPreference>("/api/alerts/preferences"),
-    enabled: isAuthenticated && hasLiveSession,
+    enabled: isAuthenticated && hasLiveSession && showAlertPreferences,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });

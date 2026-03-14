@@ -45,7 +45,9 @@ const FEED_ACTIVE_TAB_POLL_MS = 90_000;
 const FEED_TAB_PREFETCH_ENABLED = false;
 const FEED_TAB_PREFETCH_INITIAL_DELAY_MS = import.meta.env.PROD ? 2_500 : 1_200;
 const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 550 : 300;
-const FEED_AUXILIARY_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 1_500 : 500;
+const FEED_UNREAD_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 1_000 : 350;
+const FEED_ANNOUNCEMENTS_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 2_400 : 650;
+const FEED_TRENDING_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 4_200 : 1_000;
 const FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS = import.meta.env.PROD ? 900 : 250;
 const FEED_BACKGROUND_REFRESH_STARTUP_DELAY_MS = import.meta.env.PROD ? 12_000 : 3_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
@@ -1061,7 +1063,9 @@ export default function Feed() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [isOverlayOpen, setIsOverlayOpen] = useState<boolean>(() => isGlobalOverlayOpen());
   const [frozenPostsWhileOverlayOpen, setFrozenPostsWhileOverlayOpen] = useState<Post[] | null>(null);
-  const [feedAuxiliaryQueriesReady, setFeedAuxiliaryQueriesReady] = useState(false);
+  const [feedUnreadQueryReady, setFeedUnreadQueryReady] = useState(false);
+  const [feedAnnouncementsReady, setFeedAnnouncementsReady] = useState(false);
+  const [feedTrendingReady, setFeedTrendingReady] = useState(false);
   const [feedRealtimeEnrichmentReady, setFeedRealtimeEnrichmentReady] = useState(false);
   const [feedBackgroundRefreshReady, setFeedBackgroundRefreshReady] = useState(false);
   const [latestAcknowledgedTopId, setLatestAcknowledgedTopId] = useState<string | null>(() =>
@@ -1571,12 +1575,28 @@ export default function Feed() {
   const hasInitialFeedResult = isPostsFetched || Boolean(postsError);
 
   useEffect(() => {
-    if (feedAuxiliaryQueriesReady || !hasInitialFeedResult) return;
+    if (feedUnreadQueryReady || !hasInitialFeedResult) return;
     const timer = window.setTimeout(() => {
-      setFeedAuxiliaryQueriesReady(true);
-    }, FEED_AUXILIARY_QUERY_STARTUP_DELAY_MS);
+      setFeedUnreadQueryReady(true);
+    }, FEED_UNREAD_QUERY_STARTUP_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [feedAuxiliaryQueriesReady, hasInitialFeedResult]);
+  }, [feedUnreadQueryReady, hasInitialFeedResult]);
+
+  useEffect(() => {
+    if (feedAnnouncementsReady || !hasInitialFeedResult) return;
+    const timer = window.setTimeout(() => {
+      setFeedAnnouncementsReady(true);
+    }, FEED_ANNOUNCEMENTS_QUERY_STARTUP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [feedAnnouncementsReady, hasInitialFeedResult]);
+
+  useEffect(() => {
+    if (feedTrendingReady || !hasInitialFeedResult) return;
+    const timer = window.setTimeout(() => {
+      setFeedTrendingReady(true);
+    }, FEED_TRENDING_QUERY_STARTUP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [feedTrendingReady, hasInitialFeedResult]);
 
   useEffect(() => {
     if (feedBackgroundRefreshReady || !hasInitialFeedResult) return;
@@ -2330,17 +2350,17 @@ export default function Feed() {
         activeTab={activeTab}
         onTabChange={handleTabChange}
         onLogout={handleSignOut}
-        enableUnreadCountQuery={feedAuxiliaryQueriesReady}
+        enableUnreadCountQuery={feedUnreadQueryReady}
       />
 
       <main className="app-page-shell">
         {/* 1. Pinned Announcements (at very top) */}
-        <AnnouncementBanner enabled={feedAuxiliaryQueriesReady} />
+        <AnnouncementBanner enabled={feedAnnouncementsReady} />
 
         {/* 2. Trending Now Section */}
         {showTrendingSection ? (
           <QueryErrorBoundary sectionName="Trending">
-            <TrendingSection enabled={feedAuxiliaryQueriesReady} />
+            <TrendingSection enabled={feedTrendingReady} />
           </QueryErrorBoundary>
         ) : null}
 
