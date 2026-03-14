@@ -434,6 +434,7 @@ function mergePostWithCachedRealtimeState(
   let nextRadarReasons = post.radarReasons;
   let nextAuthor = post.author;
   let nextLastMcapUpdate = post.lastMcapUpdate ?? null;
+  let nextLastIntelligenceAt = post.lastIntelligenceAt ?? null;
   let nextTrackingMode = post.trackingMode ?? null;
 
   const fetchedMarketStateVersion = getFeedMarketStateVersion(post);
@@ -444,6 +445,8 @@ function mergePostWithCachedRealtimeState(
   const cachedIntelligenceVersion = getFeedIntelligenceVersion(cachedPost);
   const sameOrNewerCachedIntelligence =
     cachedIntelligenceVersion > 0 && cachedIntelligenceVersion >= fetchedIntelligenceVersion;
+  const hasNewerCachedIntelligence =
+    cachedIntelligenceVersion > 0 && cachedIntelligenceVersion > fetchedIntelligenceVersion;
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -489,6 +492,97 @@ function mergePostWithCachedRealtimeState(
     }
     if ((cachedPost.trackingMode ?? null) !== (post.trackingMode ?? null)) {
       nextTrackingMode = cachedPost.trackingMode ?? null;
+      didChange = true;
+    }
+  }
+
+  if (hasNewerCachedIntelligence) {
+    if ((cachedPost.lastIntelligenceAt ?? null) !== (post.lastIntelligenceAt ?? null)) {
+      nextLastIntelligenceAt = cachedPost.lastIntelligenceAt ?? null;
+      didChange = true;
+    }
+
+    if (cachedPost.confidenceScore !== null && cachedPost.confidenceScore !== post.confidenceScore) {
+      nextConfidenceScore = cachedPost.confidenceScore;
+      didChange = true;
+    }
+
+    if (cachedPost.hotAlphaScore !== null && cachedPost.hotAlphaScore !== post.hotAlphaScore) {
+      nextHotAlphaScore = cachedPost.hotAlphaScore;
+      didChange = true;
+    }
+
+    if (cachedPost.earlyRunnerScore !== null && cachedPost.earlyRunnerScore !== post.earlyRunnerScore) {
+      nextEarlyRunnerScore = cachedPost.earlyRunnerScore;
+      didChange = true;
+    }
+
+    if (
+      cachedPost.highConvictionScore !== null &&
+      cachedPost.highConvictionScore !== post.highConvictionScore
+    ) {
+      nextHighConvictionScore = cachedPost.highConvictionScore;
+      didChange = true;
+    }
+
+    if (cachedPost.roiCurrentPct !== null && cachedPost.roiCurrentPct !== post.roiCurrentPct) {
+      nextRoiCurrentPct = cachedPost.roiCurrentPct;
+      didChange = true;
+    }
+
+    if (!isMissingFeedValue(cachedPost.timingTier) && cachedPost.timingTier !== post.timingTier) {
+      nextTimingTier = cachedPost.timingTier;
+      didChange = true;
+    }
+
+    if (!isMissingFeedValue(cachedPost.bundleRiskLabel) && cachedPost.bundleRiskLabel !== post.bundleRiskLabel) {
+      nextBundleRiskLabel = cachedPost.bundleRiskLabel;
+      didChange = true;
+    }
+
+    if (cachedPost.tokenRiskScore !== null && cachedPost.tokenRiskScore !== post.tokenRiskScore) {
+      nextTokenRiskScore = cachedPost.tokenRiskScore;
+      didChange = true;
+    }
+
+    if (cachedPost.liquidity !== null && cachedPost.liquidity !== post.liquidity) {
+      nextLiquidity = cachedPost.liquidity;
+      didChange = true;
+    }
+
+    if (cachedPost.volume24h !== null && cachedPost.volume24h !== post.volume24h) {
+      nextVolume24h = cachedPost.volume24h;
+      didChange = true;
+    }
+
+    if (cachedPost.holderCount !== null && cachedPost.holderCount !== post.holderCount) {
+      nextHolderCount = cachedPost.holderCount;
+      didChange = true;
+    }
+
+    if (cachedPost.largestHolderPct !== null && cachedPost.largestHolderPct !== post.largestHolderPct) {
+      nextLargestHolderPct = cachedPost.largestHolderPct;
+      didChange = true;
+    }
+
+    if (cachedPost.top10HolderPct !== null && cachedPost.top10HolderPct !== post.top10HolderPct) {
+      nextTop10HolderPct = cachedPost.top10HolderPct;
+      didChange = true;
+    }
+
+    if (
+      cachedPost.bundledWalletCount !== null &&
+      cachedPost.bundledWalletCount !== post.bundledWalletCount
+    ) {
+      nextBundledWalletCount = cachedPost.bundledWalletCount;
+      didChange = true;
+    }
+
+    if (
+      cachedPost.estimatedBundledSupplyPct !== null &&
+      cachedPost.estimatedBundledSupplyPct !== post.estimatedBundledSupplyPct
+    ) {
+      nextEstimatedBundledSupplyPct = cachedPost.estimatedBundledSupplyPct;
       didChange = true;
     }
   }
@@ -824,6 +918,7 @@ function mergePostWithCachedRealtimeState(
     mcap6h: nextMcap6h,
     isWin: nextIsWin,
     lastMcapUpdate: nextLastMcapUpdate,
+    lastIntelligenceAt: nextLastIntelligenceAt,
     trackingMode: nextTrackingMode,
     tokenName: nextTokenName,
     tokenSymbol: nextTokenSymbol,
