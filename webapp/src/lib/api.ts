@@ -1,3 +1,5 @@
+import { getStoredBackendSessionToken } from "./backend-session-token";
+
 // In production/custom domains, use same-origin API calls.
 // In local development, use localhost:3000.
 const API_BASE_URL = (() => {
@@ -100,6 +102,10 @@ async function request<T>(
 
   const headers = new Headers(fetchOptions.headers);
   headers.set("Content-Type", "application/json");
+  const storedAuthToken = getStoredBackendSessionToken();
+  if (storedAuthToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${storedAuthToken}`);
+  }
 
   const config: RequestInit = {
     ...fetchOptions,
@@ -166,6 +172,10 @@ async function rawRequest(endpoint: string, options: RequestOptions = {}): Promi
   const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options;
 
   const headers = new Headers(fetchOptions.headers);
+  const storedAuthToken = getStoredBackendSessionToken();
+  if (storedAuthToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${storedAuthToken}`);
+  }
 
   const config: RequestInit = {
     ...fetchOptions,

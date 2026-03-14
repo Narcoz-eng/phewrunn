@@ -1,6 +1,11 @@
 ﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
 import { useRef, useLayoutEffect } from "react";
+import {
+  clearStoredBackendSessionToken,
+  getStoredBackendSessionToken,
+  setStoredBackendSessionToken,
+} from "./backend-session-token";
 import { clearSessionCacheByPrefix } from "./session-cache";
 import {
   cancelPrivyIdentityRetryTimers,
@@ -227,7 +232,10 @@ export async function signUp() {
 }
 
 export async function signOut(options?: { token?: string | null }) {
-  void options;
+  const bearerToken =
+    typeof options?.token === "string" && options.token.trim().length > 0
+      ? options.token.trim()
+      : getStoredAuthToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -238,6 +246,7 @@ export async function signOut(options?: { token?: string | null }) {
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
+        ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
       },
     });
   } catch (error) {
@@ -328,22 +337,24 @@ function clearLegacyStoredAuthTokenArtifacts(): void {
 
 function getStoredAuthToken(): string | null {
   clearLegacyStoredAuthTokenArtifacts();
-  return null;
+  return getStoredBackendSessionToken();
 }
 
-function setStoredAuthToken(_token: string): void {
+function setStoredAuthToken(token: string): void {
   clearLegacyStoredAuthTokenArtifacts();
+  setStoredBackendSessionToken(token);
 }
 
 function clearStoredAuthToken(): void {
   clearLegacyStoredAuthTokenArtifacts();
+  clearStoredBackendSessionToken();
 }
 
 export function hasStoredAuthTokenHint(): boolean {
   if (isExplicitLogoutCoolingDown()) {
     return false;
   }
-  return Boolean(readCachedAuthUser()) || hasSessionCookieHint();
+  return Boolean(readCachedAuthUser()) || Boolean(getStoredAuthToken()) || hasSessionCookieHint();
 }
 
 function hasRecoverableBackendSessionHint(referenceTime = Date.now()): boolean {
@@ -2342,6 +2353,7 @@ async function fetchSessionFromServer(
   timeoutMs = SESSION_FETCH_TIMEOUT_MS,
   reason = "confirmation"
 ): Promise<ServerSessionResult> {
+  const storedAuthToken = getStoredAuthToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -2354,6 +2366,7 @@ async function fetchSessionFromServer(
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
+        ...(storedAuthToken ? { Authorization: `Bearer ${storedAuthToken}` } : {}),
       },
       signal: controller.signal,
     });
@@ -2516,6 +2529,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
+  const storedAuthToken = getStoredAuthToken();
   const pendingBootstrap = readPrivyAuthBootstrapSnapshot();
   const pendingBootstrapBelongsToCurrentTab =
     doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(pendingBootstrap);
@@ -2580,6 +2594,7 @@ async function fetchSession(): Promise<AuthUser | null> {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
+        ...(storedAuthToken ? { Authorization: `Bearer ${storedAuthToken}` } : {}),
       },
       signal: controller.signal,
     });
@@ -3481,7 +3496,7 @@ export async function syncPrivySession(
         throw new Error("Empty response from auth server");
       }
 
-      let data: { user?: AuthUser; error?: { message?: string } } | null = null;
+      let data: { user?: AuthUser; token?: string; error?: { message?: string } } | null = null;
       try {
         data = JSON.parse(text);
       } catch {
@@ -3510,6 +3525,9 @@ export async function syncPrivySession(
         throw new Error(message);
       }
 
+      if (data?.token) {
+        setStoredAuthToken(data.token);
+      }
       const syncedUser = toAuthUser(data.user);
       if (explicitLogoutAt > syncStartedAt) {
         throw new Error("Session sync completed after logout");
