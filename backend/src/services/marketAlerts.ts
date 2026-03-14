@@ -73,7 +73,7 @@ async function broadcastToAllUsers(
 ): Promise<void> {
   // Fetch all active user IDs (non-banned)
   const users = await prisma.user.findMany({
-    where: { banned: false },
+    where: { isBanned: false },
     select: { id: true },
   });
 
