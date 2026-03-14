@@ -1837,6 +1837,7 @@ export function PostCard({
         profitText: "N/A",
         positive: null as boolean | null,
         magnitudeRatio: 0,
+        _rawAbsPercent: 0,
       };
     }
     const snapshotPercent = calculatePercentChange(post.entryMcap, snapshotMcap);
@@ -1849,7 +1850,8 @@ export function PostCard({
         snapshotPercent === null ? "N/A" : `${snapshotPercent >= 0 ? "+" : ""}${snapshotPercent.toFixed(2)}%`,
       profitText: `${snapshotProfit >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(snapshotProfit))}`,
       positive: isPositive,
-      magnitudeRatio: Math.max(0.12, Math.min(1, absPercent / 250)),
+      magnitudeRatio: 0, // will be normalized below
+      _rawAbsPercent: absPercent,
     };
   };
   const buildWinCardRenderModel = useCallback(
@@ -2031,11 +2033,18 @@ export function PostCard({
             tone: trendTone,
           },
         ],
-        snapshots: [
-          { shortLabel: "1H", ...buildWinCardSnapshotMetric("1H Snapshot", resolvedMcap1h) },
-          { shortLabel: "6H", ...buildWinCardSnapshotMetric("6H Snapshot", resolvedMcap6h) },
-          { shortLabel: "NOW", ...buildWinCardSnapshotMetric("Current", resolvedCurrentMcap) },
-        ],
+        snapshots: (() => {
+          const raw = [
+            { shortLabel: "1H", ...buildWinCardSnapshotMetric("1H Snapshot", resolvedMcap1h) },
+            { shortLabel: "6H", ...buildWinCardSnapshotMetric("6H Snapshot", resolvedMcap6h) },
+            { shortLabel: "NOW", ...buildWinCardSnapshotMetric("Current", resolvedCurrentMcap) },
+          ];
+          const peak = Math.max(...raw.map((s) => s._rawAbsPercent), 1);
+          return raw.map(({ _rawAbsPercent, ...s }) => ({
+            ...s,
+            magnitudeRatio: Math.max(0.12, Math.min(1, _rawAbsPercent / peak)),
+          }));
+        })(),
         summaryItems: summaryItems.slice(0, 4),
       };
     },
@@ -2463,6 +2472,11 @@ export function PostCard({
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
 
       toast.success(rendered.model.resultLabel === "WIN CARD" ? "Wincard downloaded" : "Result card downloaded");
+
+      const tokenTag = post.tokenSymbol ? `$${post.tokenSymbol}` : post.tokenName || "this token";
+      const percentText = rendered.model.resultText !== "N/A" ? ` ${rendered.model.resultText} move` : "";
+      const tweetText = `Just called ${tokenTag} on @phewrun 🔥${percentText} 📈\nJust a PHEW running the internet`;
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`, "_blank");
     } catch (error) {
       console.error("[wincard] Failed to generate card", error);
       toast.error("Failed to generate win card");
@@ -6918,14 +6932,16 @@ export function PostCard({
               type="button"
               onClick={handleDownloadWinCard}
               disabled={isWinCardDownloading || isWinCardRendering}
-              className="w-full sm:w-auto gap-2"
+              className="w-full sm:w-auto gap-2 bg-black hover:bg-zinc-900 text-white border border-zinc-700"
             >
               {isWinCardDownloading || isWinCardRendering ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Download className="h-4 w-4" />
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.261 5.632L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
               )}
-              Download PNG
+              FLEX ON X
             </Button>
           </DialogFooter>
         </DialogContent>
