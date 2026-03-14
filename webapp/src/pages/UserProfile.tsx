@@ -733,7 +733,11 @@ export default function UserProfile() {
               isLoading={isLoadingUser}
             />
 
-            <TraderIntelligenceCard handle={user.username ?? user.id ?? userId} />
+            <TraderIntelligenceCard
+              handle={user.username ?? user.id ?? userId}
+              enabled={isPostsFetched}
+              deferMs={1500}
+            />
 
             {/* Followers/Following */}
             <div className="flex items-center justify-center gap-6 py-3">

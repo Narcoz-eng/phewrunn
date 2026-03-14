@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
-import { prisma, withPrismaRetry } from "../prisma.js";
+import { prisma, withPrismaRetry, isTransientPrismaError } from "../prisma.js";
 import { invalidatePostReadCaches } from "./posts.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
@@ -861,6 +861,55 @@ function isLikelySolanaWalletAddress(value: string | null | undefined): value is
   return typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
 }
 
+type WalletOverviewPayload = {
+  connected: boolean;
+  balanceSol: number | null;
+  balanceUsd: number | null;
+  totalVolumeBoughtSol: number | null;
+  totalVolumeSoldSol: number | null;
+  totalVolumeBoughtUsd: number | null;
+  totalVolumeSoldUsd: number | null;
+  totalProfitUsd: number | null;
+  tokenPositions: Array<{
+    mint: string;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    holdingAmount: number | null;
+    holdingUsd: number | null;
+    boughtAmount: number | null;
+    soldAmount: number | null;
+    totalPnlUsd: number | null;
+  }>;
+};
+
+function buildWalletStatusPayload(params: {
+  walletAddress: string | null | undefined;
+  walletProvider?: string | null | undefined;
+  walletConnectedAt?: Date | null | undefined;
+}) {
+  return {
+    connected: Boolean(params.walletAddress),
+    address: params.walletAddress ?? null,
+    provider: params.walletProvider ?? null,
+    connectedAt: params.walletConnectedAt?.toISOString() ?? null,
+  };
+}
+
+function buildEmptyWalletOverview(connected: boolean): WalletOverviewPayload {
+  return {
+    connected,
+    balanceSol: null,
+    balanceUsd: null,
+    totalVolumeBoughtSol: null,
+    totalVolumeSoldSol: null,
+    totalVolumeBoughtUsd: null,
+    totalVolumeSoldUsd: null,
+    totalProfitUsd: null,
+    tokenPositions: [],
+  };
+}
+
 async function attachWalletTradeSnapshotsForUserPosts<
   T extends {
     contractAddress: string | null;
@@ -995,6 +1044,10 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
+  const sessionFallback = buildWalletStatusPayload({
+    walletAddress: sessionUser.walletAddress,
+  });
+
   let user:
     | {
         walletAddress: string | null;
@@ -1009,25 +1062,52 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
     | null = null;
 
   try {
-    user = await prisma.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        walletAddress: true,
-        walletProvider: true,
-        walletConnectedAt: true,
-      },
-    });
+    user = await withPrismaRetry(
+      () =>
+        prisma.user.findUnique({
+          where: { id: sessionUser.id },
+          select: {
+            walletAddress: true,
+            walletProvider: true,
+            walletConnectedAt: true,
+          },
+        }),
+      { label: "users:wallet-status" }
+    );
   } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/wallet-status] database unavailable; returning session-backed wallet status", {
+        userId: sessionUser.id,
+        message: getErrorMessage(error),
+      });
+      return c.json({ data: sessionFallback });
+    }
     if (!isPrismaSchemaDriftError(error)) {
       throw error;
     }
 
-    const fallbackUser = await prisma.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        walletAddress: true,
-      },
-    });
+    let fallbackUser: { walletAddress: string | null } | null = null;
+    try {
+      fallbackUser = await withPrismaRetry(
+        () =>
+          prisma.user.findUnique({
+            where: { id: sessionUser.id },
+            select: {
+              walletAddress: true,
+            },
+          }),
+        { label: "users:wallet-status:fallback" }
+      );
+    } catch (fallbackError) {
+      if (isTransientPrismaError(fallbackError)) {
+        console.warn("[users/wallet-status] fallback lookup unavailable; returning session-backed wallet status", {
+          userId: sessionUser.id,
+          message: getErrorMessage(fallbackError),
+        });
+        return c.json({ data: sessionFallback });
+      }
+      throw fallbackError;
+    }
 
     user = fallbackUser
       ? {
@@ -1043,12 +1123,7 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
   }
 
   return c.json({
-    data: {
-      connected: !!user.walletAddress,
-      address: user.walletAddress,
-      provider: user.walletProvider,
-      connectedAt: user.walletConnectedAt?.toISOString() || null,
-    }
+    data: buildWalletStatusPayload(user),
   });
 });
 
@@ -1670,13 +1745,46 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const user = await prisma.user.findFirst({
-    where: buildUserIdentifierWhere(identifier),
-    select: {
-      id: true,
-      walletAddress: true,
-    },
-  });
+  let user:
+    | {
+        id: string;
+        walletAddress: string | null;
+      }
+    | null = null;
+
+  try {
+    user = await withPrismaRetry(
+      () =>
+        prisma.user.findFirst({
+          where: buildUserIdentifierWhere(identifier),
+          select: {
+            id: true,
+            walletAddress: true,
+          },
+        }),
+      { label: "users:wallet-overview:user" }
+    );
+  } catch (error) {
+    if (isTransientPrismaError(error) && identifier === sessionUser.id) {
+      console.warn("[users/wallet-overview] owner lookup unavailable; using session-backed wallet context", {
+        userId: sessionUser.id,
+        message: getErrorMessage(error),
+      });
+      user = {
+        id: sessionUser.id,
+        walletAddress: sessionUser.walletAddress,
+      };
+    } else if (isTransientPrismaError(error)) {
+      console.warn("[users/wallet-overview] lookup unavailable; returning empty overview", {
+        userId: sessionUser.id,
+        identifier,
+        message: getErrorMessage(error),
+      });
+      return c.json({ data: buildEmptyWalletOverview(Boolean(sessionUser.walletAddress)) });
+    } else {
+      throw error;
+    }
+  }
 
   if (!user) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
@@ -1691,51 +1799,55 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
 
   if (!user.walletAddress || !isLikelySolanaWalletAddress(user.walletAddress) || !isHeliusConfigured()) {
     return c.json({
-      data: {
-        connected: Boolean(user.walletAddress),
-        balanceSol: null,
-        balanceUsd: null,
-        totalVolumeBoughtSol: null,
-        totalVolumeSoldSol: null,
-        totalVolumeBoughtUsd: null,
-        totalVolumeSoldUsd: null,
-        totalProfitUsd: null,
-        tokenPositions: [],
-      }
+      data: buildEmptyWalletOverview(Boolean(user.walletAddress)),
     });
   }
 
-  const postedTokens = await prisma.post.findMany({
-    where: {
-      authorId: user.id,
-      chainType: "solana",
-      contractAddress: { not: null },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-    select: {
-      contractAddress: true,
-      chainType: true,
-      tokenName: true,
-      tokenSymbol: true,
-      tokenImage: true,
-      createdAt: true,
-    },
-  });
+  let postedTokens: Array<{
+    contractAddress: string | null;
+    chainType: string | null;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    createdAt: Date;
+  }> = [];
+
+  try {
+    postedTokens = await withPrismaRetry(
+      () =>
+        prisma.post.findMany({
+          where: {
+            authorId: user.id,
+            chainType: "solana",
+            contractAddress: { not: null },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 200,
+          select: {
+            contractAddress: true,
+            chainType: true,
+            tokenName: true,
+            tokenSymbol: true,
+            tokenImage: true,
+            createdAt: true,
+          },
+        }),
+      { label: "users:wallet-overview:posts" }
+    );
+  } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/wallet-overview] posted-token lookup unavailable; returning empty overview", {
+        userId: user.id,
+        message: getErrorMessage(error),
+      });
+      return c.json({ data: buildEmptyWalletOverview(true) });
+    }
+    throw error;
+  }
 
   if (postedTokens.length === 0) {
     return c.json({
-      data: {
-        connected: true,
-        balanceSol: null,
-        balanceUsd: null,
-        totalVolumeBoughtSol: null,
-        totalVolumeSoldSol: null,
-        totalVolumeBoughtUsd: null,
-        totalVolumeSoldUsd: null,
-        totalProfitUsd: null,
-        tokenPositions: [],
-      }
+      data: buildEmptyWalletOverview(true),
     });
   }
 
@@ -1809,17 +1921,7 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
 
   if (!portfolio) {
     return c.json({
-      data: {
-        connected: true,
-        balanceSol: null,
-        balanceUsd: null,
-        totalVolumeBoughtSol: null,
-        totalVolumeSoldSol: null,
-        totalVolumeBoughtUsd: null,
-        totalVolumeSoldUsd: null,
-        totalProfitUsd: null,
-        tokenPositions: [],
-      }
+      data: buildEmptyWalletOverview(true),
     });
   }
 

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +31,12 @@ type TraderStats = {
   firstCallCount: number;
 };
 
+type TraderOverviewResponse = {
+  trader: TraderOverview | null;
+  stats: TraderStats;
+  degraded?: boolean;
+};
+
 function Metric({
   label,
   value,
@@ -56,27 +63,43 @@ function Metric({
   );
 }
 
-export function TraderIntelligenceCard({ handle }: { handle?: string | null }) {
+export function TraderIntelligenceCard({
+  handle,
+  enabled = true,
+  deferMs = 0,
+}: {
+  handle?: string | null;
+  enabled?: boolean;
+  deferMs?: number;
+}) {
   const normalizedHandle = handle?.trim() ?? "";
+  const [delayReady, setDelayReady] = useState(deferMs <= 0);
+
+  useEffect(() => {
+    if (deferMs <= 0) {
+      setDelayReady(true);
+      return;
+    }
+    setDelayReady(false);
+    const timer = window.setTimeout(() => setDelayReady(true), deferMs);
+    return () => window.clearTimeout(timer);
+  }, [deferMs, normalizedHandle]);
+
+  const queryEnabled = normalizedHandle.length > 0 && enabled && delayReady;
   const {
     data,
     isLoading,
     error,
   } = useQuery({
     queryKey: ["trader-intelligence", normalizedHandle],
-    queryFn: async () => {
-      const [trader, stats] = await Promise.all([
-        api.get<TraderOverview>(`/api/traders/${normalizedHandle}`),
-        api.get<TraderStats>(`/api/traders/${normalizedHandle}/stats`),
-      ]);
-      return { trader, stats };
-    },
-    enabled: normalizedHandle.length > 0,
+    queryFn: async () => api.get<TraderOverviewResponse>(`/api/traders/${normalizedHandle}/overview`),
+    enabled: queryEnabled,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
+    retry: 0,
   });
 
-  if (!normalizedHandle) {
+  if (!normalizedHandle || !enabled || !delayReady) {
     return null;
   }
 
@@ -101,6 +124,9 @@ export function TraderIntelligenceCard({ handle }: { handle?: string | null }) {
   }
 
   const { trader, stats } = data;
+  if (!trader) {
+    return null;
+  }
 
   return (
     <div className="app-surface p-4 sm:p-5">

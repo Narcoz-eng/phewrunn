@@ -300,7 +300,7 @@ export default function Profile() {
   useEffect(() => {
     setEnableWalletOverviewQuery(false);
     if (!user?.walletAddress) return;
-    const timer = window.setTimeout(() => setEnableWalletOverviewQuery(true), 350);
+    const timer = window.setTimeout(() => setEnableWalletOverviewQuery(true), 1800);
     return () => window.clearTimeout(timer);
   }, [user?.walletAddress]);
 
@@ -1223,7 +1223,11 @@ export default function Profile() {
               </Button>
             </div>
 
-            <TraderIntelligenceCard handle={user.username ?? user.id} />
+            <TraderIntelligenceCard
+              handle={user.username ?? user.id}
+              enabled={isPostsFetched}
+              deferMs={1800}
+            />
 
             <LivePortfolioDialog
               open={isPortfolioOpen}
@@ -1232,7 +1236,7 @@ export default function Profile() {
             />
 
             {/* Wallet Connection Section */}
-            <WalletConnection />
+            <WalletConnection deferMs={2600} />
 
             {/* Followers/Following */}
             <div className="flex items-center justify-center gap-6 py-3">

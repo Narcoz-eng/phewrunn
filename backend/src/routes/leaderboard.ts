@@ -1179,15 +1179,11 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     } catch (rawError) {
       logLeaderboardFallback("daily-gainers/raw", rawError, false);
     }
-    return c.json(
-      {
-        error: {
-          message: "Daily gainers are temporarily unavailable. Please retry shortly.",
-          code: "DAILY_GAINERS_UNAVAILABLE",
-        },
-      },
-      503
-    );
+    dailyGainersCache = {
+      data: [],
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    };
+    return c.json({ data: [] });
   } finally {
     dailyGainersInFlight = null;
   }

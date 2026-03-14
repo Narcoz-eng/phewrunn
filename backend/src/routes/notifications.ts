@@ -713,18 +713,9 @@ notificationsRouter.get("/", requireAuth, async (c) => {
           writeNotificationsListCache(listCacheKey, notifications);
           return c.json({ data: notifications });
         }
-        if (staleCachedNotifications) {
-          return c.json({ data: staleCachedNotifications });
-        }
-        return c.json(
-          {
-            error: {
-              message: "Notifications are temporarily unavailable. Please retry shortly.",
-              code: "NOTIFICATIONS_UNAVAILABLE",
-            },
-          },
-          503
-        );
+        const fallbackNotifications = staleCachedNotifications ?? [];
+        writeNotificationsListCache(listCacheKey, fallbackNotifications);
+        return c.json({ data: fallbackNotifications });
       }
       throw error;
     }
@@ -797,18 +788,9 @@ notificationsRouter.get("/", requireAuth, async (c) => {
               writeNotificationsListCache(listCacheKey, notifications);
               return c.json({ data: notifications });
             }
-            if (staleCachedNotifications) {
-              return c.json({ data: staleCachedNotifications });
-            }
-            return c.json(
-              {
-                error: {
-                  message: "Notifications are temporarily unavailable. Please retry shortly.",
-                  code: "NOTIFICATIONS_UNAVAILABLE",
-                },
-              },
-              503
-            );
+            const fallbackNotifications = staleCachedNotifications ?? [];
+            writeNotificationsListCache(listCacheKey, fallbackNotifications);
+            return c.json({ data: fallbackNotifications });
           }
           throw minimalError;
         }
@@ -825,18 +807,9 @@ notificationsRouter.get("/", requireAuth, async (c) => {
           });
         }
         if (!recoveredFromRaw) {
-          if (staleCachedNotifications) {
-            return c.json({ data: staleCachedNotifications });
-          }
-          return c.json(
-            {
-              error: {
-                message: "Notifications are temporarily unavailable. Please retry shortly.",
-                code: "NOTIFICATIONS_UNAVAILABLE",
-              },
-            },
-            503
-          );
+          const fallbackNotifications = staleCachedNotifications ?? [];
+          writeNotificationsListCache(listCacheKey, fallbackNotifications);
+          return c.json({ data: fallbackNotifications });
         }
       }
     }

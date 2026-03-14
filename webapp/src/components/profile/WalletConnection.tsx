@@ -92,9 +92,10 @@ function buildWalletLinkMessage(userId: string, walletAddress: string) {
 
 interface WalletConnectionProps {
   className?: string;
+  deferMs?: number;
 }
 
-export function WalletConnection({ className }: WalletConnectionProps) {
+export function WalletConnection({ className, deferMs = 0 }: WalletConnectionProps) {
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { canPerformAuthenticatedWrites } = useAuth();
@@ -103,6 +104,7 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   const [copied, setCopied] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [autoLinkAttemptedFor, setAutoLinkAttemptedFor] = useState<string | null>(null);
+  const [delayReady, setDelayReady] = useState(deferMs <= 0);
   const walletStatusQueryKey = ["wallet-status", session?.user?.id ?? "anonymous"] as const;
 
   const {
@@ -117,6 +119,16 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   const adapterWalletAddress = publicKey?.toBase58() ?? null;
   const adapterProviderId = detectProviderId(adapterWallet?.adapter.name);
 
+  useEffect(() => {
+    if (deferMs <= 0) {
+      setDelayReady(true);
+      return;
+    }
+    setDelayReady(false);
+    const timer = window.setTimeout(() => setDelayReady(true), deferMs);
+    return () => window.clearTimeout(timer);
+  }, [deferMs, session?.user?.id]);
+
   const {
     data: walletStatus,
     isLoading,
@@ -124,21 +136,27 @@ export function WalletConnection({ className }: WalletConnectionProps) {
   } = useQuery({
     queryKey: walletStatusQueryKey,
     queryFn: async () => {
+      const sessionFallback =
+        session?.user
+          ? ({
+              connected: Boolean(session.user.walletAddress),
+              address: session.user.walletAddress ?? null,
+              provider: session.user.walletProvider ?? null,
+              connectedAt: null,
+            } satisfies WalletStatus)
+          : null;
       try {
         return await api.get<WalletStatus>("/api/users/me/wallet");
       } catch (error) {
-        if (error instanceof ApiError && (error.status === 401 || error.status === 403) && session?.user) {
-          return {
-            connected: Boolean(session.user.walletAddress),
-            address: session.user.walletAddress ?? null,
-            provider: session.user.walletProvider ?? null,
-            connectedAt: null,
-          } satisfies WalletStatus;
+        if (sessionFallback) {
+          if (!(error instanceof ApiError) || error.status === 401 || error.status === 403 || error.status >= 500) {
+            return sessionFallback;
+          }
         }
         throw error;
       }
     },
-    enabled: !!session?.user && canPerformAuthenticatedWrites,
+    enabled: !!session?.user && canPerformAuthenticatedWrites && delayReady,
     staleTime: 60_000,
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
