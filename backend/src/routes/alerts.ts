@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { type Notification } from "@prisma/client";
 import { type AuthVariables, requireAuth } from "../auth.js";
-import { prisma } from "../prisma.js";
+import { isTransientPrismaError, prisma } from "../prisma.js";
 import { ensureAlertPreference } from "../services/intelligence/engine.js";
 
 export const alertsRouter = new Hono<{ Variables: AuthVariables }>();
@@ -21,24 +22,55 @@ const AlertPreferenceSchema = z.object({
   notifyConfidenceCross: z.boolean().optional(),
 });
 
+function buildDefaultAlertPreference(userId: string) {
+  return {
+    id: `fallback:${userId}`,
+    userId,
+    minConfidenceScore: 65,
+    minLiquidity: null,
+    maxBundleRiskScore: 45,
+    timeframeMinutes: 240,
+    notifyFollowedTraders: true,
+    notifyFollowedTokens: true,
+    notifyEarlyRunners: true,
+    notifyHotAlpha: true,
+    notifyHighConviction: true,
+    notifyBundleChanges: true,
+    notifyConfidenceCross: true,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+}
+
 alertsRouter.get("/", requireAuth, async (c) => {
   const user = c.get("user");
   if (!user) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const notifications = await prisma.notification.findMany({
-    where: {
+  let notifications: Notification[] = [];
+  try {
+    notifications = await prisma.notification.findMany({
+      where: {
+        userId: user.id,
+        OR: [
+          { entityType: "token" },
+          { entityType: "call" },
+          { type: { in: ["posted_alpha", "early_runner_detected", "hot_alpha_detected", "high_conviction_detected", "bundle_risk_changed", "token_confidence_crossed"] } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+  } catch (error) {
+    if (!isTransientPrismaError(error)) {
+      throw error;
+    }
+    console.warn("[alerts] notification list degraded; returning empty alerts payload", {
       userId: user.id,
-      OR: [
-        { entityType: "token" },
-        { entityType: "call" },
-        { type: { in: ["posted_alpha", "early_runner_detected", "hot_alpha_detected", "high_conviction_detected", "bundle_risk_changed", "token_confidence_crossed"] } },
-      ],
-    },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   return c.json({ data: notifications });
 });
@@ -49,7 +81,19 @@ alertsRouter.get("/preferences", requireAuth, async (c) => {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
 
-  const pref = await ensureAlertPreference(user.id);
+  let pref;
+  try {
+    pref = await ensureAlertPreference(user.id);
+  } catch (error) {
+    if (!isTransientPrismaError(error)) {
+      throw error;
+    }
+    console.warn("[alerts] preferences degraded; returning default alert preference payload", {
+      userId: user.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    pref = buildDefaultAlertPreference(user.id);
+  }
   return c.json({ data: pref });
 });
 
@@ -60,14 +104,31 @@ alertsRouter.put("/preferences", requireAuth, zValidator("json", AlertPreference
   }
 
   const body = c.req.valid("json");
-  const updated = await prisma.alertPreference.upsert({
-    where: { userId: user.id },
-    create: {
-      userId: user.id,
-      ...body,
-    },
-    update: body,
-  });
+  let updated;
+  try {
+    updated = await prisma.alertPreference.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        ...body,
+      },
+      update: body,
+    });
+  } catch (error) {
+    if (!isTransientPrismaError(error)) {
+      throw error;
+    }
+    c.header("Retry-After", "2");
+    return c.json(
+      {
+        error: {
+          message: "Alert preferences are temporarily unavailable. Please retry.",
+          code: "ALERT_PREFERENCES_UNAVAILABLE",
+        },
+      },
+      503
+    );
+  }
 
   return c.json({ data: updated });
 });

@@ -262,6 +262,20 @@ function buildFeeSettingsResponse(user: {
   };
 }
 
+function buildEmptyWalletOverview(connected: boolean) {
+  return {
+    connected,
+    balanceSol: null,
+    balanceUsd: null,
+    totalVolumeBoughtSol: null,
+    totalVolumeSoldSol: null,
+    totalVolumeBoughtUsd: null,
+    totalVolumeSoldUsd: null,
+    totalProfitUsd: null,
+    tokenPositions: [],
+  };
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -285,6 +299,24 @@ function isPrismaClientError(error: unknown): boolean {
       ? (error as { name: string }).name
       : "";
   return name.startsWith("PrismaClient");
+}
+
+function isPrismaConnectivityError(error: unknown): boolean {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  if (code === "P1001" || code === "P1002" || code === "P1008" || code === "P1017" || code === "P2024") {
+    return true;
+  }
+
+  return /timed out fetching a new connection|connection pool|error in connector|kind:\s*closed|server closed the connection|connection.*(closed|timed out|timeout|refused|terminated)|econnreset|etimedout|can't reach database/i.test(
+    getErrorMessage(error)
+  );
 }
 
 function toSafeNumber(value: unknown): number {
@@ -994,6 +1026,10 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
   if (!sessionUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
+  const sessionWalletAddress =
+    typeof sessionUser.walletAddress === "string" && sessionUser.walletAddress.trim().length > 0
+      ? sessionUser.walletAddress.trim()
+      : null;
 
   let user:
     | {
@@ -1018,28 +1054,52 @@ usersRouter.get("/me/wallet", requireAuth, async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
+    if (isPrismaConnectivityError(error)) {
+      console.warn("[users/me-wallet] database unavailable; serving session-backed fallback", {
+        userId: sessionUser.id,
+        message: getErrorMessage(error),
+      });
+      user = {
+        walletAddress: sessionWalletAddress,
+        walletProvider: null,
+        walletConnectedAt: null,
+      };
+    } else if (!isPrismaSchemaDriftError(error)) {
       throw error;
-    }
+    } else {
+      try {
+        const fallbackUser = await prisma.user.findUnique({
+          where: { id: sessionUser.id },
+          select: {
+            walletAddress: true,
+          },
+        });
 
-    const fallbackUser = await prisma.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        walletAddress: true,
-      },
-    });
-
-    user = fallbackUser
-      ? {
-          walletAddress: fallbackUser.walletAddress,
-          walletProvider: null,
-          walletConnectedAt: null,
+        user = fallbackUser
+          ? {
+              walletAddress: fallbackUser.walletAddress,
+              walletProvider: null,
+              walletConnectedAt: null,
+            }
+          : null;
+      } catch (fallbackError) {
+        if (!isPrismaConnectivityError(fallbackError) && !isPrismaSchemaDriftError(fallbackError)) {
+          throw fallbackError;
         }
-      : null;
+        console.warn("[users/me-wallet] fallback lookup degraded; serving session-backed state", {
+          userId: sessionUser.id,
+          message: getErrorMessage(fallbackError),
+        });
+      }
+    }
   }
 
   if (!user) {
-    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+    user = {
+      walletAddress: sessionWalletAddress,
+      walletProvider: null,
+      walletConnectedAt: null,
+    };
   }
 
   return c.json({
@@ -1669,16 +1729,80 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
   if (!sessionUser) {
     return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
   }
+  const sessionUsernameCandidate = (sessionUser as unknown as { username?: string | null }).username;
+  const sessionUsername =
+    typeof sessionUsernameCandidate === "string" && sessionUsernameCandidate.trim().length > 0
+      ? sessionUsernameCandidate.trim()
+      : null;
+  const normalizedIdentifier = normalizeUsernameHandle(identifier);
+  const normalizedSessionUsername =
+    sessionUsername !== null ? normalizeUsernameHandle(sessionUsername) : null;
+  const sessionWalletAddress =
+    typeof sessionUser.walletAddress === "string" && sessionUser.walletAddress.trim().length > 0
+      ? sessionUser.walletAddress.trim()
+      : null;
+  const isOwnWalletRequest =
+    identifier === sessionUser.id ||
+    (normalizedSessionUsername !== null && normalizedIdentifier === normalizedSessionUsername);
 
-  const user = await prisma.user.findFirst({
-    where: buildUserIdentifierWhere(identifier),
-    select: {
-      id: true,
-      walletAddress: true,
-    },
-  });
+  let user: { id: string; walletAddress: string | null } | null = isOwnWalletRequest
+    ? {
+        id: sessionUser.id,
+        walletAddress: sessionWalletAddress,
+      }
+    : null;
+  let userLookupUnavailable = false;
 
   if (!user) {
+    try {
+      user = await prisma.user.findFirst({
+        where: buildUserIdentifierWhere(identifier),
+        select: {
+          id: true,
+          walletAddress: true,
+        },
+      });
+    } catch (error) {
+      if (isPrismaConnectivityError(error)) {
+        userLookupUnavailable = true;
+        console.warn("[users/wallet-overview] user lookup degraded", {
+          identifier,
+          message: getErrorMessage(error),
+        });
+      } else if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+        throw error;
+      } else {
+        try {
+          const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+          user = fallbackUser
+            ? {
+                id: fallbackUser.id,
+                walletAddress: null,
+              }
+            : null;
+        } catch (fallbackError) {
+          userLookupUnavailable = true;
+          console.warn("[users/wallet-overview] fallback user lookup degraded", {
+            identifier,
+            message: getErrorMessage(fallbackError),
+          });
+        }
+      }
+    }
+  }
+
+  if (!user) {
+    if (userLookupUnavailable) {
+      return c.json(
+        {
+          error: {
+            message: "Wallet overview is temporarily unavailable. Please retry shortly.",
+            code: "WALLET_OVERVIEW_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
@@ -1691,51 +1815,52 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
 
   if (!user.walletAddress || !isLikelySolanaWalletAddress(user.walletAddress) || !isHeliusConfigured()) {
     return c.json({
-      data: {
-        connected: Boolean(user.walletAddress),
-        balanceSol: null,
-        balanceUsd: null,
-        totalVolumeBoughtSol: null,
-        totalVolumeSoldSol: null,
-        totalVolumeBoughtUsd: null,
-        totalVolumeSoldUsd: null,
-        totalProfitUsd: null,
-        tokenPositions: [],
-      }
+      data: buildEmptyWalletOverview(Boolean(user.walletAddress)),
     });
   }
 
-  const postedTokens = await prisma.post.findMany({
-    where: {
-      authorId: user.id,
-      chainType: "solana",
-      contractAddress: { not: null },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-    select: {
-      contractAddress: true,
-      chainType: true,
-      tokenName: true,
-      tokenSymbol: true,
-      tokenImage: true,
-      createdAt: true,
-    },
-  });
+  let postedTokens: Array<{
+    contractAddress: string | null;
+    chainType: string | null;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    createdAt: Date;
+  }> = [];
+  try {
+    postedTokens = await prisma.post.findMany({
+      where: {
+        authorId: user.id,
+        chainType: "solana",
+        contractAddress: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: {
+        contractAddress: true,
+        chainType: true,
+        tokenName: true,
+        tokenSymbol: true,
+        tokenImage: true,
+        createdAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaConnectivityError(error) && !isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    console.warn("[users/wallet-overview] post lookup degraded; returning empty overview", {
+      userId: user.id,
+      message: getErrorMessage(error),
+    });
+    return c.json({
+      data: buildEmptyWalletOverview(true),
+    });
+  }
 
   if (postedTokens.length === 0) {
     return c.json({
-      data: {
-        connected: true,
-        balanceSol: null,
-        balanceUsd: null,
-        totalVolumeBoughtSol: null,
-        totalVolumeSoldSol: null,
-        totalVolumeBoughtUsd: null,
-        totalVolumeSoldUsd: null,
-        totalProfitUsd: null,
-        tokenPositions: [],
-      }
+      data: buildEmptyWalletOverview(true),
     });
   }
 
@@ -1809,17 +1934,7 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
 
   if (!portfolio) {
     return c.json({
-      data: {
-        connected: true,
-        balanceSol: null,
-        balanceUsd: null,
-        totalVolumeBoughtSol: null,
-        totalVolumeSoldSol: null,
-        totalVolumeBoughtUsd: null,
-        totalVolumeSoldUsd: null,
-        totalProfitUsd: null,
-        tokenPositions: [],
-      }
+      data: buildEmptyWalletOverview(true),
     });
   }
 
@@ -2572,17 +2687,24 @@ usersRouter.get("/:identifier/posts", async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
-      throw error;
-    }
-    try {
-      const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-      user = fallbackUser ? { id: fallbackUser.id } : null;
-    } catch (rawError) {
+    if (isPrismaConnectivityError(error)) {
       userLookupUnavailable = true;
-      console.warn("[users/profile-posts] raw user lookup degraded", {
-        message: getErrorMessage(rawError),
+      console.warn("[users/profile-posts] user lookup degraded", {
+        identifier,
+        message: getErrorMessage(error),
       });
+    } else if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    } else {
+      try {
+        const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+        user = fallbackUser ? { id: fallbackUser.id } : null;
+      } catch (rawError) {
+        userLookupUnavailable = true;
+        console.warn("[users/profile-posts] raw user lookup degraded", {
+          message: getErrorMessage(rawError),
+        });
+      }
     }
   }
 
@@ -2650,6 +2772,23 @@ usersRouter.get("/:identifier/posts", async (c) => {
       },
     });
   } catch (error) {
+    if (isPrismaConnectivityError(error)) {
+      console.warn("[users/profile-posts] prisma post lookup degraded during transient db pressure", {
+        message: getErrorMessage(error),
+      });
+      if (staleCachedPostsResponse) {
+        return c.json(staleCachedPostsResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile posts are temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_POSTS_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }
@@ -2732,17 +2871,24 @@ usersRouter.get("/:identifier/reposts", async (c) => {
       },
     });
   } catch (error) {
-    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
-      throw error;
-    }
-    try {
-      const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-      user = fallbackUser ? { id: fallbackUser.id } : null;
-    } catch (rawError) {
+    if (isPrismaConnectivityError(error)) {
       userLookupUnavailable = true;
-      console.warn("[users/profile-reposts] raw user lookup degraded", {
-        message: getErrorMessage(rawError),
+      console.warn("[users/profile-reposts] user lookup degraded", {
+        identifier,
+        message: getErrorMessage(error),
       });
+    } else if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    } else {
+      try {
+        const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
+        user = fallbackUser ? { id: fallbackUser.id } : null;
+      } catch (rawError) {
+        userLookupUnavailable = true;
+        console.warn("[users/profile-reposts] raw user lookup degraded", {
+          message: getErrorMessage(rawError),
+        });
+      }
     }
   }
 
@@ -2815,6 +2961,23 @@ usersRouter.get("/:identifier/reposts", async (c) => {
       },
     });
   } catch (error) {
+    if (isPrismaConnectivityError(error)) {
+      console.warn("[users/profile-reposts] prisma repost lookup degraded during transient db pressure", {
+        message: getErrorMessage(error),
+      });
+      if (staleCachedRepostsResponse) {
+        return c.json(staleCachedRepostsResponse);
+      }
+      return c.json(
+        {
+          error: {
+            message: "Profile reposts are temporarily unavailable. Please retry shortly.",
+            code: "PROFILE_REPOSTS_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
     }

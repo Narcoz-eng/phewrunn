@@ -1778,15 +1778,28 @@ function buildIssuedSessionCookies(
 ): string[] {
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = resolveSessionCookieDomain(hostHeader);
-  return [
+  const cookies = [
     buildSessionCookie({
       name: SESSION_COOKIE_NAME,
       value: sessionToken,
-      domain: cookieDomain ?? undefined,
       maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
       secure: isProd,
     }),
   ];
+
+  if (cookieDomain) {
+    cookies.push(
+      buildSessionCookie({
+        name: SESSION_COOKIE_NAME,
+        value: sessionToken,
+        domain: cookieDomain,
+        maxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
+        secure: isProd,
+      })
+    );
+  }
+
+  return cookies;
 }
 
 function applySessionCookies(c: Context, sessionToken: string): void {
