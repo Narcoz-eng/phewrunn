@@ -13,6 +13,7 @@ import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
 import { AuthInitializer } from "@/components/AuthInitializer";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
+import { RealtimeProvider } from "@/lib/realtime/provider";
 
 // Lazy load page components
 const Feed = lazy(() => import("./pages/Feed"));
@@ -86,13 +87,14 @@ const App = () => (
       <SolanaWalletProvider>
         <PrivyWalletProvider>
           <AuthProvider>
-            <AuthInitializer>
-              <TooltipProvider>
-                <Toaster />
-                <Sonner />
-                <BrowserRouter>
-                  <Suspense fallback={<PageSkeleton />}>
-                    <Routes>
+            <RealtimeProvider>
+              <AuthInitializer>
+                <TooltipProvider>
+                  <Toaster />
+                  <Sonner />
+                  <BrowserRouter>
+                    <Suspense fallback={<PageSkeleton />}>
+                      <Routes>
                   <Route
                     path="/"
                     element={
@@ -174,11 +176,12 @@ const App = () => (
                   <Route path="/docs" element={<Docs />} />
                   <Route path="/:userId" element={<PublicHandleProfileRoute />} />
                   <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </Suspense>
-                </BrowserRouter>
-              </TooltipProvider>
-            </AuthInitializer>
+                      </Routes>
+                    </Suspense>
+                  </BrowserRouter>
+                </TooltipProvider>
+              </AuthInitializer>
+            </RealtimeProvider>
           </AuthProvider>
         </PrivyWalletProvider>
       </SolanaWalletProvider>

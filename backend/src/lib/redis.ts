@@ -397,6 +397,16 @@ export async function redisDelete(key: string): Promise<boolean> {
   return result !== null;
 }
 
+export async function redisPublish(channel: string, payload: string): Promise<number | null> {
+  const result = await redisCommand<unknown>(["PUBLISH", channel, payload]);
+  if (typeof result === "number") return result;
+  if (typeof result === "string") {
+    const parsed = Number(result);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 export async function redisIncr(key: string): Promise<number | null> {
   const result = await redisCommand<unknown>(["INCR", key]);
   if (typeof result === "number") return result;

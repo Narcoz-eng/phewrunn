@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 import { prisma, withPrismaRetry } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
+import { publishUnreadCountSnapshot } from "../lib/notification-realtime.js";
+import { recordCacheResult } from "../lib/performance.js";
 import { NotificationsQuerySchema } from "../types.js";
 
 export const notificationsRouter = new Hono<{ Variables: AuthVariables }>();
@@ -102,9 +104,11 @@ async function readNotificationsListCache(
   const cached = notificationsListCache.get(cacheKey);
   if (cached) {
     if (cached.expiresAtMs > nowMs) {
+      recordCacheResult("notifications.list.local", "hit");
       return cached.data;
     }
     if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+      recordCacheResult("notifications.list.local", "stale");
       return cached.data;
     }
     if (cached.staleUntilMs <= nowMs) {
@@ -116,12 +120,20 @@ async function readNotificationsListCache(
   const redisEnvelope = normalizeNotificationsListCacheEnvelope(redisRaw);
   const redisCached = redisEnvelope?.data ?? (Array.isArray(redisRaw) ? redisRaw : null);
   if (!redisCached) {
+    recordCacheResult("notifications.list.redis", "miss");
     return null;
   }
   if (!opts?.allowStale && redisEnvelope && nowMs - redisEnvelope.cachedAtMs > NOTIFICATIONS_LIST_CACHE_TTL_MS) {
+    recordCacheResult("notifications.list.redis", "miss");
     return null;
   }
 
+  recordCacheResult(
+    "notifications.list.redis",
+    opts?.allowStale && redisEnvelope && nowMs - redisEnvelope.cachedAtMs > NOTIFICATIONS_LIST_CACHE_TTL_MS
+      ? "stale"
+      : "hit"
+  );
   writeNotificationsListCacheLocal(cacheKey, redisCached);
   return redisCached;
 }
@@ -158,9 +170,11 @@ async function readNotificationsUnreadCountCache(
   const cached = notificationsUnreadCountCache.get(userId);
   if (cached) {
     if (cached.expiresAtMs > nowMs) {
+      recordCacheResult("notifications.unread.local", "hit");
       return cached.count;
     }
     if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+      recordCacheResult("notifications.unread.local", "stale");
       return cached.count;
     }
     if (cached.staleUntilMs <= nowMs) {
@@ -183,12 +197,18 @@ async function readNotificationsUnreadCountCache(
       ? redisCached.cachedAt
       : Date.now() - NOTIFICATIONS_UNREAD_CACHE_TTL_MS;
   if (typeof count !== "number" || !Number.isFinite(count)) {
+    recordCacheResult("notifications.unread.redis", "miss");
     return null;
   }
   if (!opts?.allowStale && nowMs - cachedAtMs > NOTIFICATIONS_UNREAD_CACHE_TTL_MS) {
+    recordCacheResult("notifications.unread.redis", "miss");
     return null;
   }
 
+  recordCacheResult(
+    "notifications.unread.redis",
+    opts?.allowStale && nowMs - cachedAtMs > NOTIFICATIONS_UNREAD_CACHE_TTL_MS ? "stale" : "hit"
+  );
   writeNotificationsUnreadCountCacheLocal(userId, count);
   return count;
 }
@@ -520,7 +540,20 @@ async function countUnreadNotifications(userId: string): Promise<number> {
   });
 }
 
-async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnType<typeof mapRawNotificationRow> | null> {
+async function broadcastUnreadCount(userId: string): Promise<void> {
+  try {
+    const count = await countUnreadNotifications(userId);
+    writeNotificationsUnreadCountCache(userId, count);
+    await publishUnreadCountSnapshot(userId, count);
+  } catch (error) {
+    console.warn("[notifications] failed to broadcast unread count", {
+      userId,
+      message: getErrorMessage(error),
+    });
+  }
+}
+
+export async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnType<typeof mapRawNotificationRow> | null> {
   const rows = await prisma.$queryRaw<RawNotificationRow[]>(Prisma.sql`
     SELECT
       n.id,
@@ -550,6 +583,44 @@ async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnT
 
   const row = rows[0];
   return row ? mapRawNotificationRow(row) : null;
+}
+
+export async function queryNotificationsByDedupeKeysRaw(
+  dedupeKeys: string[]
+): Promise<Array<ReturnType<typeof mapRawNotificationRow>>> {
+  const normalizedKeys = dedupeKeys.filter((value) => value.trim().length > 0);
+  if (normalizedKeys.length === 0) {
+    return [];
+  }
+
+  const rows = await prisma.$queryRaw<RawNotificationRow[]>(Prisma.sql`
+    SELECT
+      n.id,
+      n."userId",
+      n.type,
+      n.message,
+      n.read,
+      n."entityType",
+      n."entityId",
+      n."reasonCode",
+      n.payload,
+      n."postId",
+      n."fromUserId",
+      n."createdAt",
+      fu.name AS "fromUserName",
+      fu.username AS "fromUserUsername",
+      fu.image AS "fromUserImage",
+      fu.level AS "fromUserLevel",
+      p.content AS "postContent",
+      p."contractAddress" AS "postContractAddress"
+    FROM "Notification" n
+    LEFT JOIN "User" fu ON fu.id = n."fromUserId"
+    LEFT JOIN "Post" p ON p.id = n."postId"
+    WHERE n."dedupeKey" IN (${Prisma.join(normalizedKeys)})
+    ORDER BY n."createdAt" DESC
+  `);
+
+  return rows.map(mapRawNotificationRow);
 }
 
 async function markNotificationReadRaw(notificationId: string, userId: string): Promise<boolean> {
@@ -930,6 +1001,7 @@ notificationsRouter.patch("/:id/read", requireAuth, async (c) => {
     };
   }
   invalidateNotificationsCache(user.id);
+  await broadcastUnreadCount(user.id);
 
   return c.json({ data: updated });
 });
@@ -961,6 +1033,7 @@ notificationsRouter.patch("/read-all", requireAuth, async (c) => {
     }
   }
   invalidateNotificationsCache(user.id);
+  await broadcastUnreadCount(user.id);
 
   return c.json({ data: { success: true } });
 });
@@ -1055,6 +1128,7 @@ notificationsRouter.patch("/:id/click", requireAuth, async (c) => {
 
   // Return the notification data for frontend navigation (no redirect URL)
   invalidateNotificationsCache(user.id);
+  await broadcastUnreadCount(user.id);
   return c.json({ data: updated });
 });
 
@@ -1083,6 +1157,7 @@ notificationsRouter.patch("/:id/dismiss", requireAuth, async (c) => {
       data: { dismissed: true },
     });
     invalidateNotificationsCache(user.id);
+    await broadcastUnreadCount(user.id);
     return c.json({ data: updated });
   } catch (error) {
     if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
@@ -1100,6 +1175,7 @@ notificationsRouter.patch("/:id/dismiss", requireAuth, async (c) => {
     }
     const result = await dismissNotificationRaw(notificationId, user.id);
     invalidateNotificationsCache(user.id);
+    await broadcastUnreadCount(user.id);
     return c.json({ data: result === "dismissed" ? { dismissed: true } : { deleted: true } });
   }
 });
@@ -1146,6 +1222,7 @@ notificationsRouter.delete("/:id", requireAuth, async (c) => {
     await deleteNotificationRaw(notificationId, user.id);
   }
   invalidateNotificationsCache(user.id);
+  await broadcastUnreadCount(user.id);
 
   return c.json({ data: { deleted: true } });
 });

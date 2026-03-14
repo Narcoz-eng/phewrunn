@@ -9,6 +9,7 @@ import {
   type PrivyIdentityDebugContext,
   type PrivyUserLike,
 } from "./privy-user";
+import { startPerfMeasure } from "./performance";
 
 // Get the backend URL
 const getBaseUrl = () => {
@@ -2989,13 +2990,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     const checkSession = async () => {
-      const user = (await resolveSessionWithRetry()) ?? readCachedAuthUserSnapshot();
-      if (mounted) {
-        applyAuthProviderState("initial_check", {
-          user,
-          isLoading: false,
-          isAuthenticated: !!user,
-        });
+      const finishMeasure = startPerfMeasure("auth.initial_session");
+      try {
+        const user = (await resolveSessionWithRetry()) ?? readCachedAuthUserSnapshot();
+        if (mounted) {
+          applyAuthProviderState("initial_check", {
+            user,
+            isLoading: false,
+            isAuthenticated: !!user,
+          });
+        }
+      } finally {
+        finishMeasure();
       }
     };
 
@@ -3435,6 +3441,7 @@ export async function syncPrivySession(
     privyAuthToken?: string | null;
   }
 ): Promise<{ user: AuthUser }> {
+  const finishMeasure = startPerfMeasure("auth.privy_sync");
   const normalizedUserId = privyUserId.trim();
   void email;
   if (privySyncInFlight) {
@@ -3584,6 +3591,7 @@ export async function syncPrivySession(
     return await privySyncInFlight;
   } finally {
     privySyncInFlight = null;
+    finishMeasure();
   }
 }
 

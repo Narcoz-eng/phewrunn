@@ -14,12 +14,17 @@ import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
 import { PhewBellIcon } from "@/components/icons/PhewIcons";
+import {
+  buildNotificationsCacheKey,
+  buildNotificationsQueryKey,
+  buildUnreadCacheKey,
+  buildUnreadQueryKey,
+  NOTIFICATIONS_CACHE_TTL_MS,
+} from "@/lib/realtime/notifications-cache";
+import { useRealtime } from "@/lib/realtime/provider";
+import { startPerfMeasure } from "@/lib/performance";
 
-const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
-const NOTIFICATIONS_CACHE_TTL_MS = 60_000;
 const NOTIFICATION_MERGE_WINDOW_MS = 24 * 60 * 60 * 1000;
-const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
-const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 
 type AlertPreference = {
   minConfidenceScore: number | null;
@@ -192,31 +197,27 @@ export default function Notifications() {
   const pageTopRef = useRef<HTMLDivElement>(null);
   const { data: session } = useSession();
   const { isAuthenticated, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
+  const { status: realtimeStatus } = useRealtime();
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
   const [showAlertPreferences, setShowAlertPreferences] = useState(false);
-  const notificationsQueryKey = useMemo(
-    () => ["notifications", session?.user?.id ?? "anonymous"] as const,
-    [session?.user?.id]
-  );
-  const notificationsCacheKey = useMemo(
-    () => (session?.user?.id ? `${NOTIFICATIONS_CACHE_KEY}:${session.user.id}` : NOTIFICATIONS_CACHE_KEY),
-    [session?.user?.id]
-  );
-  const unreadCacheKey = useMemo(
-    () =>
-      session?.user?.id
-        ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
-        : NOTIFICATIONS_UNREAD_CACHE_PREFIX,
-    [session?.user?.id]
-  );
-  const unreadQueryKey = useMemo(
-    () => ["notifications", "unread-count", session?.user?.id ?? "anonymous"] as const,
-    [session?.user?.id]
-  );
+  const notificationsLoadMeasureRef = useRef<(() => void) | null>(null);
+  const notificationsQueryKey = useMemo(() => buildNotificationsQueryKey(session?.user?.id), [session?.user?.id]);
+  const notificationsCacheKey = useMemo(() => buildNotificationsCacheKey(session?.user?.id), [session?.user?.id]);
+  const unreadCacheKey = useMemo(() => buildUnreadCacheKey(session?.user?.id), [session?.user?.id]);
+  const unreadQueryKey = useMemo(() => buildUnreadQueryKey(session?.user?.id), [session?.user?.id]);
   const initialCachedNotifications = useMemo(
     () => readSessionCache<Notification[]>(notificationsCacheKey, NOTIFICATIONS_CACHE_TTL_MS),
     [notificationsCacheKey]
   );
+
+  useEffect(() => {
+    notificationsLoadMeasureRef.current?.();
+    notificationsLoadMeasureRef.current = startPerfMeasure("notifications.load");
+    return () => {
+      notificationsLoadMeasureRef.current?.();
+      notificationsLoadMeasureRef.current = null;
+    };
+  }, []);
 
   // Fetch notifications
   const {
@@ -300,6 +301,9 @@ export default function Notifications() {
     },
     retryDelay: (attempt) => Math.min(1200 * 2 ** attempt, 5000),
     refetchInterval: () => {
+      if (realtimeStatus !== "degraded") {
+        return false;
+      }
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return false;
       }
@@ -317,6 +321,14 @@ export default function Notifications() {
     }
     return "Please try again later.";
   }, [error]);
+
+  useEffect(() => {
+    if (!isFetched && !error) {
+      return;
+    }
+    notificationsLoadMeasureRef.current?.();
+    notificationsLoadMeasureRef.current = null;
+  }, [error, isFetched]);
 
   const {
     data: alertPreferences,
@@ -345,14 +357,11 @@ export default function Notifications() {
     writeSessionCache(notificationsCacheKey, notifications);
   }, [isFetched, notifications, notificationsCacheKey]);
 
-  const updateUnreadCountCache = useCallback(
-    (count: number) => {
-      const nextCount = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
-      queryClient.setQueryData(unreadQueryKey, { count: nextCount });
-      writeSessionCache(unreadCacheKey, nextCount);
-    },
-    [queryClient, unreadCacheKey, unreadQueryKey]
-  );
+  const updateUnreadCountCache = useCallback((count: number) => {
+    const nextCount = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
+    queryClient.setQueryData(unreadQueryKey, { count: nextCount });
+    writeSessionCache(unreadCacheKey, nextCount);
+  }, [queryClient, unreadCacheKey, unreadQueryKey]);
 
   useEffect(() => {
     if (!isFetched) return;
