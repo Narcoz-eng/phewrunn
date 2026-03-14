@@ -1,13 +1,12 @@
 import net from "node:net";
 import tls from "node:tls";
 import { randomUUID } from "node:crypto";
-import {
-  type RealtimeClientChannel,
-  type RealtimeClientMessage,
-  type RealtimeEventInput,
-  type RealtimeServerEvent,
-  type RealtimeTopic,
-  parseRealtimeClientMessage,
+import type {
+  RealtimeClientChannel,
+  RealtimeClientMessage,
+  RealtimeEventInput,
+  RealtimeServerEvent,
+  RealtimeTopic,
 } from "../../../shared/realtime.js";
 import { redisPublish } from "./redis.js";
 
@@ -68,6 +67,32 @@ function warnRealtime(message: string, extra?: Record<string, unknown>): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRealtimeClientChannel(value: unknown): value is RealtimeClientChannel {
+  return value === "feed.latest" || value === "feed.following";
+}
+
+function parseRealtimeClientMessage(value: unknown): RealtimeClientMessage | null {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return null;
+  }
+
+  if (value.type === "system.ping") {
+    return { type: "system.ping" };
+  }
+
+  if (
+    (value.type === "subscribe" || value.type === "unsubscribe") &&
+    isRealtimeClientChannel(value.channel)
+  ) {
+    return {
+      type: value.type,
+      channel: value.channel,
+    };
+  }
+
+  return null;
 }
 
 function topicForUser(userId: string): RealtimeTopic {
