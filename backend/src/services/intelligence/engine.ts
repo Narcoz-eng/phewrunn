@@ -35,6 +35,8 @@ const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
 const FEED_PRIORITY_POST_COUNT = 15;
+const RANKED_FEED_MIN_CANDIDATE_COUNT = 240;
+const RANKED_FEED_MAX_CANDIDATE_COUNT = 400;
 const FEED_PRIORITY_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 850 : 1_300;
 const FEED_RESULT_CACHE_TTL_MS = 15_000;
 const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
@@ -2256,6 +2258,10 @@ async function hydrateCalls(
   }
   if (refreshTokens && tokenMap.size > 0) {
     tokenMap = mergeTokenMaps(tokenMap, await refreshTokenIntelligenceForMap(tokenMap));
+  } else if (tokenMap.size > 0) {
+    for (const token of tokenMap.values()) {
+      scheduleTokenIntelligenceRefresh(token);
+    }
   }
 
   const tokenIds = Array.from(
@@ -2836,7 +2842,7 @@ export async function computeRealtimeIntelligenceSnapshots(
     {
       refreshTraders: false,
       refreshTokens: false,
-      ensureTokenLinks: false,
+      ensureTokenLinks: true,
       persistComputed: false,
       preferStoredIntelligence: false,
     }
@@ -3007,32 +3013,36 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             ? whereClauses[0]
             : { AND: whereClauses };
       const isDirectChronologicalFeed = args.kind === "latest" || args.kind === "following";
+      const preferStoredFeedIntelligence = isDirectChronologicalFeed;
       const candidateLimit = isDirectChronologicalFeed
         ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
-        : limit * 5;
+        : Math.max(
+            RANKED_FEED_MIN_CANDIDATE_COUNT,
+            Math.min(RANKED_FEED_MAX_CANDIDATE_COUNT, limit * 8)
+          );
       const records = await prisma.post.findMany({
         where,
         select: CALL_SELECT,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: Math.min(200, Math.max(limit + 1, candidateLimit)),
+        take: Math.max(limit + 1, candidateLimit),
       });
 
-      const baseHydrated = filterCallsForFeedKind(
+      const sortedHydrated = sortCalls(
         args.kind,
-        sortCalls(
-          args.kind,
-          await hydrateCalls(records, args.viewerId, {
-            refreshTraders: false,
-            refreshTokens: false,
-            ensureTokenLinks: false,
-            persistComputed: false,
-            preferStoredIntelligence: true,
-          })
-        )
+        await hydrateCalls(records, args.viewerId, {
+          refreshTraders: false,
+          refreshTokens: false,
+          ensureTokenLinks: true,
+          persistComputed: false,
+          preferStoredIntelligence: preferStoredFeedIntelligence,
+        })
       );
+      const baseHydrated = filterCallsForFeedKind(args.kind, sortedHydrated);
       const hydrated = filterCallsForFeedKind(
         args.kind,
-        await refreshPriorityFeedSlice(args, records, baseHydrated)
+        isDirectChronologicalFeed
+          ? await refreshPriorityFeedSlice(args, records, baseHydrated)
+          : baseHydrated
       );
       const startIndex =
         isDirectChronologicalFeed && cursorBoundary
@@ -3092,7 +3102,7 @@ export async function getEnrichedCallById(id: string, viewerId: string | null): 
   const [call] = await hydrateCalls([record], viewerId, {
     refreshTraders: false,
     refreshTokens: false,
-    ensureTokenLinks: false,
+    ensureTokenLinks: true,
     persistComputed: false,
   });
   return call ?? null;

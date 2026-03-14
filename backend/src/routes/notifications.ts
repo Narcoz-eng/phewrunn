@@ -12,6 +12,8 @@ const NOTIFICATIONS_LIST_CACHE_TTL_MS =
   process.env.NODE_ENV === "production" ? 15_000 : 4_000;
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS =
   process.env.NODE_ENV === "production" ? 10_000 : 3_000;
+const NOTIFICATIONS_LIST_LIMIT =
+  process.env.NODE_ENV === "production" ? 200 : 120;
 const NOTIFICATIONS_LIST_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const NOTIFICATIONS_UNREAD_STALE_FALLBACK_MS =
@@ -452,7 +454,7 @@ async function queryNotificationsRaw(userId: string, includeDismissed: boolean):
     WHERE n."userId" = ${userId}
     ${dismissedCondition}
     ORDER BY n."createdAt" DESC
-    LIMIT 50
+    LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
   `);
 
   return rows.map(mapRawNotificationRow);
@@ -670,7 +672,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
       () => prisma.notification.findMany({
         where: whereClause,
         orderBy: { createdAt: "desc" },
-        take: 50,
+        take: NOTIFICATIONS_LIST_LIMIT,
         include: {
           fromUser: {
             select: {
@@ -730,7 +732,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
       notifications = await prisma.notification.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
-        take: 50,
+        take: NOTIFICATIONS_LIST_LIMIT,
         include: {
           fromUser: {
             select: {
@@ -758,7 +760,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
         const minimalNotifications = await prisma.notification.findMany({
           where: { userId: user.id },
           orderBy: { createdAt: "desc" },
-          take: 50,
+          take: NOTIFICATIONS_LIST_LIMIT,
           select: {
             id: true,
             type: true,

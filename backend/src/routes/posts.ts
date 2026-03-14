@@ -2657,10 +2657,29 @@ function triggerNewPostFollowerFanout(params: {
         return;
       }
 
+      const alertPreferences = await prisma.alertPreference.findMany({
+        where: {
+          userId: { in: followerIds },
+        },
+        select: {
+          userId: true,
+          notifyFollowedTraders: true,
+        },
+      });
+      const disabledFollowerIds = new Set(
+        alertPreferences
+          .filter((pref) => pref.notifyFollowedTraders === false)
+          .map((pref) => pref.userId)
+      );
+      const optedInFollowerIds = followerIds.filter((followerId) => !disabledFollowerIds.has(followerId));
+      if (optedInFollowerIds.length === 0) {
+        return;
+      }
+
       const displayName = params.authorUsername || params.authorName || "A trader";
       await createManyNotificationsSafely({
         operation: "new_post_follower_notification",
-        data: followerIds.map((followerId) => ({
+        data: optedInFollowerIds.map((followerId) => ({
           userId: followerId,
           type: "new_post",
           message: `${displayName} just posted a new Alpha!`,
@@ -2674,7 +2693,7 @@ function triggerNewPostFollowerFanout(params: {
           postId: params.postId,
           fromUserId: params.authorId,
         })),
-        fallbackData: followerIds.map((followerId) => ({
+        fallbackData: optedInFollowerIds.map((followerId) => ({
           userId: followerId,
           type: "new_post",
           message: `${displayName} just posted a new Alpha!`,

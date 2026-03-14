@@ -41,10 +41,6 @@ function normalizeNotificationMessage(message: string): string {
 function buildNotificationGroupKey(notification: Notification): string {
   const actorKey = notification.fromUserId ?? "system";
   const postKey = notification.postId ?? "none";
-  const entityKey =
-    notification.entityType && notification.entityId
-      ? `${notification.entityType}:${notification.entityId}`
-      : postKey;
   const messageKey = normalizeNotificationMessage(notification.message).slice(0, 96);
 
   switch (notification.type) {
@@ -55,13 +51,12 @@ function buildNotificationGroupKey(notification: Notification): string {
       return `${notification.type}:${actorKey}`;
     case "new_post":
     case "posted_alpha":
-      return `followed_source_posted:${actorKey}`;
     case "early_runner_detected":
     case "hot_alpha_detected":
     case "high_conviction_detected":
     case "bundle_risk_changed":
     case "token_confidence_crossed":
-      return `${notification.type}:${entityKey}`;
+      return `${notification.type}:${notification.id}`;
     case "win_1h":
     case "loss_1h":
     case "win_6h":

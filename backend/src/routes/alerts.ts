@@ -37,7 +37,7 @@ alertsRouter.get("/", requireAuth, async (c) => {
       ],
     },
     orderBy: { createdAt: "desc" },
-    take: 80,
+    take: 200,
   });
 
   return c.json({ data: notifications });

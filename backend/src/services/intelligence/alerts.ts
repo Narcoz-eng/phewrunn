@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../prisma.js";
+import { invalidateNotificationsCache } from "../../routes/notifications.js";
 
 type AlertPreferenceSnapshot = {
   userId: string;
@@ -21,6 +22,38 @@ function bucketKey(prefix: string): string {
   return `${prefix}:${bucket}`;
 }
 
+function normalizeSignalVersion(value: Date | string | null | undefined): string | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString();
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+  return null;
+}
+
+function buildTokenSignalDedupeKey(args: {
+  alertKey: string;
+  userId: string;
+  tokenId: string;
+  signalVersion?: Date | string | null;
+  fallbackSeed?: string | null;
+}): string {
+  const signalVersion = normalizeSignalVersion(args.signalVersion);
+  if (signalVersion) {
+    return `${args.alertKey}:${args.userId}:${args.tokenId}:${signalVersion}`;
+  }
+
+  return bucketKey(
+    `${args.alertKey}:${args.userId}:${args.tokenId}:${args.fallbackSeed ?? "signal"}`
+  );
+}
+
+function isDuplicateNotificationError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
 async function createNotification(data: {
   userId: string;
   type: string;
@@ -33,21 +66,35 @@ async function createNotification(data: {
   payload?: Record<string, unknown>;
   dedupeKey: string;
 }): Promise<void> {
-  await prisma.notification.create({
-    data: {
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: data.userId,
+        type: data.type,
+        message: data.message,
+        entityType: data.entityType,
+        entityId: data.entityId,
+        postId: data.postId ?? null,
+        fromUserId: data.fromUserId ?? null,
+        reasonCode: data.reasonCode ?? null,
+        payload: (data.payload ?? undefined) as Prisma.InputJsonValue | undefined,
+        dedupeKey: data.dedupeKey,
+        priority: 1,
+      },
+    });
+    invalidateNotificationsCache(data.userId);
+  } catch (error) {
+    if (isDuplicateNotificationError(error)) {
+      return;
+    }
+    console.warn("[alerts] notification fanout write skipped", {
       userId: data.userId,
       type: data.type,
-      message: data.message,
       entityType: data.entityType,
       entityId: data.entityId,
-      postId: data.postId ?? null,
-      fromUserId: data.fromUserId ?? null,
-      reasonCode: data.reasonCode ?? null,
-      payload: (data.payload ?? undefined) as Prisma.InputJsonValue | undefined,
-      dedupeKey: data.dedupeKey,
-      priority: 1,
-    },
-  }).catch(() => undefined);
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function readAlertPreferences(): Promise<AlertPreferenceSnapshot[]> {
@@ -156,7 +203,7 @@ export async function fanoutPostedAlphaAlert(args: {
             tokenSymbol: args.tokenSymbol,
             confidenceScore: args.confidenceScore,
           },
-          dedupeKey: bucketKey(`posted_alpha:${pref.userId}:${args.postId}`),
+          dedupeKey: `posted_alpha:${pref.userId}:${args.postId}`,
         })
       )
   );
@@ -175,6 +222,7 @@ export async function fanoutTokenSignalAlerts(args: {
     hotAlphaScore: number | null;
     earlyRunnerScore: number | null;
     highConvictionScore: number | null;
+    lastIntelligenceAt: Date | string | null;
   };
   previousToken: {
     bundleRiskLabel: string | null;
@@ -246,7 +294,13 @@ export async function fanoutTokenSignalAlerts(args: {
   await Promise.all(
     prefs.map(async (pref) => {
       const followsToken = tokenFollowers.has(pref.userId);
-      if (!followsToken && !pref.notifyEarlyRunners && !pref.notifyHotAlpha && !pref.notifyHighConviction) {
+      if (
+        !followsToken &&
+        !pref.notifyEarlyRunners &&
+        !pref.notifyHotAlpha &&
+        !pref.notifyHighConviction &&
+        !pref.notifyConfidenceCross
+      ) {
         return;
       }
       if (
@@ -296,7 +350,16 @@ export async function fanoutTokenSignalAlerts(args: {
             highConvictionScore: args.token.highConvictionScore,
             bundleRiskLabel: args.token.bundleRiskLabel,
           },
-          dedupeKey: bucketKey(`${alertDef.key}:${pref.userId}:${args.token.id}`),
+          dedupeKey: buildTokenSignalDedupeKey({
+            alertKey: alertDef.key,
+            userId: pref.userId,
+            tokenId: args.token.id,
+            signalVersion: args.token.lastIntelligenceAt,
+            fallbackSeed:
+              alertDef.key === "bundle_risk"
+                ? args.token.bundleRiskLabel
+                : String(Math.round(args.token.confidenceScore ?? 0)),
+          }),
         });
       }
     })
