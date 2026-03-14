@@ -2320,25 +2320,29 @@ export function PostCard({
     }
 
     const promise = (async () => {
-      const blobToDataUrl = (blob: Blob) =>
-        new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            if (typeof reader.result === "string") {
-              resolve(reader.result);
-              return;
-            }
-            reject(new Error("Invalid avatar reader result"));
-          };
-          reader.onerror = () => reject(reader.error ?? new Error("Failed to read avatar blob"));
-          reader.readAsDataURL(blob);
-        });
-
       const avatarSrc = getAvatarUrl(post.author.id, post.author.image);
       try {
-        const response = await fetch(avatarSrc, { cache: "force-cache", mode: "cors" });
-        if (!response.ok) return null;
-        const dataUrl = await blobToDataUrl(await response.blob());
+        const dataUrl = await new Promise<string | null>((resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          const timer = setTimeout(() => resolve(null), 6000);
+          img.onload = () => {
+            clearTimeout(timer);
+            try {
+              const canvas = document.createElement("canvas");
+              canvas.width = 80;
+              canvas.height = 80;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) { resolve(null); return; }
+              ctx.drawImage(img, 0, 0, 80, 80);
+              resolve(canvas.toDataURL("image/png"));
+            } catch {
+              resolve(null);
+            }
+          };
+          img.onerror = () => { clearTimeout(timer); resolve(null); };
+          img.src = avatarSrc;
+        });
         winCardAvatarDataUrlRef.current = dataUrl;
         return dataUrl;
       } catch {
