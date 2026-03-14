@@ -54,6 +54,7 @@ import {
   type RealtimePostIntelligenceSnapshot,
 } from "../services/intelligence/engine.js";
 import { fanoutPostedAlphaAlert } from "../services/intelligence/alerts.js";
+import { runMarketAlertScan } from "../services/marketAlerts.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -4249,6 +4250,16 @@ async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Pr
   if (marketRefresh.updatedPosts > 0) {
     trendingCache = null;
   }
+
+  // Fire market-alert scan non-blocking — checks liquidity/volume spikes
+  // across all unsettled posts and broadcasts notifications to all users.
+  void runMarketAlertScan().then((alertResult) => {
+    if (alertResult.liquiditySpikes > 0 || alertResult.volumeSpikes > 0 || alertResult.errors > 0) {
+      console.log("[Maintenance] Market alert scan:", alertResult);
+    }
+  }).catch((err) => {
+    console.warn("[Maintenance] Market alert scan failed", { error: err instanceof Error ? err.message : String(err) });
+  });
 
   return summary;
 }

@@ -12,6 +12,8 @@ import {
   X,
   Flame,
   AlertTriangle,
+  Droplets,
+  BarChart2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
@@ -42,6 +44,8 @@ const notificationIcons: Record<string, { icon: typeof PhewBellIcon; colorClass:
   high_conviction_detected: { icon: Star, colorClass: "text-violet-500" },
   bundle_risk_changed: { icon: AlertTriangle, colorClass: "text-amber-500" },
   token_confidence_crossed: { icon: Award, colorClass: "text-primary" },
+  liquidity_spike: { icon: Droplets, colorClass: "text-cyan-400" },
+  volume_spike: { icon: BarChart2, colorClass: "text-orange-400" },
 };
 
 function readNotificationPayloadString(notification: Notification, key: string): string | null {
