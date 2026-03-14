@@ -926,6 +926,8 @@ export const NOTIFICATION_TYPES = {
   LOSS_6H: 'loss_6h',
   LEVEL_UP: 'level_up',
   ACHIEVEMENT: 'achievement',
+  LIQUIDITY_SPIKE: 'liquidity_spike',
+  VOLUME_SPIKE: 'volume_spike',
 } as const;
 
 export type NotificationType = typeof NOTIFICATION_TYPES[keyof typeof NOTIFICATION_TYPES];
