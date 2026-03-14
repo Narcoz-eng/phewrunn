@@ -140,6 +140,7 @@ const LEADERBOARD_DEDUPED_POSTS_SUBQUERY = Prisma.sql`
     p."currentMcap",
     p."mcap1h",
     p."mcap6h",
+    p."roiPeakPct",
     p."percentChange1h",
     p."percentChange6h",
     p."settledAt",
