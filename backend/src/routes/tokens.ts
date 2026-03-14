@@ -50,7 +50,7 @@ type TokenLivePayload = {
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_LIVE_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
-const TOKEN_ROUTE_CACHE_VERSION = 11;
+const TOKEN_ROUTE_CACHE_VERSION = 12;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
 const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();

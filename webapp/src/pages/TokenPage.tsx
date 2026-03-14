@@ -622,7 +622,9 @@ function mergeTokenPageDataWithCached(
     deployerSupplyPct: pickMergedMetric(live.deployerSupplyPct, cached.deployerSupplyPct),
     bundledWalletCount: pickMergedMetric(live.bundledWalletCount, cached.bundledWalletCount, { positive: true }),
     estimatedBundledSupplyPct: pickMergedMetric(live.estimatedBundledSupplyPct, cached.estimatedBundledSupplyPct),
-    tokenRiskScore: pickMergedMetric(live.tokenRiskScore, cached.tokenRiskScore),
+    tokenRiskScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.tokenRiskScore, cached.tokenRiskScore)
+      : live.tokenRiskScore ?? null,
     sentimentScore: pickMergedMetric(live.sentimentScore, cached.sentimentScore),
     radarScore: pickMergedMetric(live.radarScore, cached.radarScore),
     confidenceScore: canReuseCachedIntelligence
@@ -637,7 +639,9 @@ function mergeTokenPageDataWithCached(
     highConvictionScore: canReuseCachedIntelligence
       ? pickMergedMetric(live.highConvictionScore, cached.highConvictionScore)
       : live.highConvictionScore ?? null,
-    bundleRiskLabel: live.bundleRiskLabel ?? cached.bundleRiskLabel,
+    bundleRiskLabel: canReuseCachedIntelligence
+      ? live.bundleRiskLabel ?? cached.bundleRiskLabel
+      : live.bundleRiskLabel ?? null,
     holderCountSource:
       hasResolvedHolderCount(live.holderCount, live.holderCountSource)
         ? live.holderCountSource ?? cached.holderCountSource
@@ -653,8 +657,12 @@ function mergeTokenPageDataWithCached(
     topTraders: live.topTraders.length > 0 ? live.topTraders : cached.topTraders,
     sentiment: liveSentimentHasSignals ? live.sentiment : cached.sentiment,
     risk: {
-      tokenRiskScore: pickMergedMetric(live.risk.tokenRiskScore, cached.risk.tokenRiskScore),
-      bundleRiskLabel: live.risk.bundleRiskLabel ?? cached.risk.bundleRiskLabel,
+      tokenRiskScore: canReuseCachedIntelligence
+        ? pickMergedMetric(live.risk.tokenRiskScore, cached.risk.tokenRiskScore)
+        : live.risk.tokenRiskScore ?? null,
+      bundleRiskLabel: canReuseCachedIntelligence
+        ? live.risk.bundleRiskLabel ?? cached.risk.bundleRiskLabel
+        : live.risk.bundleRiskLabel ?? null,
       largestHolderPct: pickMergedMetric(live.risk.largestHolderPct, cached.risk.largestHolderPct),
       top10HolderPct: pickMergedMetric(live.risk.top10HolderPct, cached.risk.top10HolderPct),
       bundledWalletCount: pickMergedMetric(live.risk.bundledWalletCount, cached.risk.bundledWalletCount, { positive: true }),
@@ -762,7 +770,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v15:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v16:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(

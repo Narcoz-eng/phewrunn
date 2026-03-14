@@ -1807,6 +1807,11 @@ export function PostCard({
       : hasResolvedBundleContext
         ? "--"
         : "Pending";
+  const bundleRiskSummary = !hasResolvedBundleContext
+    ? "Pending"
+    : normalizedBundledSupplyPct === "--"
+      ? normalizedBundleRiskLabel
+      : `${normalizedBundleRiskLabel} | ${normalizedBundledSupplyPct}`;
   const threadTotal = post.threadCount ?? commentCount;
   const traderTier =
     post.author.reputationTier ??
@@ -5518,7 +5523,7 @@ export function PostCard({
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
                     <div className="mt-1 font-semibold text-foreground">
-                      {normalizedBundleRiskLabel} | {normalizedBundledSupplyPct}
+                      {bundleRiskSummary}
                     </div>
                   </div>
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">

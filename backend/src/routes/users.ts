@@ -7,6 +7,7 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { prisma, withPrismaRetry } from "../prisma.js";
 import { invalidatePostReadCaches } from "./posts.js";
+import { invalidateNotificationsCache } from "./notifications.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { clearCachedMeResponse } from "../lib/me-response-cache.js";
@@ -2890,6 +2891,66 @@ async function resolveUserIdentityFromIdentifier(identifier: string): Promise<{
   return byId ?? null;
 }
 
+async function createFollowNotificationSafely(params: {
+  targetUserId: string;
+  followerId: string;
+  followerUsername: string | null;
+  followerName: string | null;
+}): Promise<void> {
+  const actorLabel =
+    params.followerUsername?.trim() ||
+    params.followerName?.trim() ||
+    "Someone";
+  const payload =
+    params.followerUsername && params.followerUsername.trim().length > 0
+      ? { handle: params.followerUsername.trim().toLowerCase() }
+      : undefined;
+
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: params.targetUserId,
+        type: "follow",
+        message: `${actorLabel} followed you!`,
+        fromUserId: params.followerId,
+        entityType: "user",
+        entityId: params.followerId,
+        reasonCode: "followed_you",
+        payload,
+      },
+    });
+    invalidateNotificationsCache(params.targetUserId);
+    return;
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error)) {
+      console.warn("[users] Failed to create follow notification", {
+        followerId: params.followerId,
+        targetUserId: params.targetUserId,
+        message: getErrorMessage(error),
+      });
+      return;
+    }
+  }
+
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: params.targetUserId,
+        type: "follow",
+        message: `${actorLabel} followed you!`,
+        fromUserId: params.followerId,
+      },
+    });
+    invalidateNotificationsCache(params.targetUserId);
+  } catch (fallbackError) {
+    console.warn("[users] Failed to create follow notification fallback", {
+      followerId: params.followerId,
+      targetUserId: params.targetUserId,
+      message: getErrorMessage(fallbackError),
+    });
+  }
+}
+
 // Follow a user
 usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
   const currentUser = c.get("user");
@@ -2912,6 +2973,7 @@ usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
   }
 
   // Create follow idempotently so stale UI or repeated taps do not surface raw Prisma errors.
+  let createdFollow = false;
   try {
     await prisma.follow.create({
       data: {
@@ -2919,6 +2981,7 @@ usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
         followingId: targetUserId,
       },
     });
+    createdFollow = true;
   } catch (error) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
       console.error("[users] Failed to follow user", {
@@ -2930,6 +2993,28 @@ usersRouter.post("/:id/follow", requireNotBanned, async (c) => {
         { error: { message: "Failed to follow user", code: "INTERNAL_ERROR" } },
         500
       );
+    }
+  }
+
+  if (createdFollow) {
+    try {
+      const followerProfile = await prisma.user.findUnique({
+        where: { id: currentUser.id },
+        select: { username: true, name: true },
+      });
+
+      await createFollowNotificationSafely({
+        targetUserId,
+        followerId: currentUser.id,
+        followerUsername: followerProfile?.username ?? null,
+        followerName: followerProfile?.name ?? null,
+      });
+    } catch (error) {
+      console.warn("[users] Follow notification side-effect failed", {
+        followerId: currentUser.id,
+        targetUserId,
+        message: getErrorMessage(error),
+      });
     }
   }
 

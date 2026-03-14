@@ -41,7 +41,7 @@ const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
-const TOKEN_OVERVIEW_CACHE_VERSION = 3;
+const TOKEN_OVERVIEW_CACHE_VERSION = 4;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
 const TOKEN_CORE_HYDRATION_RETRY_MS = process.env.NODE_ENV === "production" ? 45_000 : 12_000;
 const TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
@@ -1173,6 +1173,33 @@ function shouldRefreshToken(token: TokenRecord | null): boolean {
     : TOKEN_INTELLIGENCE_STALE_MS;
 
   return Date.now() - token.lastIntelligenceAt.getTime() > staleAfterMs;
+}
+
+function hasFreshStoredTokenIntelligence(
+  token:
+    | Pick<
+        TokenRecord,
+        "lastIntelligenceAt" | "hotAlphaScore" | "earlyRunnerScore" | "highConvictionScore"
+      >
+    | null
+    | undefined
+): boolean {
+  if (!token?.lastIntelligenceAt) {
+    return false;
+  }
+  if (token.lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) {
+    return false;
+  }
+
+  const hasHighSignal =
+    finite(token.hotAlphaScore) >= HOT_ALPHA_THRESHOLD ||
+    finite(token.earlyRunnerScore) >= EARLY_RUNNER_THRESHOLD ||
+    finite(token.highConvictionScore) >= HIGH_CONVICTION_THRESHOLD;
+  const staleAfterMs = hasHighSignal
+    ? TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS
+    : TOKEN_INTELLIGENCE_STALE_MS;
+
+  return Date.now() - token.lastIntelligenceAt.getTime() <= staleAfterMs;
 }
 
 function scheduleTokenIntelligenceRefresh(token: TokenRecord | null): void {
@@ -3483,17 +3510,34 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         staleToken?.estimatedBundledSupplyPct
       )
     );
+    const canUseCurrentTokenStoredIntelligence = hasFreshStoredTokenIntelligence(currentToken);
+    const currentTokenConfidenceScore = canUseCurrentTokenStoredIntelligence
+      ? currentToken.confidenceScore
+      : null;
+    const currentTokenHotAlphaScore = canUseCurrentTokenStoredIntelligence
+      ? currentToken.hotAlphaScore
+      : null;
+    const currentTokenEarlyRunnerScore = canUseCurrentTokenStoredIntelligence
+      ? currentToken.earlyRunnerScore
+      : null;
+    const currentTokenHighConvictionScore = canUseCurrentTokenStoredIntelligence
+      ? currentToken.highConvictionScore
+      : null;
+    const currentTokenRiskScore = canUseCurrentTokenStoredIntelligence
+      ? currentToken.tokenRiskScore
+      : null;
+    const currentTokenBundleRiskLabel = canUseCurrentTokenStoredIntelligence
+      ? currentToken.bundleRiskLabel
+      : null;
     const resolvedTokenRiskScore = roundMetric(
       pickFirstFiniteMetric(
         distributionFallback?.tokenRiskScore,
-        currentToken.tokenRiskScore,
-        staleToken?.tokenRiskScore
+        currentTokenRiskScore
       )
     );
     const resolvedBundleRiskLabel =
       distributionFallback?.bundleRiskLabel ??
-      currentToken.bundleRiskLabel ??
-      staleToken?.bundleRiskLabel ??
+      currentTokenBundleRiskLabel ??
       (resolvedTokenRiskScore !== null ? determineBundleRiskLabel(resolvedTokenRiskScore) : null);
     const resolvedTopHolders =
       hasFreshDistributionTelemetry &&
@@ -3506,8 +3550,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       : staleDevWallet;
     const resolvedConfidenceScore = roundMetric(
       pickFirstFiniteMetric(
-        currentToken.confidenceScore,
-        staleToken?.confidenceScore,
+        currentTokenConfidenceScore,
         recentCalls.length > 0
           ? recentCalls.reduce((sum, call) => sum + finite(call.confidenceScore), 0) / recentCalls.length
           : null
@@ -3515,8 +3558,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     );
     const resolvedHotAlphaScore = roundMetric(
       pickFirstFiniteMetric(
-        currentToken.hotAlphaScore,
-        staleToken?.hotAlphaScore,
+        currentTokenHotAlphaScore,
         recentCalls.length > 0
           ? recentCalls.reduce((sum, call) => sum + finite(call.hotAlphaScore), 0) / recentCalls.length
           : null
@@ -3524,8 +3566,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     );
     const resolvedEarlyRunnerScore = roundMetric(
       pickFirstFiniteMetric(
-        currentToken.earlyRunnerScore,
-        staleToken?.earlyRunnerScore,
+        currentTokenEarlyRunnerScore,
         recentCalls.length > 0
           ? Math.max(...recentCalls.map((call) => finite(call.earlyRunnerScore)))
           : null
@@ -3533,8 +3574,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     );
     const resolvedHighConvictionScore = roundMetric(
       pickFirstFiniteMetric(
-        currentToken.highConvictionScore,
-        staleToken?.highConvictionScore,
+        currentTokenHighConvictionScore,
         recentCalls.length > 0
           ? recentCalls.reduce((sum, call) => sum + finite(call.highConvictionScore), 0) / recentCalls.length
           : null
