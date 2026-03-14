@@ -60,42 +60,6 @@ type LeaderboardStatsPayload = {
   }>;
 };
 
-function deriveRoiPct(entryMcap: number | null, targetMcap: number | null): number | null {
-  if (
-    typeof entryMcap !== "number" ||
-    !Number.isFinite(entryMcap) ||
-    entryMcap <= 0 ||
-    typeof targetMcap !== "number" ||
-    !Number.isFinite(targetMcap) ||
-    targetMcap <= 0
-  ) {
-    return null;
-  }
-
-  return ((targetMcap - entryMcap) / entryMcap) * 100;
-}
-
-function derivePeakRoiPct(params: {
-  entryMcap: number | null;
-  currentMcap: number | null;
-  mcap1h: number | null;
-  mcap6h: number | null;
-  roiPeakPct: number | null;
-}): number | null {
-  const candidates = [
-    params.roiPeakPct,
-    deriveRoiPct(params.entryMcap, params.currentMcap),
-    deriveRoiPct(params.entryMcap, params.mcap1h),
-    deriveRoiPct(params.entryMcap, params.mcap6h),
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  return Math.max(...candidates);
-}
-
 const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 10_000;
 const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 15_000;
 const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
@@ -140,7 +104,6 @@ const LEADERBOARD_DEDUPED_POSTS_SUBQUERY = Prisma.sql`
     p."currentMcap",
     p."mcap1h",
     p."mcap6h",
-    p."roiPeakPct",
     p."percentChange1h",
     p."percentChange6h",
     p."settledAt",
@@ -204,7 +167,7 @@ export function invalidateLeaderboardCaches() {
   leaderboardCacheVersionMemory += 1;
   void redisIncr(LEADERBOARD_CACHE_VERSION_KEY);
   // Best-effort cleanup of current known singleton keys; paged top-users keys are versioned.
-  void redisDelete(buildLeaderboardRedisKey("daily-gainers-v2", leaderboardCacheVersionMemory));
+  void redisDelete(buildLeaderboardRedisKey("daily-gainers", leaderboardCacheVersionMemory));
   void redisDelete(buildLeaderboardRedisKey("stats", leaderboardCacheVersionMemory));
 }
 
@@ -719,7 +682,6 @@ async function getDailyGainersRaw(trace: LeaderboardTraceContext): Promise<Array
       currentMcap: number | null;
       mcap1h: number | null;
       mcap6h: number | null;
-      roiPeakPct: number | null;
       percentChange1h: number | null;
       percentChange6h: number | null;
       settledAt: Date | null;
@@ -743,7 +705,6 @@ async function getDailyGainersRaw(trace: LeaderboardTraceContext): Promise<Array
         p."currentMcap",
         p."mcap1h",
         p."mcap6h",
-        p."roiPeakPct",
         p."percentChange1h",
         p."percentChange6h",
         p."settledAt",
@@ -769,19 +730,35 @@ async function getDailyGainersRaw(trace: LeaderboardTraceContext): Promise<Array
         return null;
       }
 
-      const peakGainPercent = derivePeakRoiPct({
-        entryMcap: row.entryMcap,
-        currentMcap: row.currentMcap,
-        mcap1h: row.mcap1h,
-        mcap6h: row.mcap6h,
-        roiPeakPct: row.roiPeakPct,
-      });
+      const candidates: Array<{ gainPercent: number; displayMcap: number }> = [];
 
-      if (!(typeof peakGainPercent === "number" && peakGainPercent > 0)) {
-        return null;
+      if (row.mcap1h !== null && row.percentChange1h !== null) {
+        candidates.push({
+          gainPercent: row.percentChange1h,
+          displayMcap: row.mcap1h,
+        });
       }
 
-      const peakMcap = row.entryMcap * (1 + peakGainPercent / 100);
+      if (row.mcap6h !== null && row.percentChange6h !== null) {
+        candidates.push({
+          gainPercent: row.percentChange6h,
+          displayMcap: row.mcap6h,
+        });
+      }
+
+      const currentGainPercent = ((row.currentMcap - row.entryMcap) / row.entryMcap) * 100;
+      candidates.push({
+        gainPercent: currentGainPercent,
+        displayMcap: row.currentMcap,
+      });
+
+      const bestCandidate = candidates.reduce((best, candidate) =>
+        candidate.gainPercent > best.gainPercent ? candidate : best
+      );
+
+      if (!(bestCandidate.gainPercent > 0)) {
+        return null;
+      }
 
       return {
         postId: row.id,
@@ -796,9 +773,9 @@ async function getDailyGainersRaw(trace: LeaderboardTraceContext): Promise<Array
           image: row.authorImage ?? null,
           level: Math.max(0, Math.round(toSafeNumber(row.authorLevel))),
         },
-        gainPercent: Math.round(peakGainPercent * 100) / 100,
+        gainPercent: Math.round(bestCandidate.gainPercent * 100) / 100,
         entryMcap: toSafeNumber(row.entryMcap),
-        peakMcap: toSafeNumber(peakMcap),
+        currentMcap: toSafeNumber(bestCandidate.displayMcap),
         settledAt: row.settledAt?.toISOString() ?? new Date(0).toISOString(),
       };
     })
@@ -1146,7 +1123,7 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     return c.json({ data: cached });
   }
   const staleCached = readStaleCache(dailyGainersCache);
-  const redisKey = buildLeaderboardRedisKey("daily-gainers-v2", cacheVersion);
+  const redisKey = buildLeaderboardRedisKey("daily-gainers", cacheVersion);
   const redisCached = await cacheGetJson<Array<unknown>>(redisKey);
   if (redisCached) {
     dailyGainersCache = {

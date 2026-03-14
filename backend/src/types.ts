@@ -987,7 +987,7 @@ export const DailyGainerSchema = z.object({
   }),
   gainPercent: z.number(),
   entryMcap: z.number(),
-  peakMcap: z.number(),
+  currentMcap: z.number(),
   settledAt: z.string(),
 });
 
