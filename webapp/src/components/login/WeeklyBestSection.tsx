@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatMarketCap } from "@/types";
+import { api } from "@/lib/api";
 
 type WeeklyBestEntry = {
   postId: string;
@@ -308,16 +309,9 @@ type WeeklyBestSectionProps = {
 };
 
 export function WeeklyBestSection({ optimizeMotion }: WeeklyBestSectionProps) {
-  const baseUrl = import.meta.env.VITE_BACKEND_URL as string;
-
   const { data, isLoading } = useQuery({
     queryKey: ["weekly-best"],
-    queryFn: async (): Promise<WeeklyBestEntry[]> => {
-      const res = await fetch(`${baseUrl}/api/leaderboard/weekly-best`);
-      if (!res.ok) return [];
-      const json = await res.json() as { data: WeeklyBestEntry[] };
-      return json.data ?? [];
-    },
+    queryFn: () => api.get<WeeklyBestEntry[]>("/api/leaderboard/weekly-best"),
     staleTime: 10 * 60 * 1000,
     retry: 1,
   });
