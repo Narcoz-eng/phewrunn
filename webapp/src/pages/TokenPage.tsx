@@ -1111,11 +1111,17 @@ export default function TokenPage() {
         emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
       })
     : "Scanning";
+  const holderCountLowerBoundValue =
+    isSuspiciousCappedHolderCount && token?.holderCount
+      ? `${new Intl.NumberFormat("en-US").format(Math.round(token.holderCount))}+`
+      : token?.holderCountSource === "largest_accounts" && typeof token.holderCount === "number" && token.holderCount > 0
+        ? `${new Intl.NumberFormat("en-US").format(Math.round(token.holderCount))}+`
+        : null;
   const holderCountLabel = hasVerifiedHolderCount
     ? holderCountValue
     : isHolderCountLowerBound
       ? hasLiveHolderDistribution
-        ? "Pending"
+        ? (holderCountLowerBoundValue ?? "Pending")
         : "Scanning"
       : holderCountValue;
   const holderMetricTitle = "Total holders";
@@ -1123,14 +1129,16 @@ export default function TokenPage() {
     ? "Verified"
     : isHolderCountLowerBound
       ? hasLiveHolderDistribution
-        ? "Top 10 ready"
+        ? holderCountLowerBoundValue ? "Minimum" : "Top 10 ready"
         : "Scanning"
       : "Refreshing";
   const holderMetricCopy = hasVerifiedHolderCount
     ? "Verified holder total from the latest live chain scan."
     : isHolderCountLowerBound
       ? hasLiveHolderDistribution
-        ? "Largest wallets are loaded now. Full holder count is still resolving."
+        ? holderCountLowerBoundValue
+          ? "Minimum confirmed holder count. Full count is still being resolved."
+          : "Largest wallets are loaded now. Full holder count is still resolving."
         : "Fetching the full holder count for this token."
       : "Refreshing holder count from the live route.";
   const topHolderSectionCopy = hasVerifiedHolderCount

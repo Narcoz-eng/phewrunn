@@ -3238,7 +3238,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       (currentToken.chainType === "solana" &&
         (!hasPositiveMetric(currentToken.holderCount) ||
           !hasFiniteMetric(currentToken.top10HolderPct) ||
-          !hasFiniteMetric(currentToken.largestHolderPct)));
+          !hasFiniteMetric(currentToken.largestHolderPct) ||
+          staleTopHolders.length === 0));
 
     const [callsRaw, clusters, snapshots, events, tokenFollow, marketSnapshotFallback, distributionFallback] = await Promise.all([
       resolveTokenOverviewSection(
