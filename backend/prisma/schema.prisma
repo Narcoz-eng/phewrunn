@@ -64,6 +64,7 @@ model User {
   reactions     Reaction[]
   notifications Notification[] @relation("UserNotifications") // notifications received
   notificationsSent Notification[] @relation("NotificationsFrom") // notifications triggered
+  pushSubscriptions PushSubscription[] // browser push subscriptions
   announcements Announcement[] // announcements created by admin
   viewedAnnouncements AnnouncementView[] // track which announcements user has seen
   posterTradeFeeEvents TradeFeeEvent[] @relation("PosterTradeFeeEvents")
@@ -612,6 +613,20 @@ model Announcement {
 
   @@index([isPinned, priority, createdAt])
   @@index([authorId, createdAt])
+}
+
+// Browser push notification subscriptions (Web Push API)
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // Many-to-many relation for tracking announcement views

@@ -24,6 +24,7 @@ import { callsRouter } from "./routes/calls.js";
 import { tradersRouter } from "./routes/traders.js";
 import { radarRouter } from "./routes/radar.js";
 import { alertsRouter } from "./routes/alerts.js";
+import { pushRouter } from "./routes/push.js";
 import { leaderboardsRouter } from "./routes/leaderboards.js";
 import {
   clearCachedMeResponse,
@@ -3706,6 +3707,7 @@ app.route("/api/calls", callsRouter);
 app.route("/api/traders", tradersRouter);
 app.route("/api/radar", radarRouter);
 app.route("/api/alerts", alertsRouter);
+app.route("/api/push", pushRouter);
 app.route("/api/leaderboards", leaderboardsRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/notifications", notificationsRouter);

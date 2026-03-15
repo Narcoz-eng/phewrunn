@@ -1,6 +1,45 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../prisma.js";
 import { invalidateNotificationsCache } from "../../routes/notifications.js";
+import { sendPushToUser, type PushPayload } from "../webPush.js";
+
+// Map notification type to a push-friendly title
+function buildPushPayload(data: {
+  type: string;
+  message: string;
+  entityType?: string;
+  entityId?: string;
+  postId?: string | null;
+}): PushPayload {
+  const typeToTitle: Record<string, string> = {
+    posted_alpha: "New Alpha Posted",
+    early_runner_detected: "Early Runner Detected",
+    hot_alpha_detected: "Hot Alpha",
+    high_conviction_detected: "High Conviction Signal",
+    bundle_risk_changed: "Bundle Risk Changed",
+    token_confidence_crossed: "Confidence Threshold Crossed",
+    liquidity_spike: "Liquidity Spike",
+    volume_spike: "Volume Spike",
+    settlement_win: "Trade Won",
+    settlement_loss: "Trade Settled",
+    like: "New Like",
+    comment: "New Comment",
+    follow: "New Follower",
+    repost: "Repost",
+  };
+
+  const title = typeToTitle[data.type] ?? "Phewrunn";
+
+  // Build deep-link URL
+  let url = "/notifications";
+  if (data.postId) {
+    url = `/posts/${data.postId}`;
+  } else if (data.entityType === "token" && data.entityId) {
+    url = `/tokens/${data.entityId}`;
+  }
+
+  return { title, body: data.message, icon: "/phew-mark.svg", badge: "/phew-mark.svg", url, tag: data.type };
+}
 
 type AlertPreferenceSnapshot = {
   userId: string;
@@ -83,6 +122,8 @@ async function createNotification(data: {
       },
     });
     invalidateNotificationsCache(data.userId);
+    // Fire push notification non-blocking — don't await, never crash the caller
+    void sendPushToUser(data.userId, buildPushPayload(data)).catch(() => {});
   } catch (error) {
     if (isDuplicateNotificationError(error)) {
       return;
