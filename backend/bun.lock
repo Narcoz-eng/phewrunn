@@ -9,7 +9,6 @@
         "@prisma/client": "6",
         "@privy-io/server-auth": "^1.32.5",
         "@solana/web3.js": "^1.98.4",
-        "@types/web-push": "^3.6.4",
         "@vibecodeapp/cloud-studio": "^0.2.4",
         "@vibecodeapp/proxy": "^2.0.3",
         "better-auth": "^1.4.14",
