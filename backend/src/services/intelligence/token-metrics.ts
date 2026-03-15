@@ -951,14 +951,24 @@ export async function analyzeSolanaTokenDistribution(
     const rawTopHoldersByWallet = aggregateTopHoldersByWallet(rpcTopHolders);
     const ownerAccountClassifications = await getRpcOwnerAccountClassifications(
       rawTopHoldersByWallet
-        .map((holder) => holder.ownerAddress ?? holder.address)
+        // Only classify confirmed wallet addresses (ownerAddress), not token accounts.
+        // Token accounts are owned by SPL Token Program and would be wrongly filtered.
+        .map((holder) => holder.ownerAddress)
         .filter((address): address is string => isLikelySolanaWallet(address))
     );
     const topHoldersBase = rawTopHoldersByWallet.filter((holder) => {
       const walletAddress = holder.ownerAddress ?? holder.address;
+      // Only use program classification when we successfully resolved the wallet owner.
+      // If ownerAddress is null (getRpcTokenAccountOwners failed), the walletAddress is
+      // actually a token account (owned by SPL Token Program), so classification would
+      // incorrectly mark all holders as program-owned and filter them out.
+      const ownerClassification =
+        holder.ownerAddress !== null
+          ? ownerAccountClassifications.get(walletAddress) ?? null
+          : null;
       return !isProgramOwnedHolder({
         holder,
-        ownerClassification: ownerAccountClassifications.get(walletAddress) ?? null,
+        ownerClassification,
         pairAddress: marketSnapshot.pairAddress ?? null,
       });
     });
