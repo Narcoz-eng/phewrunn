@@ -3,6 +3,12 @@
   "version": 2,
   "regions": ["lhr1"],
   "installCommand": "npm --prefix backend install && npm --prefix backend run db:generate && npm --prefix webapp install",
+  "crons": [
+    {
+      "path": "/api/posts/maintenance/run",
+      "schedule": "* * * * *"
+    }
+  ],
   "builds": [
     {
       "src": "webapp/package.json",
