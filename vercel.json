@@ -48,6 +48,8 @@
     }
   ],
   "env": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "VAPID_PUBLIC_KEY": "BCSK5_xRSag-ThfHgQyfira-Qcfrj7xwD3DucnPfw90lKmcuGobtI1twjl7sE_wyaEB6fPKwZgSDXaavCTLt5QM",
+    "VAPID_EMAIL": "mailto:admin@phewrunn.app"
   }
 }

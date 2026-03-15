@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  isPushSupported,
+  getPushPermission,
+  subscribeToPush,
+  unsubscribeFromPush,
+  isPushSubscribed,
+} from "@/services/pushNotifications";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth, useSession } from "@/lib/auth-client";
@@ -194,6 +201,39 @@ export default function Notifications() {
   const { isAuthenticated, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
   const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
   const [showAlertPreferences, setShowAlertPreferences] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+  const pushSupported = isPushSupported() && getPushPermission() !== "denied";
+
+  // Check current push subscription state on mount
+  useEffect(() => {
+    isPushSubscribed().then(setPushSubscribed).catch(() => {});
+  }, []);
+
+  const handlePushToggle = useCallback(async () => {
+    setPushLoading(true);
+    try {
+      if (pushSubscribed) {
+        await unsubscribeFromPush();
+        setPushSubscribed(false);
+        toast.success("Push notifications disabled");
+      } else {
+        const ok = await subscribeToPush();
+        if (ok) {
+          setPushSubscribed(true);
+          toast.success("Push notifications enabled");
+        } else if (getPushPermission() === "denied") {
+          toast.error("Notifications blocked — allow them in browser settings");
+        } else {
+          toast.error("Could not enable push notifications");
+        }
+      }
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setPushLoading(false);
+    }
+  }, [pushSubscribed]);
   const notificationsQueryKey = useMemo(
     () => ["notifications", session?.user?.id ?? "anonymous"] as const,
     [session?.user?.id]
@@ -585,6 +625,37 @@ export default function Notifications() {
             </div>
             {showAlertPreferences && alertPreferences ? (
               <div className="mb-4 rounded-[24px] border border-border/65 bg-background/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
+                {/* Push notification toggle */}
+                {pushSupported ? (
+                  <div className="mb-4 flex items-center justify-between rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Browser push notifications</p>
+                      <p className="text-xs text-muted-foreground">
+                        {pushSubscribed
+                          ? "You'll get notified even when the app is closed"
+                          : "Get alerts even when you're not on the platform"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={pushLoading}
+                      onClick={handlePushToggle}
+                      className={cn(
+                        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-50",
+                        pushSubscribed ? "bg-primary" : "bg-muted-foreground/30"
+                      )}
+                      role="switch"
+                      aria-checked={pushSubscribed}
+                    >
+                      <span
+                        className={cn(
+                          "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg transition duration-200",
+                          pushSubscribed ? "translate-x-5" : "translate-x-0"
+                        )}
+                      />
+                    </button>
+                  </div>
+                ) : null}
                 <div className="grid gap-3 md:grid-cols-3">
                   <label className="space-y-1">
                     <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min confidence</span>

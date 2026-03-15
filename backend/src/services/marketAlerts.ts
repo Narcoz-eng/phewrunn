@@ -16,6 +16,7 @@ import { prisma } from "../prisma.js";
 import { redisGetString, redisSetString } from "../lib/redis.js";
 import { invalidateNotificationsCache } from "../routes/notifications.js";
 import { getCachedMarketCapSnapshot } from "./marketcap.js";
+import { sendPushToUsers } from "./webPush.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -87,15 +88,26 @@ async function broadcastToAllUsers(
     postId: postId ?? undefined,
   }));
 
+  const pushPayload = {
+    title: type === "liquidity_spike" ? "Liquidity Spike" : "Volume Spike",
+    body: message,
+    icon: "/phew-mark.svg",
+    badge: "/phew-mark.svg",
+    url: postId ? `/posts/${postId}` : "/notifications",
+    tag: type,
+  };
+
   // Batch insert to avoid giant single query
   for (let i = 0; i < notifications.length; i += NOTIFICATION_BATCH_SIZE) {
     const batch = notifications.slice(i, i + NOTIFICATION_BATCH_SIZE);
     try {
       await prisma.notification.createMany({ data: batch, skipDuplicates: true });
-      const userIds = new Set(batch.map((n) => n.userId));
+      const userIds = [...new Set(batch.map((n) => n.userId))];
       for (const userId of userIds) {
         invalidateNotificationsCache(userId);
       }
+      // Send push to this batch of users (non-blocking)
+      void sendPushToUsers(userIds, pushPayload).catch(() => {});
     } catch (err) {
       console.warn("[market-alerts] batch notification insert failed", {
         batchIndex: i,
