@@ -32,6 +32,8 @@ import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
+const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
+const TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS = 10_000;
 const TOKEN_LIVE_CHART_VISIBLE_POINTS = 72;
 const TOKEN_LIVE_CHART_FUTURE_SLOTS = 6;
 const TOKEN_CHART_INTERVAL_OPTIONS = [
@@ -888,12 +890,14 @@ export default function TokenPage() {
     refetchOnWindowFocus: false,
     retry: 1,
     refetchIntervalInBackground: false,
-    refetchInterval: shouldForceFreshDistribution ? 8_000 : 10_000,
+    refetchInterval: shouldForceFreshDistribution
+      ? TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS
+      : TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS,
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
       return getTokenLiveIntelligence(tokenAddress, {
         freshBundle: shouldForceFreshDistribution,
-        timeoutMs: 15_000,
+        timeoutMs: shouldForceFreshDistribution ? 12_000 : 9_000,
       }) as Promise<TokenLiveData>;
     },
   });

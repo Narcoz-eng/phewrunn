@@ -55,7 +55,8 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_LIVE_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
+const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
+const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
 const TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_ROUTE_CACHE_VERSION = 12;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
@@ -100,6 +101,14 @@ function readTokenLiveRouteCache(key: string): TokenLivePayload | null {
     return null;
   }
   return cached.data;
+}
+
+function hasResolvedLiveTokenPayload(payload: TokenLivePayload): boolean {
+  return Boolean(
+    payload.bundleScanCompletedAt &&
+      payload.topHolders.length > 0 &&
+      hasResolvedHolderCount(payload.holderCount, payload.holderCountSource)
+  );
 }
 
 function writeTokenRouteCache(key: string, data: TokenRoutePayload): void {
@@ -580,7 +589,11 @@ tokensRouter.get(
     const payload = await request;
     tokenLiveRouteCache.set(cacheKey, {
       data: payload,
-      expiresAtMs: Date.now() + TOKEN_LIVE_ROUTE_CACHE_TTL_MS,
+      expiresAtMs:
+        Date.now() +
+        (hasResolvedLiveTokenPayload(payload)
+          ? TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS
+          : TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS),
     });
     return c.json({ data: payload }, 200, buildLiveTokenRouteHeaders());
   } catch (error) {

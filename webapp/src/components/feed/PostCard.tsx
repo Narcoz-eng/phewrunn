@@ -119,6 +119,7 @@ const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
+const VISIBLE_BUNDLE_SCAN_REFRESH_INTERVAL_MS = 5_000;
 const SHARED_ALPHA_QUERY_STALE_TIME_MS = 60_000;
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const MAX_CREATOR_ROUTE_FEE_BPS = 50;
@@ -1780,12 +1781,13 @@ export function PostCard({
     if (!bundleScanPending) return;
 
     let cancelled = false;
+    let intervalId: number | null = null;
 
     const refreshVisibleBundleIntelligence = async () => {
       try {
         const live = await getTokenLiveIntelligence(post.contractAddress!, {
           freshBundle: true,
-          timeoutMs: 12_000,
+          timeoutMs: 10_000,
         });
         if (cancelled) return;
         syncTokenIntelligenceAcrossPostCaches(
@@ -1798,9 +1800,15 @@ export function PostCard({
     };
 
     void refreshVisibleBundleIntelligence();
+    intervalId = window.setInterval(() => {
+      void refreshVisibleBundleIntelligence();
+    }, VISIBLE_BUNDLE_SCAN_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
     };
   }, [bundleScanPending, isInViewport, post.chainType, post.contractAddress, queryClient]);
   const threadTotal = post.threadCount ?? commentCount;
