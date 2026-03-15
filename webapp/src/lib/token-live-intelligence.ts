@@ -64,6 +64,35 @@ function readCachedTokenLivePayload(cacheKey: string): TokenLiveIntelligencePayl
   return cached.data;
 }
 
+function hasResolvedHolderCount(
+  holderCount: number | null | undefined,
+  holderCountSource: TokenLiveIntelligencePayload["holderCountSource"]
+): boolean {
+  return (
+    typeof holderCount === "number" &&
+    Number.isFinite(holderCount) &&
+    holderCount > 0 &&
+    holderCountSource !== "largest_accounts" &&
+    holderCountSource !== null &&
+    holderCountSource !== undefined &&
+    !(
+      (holderCountSource === "helius" ||
+        holderCountSource === "rpc_scan" ||
+        holderCountSource === "birdeye" ||
+        holderCountSource === "stored") &&
+      Math.round(holderCount) === 1000
+    )
+  );
+}
+
+function isPendingLiveDistributionPayload(payload: TokenLiveIntelligencePayload): boolean {
+  return (
+    !payload.bundleScanCompletedAt ||
+    payload.topHolders.length === 0 ||
+    !hasResolvedHolderCount(payload.holderCount, payload.holderCountSource)
+  );
+}
+
 export async function getTokenLiveIntelligence(
   address: string,
   options?: { freshBundle?: boolean; timeoutMs?: number }
@@ -107,9 +136,9 @@ export async function getTokenLiveIntelligence(
       data: payload.data,
       expiresAtMs:
         Date.now() +
-        (payload.data.bundleScanCompletedAt
-          ? TOKEN_LIVE_RESOLVED_CACHE_TTL_MS
-          : TOKEN_LIVE_PENDING_CACHE_TTL_MS),
+        (isPendingLiveDistributionPayload(payload.data)
+          ? TOKEN_LIVE_PENDING_CACHE_TTL_MS
+          : TOKEN_LIVE_RESOLVED_CACHE_TTL_MS),
     });
 
     return payload.data;

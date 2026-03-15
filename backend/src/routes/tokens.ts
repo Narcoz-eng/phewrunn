@@ -324,6 +324,16 @@ function hasResolvedSolanaDistributionSnapshot(
   );
 }
 
+function needsFreshSolanaHolderDistributionSnapshot(
+  snapshot: Awaited<ReturnType<typeof peekCachedSolanaTokenDistribution>>
+): boolean {
+  if (!snapshot) {
+    return true;
+  }
+
+  return snapshot.topHolders.length === 0 || !hasResolvedHolderCount(snapshot.holderCount, snapshot.holderCountSource);
+}
+
 function shouldRefreshLiveDistribution(token: TokenLookupPayload | null | undefined): boolean {
   if (!token || token.chainType !== "solana") {
     return false;
@@ -379,7 +389,7 @@ tokensRouter.get(
       const shouldRunLiveDistributionScan =
         chainType === "solana" &&
         (shouldPreferFreshDistribution
-          ? !hasResolvedSolanaDistributionSnapshot(cachedDistribution)
+          ? needsFreshSolanaHolderDistributionSnapshot(cachedDistribution)
           : !cachedDistribution && (!token || !hasStoredSolanaDistributionTelemetry(token)));
 
       if (token?.id && shouldRefreshLiveDistribution(token)) {

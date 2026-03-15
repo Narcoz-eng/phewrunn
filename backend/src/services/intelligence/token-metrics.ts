@@ -158,6 +158,7 @@ const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000
 const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 15_000;
 const TOKEN_DISTRIBUTION_STALE_TTL_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 90_000;
 const TOKEN_DISTRIBUTION_RETRY_MS = process.env.NODE_ENV === "production" ? 30_000 : 7_500;
+const TOKEN_DISTRIBUTION_VISIBLE_REFRESH_MS = process.env.NODE_ENV === "production" ? 10_000 : 2_500;
 const FRESH_WALLET_DAYS_THRESHOLD = 5;
 const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 5;
 const LOW_HISTORY_MINT_THRESHOLD = 2;
@@ -244,6 +245,14 @@ function hasResolvedHolderCount(snapshot: TokenDistributionSnapshot | null | und
       minimumObservedHolderCount: snapshot.topHolders.length,
     })
   );
+}
+
+function needsVisibleDistributionRefresh(snapshot: TokenDistributionSnapshot | null | undefined): boolean {
+  if (!snapshot) {
+    return true;
+  }
+
+  return snapshot.topHolders.length === 0 || !hasResolvedHolderCount(snapshot);
 }
 
 function cloneDistributionSnapshot(
@@ -879,8 +888,13 @@ export async function analyzeSolanaTokenDistribution(
   const cached = tokenDistributionCache.get(cacheKey);
   const hasFreshCachedValue = cached && cached.expiresAtMs > now;
   const hasStaleCachedValue = cached && cached.staleExpiresAtMs > now;
+  const canBypassFreshCacheForVisibleRefresh = Boolean(
+    options?.preferFresh &&
+      needsVisibleDistributionRefresh(cached?.value ?? null) &&
+      (cached?.nextRefreshAllowedAtMs ?? 0) <= now
+  );
 
-  if (hasFreshCachedValue) {
+  if (hasFreshCachedValue && !canBypassFreshCacheForVisibleRefresh) {
     return cloneDistributionSnapshot(cached.value);
   }
 
@@ -1351,11 +1365,15 @@ export async function analyzeSolanaTokenDistribution(
     return nextSnapshot;
   })()
     .then((snapshot) => {
+      const needsFollowUpVisibleRefresh = needsVisibleDistributionRefresh(snapshot);
       tokenDistributionCache.set(cacheKey, {
         value: cloneDistributionSnapshot(snapshot),
         expiresAtMs: Date.now() + TOKEN_DISTRIBUTION_CACHE_TTL_MS,
         staleExpiresAtMs: Date.now() + TOKEN_DISTRIBUTION_STALE_TTL_MS,
-        nextRefreshAllowedAtMs: Date.now() + TOKEN_DISTRIBUTION_CACHE_TTL_MS,
+        nextRefreshAllowedAtMs: Date.now() +
+          (needsFollowUpVisibleRefresh
+            ? TOKEN_DISTRIBUTION_VISIBLE_REFRESH_MS
+            : TOKEN_DISTRIBUTION_CACHE_TTL_MS),
       });
       return snapshot;
     })

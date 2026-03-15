@@ -228,9 +228,9 @@ export const SEVERE_LOSS_THRESHOLD = -30;
 
 // XP constants
 export const MAX_XP_GAIN_PER_POST = 100;
-export const MAX_XP_LOSS_PER_POST = 50;
+export const MAX_XP_LOSS_PER_POST = 100;
 export const XP_PROFIT_MULTIPLIER = 10; // XP = percentChange * 10
-export const XP_LOSS_MULTIPLIER = 5;    // XP = percentChange * 5
+export const XP_LOSS_MULTIPLIER = 10;   // XP = percentChange * 10
 export const SMALL_PROFIT_XP_ONLY_MAX_PCT = 3; // 1-3% wins = XP only, no level
 // "3-4x" (200-300%) should still only award a single level.
 // Only very large runners (10x-20x+) can award two levels.

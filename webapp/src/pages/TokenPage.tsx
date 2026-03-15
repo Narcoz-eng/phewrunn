@@ -533,6 +533,19 @@ function hasResolvedHolderCount(
   );
 }
 
+function isHolderIntelligencePending(
+  token:
+    | Pick<TokenPageData, "chainType" | "topHolders" | "holderCount" | "holderCountSource">
+    | null
+    | undefined
+): boolean {
+  if (!token || token.chainType !== "solana") {
+    return false;
+  }
+
+  return token.topHolders.length === 0 || !hasResolvedHolderCount(token.holderCount, token.holderCountSource);
+}
+
 function holderSnapshotKey(holder: Pick<TokenHolder, "address" | "ownerAddress">): string {
   return (holder.ownerAddress ?? holder.address).trim().toLowerCase();
 }
@@ -817,32 +830,32 @@ export default function TokenPage() {
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: 1,
-    // Auto-refetch every 4s while holder distribution is still computing.
-    // The backend caches results for 20s; this retries until holders arrive
-    // without the user having to manually refresh.
+    // Keep refetching while visible holder intelligence is still unresolved.
     refetchInterval: (query) => {
       const d = query.state.data;
       if (!d) return false;
-      const holdersReady = d.risk.largestHolderPct !== null && d.topHolders.length > 0;
-      return holdersReady ? false : 4_000;
+      return isHolderIntelligencePending(d) ? 4_000 : false;
     },
     refetchIntervalInBackground: false,
   });
 
-  const liveTokenQuery = useQuery<TokenLiveData>({
-    queryKey: [
-      "token-live",
-      tokenAddress,
-      token &&
-      isBundleScanPending({
+  const bundleScanPending = token
+    ? isBundleScanPending({
         bundleRiskLabel: token.risk.bundleRiskLabel,
         bundleScanCompletedAt: token.bundleScanCompletedAt,
         bundledWalletCount: token.risk.bundledWalletCount,
         estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
         bundleClusters: token.bundleClusters,
       })
-        ? "fresh-bundle"
-        : "cached",
+    : true;
+  const holderIntelligencePending = token ? isHolderIntelligencePending(token) : true;
+  const shouldForceFreshDistribution = Boolean(token && (bundleScanPending || holderIntelligencePending));
+
+  const liveTokenQuery = useQuery<TokenLiveData>({
+    queryKey: [
+      "token-live",
+      tokenAddress,
+      shouldForceFreshDistribution ? "fresh-distribution" : "cached",
     ],
     enabled: Boolean(tokenAddress && token?.id),
     staleTime: 6_000,
@@ -851,20 +864,11 @@ export default function TokenPage() {
     refetchOnWindowFocus: false,
     retry: 1,
     refetchIntervalInBackground: false,
-    refetchInterval: 10_000,
+    refetchInterval: shouldForceFreshDistribution ? 8_000 : 10_000,
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
       return getTokenLiveIntelligence(tokenAddress, {
-        freshBundle: Boolean(
-          token &&
-            isBundleScanPending({
-              bundleRiskLabel: token.risk.bundleRiskLabel,
-              bundleScanCompletedAt: token.bundleScanCompletedAt,
-              bundledWalletCount: token.risk.bundledWalletCount,
-              estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
-              bundleClusters: token.bundleClusters,
-            })
-        ),
+        freshBundle: shouldForceFreshDistribution,
         timeoutMs: 15_000,
       }) as Promise<TokenLiveData>;
     },
@@ -1185,16 +1189,9 @@ export default function TokenPage() {
       : "Refreshing holder count from the live route.";
   const topHolderSectionCopy = hasVerifiedHolderCount
     ? "Top wallets, developer wallet, and role tags from the current chain scan."
-    : "Top wallets are ready first. Full holder count follows after the chain scan finishes.";
-  const bundleScanPending = token
-    ? isBundleScanPending({
-        bundleRiskLabel: token.risk.bundleRiskLabel,
-        bundleScanCompletedAt: token.bundleScanCompletedAt,
-        bundledWalletCount: token.risk.bundledWalletCount,
-        estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
-        bundleClusters: token.bundleClusters,
-      })
-    : true;
+    : hasLiveHolderDistribution
+      ? "Top wallets are live. Full holder count is still being refined from the chain scan."
+      : "Scanning top wallets, holder count, and developer-wallet intelligence for this token.";
   const recentCallsEmptyCopy =
     isLoading || isFetching
       ? "Recent token calls are still loading for this address."
@@ -1798,7 +1795,9 @@ export default function TokenPage() {
                         Developer wallet not detected yet
                       </div>
                       <div className="mt-1 text-sm text-muted-foreground">
-                        The current chain scan has not confirmed a creator, authority, or earliest mint signer wallet for this token yet.
+                        {hasLiveHolderDistribution || hasVerifiedHolderCount
+                          ? "The latest chain scan did not confirm a creator, authority, or earliest mint signer wallet for this token."
+                          : "The current chain scan has not confirmed a creator, authority, or earliest mint signer wallet for this token yet."}
                       </div>
                     </div>
                   )}
@@ -1888,7 +1887,9 @@ export default function TokenPage() {
                       ))
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        Scanning holder wallets and developer-wallet intelligence for this token.
+                        {holderIntelligencePending
+                          ? "Scanning holder wallets and developer-wallet intelligence for this token."
+                          : "No holder wallets were returned by the latest chain scan."}
                       </p>
                     )}
                   </div>
