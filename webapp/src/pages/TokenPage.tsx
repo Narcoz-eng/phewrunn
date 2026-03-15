@@ -1155,13 +1155,15 @@ export default function TokenPage() {
   const topHolderSectionCopy = hasVerifiedHolderCount
     ? "Top wallets, developer wallet, and role tags from the current chain scan."
     : "Top wallets are ready first. Full holder count follows after the chain scan finishes.";
-  const bundleScanPending = isBundleScanPending({
-    bundleRiskLabel: token.risk.bundleRiskLabel,
-    tokenRiskScore: token.risk.tokenRiskScore,
-    bundledWalletCount: token.risk.bundledWalletCount,
-    estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
-    bundleClusters: token.bundleClusters,
-  });
+  const bundleScanPending = token
+    ? isBundleScanPending({
+        bundleRiskLabel: token.risk.bundleRiskLabel,
+        tokenRiskScore: token.risk.tokenRiskScore,
+        bundledWalletCount: token.risk.bundledWalletCount,
+        estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
+        bundleClusters: token.bundleClusters,
+      })
+    : true;
   const recentCallsEmptyCopy =
     isLoading || isFetching
       ? "Recent token calls are still loading for this address."
