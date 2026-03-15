@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { CheckCheck, ArrowLeft, BellOff } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
-import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { readSessionCache, readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
@@ -213,10 +213,11 @@ export default function Notifications() {
     () => ["notifications", "unread-count", session?.user?.id ?? "anonymous"] as const,
     [session?.user?.id]
   );
-  const initialCachedNotifications = useMemo(
-    () => readSessionCache<Notification[]>(notificationsCacheKey, NOTIFICATIONS_CACHE_TTL_MS),
+  const initialCachedEntry = useMemo(
+    () => readSessionCacheEntry<Notification[]>(notificationsCacheKey, NOTIFICATIONS_CACHE_TTL_MS),
     [notificationsCacheKey]
   );
+  const initialCachedNotifications = initialCachedEntry?.data ?? null;
 
   // Fetch notifications
   const {
@@ -280,10 +281,10 @@ export default function Notifications() {
       initialCachedNotifications && initialCachedNotifications.length > 0
         ? initialCachedNotifications
         : undefined,
+    initialDataUpdatedAt: initialCachedEntry?.cachedAt,
     enabled: isAuthenticated && hasLiveSession,
-    staleTime: 60_000,
-    refetchOnMount:
-      initialCachedNotifications && initialCachedNotifications.length > 0 ? false : "always",
+    staleTime: 30_000,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: (failureCount, error) => {
