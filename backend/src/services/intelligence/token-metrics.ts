@@ -1242,11 +1242,6 @@ export async function analyzeSolanaTokenDistribution(
       heliusHolderSummary > 0
         ? Math.round(heliusHolderSummary)
         : 0;
-    const isSuspiciousHeliusHolderCount = isSuspiciousResolvedHolderCount({
-      holderCount: heliusHolderCount,
-      holderCountSource: "helius",
-      minimumObservedHolderCount: normalizedObservedHolderCount,
-    });
     const rpcHolderCount = countCurrentHolderWalletsFromProgramAccounts(holderAccountsResult);
     const normalizedBirdeyeHolderCount =
       typeof birdeyeHolderCount === "number" && Number.isFinite(birdeyeHolderCount)
@@ -1267,7 +1262,10 @@ export async function analyzeSolanaTokenDistribution(
     if (isPlausibleHolderCount(rpcHolderCount)) {
       holderCount = rpcHolderCount;
       holderCountSource = "rpc_scan";
-    } else if (!isSuspiciousHeliusHolderCount && isPlausibleHolderCount(heliusHolderCount)) {
+    } else if (isPlausibleHolderCount(heliusHolderCount)) {
+      // Trust the paginated Helius count directly — getHeliusCurrentHolderOwnerCount
+      // already returns null for any ambiguous/truncated result, so a non-null value
+      // here is a verified unique-owner count.
       holderCount = heliusHolderCount;
       holderCountSource = "helius";
     } else if (
