@@ -8,10 +8,18 @@ interface ThemeToggleProps {
   size?: "default" | "sm" | "lg" | "icon";
 }
 
+function triggerThemeTransition() {
+  const html = document.documentElement;
+  html.classList.add("transitioning");
+  const id = setTimeout(() => html.classList.remove("transitioning"), 500);
+  return id;
+}
+
 export function ThemeToggle({ className, size = "default" }: ThemeToggleProps) {
   const { theme, setTheme } = useTheme();
 
   const toggleTheme = () => {
+    triggerThemeTransition();
     setTheme(theme === "dark" ? "light" : "dark");
   };
 
@@ -71,7 +79,7 @@ export function ThemeToggleCompact({ className }: { className?: string }) {
 
   return (
     <button
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={() => { triggerThemeTransition(); setTheme(theme === "dark" ? "light" : "dark"); }}
       className={cn(
         "relative w-14 h-7 rounded-full p-1 transition-all duration-300",
         "bg-secondary border border-border",

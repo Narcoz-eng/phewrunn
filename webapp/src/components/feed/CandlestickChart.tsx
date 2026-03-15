@@ -79,6 +79,7 @@ export function CandlestickChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const overviewPointerActiveRef = useRef(false);
   const suppressHoverUntilRef = useRef(0);
+  const hoverRafRef = useRef<number>(0);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredVisibleIndex, setHoveredVisibleIndex] = useState<number | null>(null);
 
@@ -345,23 +346,26 @@ export function CandlestickChart({
   );
 
   const handleHover = (clientX: number) => {
-    const node = containerRef.current;
-    if (!node || visibleData.length === 0) {
-      setHoveredVisibleIndex(null);
-      return;
-    }
-    if (
-      suppressHoverUntilRef.current > 0 &&
-      typeof performance !== "undefined" &&
-      performance.now() < suppressHoverUntilRef.current
-    ) {
-      return;
-    }
-    const rect = node.getBoundingClientRect();
-    const relativeX = clamp(clientX - rect.left - MAIN_PADDING_LEFT, 0, chartWidth);
-    const ratio = chartWidth <= 0 ? 0 : relativeX / chartWidth;
-    const nextIndex = clamp(Math.round(ratio * Math.max(visibleData.length - 1, 0)), 0, visibleData.length - 1);
-    setHoveredVisibleIndex(nextIndex);
+    if (hoverRafRef.current) cancelAnimationFrame(hoverRafRef.current);
+    hoverRafRef.current = requestAnimationFrame(() => {
+      const node = containerRef.current;
+      if (!node || visibleData.length === 0) {
+        setHoveredVisibleIndex(null);
+        return;
+      }
+      if (
+        suppressHoverUntilRef.current > 0 &&
+        typeof performance !== "undefined" &&
+        performance.now() < suppressHoverUntilRef.current
+      ) {
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      const relativeX = clamp(clientX - rect.left - MAIN_PADDING_LEFT, 0, chartWidth);
+      const ratio = chartWidth <= 0 ? 0 : relativeX / chartWidth;
+      const nextIndex = clamp(Math.round(ratio * Math.max(visibleData.length - 1, 0)), 0, visibleData.length - 1);
+      setHoveredVisibleIndex(nextIndex);
+    });
   };
 
   const resolveOverviewIndex = (clientX: number) => {
@@ -421,7 +425,7 @@ export function CandlestickChart({
   return (
     <div
       ref={containerRef}
-      className={cn("relative h-full w-full", className)}
+      className={cn("chart-container relative h-full w-full", className)}
       onMouseMove={(event) => handleHover(event.clientX)}
       onMouseLeave={() => setHoveredVisibleIndex(null)}
     >

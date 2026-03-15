@@ -1000,11 +1000,11 @@ export default function TokenPage() {
     refetchInterval:
       chartRequestConfig.timeframe === "minute"
         ? chartRequestConfig.aggregate <= 5
-          ? 8_000
-          : 12_000
+          ? 5_000
+          : 8_000
         : chartRequestConfig.timeframe === "hour"
-          ? 20_000
-          : 60_000,
+          ? 15_000
+          : 45_000,
     queryFn: async () => {
       if (!tokenAddress || !token) {
         return {

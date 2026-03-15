@@ -103,6 +103,14 @@
 @layer base {
   * {
     @apply border-border;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, box-shadow, opacity;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    transition-duration: 150ms;
+  }
+
+  /* Disable transitions for things that should never animate */
+  svg *, canvas, video, img {
+    transition: none !important;
   }
 
   html {
@@ -640,10 +648,39 @@
   animation: shimmer 2s ease-in-out infinite;
 }
 
+/* Chart container — GPU-accelerated, no browser scroll interference */
+.chart-container {
+  will-change: transform;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.chart-container.chart-panning {
+  cursor: grabbing;
+}
+
+/* Page transition animation */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-enter {
+  animation: page-enter 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 /* Theme transition - smooth color changes */
 html.transitioning,
 html.transitioning *,
 html.transitioning *::before,
 html.transitioning *::after {
-  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.15s ease !important;
+  transition: background-color 0.45s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.45s cubic-bezier(0.22, 1, 0.36, 1), color 0.3s cubic-bezier(0.22, 1, 0.36, 1), fill 0.3s cubic-bezier(0.22, 1, 0.36, 1), stroke 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.45s cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
