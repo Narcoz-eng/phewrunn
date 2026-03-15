@@ -805,6 +805,16 @@ export default function TokenPage() {
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: 1,
+    // Auto-refetch every 4s while holder distribution is still computing.
+    // The backend caches results for 20s; this retries until holders arrive
+    // without the user having to manually refresh.
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (!d) return false;
+      const holdersReady = d.risk.largestHolderPct !== null && d.topHolders.length > 0;
+      return holdersReady ? false : 4_000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const liveTokenQuery = useQuery<TokenLiveData>({
