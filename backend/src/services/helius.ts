@@ -1356,17 +1356,6 @@ export async function getHeliusCurrentHolderOwnerCount(params: {
     if (looksTruncatedWithoutCursor) {
       return null;
     }
-    const ambiguousExactPageBoundary =
-      !nextCursor &&
-      page.tokenAccounts.length === limit &&
-      hasKnownTotal &&
-      knownTotal === processedAccounts &&
-      knownTotal % limit === 0;
-
-    if (ambiguousExactPageBoundary) {
-      return null;
-    }
-
     if (page.tokenAccounts.length === 0 || reachedKnownEnd) {
       return uniqueOwners.size;
     }
