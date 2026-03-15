@@ -3013,7 +3013,10 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             ? whereClauses[0]
             : { AND: whereClauses };
       const isDirectChronologicalFeed = args.kind === "latest" || args.kind === "following";
-      const preferStoredFeedIntelligence = isDirectChronologicalFeed;
+      // Always use stored intelligence for feed rendering — scores, reaction counts, and
+      // trusted trader counts are all persisted on the post. Re-computing from scratch
+      // requires 5+ expensive DB queries over 240+ candidates and reliably times out.
+      const preferStoredFeedIntelligence = true;
       const candidateLimit = isDirectChronologicalFeed
         ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
         : Math.max(
@@ -3368,6 +3371,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
                 refreshTokens: false,
                 ensureTokenLinks: false,
                 persistComputed: false,
+                preferStoredIntelligence: true,
               }),
             staleToken?.recentCalls ?? ([] as EnrichedCall[])
           )
