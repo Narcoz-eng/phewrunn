@@ -36,6 +36,11 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api, ApiError } from "@/lib/api";
 import { getPostPriceSnapshotBatched, type BatchedPostPriceSnapshot } from "@/lib/post-price-batch";
 import {
+  buildTokenIntelligenceSnapshotFromLivePayload,
+  getTokenLiveIntelligence,
+} from "@/lib/token-live-intelligence";
+import { syncTokenIntelligenceAcrossPostCaches } from "@/lib/token-intelligence-cache";
+import {
   Post,
   Comment,
   ReactionType,
@@ -796,6 +801,7 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
     snapshotVersion > 0 && snapshotVersion < postVersion;
   const postHasResolvedBundleEvidence = hasResolvedBundleEvidence({
     bundleRiskLabel: post.bundleRiskLabel,
+    bundleScanCompletedAt: post.bundleScanCompletedAt,
     bundledWalletCount: post.bundledWalletCount,
     estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
     bundleClusters: post.bundleClusters,
@@ -1793,7 +1799,7 @@ export function PostCard({
   const shouldShowIntelligenceStrip = hasContractAddress || hasTokenIntelligence;
   const bundleScanPending = isBundleScanPending({
     bundleRiskLabel: post.bundleRiskLabel,
-    tokenRiskScore: post.tokenRiskScore,
+    bundleScanCompletedAt: post.bundleScanCompletedAt,
     bundledWalletCount: post.bundledWalletCount,
     estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
     bundleClusters: post.bundleClusters,
@@ -1829,6 +1835,35 @@ export function PostCard({
     : normalizedBundledSupplyPct === "--"
       ? normalizedBundleRiskLabel
       : `${normalizedBundleRiskLabel} | ${normalizedBundledSupplyPct}`;
+  useEffect(() => {
+    if (!isInViewport) return;
+    if (!post.contractAddress || post.chainType !== "solana") return;
+    if (!bundleScanPending) return;
+
+    let cancelled = false;
+
+    const refreshVisibleBundleIntelligence = async () => {
+      try {
+        const live = await getTokenLiveIntelligence(post.contractAddress!, {
+          freshBundle: true,
+          timeoutMs: 12_000,
+        });
+        if (cancelled) return;
+        syncTokenIntelligenceAcrossPostCaches(
+          queryClient,
+          buildTokenIntelligenceSnapshotFromLivePayload(post.contractAddress!, live)
+        );
+      } catch {
+        // Keep placeholder state without surfacing noisy request errors.
+      }
+    };
+
+    void refreshVisibleBundleIntelligence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bundleScanPending, isInViewport, post.chainType, post.contractAddress, queryClient]);
   const threadTotal = post.threadCount ?? commentCount;
   const traderTier =
     post.author.reputationTier ??

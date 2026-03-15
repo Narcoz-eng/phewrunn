@@ -423,6 +423,7 @@ function mergePostWithCachedRealtimeState(
   let nextSentimentScore = post.sentimentScore;
   let nextTokenRiskScore = post.tokenRiskScore;
   let nextBundleRiskLabel = post.bundleRiskLabel;
+  let nextBundleScanCompletedAt = post.bundleScanCompletedAt ?? null;
   let nextLiquidity = post.liquidity;
   let nextVolume24h = post.volume24h;
   let nextHolderCount = post.holderCount;
@@ -452,12 +453,14 @@ function mergePostWithCachedRealtimeState(
     cachedIntelligenceVersion > 0 && cachedIntelligenceVersion > fetchedIntelligenceVersion;
   const fetchedBundleLooksPlaceholder = isBundlePlaceholderState({
     bundleRiskLabel: post.bundleRiskLabel,
+    bundleScanCompletedAt: post.bundleScanCompletedAt,
     bundledWalletCount: post.bundledWalletCount,
     estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
     bundleClusters: post.bundleClusters,
   });
   const cachedHasResolvedBundleEvidence = hasResolvedBundleEvidence({
     bundleRiskLabel: cachedPost.bundleRiskLabel,
+    bundleScanCompletedAt: cachedPost.bundleScanCompletedAt,
     bundledWalletCount: cachedPost.bundledWalletCount,
     estimatedBundledSupplyPct: cachedPost.estimatedBundledSupplyPct,
     bundleClusters: cachedPost.bundleClusters,
@@ -514,6 +517,10 @@ function mergePostWithCachedRealtimeState(
   if (hasNewerCachedIntelligence) {
     if ((cachedPost.lastIntelligenceAt ?? null) !== (post.lastIntelligenceAt ?? null)) {
       nextLastIntelligenceAt = cachedPost.lastIntelligenceAt ?? null;
+      didChange = true;
+    }
+    if ((cachedPost.bundleScanCompletedAt ?? null) !== (post.bundleScanCompletedAt ?? null)) {
+      nextBundleScanCompletedAt = cachedPost.bundleScanCompletedAt ?? null;
       didChange = true;
     }
 
@@ -836,6 +843,10 @@ function mergePostWithCachedRealtimeState(
       nextLastIntelligenceAt = cachedPost.lastIntelligenceAt ?? null;
       didChange = true;
     }
+    if ((cachedPost.bundleScanCompletedAt ?? null) !== (post.bundleScanCompletedAt ?? null)) {
+      nextBundleScanCompletedAt = cachedPost.bundleScanCompletedAt ?? null;
+      didChange = true;
+    }
   }
 
   if (
@@ -986,6 +997,7 @@ function mergePostWithCachedRealtimeState(
     sentimentScore: nextSentimentScore,
     tokenRiskScore: nextTokenRiskScore,
     bundleRiskLabel: nextBundleRiskLabel,
+    bundleScanCompletedAt: nextBundleScanCompletedAt,
     liquidity: nextLiquidity,
     volume24h: nextVolume24h,
     holderCount: nextHolderCount,

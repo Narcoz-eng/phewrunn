@@ -21,6 +21,7 @@ export type TokenIntelligenceSnapshot = {
   name: string | null;
   imageUrl: string | null;
   dexscreenerUrl: string | null;
+  bundleScanCompletedAt?: string | null;
   liquidity: number | null;
   volume24h: number | null;
   holderCount: number | null;
@@ -116,6 +117,7 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     (hasResolvedBundleEvidence(token) &&
       isBundlePlaceholderState({
         bundleRiskLabel: post.bundleRiskLabel,
+        bundleScanCompletedAt: post.bundleScanCompletedAt,
         bundledWalletCount: post.bundledWalletCount,
         estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
         bundleClusters: post.bundleClusters,
@@ -132,6 +134,11 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
   const nextSentimentScore = pickMetric(post.sentimentScore, token.sentimentScore, preferIncoming);
   const nextTokenRiskScore = pickMetric(post.tokenRiskScore, token.tokenRiskScore, shouldPreferIncomingBundle);
   const nextBundleRiskLabel = pickText(post.bundleRiskLabel, token.bundleRiskLabel, shouldPreferIncomingBundle);
+  const nextBundleScanCompletedAt = pickText(
+    post.bundleScanCompletedAt,
+    token.bundleScanCompletedAt,
+    shouldPreferIncomingBundle
+  );
   const nextLiquidity = pickMetric(post.liquidity, token.liquidity, preferIncoming, { positive: true });
   const nextVolume24h = pickMetric(post.volume24h, token.volume24h, preferIncoming, { positive: true });
   const nextHolderCount = pickMetric(post.holderCount, token.holderCount, preferIncoming, { positive: true });
@@ -169,6 +176,7 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     nextSentimentScore === post.sentimentScore &&
     nextTokenRiskScore === post.tokenRiskScore &&
     nextBundleRiskLabel === post.bundleRiskLabel &&
+    nextBundleScanCompletedAt === (post.bundleScanCompletedAt ?? null) &&
     nextLiquidity === post.liquidity &&
     nextVolume24h === post.volume24h &&
     nextHolderCount === post.holderCount &&
@@ -195,6 +203,7 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     sentimentScore: nextSentimentScore ?? null,
     tokenRiskScore: nextTokenRiskScore ?? null,
     bundleRiskLabel: nextBundleRiskLabel ?? null,
+    bundleScanCompletedAt: nextBundleScanCompletedAt ?? null,
     liquidity: nextLiquidity ?? null,
     volume24h: nextVolume24h ?? null,
     holderCount: nextHolderCount ?? null,

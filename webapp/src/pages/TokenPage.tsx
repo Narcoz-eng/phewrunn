@@ -15,6 +15,10 @@ import { useSession } from "@/lib/auth-client";
 import { readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
 import { syncTokenIntelligenceAcrossPostCaches } from "@/lib/token-intelligence-cache";
 import {
+  buildTokenIntelligenceSnapshotFromLivePayload,
+  getTokenLiveIntelligence,
+} from "@/lib/token-live-intelligence";
+import {
   Area,
   AreaChart,
   CartesianGrid,
@@ -158,6 +162,7 @@ type TokenPageData = {
   bundledWalletCount: number | null;
   estimatedBundledSupplyPct: number | null;
   bundleRiskLabel: string | null;
+  bundleScanCompletedAt: string | null;
   tokenRiskScore: number | null;
   sentimentScore: number | null;
   radarScore: number | null;
@@ -213,6 +218,7 @@ type TokenLiveData = {
   priceChange24hPct: number | null;
   buys24h: number | null;
   sells24h: number | null;
+  bundleScanCompletedAt: string | null;
   updatedAt: string;
 };
 
@@ -644,6 +650,8 @@ function mergeTokenPageDataWithCached(
     bundleRiskLabel: canReuseCachedIntelligence
       ? live.bundleRiskLabel ?? cached.bundleRiskLabel
       : live.bundleRiskLabel ?? null,
+    bundleScanCompletedAt:
+      live.bundleScanCompletedAt ?? cached.bundleScanCompletedAt ?? null,
     holderCountSource:
       hasResolvedHolderCount(live.holderCount, live.holderCountSource)
         ? live.holderCountSource ?? cached.holderCountSource
@@ -708,6 +716,7 @@ function mergeTokenPageDataWithLiveSnapshot(
   const topHolders = mergeTopHolderSnapshots(live.topHolders, current.topHolders);
   const devWallet = live.devWallet ? mergeHolderSnapshot(live.devWallet, current.devWallet) : current.devWallet;
   const bundleClusters = live.bundleClusters.length > 0 ? live.bundleClusters : current.bundleClusters;
+  const bundleScanCompletedAt = live.bundleScanCompletedAt ?? current.bundleScanCompletedAt ?? null;
 
   return {
     ...current,
@@ -727,6 +736,7 @@ function mergeTokenPageDataWithLiveSnapshot(
     bundledWalletCount,
     estimatedBundledSupplyPct,
     bundleRiskLabel,
+    bundleScanCompletedAt,
     tokenRiskScore,
     topHolders,
     devWallet,
@@ -820,7 +830,20 @@ export default function TokenPage() {
   });
 
   const liveTokenQuery = useQuery<TokenLiveData>({
-    queryKey: ["token-live", tokenAddress],
+    queryKey: [
+      "token-live",
+      tokenAddress,
+      token &&
+      isBundleScanPending({
+        bundleRiskLabel: token.risk.bundleRiskLabel,
+        bundleScanCompletedAt: token.bundleScanCompletedAt,
+        bundledWalletCount: token.risk.bundledWalletCount,
+        estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
+        bundleClusters: token.bundleClusters,
+      })
+        ? "fresh-bundle"
+        : "cached",
+    ],
     enabled: Boolean(tokenAddress && token?.id),
     staleTime: 6_000,
     gcTime: 5 * 60_000,
@@ -831,23 +854,19 @@ export default function TokenPage() {
     refetchInterval: 10_000,
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
-      const response = await api.raw(`/api/tokens/${tokenAddress}/live`, {
-        method: "GET",
-        cache: "default",
-        timeout: 15_000,
-      });
-
-      if (!response.ok) {
-        const payload = await response.text().catch(() => "");
-        throw new Error(payload || `Live token request failed (${response.status})`);
-      }
-
-      const payload = (await response.json().catch(() => null)) as { data?: TokenLiveData } | null;
-      if (!payload?.data) {
-        throw new Error("Live token payload missing");
-      }
-
-      return payload.data;
+      return getTokenLiveIntelligence(tokenAddress, {
+        freshBundle: Boolean(
+          token &&
+            isBundleScanPending({
+              bundleRiskLabel: token.risk.bundleRiskLabel,
+              bundleScanCompletedAt: token.bundleScanCompletedAt,
+              bundledWalletCount: token.risk.bundledWalletCount,
+              estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
+              bundleClusters: token.bundleClusters,
+            })
+        ),
+        timeoutMs: 15_000,
+      }) as Promise<TokenLiveData>;
     },
   });
 
@@ -856,6 +875,12 @@ export default function TokenPage() {
     queryClient.setQueryData<TokenPageData | undefined>(tokenQueryKey, (current) =>
       current ? mergeTokenPageDataWithLiveSnapshot(current, liveTokenQuery.data) : current
     );
+    if (tokenAddress) {
+      syncTokenIntelligenceAcrossPostCaches(
+        queryClient,
+        buildTokenIntelligenceSnapshotFromLivePayload(tokenAddress, liveTokenQuery.data)
+      );
+    }
   }, [liveTokenQuery.data, queryClient, tokenQueryKey]);
 
   useEffect(() => {
@@ -1164,7 +1189,7 @@ export default function TokenPage() {
   const bundleScanPending = token
     ? isBundleScanPending({
         bundleRiskLabel: token.risk.bundleRiskLabel,
-        tokenRiskScore: token.risk.tokenRiskScore,
+        bundleScanCompletedAt: token.bundleScanCompletedAt,
         bundledWalletCount: token.risk.bundledWalletCount,
         estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
         bundleClusters: token.bundleClusters,

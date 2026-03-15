@@ -123,6 +123,7 @@ export interface Post {
   sentimentScore?: number | null;
   tokenRiskScore?: number | null;
   bundleRiskLabel?: string | null;
+  bundleScanCompletedAt?: string | null;
   liquidity?: number | null;
   volume24h?: number | null;
   holderCount?: number | null;

@@ -4,6 +4,7 @@ type BundleClusterLike = {
 
 export type BundleSignalLike = {
   bundleRiskLabel?: string | null;
+  bundleScanCompletedAt?: string | null;
   bundledWalletCount?: number | null;
   estimatedBundledSupplyPct?: number | null;
   bundleClusters?: BundleClusterLike[] | null;
@@ -18,6 +19,10 @@ function normalizeBundleRiskLabel(value: string | null | undefined): string {
 }
 
 export function hasResolvedBundleEvidence(input: BundleSignalLike): boolean {
+  if (typeof input.bundleScanCompletedAt === "string" && input.bundleScanCompletedAt.trim().length > 0) {
+    return true;
+  }
+
   if (
     Array.isArray(input.bundleClusters) &&
     input.bundleClusters.some((cluster) => hasPositiveFiniteNumber(cluster.estimatedSupplyPct))

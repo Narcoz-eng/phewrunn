@@ -1,0 +1,152 @@
+import { api } from "@/lib/api";
+import type { TokenBundleCluster } from "@/types";
+import type { TokenIntelligenceSnapshot } from "@/lib/token-intelligence-cache";
+
+export type TokenLiveIntelligencePayload = {
+  marketCap: number | null;
+  liquidity: number | null;
+  volume24h: number | null;
+  holderCount: number | null;
+  holderCountSource?: "stored" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
+  largestHolderPct: number | null;
+  top10HolderPct: number | null;
+  deployerSupplyPct: number | null;
+  bundledWalletCount: number | null;
+  estimatedBundledSupplyPct: number | null;
+  bundleRiskLabel: string | null;
+  tokenRiskScore: number | null;
+  topHolders: unknown[];
+  devWallet: unknown | null;
+  bundleClusters: TokenBundleCluster[];
+  dexscreenerUrl: string | null;
+  pairAddress: string | null;
+  dexId: string | null;
+  imageUrl: string | null;
+  symbol: string | null;
+  name: string | null;
+  priceUsd: number | null;
+  priceChange24hPct: number | null;
+  buys24h: number | null;
+  sells24h: number | null;
+  bundleScanCompletedAt: string | null;
+  updatedAt: string;
+};
+
+const TOKEN_LIVE_RESOLVED_CACHE_TTL_MS = import.meta.env.PROD ? 18_000 : 5_000;
+const TOKEN_LIVE_PENDING_CACHE_TTL_MS = import.meta.env.PROD ? 4_000 : 1_500;
+
+const tokenLiveCache = new Map<
+  string,
+  {
+    data: TokenLiveIntelligencePayload;
+    expiresAtMs: number;
+  }
+>();
+const tokenLiveInFlight = new Map<string, Promise<TokenLiveIntelligencePayload>>();
+
+function normalizeTokenAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+function buildTokenLiveCacheKey(address: string, freshBundle: boolean): string {
+  return `${normalizeTokenAddress(address)}:${freshBundle ? "fresh" : "default"}`;
+}
+
+function readCachedTokenLivePayload(cacheKey: string): TokenLiveIntelligencePayload | null {
+  const cached = tokenLiveCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAtMs <= Date.now()) {
+    tokenLiveCache.delete(cacheKey);
+    return null;
+  }
+  return cached.data;
+}
+
+export async function getTokenLiveIntelligence(
+  address: string,
+  options?: { freshBundle?: boolean; timeoutMs?: number }
+): Promise<TokenLiveIntelligencePayload> {
+  const freshBundle = Boolean(options?.freshBundle);
+  const cacheKey = buildTokenLiveCacheKey(address, freshBundle);
+  const cached = readCachedTokenLivePayload(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const inFlight = tokenLiveInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async () => {
+    const endpoint = `/api/tokens/${address}/live${freshBundle ? "?fresh=1" : ""}`;
+    const response = await api.raw(endpoint, {
+      method: "GET",
+      cache: "no-store",
+      timeout: options?.timeoutMs ?? (freshBundle ? 12_000 : 9_000),
+    });
+
+    if (!response.ok) {
+      const payload = await response.text().catch(() => "");
+      throw new Error(payload || `Live token request failed (${response.status})`);
+    }
+
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          data?: TokenLiveIntelligencePayload;
+        }
+      | null;
+
+    if (!payload?.data) {
+      throw new Error("Live token payload missing");
+    }
+
+    tokenLiveCache.set(cacheKey, {
+      data: payload.data,
+      expiresAtMs:
+        Date.now() +
+        (payload.data.bundleScanCompletedAt
+          ? TOKEN_LIVE_RESOLVED_CACHE_TTL_MS
+          : TOKEN_LIVE_PENDING_CACHE_TTL_MS),
+    });
+
+    return payload.data;
+  })().finally(() => {
+    tokenLiveInFlight.delete(cacheKey);
+  });
+
+  tokenLiveInFlight.set(cacheKey, request);
+  return request;
+}
+
+export function buildTokenIntelligenceSnapshotFromLivePayload(
+  address: string,
+  payload: TokenLiveIntelligencePayload
+): TokenIntelligenceSnapshot {
+  return {
+    address,
+    symbol: payload.symbol,
+    name: payload.name,
+    imageUrl: payload.imageUrl,
+    dexscreenerUrl: payload.dexscreenerUrl,
+    bundleScanCompletedAt: payload.bundleScanCompletedAt,
+    liquidity: payload.liquidity,
+    volume24h: payload.volume24h,
+    holderCount: payload.holderCount,
+    largestHolderPct: payload.largestHolderPct,
+    top10HolderPct: payload.top10HolderPct,
+    bundledWalletCount: payload.bundledWalletCount,
+    estimatedBundledSupplyPct: payload.estimatedBundledSupplyPct,
+    bundleRiskLabel: payload.bundleRiskLabel,
+    tokenRiskScore: payload.tokenRiskScore,
+    sentimentScore: null,
+    confidenceScore: null,
+    hotAlphaScore: null,
+    earlyRunnerScore: null,
+    highConvictionScore: null,
+    lastIntelligenceAt: payload.bundleScanCompletedAt ?? payload.updatedAt ?? null,
+    bundleClusters: payload.bundleClusters ?? [],
+  };
+}
