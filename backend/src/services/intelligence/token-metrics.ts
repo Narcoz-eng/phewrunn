@@ -905,7 +905,10 @@ export async function analyzeSolanaTokenDistribution(
       ], { timeoutMs: HOLDER_SCAN_RPC_TIMEOUT_MS }),
       fetchBirdeyeHolderCount(mintAddress),
       getHeliusTokenMetadataForMint({ mint: mintAddress, chainType: "solana" }),
-      getHeliusCurrentHolderOwnerCount({ mint: mintAddress }),
+      // Cap at 3 pages (~3000 accounts, ~900ms) so the Promise.all resolves within
+      // the 5s distribution section timeout. For tokens with more holders, returns null
+      // and we fall through to the largestAccounts lower-bound count.
+      getHeliusCurrentHolderOwnerCount({ mint: mintAddress, maxPages: 3 }),
       getRpcMintAuthorities(mintAddress),
       getCachedMarketCapSnapshot(mintAddress, "solana"),
     ]);
