@@ -445,6 +445,27 @@ export default function Profile() {
       return failureCount < 1;
     },
   });
+  const shouldBackfillProfileCounters =
+    Boolean(session?.user?.id) &&
+    (!hasCompleteProfileCounters(user ?? sessionBackedProfile) ||
+      hasOnlyZeroProfileCounters(user ?? sessionBackedProfile) ||
+      hasSuspiciousZeroSocialCounts(user ?? sessionBackedProfile));
+  const { data: publicProfileCounters } = useQuery({
+    queryKey: ["profile", "me", "public-counters", session?.user?.id ?? "anonymous"],
+    queryFn: async () => {
+      if (!session?.user?.id) {
+        throw new Error("User ID is required");
+      }
+      return await api.get<UserProfileCountersPayload>(`/api/users/${session.user.id}`);
+    },
+    enabled: shouldBackfillProfileCounters,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
 
   // Update edit form state when user data loads
   useEffect(() => {
@@ -607,6 +628,42 @@ export default function Profile() {
       lossesCount: user.lossesCount ?? null,
     });
   }, [isUserFetched, meProfileCacheKey, queryClient, user]);
+
+  useEffect(() => {
+    if (!publicProfileCounters || !session?.user?.id) return;
+
+    const currentUser =
+      queryClient.getQueryData<ExtendedUser>(profileMeQueryKey) ??
+      sessionBackedProfile;
+    if (!currentUser) return;
+
+    const mergedUser = mergeProfileCounters(currentUser, publicProfileCounters);
+    queryClient.setQueryData(profileMeQueryKey, mergedUser);
+    if (meProfileCacheKey) {
+      writeSessionCache(meProfileCacheKey, mergedUser);
+    }
+    syncProfileSnapshotAcrossCaches(queryClient, {
+      id: mergedUser.id,
+      username: mergedUser.username ?? null,
+      image: mergedUser.image ?? null,
+      level: mergedUser.level,
+      xp: mergedUser.xp,
+      isVerified: mergedUser.isVerified,
+      createdAt: mergedUser.createdAt,
+      followersCount: mergedUser.followersCount ?? null,
+      followingCount: mergedUser.followingCount ?? null,
+      postsCount: mergedUser.postsCount ?? null,
+      winsCount: mergedUser.winsCount ?? null,
+      lossesCount: mergedUser.lossesCount ?? null,
+    });
+  }, [
+    meProfileCacheKey,
+    profileMeQueryKey,
+    publicProfileCounters,
+    queryClient,
+    session?.user?.id,
+    sessionBackedProfile,
+  ]);
 
   useEffect(() => {
     if (!session?.user?.id || !isPostsFetched) return;
