@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
+import { compress } from "hono/compress";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import "./env.js";
@@ -96,7 +97,10 @@ app.use(
   })
 );
 
-// 3. CORS - Production-ready, validates origin against allowlist
+// 3. Response Compression - gzip/deflate for all responses (60-80% bandwidth reduction)
+app.use("*", compress());
+
+// 4. CORS - Production-ready, validates origin against allowlist
 const allowed = [
   /^http:\/\/localhost(:\d+)?$/,
   /^http:\/\/127\.0\.0\.1(:\d+)?$/,
@@ -118,7 +122,7 @@ app.use(
   })
 );
 
-// 3.5. Prisma readiness gate - ensure DB is connected before serving API requests
+// 4.5. Prisma readiness gate - ensure DB is connected before serving API requests
 // Uses a short timeout so requests don't hang if guardrails are slow
 let prismaReady = false;
 const INTELLIGENCE_PRIORITY_LOOP_ENABLED =
@@ -219,11 +223,11 @@ app.use("/api/*", async (c, next) => {
   return next();
 });
 
-// 4. Input Sanitization - sanitize request bodies and query params
+// 5. Input Sanitization - sanitize request bodies and query params
 app.use("/api/*", sanitizeBody());
 app.use("/api/*", sanitizeQuery());
 
-// 5. CSRF Protection - validate origin for state-changing requests
+// 6. CSRF Protection - validate origin for state-changing requests
 app.use("/api/*", async (c, next) => {
   // Explicitly exempt auth bootstrap and session teardown endpoints.
   // privy-sync/wallet: may be called before a cookie session exists.
@@ -234,7 +238,7 @@ app.use("/api/*", async (c, next) => {
   return csrfProtection()(c, next);
 });
 
-// 6. Global API Rate Limit - 100 requests per minute per client
+// 7. Global API Rate Limit - 100 requests per minute per client
 // Protects against abuse and DoS
 app.use("/api/*", async (c, next) => {
   // High-frequency market polling + quote refresh endpoints should not starve the rest
@@ -254,7 +258,7 @@ app.use("/api/*", async (c, next) => {
   return apiRateLimit(c, next);
 });
 
-// 7. Endpoint-specific rate limits (more restrictive, applied before general limit)
+// 8. Endpoint-specific rate limits (more restrictive, applied before general limit)
 // Auth endpoints - 10 req/5min (brute force protection)
 app.use("/api/auth/*", async (c, next) => {
   return authRateLimit(c, next);
@@ -287,14 +291,14 @@ app.use("/api/posts/jupiter/fee-confirm", bodySizeLimit(8 * 1024, "Trade confirm
 app.use("/api/posts/chart/candles", bodySizeLimit(8 * 1024, "Chart payload is too large"));
 app.use("/api/posts/portfolio", bodySizeLimit(12 * 1024, "Portfolio payload is too large"));
 
-// 8. Structured Logging
+// 9. Structured Logging
 app.use("*", structuredLogger({
   level: isProduction ? "slow" : "all",
   slowThreshold: 1000,
   skipPaths: ["/health"],
 }));
 
-// 9. Global error handler - doesn't leak stack traces in production
+// 10. Global error handler - doesn't leak stack traces in production
 app.onError(createErrorHandler());
 
 // 10. Better Auth middleware - populates user from session cookie
