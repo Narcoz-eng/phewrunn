@@ -23,6 +23,7 @@ import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
+import { syncPostsIntoQueryCache } from "@/lib/post-query-cache";
 
 interface FeedPage {
   items: Post[];
@@ -1703,6 +1704,10 @@ export default function Feed() {
     }
     return sortPostsNewestFirst(mergedPosts);
   }, [activeTab, postsPages?.pages]);
+  useEffect(() => {
+    if (!posts.length) return;
+    syncPostsIntoQueryCache(queryClient, posts);
+  }, [posts, queryClient]);
   const hasLiveOverlay = useCallback(
     () => isOverlayOpen || hasActiveTradeDialogMarker(),
     [isOverlayOpen]

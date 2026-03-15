@@ -9,6 +9,20 @@ type TokenPageLike = {
   recentCalls?: Post[];
 };
 
+type SessionCacheEnvelope<T> = {
+  cachedAt: number;
+  data?: T;
+  page?: {
+    items?: T extends Post[] ? Post[] : Post[];
+  };
+};
+
+const FEED_FIRST_PAGE_CACHE_PREFIX = "phew.feed.first-page.v3";
+const PROFILE_POSTS_CACHE_PREFIX = "phew.profile.posts:";
+const PROFILE_REPOSTS_CACHE_PREFIX = "phew.profile.reposts:";
+const USER_POSTS_CACHE_PREFIX = "phew.user-posts:";
+const USER_REPOSTS_CACHE_PREFIX = "phew.user-reposts:";
+
 function dedupePushPost(target: Post[], seenIds: Set<string>, candidate: Post | null | undefined): void {
   if (!candidate?.id || seenIds.has(candidate.id)) {
     return;
@@ -23,16 +37,95 @@ function dedupePushPostArray(target: Post[], seenIds: Set<string>, candidates: P
   }
 }
 
-export function collectCachedPosts(queryClient: QueryClient): Post[] {
+function collectSessionCachedPosts(): Post[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
   const posts: Post[] = [];
   const seenIds = new Set<string>();
+
+  try {
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (
+        typeof key !== "string" ||
+        (!key.startsWith(FEED_FIRST_PAGE_CACHE_PREFIX) &&
+          !key.startsWith(PROFILE_POSTS_CACHE_PREFIX) &&
+          !key.startsWith(PROFILE_REPOSTS_CACHE_PREFIX) &&
+          !key.startsWith(USER_POSTS_CACHE_PREFIX) &&
+          !key.startsWith(USER_REPOSTS_CACHE_PREFIX))
+      ) {
+        continue;
+      }
+
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw) as SessionCacheEnvelope<Post[]>;
+      if (key.startsWith(FEED_FIRST_PAGE_CACHE_PREFIX)) {
+        dedupePushPostArray(posts, seenIds, parsed?.page?.items);
+        continue;
+      }
+
+      dedupePushPostArray(posts, seenIds, parsed?.data);
+    }
+  } catch {
+    return posts;
+  }
+
+  return posts;
+}
+
+function pickPreferredPost(existing: Post | undefined, candidate: Post): Post {
+  if (!existing) {
+    return candidate;
+  }
+
+  const existingIntelligenceVersion = existing.lastIntelligenceAt ? new Date(existing.lastIntelligenceAt).getTime() : 0;
+  const candidateIntelligenceVersion = candidate.lastIntelligenceAt ? new Date(candidate.lastIntelligenceAt).getTime() : 0;
+  if (candidateIntelligenceVersion > existingIntelligenceVersion) {
+    return candidate;
+  }
+
+  const existingRichness =
+    Number(Boolean(existing.currentMcap)) +
+    Number(Boolean(existing.mcap1h)) +
+    Number(Boolean(existing.mcap6h)) +
+    Number(Boolean(existing.tokenRiskScore)) +
+    Number(Boolean(existing.bundleRiskLabel)) +
+    Number(Boolean(existing.confidenceScore));
+  const candidateRichness =
+    Number(Boolean(candidate.currentMcap)) +
+    Number(Boolean(candidate.mcap1h)) +
+    Number(Boolean(candidate.mcap6h)) +
+    Number(Boolean(candidate.tokenRiskScore)) +
+    Number(Boolean(candidate.bundleRiskLabel)) +
+    Number(Boolean(candidate.confidenceScore));
+
+  return candidateRichness > existingRichness ? candidate : existing;
+}
+
+export function collectCachedPosts(queryClient: QueryClient): Post[] {
+  const postsById = new Map<string, Post>();
+  const rememberPost = (candidate: Post | null | undefined) => {
+    if (!candidate?.id) {
+      return;
+    }
+    postsById.set(candidate.id, pickPreferredPost(postsById.get(candidate.id), candidate));
+  };
+  const rememberPostArray = (candidates: Post[] | null | undefined) => {
+    for (const candidate of candidates ?? []) {
+      rememberPost(candidate);
+    }
+  };
 
   const feedEntries = queryClient.getQueriesData<InfiniteData<FeedPageLike>>({
     queryKey: ["posts"],
   });
   for (const [, data] of feedEntries) {
     for (const page of data?.pages ?? []) {
-      dedupePushPostArray(posts, seenIds, page.items);
+      rememberPostArray(page.items);
     }
   }
 
@@ -46,7 +139,7 @@ export function collectCachedPosts(queryClient: QueryClient): Post[] {
   for (const prefix of arrayPrefixes) {
     const entries = queryClient.getQueriesData<Post[]>({ queryKey: prefix });
     for (const [, data] of entries) {
-      dedupePushPostArray(posts, seenIds, data);
+      rememberPostArray(data);
     }
   }
 
@@ -54,16 +147,21 @@ export function collectCachedPosts(queryClient: QueryClient): Post[] {
     queryKey: ["token-page"],
   });
   for (const [, data] of tokenPageEntries) {
-    dedupePushPostArray(posts, seenIds, data?.recentCalls);
+    rememberPostArray(data?.recentCalls);
   }
 
   const detailEntries = queryClient.getQueriesData<Post>({
     queryKey: ["post"],
   });
   for (const [, data] of detailEntries) {
-    dedupePushPost(posts, seenIds, data);
+    rememberPost(data);
   }
 
+  for (const post of collectSessionCachedPosts()) {
+    rememberPost(post);
+  }
+
+  const posts = Array.from(postsById.values());
   posts.sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   return posts;
 }
@@ -95,4 +193,11 @@ export function getCachedPostsForAuthor(queryClient: QueryClient, identifier: st
       username === normalizedIdentifier
     );
   });
+}
+
+export function syncPostsIntoQueryCache(queryClient: QueryClient, posts: Post[] | null | undefined): void {
+  for (const post of posts ?? []) {
+    if (!post?.id) continue;
+    queryClient.setQueryData<Post>(["post", post.id], (existing) => pickPreferredPost(existing, post));
+  }
 }

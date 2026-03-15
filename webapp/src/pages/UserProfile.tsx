@@ -4,8 +4,6 @@ import {
   useQuery,
   useMutation,
   useQueryClient,
-  type InfiniteData,
-  type QueryClient,
 } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
@@ -39,6 +37,11 @@ import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import {
+  getBestCachedProfileSnapshot,
+  syncProfileSnapshotAcrossCaches,
+} from "@/lib/profile-cache";
+import { getCachedPostsForAuthor, syncPostsIntoQueryCache } from "@/lib/post-query-cache";
 import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
 
 interface UserProfileData {
@@ -68,44 +71,20 @@ type MainTab = "posts" | "reposts";
 type FollowMutationResponse = { following: boolean; followerCount: number };
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_PROFILE_POSTS_CACHE_TTL_MS = 45_000;
-type CachedFeedPage = {
-  items: Post[];
-  nextCursor: string | null;
-  hasMore: boolean;
-};
 
-function collectCachedFeedPosts(queryClient: QueryClient): Post[] {
-  const queryEntries = queryClient.getQueriesData<InfiniteData<CachedFeedPage>>({
-    queryKey: ["posts"],
-  });
-  const seenIds = new Set<string>();
-  const posts: Post[] = [];
-
-  for (const [, data] of queryEntries) {
-    for (const page of data?.pages ?? []) {
-      for (const post of page.items ?? []) {
-        if (!post?.id || seenIds.has(post.id)) continue;
-        seenIds.add(post.id);
-        posts.push(post);
-      }
-    }
+function hasSuspiciousZeroPublicProfileCounts(profile: UserProfileData | null | undefined): boolean {
+  if (!profile?.stats) {
+    return true;
   }
 
-  posts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return posts;
-}
+  const { followers, following, posts, wins, losses } = profile.stats;
+  const counts = [followers, following, posts, wins, losses];
 
-function getCachedFeedPostsForProfile(queryClient: QueryClient, identifier: string | undefined): Post[] {
-  if (!identifier) return [];
-  const normalizedIdentifier = identifier.trim().toLowerCase();
-  return collectCachedFeedPosts(queryClient).filter((post) => {
-    const username = post.author.username?.trim().toLowerCase();
-    return (
-      post.authorId === identifier ||
-      post.author.id === identifier ||
-      username === normalizedIdentifier
-    );
-  });
+  if (!counts.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return true;
+  }
+
+  return followers === 0 && following === 0;
 }
 
 export default function UserProfile() {
@@ -162,6 +141,31 @@ export default function UserProfile() {
         : null,
     [userRepostsCacheKey]
   );
+  const cachedProfileSnapshot = useMemo(
+    () => getBestCachedProfileSnapshot(queryClient, userId, cachedUserProfile?.username ?? null),
+    [cachedUserProfile?.username, queryClient, userId]
+  );
+  const shouldRefetchUserProfileOnMount = useMemo(() => {
+    if (!cachedUserProfile) {
+      return true;
+    }
+
+    if (!hasSuspiciousZeroPublicProfileCounts(cachedUserProfile)) {
+      return false;
+    }
+
+    return !(
+      typeof cachedProfileSnapshot?.followersCount === "number" &&
+      Number.isFinite(cachedProfileSnapshot.followersCount) &&
+      typeof cachedProfileSnapshot?.followingCount === "number" &&
+      Number.isFinite(cachedProfileSnapshot.followingCount) &&
+      (cachedProfileSnapshot.followersCount > 0 || cachedProfileSnapshot.followingCount > 0)
+    );
+  }, [cachedProfileSnapshot, cachedUserProfile]);
+  const cachedFeedPostsForProfile = useMemo(
+    () => getCachedPostsForAuthor(queryClient, userId),
+    [queryClient, userId]
+  );
 
   // Fetch user profile
   const {
@@ -175,15 +179,87 @@ export default function UserProfile() {
       if (!userId) {
         throw new Error("User not found");
       }
-      return await api.get<UserProfileData>(`/api/users/${userId}`);
+      const profile = await api.get<UserProfileData>(`/api/users/${userId}`);
+      if (!cachedProfileSnapshot) {
+        return profile;
+      }
+      return {
+        ...profile,
+        username: profile.username ?? cachedProfileSnapshot.username ?? null,
+        image: profile.image ?? cachedProfileSnapshot.image ?? null,
+        level:
+          typeof profile.level === "number" && Number.isFinite(profile.level)
+            ? profile.level
+            : cachedProfileSnapshot.level ?? 0,
+        xp:
+          typeof profile.xp === "number" && Number.isFinite(profile.xp)
+            ? profile.xp
+            : cachedProfileSnapshot.xp ?? 0,
+        isVerified:
+          typeof profile.isVerified === "boolean"
+            ? profile.isVerified
+            : cachedProfileSnapshot.isVerified,
+        createdAt: profile.createdAt ?? cachedProfileSnapshot.createdAt ?? new Date(0).toISOString(),
+        stats: {
+          ...profile.stats,
+          posts:
+            typeof profile.stats?.posts === "number" && Number.isFinite(profile.stats.posts)
+              ? profile.stats.posts
+              : cachedProfileSnapshot.postsCount ?? 0,
+          followers:
+            typeof profile.stats?.followers === "number" && Number.isFinite(profile.stats.followers)
+              ? profile.stats.followers
+              : cachedProfileSnapshot.followersCount ?? 0,
+          following:
+            typeof profile.stats?.following === "number" && Number.isFinite(profile.stats.following)
+              ? profile.stats.following
+              : cachedProfileSnapshot.followingCount ?? 0,
+          wins:
+            typeof profile.stats?.wins === "number" && Number.isFinite(profile.stats.wins)
+              ? profile.stats.wins
+              : cachedProfileSnapshot.winsCount ?? 0,
+          losses:
+            typeof profile.stats?.losses === "number" && Number.isFinite(profile.stats.losses)
+              ? profile.stats.losses
+              : cachedProfileSnapshot.lossesCount ?? 0,
+        },
+      };
     },
-    initialData: cachedUserProfile ?? undefined,
+    initialData:
+      cachedUserProfile
+        ? {
+            ...cachedUserProfile,
+            stats: {
+              ...cachedUserProfile.stats,
+              posts:
+                typeof cachedUserProfile.stats?.posts === "number" && Number.isFinite(cachedUserProfile.stats.posts)
+                  ? cachedUserProfile.stats.posts
+                  : cachedProfileSnapshot?.postsCount ?? 0,
+              followers:
+                typeof cachedUserProfile.stats?.followers === "number" && Number.isFinite(cachedUserProfile.stats.followers)
+                  ? cachedUserProfile.stats.followers
+                  : cachedProfileSnapshot?.followersCount ?? 0,
+              following:
+                typeof cachedUserProfile.stats?.following === "number" && Number.isFinite(cachedUserProfile.stats.following)
+                  ? cachedUserProfile.stats.following
+                  : cachedProfileSnapshot?.followingCount ?? 0,
+              wins:
+                typeof cachedUserProfile.stats?.wins === "number" && Number.isFinite(cachedUserProfile.stats.wins)
+                  ? cachedUserProfile.stats.wins
+                  : cachedProfileSnapshot?.winsCount ?? 0,
+              losses:
+                typeof cachedUserProfile.stats?.losses === "number" && Number.isFinite(cachedUserProfile.stats.losses)
+                  ? cachedUserProfile.stats.losses
+                  : cachedProfileSnapshot?.lossesCount ?? 0,
+            },
+          }
+        : undefined,
     initialDataUpdatedAt: cachedUserProfile ? Date.now() : undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
     refetchInterval: false,
-    refetchOnMount: cachedUserProfile ? false : true,
+    refetchOnMount: shouldRefetchUserProfileOnMount,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 0,
@@ -202,7 +278,7 @@ export default function UserProfile() {
           ? readSessionCache<Post[]>(userPostsCacheKey, USER_PROFILE_POSTS_CACHE_TTL_MS)
           : null;
       const currentPosts = queryClient.getQueryData<Post[]>(userPostsQueryKey);
-      const feedFallbackPosts = getCachedFeedPostsForProfile(queryClient, userId);
+      const feedFallbackPosts = getCachedPostsForAuthor(queryClient, user?.username ?? userId);
       const fallbackPosts =
         sessionCachedPosts && sessionCachedPosts.length > 0
           ? sessionCachedPosts
@@ -228,14 +304,14 @@ export default function UserProfile() {
     },
     initialData:
       cachedUserPosts ?? (() => {
-        const fallbackPosts = getCachedFeedPostsForProfile(queryClient, userId);
+        const fallbackPosts = cachedFeedPostsForProfile;
         return fallbackPosts.length > 0 ? fallbackPosts : undefined;
       })(),
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
     refetchInterval: false,
-    refetchOnMount: cachedUserPosts ? false : true,
+    refetchOnMount: cachedUserPosts || cachedFeedPostsForProfile.length > 0 ? false : true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 0,
@@ -289,17 +365,33 @@ export default function UserProfile() {
   useEffect(() => {
     if (!user || !isUserFetched || !userProfileCacheKey) return;
     writeSessionCache(userProfileCacheKey, user);
-  }, [isUserFetched, user, userProfileCacheKey]);
+    syncProfileSnapshotAcrossCaches(queryClient, {
+      id: user.id ?? userId ?? "",
+      username: user.username ?? null,
+      image: user.image ?? null,
+      level: user.level,
+      xp: user.xp,
+      isVerified: user.isVerified,
+      createdAt: user.createdAt,
+      followersCount: user.stats.followers,
+      followingCount: user.stats.following,
+      postsCount: user.stats.posts,
+      winsCount: user.stats.wins,
+      lossesCount: user.stats.losses,
+    });
+  }, [isUserFetched, queryClient, user, userId, userProfileCacheKey]);
 
   useEffect(() => {
     if (!isPostsFetched || !userPostsCacheKey) return;
     writeSessionCache(userPostsCacheKey, posts);
-  }, [isPostsFetched, posts, userPostsCacheKey]);
+    syncPostsIntoQueryCache(queryClient, posts);
+  }, [isPostsFetched, posts, queryClient, userPostsCacheKey]);
 
   useEffect(() => {
     if (!isRepostsFetched || !userRepostsCacheKey) return;
     writeSessionCache(userRepostsCacheKey, reposts);
-  }, [isRepostsFetched, reposts, userRepostsCacheKey]);
+    syncPostsIntoQueryCache(queryClient, reposts);
+  }, [isRepostsFetched, queryClient, reposts, userRepostsCacheKey]);
 
   useEffect(() => {
     const canonicalUsername = user?.username?.trim().toLowerCase();
@@ -349,6 +441,20 @@ export default function UserProfile() {
             followers: result.followerCount,
           },
         };
+      });
+      syncProfileSnapshotAcrossCaches(queryClient, {
+        id: user?.id ?? userId ?? "",
+        username: user?.username ?? null,
+        image: user?.image ?? null,
+        level: user?.level,
+        xp: user?.xp,
+        isVerified: user?.isVerified,
+        createdAt: user?.createdAt,
+        followersCount: result.followerCount,
+        followingCount: user?.stats.following,
+        postsCount: user?.stats.posts,
+        winsCount: user?.stats.wins,
+        lossesCount: user?.stats.losses,
       });
 
       const syncPostFollowState = (prev?: Post[]) =>

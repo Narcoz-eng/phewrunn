@@ -55,7 +55,12 @@ import {
   getProfileHandleValidationMessage,
   normalizeProfileHandleInput,
 } from "@/lib/profile-path";
-import { getCachedPostsForAuthor } from "@/lib/post-query-cache";
+import { getCachedPostsForAuthor, syncPostsIntoQueryCache } from "@/lib/post-query-cache";
+import {
+  getBestCachedProfileSnapshot,
+  mergeProfileSnapshotIntoExtendedUser,
+  syncProfileSnapshotAcrossCaches,
+} from "@/lib/profile-cache";
 import { PhewEditIcon } from "@/components/icons/PhewIcons";
 import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 
@@ -136,6 +141,32 @@ function hasCompleteProfileCounters(user: ExtendedUser | null | undefined): bool
   ].every(hasFiniteCount);
 }
 
+function hasOnlyZeroProfileCounters(user: ExtendedUser | null | undefined): boolean {
+  if (!user || !hasCompleteProfileCounters(user)) {
+    return false;
+  }
+
+  return (
+    user.followersCount === 0 &&
+    user.followingCount === 0 &&
+    user.postsCount === 0 &&
+    user.winsCount === 0 &&
+    user.lossesCount === 0
+  );
+}
+
+function hasSuspiciousZeroSocialCounts(user: ExtendedUser | null | undefined): boolean {
+  if (!user) {
+    return true;
+  }
+
+  if (!hasFiniteCount(user.followersCount) || !hasFiniteCount(user.followingCount)) {
+    return true;
+  }
+
+  return user.followersCount === 0 && user.followingCount === 0;
+}
+
 function mergeProfileCounters(
   user: ExtendedUser,
   profile: UserProfileCountersPayload | null | undefined
@@ -149,6 +180,35 @@ function mergeProfileCounters(
     postsCount: hasFiniteCount(stats?.posts) ? stats.posts : user.postsCount,
     winsCount: hasFiniteCount(stats?.wins) ? stats.wins : user.winsCount,
     lossesCount: hasFiniteCount(stats?.losses) ? stats.losses : user.lossesCount,
+  };
+}
+
+function mergeDerivedPostCounters(
+  user: ExtendedUser,
+  posts: Post[] | null | undefined
+): ExtendedUser {
+  if (!posts?.length) {
+    return user;
+  }
+
+  const settledPosts = posts.filter((post) => post.settled);
+  const winsCount = settledPosts.filter((post) => post.isWin).length;
+  const lossesCount = settledPosts.filter((post) => post.isWin === false).length;
+
+  return {
+    ...user,
+    postsCount:
+      hasFiniteCount(user.postsCount) && user.postsCount > 0
+        ? user.postsCount
+        : posts.length,
+    winsCount:
+      hasFiniteCount(user.winsCount) && user.winsCount > 0
+        ? user.winsCount
+        : winsCount,
+    lossesCount:
+      hasFiniteCount(user.lossesCount) && user.lossesCount > 0
+        ? user.lossesCount
+        : lossesCount,
   };
 }
 
@@ -222,9 +282,66 @@ export default function Profile() {
     () => (meProfileCacheKey ? readSessionCache<ExtendedUser>(meProfileCacheKey, PROFILE_ME_CACHE_TTL_MS) : null),
     [meProfileCacheKey]
   );
+  const cachedProfileSnapshot = useMemo(
+    () =>
+      getBestCachedProfileSnapshot(
+        queryClient,
+        session?.user?.id ?? cachedProfileBySession?.id ?? null,
+        session?.user?.username ?? cachedProfileBySession?.username ?? null
+      ),
+    [
+      cachedProfileBySession?.id,
+      cachedProfileBySession?.username,
+      queryClient,
+      session?.user?.id,
+      session?.user?.username,
+    ]
+  );
+  const profilePostFallbackIdentifier =
+    session?.user?.id ??
+    cachedProfileBySession?.id ??
+    cachedProfileSnapshot?.id ??
+    session?.user?.username ??
+    cachedProfileBySession?.username ??
+    cachedProfileSnapshot?.username ??
+    null;
+  const feedFallbackPosts = useMemo(
+    () => getCachedPostsForAuthor(queryClient, profilePostFallbackIdentifier),
+    [profilePostFallbackIdentifier, queryClient]
+  );
+  const cachedPosts = useMemo(
+    () =>
+      session?.user?.id
+        ? readSessionCache<Post[]>(`phew.profile.posts:${session.user.id}`, PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [session?.user?.id]
+  );
+  const cachedReposts = useMemo(
+    () =>
+      session?.user?.id
+        ? readSessionCache<Post[]>(`phew.profile.reposts:${session.user.id}`, PROFILE_POSTS_CACHE_TTL_MS)
+        : null,
+    [session?.user?.id]
+  );
+  const cachedWalletOverview = useMemo(
+    () =>
+      session?.user?.id
+        ? readSessionCache<WalletData>(`phew.profile.wallet:${session.user.id}`, PROFILE_WALLET_CACHE_TTL_MS)
+        : null,
+    [session?.user?.id]
+  );
+  const derivedCachedProfilePosts = useMemo(
+    () =>
+      cachedPosts && cachedPosts.length > 0
+        ? cachedPosts
+        : feedFallbackPosts.length > 0
+          ? feedFallbackPosts
+          : null,
+    [cachedPosts, feedFallbackPosts]
+  );
   const sessionBackedProfile = useMemo<ExtendedUser | null>(() => {
     if (!session?.user) return cachedProfileBySession;
-    return {
+    const baseProfile: ExtendedUser = {
       ...(cachedProfileBySession ?? {}),
       id: session.user.id,
       name: session.user.name,
@@ -249,39 +366,15 @@ export default function Profile() {
       winsCount: cachedProfileBySession?.winsCount,
       lossesCount: cachedProfileBySession?.lossesCount,
     };
-  }, [cachedProfileBySession, session?.user]);
-  const shouldRefetchProfileOnMount = !hasCompleteProfileCounters(sessionBackedProfile);
-  const cachedPosts = useMemo(
-    () =>
-      session?.user?.id
-        ? readSessionCache<Post[]>(`phew.profile.posts:${session.user.id}`, PROFILE_POSTS_CACHE_TTL_MS)
-        : null,
-    [session?.user?.id]
-  );
-  const cachedReposts = useMemo(
-    () =>
-      session?.user?.id
-        ? readSessionCache<Post[]>(`phew.profile.reposts:${session.user.id}`, PROFILE_POSTS_CACHE_TTL_MS)
-        : null,
-    [session?.user?.id]
-  );
-  const cachedWalletOverview = useMemo(
-    () =>
-      session?.user?.id
-        ? readSessionCache<WalletData>(`phew.profile.wallet:${session.user.id}`, PROFILE_WALLET_CACHE_TTL_MS)
-        : null,
-    [session?.user?.id]
-  );
-  const profilePostFallbackIdentifier =
-    sessionBackedProfile?.id ??
-    session?.user?.id ??
-    sessionBackedProfile?.username ??
-    session?.user?.username ??
-    null;
-  const feedFallbackPosts = useMemo(
-    () => getCachedPostsForAuthor(queryClient, profilePostFallbackIdentifier),
-    [profilePostFallbackIdentifier, queryClient]
-  );
+    return mergeDerivedPostCounters(
+      mergeProfileSnapshotIntoExtendedUser(baseProfile, cachedProfileSnapshot),
+      derivedCachedProfilePosts
+    );
+  }, [cachedProfileBySession, cachedProfileSnapshot, derivedCachedProfilePosts, session?.user]);
+  const shouldRefetchProfileOnMount =
+    !hasCompleteProfileCounters(sessionBackedProfile) ||
+    hasOnlyZeroProfileCounters(sessionBackedProfile) ||
+    hasSuspiciousZeroSocialCounts(sessionBackedProfile);
 
   // Fetch user data with React Query
   const {
@@ -298,14 +391,18 @@ export default function Profile() {
       }
       try {
         const userData = await api.get<ExtendedUser>("/api/me");
-        if (hasCompleteProfileCounters(userData) || !session?.user?.id) {
-          return userData;
+        const mergedUserData = mergeDerivedPostCounters(
+          mergeProfileSnapshotIntoExtendedUser(userData, cachedProfileSnapshot),
+          derivedCachedProfilePosts
+        );
+        if (hasCompleteProfileCounters(mergedUserData) || !session?.user?.id) {
+          return mergedUserData;
         }
         try {
           const profileData = await api.get<UserProfileCountersPayload>(`/api/users/${session.user.id}`);
-          return mergeProfileCounters(userData, profileData);
+          return mergeProfileCounters(mergedUserData, profileData);
         } catch {
-          return userData;
+          return mergedUserData;
         }
       } catch (error) {
         if (
@@ -495,17 +592,33 @@ export default function Profile() {
     if (meProfileCacheKey) {
       writeSessionCache(meProfileCacheKey, user);
     }
-  }, [isUserFetched, meProfileCacheKey, user]);
+    syncProfileSnapshotAcrossCaches(queryClient, {
+      id: user.id,
+      username: user.username ?? null,
+      image: user.image ?? null,
+      level: user.level,
+      xp: user.xp,
+      isVerified: user.isVerified,
+      createdAt: user.createdAt,
+      followersCount: user.followersCount ?? null,
+      followingCount: user.followingCount ?? null,
+      postsCount: user.postsCount ?? null,
+      winsCount: user.winsCount ?? null,
+      lossesCount: user.lossesCount ?? null,
+    });
+  }, [isUserFetched, meProfileCacheKey, queryClient, user]);
 
   useEffect(() => {
     if (!session?.user?.id || !isPostsFetched) return;
     writeSessionCache(`phew.profile.posts:${session.user.id}`, posts);
-  }, [isPostsFetched, posts, session?.user?.id]);
+    syncPostsIntoQueryCache(queryClient, posts);
+  }, [isPostsFetched, posts, queryClient, session?.user?.id]);
 
   useEffect(() => {
     if (!session?.user?.id || !isRepostsFetched) return;
     writeSessionCache(`phew.profile.reposts:${session.user.id}`, reposts);
-  }, [isRepostsFetched, reposts, session?.user?.id]);
+    syncPostsIntoQueryCache(queryClient, reposts);
+  }, [isRepostsFetched, queryClient, reposts, session?.user?.id]);
 
   useEffect(() => {
     if (!session?.user?.id || !isWalletOverviewFetched || !walletOverview) return;
@@ -529,6 +642,20 @@ export default function Profile() {
       if (meProfileCacheKey) {
         writeSessionCache(meProfileCacheKey, updatedUser);
       }
+      syncProfileSnapshotAcrossCaches(queryClient, {
+        id: updatedUser.id,
+        username: updatedUser.username ?? null,
+        image: updatedUser.image ?? null,
+        level: updatedUser.level,
+        xp: updatedUser.xp,
+        isVerified: updatedUser.isVerified,
+        createdAt: updatedUser.createdAt,
+        followersCount: updatedUser.followersCount ?? null,
+        followingCount: updatedUser.followingCount ?? null,
+        postsCount: updatedUser.postsCount ?? null,
+        winsCount: updatedUser.winsCount ?? null,
+        lossesCount: updatedUser.lossesCount ?? null,
+      });
       updateCachedAuthUser(updatedUser);
       setIsEditing(false);
       setPreviewImage(null);
