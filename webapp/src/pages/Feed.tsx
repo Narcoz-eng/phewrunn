@@ -59,7 +59,7 @@ const FEED_LATEST_ACK_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
 const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
 const FEED_QUERY_GC_TIME_MS = 5 * 60_000;
-const FEED_AI_REQUEST_TIMEOUT_MS = 2_800;
+const FEED_AI_REQUEST_TIMEOUT_MS = 4_200;
 const FEED_LEGACY_FALLBACK_TIMEOUT_MS = 2_200;
 
 type AiFeedResponse = {
@@ -1319,7 +1319,19 @@ export default function Feed() {
         throw new ApiError("Feed payload was invalid. Please retry.", response.status, json);
       }
       if (data.degraded === true) {
-        throw new ApiError("Feed is temporarily degraded. Please retry shortly.", 503, json);
+        if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
+          return fallbackFirstPage;
+        }
+
+        return {
+          items: data.items,
+          nextCursor: null,
+          hasMore: false,
+          totalPosts:
+            typeof data.totalPosts === "number" && Number.isFinite(data.totalPosts)
+              ? data.totalPosts
+              : null,
+        };
       }
 
       return {
@@ -1380,6 +1392,18 @@ export default function Feed() {
       if (isBackendPoolPressureError(error)) {
         if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
           return fallbackFirstPage;
+        }
+        if (tab === "hot-alpha" || tab === "early-runners" || tab === "high-conviction") {
+          try {
+            return await readLegacyFeedPayload();
+          } catch {
+            return {
+              items: [],
+              nextCursor: null,
+              hasMore: false,
+              totalPosts: null,
+            };
+          }
         }
         throw error;
       }

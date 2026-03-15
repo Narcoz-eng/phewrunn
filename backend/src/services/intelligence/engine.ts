@@ -35,11 +35,12 @@ const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
 const FEED_PRIORITY_POST_COUNT = 15;
-const RANKED_FEED_MIN_CANDIDATE_COUNT = 240;
-const RANKED_FEED_MAX_CANDIDATE_COUNT = 400;
+const RANKED_FEED_MIN_CANDIDATE_COUNT = 120;
+const RANKED_FEED_MAX_CANDIDATE_COUNT = 180;
 const FEED_PRIORITY_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 850 : 1_300;
 const FEED_RESULT_CACHE_TTL_MS = 15_000;
 const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
+const FEED_LIST_SOFT_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 4_000;
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
@@ -2641,6 +2642,48 @@ function buildFeedCursorWhere(cursorBoundary: FeedCursorBoundary | null): Prisma
   };
 }
 
+function buildRankedFeedWhere(kind: FeedKind): Prisma.PostWhereInput | undefined {
+  if (kind === "latest" || kind === "following") {
+    return undefined;
+  }
+
+  if (kind === "hot-alpha") {
+    return {
+      hotAlphaScore: { gte: HOT_ALPHA_THRESHOLD },
+      OR: [{ roiCurrentPct: null }, { roiCurrentPct: { gt: -45 } }],
+    };
+  }
+
+  if (kind === "early-runners") {
+    return {
+      earlyRunnerScore: { gte: EARLY_RUNNER_THRESHOLD },
+      OR: [{ roiCurrentPct: null }, { roiCurrentPct: { gt: -50 } }],
+    };
+  }
+
+  return {
+    highConvictionScore: { gte: HIGH_CONVICTION_THRESHOLD },
+    confidenceScore: { gte: 45 },
+    OR: [{ roiCurrentPct: null }, { roiCurrentPct: { gt: -35 } }],
+  };
+}
+
+function buildFeedOrderBy(kind: FeedKind): Prisma.PostOrderByWithRelationInput[] {
+  if (kind === "latest" || kind === "following") {
+    return [{ createdAt: "desc" }, { id: "desc" }];
+  }
+
+  if (kind === "hot-alpha") {
+    return [{ hotAlphaScore: "desc" }, { createdAt: "desc" }, { id: "desc" }];
+  }
+
+  if (kind === "early-runners") {
+    return [{ earlyRunnerScore: "desc" }, { createdAt: "desc" }, { id: "desc" }];
+  }
+
+  return [{ highConvictionScore: "desc" }, { createdAt: "desc" }, { id: "desc" }];
+}
+
 async function getFollowingSnapshot(viewerId: string | null): Promise<{
   followedTraderIds: string[];
   followedTokenIds: string[];
@@ -2965,7 +3008,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
   const staleCached = peekCacheValue(feedListCache, cacheKey);
 
   return memoizeCached(feedListCache, feedListInFlight, cacheKey, ttlMs, async () => {
-    try {
+    const computeFeedResult = async (): Promise<FeedListResult> => {
       const { followedTraderIds, followedTokenIds } =
         args.kind === "following"
           ? await getFollowingSnapshot(args.viewerId)
@@ -3001,6 +3044,11 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         });
       }
 
+      const rankedWhere = buildRankedFeedWhere(args.kind);
+      if (rankedWhere) {
+        whereClauses.push(rankedWhere);
+      }
+
       const cursorWhere = buildFeedCursorWhere(cursorBoundary);
       if (cursorWhere) {
         whereClauses.push(cursorWhere);
@@ -3013,9 +3061,6 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             ? whereClauses[0]
             : { AND: whereClauses };
       const isDirectChronologicalFeed = args.kind === "latest" || args.kind === "following";
-      // Always use stored intelligence for feed rendering — scores, reaction counts, and
-      // trusted trader counts are all persisted on the post. Re-computing from scratch
-      // requires 5+ expensive DB queries over 240+ candidates and reliably times out.
       const preferStoredFeedIntelligence = true;
       const candidateLimit = isDirectChronologicalFeed
         ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
@@ -3026,7 +3071,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
       const records = await prisma.post.findMany({
         where,
         select: CALL_SELECT,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: buildFeedOrderBy(args.kind),
         take: Math.max(limit + 1, candidateLimit),
       });
 
@@ -3064,6 +3109,35 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         hasMore: startIndex + limit < hydrated.length,
         nextCursor,
         totalItems: hydrated.length,
+      };
+    };
+
+    try {
+      const result = await withSoftTimeout(computeFeedResult(), FEED_LIST_SOFT_TIMEOUT_MS);
+      if (result) {
+        return result;
+      }
+
+      if (staleCached) {
+        console.warn("[intelligence/feed] serving stale feed cache after soft timeout", {
+          kind: args.kind,
+          viewerId: args.viewerId,
+          timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
+        });
+        return staleCached;
+      }
+
+      console.warn("[intelligence/feed] feed soft-timed out; serving degraded empty state", {
+        kind: args.kind,
+        viewerId: args.viewerId,
+        timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
+      });
+      return {
+        items: [],
+        hasMore: false,
+        nextCursor: null,
+        totalItems: 0,
+        degraded: true,
       };
     } catch (error) {
       if (!isTransientPrismaError(error)) {
