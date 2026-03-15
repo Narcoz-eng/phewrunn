@@ -6,6 +6,7 @@ import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAv
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
 import { TokenScanningState } from "@/components/feed/TokenScanningState";
 import { CandlestickChart } from "@/components/feed/CandlestickChart";
@@ -1154,6 +1155,13 @@ export default function TokenPage() {
   const topHolderSectionCopy = hasVerifiedHolderCount
     ? "Top wallets, developer wallet, and role tags from the current chain scan."
     : "Top wallets are ready first. Full holder count follows after the chain scan finishes.";
+  const bundleScanPending = isBundleScanPending({
+    bundleRiskLabel: token.risk.bundleRiskLabel,
+    tokenRiskScore: token.risk.tokenRiskScore,
+    bundledWalletCount: token.risk.bundledWalletCount,
+    estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
+    bundleClusters: token.bundleClusters,
+  });
   const recentCallsEmptyCopy =
     isLoading || isFetching
       ? "Recent token calls are still loading for this address."
@@ -1213,8 +1221,13 @@ export default function TokenPage() {
                         <h2 className="break-words text-2xl font-bold text-foreground">
                           {token.symbol || token.name || token.address.slice(0, 8)}
                         </h2>
-                        <span className={cn("rounded-full border px-3 py-1 text-xs font-semibold", riskTone(token.bundleRiskLabel))}>
-                          {token.bundleRiskLabel || "Unknown Risk"}
+                        <span
+                          className={cn(
+                            "rounded-full border px-3 py-1 text-xs font-semibold",
+                            bundleScanPending ? "border-primary/25 bg-primary/10 text-primary" : riskTone(token.bundleRiskLabel)
+                          )}
+                        >
+                          {bundleScanPending ? "Scanning risk" : token.bundleRiskLabel || "Unknown Risk"}
                         </span>
                         {token.isEarlyRunner ? (
                           <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
@@ -1591,13 +1604,29 @@ export default function TokenPage() {
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundled wallets</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">
-                        {formatIntegerMetric(token.risk.bundledWalletCount, { zeroIsValid: true })}
-                      </div>
+                      {bundleScanPending ? (
+                        <BundleScanLoop
+                          title="Scan live"
+                          hint="Resolving linked wallets."
+                          className="mt-2 w-full"
+                        />
+                      ) : (
+                        <div className="mt-2 text-xl font-semibold text-foreground">
+                          {formatIntegerMetric(token.risk.bundledWalletCount, { zeroIsValid: true })}
+                        </div>
+                      )}
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundled supply</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatPct(token.risk.estimatedBundledSupplyPct)}</div>
+                      {bundleScanPending ? (
+                        <BundleScanLoop
+                          title="Scan live"
+                          hint="Measuring bundled supply."
+                          className="mt-2 w-full"
+                        />
+                      ) : (
+                        <div className="mt-2 text-xl font-semibold text-foreground">{formatPct(token.risk.estimatedBundledSupplyPct)}</div>
+                      )}
                     </div>
                   </div>
                   <div className="mt-4 rounded-[20px] border border-border/60 bg-white/55 p-3 dark:bg-white/[0.03]">
@@ -1610,6 +1639,12 @@ export default function TokenPage() {
                             <span className="font-mono text-muted-foreground">{cluster.estimatedSupplyPct.toFixed(1)}%</span>
                           </div>
                         ))
+                      ) : bundleScanPending ? (
+                        <BundleScanLoop
+                          title="Cluster loop active"
+                          hint="Mapping linked holder groups and supply pockets."
+                          className="w-full"
+                        />
                       ) : (
                         <p className="text-sm text-muted-foreground">
                           {token.risk.bundleRiskLabel ? "No clustered bundlers detected yet." : "Scanning holder clusters and linked bundlers."}

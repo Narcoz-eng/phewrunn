@@ -31,6 +31,7 @@ import { SharedAlphaDialog, type SharedAlphaResponse } from "./SharedAlphaDialog
 import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
+import { BundleScanLoop, isBundleScanPending } from "./BundleScanLoop";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api, ApiError } from "@/lib/api";
 import { getPostPriceSnapshotBatched, type BatchedPostPriceSnapshot } from "@/lib/post-price-batch";
@@ -1788,12 +1789,14 @@ export function PostCard({
     post.holderCount != null ||
     post.top10HolderPct != null ||
     post.largestHolderPct != null;
-  const hasResolvedBundleContext =
-    typeof post.estimatedBundledSupplyPct === "number" ||
-    post.bundleRiskLabel != null ||
-    post.tokenRiskScore != null ||
-    post.bundledWalletCount != null ||
-    Boolean(post.bundleClusters?.length);
+  const bundleScanPending = isBundleScanPending({
+    bundleRiskLabel: post.bundleRiskLabel,
+    tokenRiskScore: post.tokenRiskScore,
+    bundledWalletCount: post.bundledWalletCount,
+    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+    bundleClusters: post.bundleClusters,
+  });
+  const hasResolvedBundleContext = !bundleScanPending;
   const normalizedConfidenceScore =
     hasResolvedConfidenceContext && typeof confidenceScore === "number" && Number.isFinite(confidenceScore)
       ? Math.max(0, Math.min(100, confidenceScore))
@@ -5540,8 +5543,16 @@ export function PostCard({
                   </div>
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
-                    <div className="mt-1 font-semibold text-foreground">
-                      {bundleRiskSummary}
+                    <div className="mt-1">
+                      {bundleScanPending ? (
+                        <BundleScanLoop
+                          title="Bundle scan live"
+                          hint="Mapping bundled supply and cluster links."
+                          className="w-full"
+                        />
+                      ) : (
+                        <div className="font-semibold text-foreground">{bundleRiskSummary}</div>
+                      )}
                     </div>
                   </div>
                   <div className="rounded-[18px] border border-border/60 bg-white/55 px-3 py-2.5 text-sm shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
