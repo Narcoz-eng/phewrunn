@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,22 +13,28 @@ import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
 import { AuthInitializer } from "@/components/AuthInitializer";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
+import { importWithRecovery } from "@/lib/lazy-with-recovery";
+
+const lazyPage = <T extends { default: ComponentType<any> }>(
+  loader: () => Promise<T>,
+  scope: string
+) => lazy(() => importWithRecovery(loader, scope));
 
 // Lazy load page components
-const Feed = lazy(() => import("./pages/Feed"));
-const Profile = lazy(() => import("./pages/Profile"));
-const UserProfile = lazy(() => import("./pages/UserProfile"));
-const Notifications = lazy(() => import("./pages/Notifications"));
-const Leaderboard = lazy(() => import("./pages/Leaderboard"));
-const Admin = lazy(() => import("./pages/Admin"));
-const HandleOnboarding = lazy(() => import("./pages/HandleOnboarding"));
-const Login = lazy(() => import("./pages/Login"));
-const PostDetail = lazy(() => import("./pages/PostDetail"));
-const TokenPage = lazy(() => import("./pages/TokenPage"));
-const Terms = lazy(() => import("./pages/Terms"));
-const Privacy = lazy(() => import("./pages/Privacy"));
-const Docs = lazy(() => import("./pages/Docs"));
-const NotFound = lazy(() => import("./pages/NotFound"));
+const Feed = lazyPage(() => import("./pages/Feed"), "route:feed");
+const Profile = lazyPage(() => import("./pages/Profile"), "route:profile");
+const UserProfile = lazyPage(() => import("./pages/UserProfile"), "route:user-profile");
+const Notifications = lazyPage(() => import("./pages/Notifications"), "route:notifications");
+const Leaderboard = lazyPage(() => import("./pages/Leaderboard"), "route:leaderboard");
+const Admin = lazyPage(() => import("./pages/Admin"), "route:admin");
+const HandleOnboarding = lazyPage(() => import("./pages/HandleOnboarding"), "route:welcome");
+const Login = lazyPage(() => import("./pages/Login"), "route:login");
+const PostDetail = lazyPage(() => import("./pages/PostDetail"), "route:post-detail");
+const TokenPage = lazyPage(() => import("./pages/TokenPage"), "route:token-page");
+const Terms = lazyPage(() => import("./pages/Terms"), "route:terms");
+const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
+const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
+const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
 
 // Loading fallback component
 function PageSkeleton() {

@@ -27,6 +27,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import {
   LIQUIDATION_LEVEL,
   MAX_LEVEL,
@@ -38,15 +39,23 @@ import { AccuracyScoreCard } from "@/components/AccuracyScoreCard";
 import { WeeklyBestSection } from "@/components/login/WeeklyBestSection";
 
 const FeeOrbit = lazy(() =>
-  import("@/components/login/FeeOrbit").then((module) => ({
-    default: module.FeeOrbit,
-  }))
+  importWithRecovery(
+    () =>
+      import("@/components/login/FeeOrbit").then((module) => ({
+        default: module.FeeOrbit,
+      })),
+    "login:fee-orbit"
+  )
 );
 
 const ReputationEngine = lazy(() =>
-  import("@/components/login/ReputationEngine").then((module) => ({
-    default: module.ReputationEngine,
-  }))
+  importWithRecovery(
+    () =>
+      import("@/components/login/ReputationEngine").then((module) => ({
+        default: module.ReputationEngine,
+      })),
+    "login:reputation-engine"
+  )
 );
 
 type DeferredViewportBlockProps = {
