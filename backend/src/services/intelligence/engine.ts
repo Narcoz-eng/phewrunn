@@ -54,7 +54,7 @@ const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_SNAPSHOT_TTL_MS = 2 * 60_000;
 const LEADERBOARD_SNAPSHOT_STALE_REVALIDATE_MS = 20 * 60_000;
-const LEADERBOARD_SNAPSHOT_VERSION = 2;
+const LEADERBOARD_SNAPSHOT_VERSION = 3;
 const DAILY_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:daily:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:first-callers:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
@@ -4032,9 +4032,15 @@ async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
     persistComputed: false,
     preferStoredIntelligence: true,
   });
+  const qualifiedCallsToday = todaysCalls.filter((call) => {
+    return (
+      finite(call.confidenceScore) >= 45 &&
+      (call.roiCurrentPct === null || call.roiCurrentPct > -50)
+    );
+  });
   const traderMap = new Map<string, LeaderboardsPayload["topTradersToday"][number] & { wins: number }>();
 
-  for (const call of todaysCalls) {
+  for (const call of qualifiedCallsToday) {
     const current = traderMap.get(call.author.id) ?? {
       traderId: call.author.id,
       handle: call.author.username,
@@ -4074,15 +4080,29 @@ async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
 
   return {
     topTradersToday,
-    topAlphaToday: [...todaysCalls]
-      .sort((left, right) => right.hotAlphaScore - left.hotAlphaScore)
+    topAlphaToday: [...qualifiedCallsToday]
+      .filter((call) => isEligibleForRankedFeed("hot-alpha", call))
+      .sort((left, right) => {
+        const hotDelta = right.hotAlphaScore - left.hotAlphaScore;
+        if (hotDelta !== 0) return hotDelta;
+        const confidenceDelta = right.confidenceScore - left.confidenceScore;
+        if (confidenceDelta !== 0) return confidenceDelta;
+        return right.createdAt.getTime() - left.createdAt.getTime();
+      })
       .slice(0, 12),
-    biggestRoiToday: [...todaysCalls]
+    biggestRoiToday: [...qualifiedCallsToday]
+      .filter((call) => finite(call.roiPeakPct, -100) > 0)
       .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
       .slice(0, 12),
-    bestEntryToday: [...todaysCalls]
+    bestEntryToday: [...qualifiedCallsToday]
       .filter((call) => call.firstCallerRank === 1 || call.timingTier === "FIRST CALLER")
-      .sort((left, right) => finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100))
+      .sort((left, right) => {
+        const entryDelta = finite(right.entryQualityScore) - finite(left.entryQualityScore);
+        if (entryDelta !== 0) return entryDelta;
+        const confidenceDelta = right.confidenceScore - left.confidenceScore;
+        if (confidenceDelta !== 0) return confidenceDelta;
+        return finite(right.roiPeakPct, -100) - finite(left.roiPeakPct, -100);
+      })
       .slice(0, 12),
   };
 }

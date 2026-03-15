@@ -199,15 +199,18 @@ function CallRow({
   index,
   metricLabel,
   metricValue,
+  metricTone = "default",
 }: {
   post: Post;
   index: number;
   metricLabel: string;
   metricValue: string;
+  metricTone?: "default" | "good" | "warn";
 }) {
   const navigate = useNavigate();
   const handle = post.author.username ? `@${post.author.username}` : post.author.name;
   const tokenLabel = post.tokenSymbol || post.tokenName || "Unknown Token";
+  const roundedConfidence = Math.round(post.confidenceScore ?? 0);
   return (
     <button
       type="button"
@@ -229,7 +232,12 @@ function CallRow({
           {handle} • {formatTimeAgo(post.createdAt)}
         </div>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          <MetricChip label="Confidence" value={`${Math.round(post.confidenceScore ?? 0)}%`} />
+          <MetricChip label={metricLabel} value={metricValue} tone={metricTone} />
+          <MetricChip
+            label="Confidence"
+            value={`${roundedConfidence}%`}
+            tone={roundedConfidence >= 45 ? "good" : "warn"}
+          />
           {post.bundleRiskLabel ? (
             <MetricChip
               label="Risk"
@@ -406,8 +414,9 @@ export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderb
                       key={post.id}
                       post={post}
                       index={index}
-                      metricLabel="hot alpha"
+                      metricLabel="Hot"
                       metricValue={`${Math.round(post.hotAlphaScore ?? 0)}%`}
+                      metricTone="good"
                     />
                   ))
                 )}
@@ -428,8 +437,9 @@ export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderb
                       key={post.id}
                       post={post}
                       index={index}
-                      metricLabel="peak ROI"
+                      metricLabel="ROI"
                       metricValue={`${(post.roiPeakPct ?? 0).toFixed(1)}%`}
+                      metricTone={typeof post.roiPeakPct === "number" && post.roiPeakPct >= 0 ? "good" : "warn"}
                     />
                   ))
                 )}
@@ -450,8 +460,9 @@ export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderb
                       key={post.id}
                       post={post}
                       index={index}
-                      metricLabel="entry quality"
+                      metricLabel="Entry"
                       metricValue={`${Math.round(post.entryQualityScore ?? 0)}%`}
+                      metricTone="good"
                     />
                   ))
                 )}

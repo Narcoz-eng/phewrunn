@@ -15,6 +15,7 @@ import {
   invalidateViewerSocialCaches,
   refreshTokenIntelligence,
 } from "../services/intelligence/engine.js";
+import { computeTokenRiskScore, determineBundleRiskLabel } from "../services/intelligence/scoring.js";
 
 export const tokensRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -256,6 +257,34 @@ function pickFirstFiniteMetric(...values: Array<number | null | undefined>): num
   return null;
 }
 
+function deriveBundledSupplyPctFromClusters(
+  clusters: Array<{ estimatedSupplyPct: number }> | null | undefined
+): number | null {
+  if (!Array.isArray(clusters) || clusters.length === 0) {
+    return null;
+  }
+
+  const total = clusters.reduce((sum, cluster) => {
+    return sum + (isFiniteNumber(cluster.estimatedSupplyPct) && cluster.estimatedSupplyPct > 0 ? cluster.estimatedSupplyPct : 0);
+  }, 0);
+
+  return total > 0 ? roundMetric(total) : null;
+}
+
+function resolveBundledSupplyPct(
+  value: number | null | undefined,
+  clusters: Array<{ estimatedSupplyPct: number }> | null | undefined
+): number | null {
+  const roundedValue = roundMetric(value);
+  const derivedFromClusters = deriveBundledSupplyPctFromClusters(clusters);
+
+  if (roundedValue !== null && (roundedValue > 0 || derivedFromClusters === null)) {
+    return roundedValue;
+  }
+
+  return derivedFromClusters ?? roundedValue;
+}
+
 function inferTokenChainType(tokenAddress: string): "solana" | "evm" | null {
   const normalized = tokenAddress.trim();
   if (SOLANA_ADDRESS_REGEX.test(normalized)) {
@@ -475,18 +504,36 @@ tokensRouter.get(
           : roundCount(pickFirstFiniteMetric(token?.bundledWalletCount));
       const estimatedBundledSupplyPct =
         chainType === "solana"
-          ? roundMetric(
+          ? resolveBundledSupplyPct(
               pickFirstFiniteMetric(distributionSnapshot?.estimatedBundledSupplyPct, token?.estimatedBundledSupplyPct)
+              ,
+              liveBundleClusters
             )
           : roundMetric(pickFirstFiniteMetric(token?.estimatedBundledSupplyPct));
       const tokenRiskScore =
-        chainType === "solana"
-          ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.tokenRiskScore, token?.tokenRiskScore))
-          : roundMetric(pickFirstFiniteMetric(token?.tokenRiskScore));
+        chainType === "solana" &&
+        ((isFiniteNumber(estimatedBundledSupplyPct) && estimatedBundledSupplyPct > 0) || liveBundleClusters.length > 0)
+          ? roundMetric(
+              computeTokenRiskScore({
+                estimatedBundledSupplyPct,
+                bundledClusterCount: liveBundleClusters.length,
+                largestHolderPct,
+                top10HolderPct,
+                deployerSupplyPct,
+              })
+            )
+          : chainType === "solana"
+            ? roundMetric(pickFirstFiniteMetric(distributionSnapshot?.tokenRiskScore, token?.tokenRiskScore))
+            : roundMetric(pickFirstFiniteMetric(token?.tokenRiskScore));
       const bundleRiskLabel =
-        chainType === "solana"
-          ? distributionSnapshot?.bundleRiskLabel ?? token?.bundleRiskLabel ?? null
-          : token?.bundleRiskLabel ?? null;
+        chainType === "solana" &&
+        typeof tokenRiskScore === "number" &&
+        Number.isFinite(tokenRiskScore) &&
+        ((isFiniteNumber(estimatedBundledSupplyPct) && estimatedBundledSupplyPct > 0) || liveBundleClusters.length > 0)
+          ? determineBundleRiskLabel(tokenRiskScore)
+          : chainType === "solana"
+            ? distributionSnapshot?.bundleRiskLabel ?? token?.bundleRiskLabel ?? null
+            : token?.bundleRiskLabel ?? null;
 
       const payload = {
         marketCap: roundMetric(pickFirstPositiveMetric(marketSnapshot.mcap)),

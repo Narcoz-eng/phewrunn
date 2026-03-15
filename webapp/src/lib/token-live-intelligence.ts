@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { resolveEstimatedBundledSupplyPct } from "@/lib/bundle-intelligence";
 import type { TokenBundleCluster } from "@/types";
 import type { TokenIntelligenceSnapshot } from "@/lib/token-intelligence-cache";
 
@@ -154,6 +155,11 @@ export function buildTokenIntelligenceSnapshotFromLivePayload(
   address: string,
   payload: TokenLiveIntelligencePayload
 ): TokenIntelligenceSnapshot {
+  const estimatedBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: payload.estimatedBundledSupplyPct,
+    bundleClusters: payload.bundleClusters,
+  });
+
   return {
     address,
     symbol: payload.symbol,
@@ -167,7 +173,7 @@ export function buildTokenIntelligenceSnapshotFromLivePayload(
     largestHolderPct: payload.largestHolderPct,
     top10HolderPct: payload.top10HolderPct,
     bundledWalletCount: payload.bundledWalletCount,
-    estimatedBundledSupplyPct: payload.estimatedBundledSupplyPct,
+    estimatedBundledSupplyPct,
     bundleRiskLabel: payload.bundleRiskLabel,
     tokenRiskScore: payload.tokenRiskScore,
     sentimentScore: null,

@@ -40,6 +40,7 @@ import {
   getTokenLiveIntelligence,
 } from "@/lib/token-live-intelligence";
 import { syncTokenIntelligenceAcrossPostCaches } from "@/lib/token-intelligence-cache";
+import { syncFollowStateAcrossPostCaches } from "@/lib/post-query-cache";
 import {
   Post,
   Comment,
@@ -76,7 +77,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
-import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
+import {
+  hasResolvedBundleEvidence,
+  isBundlePlaceholderState,
+  resolveEstimatedBundledSupplyPct,
+} from "@/lib/bundle-intelligence";
 import { toast } from "sonner";
 import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
@@ -648,76 +653,6 @@ type FeedPostsPageLike = {
 type TokenPageCacheLike = {
   recentCalls: Post[];
 };
-
-type IntelligenceLeaderboardsCacheLike = {
-  topAlphaToday?: Post[];
-  biggestRoiToday?: Post[];
-  bestEntryToday?: Post[];
-};
-
-function syncFollowStateAcrossPostCaches(
-  queryClient: QueryClient,
-  author: Pick<PostAuthor, "id" | "username">,
-  nextFollowing: boolean
-): void {
-  const normalizedUsername = author.username?.trim().toLowerCase() ?? null;
-  const matchesAuthor = (post: Post): boolean =>
-    post.author.id === author.id ||
-    post.authorId === author.id ||
-    (normalizedUsername !== null && post.author.username?.trim().toLowerCase() === normalizedUsername);
-  const syncPost = (post: Post): Post =>
-    matchesAuthor(post) ? { ...post, isFollowingAuthor: nextFollowing } : post;
-
-  queryClient.setQueriesData<InfiniteData<FeedPostsPageLike>>({ queryKey: ["posts"] }, (current) => {
-    if (!current) return current;
-    return {
-      ...current,
-      pages: current.pages.map((page) => ({
-        ...page,
-        items: page.items.map(syncPost),
-      })),
-    };
-  });
-
-  queryClient.setQueriesData<Post[]>({ queryKey: ["userPosts"] }, (current) =>
-    current?.map(syncPost) ?? current
-  );
-  queryClient.setQueriesData<Post[]>({ queryKey: ["userReposts"] }, (current) =>
-    current?.map(syncPost) ?? current
-  );
-  queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "posts"] }, (current) =>
-    current?.map(syncPost) ?? current
-  );
-  queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "reposts"] }, (current) =>
-    current?.map(syncPost) ?? current
-  );
-  queryClient.setQueriesData<TokenPageCacheLike>({ queryKey: ["token-page"] }, (current) => {
-    if (!current) return current;
-    return {
-      ...current,
-      recentCalls: current.recentCalls?.map(syncPost) ?? current.recentCalls,
-    };
-  });
-  queryClient.setQueriesData<IntelligenceLeaderboardsCacheLike>({ queryKey: ["leaderboards"] }, (current) => {
-    if (!current) return current;
-    return {
-      ...current,
-      topAlphaToday: current.topAlphaToday?.map(syncPost) ?? current.topAlphaToday,
-      biggestRoiToday: current.biggestRoiToday?.map(syncPost) ?? current.biggestRoiToday,
-      bestEntryToday: current.bestEntryToday?.map(syncPost) ?? current.bestEntryToday,
-    };
-  });
-  queryClient.setQueriesData<{ id?: string | null; username?: string | null; isFollowing?: boolean }>(
-    { queryKey: ["userProfile"] },
-    (current) => {
-      if (!current) return current;
-      const matchesProfile =
-        current.id === author.id ||
-        (normalizedUsername !== null && current.username?.trim().toLowerCase() === normalizedUsername);
-      return matchesProfile ? { ...current, isFollowing: nextFollowing } : current;
-    }
-  );
-}
 
 function parseMarketStateTimestamp(value: string | null | undefined): number {
   if (!value) return 0;
@@ -1824,9 +1759,13 @@ export function PostCard({
   const normalizedBundleRiskLabel =
     post.bundleRiskLabel ||
     (hasResolvedBundleContext ? "Unknown" : "Pending");
+  const resolvedBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+    bundleClusters: post.bundleClusters,
+  });
   const normalizedBundledSupplyPct =
-    typeof post.estimatedBundledSupplyPct === "number"
-      ? `${post.estimatedBundledSupplyPct.toFixed(1)}%`
+    typeof resolvedBundledSupplyPct === "number"
+      ? `${resolvedBundledSupplyPct.toFixed(1)}%`
       : hasResolvedBundleContext
         ? "--"
         : "Pending";

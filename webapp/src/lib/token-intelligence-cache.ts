@@ -1,6 +1,10 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { Post, TokenBundleCluster } from "@/types";
-import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
+import {
+  hasResolvedBundleEvidence,
+  isBundlePlaceholderState,
+  resolveEstimatedBundledSupplyPct,
+} from "@/lib/bundle-intelligence";
 
 type FeedPageLike = {
   items: Post[];
@@ -144,6 +148,14 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
   const nextHolderCount = pickMetric(post.holderCount, token.holderCount, preferIncoming, { positive: true });
   const nextLargestHolderPct = pickMetric(post.largestHolderPct, token.largestHolderPct, preferIncoming);
   const nextTop10HolderPct = pickMetric(post.top10HolderPct, token.top10HolderPct, preferIncoming);
+  const normalizedPostBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+    bundleClusters: post.bundleClusters,
+  });
+  const normalizedTokenBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: token.estimatedBundledSupplyPct,
+    bundleClusters: token.bundleClusters,
+  });
   const nextBundledWalletCount = pickMetric(
     post.bundledWalletCount,
     token.bundledWalletCount,
@@ -151,8 +163,8 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     { positive: true }
   );
   const nextEstimatedBundledSupplyPct = pickMetric(
-    post.estimatedBundledSupplyPct,
-    token.estimatedBundledSupplyPct,
+    normalizedPostBundledSupplyPct,
+    normalizedTokenBundledSupplyPct,
     shouldPreferIncomingBundle
   );
   const nextLastIntelligenceAt =
@@ -183,7 +195,7 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     nextLargestHolderPct === post.largestHolderPct &&
     nextTop10HolderPct === post.top10HolderPct &&
     nextBundledWalletCount === post.bundledWalletCount &&
-    nextEstimatedBundledSupplyPct === post.estimatedBundledSupplyPct &&
+    nextEstimatedBundledSupplyPct === normalizedPostBundledSupplyPct &&
     nextLastIntelligenceAt === (post.lastIntelligenceAt ?? null) &&
     nextBundleClusters === post.bundleClusters
   ) {

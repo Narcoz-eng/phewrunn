@@ -41,7 +41,11 @@ import {
   getBestCachedProfileSnapshot,
   syncProfileSnapshotAcrossCaches,
 } from "@/lib/profile-cache";
-import { getCachedPostsForAuthor, syncPostsIntoQueryCache } from "@/lib/post-query-cache";
+import {
+  getCachedPostsForAuthor,
+  syncFollowStateAcrossPostCaches,
+  syncPostsIntoQueryCache,
+} from "@/lib/post-query-cache";
 import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
 
 interface UserProfileData {
@@ -457,16 +461,10 @@ export default function UserProfile() {
         lossesCount: user?.stats.losses,
       });
 
-      const syncPostFollowState = (prev?: Post[]) =>
-        prev?.map((post) => {
-          const matchesProfile =
-            post.author.id === user?.id ||
-            (Boolean(user?.username) && post.author.username === user?.username);
-          return matchesProfile ? { ...post, isFollowingAuthor: nextFollowing } : post;
-        }) ?? prev;
-
-      queryClient.setQueryData<Post[] | undefined>(userPostsQueryKey, syncPostFollowState);
-      queryClient.setQueryData<Post[] | undefined>(userRepostsQueryKey, syncPostFollowState);
+      syncFollowStateAcrossPostCaches(queryClient, {
+        id: user?.id ?? userId ?? "",
+        username: user?.username ?? null,
+      }, nextFollowing);
 
       queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
       queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
@@ -487,6 +485,10 @@ export default function UserProfile() {
               isFollowing: nextFollowing,
             };
           });
+          syncFollowStateAcrossPostCaches(queryClient, {
+            id: user?.id ?? userId ?? "",
+            username: user?.username ?? null,
+          }, nextFollowing);
           queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
           queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
           queryClient.invalidateQueries({ queryKey: userRepostsQueryKey });

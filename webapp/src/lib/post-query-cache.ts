@@ -9,6 +9,18 @@ type TokenPageLike = {
   recentCalls?: Post[];
 };
 
+type IntelligenceLeaderboardsCacheLike = {
+  topAlphaToday?: Post[];
+  biggestRoiToday?: Post[];
+  bestEntryToday?: Post[];
+};
+
+type FollowableProfileLike = {
+  id?: string | null;
+  username?: string | null;
+  isFollowing?: boolean;
+};
+
 type SessionCacheEnvelope<T> = {
   cachedAt: number;
   data?: T;
@@ -34,6 +46,85 @@ function dedupePushPost(target: Post[], seenIds: Set<string>, candidate: Post | 
 function dedupePushPostArray(target: Post[], seenIds: Set<string>, candidates: Post[] | null | undefined): void {
   for (const candidate of candidates ?? []) {
     dedupePushPost(target, seenIds, candidate);
+  }
+}
+
+function normalizeIdentifier(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function syncPostsInSessionCache(
+  author: Pick<Post["author"], "id" | "username">,
+  nextFollowing: boolean
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const normalizedUsername = normalizeIdentifier(author.username);
+  const matchesAuthor = (post: Post): boolean =>
+    post.author.id === author.id ||
+    post.authorId === author.id ||
+    (normalizedUsername !== null && normalizeIdentifier(post.author.username) === normalizedUsername);
+  const syncPost = (post: Post): Post =>
+    matchesAuthor(post) ? { ...post, isFollowingAuthor: nextFollowing } : post;
+
+  try {
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (
+        typeof key !== "string" ||
+        (!key.startsWith(FEED_FIRST_PAGE_CACHE_PREFIX) &&
+          !key.startsWith(PROFILE_POSTS_CACHE_PREFIX) &&
+          !key.startsWith(PROFILE_REPOSTS_CACHE_PREFIX) &&
+          !key.startsWith(USER_POSTS_CACHE_PREFIX) &&
+          !key.startsWith(USER_REPOSTS_CACHE_PREFIX))
+      ) {
+        continue;
+      }
+
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw) as SessionCacheEnvelope<Post[]>;
+      if (key.startsWith(FEED_FIRST_PAGE_CACHE_PREFIX)) {
+        const currentItems = parsed?.page?.items;
+        if (!Array.isArray(currentItems)) {
+          continue;
+        }
+        const nextItems = currentItems.map(syncPost);
+        window.sessionStorage.setItem(
+          key,
+          JSON.stringify({
+            ...parsed,
+            page: {
+              ...(parsed.page ?? {}),
+              items: nextItems,
+            },
+          } satisfies SessionCacheEnvelope<Post[]>)
+        );
+        continue;
+      }
+
+      const currentData = parsed?.data;
+      if (!Array.isArray(currentData)) {
+        continue;
+      }
+      const nextData = currentData.map(syncPost);
+      window.sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          ...parsed,
+          data: nextData,
+        } satisfies SessionCacheEnvelope<Post[]>)
+      );
+    }
+  } catch {
+    // Ignore sessionStorage failures.
   }
 }
 
@@ -200,4 +291,64 @@ export function syncPostsIntoQueryCache(queryClient: QueryClient, posts: Post[] 
     if (!post?.id) continue;
     queryClient.setQueryData<Post>(["post", post.id], (existing) => pickPreferredPost(existing, post));
   }
+}
+
+export function syncFollowStateAcrossPostCaches(
+  queryClient: QueryClient,
+  author: Pick<Post["author"], "id" | "username">,
+  nextFollowing: boolean
+): void {
+  const normalizedUsername = normalizeIdentifier(author.username);
+  const matchesAuthor = (post: Post): boolean =>
+    post.author.id === author.id ||
+    post.authorId === author.id ||
+    (normalizedUsername !== null && normalizeIdentifier(post.author.username) === normalizedUsername);
+  const syncPost = (post: Post): Post =>
+    matchesAuthor(post) ? { ...post, isFollowingAuthor: nextFollowing } : post;
+
+  queryClient.setQueriesData<InfiniteData<FeedPageLike>>({ queryKey: ["posts"] }, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      pages: current.pages.map((page) => ({
+        ...page,
+        items: page.items.map(syncPost),
+      })),
+    };
+  });
+
+  queryClient.setQueriesData<Post[]>({ queryKey: ["userPosts"] }, (current) => current?.map(syncPost) ?? current);
+  queryClient.setQueriesData<Post[]>({ queryKey: ["userReposts"] }, (current) => current?.map(syncPost) ?? current);
+  queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "posts"] }, (current) =>
+    current?.map(syncPost) ?? current
+  );
+  queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "reposts"] }, (current) =>
+    current?.map(syncPost) ?? current
+  );
+  queryClient.setQueriesData<TokenPageLike>({ queryKey: ["token-page"] }, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      recentCalls: current.recentCalls?.map(syncPost) ?? current.recentCalls,
+    };
+  });
+  queryClient.setQueriesData<IntelligenceLeaderboardsCacheLike>({ queryKey: ["leaderboards"] }, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      topAlphaToday: current.topAlphaToday?.map(syncPost) ?? current.topAlphaToday,
+      biggestRoiToday: current.biggestRoiToday?.map(syncPost) ?? current.biggestRoiToday,
+      bestEntryToday: current.bestEntryToday?.map(syncPost) ?? current.bestEntryToday,
+    };
+  });
+  queryClient.setQueriesData<Post>({ queryKey: ["post"] }, (current) => (current ? syncPost(current) : current));
+  queryClient.setQueriesData<FollowableProfileLike>({ queryKey: ["userProfile"] }, (current) => {
+    if (!current) return current;
+    const matchesProfile =
+      current.id === author.id ||
+      (normalizedUsername !== null && normalizeIdentifier(current.username) === normalizedUsername);
+    return matchesProfile ? { ...current, isFollowing: nextFollowing } : current;
+  });
+
+  syncPostsInSessionCache(author, nextFollowing);
 }
