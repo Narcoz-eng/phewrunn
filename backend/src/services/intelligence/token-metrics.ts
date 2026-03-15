@@ -178,6 +178,10 @@ const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
   process.env.HELIUS_RPC_ENDPOINT?.trim() || null,
   process.env.SOLANA_RPC_URL?.trim() || null,
+  // Additional free public RPC endpoints as fallbacks when no API key is configured.
+  // Tried in order — first successful response wins.
+  "https://rpc.ankr.com/solana",
+  "https://solana.publicnode.com",
   DEFAULT_SOLANA_RPC_URL,
 ].filter((value, index, collection): value is string =>
   typeof value === "string" &&
