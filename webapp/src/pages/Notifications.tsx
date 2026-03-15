@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   isPushSupported,
   getPushPermission,
@@ -203,6 +204,7 @@ export default function Notifications() {
   const [showAlertPreferences, setShowAlertPreferences] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const pushSupported = isPushSupported() && getPushPermission() !== "denied";
 
   // Check current push subscription state on mount
@@ -541,6 +543,22 @@ export default function Notifications() {
     : mergedNotifications;
   const shouldShowSessionRecovery = isAuthenticated && isUsingCachedUser && filteredNotifications.length === 0;
   const shouldShowRecoveryBanner = isAuthenticated && isUsingCachedUser && filteredNotifications.length > 0;
+  const contentStateKey = !isAuthenticated
+    ? "signed-out"
+    : shouldShowSessionRecovery
+      ? "session-recovery"
+      : shouldShowRecoveryBanner
+        ? `recovery:${activeFilter}`
+        : isLoading || (!isFetched && filteredNotifications.length === 0)
+          ? `loading:${activeFilter}`
+          : error
+            ? `error:${activeFilter}`
+            : filteredNotifications.length === 0
+              ? `empty:${activeFilter}`
+              : `list:${activeFilter}`;
+  const panelTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: 0.24, ease: [0.22, 1, 0.36, 1] as const };
 
   useLayoutEffect(() => {
     if (typeof window === "undefined") return;
@@ -570,6 +588,111 @@ export default function Notifications() {
       if (secondRafId) window.cancelAnimationFrame(secondRafId);
     };
   }, []);
+
+  const notificationsContent = !isAuthenticated ? (
+    <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
+      <div className="app-empty-state w-full gap-5 px-8 py-12">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full border border-border/70 bg-muted/80">
+          <PhewBellIcon className="h-10 w-10 text-muted-foreground" />
+        </div>
+        <div>
+          <p className="text-lg font-semibold text-foreground">Sign in to view notifications</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Activity alerts appear here after you sign in.
+          </p>
+        </div>
+      </div>
+    </div>
+  ) : shouldShowSessionRecovery ? (
+    <div className="px-4 pb-6 pt-6">
+      {[0, 1, 2].map((i) => (
+        <NotificationItemSkeleton key={i} />
+      ))}
+      <p className="px-4 py-3 text-sm text-muted-foreground">
+        Finalizing your session and loading notifications...
+      </p>
+    </div>
+  ) : shouldShowRecoveryBanner ? (
+    <div className="px-4 pb-6 pt-6">
+      <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+        Notifications are showing cached activity while sign-in finishes. Actions will unlock automatically.
+      </div>
+      <WindowVirtualList
+        items={filteredNotifications}
+        getItemKey={(notification) => notification.id}
+        estimateItemHeight={104}
+        overscanPx={900}
+        className="pt-5"
+        renderItem={(notification, index) => (
+          <div
+            className={cn(
+              index === 0 && "pt-4",
+              index < filteredNotifications.length - 1 && "pb-3"
+            )}
+          >
+            <NotificationItem
+              notification={notification}
+              onMarkClicked={handleMarkClicked}
+              onDismiss={handleDismiss}
+              onProfileClick={handleProfileClick}
+            />
+          </div>
+        )}
+      />
+    </div>
+  ) : isLoading || (!isFetched && filteredNotifications.length === 0) ? (
+    <div className="px-4 pb-6 pt-6">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <NotificationItemSkeleton key={i} />
+      ))}
+    </div>
+  ) : error ? (
+    <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
+      <div className="app-empty-state w-full gap-5 px-8 py-12">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
+          <PhewBellIcon className="h-10 w-10 text-destructive" />
+        </div>
+        <div>
+          <p className="text-lg font-semibold text-foreground">
+            Failed to load notifications
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {notificationsErrorMessage}
+          </p>
+        </div>
+        <Button variant="outline" onClick={() => refetch()}>
+          Try Again
+        </Button>
+      </div>
+    </div>
+  ) : filteredNotifications.length === 0 ? (
+    <EmptyState mode={activeFilter} />
+  ) : (
+    <div className="px-4 pb-6 pt-6">
+      <WindowVirtualList
+        items={filteredNotifications}
+        getItemKey={(notification) => notification.id}
+        estimateItemHeight={112}
+        overscanPx={900}
+        className="pt-5"
+        renderItem={(notification, index) => (
+          <div
+            className={cn(
+              index === 0 && "pt-4",
+              index < filteredNotifications.length - 1 && "pb-3"
+            )}
+          >
+            <NotificationItem
+              notification={notification}
+              onMarkClicked={handleMarkClicked}
+              onDismiss={handleDismiss}
+              onProfileClick={handleProfileClick}
+            />
+          </div>
+        )}
+      />
+    </div>
+  );
 
   return (
     <div ref={pageTopRef} className="min-h-screen bg-background">
@@ -623,242 +746,173 @@ export default function Notifications() {
                 {showAlertPreferences ? "Hide alert settings" : "Alert settings"}
               </Button>
             </div>
-            {showAlertPreferences && alertPreferences ? (
-              <div className="mb-4 rounded-[24px] border border-border/65 bg-background/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
-                {/* Push notification toggle */}
-                {pushSupported ? (
-                  <div className="mb-4 flex items-center justify-between rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Browser push notifications</p>
-                      <p className="text-xs text-muted-foreground">
-                        {pushSubscribed
-                          ? "You'll get notified even when the app is closed"
-                          : "Get alerts even when you're not on the platform"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={pushLoading}
-                      onClick={handlePushToggle}
-                      className={cn(
-                        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-50",
-                        pushSubscribed ? "bg-primary" : "bg-muted-foreground/30"
-                      )}
-                      role="switch"
-                      aria-checked={pushSubscribed}
-                    >
-                      <span
-                        className={cn(
-                          "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg transition duration-200",
-                          pushSubscribed ? "translate-x-5" : "translate-x-0"
-                        )}
-                      />
-                    </button>
+            <AnimatePresence initial={false}>
+              {showAlertPreferences ? (
+                <motion.div
+                  initial={prefersReducedMotion ? { opacity: 1, height: "auto" } : { opacity: 0, height: 0, y: -8 }}
+                  animate={{ opacity: 1, height: "auto", y: 0 }}
+                  exit={prefersReducedMotion ? { opacity: 1, height: 0 } : { opacity: 0, height: 0, y: -8 }}
+                  transition={panelTransition}
+                  className="mb-4 overflow-hidden"
+                >
+                  <div className="rounded-[24px] border border-border/65 bg-background/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
+                    {alertPreferences ? (
+                      <>
+                        {pushSupported ? (
+                          <div className="mb-4 flex items-center justify-between rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">Browser push notifications</p>
+                              <p className="text-xs text-muted-foreground">
+                                {pushSubscribed
+                                  ? "You'll get notified even when the app is closed"
+                                  : "Get alerts even when you're not on the platform"}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={pushLoading}
+                              onClick={handlePushToggle}
+                              className={cn(
+                                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-50",
+                                pushSubscribed ? "bg-primary" : "bg-muted-foreground/30"
+                              )}
+                              role="switch"
+                              aria-checked={pushSubscribed}
+                            >
+                              <span
+                                className={cn(
+                                  "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg transition duration-200",
+                                  pushSubscribed ? "translate-x-5" : "translate-x-0"
+                                )}
+                              />
+                            </button>
+                          </div>
+                        ) : null}
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <label className="space-y-1">
+                            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min confidence</span>
+                            <Input
+                              type="number"
+                              defaultValue={alertPreferences.minConfidenceScore ?? 65}
+                              onBlur={(event) =>
+                                updateAlertPreferencesMutation.mutate({
+                                  minConfidenceScore: Number(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="space-y-1">
+                            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min liquidity</span>
+                            <Input
+                              type="number"
+                              defaultValue={alertPreferences.minLiquidity ?? 0}
+                              onBlur={(event) =>
+                                updateAlertPreferencesMutation.mutate({
+                                  minLiquidity: Number(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="space-y-1">
+                            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Max bundle risk</span>
+                            <Input
+                              type="number"
+                              defaultValue={alertPreferences.maxBundleRiskScore ?? 45}
+                              onBlur={(event) =>
+                                updateAlertPreferencesMutation.mutate({
+                                  maxBundleRiskScore: Number(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {[
+                            ["notifyFollowedTraders", "Followed traders"],
+                            ["notifyFollowedTokens", "Followed tokens"],
+                            ["notifyEarlyRunners", "Early runners"],
+                            ["notifyHotAlpha", "Hot alpha"],
+                            ["notifyHighConviction", "High conviction"],
+                            ["notifyBundleChanges", "Bundle changes"],
+                            ["notifyConfidenceCross", "Confidence cross"],
+                          ].map(([key, label]) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() =>
+                                updateAlertPreferencesMutation.mutate({
+                                  [key]: !alertPreferences[key as keyof AlertPreference],
+                                } as Partial<AlertPreference>)
+                              }
+                              className={cn(
+                                "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                                alertPreferences[key as keyof AlertPreference]
+                                  ? "border-primary/30 bg-primary/10 text-primary"
+                                  : "border-border/60 bg-secondary text-muted-foreground"
+                              )}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="rounded-2xl border border-border/60 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
+                        Loading alert settings...
+                      </div>
+                    )}
                   </div>
-                ) : null}
-                <div className="grid gap-3 md:grid-cols-3">
-                  <label className="space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min confidence</span>
-                    <Input
-                      type="number"
-                      defaultValue={alertPreferences.minConfidenceScore ?? 65}
-                      onBlur={(event) =>
-                        updateAlertPreferencesMutation.mutate({
-                          minConfidenceScore: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Min liquidity</span>
-                    <Input
-                      type="number"
-                      defaultValue={alertPreferences.minLiquidity ?? 0}
-                      onBlur={(event) =>
-                        updateAlertPreferencesMutation.mutate({
-                          minLiquidity: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Max bundle risk</span>
-                    <Input
-                      type="number"
-                      defaultValue={alertPreferences.maxBundleRiskScore ?? 45}
-                      onBlur={(event) =>
-                        updateAlertPreferencesMutation.mutate({
-                          maxBundleRiskScore: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {[
-                    ["notifyFollowedTraders", "Followed traders"],
-                    ["notifyFollowedTokens", "Followed tokens"],
-                    ["notifyEarlyRunners", "Early runners"],
-                    ["notifyHotAlpha", "Hot alpha"],
-                    ["notifyHighConviction", "High conviction"],
-                    ["notifyBundleChanges", "Bundle changes"],
-                    ["notifyConfidenceCross", "Confidence cross"],
-                  ].map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() =>
-                        updateAlertPreferencesMutation.mutate({
-                          [key]: !alertPreferences[key as keyof AlertPreference],
-                        } as Partial<AlertPreference>)
-                      }
-                      className={cn(
-                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
-                        alertPreferences[key as keyof AlertPreference]
-                          ? "border-primary/30 bg-primary/10 text-primary"
-                          : "border-border/60 bg-secondary text-muted-foreground"
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
             <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-border/65 bg-background/55 p-1.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
-              <button
-                type="button"
-                onClick={() => setActiveFilter("all")}
-                className={cn(
-                  "h-11 rounded-[18px] px-4 text-sm font-semibold transition-all duration-200",
-                  activeFilter === "all"
-                    ? "border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.98),hsl(37_34%_95%/0.92))] text-foreground shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none"
-                    : "text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/[0.04]"
-                )}
-              >
-                All
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveFilter("unread")}
-                className={cn(
-                  "h-11 rounded-[18px] px-4 text-sm font-semibold transition-all duration-200",
-                  activeFilter === "unread"
-                    ? "border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.98),hsl(37_34%_95%/0.92))] text-foreground shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none"
-                    : "text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/[0.04]"
-                )}
-              >
-                Unread
-              </button>
+              {([
+                ["all", "All"],
+                ["unread", "Unread"],
+              ] as const).map(([value, label]) => {
+                const isActive = activeFilter === value;
+
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setActiveFilter(value)}
+                    className={cn(
+                      "relative isolate h-11 overflow-hidden rounded-[18px] px-4 text-sm font-semibold transition-all duration-200",
+                      isActive
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/[0.04]"
+                    )}
+                  >
+                    {isActive ? (
+                      <motion.span
+                        layoutId="notifications-filter-pill"
+                        transition={
+                          prefersReducedMotion
+                            ? { duration: 0 }
+                            : { type: "spring", stiffness: 420, damping: 34, mass: 0.8 }
+                        }
+                        className="absolute inset-0 border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.98),hsl(37_34%_95%/0.92))] shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none"
+                      />
+                    ) : null}
+                    <span className="relative z-10">{label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {!isAuthenticated ? (
-            <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
-              <div className="app-empty-state w-full gap-5 px-8 py-12">
-                <div className="flex h-20 w-20 items-center justify-center rounded-full border border-border/70 bg-muted/80">
-                  <PhewBellIcon className="h-10 w-10 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-foreground">Sign in to view notifications</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Activity alerts appear here after you sign in.
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : shouldShowSessionRecovery ? (
-            <div className="px-4 pb-6 pt-6">
-              {[0, 1, 2].map((i) => (
-                <NotificationItemSkeleton key={i} />
-              ))}
-              <p className="px-4 py-3 text-sm text-muted-foreground">
-                Finalizing your session and loading notifications...
-              </p>
-            </div>
-          ) : shouldShowRecoveryBanner ? (
-            <div className="px-4 pb-6 pt-6">
-              <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                Notifications are showing cached activity while sign-in finishes. Actions will unlock automatically.
-              </div>
-              <WindowVirtualList
-                items={filteredNotifications}
-                getItemKey={(notification) => notification.id}
-                estimateItemHeight={104}
-                overscanPx={900}
-                className="pt-5"
-                renderItem={(notification, index) => (
-                  <div
-                    className={cn(
-                      index === 0 && "pt-4",
-                      index < filteredNotifications.length - 1 && "pb-3"
-                    )}
-                  >
-                    <NotificationItem
-                      notification={notification}
-                      onMarkClicked={handleMarkClicked}
-                      onDismiss={handleDismiss}
-                      onProfileClick={handleProfileClick}
-                    />
-                  </div>
-                )}
-              />
-            </div>
-          ) : isLoading || (!isFetched && filteredNotifications.length === 0) ? (
-            // Loading skeletons
-            <div className="px-4 pb-6 pt-6">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <NotificationItemSkeleton key={i} />
-              ))}
-            </div>
-          ) : error ? (
-            // Error state
-            <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
-              <div className="app-empty-state w-full gap-5 px-8 py-12">
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
-                  <PhewBellIcon className="h-10 w-10 text-destructive" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-foreground">
-                    Failed to load notifications
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {notificationsErrorMessage}
-                  </p>
-                </div>
-                <Button variant="outline" onClick={() => refetch()}>
-                  Try Again
-                </Button>
-              </div>
-            </div>
-          ) : filteredNotifications.length === 0 ? (
-            <EmptyState mode={activeFilter} />
-          ) : (
-            <div className="px-4 pb-6 pt-6">
-              <WindowVirtualList
-                items={filteredNotifications}
-                getItemKey={(notification) => notification.id}
-                estimateItemHeight={112}
-                overscanPx={900}
-                className="pt-5"
-                renderItem={(notification, index) => (
-                  <div
-                    className={cn(
-                      index === 0 && "pt-4",
-                      index < filteredNotifications.length - 1 && "pb-3"
-                    )}
-                  >
-                    <NotificationItem
-                      notification={notification}
-                      onMarkClicked={handleMarkClicked}
-                      onDismiss={handleDismiss}
-                      onProfileClick={handleProfileClick}
-                    />
-                  </div>
-                )}
-              />
-            </div>
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={contentStateKey}
+              initial={prefersReducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={prefersReducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -8 }}
+              transition={panelTransition}
+            >
+              {notificationsContent}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </main>
     </div>

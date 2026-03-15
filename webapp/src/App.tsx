@@ -1,11 +1,11 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { AuthProvider } from "@/lib/auth-client";
+import { AuthProvider, useAuth } from "@/lib/auth-client";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,6 +54,31 @@ function PublicHandleProfileRoute() {
   return <UserProfile />;
 }
 
+function hasCompletedHandle(username: string | null | undefined): boolean {
+  return typeof username === "string" && username.trim().length > 0;
+}
+
+function MissingHandleGate({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  const { user, isAuthenticated, isReady } = useAuth();
+
+  if (!isReady || !isAuthenticated || !user || hasCompletedHandle(user.username)) {
+    return <>{children}</>;
+  }
+
+  if (location.pathname === "/welcome") {
+    return <>{children}</>;
+  }
+
+  return (
+    <Navigate
+      to="/welcome"
+      replace
+      state={{ from: `${location.pathname}${location.search}${location.hash}` }}
+    />
+  );
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -92,7 +117,8 @@ const App = () => (
                 <Sonner />
                 <BrowserRouter>
                   <Suspense fallback={<PageSkeleton />}>
-                    <Routes>
+                    <MissingHandleGate>
+                      <Routes>
                   <Route
                     path="/"
                     element={
@@ -174,7 +200,8 @@ const App = () => (
                   <Route path="/docs" element={<Docs />} />
                   <Route path="/:userId" element={<PublicHandleProfileRoute />} />
                   <Route path="*" element={<NotFound />} />
-                    </Routes>
+                      </Routes>
+                    </MissingHandleGate>
                   </Suspense>
                 </BrowserRouter>
               </TooltipProvider>

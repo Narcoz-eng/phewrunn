@@ -67,6 +67,16 @@ interface ExtendedUser extends User {
   lossesCount?: number;
 }
 
+type UserProfileCountersPayload = {
+  stats?: {
+    posts?: number;
+    followers?: number;
+    following?: number;
+    wins?: number;
+    losses?: number;
+  };
+};
+
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
 type ProfileViewTab = "profile" | "settings";
@@ -108,6 +118,38 @@ interface FeeEarningsData {
     traderWalletAddress: string;
     createdAt: string;
   }>;
+}
+
+function hasFiniteCount(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function hasCompleteProfileCounters(user: ExtendedUser | null | undefined): boolean {
+  if (!user) return false;
+
+  return [
+    user.followersCount,
+    user.followingCount,
+    user.postsCount,
+    user.winsCount,
+    user.lossesCount,
+  ].every(hasFiniteCount);
+}
+
+function mergeProfileCounters(
+  user: ExtendedUser,
+  profile: UserProfileCountersPayload | null | undefined
+): ExtendedUser {
+  const stats = profile?.stats;
+
+  return {
+    ...user,
+    followersCount: hasFiniteCount(stats?.followers) ? stats.followers : user.followersCount,
+    followingCount: hasFiniteCount(stats?.following) ? stats.following : user.followingCount,
+    postsCount: hasFiniteCount(stats?.posts) ? stats.posts : user.postsCount,
+    winsCount: hasFiniteCount(stats?.wins) ? stats.wins : user.winsCount,
+    lossesCount: hasFiniteCount(stats?.losses) ? stats.losses : user.lossesCount,
+  };
 }
 
 function clampCropOffset(offset: CropOffset, image: CropImageMeta, scale: number): CropOffset {
@@ -208,6 +250,7 @@ export default function Profile() {
       lossesCount: cachedProfileBySession?.lossesCount,
     };
   }, [cachedProfileBySession, session?.user]);
+  const shouldRefetchProfileOnMount = !hasCompleteProfileCounters(sessionBackedProfile);
   const cachedPosts = useMemo(
     () =>
       session?.user?.id
@@ -255,18 +298,34 @@ export default function Profile() {
       }
       try {
         const userData = await api.get<ExtendedUser>("/api/me");
-        return userData;
+        if (hasCompleteProfileCounters(userData) || !session?.user?.id) {
+          return userData;
+        }
+        try {
+          const profileData = await api.get<UserProfileCountersPayload>(`/api/users/${session.user.id}`);
+          return mergeProfileCounters(userData, profileData);
+        } catch {
+          return userData;
+        }
       } catch (error) {
         if (
           sessionBackedProfile &&
           (!(error instanceof ApiError) || (error.status !== 401 && error.status !== 403))
         ) {
+          if (!hasCompleteProfileCounters(sessionBackedProfile) && session?.user?.id) {
+            try {
+              const profileData = await api.get<UserProfileCountersPayload>(`/api/users/${session.user.id}`);
+              return mergeProfileCounters(sessionBackedProfile, profileData);
+            } catch {
+              return sessionBackedProfile;
+            }
+          }
           return sessionBackedProfile;
         }
-        if (session?.user?.id) {
+        if (session?.user?.id && sessionBackedProfile) {
           try {
-            const fallbackUser = await api.get<ExtendedUser>(`/api/users/${session.user.id}`);
-            return fallbackUser;
+            const profileData = await api.get<UserProfileCountersPayload>(`/api/users/${session.user.id}`);
+            return mergeProfileCounters(sessionBackedProfile, profileData);
           } catch {
             // fall through to original error
           }
@@ -279,7 +338,7 @@ export default function Profile() {
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
     refetchInterval: false,
-    refetchOnMount: sessionBackedProfile ? false : true,
+    refetchOnMount: shouldRefetchProfileOnMount,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: (failureCount, error) => {

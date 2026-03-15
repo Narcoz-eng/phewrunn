@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Notification, getAvatarUrl, formatTimeAgo, stripContractAddress } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -124,11 +125,15 @@ export function NotificationItem({
 }: NotificationItemProps) {
   const navigate = useNavigate();
   const [isExpanded, setIsExpanded] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const fromUser = notification.fromUser;
   const { icon: IconComponent, colorClass } = getNotificationIcon(notification);
   const mergedItems = Array.isArray(notification.mergedItems) ? notification.mergedItems : [];
   const hasMergedItems = mergedItems.length > 1;
   const mergedCount = notification.mergedCount ?? mergedItems.length;
+  const cardTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 
   const detailPreview = useMemo(
     () => stripContractAddress(notification.post?.content ?? "").trim(),
@@ -177,7 +182,12 @@ export function NotificationItem({
   };
 
   return (
-    <article
+    <motion.article
+      layout="position"
+      initial={prefersReducedMotion ? false : { opacity: 0, y: 10, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      whileHover={prefersReducedMotion ? undefined : { y: -1.5 }}
+      transition={cardTransition}
       className={cn(
         "group relative overflow-hidden rounded-[24px] border border-border/65 transition-all duration-200 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.14)] dark:shadow-none",
         !notification.read
@@ -287,51 +297,61 @@ export function NotificationItem({
         </div>
       </div>
 
-      {hasMergedItems && isExpanded ? (
-        <div className="border-t border-border/60 bg-muted/15 px-4 pb-4 pt-3">
-          <div className="space-y-2">
-            {mergedItems.map((item) => {
-              const itemPreview = stripContractAddress(item.post?.content ?? "").trim();
-              const itemHref = buildNotificationDestination(item);
-              const itemTokenAddress = readNotificationPayloadString(item, "tokenAddress");
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!item.read) {
-                      onMarkClicked(item);
-                    }
-                    if (itemHref) {
-                      navigate(itemHref);
-                    }
-                  }}
-                  className="w-full rounded-[16px] border border-border/60 bg-background/70 px-3 py-2.5 text-left transition-colors hover:bg-background/90"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px] text-muted-foreground">{formatTimeAgo(item.createdAt)}</span>
-                    {item.post?.contractAddress ? (
-                      <span className="truncate text-[10px] font-mono text-muted-foreground">
-                        {item.post.contractAddress}
-                      </span>
-                    ) : itemTokenAddress ? (
-                      <span className="truncate text-[10px] font-mono text-muted-foreground">
-                        {itemTokenAddress}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 line-clamp-1 text-xs text-foreground/90">{item.message}</p>
-                  {itemPreview ? (
-                    <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{itemPreview}</p>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </article>
+      <AnimatePresence initial={false}>
+        {hasMergedItems && isExpanded ? (
+          <motion.div
+            initial={prefersReducedMotion ? { opacity: 1, height: "auto" } : { opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={prefersReducedMotion ? { opacity: 1, height: 0 } : { opacity: 0, height: 0 }}
+            transition={cardTransition}
+            className="overflow-hidden border-t border-border/60 bg-muted/15"
+          >
+            <div className="px-4 pb-4 pt-3">
+              <div className="space-y-2">
+                {mergedItems.map((item) => {
+                  const itemPreview = stripContractAddress(item.post?.content ?? "").trim();
+                  const itemHref = buildNotificationDestination(item);
+                  const itemTokenAddress = readNotificationPayloadString(item, "tokenAddress");
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!item.read) {
+                          onMarkClicked(item);
+                        }
+                        if (itemHref) {
+                          navigate(itemHref);
+                        }
+                      }}
+                      className="w-full rounded-[16px] border border-border/60 bg-background/70 px-3 py-2.5 text-left transition-colors hover:bg-background/90"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[11px] text-muted-foreground">{formatTimeAgo(item.createdAt)}</span>
+                        {item.post?.contractAddress ? (
+                          <span className="truncate text-[10px] font-mono text-muted-foreground">
+                            {item.post.contractAddress}
+                          </span>
+                        ) : itemTokenAddress ? (
+                          <span className="truncate text-[10px] font-mono text-muted-foreground">
+                            {itemTokenAddress}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 line-clamp-1 text-xs text-foreground/90">{item.message}</p>
+                      {itemPreview ? (
+                        <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{itemPreview}</p>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </motion.article>
   );
 }
 
