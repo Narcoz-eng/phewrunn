@@ -48,7 +48,10 @@ if (typeof window !== "undefined") {
 import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import App from "./App.js";
+import { installStaleAssetRecovery } from "./lib/stale-asset-recovery";
 import "./index.css";
+
+installStaleAssetRecovery();
 
 createRoot(document.getElementById("root")!).render(
   <ErrorBoundary>
