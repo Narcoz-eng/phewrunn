@@ -3429,11 +3429,11 @@ export function PostCard({
       isBuyDialogOpen
         ? chartRequestConfig.timeframe === "minute"
           ? chartRequestConfig.aggregate <= 5
-            ? 8_000
-            : 12_000
+            ? 5_000
+            : 8_000
           : chartRequestConfig.timeframe === "hour"
-            ? 20_000
-            : 60_000
+            ? 15_000
+            : 45_000
         : false,
     queryFn: async () => {
       if (!canRequestChartCandles) {
@@ -6392,8 +6392,9 @@ export function PostCard({
                         onMouseUp={handleChartMouseUp}
                         onMouseLeave={handleChartMouseUp}
                         style={{
-                          touchAction: hasProfessionalChartData ? "pan-y" : "auto",
+                          touchAction: hasProfessionalChartData ? "none" : "auto",
                           userSelect: isChartMousePanning ? "none" : "auto",
+                          willChange: hasProfessionalChartData ? "transform" : "auto",
                         }}
                       >
                         {hasProfessionalChartData ? (

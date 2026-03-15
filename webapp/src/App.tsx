@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/lib/auth-client";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -111,6 +112,107 @@ const queryClient = new QueryClient({
   },
 });
 
+const pageTransition = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -6 },
+  transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
+};
+
+function AnimatedRoutes() {
+  const location = useLocation();
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={location.pathname}
+        {...pageTransition}
+        style={{ minHeight: "100vh" }}
+      >
+        <Routes location={location}>
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Feed />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/welcome"
+            element={
+              <ProtectedRoute allowMissingUsername>
+                <HandleOnboarding />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/profile/:userId" element={<UserProfile />} />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <Admin />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/notifications"
+            element={
+              <ProtectedRoute>
+                <Notifications />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/leaderboard"
+            element={
+              <ProtectedRoute>
+                <Leaderboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/post/:postId"
+            element={
+              <ProtectedRoute>
+                <PostDetail />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/token/:tokenAddress"
+            element={
+              <ProtectedRoute>
+                <TokenPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              <GuestRoute>
+                <Login />
+              </GuestRoute>
+            }
+          />
+          <Route path="/terms" element={<Terms />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/docs" element={<Docs />} />
+          <Route path="/:userId" element={<PublicHandleProfileRoute />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
@@ -124,89 +226,7 @@ const App = () => (
                 <BrowserRouter>
                   <Suspense fallback={<PageSkeleton />}>
                     <MissingHandleGate>
-                      <Routes>
-                  <Route
-                    path="/"
-                    element={
-                      <ProtectedRoute>
-                        <Feed />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/profile"
-                    element={
-                      <ProtectedRoute>
-                        <Profile />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/welcome"
-                    element={
-                      <ProtectedRoute allowMissingUsername>
-                        <HandleOnboarding />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/profile/:userId"
-                    element={<UserProfile />}
-                  />
-                  <Route
-                    path="/admin"
-                    element={
-                      <ProtectedRoute>
-                        <Admin />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/notifications"
-                    element={
-                      <ProtectedRoute>
-                        <Notifications />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/leaderboard"
-                    element={
-                      <ProtectedRoute>
-                        <Leaderboard />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/post/:postId"
-                    element={
-                      <ProtectedRoute>
-                        <PostDetail />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/token/:tokenAddress"
-                    element={
-                      <ProtectedRoute>
-                        <TokenPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/login"
-                    element={
-                      <GuestRoute>
-                        <Login />
-                      </GuestRoute>
-                    }
-                  />
-                  <Route path="/terms" element={<Terms />} />
-                  <Route path="/privacy" element={<Privacy />} />
-                  <Route path="/docs" element={<Docs />} />
-                  <Route path="/:userId" element={<PublicHandleProfileRoute />} />
-                  <Route path="*" element={<NotFound />} />
-                      </Routes>
+                      <AnimatedRoutes />
                     </MissingHandleGate>
                   </Suspense>
                 </BrowserRouter>
