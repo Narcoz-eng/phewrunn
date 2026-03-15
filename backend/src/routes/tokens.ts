@@ -107,7 +107,8 @@ function hasResolvedLiveTokenPayload(payload: TokenLivePayload): boolean {
   return Boolean(
     payload.bundleScanCompletedAt &&
       payload.topHolders.length > 0 &&
-      hasResolvedHolderCount(payload.holderCount, payload.holderCountSource)
+      hasResolvedHolderCount(payload.holderCount, payload.holderCountSource) &&
+      hasResolvedHolderRoleIntelligence(payload.topHolders, payload.devWallet)
   );
 }
 
@@ -362,6 +363,42 @@ function hasResolvedSolanaDistributionSnapshot(
   );
 }
 
+function hasResolvedHolderRoleFields(
+  holder:
+    | Pick<TokenRoutePayload["topHolders"][number], "badges" | "devRole" | "activeAgeDays" | "fundedBy" | "tradeVolume90dSol" | "solBalance" | "label">
+    | null
+    | undefined
+): boolean {
+  if (!holder) {
+    return false;
+  }
+
+  return Boolean(
+    holder.badges.length > 0 ||
+      holder.devRole !== null ||
+      holder.activeAgeDays !== null ||
+      holder.fundedBy !== null ||
+      holder.tradeVolume90dSol !== null ||
+      holder.solBalance !== null ||
+      (typeof holder.label === "string" && holder.label.trim().length > 0)
+  );
+}
+
+function hasResolvedHolderRoleIntelligence(
+  topHolders: TokenRoutePayload["topHolders"] | TokenLivePayload["topHolders"] | null | undefined,
+  devWallet:
+    | TokenRoutePayload["devWallet"]
+    | TokenLivePayload["devWallet"]
+    | NonNullable<Awaited<ReturnType<typeof peekCachedSolanaTokenDistribution>>>["devWallet"]
+    | null
+    | undefined
+): boolean {
+  return Boolean(
+    (topHolders ?? []).some((holder) => hasResolvedHolderRoleFields(holder)) ||
+      hasResolvedHolderRoleFields(devWallet)
+  );
+}
+
 function needsFreshSolanaHolderDistributionSnapshot(
   snapshot: Awaited<ReturnType<typeof peekCachedSolanaTokenDistribution>>
 ): boolean {
@@ -369,7 +406,11 @@ function needsFreshSolanaHolderDistributionSnapshot(
     return true;
   }
 
-  return snapshot.topHolders.length === 0 || !hasResolvedHolderCount(snapshot.holderCount, snapshot.holderCountSource);
+  return (
+    snapshot.topHolders.length === 0 ||
+    !hasResolvedHolderCount(snapshot.holderCount, snapshot.holderCountSource) ||
+    !hasResolvedHolderRoleIntelligence(snapshot.topHolders, snapshot.devWallet)
+  );
 }
 
 function shouldRefreshLiveDistribution(token: TokenLookupPayload | null | undefined): boolean {

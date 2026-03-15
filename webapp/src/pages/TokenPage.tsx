@@ -538,7 +538,7 @@ function hasResolvedHolderCount(
 
 function isHolderIntelligencePending(
   token:
-    | Pick<TokenPageData, "chainType" | "topHolders" | "holderCount" | "holderCountSource">
+    | Pick<TokenPageData, "chainType" | "topHolders" | "holderCount" | "holderCountSource" | "devWallet">
     | null
     | undefined
 ): boolean {
@@ -546,7 +546,48 @@ function isHolderIntelligencePending(
     return false;
   }
 
-  return token.topHolders.length === 0 || !hasResolvedHolderCount(token.holderCount, token.holderCountSource);
+  return (
+    token.topHolders.length === 0 ||
+    !hasResolvedHolderCount(token.holderCount, token.holderCountSource) ||
+    !hasResolvedHolderRoleIntelligence(token)
+  );
+}
+
+function hasResolvedHolderRoleFields(
+  holder:
+    | Pick<TokenHolder, "badges" | "devRole" | "activeAgeDays" | "fundedBy" | "tradeVolume90dSol" | "solBalance" | "label">
+    | null
+    | undefined
+): boolean {
+  if (!holder) {
+    return false;
+  }
+
+  return Boolean(
+    holder.badges.length > 0 ||
+      holder.devRole !== null ||
+      holder.activeAgeDays !== null ||
+      holder.fundedBy !== null ||
+      holder.tradeVolume90dSol !== null ||
+      holder.solBalance !== null ||
+      (typeof holder.label === "string" && holder.label.trim().length > 0)
+  );
+}
+
+function hasResolvedHolderRoleIntelligence(
+  token:
+    | Pick<TokenPageData, "topHolders" | "devWallet">
+    | null
+    | undefined
+): boolean {
+  if (!token) {
+    return false;
+  }
+
+  return (
+    token.topHolders.some((holder) => hasResolvedHolderRoleFields(holder)) ||
+    hasResolvedHolderRoleFields(token.devWallet)
+  );
 }
 
 function holderSnapshotKey(holder: Pick<TokenHolder, "address" | "ownerAddress">): string {
