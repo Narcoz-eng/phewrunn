@@ -1451,7 +1451,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
         () => ({ mcap: null } as MarketCapResult)
       ),
       existing.chainType === "solana"
-        ? analyzeSolanaTokenDistribution(existing.address, existing.liquidity).catch(() => null)
+        ? analyzeSolanaTokenDistribution(existing.address, existing.liquidity, { preferFresh: true }).catch(() => null)
         : Promise.resolve(null),
       prisma.tokenBundleCluster.findMany({
         where: { tokenId },

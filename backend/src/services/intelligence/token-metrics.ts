@@ -155,7 +155,9 @@ const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
-const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
+const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 15_000;
+const TOKEN_DISTRIBUTION_STALE_TTL_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 90_000;
+const TOKEN_DISTRIBUTION_RETRY_MS = process.env.NODE_ENV === "production" ? 30_000 : 7_500;
 const FRESH_WALLET_DAYS_THRESHOLD = 5;
 const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 5;
 const LOW_HISTORY_MINT_THRESHOLD = 2;
@@ -190,7 +192,12 @@ const SOLANA_RPC_URLS = [
 );
 const tokenDistributionCache = new Map<
   string,
-  { value: TokenDistributionSnapshot | null; expiresAtMs: number }
+  {
+    value: TokenDistributionSnapshot | null;
+    expiresAtMs: number;
+    staleExpiresAtMs: number;
+    nextRefreshAllowedAtMs: number;
+  }
 >();
 const tokenDistributionInFlight = new Map<string, Promise<TokenDistributionSnapshot | null>>();
 const AMBIGUOUS_HOLDER_COUNT_PAGE_SIZE = 1000;
@@ -864,18 +871,38 @@ async function getRpcMintAuthorities(mintAddress: string): Promise<{
 
 export async function analyzeSolanaTokenDistribution(
   mintAddress: string,
-  fallbackLiquidityUsd?: number | null
+  fallbackLiquidityUsd?: number | null,
+  options?: { preferFresh?: boolean }
 ): Promise<TokenDistributionSnapshot | null> {
   const cacheKey = mintAddress.trim();
   const now = Date.now();
   const cached = tokenDistributionCache.get(cacheKey);
-  if (cached && cached.expiresAtMs > now) {
+  const hasFreshCachedValue = cached && cached.expiresAtMs > now;
+  const hasStaleCachedValue = cached && cached.staleExpiresAtMs > now;
+
+  if (hasFreshCachedValue) {
     return cloneDistributionSnapshot(cached.value);
   }
 
   const inFlight = tokenDistributionInFlight.get(cacheKey);
   if (inFlight) {
+    if (!options?.preferFresh && hasStaleCachedValue) {
+      return cloneDistributionSnapshot(cached.value);
+    }
     return cloneDistributionSnapshot(await inFlight);
+  }
+
+  if (!options?.preferFresh && hasStaleCachedValue) {
+    if ((cached?.nextRefreshAllowedAtMs ?? 0) <= now) {
+      tokenDistributionCache.set(cacheKey, {
+        value: cached?.value ?? null,
+        expiresAtMs: cached?.expiresAtMs ?? 0,
+        staleExpiresAtMs: cached?.staleExpiresAtMs ?? now + TOKEN_DISTRIBUTION_STALE_TTL_MS,
+        nextRefreshAllowedAtMs: now + TOKEN_DISTRIBUTION_RETRY_MS,
+      });
+      void analyzeSolanaTokenDistribution(mintAddress, fallbackLiquidityUsd, { preferFresh: true }).catch(() => undefined);
+    }
+    return cloneDistributionSnapshot(cached.value);
   }
 
   const request = (async (): Promise<TokenDistributionSnapshot | null> => {
@@ -1327,8 +1354,20 @@ export async function analyzeSolanaTokenDistribution(
       tokenDistributionCache.set(cacheKey, {
         value: cloneDistributionSnapshot(snapshot),
         expiresAtMs: Date.now() + TOKEN_DISTRIBUTION_CACHE_TTL_MS,
+        staleExpiresAtMs: Date.now() + TOKEN_DISTRIBUTION_STALE_TTL_MS,
+        nextRefreshAllowedAtMs: Date.now() + TOKEN_DISTRIBUTION_CACHE_TTL_MS,
       });
       return snapshot;
+    })
+    .catch((error) => {
+      const previous = tokenDistributionCache.get(cacheKey);
+      if (previous && previous.staleExpiresAtMs > Date.now()) {
+        tokenDistributionCache.set(cacheKey, {
+          ...previous,
+          nextRefreshAllowedAtMs: Date.now() + TOKEN_DISTRIBUTION_RETRY_MS,
+        });
+      }
+      throw error;
     })
     .finally(() => {
       tokenDistributionInFlight.delete(cacheKey);
@@ -1336,4 +1375,17 @@ export async function analyzeSolanaTokenDistribution(
 
   tokenDistributionInFlight.set(cacheKey, request);
   return cloneDistributionSnapshot(await request);
+}
+
+export function peekCachedSolanaTokenDistribution(mintAddress: string): TokenDistributionSnapshot | null {
+  const cacheKey = mintAddress.trim();
+  const cached = tokenDistributionCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (cached.staleExpiresAtMs <= Date.now()) {
+    tokenDistributionCache.delete(cacheKey);
+    return null;
+  }
+  return cloneDistributionSnapshot(cached.value);
 }

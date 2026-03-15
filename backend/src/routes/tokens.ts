@@ -5,11 +5,15 @@ import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { isTransientPrismaError, prisma } from "../prisma.js";
 import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
-import { analyzeSolanaTokenDistribution } from "../services/intelligence/token-metrics.js";
+import {
+  analyzeSolanaTokenDistribution,
+  peekCachedSolanaTokenDistribution,
+} from "../services/intelligence/token-metrics.js";
 import {
   findTokenByAddress,
   getTokenOverviewByAddress,
   invalidateViewerSocialCaches,
+  refreshTokenIntelligence,
 } from "../services/intelligence/engine.js";
 
 export const tokensRouter = new Hono<{ Variables: AuthVariables }>();
@@ -50,6 +54,7 @@ type TokenLivePayload = {
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_LIVE_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
+const TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_ROUTE_CACHE_VERSION = 12;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
@@ -273,6 +278,37 @@ function hasUsefulLiveTokenPayload(payload: TokenLivePayload): boolean {
   );
 }
 
+type TokenLookupPayload = NonNullable<Awaited<ReturnType<typeof findTokenByAddress>>>;
+
+function hasStoredSolanaDistributionTelemetry(token: TokenLookupPayload | null | undefined): boolean {
+  if (!token || token.chainType !== "solana") {
+    return false;
+  }
+
+  return (
+    (isFiniteNumber(token.holderCount) && token.holderCount > 0) ||
+    isFiniteNumber(token.largestHolderPct) ||
+    isFiniteNumber(token.top10HolderPct) ||
+    (isFiniteNumber(token.bundledWalletCount) && token.bundledWalletCount > 0) ||
+    (isFiniteNumber(token.estimatedBundledSupplyPct) && token.estimatedBundledSupplyPct > 0) ||
+    isFiniteNumber(token.tokenRiskScore) ||
+    (typeof token.bundleRiskLabel === "string" && token.bundleRiskLabel.trim().length > 0)
+  );
+}
+
+function shouldRefreshLiveDistribution(token: TokenLookupPayload | null | undefined): boolean {
+  if (!token || token.chainType !== "solana") {
+    return false;
+  }
+
+  if (!hasStoredSolanaDistributionTelemetry(token)) {
+    return true;
+  }
+
+  const lastIntelligenceAt = token.lastIntelligenceAt?.getTime() ?? 0;
+  return lastIntelligenceAt <= 0 || Date.now() - lastIntelligenceAt > TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS;
+}
+
 tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");
   const cacheKey = buildTokenLiveRouteCacheKey(tokenAddress);
@@ -302,11 +338,22 @@ tokensRouter.get("/:tokenAddress/live", zValidator("param", TokenAddressParamSch
         throw new Error("NOT_FOUND");
       }
 
+      const cachedDistribution =
+        chainType === "solana" ? peekCachedSolanaTokenDistribution(tokenAddress) : null;
+      const shouldRunLiveDistributionScan =
+        chainType === "solana" &&
+        !cachedDistribution &&
+        (!token || !hasStoredSolanaDistributionTelemetry(token));
+
+      if (token?.id && shouldRefreshLiveDistribution(token)) {
+        void refreshTokenIntelligence(token.id).catch(() => undefined);
+      }
+
       const [marketSnapshot, distributionSnapshot] = await Promise.all([
         getCachedMarketCapSnapshot(tokenAddress, chainType),
-        chainType === "solana"
+        shouldRunLiveDistributionScan
           ? analyzeSolanaTokenDistribution(tokenAddress, token?.liquidity ?? null)
-          : Promise.resolve(null),
+          : Promise.resolve(cachedDistribution),
       ]);
 
       const liveBundleClusters =
