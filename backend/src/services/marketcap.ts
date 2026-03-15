@@ -10,6 +10,7 @@
  * using something like BullMQ or cron jobs for more reliable updates
  * instead of the current lazy update pattern on feed fetch.
  */
+import { dexscreenerCircuit } from "../lib/circuit-breaker.js";
 
 // Tracking mode constants
 export const TRACKING_MODE_ACTIVE = 'active';
@@ -321,6 +322,11 @@ export async function fetchMarketCap(
       ];
       let selectedPair: DexscreenerSelectedPair | undefined;
 
+      // Fast-fail if DexScreener is having an outage — skip timeout wait
+      if (dexscreenerCircuit.isOpen()) {
+        return { mcap: null, error: "DexScreener circuit open — service unavailable" };
+      }
+
       for (const endpoint of endpoints) {
         let response: Response;
         try {
@@ -336,10 +342,11 @@ export async function fetchMarketCap(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.warn(`[MarketCap] Endpoint timeout/error for ${endpoint}: ${message}`);
+          dexscreenerCircuit.recordFailure();
           continue;
         }
 
-        // Handle rate limiting
+        // Handle rate limiting — not a service failure, don't trip circuit
         if (response.status === 429) {
           const retryAfter = response.headers.get('Retry-After');
           const waitTime = retryAfter
@@ -351,6 +358,11 @@ export async function fetchMarketCap(
           continue;
         }
 
+        if (response.status >= 500) {
+          dexscreenerCircuit.recordFailure();
+          continue;
+        }
+
         if (!response.ok) {
           continue;
         }
@@ -358,7 +370,10 @@ export async function fetchMarketCap(
         const data = await response.json() as DexscreenerResponse;
         const pairs = extractDexPairs(data);
         selectedPair = selectBestDexPair(pairs, address, chainType);
-        if (selectedPair?.pair) break;
+        if (selectedPair?.pair) {
+          dexscreenerCircuit.recordSuccess();
+          break;
+        }
       }
 
       if (selectedPair?.pair) {

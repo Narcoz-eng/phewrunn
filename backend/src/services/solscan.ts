@@ -74,6 +74,8 @@ export type SolscanWalletMetadata = {
   fundedBy: string | null;
 };
 
+import { solscanCircuit } from "../lib/circuit-breaker.js";
+
 const SOLSCAN_API_KEY = process.env.SOLSCAN_API_KEY?.trim() || "";
 const SOLSCAN_API_BASE = "https://pro-api.solscan.io/v2.0";
 const SOLSCAN_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 6_500 : 9_000;
@@ -152,6 +154,8 @@ async function solscanGet<T>(
   queryParams?: Record<string, string | number | boolean | Array<string> | null | undefined>
 ): Promise<T | null> {
   if (!SOLSCAN_API_KEY) return null;
+  // Fast-fail if Solscan is having an outage — skip the long timeout wait
+  if (solscanCircuit.isOpen()) return null;
 
   const url = new URL(`${SOLSCAN_API_BASE}${path}`);
   for (const [key, value] of Object.entries(queryParams ?? {})) {
@@ -178,14 +182,20 @@ async function solscanGet<T>(
       },
       signal: controller.signal,
     });
+    if (response.status >= 500) {
+      solscanCircuit.recordFailure();
+      return null;
+    }
     if (!response.ok) return null;
     const payload = (await response.json().catch(() => null)) as SolscanEnvelope<T> | T | null;
     if (!payload || typeof payload !== "object") return null;
+    solscanCircuit.recordSuccess();
     if ("data" in payload) {
       return payload.data ?? null;
     }
     return payload as T;
   } catch {
+    solscanCircuit.recordFailure();
     return null;
   } finally {
     clearTimeout(timeout);

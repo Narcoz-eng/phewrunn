@@ -234,6 +234,8 @@ export type MintCreatorResolution = {
   blockTimeMs: number | null;
 };
 
+import { heliusCircuit } from "../lib/circuit-breaker.js";
+
 const HELIUS_RPC_URL =
   process.env.HELIUS_RPC_URL?.trim() ||
   process.env.HELIUS_RPC_ENDPOINT?.trim() ||
@@ -312,6 +314,8 @@ function parseHeliusUrlParts() {
 
 async function heliusRpcCall<T>(method: string, params: unknown, id: string): Promise<T | null> {
   if (!HELIUS_RPC_URL) return null;
+  // Fast-fail if Helius is having an outage — skip the 6s timeout wait
+  if (heliusCircuit.isOpen()) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 6000);
   try {
@@ -326,11 +330,17 @@ async function heliusRpcCall<T>(method: string, params: unknown, id: string): Pr
       }),
       signal: controller.signal,
     });
+    if (response.status >= 500) {
+      heliusCircuit.recordFailure();
+      return null;
+    }
     if (!response.ok) return null;
     const payload = (await response.json()) as { result?: T; error?: unknown };
     if (payload.error) return null;
+    heliusCircuit.recordSuccess();
     return payload.result ?? null;
   } catch {
+    heliusCircuit.recordFailure();
     return null;
   } finally {
     clearTimeout(timeout);

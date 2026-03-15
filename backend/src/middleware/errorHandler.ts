@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod";
 import { refreshPrismaCompatGuardrails } from "../prisma.js";
+import { captureException } from "../lib/sentry.js";
 
 /**
  * Error Handler Utilities
@@ -387,6 +388,13 @@ export function createErrorHandler() {
       ...logData,
       errorName: err.name,
       errorStack: err.stack,
+    });
+
+    captureException(err, {
+      path: c.req.path,
+      method: c.req.method,
+      requestId,
+      userId: (c.get("user") as { id?: string } | undefined)?.id,
     });
 
     return c.json(

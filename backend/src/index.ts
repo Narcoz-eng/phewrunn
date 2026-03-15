@@ -4,6 +4,7 @@ import { compress } from "hono/compress";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import "./env.js";
+import "./lib/sentry.js"; // Init Sentry at startup (no-op if SENTRY_DSN not set)
 import {
   betterAuthMiddleware,
   auth,
@@ -126,8 +127,8 @@ app.use(
 // Uses a short timeout so requests don't hang if guardrails are slow
 let prismaReady = false;
 const INTELLIGENCE_PRIORITY_LOOP_ENABLED =
-  process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED?.trim().toLowerCase() === "true";
-const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
+  process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED?.trim().toLowerCase() !== "false";
+const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 10_000 : 5_000;
 let lastAuthSensitiveRequestAt = Date.now();
 let intelligencePriorityLoopBootstrapped = false;
 let intelligencePriorityLoopBootstrapTimer: ReturnType<typeof setTimeout> | null = null;

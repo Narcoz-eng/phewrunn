@@ -24,6 +24,7 @@ import {
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
 import { getCachedMarketCapSnapshot, type MarketCapResult } from "../marketcap.js";
+import { isRedisConfigured, cacheGetJson, cacheSetJson } from "../../lib/redis.js";
 
 const TOKEN_INTELLIGENCE_STALE_MS = 15 * 60 * 1000;
 const TRADER_METRICS_STALE_MS = 6 * 60 * 60 * 1000;
@@ -46,6 +47,11 @@ const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
 const TOKEN_OVERVIEW_CACHE_VERSION = 4;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
+const TOKEN_LOOKUP_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
+const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
+const FEED_LIST_CACHE_MAX_ENTRIES = 500;
+const TOKEN_OVERVIEW_CACHE_MAX_ENTRIES = 500;
+const TRADER_OVERVIEW_CACHE_MAX_ENTRIES = 300;
 const TOKEN_CORE_HYDRATION_RETRY_MS = process.env.NODE_ENV === "production" ? 45_000 : 12_000;
 const TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_REFRESH_REQUEST_COOLDOWN_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
@@ -62,9 +68,9 @@ const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" 
 const TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS =
   process.env.NODE_ENV === "production" ? 5_000 : 7_500;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-12T00:00:00.000Z");
-const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
+const INTELLIGENCE_PREWARM_INTERVAL_MS = 3 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
-const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 24;
+const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 80;
 const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
 
 const AUTHOR_SELECT = Prisma.validator<Prisma.UserSelect>()({
@@ -537,6 +543,7 @@ function buildTokenLookupCacheKey(address: string): string {
 }
 
 function writeTokenLookupCacheValue(address: string, value: TokenRecord | null): void {
+  evictOldestFromMap(tokenLookupCache, TOKEN_LOOKUP_CACHE_MAX_ENTRIES);
   tokenLookupCache.set(buildTokenLookupCacheKey(address), {
     value: cloneCachedValue(value),
     expiresAt: Date.now() + TOKEN_LOOKUP_CACHE_TTL_MS,
@@ -662,7 +669,8 @@ function peekCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string): T | 
   return cloneCachedValue(cached.value);
 }
 
-function writeCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number): T {
+function writeCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number, maxEntries?: number): T {
+  if (maxEntries !== undefined) evictOldestFromMap(cache, maxEntries);
   cache.set(key, {
     expiresAt: Date.now() + ttlMs,
     value: cloneCachedValue(value),
@@ -675,7 +683,8 @@ async function memoizeCached<T>(
   inFlight: Map<string, Promise<T>>,
   key: string,
   ttlMs: number,
-  loader: () => Promise<T>
+  loader: () => Promise<T>,
+  maxEntries?: number
 ): Promise<T> {
   const cached = readCacheValue(cache, key);
   if (cached !== null) {
@@ -688,13 +697,41 @@ async function memoizeCached<T>(
   }
 
   const promise = loader()
-    .then((value) => writeCacheValue(cache, key, value, ttlMs))
+    .then((value) => writeCacheValue(cache, key, value, ttlMs, maxEntries))
     .finally(() => {
       inFlight.delete(key);
     });
 
   inFlight.set(key, promise);
   return cloneCachedValue(await promise);
+}
+
+function evictOldestFromMap<V>(map: Map<string, V>, maxEntries: number): void {
+  while (map.size >= maxEntries) {
+    const oldestKey = map.keys().next().value;
+    if (typeof oldestKey !== "string") break;
+    map.delete(oldestKey);
+  }
+}
+
+function serializeWithDates(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val instanceof Date) return { __date__: val.getTime() };
+    return val;
+  });
+}
+
+function deserializeWithDates<T>(raw: string): T {
+  return JSON.parse(raw, (_key, val) => {
+    if (val && typeof val === "object" && "__date__" in val && typeof val.__date__ === "number") {
+      return new Date(val.__date__);
+    }
+    return val;
+  });
+}
+
+function buildTokenLookupRedisKey(address: string): string {
+  return `intelligence:token:lookup:v1:${address.trim().toLowerCase()}`;
 }
 
 function parseLeaderboardsPayloadSnapshot(payload: Prisma.JsonValue): LeaderboardsPayload | null {
@@ -2947,8 +2984,8 @@ async function prewarmRecentTokenIntelligence(): Promise<void> {
     })
     .slice(0, INTELLIGENCE_PREWARM_TOKEN_LIMIT);
 
-  for (let index = 0; index < tokensToRefresh.length; index += 3) {
-    const batch = tokensToRefresh.slice(index, index + 3);
+  for (let index = 0; index < tokensToRefresh.length; index += 5) {
+    const batch = tokensToRefresh.slice(index, index + 5);
     await Promise.allSettled(batch.map((token) => refreshTokenIntelligence(token.id)));
   }
 }
@@ -2961,6 +2998,10 @@ async function runIntelligencePriorityLoop(): Promise<void> {
   intelligencePriorityLoopInFlight = (async () => {
     try {
       await prewarmRecentTokenIntelligence();
+      // Enforce Map size limits on each cycle to prevent unbounded memory growth
+      evictOldestFromMap(feedListCache, FEED_LIST_CACHE_MAX_ENTRIES);
+      evictOldestFromMap(tokenOverviewCache, TOKEN_OVERVIEW_CACHE_MAX_ENTRIES);
+      evictOldestFromMap(traderOverviewCache, TRADER_OVERVIEW_CACHE_MAX_ENTRIES);
     } catch (error) {
       console.warn("[intelligence] priority prewarm failed", error);
     } finally {
@@ -3201,6 +3242,26 @@ export async function findTokenByAddress(address: string): Promise<TokenRecord |
   const cacheKey = buildTokenLookupCacheKey(normalizedAddress);
   const staleCachedToken = peekCacheValue(tokenLookupCache, cacheKey);
 
+  // Check in-memory cache first (fastest path)
+  const inMemory = readCacheValue(tokenLookupCache, cacheKey);
+  if (inMemory !== null) return inMemory;
+
+  // Check Redis before hitting DB (shared across instances)
+  if (isRedisConfigured()) {
+    const redisRaw = await cacheGetJson<unknown>(buildTokenLookupRedisKey(normalizedAddress));
+    if (redisRaw !== null) {
+      try {
+        const redisToken = deserializeWithDates<TokenRecord | null>(JSON.stringify(redisRaw));
+        if (redisToken !== null) {
+          writeTokenLookupCacheValue(normalizedAddress, redisToken);
+          return redisToken;
+        }
+      } catch {
+        // ignore malformed Redis entry, fall through to DB
+      }
+    }
+  }
+
   return memoizeCached(tokenLookupCache, tokenLookupInFlight, cacheKey, TOKEN_LOOKUP_CACHE_TTL_MS, async () => {
     try {
       const token = await prisma.token.findFirst({
@@ -3212,6 +3273,7 @@ export async function findTokenByAddress(address: string): Promise<TokenRecord |
       });
 
       if (token) {
+        void cacheSetJson(buildTokenLookupRedisKey(normalizedAddress), JSON.parse(serializeWithDates(token)), TOKEN_LOOKUP_REDIS_TTL_MS);
         return token;
       }
 
@@ -3226,7 +3288,11 @@ export async function findTokenByAddress(address: string): Promise<TokenRecord |
       if (!post) return null;
       const tokenMap = await ensureTokensForCalls([post]);
       const key = buildTokenKey(post.chainType, normalizedAddress);
-      return tokenMap.get(key) ?? null;
+      const resolved = tokenMap.get(key) ?? null;
+      if (resolved) {
+        void cacheSetJson(buildTokenLookupRedisKey(normalizedAddress), JSON.parse(serializeWithDates(resolved)), TOKEN_LOOKUP_REDIS_TTL_MS);
+      }
+      return resolved;
     } catch (error) {
       if (staleCachedToken) {
         console.warn("[intelligence/token] serving stale token lookup after transient prisma failure", {
