@@ -301,7 +301,9 @@ async function rpcCall<T>(
 
   for (const endpoint of SOLANA_RPC_URLS) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options?.timeoutMs ?? 6_000);
+    // Default 2500ms per endpoint so fallback URLs are reached within the
+    // 5s distribution section timeout if the primary endpoint is unreachable.
+    const timeoutId = setTimeout(() => controller.abort(), options?.timeoutMs ?? 2_500);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
