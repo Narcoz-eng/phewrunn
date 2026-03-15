@@ -55,19 +55,24 @@ type AlertPreferenceSnapshot = {
   notifyConfidenceCross: boolean;
 };
 
-function bucketKey(prefix: string): string {
-  const now = new Date();
+function bucketKey(prefix: string, now = new Date()): string {
   const bucket = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}${String(now.getUTCHours()).padStart(2, "0")}`;
   return `${prefix}:${bucket}`;
 }
 
-function normalizeSignalVersion(value: Date | string | null | undefined): string | null {
+function bucketKeyByWindow(prefix: string, now = new Date(), windowMinutes = 60): string {
+  const windowMs = Math.max(1, windowMinutes) * 60 * 1000;
+  const bucket = Math.floor(now.getTime() / windowMs);
+  return `${prefix}:${bucket}`;
+}
+
+function normalizeSignalDate(value: Date | string | null | undefined): Date | null {
   if (value instanceof Date && Number.isFinite(value.getTime())) {
-    return value.toISOString();
+    return value;
   }
   if (typeof value === "string") {
-    const normalized = value.trim();
-    return normalized.length > 0 ? normalized : null;
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
   }
   return null;
 }
@@ -76,16 +81,14 @@ function buildTokenSignalDedupeKey(args: {
   alertKey: string;
   userId: string;
   tokenId: string;
-  signalVersion?: Date | string | null;
   fallbackSeed?: string | null;
+  signalAt?: Date | string | null;
+  cooldownMinutes?: number;
 }): string {
-  const signalVersion = normalizeSignalVersion(args.signalVersion);
-  if (signalVersion) {
-    return `${args.alertKey}:${args.userId}:${args.tokenId}:${signalVersion}`;
-  }
-
-  return bucketKey(
-    `${args.alertKey}:${args.userId}:${args.tokenId}:${args.fallbackSeed ?? "signal"}`
+  return bucketKeyByWindow(
+    `${args.alertKey}:${args.userId}:${args.tokenId}:${args.fallbackSeed ?? "signal"}`,
+    normalizeSignalDate(args.signalAt) ?? new Date(),
+    args.cooldownMinutes ?? 360
   );
 }
 
@@ -286,10 +289,17 @@ export async function fanoutTokenSignalAlerts(args: {
   const symbol = args.token.symbol ?? args.token.name ?? args.token.address.slice(0, 6);
   const thresholdPassed = (current: number | null, previous: number | null, threshold: number) =>
     (current ?? 0) >= threshold && (previous ?? 0) < threshold;
+  const signalAt = normalizeSignalDate(args.token.lastIntelligenceAt) ?? new Date();
+  const confidenceBand = (score: number | null, threshold: number) => {
+    const safeScore = Math.max(threshold, Math.round(score ?? threshold));
+    return `${Math.floor(safeScore / 5) * 5}`;
+  };
 
   const alertDefs = [
     {
       key: "early_runner",
+      priority: 3,
+      cooldownMinutes: 12 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyEarlyRunners,
       passed: thresholdPassed(args.token.earlyRunnerScore, args.previousToken?.earlyRunnerScore ?? null, 72),
       message: `${symbol} was flagged as an early runner`,
@@ -298,6 +308,8 @@ export async function fanoutTokenSignalAlerts(args: {
     },
     {
       key: "hot_alpha",
+      priority: 4,
+      cooldownMinutes: 12 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyHotAlpha,
       passed: thresholdPassed(args.token.hotAlphaScore, args.previousToken?.hotAlphaScore ?? null, 75),
       message: `${symbol} just entered Hot Alpha`,
@@ -306,6 +318,8 @@ export async function fanoutTokenSignalAlerts(args: {
     },
     {
       key: "high_conviction",
+      priority: 5,
+      cooldownMinutes: 12 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyHighConviction,
       passed: thresholdPassed(args.token.highConvictionScore, args.previousToken?.highConvictionScore ?? null, 78),
       message: `${symbol} reached high conviction status`,
@@ -314,6 +328,8 @@ export async function fanoutTokenSignalAlerts(args: {
     },
     {
       key: "bundle_risk",
+      priority: 2,
+      cooldownMinutes: 6 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyBundleChanges,
       passed:
         args.previousToken !== null &&
@@ -324,6 +340,8 @@ export async function fanoutTokenSignalAlerts(args: {
     },
     {
       key: "confidence_cross",
+      priority: 1,
+      cooldownMinutes: 8 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyConfidenceCross,
       passed: true,
       message: `${symbol} confidence crossed your threshold`,
@@ -359,6 +377,16 @@ export async function fanoutTokenSignalAlerts(args: {
         return;
       }
 
+      const eligibleAlerts: Array<{
+        key: string;
+        priority: number;
+        cooldownMinutes: number;
+        type: string;
+        message: string;
+        reasonCode: string;
+        fallbackSeed: string | null;
+      }> = [];
+
       for (const alertDef of alertDefs) {
         if (!alertDef.enabled(pref)) continue;
         if (!alertDef.passed) continue;
@@ -371,38 +399,72 @@ export async function fanoutTokenSignalAlerts(args: {
           if ((args.previousToken?.confidenceScore ?? 0) >= minConfidence) {
             continue;
           }
+          eligibleAlerts.push({
+            key: alertDef.key,
+            priority: alertDef.priority,
+            cooldownMinutes: alertDef.cooldownMinutes,
+            type: alertDef.type,
+            message: alertDef.message,
+            reasonCode: alertDef.reasonCode,
+            fallbackSeed: `threshold:${minConfidence}:band:${confidenceBand(args.token.confidenceScore, minConfidence)}`,
+          });
         } else if (!followsToken && alertDef.key === "bundle_risk") {
           continue;
+        } else {
+          const scoreSeed =
+            alertDef.key === "bundle_risk"
+              ? args.token.bundleRiskLabel
+              : String(
+                  Math.round(
+                    alertDef.key === "high_conviction"
+                      ? args.token.highConvictionScore ?? 0
+                      : alertDef.key === "hot_alpha"
+                        ? args.token.hotAlphaScore ?? 0
+                        : args.token.earlyRunnerScore ?? 0
+                  )
+                );
+          eligibleAlerts.push({
+            key: alertDef.key,
+            priority: alertDef.priority,
+            cooldownMinutes: alertDef.cooldownMinutes,
+            type: alertDef.type,
+            message: alertDef.message,
+            reasonCode: alertDef.reasonCode,
+            fallbackSeed: scoreSeed,
+          });
         }
-
-        await createNotification({
-          userId: pref.userId,
-          type: alertDef.type,
-          message: alertDef.message,
-          entityType: "token",
-          entityId: args.token.id,
-          reasonCode: alertDef.reasonCode,
-          payload: {
-            tokenAddress: args.token.address,
-            symbol: args.token.symbol,
-            confidenceScore: args.token.confidenceScore,
-            hotAlphaScore: args.token.hotAlphaScore,
-            earlyRunnerScore: args.token.earlyRunnerScore,
-            highConvictionScore: args.token.highConvictionScore,
-            bundleRiskLabel: args.token.bundleRiskLabel,
-          },
-          dedupeKey: buildTokenSignalDedupeKey({
-            alertKey: alertDef.key,
-            userId: pref.userId,
-            tokenId: args.token.id,
-            signalVersion: args.token.lastIntelligenceAt,
-            fallbackSeed:
-              alertDef.key === "bundle_risk"
-                ? args.token.bundleRiskLabel
-                : String(Math.round(args.token.confidenceScore ?? 0)),
-          }),
-        });
       }
+
+      const strongestAlert = eligibleAlerts.sort((left, right) => right.priority - left.priority)[0];
+      if (!strongestAlert) {
+        return;
+      }
+
+      await createNotification({
+        userId: pref.userId,
+        type: strongestAlert.type,
+        message: strongestAlert.message,
+        entityType: "token",
+        entityId: args.token.id,
+        reasonCode: strongestAlert.reasonCode,
+        payload: {
+          tokenAddress: args.token.address,
+          symbol: args.token.symbol,
+          confidenceScore: args.token.confidenceScore,
+          hotAlphaScore: args.token.hotAlphaScore,
+          earlyRunnerScore: args.token.earlyRunnerScore,
+          highConvictionScore: args.token.highConvictionScore,
+          bundleRiskLabel: args.token.bundleRiskLabel,
+        },
+        dedupeKey: buildTokenSignalDedupeKey({
+          alertKey: strongestAlert.key,
+          userId: pref.userId,
+          tokenId: args.token.id,
+          signalAt,
+          cooldownMinutes: strongestAlert.cooldownMinutes,
+          fallbackSeed: strongestAlert.fallbackSeed,
+        }),
+      });
     })
   );
 }

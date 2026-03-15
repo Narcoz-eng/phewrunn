@@ -1777,18 +1777,6 @@ export function PostCard({
     post.volume24h != null ||
     post.holderCount != null;
   const shouldShowIntelligenceStrip = hasContractAddress || hasTokenIntelligence;
-  const hasResolvedConfidenceContext =
-    (typeof confidenceScore === "number" && confidenceScore > 0) ||
-    typeof hotAlphaScore === "number" ||
-    typeof earlyRunnerScore === "number" ||
-    typeof highConvictionScore === "number" ||
-    post.bundleRiskLabel != null ||
-    post.timingTier != null ||
-    post.liquidity != null ||
-    post.volume24h != null ||
-    post.holderCount != null ||
-    post.top10HolderPct != null ||
-    post.largestHolderPct != null;
   const bundleScanPending = isBundleScanPending({
     bundleRiskLabel: post.bundleRiskLabel,
     tokenRiskScore: post.tokenRiskScore,
@@ -1796,6 +1784,18 @@ export function PostCard({
     estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
     bundleClusters: post.bundleClusters,
   });
+  const hasResolvedConfidenceContext =
+    (typeof confidenceScore === "number" && confidenceScore > 0) ||
+    typeof hotAlphaScore === "number" ||
+    typeof earlyRunnerScore === "number" ||
+    typeof highConvictionScore === "number" ||
+    !bundleScanPending ||
+    post.timingTier != null ||
+    post.liquidity != null ||
+    post.volume24h != null ||
+    post.holderCount != null ||
+    post.top10HolderPct != null ||
+    post.largestHolderPct != null;
   const hasResolvedBundleContext = !bundleScanPending;
   const normalizedConfidenceScore =
     hasResolvedConfidenceContext && typeof confidenceScore === "number" && Number.isFinite(confidenceScore)

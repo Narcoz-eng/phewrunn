@@ -482,7 +482,7 @@ function buildBundleClusters(holderPcts: number[]): BundleClusterSnapshot[] {
     { key: ">=8%", min: 8, max: Number.POSITIVE_INFINITY },
     { key: "4-8%", min: 4, max: 8 },
     { key: "2-4%", min: 2, max: 4 },
-    { key: "1.5-2%", min: 1.5, max: 2 },
+    { key: "1-2%", min: 1, max: 2 },
   ];
 
   const clusters: BundleClusterSnapshot[] = [];
@@ -1235,7 +1235,7 @@ export async function analyzeSolanaTokenDistribution(
       if (index === 0 && fallbackLiquidityUsd && fallbackLiquidityUsd > 0 && pct > 12) {
         return false;
       }
-      return pct >= 1.5;
+      return pct >= 1;
     });
 
     const clusters = buildBundleClusters(suspiciousHolderPcts);

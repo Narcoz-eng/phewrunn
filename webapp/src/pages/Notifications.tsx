@@ -46,10 +46,20 @@ function normalizeNotificationMessage(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function readNotificationPayloadString(notification: Notification, key: string): string | null {
+  const value = notification.payload?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function buildNotificationGroupKey(notification: Notification): string {
   const actorKey = notification.fromUserId ?? "system";
   const postKey = notification.postId ?? "none";
   const messageKey = normalizeNotificationMessage(notification.message).slice(0, 96);
+  const tokenKey =
+    notification.entityId ??
+    readNotificationPayloadString(notification, "tokenAddress") ??
+    readNotificationPayloadString(notification, "symbol") ??
+    messageKey;
 
   switch (notification.type) {
     case "like":
@@ -59,12 +69,13 @@ function buildNotificationGroupKey(notification: Notification): string {
       return `${notification.type}:${actorKey}`;
     case "new_post":
     case "posted_alpha":
+      return `${notification.type}:${notification.id}`;
     case "early_runner_detected":
     case "hot_alpha_detected":
     case "high_conviction_detected":
     case "bundle_risk_changed":
     case "token_confidence_crossed":
-      return `${notification.type}:${notification.id}`;
+      return `${notification.type}:${tokenKey}`;
     case "win_1h":
     case "loss_1h":
     case "win_6h":

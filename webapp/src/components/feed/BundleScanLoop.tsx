@@ -23,12 +23,17 @@ function hasPositiveFiniteNumber(value: number | null | undefined): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-export function isBundleScanPending(input: BundleScanInput): boolean {
-  if (typeof input.bundleRiskLabel === "string" && input.bundleRiskLabel.trim().length > 0) {
-    return false;
-  }
+function hasFiniteNumber(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
 
-  if (hasPositiveFiniteNumber(input.tokenRiskScore)) {
+export function isBundleScanPending(input: BundleScanInput): boolean {
+  const normalizedLabel = typeof input.bundleRiskLabel === "string" ? input.bundleRiskLabel.trim().toLowerCase() : "";
+  const hasPositiveClusterEvidence =
+    Array.isArray(input.bundleClusters) &&
+    input.bundleClusters.some((cluster) => hasPositiveFiniteNumber(cluster.estimatedSupplyPct));
+
+  if (hasPositiveClusterEvidence) {
     return false;
   }
 
@@ -40,7 +45,11 @@ export function isBundleScanPending(input: BundleScanInput): boolean {
     return false;
   }
 
-  if (Array.isArray(input.bundleClusters) && input.bundleClusters.length > 0) {
+  if (hasFiniteNumber(input.tokenRiskScore) && input.tokenRiskScore >= 25) {
+    return false;
+  }
+
+  if (normalizedLabel.length > 0 && normalizedLabel !== "clean") {
     return false;
   }
 
