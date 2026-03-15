@@ -4,6 +4,7 @@ import { compress } from "hono/compress";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import "./env.js";
+import "./lib/sentry.js"; // Init Sentry at startup (no-op if SENTRY_DSN not set)
 import {
   betterAuthMiddleware,
   auth,

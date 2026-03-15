@@ -97,6 +97,10 @@ const envSchema = z.object({
   // Optional: Standard Redis URL (Redis Cloud / Redis Labs, shared rate limiting + cache)
   REDIS_URL: z
     .preprocess(normalizeOptionalStringEnv, z.string().url("REDIS_URL must be a valid URL").optional()),
+
+  // Optional: Sentry DSN for error tracking
+  SENTRY_DSN: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("SENTRY_DSN must be a valid URL").optional()),
 });
 
 /**
@@ -196,6 +200,7 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     UPSTASH_REDIS_REST_URL: parsed.UPSTASH_REDIS_REST_URL ? "configured" : "not set",
     UPSTASH_REDIS_REST_TOKEN: parsed.UPSTASH_REDIS_REST_TOKEN ? "configured" : "not set",
     REDIS_URL: parsed.REDIS_URL ? "configured" : "not set",
+    SENTRY_DSN: parsed.SENTRY_DSN ? "configured" : "not set",
   };
 }
 
