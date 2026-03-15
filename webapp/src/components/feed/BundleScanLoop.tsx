@@ -1,5 +1,6 @@
 import { Loader2, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 
 type BundleClusterLike = {
   estimatedSupplyPct?: number | null;
@@ -19,41 +20,8 @@ interface BundleScanLoopProps {
   className?: string;
 }
 
-function hasPositiveFiniteNumber(value: number | null | undefined): boolean {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-function hasFiniteNumber(value: number | null | undefined): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
 export function isBundleScanPending(input: BundleScanInput): boolean {
-  const normalizedLabel = typeof input.bundleRiskLabel === "string" ? input.bundleRiskLabel.trim().toLowerCase() : "";
-  const hasPositiveClusterEvidence =
-    Array.isArray(input.bundleClusters) &&
-    input.bundleClusters.some((cluster) => hasPositiveFiniteNumber(cluster.estimatedSupplyPct));
-
-  if (hasPositiveClusterEvidence) {
-    return false;
-  }
-
-  if (hasPositiveFiniteNumber(input.bundledWalletCount)) {
-    return false;
-  }
-
-  if (hasPositiveFiniteNumber(input.estimatedBundledSupplyPct)) {
-    return false;
-  }
-
-  if (hasFiniteNumber(input.tokenRiskScore) && input.tokenRiskScore >= 25) {
-    return false;
-  }
-
-  if (normalizedLabel.length > 0 && normalizedLabel !== "clean") {
-    return false;
-  }
-
-  return true;
+  return isBundlePlaceholderState(input);
 }
 
 export function BundleScanLoop({

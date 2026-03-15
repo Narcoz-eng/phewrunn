@@ -13,6 +13,7 @@ import { CandlestickChart } from "@/components/feed/CandlestickChart";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
 import { readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
+import { syncTokenIntelligenceAcrossPostCaches } from "@/lib/token-intelligence-cache";
 import {
   Area,
   AreaChart,
@@ -861,6 +862,11 @@ export default function TokenPage() {
     if (!tokenCacheKey || !isTokenPageDataCacheable(token)) return;
     writeSessionCache(tokenCacheKey, token);
   }, [token, tokenCacheKey]);
+
+  useEffect(() => {
+    if (!token) return;
+    syncTokenIntelligenceAcrossPostCaches(queryClient, token);
+  }, [queryClient, token]);
 
   const chartRequestConfig = useMemo(() => {
     switch (chartInterval) {

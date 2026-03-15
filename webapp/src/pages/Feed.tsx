@@ -20,6 +20,7 @@ import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
+import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
 
@@ -449,6 +450,18 @@ function mergePostWithCachedRealtimeState(
     cachedIntelligenceVersion > 0 && cachedIntelligenceVersion >= fetchedIntelligenceVersion;
   const hasNewerCachedIntelligence =
     cachedIntelligenceVersion > 0 && cachedIntelligenceVersion > fetchedIntelligenceVersion;
+  const fetchedBundleLooksPlaceholder = isBundlePlaceholderState({
+    bundleRiskLabel: post.bundleRiskLabel,
+    bundledWalletCount: post.bundledWalletCount,
+    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+    bundleClusters: post.bundleClusters,
+  });
+  const cachedHasResolvedBundleEvidence = hasResolvedBundleEvidence({
+    bundleRiskLabel: cachedPost.bundleRiskLabel,
+    bundledWalletCount: cachedPost.bundledWalletCount,
+    estimatedBundledSupplyPct: cachedPost.estimatedBundledSupplyPct,
+    bundleClusters: cachedPost.bundleClusters,
+  });
 
   const cachedLooksLikeLiveCurrent =
     cachedPost.currentMcap !== null &&
@@ -792,11 +805,44 @@ function mergePostWithCachedRealtimeState(
   }
 
   if (
-    sameOrNewerCachedMarketState &&
+    sameOrNewerCachedIntelligence &&
+    cachedHasResolvedBundleEvidence &&
+    fetchedBundleLooksPlaceholder
+  ) {
+    if (!isMissingFeedValue(cachedPost.bundleRiskLabel) && cachedPost.bundleRiskLabel !== post.bundleRiskLabel) {
+      nextBundleRiskLabel = cachedPost.bundleRiskLabel;
+      didChange = true;
+    }
+    if (cachedPost.tokenRiskScore !== null && cachedPost.tokenRiskScore !== post.tokenRiskScore) {
+      nextTokenRiskScore = cachedPost.tokenRiskScore;
+      didChange = true;
+    }
+    if (cachedPost.bundledWalletCount !== null && cachedPost.bundledWalletCount !== post.bundledWalletCount) {
+      nextBundledWalletCount = cachedPost.bundledWalletCount;
+      didChange = true;
+    }
+    if (
+      cachedPost.estimatedBundledSupplyPct !== null &&
+      cachedPost.estimatedBundledSupplyPct !== post.estimatedBundledSupplyPct
+    ) {
+      nextEstimatedBundledSupplyPct = cachedPost.estimatedBundledSupplyPct;
+      didChange = true;
+    }
+    if (!isMissingFeedValue(cachedPost.bundleClusters) && cachedPost.bundleClusters !== post.bundleClusters) {
+      nextBundleClusters = cachedPost.bundleClusters;
+      didChange = true;
+    }
+    if ((cachedPost.lastIntelligenceAt ?? null) !== (post.lastIntelligenceAt ?? null)) {
+      nextLastIntelligenceAt = cachedPost.lastIntelligenceAt ?? null;
+      didChange = true;
+    }
+  }
+
+  if (
+    sameOrNewerCachedIntelligence &&
     typeof cachedPost.estimatedBundledSupplyPct === "number" &&
     cachedPost.estimatedBundledSupplyPct > 0 &&
-    (post.estimatedBundledSupplyPct == null ||
-      (post.estimatedBundledSupplyPct <= 0 && isMissingFeedValue(post.bundleRiskLabel)))
+    (post.estimatedBundledSupplyPct == null || fetchedBundleLooksPlaceholder)
   ) {
     nextEstimatedBundledSupplyPct = cachedPost.estimatedBundledSupplyPct;
     didChange = true;

@@ -71,6 +71,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
+import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 import { toast } from "sonner";
 import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
@@ -793,6 +794,19 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
   const snapshotVersion = getSnapshotDynamicStateVersion(snapshot);
   const shouldPreserveExistingDynamicState =
     snapshotVersion > 0 && snapshotVersion < postVersion;
+  const postHasResolvedBundleEvidence = hasResolvedBundleEvidence({
+    bundleRiskLabel: post.bundleRiskLabel,
+    bundledWalletCount: post.bundledWalletCount,
+    estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+    bundleClusters: post.bundleClusters,
+  });
+  const snapshotBundleLooksPlaceholder = isBundlePlaceholderState({
+    bundleRiskLabel: snapshot.bundleRiskLabel,
+    bundledWalletCount: snapshot.bundledWalletCount,
+    estimatedBundledSupplyPct: snapshot.estimatedBundledSupplyPct,
+  });
+  const shouldPreserveExistingBundleState =
+    shouldPreserveExistingDynamicState || (postHasResolvedBundleEvidence && snapshotBundleLooksPlaceholder);
   const nextCurrentMcap = shouldPreserveExistingDynamicState
     ? post.currentMcap
     : resolveSnapshotCurrentMcap(post.currentMcap, post.entryMcap, snapshot);
@@ -829,10 +843,10 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
   const nextTimingTier = shouldPreserveExistingDynamicState
     ? post.timingTier ?? null
     : snapshot.timingTier ?? post.timingTier ?? null;
-  const nextBundleRiskLabel = shouldPreserveExistingDynamicState
+  const nextBundleRiskLabel = shouldPreserveExistingBundleState
     ? post.bundleRiskLabel ?? null
     : snapshot.bundleRiskLabel ?? post.bundleRiskLabel ?? null;
-  const nextTokenRiskScore = shouldPreserveExistingDynamicState
+  const nextTokenRiskScore = shouldPreserveExistingBundleState
     ? post.tokenRiskScore ?? null
     : snapshot.tokenRiskScore ?? post.tokenRiskScore ?? null;
   const nextLiquidity = shouldPreserveExistingDynamicState
@@ -850,10 +864,10 @@ function applyRealtimeSnapshotToPost(post: Post, snapshot: BatchedPostPriceSnaps
   const nextTop10HolderPct = shouldPreserveExistingDynamicState
     ? post.top10HolderPct ?? null
     : snapshot.top10HolderPct ?? post.top10HolderPct ?? null;
-  const nextBundledWalletCount = shouldPreserveExistingDynamicState
+  const nextBundledWalletCount = shouldPreserveExistingBundleState
     ? post.bundledWalletCount ?? null
     : snapshot.bundledWalletCount ?? post.bundledWalletCount ?? null;
-  const nextEstimatedBundledSupplyPct = shouldPreserveExistingDynamicState
+  const nextEstimatedBundledSupplyPct = shouldPreserveExistingBundleState
     ? post.estimatedBundledSupplyPct ?? null
     : snapshot.estimatedBundledSupplyPct ?? post.estimatedBundledSupplyPct ?? null;
   const nextIsWin =
