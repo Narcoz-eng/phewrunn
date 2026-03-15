@@ -129,8 +129,7 @@ function isMeaningfulTokenRoutePayload(token: TokenRoutePayload): boolean {
   const hasHolderTelemetry =
     token.chainType !== "solana" ||
     token.topHolders.length > 0 ||
-    (token.holderCountSource !== "stored" &&
-      typeof token.holderCount === "number" &&
+    (typeof token.holderCount === "number" &&
       Number.isFinite(token.holderCount) &&
       token.holderCount > 0);
   const hasSignals = [
