@@ -52,6 +52,9 @@ const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
 const FEED_LIST_CACHE_MAX_ENTRIES = 500;
 const TOKEN_OVERVIEW_CACHE_MAX_ENTRIES = 500;
 const TRADER_OVERVIEW_CACHE_MAX_ENTRIES = 300;
+const FOLLOWING_SNAPSHOT_CACHE_MAX_ENTRIES = 1_000;
+const RADAR_CACHE_MAX_ENTRIES = 50;
+const LEADERBOARD_CACHE_MAX_ENTRIES = 20;
 const TOKEN_CORE_HYDRATION_RETRY_MS = process.env.NODE_ENV === "production" ? 45_000 : 12_000;
 const TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_REFRESH_REQUEST_COOLDOWN_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
@@ -72,6 +75,11 @@ const INTELLIGENCE_PREWARM_INTERVAL_MS = 3 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
 const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 80;
 const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
+
+// Global LRU size registry — every cache Map registers here so writeCacheValue
+// can enforce limits on every write without touching each call site.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cacheMaxEntriesRegistry = new WeakMap<Map<string, any>, number>();
 
 const AUTHOR_SELECT = Prisma.validator<Prisma.UserSelect>()({
   id: true,
@@ -521,6 +529,17 @@ const firstCallerLeaderboardsInFlight = new Map<
 >();
 const marketContextCache = new Map<string, CacheEntry<MarketContextSnapshot>>();
 const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
+
+// Register LRU size limits — writeCacheValue enforces these on every write.
+cacheMaxEntriesRegistry.set(feedListCache, FEED_LIST_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(followingSnapshotCache, FOLLOWING_SNAPSHOT_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(tokenLookupCache, TOKEN_LOOKUP_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(tokenOverviewCache, TOKEN_OVERVIEW_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(radarCache, RADAR_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(traderOverviewCache, TRADER_OVERVIEW_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(dailyLeaderboardsCache, LEADERBOARD_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(firstCallerLeaderboardsCache, LEADERBOARD_CACHE_MAX_ENTRIES);
+
 let intelligencePriorityLoopTimer: ReturnType<typeof setInterval> | null = null;
 let intelligencePriorityLoopInFlight: Promise<void> | null = null;
 let intelligencePriorityLoopCanRun: (() => boolean) | null = null;
@@ -670,7 +689,8 @@ function peekCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string): T | 
 }
 
 function writeCacheValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number, maxEntries?: number): T {
-  if (maxEntries !== undefined) evictOldestFromMap(cache, maxEntries);
+  const resolvedMax = maxEntries ?? cacheMaxEntriesRegistry.get(cache);
+  if (resolvedMax !== undefined) evictOldestFromMap(cache, resolvedMax);
   cache.set(key, {
     expiresAt: Date.now() + ttlMs,
     value: cloneCachedValue(value),
