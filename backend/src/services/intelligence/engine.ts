@@ -3232,6 +3232,10 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     if (!token) return null;
 
     const staleToken = staleOverview?.token ?? null;
+    const staleTopHolders =
+      staleToken?.topHolders && staleToken.topHolders.length > 0
+        ? cloneCachedValue(staleToken.topHolders)
+        : [];
     scheduleTokenIntelligenceRefresh(token);
     const currentToken = token;
     const needsFallbackTokenData =
@@ -3436,10 +3440,6 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         staleToken?.marketCap
       )
     );
-    const staleTopHolders =
-      staleToken?.topHolders && staleToken.topHolders.length > 0
-        ? cloneCachedValue(staleToken.topHolders)
-        : [];
     const staleDevWallet =
       staleToken?.devWallet
         ? cloneCachedValue(staleToken.devWallet)
