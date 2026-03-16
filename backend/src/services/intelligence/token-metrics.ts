@@ -189,7 +189,7 @@ const SOFT_ULTRA_DEGEN_TOKEN_HOLDINGS_USD_THRESHOLD = 35_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
-const HOLDER_ROLE_ENRICH_LIMIT = 12;
+const HOLDER_ROLE_ENRICH_LIMIT = 25;
 const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
@@ -1160,7 +1160,7 @@ export async function analyzeSolanaTokenDistribution(
       ].filter((address): address is string => isLikelySolanaWallet(address))
     )];
     const topHolderWallets = topHoldersBase
-      .slice(0, 10)
+      .slice(0, HOLDER_ROLE_ENRICH_LIMIT)
       .map((holder) => holder.ownerAddress ?? holder.address)
       .filter((address): address is string => isLikelySolanaWallet(address));
 
