@@ -1292,7 +1292,7 @@ export default function TokenPage() {
             title="Opening Phew Ultra Token Lab"
             subtitle="We are mapping liquidity, community sentiment, holder concentration, bundle risk, and conviction signals for this token."
           />
-        ) : error || !token ? (
+        ) : !token ? (
           <div className="app-empty-state min-h-[360px]">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertCircle className="h-8 w-8 text-destructive" />
