@@ -2010,10 +2010,28 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     }
 
     writeTokenLookupCacheValue(refreshedToken.address, refreshedToken);
+    const topHolders = distribution?.topHolders ?? [];
+    const holderStats = {
+      holderCount: holderCount ?? null,
+      previousHolderCount: latestSnapshot?.holderCount ?? null,
+      whaleAccumulatingCount: topHolders.filter(
+        (h) =>
+          h.badges.some((b) => b === "whale") &&
+          h.tradeSnapshot !== null &&
+          (h.tradeSnapshot.netAmount ?? 0) > 0
+      ).length,
+      smartMoneyCount: topHolders.filter(
+        (h) =>
+          h.badges.some((b) => b === "high_volume_trader") &&
+          h.tradeSnapshot !== null &&
+          (h.tradeSnapshot.netAmount ?? 0) > 0
+      ).length,
+    };
     void fanoutTokenSignalAlerts({
       marketCap,
-      token: refreshedToken,
-      previousToken: existing,
+      token: { ...refreshedToken, liquidity },
+      previousToken: existing ? { ...existing, liquidity: existing.liquidity ?? null } : null,
+      holderStats,
     }).catch(() => undefined);
 
     return {
