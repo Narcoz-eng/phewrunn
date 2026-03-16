@@ -1,34 +1,54 @@
 /**
  * Sentry Error Tracking
  *
- * Captures unhandled 500 errors and sends them to Sentry for monitoring.
- * Fully optional — if SENTRY_DSN is not set, all calls are silent no-ops.
- *
- * Usage:
- *   import { captureException, captureMessage } from "./sentry.js";
- *   captureException(error, { path: "/api/posts", userId: "abc" });
+ * Fully optional. If SENTRY_DSN is unset or @sentry/node is unavailable in the
+ * current workspace, all calls degrade to no-ops.
  */
 
-import * as Sentry from "@sentry/node";
+type SentryEvent = {
+  request?: {
+    headers?: Record<string, string | undefined>;
+  };
+};
+
+type SentryScope = {
+  setUser: (user: { id: string }) => void;
+  setTag: (key: string, value: string) => void;
+  setExtras: (extras: Record<string, unknown>) => void;
+};
+
+type SentryModule = {
+  init: (options: {
+    dsn: string;
+    environment: string;
+    tracesSampleRate: number;
+    includeLocalVariables: boolean;
+    sendDefaultPii: boolean;
+    beforeSend: (event: SentryEvent) => SentryEvent;
+  }) => void;
+  withScope: (callback: (scope: SentryScope) => void) => void;
+  captureException: (error: unknown) => void;
+  captureMessage: (message: string, level?: "warning" | "error" | "info") => void;
+};
 
 const SENTRY_DSN = process.env.SENTRY_DSN?.trim() || "";
-const isEnabled = SENTRY_DSN.length > 0;
+const sentryModuleName = "@sentry/node";
+const sentryModule = (await import(sentryModuleName).catch(() => null)) as SentryModule | null;
+const isEnabled = SENTRY_DSN.length > 0 && Boolean(sentryModule);
 
-if (isEnabled) {
-  Sentry.init({
+if (SENTRY_DSN && !sentryModule) {
+  console.warn("[Sentry] @sentry/node is not installed — error tracking disabled");
+} else if (isEnabled && sentryModule) {
+  sentryModule.init({
     dsn: SENTRY_DSN,
     environment: process.env.NODE_ENV ?? "development",
-    // Capture 100% of errors (not transactions — we don't need performance tracing)
     tracesSampleRate: 0,
-    // Include source context in stack traces
     includeLocalVariables: false,
-    // Don't send PII
     sendDefaultPii: false,
     beforeSend(event) {
-      // Strip any auth tokens or sensitive headers that might leak
       if (event.request?.headers) {
-        delete event.request.headers["authorization"];
-        delete event.request.headers["cookie"];
+        delete event.request.headers.authorization;
+        delete event.request.headers.cookie;
         delete event.request.headers["x-session-token"];
       }
       return event;
@@ -40,10 +60,6 @@ if (isEnabled) {
   console.log("[Sentry] DSN not configured — error tracking disabled");
 }
 
-/**
- * Capture an exception and send to Sentry with optional context.
- * Silent no-op if Sentry is not configured.
- */
 export function captureException(
   error: unknown,
   context?: {
@@ -54,9 +70,9 @@ export function captureException(
     [key: string]: unknown;
   }
 ): void {
-  if (!isEnabled) return;
+  if (!isEnabled || !sentryModule) return;
 
-  Sentry.withScope((scope) => {
+  sentryModule.withScope((scope) => {
     if (context?.userId) {
       scope.setUser({ id: context.userId });
     }
@@ -69,34 +85,33 @@ export function captureException(
     if (context?.method) {
       scope.setTag("method", context.method);
     }
-    // Include any extra context fields
+
     const extra: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(context ?? {})) {
-      if (k !== "userId" && k !== "requestId" && k !== "path" && k !== "method") {
-        extra[k] = v;
+    for (const [key, value] of Object.entries(context ?? {})) {
+      if (key !== "userId" && key !== "requestId" && key !== "path" && key !== "method") {
+        extra[key] = value;
       }
     }
     if (Object.keys(extra).length > 0) {
       scope.setExtras(extra);
     }
-    Sentry.captureException(error);
+
+    sentryModule.captureException(error);
   });
 }
 
-/**
- * Capture a message (for warnings / anomalies that aren't exceptions).
- * Silent no-op if Sentry is not configured.
- */
 export function captureMessage(
   message: string,
   level: "warning" | "error" | "info" = "warning",
   context?: Record<string, unknown>
 ): void {
-  if (!isEnabled) return;
+  if (!isEnabled || !sentryModule) return;
 
-  Sentry.withScope((scope) => {
-    if (context) scope.setExtras(context);
-    Sentry.captureMessage(message, level);
+  sentryModule.withScope((scope) => {
+    if (context) {
+      scope.setExtras(context);
+    }
+    sentryModule.captureMessage(message, level);
   });
 }
 

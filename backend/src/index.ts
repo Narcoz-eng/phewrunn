@@ -61,6 +61,7 @@ import {
   csrfProtection,
   structuredLogger,
 } from "./middleware/index.js";
+import { loadSimAuthMiddleware } from "./middleware/load-sim-auth.js";
 
 // =====================================================
 // Production Environment Validation
@@ -304,6 +305,7 @@ app.onError(createErrorHandler());
 
 // 10. Better Auth middleware - populates user from session cookie
 app.use("*", betterAuthMiddleware);
+app.use("/api/*", loadSimAuthMiddleware);
 
 // =====================================================
 // Health Check

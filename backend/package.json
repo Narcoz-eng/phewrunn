@@ -8,6 +8,7 @@
     "dev": "bun run --hot src/index.ts",
     "start": "node_modules/.bin/prisma generate && node ./scripts/prisma-migrate-deploy.mjs && bun run src/index.ts",
     "build": "npx prisma@6 generate",
+    "load:sim": "bun run ./scripts/load-sim.ts",
     "test": "bun test",
     "studio:up": "cloud-studio --port 3001 --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",

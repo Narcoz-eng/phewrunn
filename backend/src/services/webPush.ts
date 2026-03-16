@@ -1,5 +1,27 @@
-import webPush from "web-push";
 import { prisma } from "../prisma.js";
+
+type WebPushModule = {
+  setVapidDetails: (subject: string, publicKey: string, privateKey: string) => void;
+  sendNotification: (
+    subscription: {
+      endpoint: string;
+      keys: {
+        p256dh: string;
+        auth: string;
+      };
+    },
+    payload: string,
+    options?: { TTL?: number }
+  ) => Promise<void>;
+};
+
+const webPushModuleName = "web-push";
+const webPush = (await import(webPushModuleName).catch(() => null)) as
+  | ({ default?: WebPushModule } & Partial<WebPushModule>)
+  | null;
+const resolvedWebPush: WebPushModule | null =
+  (webPush?.default as WebPushModule | undefined) ??
+  (webPush && "sendNotification" in webPush ? (webPush as WebPushModule) : null);
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
@@ -7,9 +29,11 @@ const VAPID_EMAIL = process.env.VAPID_EMAIL ?? "mailto:admin@phewrunn.app";
 
 let vapidConfigured = false;
 
-if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+if (!resolvedWebPush) {
+  console.warn("[webPush] web-push package is not installed — push disabled");
+} else if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   try {
-    webPush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    resolvedWebPush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
     vapidConfigured = true;
   } catch (err) {
     console.warn("[webPush] Failed to configure VAPID keys — push disabled", err);
@@ -29,13 +53,8 @@ export function getVapidPublicKey(): string | null {
   return VAPID_PUBLIC_KEY ?? null;
 }
 
-/**
- * Send a push notification to all subscriptions for a user.
- * Silently removes expired/invalid subscriptions (410/404).
- * No-ops if VAPID keys are not configured.
- */
 export async function sendPushToUser(userId: string, payload: PushPayload): Promise<void> {
-  if (!vapidConfigured) return;
+  if (!vapidConfigured || !resolvedWebPush) return;
 
   let subscriptions: { id: string; endpoint: string; p256dh: string; auth: string }[];
   try {
@@ -44,7 +63,7 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
       select: { id: true, endpoint: true, p256dh: true, auth: true },
     });
   } catch {
-    return; // DB failure — don't crash the request
+    return;
   }
 
   if (subscriptions.length === 0) return;
@@ -52,13 +71,12 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
   await Promise.allSettled(
     subscriptions.map(async (sub) => {
       try {
-        await webPush.sendNotification(
+        await resolvedWebPush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           JSON.stringify(payload),
-          { TTL: 86400 } // 24h delivery window
+          { TTL: 86400 }
         );
       } catch (err: unknown) {
-        // Subscription gone (browser unsubscribed or rotated) — remove it
         const status =
           err != null && typeof err === "object" && "statusCode" in err
             ? (err as { statusCode: number }).statusCode
@@ -73,11 +91,8 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
   );
 }
 
-/**
- * Send a push to a batch of userIds. Parallelizes per-user lookups and sends.
- */
 export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
-  if (!vapidConfigured || userIds.length === 0) return;
+  if (!vapidConfigured || !resolvedWebPush || userIds.length === 0) return;
 
   let subscriptions: { id: string; userId: string; endpoint: string; p256dh: string; auth: string }[];
   try {
@@ -94,7 +109,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   await Promise.allSettled(
     subscriptions.map(async (sub) => {
       try {
-        await webPush.sendNotification(
+        await resolvedWebPush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           JSON.stringify(payload),
           { TTL: 86400 }

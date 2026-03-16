@@ -183,6 +183,47 @@ const CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   },
 });
 
+const FEED_CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
+  id: true,
+  content: true,
+  authorId: true,
+  tokenId: true,
+  contractAddress: true,
+  chainType: true,
+  tokenName: true,
+  tokenSymbol: true,
+  tokenImage: true,
+  dexscreenerUrl: true,
+  entryMcap: true,
+  currentMcap: true,
+  mcap1h: true,
+  mcap6h: true,
+  lastMcapUpdate: true,
+  viewCount: true,
+  confidenceScore: true,
+  hotAlphaScore: true,
+  earlyRunnerScore: true,
+  highConvictionScore: true,
+  timingTier: true,
+  firstCallerRank: true,
+  roiPeakPct: true,
+  roiCurrentPct: true,
+  threadCount: true,
+  reactionCounts: true,
+  trustedTraderCount: true,
+  entryQualityScore: true,
+  bundlePenaltyScore: true,
+  sentimentScore: true,
+  lastIntelligenceAt: true,
+  settled: true,
+  settledAt: true,
+  isWin: true,
+  createdAt: true,
+  updatedAt: true,
+  author: { select: AUTHOR_SELECT },
+  token: { select: TOKEN_SELECT },
+});
+
 const THREAD_COMMENT_SELECT = Prisma.validator<Prisma.CommentSelect>()({
   id: true,
   content: true,
@@ -231,6 +272,13 @@ export type FeedArgs = {
   limit?: number;
   cursor?: string | null;
   search?: string | null;
+};
+
+type FeedCountSummary = {
+  likes: number;
+  comments: number;
+  reposts: number;
+  reactions: number;
 };
 
 export type EnrichedCall = CallRecord & {
@@ -724,6 +772,68 @@ async function memoizeCached<T>(
 
   inFlight.set(key, promise);
   return cloneCachedValue(await promise);
+}
+
+async function loadFeedCountSummaries(postIds: string[]): Promise<Map<string, FeedCountSummary>> {
+  if (postIds.length === 0) {
+    return new Map();
+  }
+
+  const [likes, comments, reposts] = await Promise.all([
+    prisma.like.groupBy({
+      by: ["postId"],
+      where: {
+        postId: { in: postIds },
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+    prisma.comment.groupBy({
+      by: ["postId"],
+      where: {
+        postId: { in: postIds },
+        deletedAt: null,
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+    prisma.repost.groupBy({
+      by: ["postId"],
+      where: {
+        postId: { in: postIds },
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+  ]);
+
+  const counts = new Map<string, FeedCountSummary>();
+  for (const postId of postIds) {
+    counts.set(postId, {
+      likes: 0,
+      comments: 0,
+      reposts: 0,
+      reactions: 0,
+    });
+  }
+
+  for (const row of likes) {
+    const current = counts.get(row.postId);
+    if (current) current.likes = row._count._all;
+  }
+  for (const row of comments) {
+    const current = counts.get(row.postId);
+    if (current) current.comments = row._count._all;
+  }
+  for (const row of reposts) {
+    const current = counts.get(row.postId);
+    if (current) current.reposts = row._count._all;
+  }
+
+  return counts;
 }
 
 function evictOldestFromMap<V>(map: Map<string, V>, maxEntries: number): void {
@@ -2317,7 +2427,7 @@ async function hydrateCalls(
   }
   if (refreshTokens && tokenMap.size > 0) {
     tokenMap = mergeTokenMaps(tokenMap, await refreshTokenIntelligenceForMap(tokenMap));
-  } else if (tokenMap.size > 0) {
+  } else if (tokenMap.size > 0 && !preferStoredIntelligence) {
     for (const token of tokenMap.values()) {
       scheduleTokenIntelligenceRefresh(token);
     }
@@ -3067,9 +3177,20 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
     args.kind === "following" || args.viewerId
       ? PERSONALIZED_FEED_RESULT_CACHE_TTL_MS
       : FEED_RESULT_CACHE_TTL_MS;
+  const freshCached = readCacheValue(feedListCache, cacheKey);
+  if (freshCached) {
+    return freshCached;
+  }
   const staleCached = peekCacheValue(feedListCache, cacheKey);
+  const currentInFlight = feedListInFlight.get(cacheKey);
+  if (currentInFlight) {
+    if (staleCached) {
+      return staleCached;
+    }
+    return cloneCachedValue(await currentInFlight);
+  }
 
-  return memoizeCached(feedListCache, feedListInFlight, cacheKey, ttlMs, async () => {
+  const request = (async () => {
     const computeFeedResult = async (): Promise<FeedListResult> => {
       const { followedTraderIds, followedTokenIds } =
         args.kind === "following"
@@ -3130,12 +3251,21 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             RANKED_FEED_MIN_CANDIDATE_COUNT,
             Math.min(RANKED_FEED_MAX_CANDIDATE_COUNT, limit * 8)
           );
-      const records = await prisma.post.findMany({
+      const lightRecords = await prisma.post.findMany({
         where,
-        select: CALL_SELECT,
+        select: FEED_CALL_SELECT,
         orderBy: buildFeedOrderBy(args.kind),
         take: Math.max(limit + 1, candidateLimit),
       });
+      const records = lightRecords.map((record) => ({
+        ...record,
+        _count: {
+          likes: 0,
+          comments: record.threadCount ?? 0,
+          reposts: 0,
+          reactions: 0,
+        },
+      })) as CallRecord[];
 
       const sortedHydrated = sortCalls(
         args.kind,
@@ -3161,13 +3291,18 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
             : 0;
       const items = hydrated.slice(startIndex, startIndex + limit);
+      const feedCounts = await loadFeedCountSummaries(items.map((item) => item.id));
+      const itemsWithCounts = items.map((item) => ({
+        ...item,
+        _count: feedCounts.get(item.id) ?? item._count,
+      }));
       const nextCursor =
         items.length === limit && hydrated[startIndex + limit]
           ? items[items.length - 1]?.id ?? null
           : null;
 
       return {
-        items,
+        items: itemsWithCounts,
         hasMore: startIndex + limit < hydrated.length,
         nextCursor,
         totalItems: hydrated.length,
@@ -3228,7 +3363,14 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         degraded: true,
       };
     }
-  });
+  })()
+    .then((value) => writeCacheValue(feedListCache, cacheKey, value, ttlMs, FEED_LIST_CACHE_MAX_ENTRIES))
+    .finally(() => {
+      feedListInFlight.delete(cacheKey);
+    });
+
+  feedListInFlight.set(cacheKey, request);
+  return cloneCachedValue(await request);
 }
 
 export async function getEnrichedCallById(id: string, viewerId: string | null): Promise<EnrichedCall | null> {
@@ -3397,7 +3539,6 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       staleToken?.topHolders && staleToken.topHolders.length > 0
         ? cloneCachedValue(staleToken.topHolders)
         : [];
-    scheduleTokenIntelligenceRefresh(token);
     const currentToken = token;
     const needsFallbackTokenData =
       tokenNeedsCoreHydration(currentToken) ||

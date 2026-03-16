@@ -509,6 +509,78 @@ function buildPublicUserProfileDto(params: {
   };
 }
 
+function withProfileFollowState(payload: UserProfileRoutePayload, isFollowing: boolean): UserProfileRoutePayload {
+  return {
+    data: {
+      ...payload.data,
+      isFollowing,
+    },
+  };
+}
+
+type SocialPostRecord = {
+  id: string;
+  authorId: string;
+  isLiked?: boolean;
+  isReposted?: boolean;
+  isFollowingAuthor?: boolean;
+  [key: string]: unknown;
+};
+
+function buildPublicSocialPostPayload(posts: SocialPostRecord[]): UserPostsRoutePayload {
+  return {
+    data: posts.map((post) => ({
+      ...post,
+      isLiked: false,
+      isReposted: false,
+      isFollowingAuthor: false,
+    })),
+  };
+}
+
+function withSingleAuthorSocialState(
+  payload: UserPostsRoutePayload,
+  params: {
+    userLikes: Set<string>;
+    userReposts: Set<string>;
+    isFollowingAuthor: boolean;
+  }
+): UserPostsRoutePayload {
+  return {
+    data: payload.data.map((item) => {
+      const post = item as SocialPostRecord;
+      return {
+        ...post,
+        isLiked: params.userLikes.has(post.id),
+        isReposted: params.userReposts.has(post.id),
+        isFollowingAuthor: params.isFollowingAuthor,
+      };
+    }),
+  };
+}
+
+function withMixedAuthorSocialState(
+  payload: UserPostsRoutePayload,
+  params: {
+    currentUserId: string | null | undefined;
+    userLikes: Set<string>;
+    userReposts: Set<string>;
+    followingAuthorIds: Set<string>;
+  }
+): UserPostsRoutePayload {
+  return {
+    data: payload.data.map((item) => {
+      const post = item as SocialPostRecord;
+      return {
+        ...post,
+        isLiked: params.userLikes.has(post.id),
+        isReposted: params.userReposts.has(post.id),
+        isFollowingAuthor: Boolean(params.currentUserId) && params.followingAuthorIds.has(post.authorId),
+      };
+    }),
+  };
+}
+
 async function getIsFollowingSafely(currentUserId: string | null | undefined, targetUserId: string): Promise<boolean> {
   if (!currentUserId || currentUserId === targetUserId) {
     return false;
@@ -2277,25 +2349,27 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
 usersRouter.get("/:identifier", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
-  const shouldUseCache = shouldUseUserRouteCache(currentUser?.id);
-  const profileCacheKey = shouldUseCache ? buildUserRouteCacheKey(identifier, null) : null;
-  const profileRedisKey =
-    profileCacheKey ? buildUserRouteRedisKey(USERS_PROFILE_REDIS_KEY_PREFIX, profileCacheKey) : null;
+  const isPersonalized = Boolean(currentUser?.id);
+  const profileCacheKey = buildUserRouteCacheKey(identifier, null);
+  const profileRedisKey = buildUserRouteRedisKey(USERS_PROFILE_REDIS_KEY_PREFIX, profileCacheKey);
   c.header("Vary", "Cookie");
-  c.header("Cache-Control", buildUserRouteResponseHeaders(shouldUseCache)["Cache-Control"]);
-  const cachedProfileResponse =
-    profileCacheKey && profileRedisKey
-      ? await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey)
-      : null;
+  c.header("Cache-Control", buildUserRouteResponseHeaders(!isPersonalized)["Cache-Control"]);
+  const cachedProfileResponse = await readUserRouteCache(
+    userProfileRouteCache,
+    profileCacheKey,
+    profileRedisKey
+  );
   const staleCachedProfileResponse =
     cachedProfileResponse ??
-    (profileCacheKey && profileRedisKey
-      ? await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey, {
-          allowStale: true,
-        })
-      : null);
+    (await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey, {
+      allowStale: true,
+    }));
   if (cachedProfileResponse) {
-    return c.json(cachedProfileResponse);
+    if (!isPersonalized) {
+      return c.json(cachedProfileResponse);
+    }
+    const isFollowing = await getIsFollowingSafely(currentUser?.id, cachedProfileResponse.data.id);
+    return c.json(withProfileFollowState(cachedProfileResponse, isFollowing));
   }
 
   let user:
@@ -2359,7 +2433,11 @@ usersRouter.get("/:identifier", async (c) => {
   if (!user) {
     if (profileLookupUnavailable) {
       if (staleCachedProfileResponse) {
-        return c.json(staleCachedProfileResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedProfileResponse);
+        }
+        const isFollowing = await getIsFollowingSafely(currentUser?.id, staleCachedProfileResponse.data.id);
+        return c.json(withProfileFollowState(staleCachedProfileResponse, isFollowing));
       }
       return c.json(
         {
@@ -2376,19 +2454,18 @@ usersRouter.get("/:identifier", async (c) => {
 
   const isFollowing = await getIsFollowingSafely(currentUser?.id, user.id);
   const stats = await getUserStatsSafely(user.id);
-  const responsePayload: UserProfileRoutePayload = {
+  const baseResponsePayload: UserProfileRoutePayload = {
     data: buildPublicUserProfileDto({ user, isFollowing, stats }),
   };
-  if (profileCacheKey && profileRedisKey) {
-    writeUserRouteCache(
-      userProfileRouteCache,
-      profileCacheKey,
-      profileRedisKey,
-      responsePayload
-    );
-  }
+  const sharedProfilePayload = withProfileFollowState(baseResponsePayload, false);
+  writeUserRouteCache(
+    userProfileRouteCache,
+    profileCacheKey,
+    profileRedisKey,
+    sharedProfilePayload
+  );
 
-  return c.json(responsePayload);
+  return c.json(isPersonalized ? withProfileFollowState(sharedProfilePayload, isFollowing) : sharedProfilePayload);
 });
 
 // Update current user's profile
@@ -2689,25 +2766,39 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
 usersRouter.get("/:identifier/posts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
-  const shouldUseCache = shouldUseUserRouteCache(currentUser?.id);
-  const postsCacheKey = shouldUseCache ? buildUserRouteCacheKey(identifier, null) : null;
-  const postsRedisKey =
-    postsCacheKey ? buildUserRouteRedisKey(USERS_POSTS_REDIS_KEY_PREFIX, postsCacheKey) : null;
+  const isPersonalized = Boolean(currentUser?.id);
+  const postsCacheKey = buildUserRouteCacheKey(identifier, null);
+  const postsRedisKey = buildUserRouteRedisKey(USERS_POSTS_REDIS_KEY_PREFIX, postsCacheKey);
   c.header("Vary", "Cookie");
-  c.header("Cache-Control", buildUserRouteResponseHeaders(shouldUseCache)["Cache-Control"]);
-  const cachedPostsResponse =
-    postsCacheKey && postsRedisKey
-      ? await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey)
-      : null;
+  c.header("Cache-Control", buildUserRouteResponseHeaders(!isPersonalized)["Cache-Control"]);
+  const cachedPostsResponse = await readUserRouteCache(
+    userPostsRouteCache,
+    postsCacheKey,
+    postsRedisKey
+  );
   const staleCachedPostsResponse =
     cachedPostsResponse ??
-    (postsCacheKey && postsRedisKey
-      ? await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, {
-          allowStale: true,
-        })
-      : null);
+    (await readUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, {
+      allowStale: true,
+    }));
   if (cachedPostsResponse) {
-    return c.json(cachedPostsResponse);
+    if (!isPersonalized) {
+      return c.json(cachedPostsResponse);
+    }
+    const targetUserId = (cachedPostsResponse.data[0] as SocialPostRecord | undefined)?.authorId;
+    if (!targetUserId) {
+      return c.json(cachedPostsResponse);
+    }
+    const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
+      currentUserId: currentUser?.id,
+      targetUserId,
+      postIds: cachedPostsResponse.data.map((post) => (post as SocialPostRecord).id),
+    });
+    return c.json(withSingleAuthorSocialState(cachedPostsResponse, {
+      userLikes,
+      userReposts,
+      isFollowingAuthor,
+    }));
   }
 
   let user: { id: string } | null = null;
@@ -2725,7 +2816,23 @@ usersRouter.get("/:identifier/posts", async (c) => {
         message: getErrorMessage(error),
       });
       if (staleCachedPostsResponse) {
-        return c.json(staleCachedPostsResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedPostsResponse);
+        }
+        const targetUserId = (staleCachedPostsResponse.data[0] as SocialPostRecord | undefined)?.authorId;
+        if (!targetUserId) {
+          return c.json(staleCachedPostsResponse);
+        }
+        const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
+          currentUserId: currentUser?.id,
+          targetUserId,
+          postIds: staleCachedPostsResponse.data.map((post) => (post as SocialPostRecord).id),
+        });
+        return c.json(withSingleAuthorSocialState(staleCachedPostsResponse, {
+          userLikes,
+          userReposts,
+          isFollowingAuthor,
+        }));
       }
       return c.json({ data: [] });
     }
@@ -2740,7 +2847,23 @@ usersRouter.get("/:identifier/posts", async (c) => {
         message: getErrorMessage(rawError),
       });
       if (staleCachedPostsResponse) {
-        return c.json(staleCachedPostsResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedPostsResponse);
+        }
+        const targetUserId = (staleCachedPostsResponse.data[0] as SocialPostRecord | undefined)?.authorId;
+        if (!targetUserId) {
+          return c.json(staleCachedPostsResponse);
+        }
+        const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
+          currentUserId: currentUser?.id,
+          targetUserId,
+          postIds: staleCachedPostsResponse.data.map((post) => (post as SocialPostRecord).id),
+        });
+        return c.json(withSingleAuthorSocialState(staleCachedPostsResponse, {
+          userLikes,
+          userReposts,
+          isFollowingAuthor,
+        }));
       }
       return c.json({ data: [] });
     }
@@ -2802,7 +2925,19 @@ usersRouter.get("/:identifier/posts", async (c) => {
         message: getErrorMessage(error),
       });
       if (staleCachedPostsResponse) {
-        return c.json(staleCachedPostsResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedPostsResponse);
+        }
+        const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
+          currentUserId: currentUser?.id,
+          targetUserId: user.id,
+          postIds: staleCachedPostsResponse.data.map((post) => (post as SocialPostRecord).id),
+        });
+        return c.json(withSingleAuthorSocialState(staleCachedPostsResponse, {
+          userLikes,
+          userReposts,
+          isFollowingAuthor,
+        }));
       }
       return c.json({ data: [] });
     }
@@ -2819,7 +2954,19 @@ usersRouter.get("/:identifier/posts", async (c) => {
         message: getErrorMessage(rawError),
       });
       if (staleCachedPostsResponse) {
-        return c.json(staleCachedPostsResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedPostsResponse);
+        }
+        const { userLikes, userReposts, isFollowingAuthor } = await getPostInteractionSetsSafely({
+          currentUserId: currentUser?.id,
+          targetUserId: user.id,
+          postIds: staleCachedPostsResponse.data.map((post) => (post as SocialPostRecord).id),
+        });
+        return c.json(withSingleAuthorSocialState(staleCachedPostsResponse, {
+          userLikes,
+          userReposts,
+          isFollowingAuthor,
+        }));
       }
       return c.json({ data: [] });
     }
@@ -2831,43 +2978,61 @@ usersRouter.get("/:identifier/posts", async (c) => {
     postIds: posts.map((p) => p.id),
   });
 
-  const postsWithSocial = posts.map((post) => ({
-    ...post,
-    isLiked: userLikes.has(post.id),
-    isReposted: userReposts.has(post.id),
-    isFollowingAuthor,
-  }));
-  const responsePayload: UserPostsRoutePayload = { data: postsWithSocial };
-  if (postsCacheKey && postsRedisKey) {
-    writeUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, responsePayload);
-  }
+  const publicResponsePayload = buildPublicSocialPostPayload(posts as SocialPostRecord[]);
+  writeUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, publicResponsePayload);
 
-  return c.json(responsePayload);
+  return c.json(
+    isPersonalized
+      ? withSingleAuthorSocialState(publicResponsePayload, {
+          userLikes,
+          userReposts,
+          isFollowingAuthor,
+        })
+      : publicResponsePayload
+  );
 });
 
 // Get user's reposts (saved alpha) - only visible on profile page
 usersRouter.get("/:identifier/reposts", async (c) => {
   const identifier = c.req.param("identifier");
   const currentUser = c.get("user");
-  const shouldUseCache = shouldUseUserRouteCache(currentUser?.id);
-  const repostsCacheKey = shouldUseCache ? buildUserRouteCacheKey(identifier, null) : null;
-  const repostsRedisKey =
-    repostsCacheKey ? buildUserRouteRedisKey(USERS_REPOSTS_REDIS_KEY_PREFIX, repostsCacheKey) : null;
+  const isPersonalized = Boolean(currentUser?.id);
+  const repostsCacheKey = buildUserRouteCacheKey(identifier, null);
+  const repostsRedisKey = buildUserRouteRedisKey(USERS_REPOSTS_REDIS_KEY_PREFIX, repostsCacheKey);
   c.header("Vary", "Cookie");
-  c.header("Cache-Control", buildUserRouteResponseHeaders(shouldUseCache)["Cache-Control"]);
-  const cachedRepostsResponse =
-    repostsCacheKey && repostsRedisKey
-      ? await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey)
-      : null;
+  c.header("Cache-Control", buildUserRouteResponseHeaders(!isPersonalized)["Cache-Control"]);
+  const cachedRepostsResponse = await readUserRouteCache(
+    userRepostsRouteCache,
+    repostsCacheKey,
+    repostsRedisKey
+  );
   const staleCachedRepostsResponse =
     cachedRepostsResponse ??
-    (repostsCacheKey && repostsRedisKey
-      ? await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey, {
-          allowStale: true,
-        })
-      : null);
+    (await readUserRouteCache(userRepostsRouteCache, repostsCacheKey, repostsRedisKey, {
+      allowStale: true,
+    }));
   if (cachedRepostsResponse) {
-    return c.json(cachedRepostsResponse);
+    if (!isPersonalized) {
+      return c.json(cachedRepostsResponse);
+    }
+    const authorIds = [
+      ...new Set(
+        cachedRepostsResponse.data
+          .map((post) => (post as SocialPostRecord).authorId)
+          .filter((authorId) => authorId !== currentUser?.id)
+      ),
+    ];
+    const { userLikes, userReposts, followingAuthorIds } = await getMixedAuthorPostInteractionsSafely({
+      currentUserId: currentUser?.id,
+      postIds: cachedRepostsResponse.data.map((post) => (post as SocialPostRecord).id),
+      authorIds,
+    });
+    return c.json(withMixedAuthorSocialState(cachedRepostsResponse, {
+      currentUserId: currentUser?.id,
+      userLikes,
+      userReposts,
+      followingAuthorIds,
+    }));
   }
 
   let user: { id: string } | null = null;
@@ -2897,7 +3062,27 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   if (!user) {
     if (userLookupUnavailable) {
       if (staleCachedRepostsResponse) {
-        return c.json(staleCachedRepostsResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedRepostsResponse);
+        }
+        const authorIds = [
+          ...new Set(
+            staleCachedRepostsResponse.data
+              .map((post) => (post as SocialPostRecord).authorId)
+              .filter((authorId) => authorId !== currentUser?.id)
+          ),
+        ];
+        const { userLikes, userReposts, followingAuthorIds } = await getMixedAuthorPostInteractionsSafely({
+          currentUserId: currentUser?.id,
+          postIds: staleCachedRepostsResponse.data.map((post) => (post as SocialPostRecord).id),
+          authorIds,
+        });
+        return c.json(withMixedAuthorSocialState(staleCachedRepostsResponse, {
+          currentUserId: currentUser?.id,
+          userLikes,
+          userReposts,
+          followingAuthorIds,
+        }));
       }
       return c.json(
         {
@@ -2976,7 +3161,27 @@ usersRouter.get("/:identifier/reposts", async (c) => {
         message: getErrorMessage(rawError),
       });
       if (staleCachedRepostsResponse) {
-        return c.json(staleCachedRepostsResponse);
+        if (!isPersonalized) {
+          return c.json(staleCachedRepostsResponse);
+        }
+        const authorIds = [
+          ...new Set(
+            staleCachedRepostsResponse.data
+              .map((post) => (post as SocialPostRecord).authorId)
+              .filter((authorId) => authorId !== currentUser?.id)
+          ),
+        ];
+        const { userLikes, userReposts, followingAuthorIds } = await getMixedAuthorPostInteractionsSafely({
+          currentUserId: currentUser?.id,
+          postIds: staleCachedRepostsResponse.data.map((post) => (post as SocialPostRecord).id),
+          authorIds,
+        });
+        return c.json(withMixedAuthorSocialState(staleCachedRepostsResponse, {
+          currentUserId: currentUser?.id,
+          userLikes,
+          userReposts,
+          followingAuthorIds,
+        }));
       }
       return c.json(
         {
@@ -2999,23 +3204,24 @@ usersRouter.get("/:identifier/reposts", async (c) => {
     authorIds,
   });
 
-  const postsWithSocial = posts.map((post) => ({
-    ...post,
-    isLiked: userLikes.has(post.id),
-    isReposted: userReposts.has(post.id),
-    isFollowingAuthor: currentUser ? followingAuthorIds.has(post.authorId) : false,
-  }));
-  const responsePayload: UserPostsRoutePayload = { data: postsWithSocial };
-  if (repostsCacheKey && repostsRedisKey) {
-    writeUserRouteCache(
-      userRepostsRouteCache,
-      repostsCacheKey,
-      repostsRedisKey,
-      responsePayload
-    );
-  }
+  const publicResponsePayload = buildPublicSocialPostPayload(posts as SocialPostRecord[]);
+  writeUserRouteCache(
+    userRepostsRouteCache,
+    repostsCacheKey,
+    repostsRedisKey,
+    publicResponsePayload
+  );
 
-  return c.json(responsePayload);
+  return c.json(
+    isPersonalized
+      ? withMixedAuthorSocialState(publicResponsePayload, {
+          currentUserId: currentUser?.id,
+          userLikes,
+          userReposts,
+          followingAuthorIds,
+        })
+      : publicResponsePayload
+  );
 });
 
 async function resolveUserIdentityFromIdentifier(identifier: string): Promise<{

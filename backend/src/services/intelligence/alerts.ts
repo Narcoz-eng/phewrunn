@@ -94,10 +94,6 @@ function buildTokenSignalDedupeKey(args: {
   );
 }
 
-function isDuplicateNotificationError(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
-}
-
 async function createNotification(data: {
   userId: string;
   type: string;
@@ -111,8 +107,8 @@ async function createNotification(data: {
   dedupeKey: string;
 }): Promise<void> {
   try {
-    await prisma.notification.create({
-      data: {
+    const created = await prisma.notification.createMany({
+      data: [{
         userId: data.userId,
         type: data.type,
         message: data.message,
@@ -124,15 +120,17 @@ async function createNotification(data: {
         payload: (data.payload ?? undefined) as Prisma.InputJsonValue | undefined,
         dedupeKey: data.dedupeKey,
         priority: 1,
-      },
+      }],
+      skipDuplicates: true,
     });
-    invalidateNotificationsCache(data.userId);
-    // Fire push notification non-blocking — don't await, never crash the caller
-    void sendPushToUser(data.userId, buildPushPayload(data)).catch(() => {});
-  } catch (error) {
-    if (isDuplicateNotificationError(error)) {
-      return;
+    if (created.count > 0) {
+      invalidateNotificationsCache(data.userId);
     }
+    // Fire push notification non-blocking — don't await, never crash the caller
+    if (created.count > 0) {
+      void sendPushToUser(data.userId, buildPushPayload(data)).catch(() => {});
+    }
+  } catch (error) {
     console.warn("[alerts] notification fanout write skipped", {
       userId: data.userId,
       type: data.type,
