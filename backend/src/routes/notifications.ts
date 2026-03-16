@@ -669,28 +669,17 @@ async function loadNotificationsListFresh(
     let notifications: unknown[] = [];
     try {
       notifications = await withPrismaRetry(
-        () => queryNotificationsRaw(userId, includeDismissed),
+        () => queryNotificationsMinimalRaw(userId, includeDismissed),
         { label: "notifications:list" }
       );
     } catch (error) {
       if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
         throw error;
       }
-      console.warn("[notifications/list] database unavailable; returning cached or empty notifications", {
+      console.warn("[notifications/list] database unavailable; returning stale or empty notifications", {
         message: getErrorMessage(error),
       });
-      if (isTransientPrismaError(error)) {
-        notifications = staleCachedNotifications ?? [];
-      } else {
-        try {
-          notifications = await queryNotificationsMinimalRaw(userId, includeDismissed);
-        } catch (rawError) {
-          console.warn("[notifications/list] fallback unavailable; returning cached or empty notifications", {
-            message: getErrorMessage(rawError),
-          });
-          notifications = staleCachedNotifications ?? [];
-        }
-      }
+      notifications = staleCachedNotifications ?? [];
     }
 
     writeNotificationsListCache(listCacheKey, notifications);
@@ -878,6 +867,20 @@ notificationsRouter.get("/", requireAuth, async (c) => {
   if (cachedNotifications) {
     return c.json({ data: cachedNotifications });
   }
+  if (staleCachedNotifications) {
+    void loadNotificationsListFresh(
+      listCacheKey,
+      user.id,
+      includeDismissed,
+      staleCachedNotifications
+    ).catch((error) => {
+      logNotificationsQueryFailure("notification.list.background", error, {
+        userId: user.id,
+        includeDismissed,
+      });
+    });
+    return c.json({ data: staleCachedNotifications });
+  }
   try {
     const notifications = await loadNotificationsListFresh(
       listCacheKey,
@@ -907,6 +910,14 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     cachedUnreadCount ?? (await readNotificationsUnreadCountCache(user.id, { allowStale: true }));
   if (cachedUnreadCount !== null) {
     return c.json({ data: { count: cachedUnreadCount } });
+  }
+  if (staleUnreadCount !== null) {
+    void loadNotificationsUnreadCountFresh(user.id, staleUnreadCount).catch((error) => {
+      logNotificationsQueryFailure("notification.count.background", error, {
+        userId: user.id,
+      });
+    });
+    return c.json({ data: { count: staleUnreadCount } });
   }
   try {
     const count = await loadNotificationsUnreadCountFresh(user.id, staleUnreadCount);

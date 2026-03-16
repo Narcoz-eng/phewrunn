@@ -357,6 +357,10 @@ type RawResolvedUserProfile = {
   };
 };
 
+type RawResolvedUserIdentifier = {
+  id: string;
+};
+
 type RawUserPostRow = {
   id: string;
   content: string;
@@ -507,6 +511,68 @@ function buildPublicUserProfileDto(params: {
       totalProfitPercent: params.stats.totalProfitPercent,
     },
   };
+}
+
+async function findUserProfileByIdentifierMinimalRaw(
+  identifier: string
+): Promise<RawResolvedUserProfile | null> {
+  const normalizedIdentifier = normalizeUsernameHandle(identifier);
+  const rows = await prisma.$queryRaw<Array<{
+    id: string;
+    image: string | null;
+    username: string | null;
+    level: number | null;
+    xp: number | null;
+    isVerified: boolean | null;
+    createdAt: Date;
+  }>>(Prisma.sql`
+    SELECT
+      u.id,
+      u.image,
+      u.username,
+      u.level,
+      u.xp,
+      u."isVerified",
+      u."createdAt"
+    FROM "User" u
+    WHERE u.id = ${identifier}
+       OR LOWER(COALESCE(u.username, '')) = ${normalizedIdentifier}
+    LIMIT 1
+  `);
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    image: row.image ?? null,
+    username: row.username ?? null,
+    level: toSafeNumber(row.level),
+    xp: toSafeNumber(row.xp),
+    isVerified: row.isVerified === true,
+    createdAt: row.createdAt,
+    _count: {
+      posts: 0,
+      followers: 0,
+      following: 0,
+    },
+  };
+}
+
+async function findUserIdByIdentifierRaw(identifier: string): Promise<RawResolvedUserIdentifier | null> {
+  const normalizedIdentifier = normalizeUsernameHandle(identifier);
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT u.id
+    FROM "User" u
+    WHERE u.id = ${identifier}
+       OR LOWER(COALESCE(u.username, '')) = ${normalizedIdentifier}
+    LIMIT 1
+  `);
+
+  const row = rows[0];
+  return row ? { id: row.id } : null;
 }
 
 function withProfileFollowState(payload: UserProfileRoutePayload, isFollowing: boolean): UserProfileRoutePayload {
@@ -2488,12 +2554,21 @@ usersRouter.get("/:identifier", async (c) => {
       message: getErrorMessage(error),
     });
     try {
-      user = await findUserProfileByIdentifierRaw(identifier);
+      user = isTransientPrismaError(error)
+        ? await findUserProfileByIdentifierMinimalRaw(identifier)
+        : await findUserProfileByIdentifierRaw(identifier);
     } catch (rawError) {
-      profileLookupUnavailable = true;
-      console.warn("[users/profile] raw user lookup degraded", {
-        message: getErrorMessage(rawError),
-      });
+      try {
+        user = await findUserProfileByIdentifierMinimalRaw(identifier);
+      } catch (minimalRawError) {
+        profileLookupUnavailable = true;
+        console.warn("[users/profile] raw user lookup degraded", {
+          message: getErrorMessage(rawError),
+        });
+        console.warn("[users/profile] minimal raw user lookup degraded", {
+          message: getErrorMessage(minimalRawError),
+        });
+      }
     }
   }
 
@@ -2907,8 +2982,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
       throw error;
     }
     try {
-      const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-      user = fallbackUser ? { id: fallbackUser.id } : null;
+      user = await findUserIdByIdentifierRaw(identifier);
     } catch (rawError) {
       console.warn("[users/profile-posts] raw user lookup degraded", {
         message: getErrorMessage(rawError),
@@ -3120,8 +3194,7 @@ usersRouter.get("/:identifier/reposts", async (c) => {
       throw error;
     }
     try {
-      const fallbackUser = await findUserProfileByIdentifierRaw(identifier);
-      user = fallbackUser ? { id: fallbackUser.id } : null;
+      user = await findUserIdByIdentifierRaw(identifier);
     } catch (rawError) {
       userLookupUnavailable = true;
       console.warn("[users/profile-reposts] raw user lookup degraded", {

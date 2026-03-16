@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   getBestCachedProfileSnapshot,
+  type ProfileCacheSnapshot,
   syncProfileSnapshotAcrossCaches,
 } from "@/lib/profile-cache";
 import {
@@ -89,6 +90,48 @@ function hasSuspiciousZeroPublicProfileCounts(profile: UserProfileData | null | 
   }
 
   return followers === 0 && following === 0;
+}
+
+function buildUserProfileFromSnapshot(
+  snapshot: ProfileCacheSnapshot | null | undefined
+): UserProfileData | null {
+  if (!snapshot?.id) {
+    return null;
+  }
+
+  const wins = typeof snapshot.winsCount === "number" && Number.isFinite(snapshot.winsCount) ? snapshot.winsCount : 0;
+  const losses =
+    typeof snapshot.lossesCount === "number" && Number.isFinite(snapshot.lossesCount) ? snapshot.lossesCount : 0;
+  const totalCalls = wins + losses;
+
+  return {
+    id: snapshot.id,
+    name: snapshot.username ?? null,
+    image: snapshot.image ?? null,
+    username: snapshot.username ?? null,
+    level: typeof snapshot.level === "number" && Number.isFinite(snapshot.level) ? snapshot.level : 0,
+    xp: typeof snapshot.xp === "number" && Number.isFinite(snapshot.xp) ? snapshot.xp : 0,
+    isVerified: typeof snapshot.isVerified === "boolean" ? snapshot.isVerified : false,
+    createdAt: snapshot.createdAt ?? new Date(0).toISOString(),
+    isFollowing: false,
+    stats: {
+      posts:
+        typeof snapshot.postsCount === "number" && Number.isFinite(snapshot.postsCount) ? snapshot.postsCount : 0,
+      followers:
+        typeof snapshot.followersCount === "number" && Number.isFinite(snapshot.followersCount)
+          ? snapshot.followersCount
+          : 0,
+      following:
+        typeof snapshot.followingCount === "number" && Number.isFinite(snapshot.followingCount)
+          ? snapshot.followingCount
+          : 0,
+      totalCalls,
+      wins,
+      losses,
+      winRate: totalCalls > 0 ? Math.round((wins / totalCalls) * 100) : 0,
+      totalProfitPercent: 0,
+    },
+  };
 }
 
 export default function UserProfile() {
@@ -183,51 +226,61 @@ export default function UserProfile() {
       if (!userId) {
         throw new Error("User not found");
       }
-      const profile = await api.get<UserProfileData>(`/api/users/${userId}`);
-      if (!cachedProfileSnapshot) {
-        return profile;
+      try {
+        const profile = await api.get<UserProfileData>(`/api/users/${userId}`);
+        if (!cachedProfileSnapshot) {
+          return profile;
+        }
+        return {
+          ...profile,
+          username: profile.username ?? cachedProfileSnapshot.username ?? null,
+          image: profile.image ?? cachedProfileSnapshot.image ?? null,
+          level:
+            typeof profile.level === "number" && Number.isFinite(profile.level)
+              ? profile.level
+              : cachedProfileSnapshot.level ?? 0,
+          xp:
+            typeof profile.xp === "number" && Number.isFinite(profile.xp)
+              ? profile.xp
+              : cachedProfileSnapshot.xp ?? 0,
+          isVerified:
+            typeof profile.isVerified === "boolean"
+              ? profile.isVerified
+              : cachedProfileSnapshot.isVerified,
+          createdAt: profile.createdAt ?? cachedProfileSnapshot.createdAt ?? new Date(0).toISOString(),
+          stats: {
+            ...profile.stats,
+            posts:
+              typeof profile.stats?.posts === "number" && Number.isFinite(profile.stats.posts)
+                ? profile.stats.posts
+                : cachedProfileSnapshot.postsCount ?? 0,
+            followers:
+              typeof profile.stats?.followers === "number" && Number.isFinite(profile.stats.followers)
+                ? profile.stats.followers
+                : cachedProfileSnapshot.followersCount ?? 0,
+            following:
+              typeof profile.stats?.following === "number" && Number.isFinite(profile.stats.following)
+                ? profile.stats.following
+                : cachedProfileSnapshot.followingCount ?? 0,
+            wins:
+              typeof profile.stats?.wins === "number" && Number.isFinite(profile.stats.wins)
+                ? profile.stats.wins
+                : cachedProfileSnapshot.winsCount ?? 0,
+            losses:
+              typeof profile.stats?.losses === "number" && Number.isFinite(profile.stats.losses)
+                ? profile.stats.losses
+                : cachedProfileSnapshot.lossesCount ?? 0,
+          },
+        };
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 404)) {
+          const fallbackProfile = buildUserProfileFromSnapshot(cachedProfileSnapshot);
+          if (fallbackProfile) {
+            return fallbackProfile;
+          }
+        }
+        throw error;
       }
-      return {
-        ...profile,
-        username: profile.username ?? cachedProfileSnapshot.username ?? null,
-        image: profile.image ?? cachedProfileSnapshot.image ?? null,
-        level:
-          typeof profile.level === "number" && Number.isFinite(profile.level)
-            ? profile.level
-            : cachedProfileSnapshot.level ?? 0,
-        xp:
-          typeof profile.xp === "number" && Number.isFinite(profile.xp)
-            ? profile.xp
-            : cachedProfileSnapshot.xp ?? 0,
-        isVerified:
-          typeof profile.isVerified === "boolean"
-            ? profile.isVerified
-            : cachedProfileSnapshot.isVerified,
-        createdAt: profile.createdAt ?? cachedProfileSnapshot.createdAt ?? new Date(0).toISOString(),
-        stats: {
-          ...profile.stats,
-          posts:
-            typeof profile.stats?.posts === "number" && Number.isFinite(profile.stats.posts)
-              ? profile.stats.posts
-              : cachedProfileSnapshot.postsCount ?? 0,
-          followers:
-            typeof profile.stats?.followers === "number" && Number.isFinite(profile.stats.followers)
-              ? profile.stats.followers
-              : cachedProfileSnapshot.followersCount ?? 0,
-          following:
-            typeof profile.stats?.following === "number" && Number.isFinite(profile.stats.following)
-              ? profile.stats.following
-              : cachedProfileSnapshot.followingCount ?? 0,
-          wins:
-            typeof profile.stats?.wins === "number" && Number.isFinite(profile.stats.wins)
-              ? profile.stats.wins
-              : cachedProfileSnapshot.winsCount ?? 0,
-          losses:
-            typeof profile.stats?.losses === "number" && Number.isFinite(profile.stats.losses)
-              ? profile.stats.losses
-              : cachedProfileSnapshot.lossesCount ?? 0,
-        },
-      };
     },
     initialData:
       cachedUserProfile
@@ -268,6 +321,9 @@ export default function UserProfile() {
     refetchOnReconnect: false,
     retry: 0,
   });
+
+  const isProfileMissing = userError instanceof ApiError && userError.status === 404;
+  const userErrorMessage = isProfileMissing ? "User not found" : "Profile temporarily unavailable";
 
   // Fetch user posts
   const {
@@ -753,12 +809,12 @@ export default function UserProfile() {
             <Skeleton className="h-24 w-full rounded-xl" />
             <Skeleton className="h-32 w-full rounded-xl" />
           </div>
-        ) : userError ? (
+        ) : userError && !user ? (
           <div className="app-empty-state">
             <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
               <AlertCircle className="h-8 w-8 text-destructive" />
             </div>
-            <p className="text-muted-foreground">User not found</p>
+            <p className="text-muted-foreground">{userErrorMessage}</p>
             <Button onClick={() => navigate(-1)}>Go Back</Button>
           </div>
         ) : user ? (

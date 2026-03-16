@@ -1146,7 +1146,7 @@ function resolvePostIntelligenceSignalVersion(
 function shouldUseStoredPostIntelligence(
   record: Pick<CallRecord, "lastIntelligenceAt" | "lastMcapUpdate" | "settledAt" | "entryMcap" | "currentMcap" | "roiCurrentPct">
 ): boolean {
-  const lastIntelligenceAt = record.lastIntelligenceAt?.getTime() ?? 0;
+  const lastIntelligenceAt = toDateMs(record.lastIntelligenceAt);
   if (lastIntelligenceAt <= 0) {
     return false;
   }
@@ -1331,8 +1331,9 @@ async function getMarketContextSnapshot(): Promise<MarketContextSnapshot> {
 function shouldRefreshToken(token: TokenRecord | null): boolean {
   if (!token) return false;
   if (tokenNeedsCoreHydration(token)) return true;
-  if (!token.lastIntelligenceAt) return true;
-  if (token.lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) return true;
+  const lastIntelligenceAt = normalizeOptionalDate(token.lastIntelligenceAt);
+  if (!lastIntelligenceAt) return true;
+  if (lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) return true;
 
   const hasHighSignal =
     finite(token.hotAlphaScore) >= HOT_ALPHA_THRESHOLD ||
@@ -1342,7 +1343,7 @@ function shouldRefreshToken(token: TokenRecord | null): boolean {
     ? TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS
     : TOKEN_INTELLIGENCE_STALE_MS;
 
-  return Date.now() - token.lastIntelligenceAt.getTime() > staleAfterMs;
+  return Date.now() - lastIntelligenceAt.getTime() > staleAfterMs;
 }
 
 function hasFreshStoredTokenIntelligence(
@@ -1354,10 +1355,11 @@ function hasFreshStoredTokenIntelligence(
     | null
     | undefined
 ): boolean {
-  if (!token?.lastIntelligenceAt) {
+  const lastIntelligenceAt = normalizeOptionalDate(token?.lastIntelligenceAt);
+  if (!token || !lastIntelligenceAt) {
     return false;
   }
-  if (token.lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) {
+  if (lastIntelligenceAt.getTime() < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) {
     return false;
   }
 
@@ -1369,7 +1371,7 @@ function hasFreshStoredTokenIntelligence(
     ? TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS
     : TOKEN_INTELLIGENCE_STALE_MS;
 
-  return Date.now() - token.lastIntelligenceAt.getTime() <= staleAfterMs;
+  return Date.now() - lastIntelligenceAt.getTime() <= staleAfterMs;
 }
 
 function scheduleTokenIntelligenceRefresh(token: TokenRecord | null): void {
@@ -1719,7 +1721,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     estimatedBundledSupplyPct: resolvedEstimatedBundledSupplyPct,
   });
   const modelAwareRecentCalls = recentCalls.filter(
-    (call) => (call.lastIntelligenceAt?.getTime() ?? 0) >= TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS
+    (call) => toDateMs(call.lastIntelligenceAt) >= TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS
   );
   const scoringSeedCalls = modelAwareRecentCalls;
   const distinctTrustedTraders = new Set(
@@ -3106,8 +3108,8 @@ async function prewarmRecentTokenIntelligence(): Promise<void> {
   const tokenMap = mergeTokenMaps(buildTokenMapFromRecords(recentRecords), ensuredTokenMap);
   const tokensToRefresh = Array.from(tokenMap.values())
     .sort((left, right) => {
-      const leftFreshness = left.lastIntelligenceAt?.getTime() ?? 0;
-      const rightFreshness = right.lastIntelligenceAt?.getTime() ?? 0;
+      const leftFreshness = toDateMs(left.lastIntelligenceAt);
+      const rightFreshness = toDateMs(right.lastIntelligenceAt);
       if (leftFreshness !== rightFreshness) {
         return leftFreshness - rightFreshness;
       }
@@ -4006,7 +4008,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             : null,
           {
             timestamp:
-              currentToken.lastIntelligenceAt?.toISOString() ??
+              normalizeOptionalDate(currentToken.lastIntelligenceAt)?.toISOString() ??
               currentToken.updatedAt.toISOString(),
             marketCap: resolvedMarketCap,
             liquidity: resolvedLiquidity,

@@ -206,6 +206,18 @@ function roundCount(value: number | null | undefined): number | null {
   return Math.round(value);
 }
 
+function toTimestampMs(value: Date | string | null | undefined): number {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 function hasResolvedHolderCount(
   value: number | null | undefined,
   source: TokenRoutePayload["holderCountSource"] | TokenLivePayload["holderCountSource"]
@@ -422,7 +434,7 @@ function shouldRefreshLiveDistribution(token: TokenLookupPayload | null | undefi
     return true;
   }
 
-  const lastIntelligenceAt = token.lastIntelligenceAt?.getTime() ?? 0;
+  const lastIntelligenceAt = toTimestampMs(token.lastIntelligenceAt);
   return lastIntelligenceAt <= 0 || Date.now() - lastIntelligenceAt > TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS;
 }
 
