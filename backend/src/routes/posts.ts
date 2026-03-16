@@ -393,6 +393,12 @@ const opportunisticMaintenanceEnabled = (() => {
   if (raw === "false") return false;
   return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 })();
+const organicSettlementWakeupsEnabled = (() => {
+  const raw = process.env.POSTS_ENABLE_ORGANIC_SETTLEMENTS?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return true;
+})();
 
 function isCronMaintenanceHealthy(): boolean {
   if (!hasCronMaintenanceConfigured) return false;
@@ -403,6 +409,10 @@ function isCronMaintenanceHealthy(): boolean {
 function shouldRunOpportunisticMaintenance(): boolean {
   if (!opportunisticMaintenanceEnabled) return false;
   return !hasCronMaintenanceConfigured || !isCronMaintenanceHealthy();
+}
+
+function shouldRunOrganicSettlementWakeups(): boolean {
+  return organicSettlementWakeupsEnabled;
 }
 
 type MaintenanceCandidatePost = {
@@ -424,7 +434,7 @@ function triggerMaintenanceForStaleCandidates(
   reason: string,
   posts: MaintenanceCandidatePost[]
 ): void {
-  if (!shouldRunOpportunisticMaintenance()) return;
+  if (!shouldRunOrganicSettlementWakeups()) return;
   if (!posts.some(shouldTriggerMaintenanceForPost)) return;
 
   const now = Date.now();
@@ -4594,7 +4604,7 @@ postsRouter.get("/", async (c) => {
 
   // Keep settlement/snapshot state progressing from organic traffic without running the full
   // market-refresh job on the feed path. Cron/manual maintenance handles the heavier updates.
-  if (!feedDegradedMode && !cursor && shouldRunOpportunisticMaintenance()) {
+  if (!feedDegradedMode && !cursor && shouldRunOrganicSettlementWakeups()) {
     const reason = search
       ? `feed:${sort}:search`
       : following

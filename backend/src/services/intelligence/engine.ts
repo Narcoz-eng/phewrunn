@@ -45,7 +45,7 @@ const FEED_LIST_SOFT_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
-const TOKEN_OVERVIEW_CACHE_VERSION = 4;
+const TOKEN_OVERVIEW_CACHE_VERSION = 5;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
 const TOKEN_LOOKUP_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
@@ -1206,6 +1206,26 @@ function hasVerifiedSolanaHolderCount(
         holderCountSource === "birdeye") &&
       Math.round(holderCount) === 1000
     )
+  );
+}
+
+function hasResolvedHolderRoleFields(
+  holder: Pick<TokenHolderSnapshot, "badges" | "devRole"> | null | undefined
+): boolean {
+  if (!holder) {
+    return false;
+  }
+
+  return holder.badges.length > 0 || holder.devRole !== null;
+}
+
+function hasResolvedHolderRoleIntelligence(
+  topHolders: TokenHolderSnapshot[] | null | undefined,
+  devWallet: TokenHolderSnapshot | null | undefined
+): boolean {
+  return Boolean(
+    (topHolders ?? []).some((holder) => hasResolvedHolderRoleFields(holder)) ||
+      hasResolvedHolderRoleFields(devWallet)
   );
 }
 
@@ -3598,7 +3618,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         (!hasPositiveMetric(currentToken.holderCount) ||
           !hasFiniteMetric(currentToken.top10HolderPct) ||
           !hasFiniteMetric(currentToken.largestHolderPct) ||
-          staleTopHolders.length === 0));
+          staleTopHolders.length === 0 ||
+          !hasResolvedHolderRoleIntelligence(staleTopHolders, staleToken?.devWallet ?? null)));
 
     const [callsRaw, clusters, snapshots, events, tokenFollow, marketSnapshotFallback, distributionFallback] = await Promise.all([
       resolveTokenOverviewSection(

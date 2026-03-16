@@ -99,6 +99,7 @@ type RpcLargestAccountsResult = {
 
 type RpcProgramAccountResult = Array<
   | {
+      pubkey?: string | null;
       account?: {
         data?: [string, string] | string | null;
       } | null;
@@ -523,6 +524,32 @@ function countCurrentHolderWalletsFromProgramAccounts(
   }
 
   return owners.size;
+}
+
+function deriveTokenAccountOwnersFromProgramAccounts(
+  accounts: RpcProgramAccountResult | null | undefined
+): Map<string, string> {
+  const ownerMap = new Map<string, string>();
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    return ownerMap;
+  }
+
+  for (const account of accounts) {
+    const tokenAccountAddress =
+      typeof account?.pubkey === "string" ? account.pubkey.trim() : "";
+    if (!isLikelySolanaWallet(tokenAccountAddress)) {
+      continue;
+    }
+
+    const bytes = decodeProgramAccountSlice(account?.account?.data);
+    if (!bytes) continue;
+    const owner = parseSliceOwnerAddress(bytes);
+    const amount = parseSliceAmount(bytes);
+    if (!owner || amount === null || amount <= 0n) continue;
+    ownerMap.set(tokenAccountAddress, owner);
+  }
+
+  return ownerMap;
 }
 
 function buildBundleClusters(holderPcts: number[]): BundleClusterSnapshot[] {
@@ -1019,11 +1046,16 @@ export async function analyzeSolanaTokenDistribution(
         : null;
 
     const largestAccounts = largestAccountsResult?.value ?? [];
-    const tokenAccountOwners = await getRpcTokenAccountOwners(
-      largestAccounts
-        .map((holder) => (typeof holder.address === "string" ? holder.address.trim() : ""))
-        .filter((address) => address.length > 0)
-    );
+    const tokenAccountOwners = deriveTokenAccountOwnersFromProgramAccounts(holderAccountsResult);
+    const unresolvedLargestAccountAddresses = largestAccounts
+      .map((holder) => (typeof holder.address === "string" ? holder.address.trim() : ""))
+      .filter((address) => address.length > 0 && !tokenAccountOwners.has(address));
+    if (unresolvedLargestAccountAddresses.length > 0) {
+      const fallbackOwnerMap = await getRpcTokenAccountOwners(unresolvedLargestAccountAddresses);
+      for (const [address, owner] of fallbackOwnerMap) {
+        tokenAccountOwners.set(address, owner);
+      }
+    }
     const rpcTopHolders: TokenHolderSnapshot[] =
       totalSupply && totalSupply > 0
         ? largestAccounts
