@@ -636,7 +636,8 @@ function buildHolderBadges(params: {
   }
   if (
     (params.balanceSol !== null && params.balanceSol >= WHALE_BALANCE_SOL_THRESHOLD) ||
-    (params.balanceUsd !== null && params.balanceUsd >= WHALE_BALANCE_USD_THRESHOLD)
+    (params.balanceUsd !== null && params.balanceUsd >= WHALE_BALANCE_USD_THRESHOLD) ||
+    params.supplyPct >= 5.0
   ) {
     badges.push("whale");
   }
@@ -704,6 +705,9 @@ function buildHolderBadges(params: {
       params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
     ) {
       badges.push("fresh_wallet");
+    } else if (params.supplyPct >= 1.0) {
+      // Fallback: any wallet holding ≥1% of supply is a whale by token concentration
+      badges.push("whale");
     }
   }
 
