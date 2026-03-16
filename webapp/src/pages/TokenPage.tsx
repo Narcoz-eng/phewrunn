@@ -367,17 +367,36 @@ function getHolderRoleSurfaceClass(
   }
 }
 
-function getPrimaryHolderBadge(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"][number] | null {
-  return holder?.badges?.[0] ?? null;
+function getNormalizedHolderBadges(
+  holder: Pick<TokenHolder, "badges" | "devRole"> | null | undefined
+): TokenHolder["badges"] {
+  if (!holder) {
+    return [];
+  }
+
+  const badges = [...holder.badges];
+  if (holder.devRole && !badges.includes("dev_wallet")) {
+    badges.unshift("dev_wallet");
+  }
+  return [...new Set(badges)];
 }
 
-function getSecondaryHolderBadges(holder: Pick<TokenHolder, "badges"> | null | undefined): TokenHolder["badges"] {
-  if (!holder?.badges?.length) {
+function getPrimaryHolderBadge(
+  holder: Pick<TokenHolder, "badges" | "devRole"> | null | undefined
+): TokenHolder["badges"][number] | null {
+  return getNormalizedHolderBadges(holder)[0] ?? null;
+}
+
+function getSecondaryHolderBadges(
+  holder: Pick<TokenHolder, "badges" | "devRole"> | null | undefined
+): TokenHolder["badges"] {
+  const badges = getNormalizedHolderBadges(holder);
+  if (!badges.length) {
     return [];
   }
 
   const primary = getPrimaryHolderBadge(holder);
-  return holder.badges.filter((badge) => badge !== primary);
+  return badges.filter((badge) => badge !== primary);
 }
 
 function buildHolderScanSummary(holder: TokenHolder | null | undefined): string | null {
@@ -1058,7 +1077,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v17:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v18:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
@@ -1442,8 +1461,6 @@ export default function TokenPage() {
 
   const showTokenLoading = !token && isLoading;
   const topHolders = mergedTopHolders;
-  const devWallet = mergedDevWallet;
-  const devPositionStatus = getDevPositionStatus(devWallet);
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
   const topHolderSectionCopy = holderIntelligencePending
@@ -1949,111 +1966,6 @@ export default function TokenPage() {
                       {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
                     </div>
                   </div>
-                  {devWallet ? (
-                    <div
-                      className={cn(
-                        "mb-3 rounded-[20px] border p-4",
-                        "bg-[linear-gradient(180deg,rgba(236,248,241,0.95),rgba(248,251,249,0.94))] dark:bg-[linear-gradient(180deg,rgba(12,20,17,0.98),rgba(9,14,13,0.98))]",
-                        getHolderRoleSurfaceClass(getPrimaryHolderBadge(devWallet))
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                            Developer wallet
-                          </div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
-                            {getDevRoleLabel(devWallet.devRole)}
-                          </div>
-                          <div className="mt-2 font-mono text-sm font-semibold text-foreground">
-                            {formatHolderAddress(devWallet.address)}
-                          </div>
-                          {getPrimaryHolderBadge(devWallet) ? (
-                            <div className="mt-1">
-                              <span
-                                className={cn(
-                                  "inline-flex items-center rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm",
-                                  getHolderBadgeMeta(getPrimaryHolderBadge(devWallet)!).className
-                                )}
-                              >
-                                {formatHolderBadge(getPrimaryHolderBadge(devWallet)!)}
-                              </span>
-                              {devPositionStatus ? (
-                                <span
-                                  className={cn(
-                                    "ml-2 inline-flex items-center rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm",
-                                    devPositionStatus.toneClass
-                                  )}
-                                >
-                                  {devPositionStatus.label}
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : null}
-                          {buildHolderScanSummary(devWallet) ? (
-                            <div className="mt-1 text-xs text-muted-foreground">
-                              {buildHolderScanSummary(devWallet)}
-                            </div>
-                          ) : null}
-                        </div>
-                        {devWallet.supplyPct > 0 ? (
-                          <div className="shrink-0 text-right">
-                            <div className="text-sm font-semibold text-foreground">{formatPct(devWallet.supplyPct)}</div>
-                            <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">of supply</div>
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {getSecondaryHolderBadges(devWallet).length > 0
-                          ? getSecondaryHolderBadges(devWallet).map((badge) => (
-                              <span
-                                key={badge}
-                                className={cn(
-                                  "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] shadow-sm",
-                                  getHolderBadgeMeta(badge).className
-                                )}
-                              >
-                                {formatHolderBadge(badge)}
-                              </span>
-                            ))
-                          : null}
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Authority source <span className="ml-1 font-semibold text-foreground">{getDevRoleSourceLabel(devWallet.devRole)}</span>
-                        </div>
-                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Observed age <span className="ml-1 font-semibold text-foreground">{formatDaysMetric(devWallet.activeAgeDays) ?? "N/A"}</span>
-                        </div>
-                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Trade flow <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.tradeVolume90dSol) ?? "N/A"}</span>
-                        </div>
-                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          SOL balance <span className="ml-1 font-semibold text-foreground">{formatSolMetric(devWallet.solBalance) ?? "N/A"}</span>
-                        </div>
-                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Funded by <span className="ml-1 font-mono text-foreground">{devWallet.fundedBy ? formatHolderAddress(devWallet.fundedBy) : "N/A"}</span>
-                        </div>
-                        <div className="rounded-[14px] border border-border/60 bg-white/80 px-3 py-2 dark:bg-white/[0.04]">
-                          Current position <span className="ml-1 font-semibold text-foreground">{devPositionStatus?.label ?? "Unknown"}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mb-3 rounded-[20px] border border-dashed border-border/60 bg-white/45 p-4 dark:bg-white/[0.03]">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Developer wallet
-                      </div>
-                      <div className="mt-2 text-sm font-semibold text-foreground">
-                        Developer wallet not detected yet
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {hasLiveHolderDistribution
-                          ? "The latest chain scan did not confirm a creator, authority, or earliest mint signer wallet for this token."
-                          : "The current chain scan has not confirmed a creator, authority, or earliest mint signer wallet for this token yet."}
-                      </div>
-                    </div>
-                  )}
                   <div className="max-h-[360px] space-y-2.5 overflow-y-auto pr-1">
                     {topHolderRows.length > 0 ? (
                       topHolderRows.map((holder, index) => (

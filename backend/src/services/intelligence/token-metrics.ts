@@ -127,6 +127,7 @@ type RpcOwnerAccountInfoResult = {
     | {
         executable?: boolean | null;
         owner?: string | null;
+        lamports?: number | null;
       }
     | null
   > | null;
@@ -149,10 +150,12 @@ type OwnerAccountClassification = {
   ownerProgram: string | null;
   executable: boolean;
   isSystemOwned: boolean;
+  lamports: number | null;
 };
 
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+const LAMPORTS_PER_SOL = 1_000_000_000;
 const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const HOLDER_SCAN_RPC_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 8_000 : 12_000;
@@ -181,6 +184,7 @@ const SOFT_ULTRA_DEGEN_TX_THRESHOLD = 18;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
+const HOLDER_ROLE_ENRICH_LIMIT = 12;
 const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SOLANA_RPC_URLS = [
   process.env.HELIUS_RPC_URL?.trim() || null,
@@ -898,6 +902,10 @@ async function getRpcOwnerAccountClassifications(
       ownerProgram,
       executable: account?.executable === true,
       isSystemOwned: ownerProgram === SYSTEM_PROGRAM_ID,
+      lamports:
+        typeof account?.lamports === "number" && Number.isFinite(account.lamports)
+          ? account.lamports
+          : null,
     });
   });
 
@@ -1141,9 +1149,12 @@ export async function analyzeSolanaTokenDistribution(
       }
     }
 
+    const holderRoleCandidateWallets = topHoldersBase
+      .slice(0, HOLDER_ROLE_ENRICH_LIMIT)
+      .map((holder) => holder.ownerAddress ?? holder.address);
     const candidateWallets = [...new Set(
       [
-        ...topHoldersBase.map((holder) => holder.ownerAddress ?? holder.address),
+        ...holderRoleCandidateWallets,
         ...devWalletRoles.keys(),
       ].filter((address): address is string => isLikelySolanaWallet(address))
     )];
@@ -1221,10 +1232,17 @@ export async function analyzeSolanaTokenDistribution(
       const activity = walletActivityMap.get(walletAddress) ?? null;
       const devProfile = devWalletProfileMap.get(walletAddress) ?? null;
       const devRole = devWalletRoles.get(walletAddress) ?? null;
+      const ownerClassification = ownerAccountClassifications.get(walletAddress) ?? null;
       const authorityHeuristic = authorityHeuristicMap.get(walletAddress) ?? {
         authorityAssetCount: null,
         ruggedDeploymentCount: 0,
       };
+      const fallbackSolBalance =
+        ownerClassification?.lamports !== null && ownerClassification?.lamports !== undefined
+          ? Math.round((ownerClassification.lamports / LAMPORTS_PER_SOL) * 100) / 100
+          : null;
+      const resolvedSolBalance =
+        activity?.balanceSol ?? devProfile?.balanceSol ?? fallbackSolBalance;
 
       return {
         ...holder,
@@ -1245,7 +1263,7 @@ export async function analyzeSolanaTokenDistribution(
         fundedBy: devProfile?.fundedBy ?? activity?.fundedBy ?? null,
         totalValueUsd: holder.valueUsd ?? null,
         tradeVolume90dSol: activity?.totalTradeVolumeSol ?? devProfile?.totalTradeVolumeSol ?? null,
-        solBalance: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
+        solBalance: resolvedSolBalance,
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
           balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
@@ -1256,7 +1274,7 @@ export async function analyzeSolanaTokenDistribution(
               ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
               : null),
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-          balanceSol: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
+          balanceSol: resolvedSolBalance,
           distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
           observedTxCount: activity?.observedTxCount ?? 0,
           lastSeenHours: activity?.lastSeenHours ?? null,
@@ -1289,10 +1307,17 @@ export async function analyzeSolanaTokenDistribution(
         const activity = walletActivityMap.get(walletAddress) ?? null;
         const devProfile = devWalletProfileMap.get(walletAddress) ?? null;
         const devHolding = devHoldingMap.get(walletAddress) ?? null;
+        const ownerClassification = ownerAccountClassifications.get(walletAddress) ?? null;
         const authorityHeuristic = authorityHeuristicMap.get(walletAddress) ?? {
           authorityAssetCount: null,
           ruggedDeploymentCount: 0,
         };
+        const fallbackSolBalance =
+          ownerClassification?.lamports !== null && ownerClassification?.lamports !== undefined
+            ? Math.round((ownerClassification.lamports / LAMPORTS_PER_SOL) * 100) / 100
+            : null;
+        const resolvedSolBalance =
+          activity?.balanceSol ?? devProfile?.balanceSol ?? fallbackSolBalance;
         const holdingAmount = devHolding?.holdingAmount ?? null;
         const supplyPct =
           holdingAmount !== null && totalSupply && totalSupply > 0
@@ -1324,7 +1349,7 @@ export async function analyzeSolanaTokenDistribution(
           fundedBy: devProfile?.fundedBy ?? activity?.fundedBy ?? null,
           totalValueUsd: devHolding?.holdingUsd ?? null,
           tradeVolume90dSol: activity?.totalTradeVolumeSol ?? devProfile?.totalTradeVolumeSol ?? null,
-          solBalance: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
+          solBalance: resolvedSolBalance,
           badges: buildHolderBadges({
             supplyPct,
             balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
@@ -1335,7 +1360,7 @@ export async function analyzeSolanaTokenDistribution(
                 ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
                 : null),
             tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
-            balanceSol: activity?.balanceSol ?? devProfile?.balanceSol ?? null,
+            balanceSol: resolvedSolBalance,
             distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
             observedTxCount: activity?.observedTxCount ?? 0,
             lastSeenHours: activity?.lastSeenHours ?? null,
