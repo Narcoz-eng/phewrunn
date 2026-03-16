@@ -33,12 +33,15 @@ pushRouter.get("/status", requireAuth, async (c) => {
   const endpoint = c.req.query("endpoint");
   if (!endpoint) return c.json({ data: { subscribed: false } });
 
-  const sub = await prisma.pushSubscription.findFirst({
-    where: { userId: user.id, endpoint },
-    select: { id: true },
-  });
-
-  return c.json({ data: { subscribed: !!sub } });
+  try {
+    const sub = await prisma.pushSubscription.findFirst({
+      where: { userId: user.id, endpoint },
+      select: { id: true },
+    });
+    return c.json({ data: { subscribed: !!sub } });
+  } catch {
+    return c.json({ data: { subscribed: false } });
+  }
 });
 
 // POST /api/push/subscribe — register a push subscription
@@ -48,20 +51,24 @@ pushRouter.post("/subscribe", requireAuth, zValidator("json", SubscribeSchema), 
 
   const { endpoint, keys } = c.req.valid("json");
 
-  await prisma.pushSubscription.upsert({
-    where: { endpoint },
-    create: {
-      userId: user.id,
-      endpoint,
-      p256dh: keys.p256dh,
-      auth: keys.auth,
-    },
-    update: {
-      userId: user.id,
-      p256dh: keys.p256dh,
-      auth: keys.auth,
-    },
-  });
+  try {
+    await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      create: {
+        userId: user.id,
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+      },
+      update: {
+        userId: user.id,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+      },
+    });
+  } catch {
+    return c.json({ error: { message: "Push subscriptions unavailable", code: "PUSH_UNAVAILABLE" } }, 503);
+  }
 
   return c.json({ data: { ok: true } });
 });
@@ -77,9 +84,13 @@ pushRouter.post(
 
     const { endpoint } = c.req.valid("json");
 
-    await prisma.pushSubscription.deleteMany({
-      where: { userId: user.id, endpoint },
-    });
+    try {
+      await prisma.pushSubscription.deleteMany({
+        where: { userId: user.id, endpoint },
+      });
+    } catch {
+      // Table may not exist yet — treat as success since subscription is gone
+    }
 
     return c.json({ data: { ok: true } });
   }
