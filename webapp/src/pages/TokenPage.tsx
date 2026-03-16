@@ -103,7 +103,11 @@ function getHolderBehavior(snapshot: TokenHolderTradeSnapshot | null | undefined
   const bought = typeof boughtAmount === "number" && Number.isFinite(boughtAmount) ? boughtAmount : null;
   const sold = typeof soldAmount === "number" && Number.isFinite(soldAmount) ? soldAmount : null;
   const holding = typeof holdingAmount === "number" && Number.isFinite(holdingAmount) ? holdingAmount : null;
-  if (bought === null && sold === null) return "unknown";
+  // No trade history but holds the token → they accumulated it at some point
+  if (bought === null && sold === null) {
+    if (holding !== null && holding > 0) return "holding";
+    return "unknown";
+  }
   const totalBought = bought ?? 0;
   const totalSold = sold ?? 0;
   const currentHolding = holding ?? (totalBought - totalSold);
@@ -1338,7 +1342,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v27:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v28:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(

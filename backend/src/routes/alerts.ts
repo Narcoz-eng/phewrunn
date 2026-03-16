@@ -120,14 +120,12 @@ alertsRouter.get("/preferences", requireAuth, async (c) => {
     );
     return c.json({ data: pref ?? buildDefaultAlertPreference(user.id) });
   } catch (error) {
-    if (isTransientPrismaError(error)) {
-      console.warn("[alerts] preferences unavailable; returning default preferences", {
-        userId: user.id,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return c.json({ data: buildDefaultAlertPreference(user.id) });
-    }
-    throw error;
+    // Fall back to defaults for both transient DB errors and schema migration lag (missing columns)
+    console.warn("[alerts] preferences unavailable; returning default preferences", {
+      userId: user.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return c.json({ data: buildDefaultAlertPreference(user.id) });
   }
 });
 
@@ -154,21 +152,18 @@ alertsRouter.put("/preferences", requireAuth, zValidator("json", AlertPreference
 
     return c.json({ data: updated });
   } catch (error) {
-    if (isTransientPrismaError(error)) {
-      console.warn("[alerts] preferences update unavailable", {
-        userId: user.id,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return c.json(
-        {
-          error: {
-            message: "Alert preferences are temporarily unavailable. Please retry shortly.",
-            code: "ALERT_PREFERENCES_UNAVAILABLE",
-          },
+    console.warn("[alerts] preferences update unavailable", {
+      userId: user.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return c.json(
+      {
+        error: {
+          message: "Alert preferences are temporarily unavailable. Please retry shortly.",
+          code: "ALERT_PREFERENCES_UNAVAILABLE",
         },
-        503
-      );
-    }
-    throw error;
+      },
+      503
+    );
   }
 });

@@ -2011,21 +2011,23 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
 
     writeTokenLookupCacheValue(refreshedToken.address, refreshedToken);
     const topHolders = distribution?.topHolders ?? [];
+    // Whale = has whale badge OR holding ≥1% of supply with ≥$1k value (size-based fallback)
+    // Smart money = has high_volume_trader badge
+    // Accumulating = tradeSnapshot net positive, OR no tradeSnapshot but holds the token (they bought at some point)
+    const isWhale = (h: TokenHolderSnapshot) =>
+      h.badges.some((b) => b === "whale") ||
+      (h.supplyPct >= 1 && (h.valueUsd ?? 0) >= 1000);
+    const isSmartMoney = (h: TokenHolderSnapshot) =>
+      h.badges.some((b) => b === "high_volume_trader");
+    const isAccumulating = (h: TokenHolderSnapshot) =>
+      h.tradeSnapshot !== null
+        ? (h.tradeSnapshot.netAmount ?? 0) > 0
+        : (h.amount ?? 0) > 0; // holding = accumulated at some point
     const holderStats = {
       holderCount: holderCount ?? null,
       previousHolderCount: latestSnapshot?.holderCount ?? null,
-      whaleAccumulatingCount: topHolders.filter(
-        (h) =>
-          h.badges.some((b) => b === "whale") &&
-          h.tradeSnapshot !== null &&
-          (h.tradeSnapshot.netAmount ?? 0) > 0
-      ).length,
-      smartMoneyCount: topHolders.filter(
-        (h) =>
-          h.badges.some((b) => b === "high_volume_trader") &&
-          h.tradeSnapshot !== null &&
-          (h.tradeSnapshot.netAmount ?? 0) > 0
-      ).length,
+      whaleAccumulatingCount: topHolders.filter((h) => isWhale(h) && isAccumulating(h)).length,
+      smartMoneyCount: topHolders.filter((h) => isSmartMoney(h) && isAccumulating(h)).length,
     };
     void fanoutTokenSignalAlerts({
       marketCap,

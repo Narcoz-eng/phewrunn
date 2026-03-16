@@ -359,8 +359,10 @@ export async function fanoutTokenSignalAlerts(args: {
         })()
       : false;
 
-  const whaleAccumulatingPassed = (args.holderStats?.whaleAccumulatingCount ?? 0) >= 1;
-  const smartMoneyPassed = (args.holderStats?.smartMoneyCount ?? 0) >= 1;
+  const whaleCount = args.holderStats?.whaleAccumulatingCount ?? 0;
+  const smartCount = args.holderStats?.smartMoneyCount ?? 0;
+  const whaleAccumulatingPassed = whaleCount >= 1;
+  const smartMoneyPassed = smartCount >= 1;
 
   const alertDefs = [
     {
@@ -422,7 +424,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 6 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifySmartMoney,
       passed: smartMoneyPassed,
-      message: `Smart money wallets are entering ${symbol}`,
+      message: smartCount > 1 ? `${smartCount} smart money wallets are buying ${symbol}` : `Smart money is buying ${symbol}`,
       reasonCode: "smart_money_detected",
       type: "token_smart_money",
     },
@@ -432,7 +434,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 6 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyWhaleAccumulating,
       passed: whaleAccumulatingPassed,
-      message: `Whales are accumulating ${symbol}`,
+      message: whaleCount > 1 ? `${whaleCount} whales are accumulating ${symbol}` : `A whale is accumulating ${symbol}`,
       reasonCode: "whale_accumulating",
       type: "token_whale_accumulating",
     },
