@@ -516,18 +516,29 @@ function isTokenPageDataCacheable(token: TokenPageData | null | undefined): toke
   return hasSignals || hasMarketData || hasChart || token.recentCalls.length > 0;
 }
 
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function pickMergedMetric(
   live: number | null | undefined,
   cached: number | null | undefined,
+  preferSecondOrOptions?: boolean | { positive?: boolean },
   options?: { positive?: boolean }
 ): number | null {
-  if (typeof live === "number" && Number.isFinite(live) && (!options?.positive || live > 0)) {
-    return live;
+  const preferSecond = typeof preferSecondOrOptions === "boolean" ? preferSecondOrOptions : false;
+  const opts = typeof preferSecondOrOptions === "object" ? preferSecondOrOptions : options;
+  const first = preferSecond ? cached : live;
+  const second = preferSecond ? live : cached;
+  if (typeof first === "number" && Number.isFinite(first) && (!opts?.positive || first > 0)) {
+    return first;
   }
-  if (typeof cached === "number" && Number.isFinite(cached) && (!options?.positive || cached > 0)) {
-    return cached;
+  if (typeof second === "number" && Number.isFinite(second) && (!opts?.positive || second > 0)) {
+    return second;
   }
-  return live ?? cached ?? null;
+  return first ?? second ?? null;
 }
 
 function getTokenIntelligenceVersion(token: Pick<TokenPageData, "lastIntelligenceAt"> | null | undefined): number {
