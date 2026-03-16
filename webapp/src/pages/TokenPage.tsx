@@ -1271,7 +1271,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v20:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v21:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(

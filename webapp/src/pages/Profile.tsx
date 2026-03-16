@@ -462,6 +462,13 @@ export default function Profile() {
     refetchOnReconnect: false,
     retry: 0,
   });
+  const canonicalProfileUser = useMemo(() => {
+    const baseUser = user ?? sessionBackedProfile;
+    if (!baseUser) {
+      return null;
+    }
+    return publicProfileCounters ? mergeProfileCounters(baseUser, publicProfileCounters) : baseUser;
+  }, [publicProfileCounters, sessionBackedProfile, user]);
 
   // Update edit form state when user data loads
   useEffect(() => {
@@ -982,8 +989,16 @@ export default function Profile() {
   });
 
   // Calculate stats
-  const winsCount = user?.winsCount ?? posts.filter((p) => p.settled && p.isWin).length;
-  const lossesCount = user?.lossesCount ?? posts.filter((p) => p.settled && !p.isWin).length;
+  const winsCount = canonicalProfileUser?.winsCount ?? posts.filter((p) => p.settled && p.isWin).length;
+  const lossesCount = canonicalProfileUser?.lossesCount ?? posts.filter((p) => p.settled && !p.isWin).length;
+  const followersCount =
+    publicProfileCounters?.stats && hasFiniteCount(publicProfileCounters.stats.followers)
+      ? publicProfileCounters.stats.followers
+      : canonicalProfileUser?.followersCount ?? 0;
+  const followingCount =
+    publicProfileCounters?.stats && hasFiniteCount(publicProfileCounters.stats.following)
+      ? publicProfileCounters.stats.following
+      : canonicalProfileUser?.followingCount ?? 0;
   const totalSettled = winsCount + lossesCount;
   const winRate = totalSettled > 0 ? Math.round((winsCount / totalSettled) * 100) : 0;
 
@@ -1488,12 +1503,12 @@ export default function Profile() {
             {/* Followers/Following */}
             <div className="flex items-center justify-center gap-6 py-3">
               <button className="flex items-center gap-2 hover:text-primary transition-colors">
-                <span className="font-bold">{user.followersCount ?? 0}</span>
+                <span className="font-bold">{followersCount}</span>
                 <span className="text-muted-foreground">Followers</span>
               </button>
               <div className="h-4 w-px bg-border" />
               <button className="flex items-center gap-2 hover:text-primary transition-colors">
-                <span className="font-bold">{user.followingCount ?? 0}</span>
+                <span className="font-bold">{followingCount}</span>
                 <span className="text-muted-foreground">Following</span>
               </button>
             </div>

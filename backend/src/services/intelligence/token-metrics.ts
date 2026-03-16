@@ -1154,6 +1154,7 @@ export async function analyzeSolanaTokenDistribution(
             walletAddress: address,
             sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
             excludeMints: [mintAddress],
+            includeNonBaseTokenHoldingsUsd: false,
           }),
         ] as const)
       ),
@@ -1164,6 +1165,7 @@ export async function analyzeSolanaTokenDistribution(
             walletAddress: address,
             sinceMs: null,
             excludeMints: [mintAddress],
+            includeNonBaseTokenHoldingsUsd: false,
           }),
         ] as const)
       ),
@@ -1210,10 +1212,39 @@ export async function analyzeSolanaTokenDistribution(
     const authorityHeuristicMap = new Map<string, { authorityAssetCount: number | null; ruggedDeploymentCount: number }>(
       authorityHeuristicEntries
     );
+    const ultraDegenCandidateWallets = topHoldersBase
+      .filter((holder) => isLikelySolanaWallet(holder.ownerAddress ?? holder.address))
+      .filter((holder, index) => {
+        const walletAddress = holder.ownerAddress ?? holder.address;
+        const activity = walletActivityMap.get(walletAddress) ?? null;
+        const authority = authorityHeuristicMap.get(walletAddress) ?? null;
+        return (
+          index < 4 ||
+          (activity?.balanceSol ?? 0) >= 120 ||
+          (activity?.totalTradeVolumeSol ?? 0) >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD ||
+          (activity?.distinctMintsTraded ?? 0) >= HIGH_ACTIVITY_MINTS_THRESHOLD ||
+          (authority?.authorityAssetCount ?? 0) >= 3
+        );
+      })
+      .slice(0, 6)
+      .map((holder) => holder.ownerAddress ?? holder.address);
+    const ultraDegenProfileEntries = await Promise.all(
+      ultraDegenCandidateWallets.map(async (address) => [
+        address,
+        await getWalletActivityProfile({
+          walletAddress: address,
+          sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
+          excludeMints: [mintAddress],
+          includeNonBaseTokenHoldingsUsd: true,
+        }),
+      ] as const)
+    );
+    const ultraDegenProfileMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(ultraDegenProfileEntries);
 
     const hydratedTopHolders = topHoldersBase.map((holder) => {
       const walletAddress = holder.ownerAddress ?? holder.address;
       const activity = walletActivityMap.get(walletAddress) ?? null;
+      const enrichedActivity = ultraDegenProfileMap.get(walletAddress) ?? activity;
       const devProfile = devWalletProfileMap.get(walletAddress) ?? null;
       const devRole = devWalletRoles.get(walletAddress) ?? null;
       const ownerClassification = ownerAccountClassifications.get(walletAddress) ?? null;
@@ -1231,39 +1262,45 @@ export async function analyzeSolanaTokenDistribution(
       return {
         ...holder,
         label:
-          (activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0) > 0
-            ? `${activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0} mints traded`
+          (enrichedActivity?.distinctMintsTraded ?? activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0) > 0
+            ? `${enrichedActivity?.distinctMintsTraded ?? activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0} mints traded`
             : authorityHeuristic.authorityAssetCount !== null && authorityHeuristic.authorityAssetCount >= 2
               ? `${authorityHeuristic.authorityAssetCount} launches tracked`
               : null,
         domain: null,
         accountType: null,
         activeAgeDays:
+          enrichedActivity?.observedAgeDays ??
           activity?.observedAgeDays ??
           devProfile?.observedAgeDays ??
           (devRole === "creator" && creatorHistoryBlockTimeMs
             ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
             : null),
-        fundedBy: devProfile?.fundedBy ?? activity?.fundedBy ?? null,
+        fundedBy: enrichedActivity?.fundedBy ?? devProfile?.fundedBy ?? activity?.fundedBy ?? null,
         totalValueUsd: holder.valueUsd ?? null,
-        tradeVolume90dSol: activity?.totalTradeVolumeSol ?? devProfile?.totalTradeVolumeSol ?? null,
+        tradeVolume90dSol:
+          enrichedActivity?.totalTradeVolumeSol ?? activity?.totalTradeVolumeSol ?? devProfile?.totalTradeVolumeSol ?? null,
         solBalance: resolvedSolBalance,
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
-          balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
+          balanceUsd: enrichedActivity?.balanceUsd ?? activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
           nonBaseTokenHoldingsUsd:
-            activity?.nonBaseTokenHoldingsUsd ?? devProfile?.nonBaseTokenHoldingsUsd ?? null,
+            enrichedActivity?.nonBaseTokenHoldingsUsd ??
+            activity?.nonBaseTokenHoldingsUsd ??
+            devProfile?.nonBaseTokenHoldingsUsd ??
+            null,
           activeAgeDays:
+            enrichedActivity?.observedAgeDays ??
             activity?.observedAgeDays ??
             devProfile?.observedAgeDays ??
             (devRole === "creator" && creatorHistoryBlockTimeMs
               ? Math.max(0.1, Math.round(((Date.now() - creatorHistoryBlockTimeMs) / (24 * 60 * 60 * 1000)) * 10) / 10)
               : null),
-          tradeVolume90dSol: activity?.totalTradeVolumeSol ?? null,
+          tradeVolume90dSol: enrichedActivity?.totalTradeVolumeSol ?? activity?.totalTradeVolumeSol ?? null,
           balanceSol: resolvedSolBalance,
-          distinctMintsTraded: activity?.distinctMintsTraded ?? 0,
-          observedTxCount: activity?.observedTxCount ?? 0,
-          lastSeenHours: activity?.lastSeenHours ?? null,
+          distinctMintsTraded: enrichedActivity?.distinctMintsTraded ?? activity?.distinctMintsTraded ?? 0,
+          observedTxCount: enrichedActivity?.observedTxCount ?? activity?.observedTxCount ?? 0,
+          lastSeenHours: enrichedActivity?.lastSeenHours ?? activity?.lastSeenHours ?? null,
           devRole,
           authorityAssetCount: authorityHeuristic.authorityAssetCount,
           ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,

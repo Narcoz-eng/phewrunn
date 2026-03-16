@@ -1105,6 +1105,7 @@ export async function getWalletActivityProfile(params: {
   walletAddress: string | null | undefined;
   sinceMs?: number | null;
   excludeMints?: Array<string | null | undefined>;
+  includeNonBaseTokenHoldingsUsd?: boolean;
 }): Promise<WalletActivityProfile | null> {
   if (!HELIUS_RPC_URL) return null;
   if (!isLikelySolanaAddress(params.walletAddress)) return null;
@@ -1112,10 +1113,12 @@ export async function getWalletActivityProfile(params: {
   const base = await getWalletBaseSnapshot({ walletAddress: params.walletAddress, sinceMs: params.sinceMs ?? null });
   if (!base) return null;
 
-  const nonBaseTokenHoldingsUsd = await estimateWalletNonBaseTokenHoldingsUsd({
-    base,
-    excludeMints: params.excludeMints,
-  });
+  const nonBaseTokenHoldingsUsd = params.includeNonBaseTokenHoldingsUsd
+    ? await estimateWalletNonBaseTokenHoldingsUsd({
+        base,
+        excludeMints: params.excludeMints,
+      })
+    : null;
 
   let totalTradeVolumeSol = 0;
   for (const trade of base.tradeByMint.values()) {
