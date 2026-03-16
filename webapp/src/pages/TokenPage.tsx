@@ -864,6 +864,8 @@ export default function TokenPage() {
     [tokenCacheKey]
   );
   const cachedToken = cachedTokenEntry?.data ?? null;
+  // Track last known valid token across query-key changes (e.g. auth loading changes viewerScope)
+  const lastKnownTokenRef = useRef<TokenPageData | null>(null);
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
   const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
@@ -871,7 +873,7 @@ export default function TokenPage() {
   const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
 
   const {
-    data: token,
+    data: tokenQueryData,
     isLoading,
     isFetching,
     error,
@@ -899,6 +901,14 @@ export default function TokenPage() {
     },
     refetchIntervalInBackground: false,
   });
+
+  // When query succeeds, persist to last-known-good so we can fall back on query-key transitions.
+  if (tokenQueryData) {
+    lastKnownTokenRef.current = tokenQueryData;
+  }
+  // Fall back to the last known good data when the current query errored but had valid data before
+  // (e.g. when viewerScope changes from "anonymous" to userId and the user-scoped fetch fails).
+  const token = tokenQueryData ?? (error ? (lastKnownTokenRef.current ?? undefined) : undefined);
 
   const bundleScanPending = token
     ? isBundleScanPending({

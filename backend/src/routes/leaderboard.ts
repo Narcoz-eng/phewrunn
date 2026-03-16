@@ -65,7 +65,7 @@ const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_00
 const LEADERBOARD_STATS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const LEADERBOARD_STATS_STALE_REVALIDATE_MS =
   process.env.NODE_ENV === "production" ? 20 * 60_000 : 3 * 60_000;
-const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 6_000;
+const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 9_000 : 6_000;
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
 const LEADERBOARD_STATS_SNAPSHOT_KEY = "leaderboard:stats";
 const ALPHA_SCORE_BUCKET_SECONDS = 6 * 60 * 60;
