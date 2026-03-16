@@ -43,11 +43,11 @@ export function resolveEstimatedBundledSupplyPct(input: BundleSignalLike): numbe
   const directMetric = roundBundleMetric(input.estimatedBundledSupplyPct);
   const derivedMetric = deriveBundledSupplyPctFromClusters(input.bundleClusters);
 
-  if (directMetric !== null && (directMetric > 0 || derivedMetric === null)) {
-    return directMetric;
+  if (derivedMetric !== null) {
+    return derivedMetric;
   }
 
-  return derivedMetric ?? directMetric;
+  return directMetric;
 }
 
 export function hasResolvedBundleEvidence(input: BundleSignalLike): boolean {

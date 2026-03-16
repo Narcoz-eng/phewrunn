@@ -288,11 +288,11 @@ function resolveBundledSupplyPct(
   const roundedValue = roundMetric(value);
   const derivedFromClusters = deriveBundledSupplyPctFromClusters(clusters);
 
-  if (roundedValue !== null && (roundedValue > 0 || derivedFromClusters === null)) {
-    return roundedValue;
+  if (derivedFromClusters !== null) {
+    return derivedFromClusters;
   }
 
-  return derivedFromClusters ?? roundedValue;
+  return roundedValue;
 }
 
 function inferTokenChainType(tokenAddress: string): "solana" | "evm" | null {

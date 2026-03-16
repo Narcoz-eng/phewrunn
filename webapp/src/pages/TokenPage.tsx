@@ -10,7 +10,11 @@ import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleSca
 import { PostCard } from "@/components/feed/PostCard";
 import { TokenScanningState } from "@/components/feed/TokenScanningState";
 import { CandlestickChart } from "@/components/feed/CandlestickChart";
-import { resolveEstimatedBundledSupplyPct } from "@/lib/bundle-intelligence";
+import {
+  hasResolvedBundleEvidence,
+  isBundlePlaceholderState,
+  resolveEstimatedBundledSupplyPct,
+} from "@/lib/bundle-intelligence";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
 import { readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
@@ -730,6 +734,22 @@ function mergeTokenPageDataWithCached(
     estimatedBundledSupplyPct: cached.estimatedBundledSupplyPct,
     bundleClusters: cached.bundleClusters,
   });
+  const liveBundleState = {
+    bundleRiskLabel: live.bundleRiskLabel,
+    bundleScanCompletedAt: live.bundleScanCompletedAt,
+    bundledWalletCount: live.bundledWalletCount,
+    estimatedBundledSupplyPct: liveEstimatedBundledSupplyPct,
+    bundleClusters: live.bundleClusters,
+  };
+  const cachedBundleState = {
+    bundleRiskLabel: cached.bundleRiskLabel,
+    bundleScanCompletedAt: cached.bundleScanCompletedAt,
+    bundledWalletCount: cached.bundledWalletCount,
+    estimatedBundledSupplyPct: cachedEstimatedBundledSupplyPct,
+    bundleClusters: cached.bundleClusters,
+  };
+  const shouldKeepCachedBundleState =
+    hasResolvedBundleEvidence(cachedBundleState) && isBundlePlaceholderState(liveBundleState);
   return {
     ...live,
     marketCap: pickMergedMetric(live.marketCap, cached.marketCap, { positive: true }),
@@ -739,8 +759,12 @@ function mergeTokenPageDataWithCached(
     largestHolderPct: pickMergedMetric(live.largestHolderPct, cached.largestHolderPct),
     top10HolderPct: pickMergedMetric(live.top10HolderPct, cached.top10HolderPct),
     deployerSupplyPct: pickMergedMetric(live.deployerSupplyPct, cached.deployerSupplyPct),
-    bundledWalletCount: pickMergedMetric(live.bundledWalletCount, cached.bundledWalletCount, { positive: true }),
-    estimatedBundledSupplyPct: pickMergedMetric(liveEstimatedBundledSupplyPct, cachedEstimatedBundledSupplyPct),
+    bundledWalletCount: shouldKeepCachedBundleState
+      ? cached.bundledWalletCount
+      : pickMergedMetric(live.bundledWalletCount, cached.bundledWalletCount, { positive: true }),
+    estimatedBundledSupplyPct: shouldKeepCachedBundleState
+      ? cachedEstimatedBundledSupplyPct
+      : pickMergedMetric(liveEstimatedBundledSupplyPct, cachedEstimatedBundledSupplyPct),
     tokenRiskScore: canReuseCachedIntelligence
       ? pickMergedMetric(live.tokenRiskScore, cached.tokenRiskScore)
       : live.tokenRiskScore ?? null,
@@ -758,11 +782,14 @@ function mergeTokenPageDataWithCached(
     highConvictionScore: canReuseCachedIntelligence
       ? pickMergedMetric(live.highConvictionScore, cached.highConvictionScore)
       : live.highConvictionScore ?? null,
-    bundleRiskLabel: canReuseCachedIntelligence
+    bundleRiskLabel: shouldKeepCachedBundleState
+      ? cached.bundleRiskLabel ?? live.bundleRiskLabel
+      : canReuseCachedIntelligence
       ? live.bundleRiskLabel ?? cached.bundleRiskLabel
       : live.bundleRiskLabel ?? null,
-    bundleScanCompletedAt:
-      live.bundleScanCompletedAt ?? cached.bundleScanCompletedAt ?? null,
+    bundleScanCompletedAt: shouldKeepCachedBundleState
+      ? cached.bundleScanCompletedAt ?? live.bundleScanCompletedAt ?? null
+      : live.bundleScanCompletedAt ?? cached.bundleScanCompletedAt ?? null,
     holderCountSource:
       hasResolvedHolderCount(live.holderCount, live.holderCountSource)
         ? live.holderCountSource ?? cached.holderCountSource
@@ -771,7 +798,11 @@ function mergeTokenPageDataWithCached(
           : live.holderCountSource ?? cached.holderCountSource,
     topHolders: mergeTopHolderSnapshots(live.topHolders, cached.topHolders),
     devWallet: live.devWallet ? mergeHolderSnapshot(live.devWallet, cached.devWallet) : cached.devWallet,
-    bundleClusters: live.bundleClusters.length > 0 ? live.bundleClusters : cached.bundleClusters,
+    bundleClusters: shouldKeepCachedBundleState
+      ? cached.bundleClusters
+      : live.bundleClusters.length > 0
+        ? live.bundleClusters
+        : cached.bundleClusters,
     chart: live.chart.length > 1 ? live.chart : cached.chart,
     callsCount: live.callsCount > 0 ? live.callsCount : cached.callsCount,
     distinctTraders: live.distinctTraders > 0 ? live.distinctTraders : cached.distinctTraders,
@@ -781,16 +812,22 @@ function mergeTokenPageDataWithCached(
       tokenRiskScore: canReuseCachedIntelligence
         ? pickMergedMetric(live.risk.tokenRiskScore, cached.risk.tokenRiskScore)
         : live.risk.tokenRiskScore ?? null,
-      bundleRiskLabel: canReuseCachedIntelligence
+      bundleRiskLabel: shouldKeepCachedBundleState
+        ? cached.risk.bundleRiskLabel ?? live.risk.bundleRiskLabel
+        : canReuseCachedIntelligence
         ? live.risk.bundleRiskLabel ?? cached.risk.bundleRiskLabel
         : live.risk.bundleRiskLabel ?? null,
       largestHolderPct: pickMergedMetric(live.risk.largestHolderPct, cached.risk.largestHolderPct),
       top10HolderPct: pickMergedMetric(live.risk.top10HolderPct, cached.risk.top10HolderPct),
-      bundledWalletCount: pickMergedMetric(live.risk.bundledWalletCount, cached.risk.bundledWalletCount, { positive: true }),
-      estimatedBundledSupplyPct: pickMergedMetric(
-        liveEstimatedBundledSupplyPct ?? live.risk.estimatedBundledSupplyPct,
-        cachedEstimatedBundledSupplyPct ?? cached.risk.estimatedBundledSupplyPct
-      ),
+      bundledWalletCount: shouldKeepCachedBundleState
+        ? cached.risk.bundledWalletCount
+        : pickMergedMetric(live.risk.bundledWalletCount, cached.risk.bundledWalletCount, { positive: true }),
+      estimatedBundledSupplyPct: shouldKeepCachedBundleState
+        ? cachedEstimatedBundledSupplyPct ?? cached.risk.estimatedBundledSupplyPct
+        : pickMergedMetric(
+            liveEstimatedBundledSupplyPct ?? live.risk.estimatedBundledSupplyPct,
+            cachedEstimatedBundledSupplyPct ?? cached.risk.estimatedBundledSupplyPct
+          ),
       deployerSupplyPct: pickMergedMetric(live.risk.deployerSupplyPct, cached.risk.deployerSupplyPct),
       holderCount: pickMergedMetric(live.risk.holderCount, cached.risk.holderCount, { positive: true }),
       topHolders: mergeTopHolderSnapshots(live.risk.topHolders, cached.risk.topHolders),
@@ -822,21 +859,49 @@ function mergeTokenPageDataWithLiveSnapshot(
   const deployerSupplyPct = pickMergedMetric(live.deployerSupplyPct, current.deployerSupplyPct);
   const bundledWalletCount = pickMergedMetric(live.bundledWalletCount, current.bundledWalletCount, { positive: true });
   const tokenRiskScore = pickMergedMetric(live.tokenRiskScore, current.tokenRiskScore);
-  const bundleRiskLabel = live.bundleRiskLabel ?? current.bundleRiskLabel;
+  const liveEstimatedBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: live.estimatedBundledSupplyPct,
+    bundleClusters: live.bundleClusters,
+  });
+  const currentEstimatedBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: current.estimatedBundledSupplyPct,
+    bundleClusters: current.bundleClusters,
+  });
+  const liveBundleState = {
+    bundleRiskLabel: live.bundleRiskLabel,
+    bundleScanCompletedAt: live.bundleScanCompletedAt,
+    bundledWalletCount: live.bundledWalletCount,
+    estimatedBundledSupplyPct: liveEstimatedBundledSupplyPct,
+    bundleClusters: live.bundleClusters,
+  };
+  const currentBundleState = {
+    bundleRiskLabel: current.bundleRiskLabel,
+    bundleScanCompletedAt: current.bundleScanCompletedAt,
+    bundledWalletCount: current.bundledWalletCount,
+    estimatedBundledSupplyPct: currentEstimatedBundledSupplyPct,
+    bundleClusters: current.bundleClusters,
+  };
+  const shouldKeepCurrentBundleState =
+    hasResolvedBundleEvidence(currentBundleState) && isBundlePlaceholderState(liveBundleState);
+  const bundleRiskLabel = shouldKeepCurrentBundleState
+    ? current.bundleRiskLabel
+    : live.bundleRiskLabel ?? current.bundleRiskLabel;
   const topHolders = mergeTopHolderSnapshots(live.topHolders, current.topHolders);
   const devWallet = live.devWallet ? mergeHolderSnapshot(live.devWallet, current.devWallet) : current.devWallet;
-  const bundleClusters = live.bundleClusters.length > 0 ? live.bundleClusters : current.bundleClusters;
-  const estimatedBundledSupplyPct = pickMergedMetric(
-    resolveEstimatedBundledSupplyPct({
-      estimatedBundledSupplyPct: live.estimatedBundledSupplyPct,
-      bundleClusters: live.bundleClusters,
-    }),
-    resolveEstimatedBundledSupplyPct({
-      estimatedBundledSupplyPct: current.estimatedBundledSupplyPct,
-      bundleClusters: current.bundleClusters,
-    })
-  );
-  const bundleScanCompletedAt = live.bundleScanCompletedAt ?? current.bundleScanCompletedAt ?? null;
+  const bundleClusters = shouldKeepCurrentBundleState
+    ? current.bundleClusters
+    : live.bundleClusters.length > 0
+      ? live.bundleClusters
+      : current.bundleClusters;
+  const estimatedBundledSupplyPct = shouldKeepCurrentBundleState
+    ? currentEstimatedBundledSupplyPct
+    : pickMergedMetric(liveEstimatedBundledSupplyPct, currentEstimatedBundledSupplyPct);
+  const bundleScanCompletedAt = shouldKeepCurrentBundleState
+    ? current.bundleScanCompletedAt ?? live.bundleScanCompletedAt ?? null
+    : live.bundleScanCompletedAt ?? current.bundleScanCompletedAt ?? null;
+  const lastIntelligenceAt = shouldKeepCurrentBundleState
+    ? current.lastIntelligenceAt ?? live.bundleScanCompletedAt ?? live.updatedAt ?? null
+    : live.bundleScanCompletedAt ?? live.updatedAt ?? current.lastIntelligenceAt ?? null;
 
   return {
     ...current,
@@ -857,6 +922,7 @@ function mergeTokenPageDataWithLiveSnapshot(
     estimatedBundledSupplyPct,
     bundleRiskLabel,
     bundleScanCompletedAt,
+    lastIntelligenceAt,
     tokenRiskScore,
     topHolders,
     devWallet,
@@ -867,8 +933,12 @@ function mergeTokenPageDataWithLiveSnapshot(
       bundleRiskLabel,
       largestHolderPct,
       top10HolderPct,
-      bundledWalletCount,
-      estimatedBundledSupplyPct,
+      bundledWalletCount: shouldKeepCurrentBundleState
+        ? current.risk.bundledWalletCount
+        : bundledWalletCount,
+      estimatedBundledSupplyPct: shouldKeepCurrentBundleState
+        ? currentEstimatedBundledSupplyPct ?? current.risk.estimatedBundledSupplyPct
+        : estimatedBundledSupplyPct,
       deployerSupplyPct,
       holderCount,
       topHolders,
@@ -928,7 +998,13 @@ export default function TokenPage() {
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
       const data = await api.get<TokenPageData>(`/api/tokens/${tokenAddress}`);
-      return mergeTokenPageDataWithCached(data, cachedToken);
+      const currentQueryData = queryClient.getQueryData<TokenPageData>(tokenQueryKey);
+      const latestCachedToken =
+        tokenCacheKey ? readSessionCacheEntry<TokenPageData>(tokenCacheKey, TOKEN_PAGE_CACHE_TTL_MS)?.data ?? null : null;
+      return mergeTokenPageDataWithCached(
+        data,
+        currentQueryData ?? lastKnownTokenRef.current ?? latestCachedToken ?? cachedToken
+      );
     },
     initialData: cachedToken ?? undefined,
     initialDataUpdatedAt: cachedTokenEntry?.cachedAt,
@@ -939,12 +1015,8 @@ export default function TokenPage() {
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: 1,
-    // Keep refetching while visible holder intelligence is still unresolved.
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      if (!d) return false;
-      return isHolderIntelligencePending(d) ? 4_000 : false;
-    },
+    // The live token query handles high-frequency intelligence refreshes.
+    refetchInterval: false,
     refetchIntervalInBackground: false,
   });
 
