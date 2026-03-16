@@ -83,6 +83,12 @@ const IS_SERVERLESS_RUNTIME =
 const READ_PATH_TOKEN_REFRESH_ENABLED =
   process.env.ENABLE_READ_PATH_TOKEN_REFRESH?.trim().toLowerCase() === "true" ||
   !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+const FEED_COUNT_SUMMARY_QUERY_ENABLED = (() => {
+  const raw = process.env.ENABLE_FEED_COUNT_SUMMARIES?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+})();
 
 // Global LRU size registry — every cache Map registers here so writeCacheValue
 // can enforce limits on every write without touching each call site.
@@ -787,61 +793,56 @@ async function loadFeedCountSummaries(postIds: string[]): Promise<Map<string, Fe
     return new Map();
   }
 
-  const [likes, comments, reposts] = await Promise.all([
-    prisma.like.groupBy({
-      by: ["postId"],
-      where: {
-        postId: { in: postIds },
-      },
-      _count: {
-        _all: true,
-      },
-    }),
-    prisma.comment.groupBy({
-      by: ["postId"],
-      where: {
-        postId: { in: postIds },
-        deletedAt: null,
-      },
-      _count: {
-        _all: true,
-      },
-    }),
-    prisma.repost.groupBy({
-      by: ["postId"],
-      where: {
-        postId: { in: postIds },
-      },
-      _count: {
-        _all: true,
-      },
-    }),
-  ]);
+  if (!FEED_COUNT_SUMMARY_QUERY_ENABLED) {
+    return new Map();
+  }
 
-  const counts = new Map<string, FeedCountSummary>();
-  for (const postId of postIds) {
-    counts.set(postId, {
-      likes: 0,
-      comments: 0,
-      reposts: 0,
-      reactions: 0,
+  try {
+    const counts = new Map<string, FeedCountSummary>();
+    const rows = await prisma.$queryRaw<
+      Array<{ postId: string; kind: string; count: number | bigint }>
+    >(Prisma.sql`
+      SELECT "postId", 'likes' AS kind, COUNT(*)::int AS count
+      FROM "Like"
+      WHERE "postId" IN (${Prisma.join(postIds)})
+      GROUP BY "postId"
+      UNION ALL
+      SELECT "postId", 'comments' AS kind, COUNT(*)::int AS count
+      FROM "Comment"
+      WHERE "postId" IN (${Prisma.join(postIds)}) AND "deletedAt" IS NULL
+      GROUP BY "postId"
+      UNION ALL
+      SELECT "postId", 'reposts' AS kind, COUNT(*)::int AS count
+      FROM "Repost"
+      WHERE "postId" IN (${Prisma.join(postIds)})
+      GROUP BY "postId"
+    `);
+
+    for (const row of rows) {
+      const value = typeof row.count === "bigint" ? Number(row.count) : Number(row.count ?? 0);
+      if (!Number.isFinite(value) || value < 0) continue;
+      const current = counts.get(row.postId) ?? {
+        likes: 0,
+        comments: 0,
+        reposts: 0,
+        reactions: 0,
+      };
+      if (row.kind === "likes") current.likes = value;
+      if (row.kind === "comments") current.comments = value;
+      if (row.kind === "reposts") current.reposts = value;
+      counts.set(row.postId, current);
+    }
+    return counts;
+  } catch (error) {
+    if (!isTransientPrismaError(error)) {
+      throw error;
+    }
+    console.warn("[intelligence/feed] count summaries degraded during transient prisma pressure", {
+      postCount: postIds.length,
+      message: error instanceof Error ? error.message : String(error),
     });
+    return new Map();
   }
-
-  for (const row of likes) {
-    const current = counts.get(row.postId);
-    if (current) current.likes = row._count._all;
-  }
-  for (const row of comments) {
-    const current = counts.get(row.postId);
-    if (current) current.comments = row._count._all;
-  }
-  for (const row of reposts) {
-    const current = counts.get(row.postId);
-    if (current) current.reposts = row._count._all;
-  }
-
-  return counts;
 }
 
 function evictOldestFromMap<V>(map: Map<string, V>, maxEntries: number): void {
@@ -2145,41 +2146,80 @@ async function readViewerSocialState(
     return buildEmptySocialState();
   }
 
-  const [likes, reposts, follows, reactions] = await Promise.all([
-    prisma.like.findMany({
-      where: {
-        userId: viewerId,
-        postId: { in: postIds },
-      },
-      select: { postId: true },
-    }),
-    prisma.repost.findMany({
-      where: {
-        userId: viewerId,
-        postId: { in: postIds },
-      },
-      select: { postId: true },
-    }),
-    authorIds.length > 0
-      ? prisma.follow.findMany({
-          where: {
-            followerId: viewerId,
-            followingId: { in: authorIds },
-          },
-          select: { followingId: true },
-        })
-      : Promise.resolve([]),
-    prisma.reaction.findMany({
-      where: {
-        userId: viewerId,
-        postId: { in: postIds },
-      },
-      select: {
-        postId: true,
-        type: true,
-      },
-    }),
-  ]);
+  const [row] = await prisma.$queryRaw<
+    Array<{
+      likedPostIds: unknown;
+      repostedPostIds: unknown;
+      followedAuthorIds: unknown;
+      reactions: unknown;
+    }>
+  >(Prisma.sql`
+    SELECT
+      COALESCE(
+        (
+          SELECT json_agg("postId")
+          FROM "Like"
+          WHERE "userId" = ${viewerId} AND "postId" IN (${Prisma.join(postIds)})
+        ),
+        '[]'::json
+      ) AS "likedPostIds",
+      COALESCE(
+        (
+          SELECT json_agg("postId")
+          FROM "Repost"
+          WHERE "userId" = ${viewerId} AND "postId" IN (${Prisma.join(postIds)})
+        ),
+        '[]'::json
+      ) AS "repostedPostIds",
+      ${
+        authorIds.length > 0
+          ? Prisma.sql`
+              COALESCE(
+                (
+                  SELECT json_agg("followingId")
+                  FROM "Follow"
+                  WHERE "followerId" = ${viewerId} AND "followingId" IN (${Prisma.join(authorIds)})
+                ),
+                '[]'::json
+              )
+            `
+          : Prisma.sql`'[]'::json`
+      } AS "followedAuthorIds",
+      COALESCE(
+        (
+          SELECT json_agg(
+            json_build_object(
+              'postId', "postId",
+              'type', "type"
+            )
+          )
+          FROM "Reaction"
+          WHERE "userId" = ${viewerId} AND "postId" IN (${Prisma.join(postIds)})
+        ),
+        '[]'::json
+      ) AS "reactions"
+  `);
+
+  const likedPostIds = Array.isArray(row?.likedPostIds)
+    ? row.likedPostIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const repostedPostIds = Array.isArray(row?.repostedPostIds)
+    ? row.repostedPostIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const followedAuthorIds = Array.isArray(row?.followedAuthorIds)
+    ? row.followedAuthorIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const reactions = Array.isArray(row?.reactions)
+    ? row.reactions.filter(
+        (value): value is { postId: string; type: string } =>
+          typeof value === "object" &&
+          value !== null &&
+          "postId" in value &&
+          "type" in value &&
+          typeof (value as { postId?: unknown }).postId === "string" &&
+          typeof (value as { type?: unknown }).type === "string"
+      )
+    : [];
 
   const reactionByPostId = new Map<string, string>();
   for (const reaction of reactions) {
@@ -2189,9 +2229,9 @@ async function readViewerSocialState(
   }
 
   return {
-    likedPostIds: new Set(likes.map((like) => like.postId)),
-    repostedPostIds: new Set(reposts.map((repost) => repost.postId)),
-    followedAuthorIds: new Set(follows.map((follow) => follow.followingId)),
+    likedPostIds: new Set(likedPostIds),
+    repostedPostIds: new Set(repostedPostIds),
+    followedAuthorIds: new Set(followedAuthorIds),
     reactionByPostId,
     reactionCountsByPostId: new Map<string, ReactionCounts>(),
   };

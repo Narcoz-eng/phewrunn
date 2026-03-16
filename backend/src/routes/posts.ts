@@ -57,6 +57,11 @@ import { fanoutPostedAlphaAlert } from "../services/intelligence/alerts.js";
 import { runMarketAlertScan } from "../services/marketAlerts.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
+const IS_SERVERLESS_RUNTIME =
+  !!process.env.VERCEL ||
+  !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  !!process.env.K_SERVICE ||
+  !!process.env.FUNCTIONS_WORKER_RUNTIME;
 
 type SettlementRunResult = {
   settled1h: number;
@@ -248,6 +253,12 @@ const POST_PRICE_SETTLED_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 10 * 60_000 : 2 * 60_000;
 const POST_PRICE_CACHE_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 40_000 : 4_000;
 const POST_PRICE_REDIS_KEY_PREFIX = "posts:price:v1";
+const POST_PRICE_ENABLE_LIVE_INTELLIGENCE_REFRESH = (() => {
+  const raw = process.env.POSTS_ENABLE_LIVE_PRICE_INTELLIGENCE?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+})();
 const SHARED_ALPHA_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const FEED_ENABLE_LIVE_SHARED_ALPHA = (() => {
   const raw = process.env.FEED_ENABLE_LIVE_SHARED_ALPHA?.trim().toLowerCase();
@@ -380,9 +391,7 @@ const opportunisticMaintenanceEnabled = (() => {
   const raw = process.env.POSTS_ENABLE_OPPORTUNISTIC_MAINTENANCE?.trim().toLowerCase();
   if (raw === "true") return true;
   if (raw === "false") return false;
-  // In production, keep the fallback runner enabled unless explicitly turned off.
-  // It is throttled and only activates when cron is missing or unhealthy.
-  return true;
+  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 })();
 
 function isCronMaintenanceHealthy(): boolean {
@@ -7060,6 +7069,10 @@ async function attachRealtimeIntelligenceToPostPricePayloads(
   }
 
   if (stalePosts.length === 0 || overrides.size === 0) {
+    return;
+  }
+
+  if (!POST_PRICE_ENABLE_LIVE_INTELLIGENCE_REFRESH) {
     return;
   }
 

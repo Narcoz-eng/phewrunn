@@ -127,8 +127,17 @@ app.use(
 // 4.5. Prisma readiness gate - ensure DB is connected before serving API requests
 // Uses a short timeout so requests don't hang if guardrails are slow
 let prismaReady = false;
-const INTELLIGENCE_PRIORITY_LOOP_ENABLED =
-  process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED?.trim().toLowerCase() !== "false";
+const IS_SERVERLESS_RUNTIME =
+  !!process.env.VERCEL ||
+  !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  !!process.env.K_SERVICE ||
+  !!process.env.FUNCTIONS_WORKER_RUNTIME;
+const INTELLIGENCE_PRIORITY_LOOP_ENABLED = (() => {
+  const raw = process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+})();
 const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 10_000 : 5_000;
 let lastAuthSensitiveRequestAt = Date.now();
 let intelligencePriorityLoopBootstrapped = false;
