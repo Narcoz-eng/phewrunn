@@ -707,6 +707,10 @@ function buildHolderBadges(params: {
     }
   }
 
+  if (params.devRole && !badges.includes("dev_wallet")) {
+    badges.unshift("dev_wallet");
+  }
+
   const priority: Record<TokenHolderBadge, number> = {
     dev_wallet: 99,
     serial_rugger: 1,
@@ -1214,19 +1218,7 @@ export async function analyzeSolanaTokenDistribution(
     );
     const ultraDegenCandidateWallets = topHoldersBase
       .filter((holder) => isLikelySolanaWallet(holder.ownerAddress ?? holder.address))
-      .filter((holder, index) => {
-        const walletAddress = holder.ownerAddress ?? holder.address;
-        const activity = walletActivityMap.get(walletAddress) ?? null;
-        const authority = authorityHeuristicMap.get(walletAddress) ?? null;
-        return (
-          index < 4 ||
-          (activity?.balanceSol ?? 0) >= 120 ||
-          (activity?.totalTradeVolumeSol ?? 0) >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD ||
-          (activity?.distinctMintsTraded ?? 0) >= HIGH_ACTIVITY_MINTS_THRESHOLD ||
-          (authority?.authorityAssetCount ?? 0) >= 3
-        );
-      })
-      .slice(0, 6)
+      .slice(0, 10)
       .map((holder) => holder.ownerAddress ?? holder.address);
     const ultraDegenProfileEntries = await Promise.all(
       ultraDegenCandidateWallets.map(async (address) => [
