@@ -45,6 +45,13 @@ export type TokenHolderBadge =
   | "serial_deployer"
   | "serial_rugger";
 
+export type TokenHolderTradeSnapshot = {
+  boughtAmount: number | null;
+  soldAmount: number | null;
+  holdingAmount: number | null;
+  netAmount: number | null;
+};
+
 export type TokenHolderSnapshot = {
   address: string;
   ownerAddress: string | null;
@@ -62,6 +69,7 @@ export type TokenHolderSnapshot = {
   solBalance: number | null;
   badges: TokenHolderBadge[];
   devRole: "creator" | "mint_authority" | "freeze_authority" | null;
+  tradeSnapshot: TokenHolderTradeSnapshot | null;
 };
 
 export type TokenDistributionSnapshot = {
@@ -1150,7 +1158,12 @@ export async function analyzeSolanaTokenDistribution(
         ...devWalletRoles.keys(),
       ].filter((address): address is string => isLikelySolanaWallet(address))
     )];
-    const [walletActivityEntries, devWalletProfileEntries, authorityAssetSummaryEntries, devHoldingEntries] = await Promise.all([
+    const topHolderWallets = topHoldersBase
+      .slice(0, 10)
+      .map((holder) => holder.ownerAddress ?? holder.address)
+      .filter((address): address is string => isLikelySolanaWallet(address));
+
+    const [walletActivityEntries, devWalletProfileEntries, authorityAssetSummaryEntries, devHoldingEntries, holderTradeSnapshotEntries] = await Promise.all([
       Promise.all(
         candidateWallets.map(async (address) => [
           address,
@@ -1189,11 +1202,22 @@ export async function analyzeSolanaTokenDistribution(
           }),
         ] as const)
       ),
+      Promise.all(
+        topHolderWallets.map(async (address) => [
+          address,
+          await getWalletTradeSnapshotForSolanaToken({
+            walletAddress: address,
+            tokenMint: mintAddress,
+            chainType: "solana",
+          }),
+        ] as const)
+      ),
     ]);
     const walletActivityMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(walletActivityEntries);
     const devWalletProfileMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(devWalletProfileEntries);
     const authorityAssetSummaryMap = new Map<string, Awaited<ReturnType<typeof getHeliusAuthorityAssetSummary>>>(authorityAssetSummaryEntries);
     const devHoldingMap = new Map<string, Awaited<ReturnType<typeof getWalletTradeSnapshotForSolanaToken>>>(devHoldingEntries);
+    const holderTradeSnapshotMap = new Map<string, Awaited<ReturnType<typeof getWalletTradeSnapshotForSolanaToken>>>(holderTradeSnapshotEntries);
     const authorityHeuristicEntries = await Promise.all(
       authorityScanWallets.map(async (address) => {
         const summary = authorityAssetSummaryMap.get(address) ?? null;
@@ -1384,6 +1408,16 @@ export async function analyzeSolanaTokenDistribution(
             ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,
           }),
           devRole,
+          tradeSnapshot: (() => {
+            const snap = holderTradeSnapshotMap.get(walletAddress) ?? devHoldingMap.get(walletAddress) ?? null;
+            if (!snap) return null;
+            return {
+              boughtAmount: snap.boughtAmount ?? null,
+              soldAmount: snap.soldAmount ?? null,
+              holdingAmount: snap.holdingAmount ?? null,
+              netAmount: snap.netAmount ?? null,
+            };
+          })(),
         } satisfies TokenHolderSnapshot;
       })();
 

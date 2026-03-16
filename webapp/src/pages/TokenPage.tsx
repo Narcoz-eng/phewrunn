@@ -88,6 +88,56 @@ type TokenTrader = PostAuthor & {
   bestRoiPct: number;
 };
 
+type TokenHolderTradeSnapshot = {
+  boughtAmount: number | null;
+  soldAmount: number | null;
+  holdingAmount: number | null;
+  netAmount: number | null;
+};
+
+type HolderBehavior = "accumulating" | "holding" | "selling" | "unknown";
+
+function getHolderBehavior(snapshot: TokenHolderTradeSnapshot | null | undefined): HolderBehavior {
+  if (!snapshot) return "unknown";
+  const { boughtAmount, soldAmount, holdingAmount } = snapshot;
+  const bought = typeof boughtAmount === "number" && Number.isFinite(boughtAmount) ? boughtAmount : null;
+  const sold = typeof soldAmount === "number" && Number.isFinite(soldAmount) ? soldAmount : null;
+  const holding = typeof holdingAmount === "number" && Number.isFinite(holdingAmount) ? holdingAmount : null;
+  if (bought === null && sold === null) return "unknown";
+  const totalBought = bought ?? 0;
+  const totalSold = sold ?? 0;
+  const currentHolding = holding ?? (totalBought - totalSold);
+  // Has sold more than 60% of what they bought → selling
+  if (totalSold > 0 && totalBought > 0 && totalSold >= totalBought * 0.6) return "selling";
+  // Sold everything (or near 0 remaining)
+  if (totalSold > 0 && currentHolding <= 0) return "selling";
+  // Bought and never sold, or sold less than 10% → holding strong / accumulating
+  if (totalSold === 0 && totalBought > 0) return "accumulating";
+  // Still holds majority, bought way more than sold → accumulating
+  if (totalBought > 0 && totalSold < totalBought * 0.1) return "accumulating";
+  // Holding a reasonable portion
+  if (currentHolding > 0) return "holding";
+  return "unknown";
+}
+
+function HolderBehaviorIndicator({ snapshot }: { snapshot: TokenHolderTradeSnapshot | null | undefined }) {
+  const behavior = getHolderBehavior(snapshot);
+  if (behavior === "unknown") return null;
+
+  const config = {
+    accumulating: { emoji: "🔥", label: "Accumulating", className: "border-emerald-300/70 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+    holding: { emoji: "💎", label: "Holding", className: "border-sky-300/70 bg-sky-500/10 text-sky-700 dark:text-sky-300" },
+    selling: { emoji: "🔻", label: "Selling", className: "border-rose-300/70 bg-rose-500/10 text-rose-700 dark:text-rose-300" },
+  }[behavior];
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${config.className}`}>
+      <span>{config.emoji}</span>
+      <span>{config.label}</span>
+    </span>
+  );
+}
+
 type TokenHolder = {
   address: string;
   ownerAddress: string | null;
@@ -113,6 +163,7 @@ type TokenHolder = {
     "serial_rugger"
   >;
   devRole: "creator" | "mint_authority" | "freeze_authority" | null;
+  tradeSnapshot: TokenHolderTradeSnapshot | null;
 };
 
 type TokenRisk = {
@@ -1286,7 +1337,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v24:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v25:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
@@ -2248,6 +2299,11 @@ export default function TokenPage() {
                                     ))
                                   ) : null}
                                 </div>
+                                {getHolderBehavior(holder.tradeSnapshot) !== "unknown" ? (
+                                  <div className="mt-1.5">
+                                    <HolderBehaviorIndicator snapshot={holder.tradeSnapshot} />
+                                  </div>
+                                ) : null}
                                 <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                                   {holder.activeAgeDays !== null ? <span>Age {formatDaysMetric(holder.activeAgeDays)}</span> : null}
                                   {holder.tradeVolume90dSol !== null ? <span>90d {formatSolMetric(holder.tradeVolume90dSol)}</span> : null}
