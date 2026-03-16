@@ -31,6 +31,8 @@ const notificationsListCache = new Map<
     staleUntilMs: number;
   }
 >();
+const notificationsListInFlight = new Map<string, Promise<unknown[]>>();
+const notificationsUnreadCountInFlight = new Map<string, Promise<number>>();
 const notificationsUnreadCountCache = new Map<
   string,
   {
@@ -541,25 +543,112 @@ async function queryUnreadNotificationsRaw(userId: string): Promise<Array<{
 
 async function countUnreadNotifications(userId: string): Promise<number> {
   try {
-    return await prisma.notification.count({
-      where: {
-        userId,
-        read: false,
-        dismissed: false,
-      },
-    });
+    const rows = await prisma.$queryRaw<Array<{ count: number | bigint | string | null }>>(Prisma.sql`
+      SELECT COUNT(*) AS count
+      FROM "Notification" n
+      WHERE n."userId" = ${userId}
+        AND n.read = false
+        AND n.dismissed = false
+    `);
+    return toSafeNumber(rows[0]?.count);
   } catch (error) {
     if (!isPrismaMissingColumnError(error, "dismissed")) {
       throw error;
     }
   }
 
-  return prisma.notification.count({
-    where: {
-      userId,
-      read: false,
-    },
+  const rows = await prisma.$queryRaw<Array<{ count: number | bigint | string | null }>>(Prisma.sql`
+    SELECT COUNT(*) AS count
+    FROM "Notification" n
+    WHERE n."userId" = ${userId}
+      AND n.read = false
+  `);
+  return toSafeNumber(rows[0]?.count);
+}
+
+async function loadNotificationsListFresh(
+  listCacheKey: string,
+  userId: string,
+  includeDismissed: boolean,
+  staleCachedNotifications: unknown[] | null
+): Promise<unknown[]> {
+  const currentInFlight = notificationsListInFlight.get(listCacheKey);
+  if (currentInFlight) {
+    return staleCachedNotifications ?? await currentInFlight;
+  }
+
+  const loadPromise = (async () => {
+    let notifications: unknown[] = [];
+    try {
+      notifications = await withPrismaRetry(
+        () => queryNotificationsRaw(userId, includeDismissed),
+        { label: "notifications:list" }
+      );
+    } catch (error) {
+      if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      console.warn("[notifications/list] database unavailable; returning cached or empty notifications", {
+        message: getErrorMessage(error),
+      });
+      if (isTransientPrismaError(error)) {
+        notifications = staleCachedNotifications ?? [];
+      } else {
+        try {
+          notifications = await queryNotificationsRaw(userId, includeDismissed);
+        } catch (rawError) {
+          console.warn("[notifications/list] raw fallback unavailable; returning cached or empty notifications", {
+            message: getErrorMessage(rawError),
+          });
+          notifications = staleCachedNotifications ?? [];
+        }
+      }
+    }
+
+    writeNotificationsListCache(listCacheKey, notifications);
+    return notifications;
+  })().finally(() => {
+    notificationsListInFlight.delete(listCacheKey);
   });
+
+  notificationsListInFlight.set(listCacheKey, loadPromise);
+  return await loadPromise;
+}
+
+async function loadNotificationsUnreadCountFresh(
+  userId: string,
+  staleUnreadCount: number | null
+): Promise<number> {
+  const currentInFlight = notificationsUnreadCountInFlight.get(userId);
+  if (currentInFlight) {
+    return staleUnreadCount ?? await currentInFlight;
+  }
+
+  const loadPromise = (async () => {
+    let count = staleUnreadCount ?? 0;
+    try {
+      count = await withPrismaRetry(
+        () => countUnreadNotifications(userId),
+        { label: "notifications:unread-count" }
+      );
+    } catch (error) {
+      if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+      logNotificationsQueryFailure("notification.count", error, {
+        userId,
+        isPoolPressure: isPrismaPoolPressureError(error),
+      });
+    }
+
+    writeNotificationsUnreadCountCache(userId, count);
+    return count;
+  })().finally(() => {
+    notificationsUnreadCountInFlight.delete(userId);
+  });
+
+  notificationsUnreadCountInFlight.set(userId, loadPromise);
+  return await loadPromise;
 }
 
 async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnType<typeof mapRawNotificationRow> | null> {
@@ -701,173 +790,12 @@ notificationsRouter.get("/", requireAuth, async (c) => {
   if (cachedNotifications) {
     return c.json({ data: cachedNotifications });
   }
-
-  const whereClause: { userId: string; dismissed?: boolean } = { userId: user.id };
-
-  if (!includeDismissed) {
-    whereClause.dismissed = false;
-  }
-
-  let notifications: unknown[] = [];
-  try {
-    notifications = await withPrismaRetry(
-      () => prisma.notification.findMany({
-        where: whereClause,
-        orderBy: { createdAt: "desc" },
-        take: NOTIFICATIONS_LIST_LIMIT,
-        include: {
-          fromUser: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-            },
-          },
-          post: {
-            select: {
-              id: true,
-              content: true,
-              contractAddress: true,
-            },
-          },
-        },
-      }),
-      { label: "notifications:list" }
-    );
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error)) {
-      if (isPrismaClientError(error)) {
-        console.warn("[notifications/list] database unavailable; returning cached or empty notifications", {
-          message: getErrorMessage(error),
-        });
-        if (isTransientPrismaError(error)) {
-          const fallbackNotifications = staleCachedNotifications ?? [];
-          writeNotificationsListCache(listCacheKey, fallbackNotifications);
-          return c.json({ data: fallbackNotifications });
-        }
-        let recoveredFromRaw = false;
-        try {
-          notifications = await queryNotificationsRaw(user.id, includeDismissed);
-          recoveredFromRaw = true;
-        } catch (rawError) {
-          console.warn("[notifications/list] raw fallback unavailable; returning stale cached or empty notifications", {
-            message: getErrorMessage(rawError),
-          });
-        }
-        if (recoveredFromRaw) {
-          writeNotificationsListCache(listCacheKey, notifications);
-          return c.json({ data: notifications });
-        }
-        const fallbackNotifications = staleCachedNotifications ?? [];
-        writeNotificationsListCache(listCacheKey, fallbackNotifications);
-        return c.json({ data: fallbackNotifications });
-      }
-      throw error;
-    }
-    try {
-      notifications = await prisma.notification.findMany({
-        where: { userId: user.id },
-        orderBy: { createdAt: "desc" },
-        take: NOTIFICATIONS_LIST_LIMIT,
-        include: {
-          fromUser: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-            },
-          },
-          post: {
-            select: {
-              id: true,
-              content: true,
-              contractAddress: true,
-            },
-          },
-        },
-      });
-    } catch (fallbackError) {
-      if (!isPrismaSchemaDriftError(fallbackError)) {
-        throw fallbackError;
-      }
-      try {
-        const minimalNotifications = await prisma.notification.findMany({
-          where: { userId: user.id },
-          orderBy: { createdAt: "desc" },
-          take: NOTIFICATIONS_LIST_LIMIT,
-          select: {
-            id: true,
-            type: true,
-            message: true,
-            read: true,
-            postId: true,
-            fromUserId: true,
-            createdAt: true,
-          },
-        });
-        notifications = minimalNotifications.map((notification) => ({
-          ...notification,
-          dismissed: false,
-          clickedAt: null,
-          fromUser: null,
-          post: null,
-        }));
-      } catch (minimalError) {
-        if (!isPrismaSchemaDriftError(minimalError)) {
-          if (isPrismaClientError(minimalError)) {
-            console.warn("[notifications/list] minimal fallback unavailable; returning cached or empty notifications", {
-              message: getErrorMessage(minimalError),
-            });
-            if (isTransientPrismaError(minimalError)) {
-              const fallbackNotifications = staleCachedNotifications ?? [];
-              writeNotificationsListCache(listCacheKey, fallbackNotifications);
-              return c.json({ data: fallbackNotifications });
-            }
-            let recoveredFromRaw = false;
-            try {
-              notifications = await queryNotificationsRaw(user.id, includeDismissed);
-              recoveredFromRaw = true;
-            } catch (rawError) {
-              console.warn("[notifications/list] raw fallback after minimal failure unavailable", {
-                message: getErrorMessage(rawError),
-              });
-            }
-            if (recoveredFromRaw) {
-              writeNotificationsListCache(listCacheKey, notifications);
-              return c.json({ data: notifications });
-            }
-            const fallbackNotifications = staleCachedNotifications ?? [];
-            writeNotificationsListCache(listCacheKey, fallbackNotifications);
-            return c.json({ data: fallbackNotifications });
-          }
-          throw minimalError;
-        }
-        console.warn("[notifications/list] schema drift fallback exhausted; returning empty notifications list", {
-          message: getErrorMessage(minimalError),
-        });
-        let recoveredFromRaw = false;
-        try {
-          notifications = await queryNotificationsRaw(user.id, includeDismissed);
-          recoveredFromRaw = true;
-        } catch (rawError) {
-          console.warn("[notifications/list] raw fallback after schema drift unavailable", {
-            message: getErrorMessage(rawError),
-          });
-        }
-        if (!recoveredFromRaw) {
-          const fallbackNotifications = staleCachedNotifications ?? [];
-          writeNotificationsListCache(listCacheKey, fallbackNotifications);
-          return c.json({ data: fallbackNotifications });
-        }
-      }
-    }
-  }
-
-  writeNotificationsListCache(listCacheKey, notifications);
+  const notifications = await loadNotificationsListFresh(
+    listCacheKey,
+    user.id,
+    includeDismissed,
+    staleCachedNotifications
+  );
   return c.json({ data: notifications });
 });
 
@@ -884,25 +812,7 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
   if (cachedUnreadCount !== null) {
     return c.json({ data: { count: cachedUnreadCount } });
   }
-
-  let count = staleUnreadCount ?? 0;
-  try {
-    count = await withPrismaRetry(
-      () => countUnreadNotifications(user.id),
-      { label: "notifications:unread-count" }
-    );
-  } catch (error) {
-    if (isPrismaClientError(error) || isPrismaSchemaDriftError(error)) {
-      logNotificationsQueryFailure("notification.count", error, {
-        userId: user.id,
-        isPoolPressure: isPrismaPoolPressureError(error),
-      });
-      writeNotificationsUnreadCountCache(user.id, count);
-      return c.json({ data: { count } });
-    }
-    throw error;
-  }
-
+  const count = await loadNotificationsUnreadCountFresh(user.id, staleUnreadCount);
   writeNotificationsUnreadCountCache(user.id, count);
   return c.json({ data: { count } });
 });

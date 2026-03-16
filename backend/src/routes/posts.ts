@@ -326,6 +326,15 @@ const feedCardSnapshotCache = new Map<
     expiresAtMs: number;
   }
 >();
+const postDetailResponseCache = new Map<
+  string,
+  {
+    data: Record<string, unknown>;
+    expiresAtMs: number;
+    staleUntilMs: number;
+  }
+>();
+const postDetailInFlight = new Map<string, Promise<Record<string, unknown>>>();
 let feedTotalPostCountCache: { count: number; expiresAtMs: number } | null = null;
 const feedResponseCache = new Map<
   string,
@@ -352,6 +361,8 @@ const postPriceResponseCache = new Map<
   }
 >();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
+const POST_DETAIL_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
+const POST_DETAIL_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 let feedDegradedCircuitState: {
   openUntilMs: number;
   openedAtMs: number;
@@ -510,6 +521,33 @@ function readFeedCardSnapshot(postId: string): Record<string, unknown> | null {
   }
   feedCardSnapshotCache.delete(postId);
   return null;
+}
+
+function readPostDetailCache(postId: string, opts?: { allowStale?: boolean }): Record<string, unknown> | null {
+  const cached = postDetailResponseCache.get(postId);
+  if (!cached) return null;
+  const nowMs = Date.now();
+  if (cached.expiresAtMs > nowMs) {
+    return { ...cached.data };
+  }
+  if (opts?.allowStale && cached.staleUntilMs > nowMs) {
+    return { ...cached.data };
+  }
+  postDetailResponseCache.delete(postId);
+  return null;
+}
+
+function writePostDetailCache(postId: string, data: Record<string, unknown>): void {
+  postDetailResponseCache.set(postId, {
+    data: { ...data },
+    expiresAtMs: Date.now() + POST_DETAIL_CACHE_TTL_MS,
+    staleUntilMs: Date.now() + POST_DETAIL_STALE_FALLBACK_MS,
+  });
+}
+
+function invalidatePostDetailCache(postId: string): void {
+  postDetailResponseCache.delete(postId);
+  postDetailInFlight.delete(postId);
 }
 
 function readSharedAlphaResponseCache(
@@ -1879,6 +1917,8 @@ export function invalidatePostReadCaches(options?: { leaderboard?: boolean }): v
   sharedAlphaWarmInFlight.clear();
   sharedAlphaResponseCache.clear();
   feedCardSnapshotCache.clear();
+  postDetailResponseCache.clear();
+  postDetailInFlight.clear();
   trendingCache = null;
   trendingInFlight = null;
   feedTotalPostCountCache = null;
@@ -5934,64 +5974,11 @@ postsRouter.get("/trending", async (c) => {
 postsRouter.get("/:id", async (c) => {
   const id = c.req.param("id");
   const user = c.get("user");
-
-  let post: any = null;
-  try {
-    post = await prisma.post.findUnique({
-      where: { id },
-      include: {
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-            level: true,
-            xp: true,
-            isVerified: true,
-          },
-        },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-            reposts: true,
-          },
-        },
-      },
-    });
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
-      throw error;
-    }
-    console.warn("[posts/detail] detail lookup unavailable", {
-      postId: id,
-      message: getErrorMessage(error),
-    });
-    const cachedPost = [...feedResponseCache.values(), ...feedSharedResponseCache.values()]
-      .flatMap((entry) => entry.payload.data)
-      .find((item) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-        return (item as { id?: unknown }).id === id;
-      });
-    if (cachedPost) {
+  const cachedPost = readPostDetailCache(id);
+  if (cachedPost) {
+    if (!user) {
       return c.json({ data: cachedPost });
     }
-    return c.json(
-      { error: { message: "Post is temporarily unavailable", code: "POST_UNAVAILABLE" } },
-      503
-    );
-  }
-
-  if (!post) {
-    return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
-  }
-
-  // Check user interactions
-  let isLiked = false;
-  let isReposted = false;
-
-  if (user) {
     const [like, repost] = await Promise.all([
       prisma.like.findUnique({
         where: { userId_postId: { userId: user.id, postId: id } },
@@ -6000,16 +5987,142 @@ postsRouter.get("/:id", async (c) => {
         where: { userId_postId: { userId: user.id, postId: id } },
       }),
     ]);
-
-    isLiked = !!like;
-    isReposted = !!repost;
+    return c.json({
+      data: {
+        ...cachedPost,
+        isLiked: !!like,
+        isReposted: !!repost,
+      },
+    });
   }
+
+  const staleCachedPost = readPostDetailCache(id, { allowStale: true });
+  const inFlight = postDetailInFlight.get(id);
+  if (inFlight) {
+    const sharedPost = staleCachedPost ?? await inFlight;
+    if (!user) {
+      return c.json({ data: sharedPost });
+    }
+    const [like, repost] = await Promise.all([
+      prisma.like.findUnique({
+        where: { userId_postId: { userId: user.id, postId: id } },
+      }),
+      prisma.repost.findUnique({
+        where: { userId_postId: { userId: user.id, postId: id } },
+      }),
+    ]);
+    return c.json({
+      data: {
+        ...sharedPost,
+        isLiked: !!like,
+        isReposted: !!repost,
+      },
+    });
+  }
+
+  const loadPromise = (async () => {
+    let post: any = null;
+    try {
+      post = await prisma.post.findUnique({
+        where: { id },
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+              xp: true,
+              isVerified: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              reposts: true,
+            },
+          },
+        },
+      });
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+        throw error;
+      }
+      console.warn("[posts/detail] detail lookup unavailable", {
+        postId: id,
+        message: getErrorMessage(error),
+      });
+      const fallbackPost =
+        staleCachedPost ??
+        [...feedResponseCache.values(), ...feedSharedResponseCache.values()]
+          .flatMap((entry) => entry.payload.data)
+          .find((item) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+            return (item as { id?: unknown }).id === id;
+          }) ??
+        null;
+      if (fallbackPost && typeof fallbackPost === "object" && !Array.isArray(fallbackPost)) {
+        const normalizedFallback = fallbackPost as Record<string, unknown>;
+        writePostDetailCache(id, normalizedFallback);
+        return normalizedFallback;
+      }
+      throw error;
+    }
+
+    if (!post) {
+      throw new Error("__POST_NOT_FOUND__");
+    }
+
+    const publicPayload = {
+      ...post,
+      isLiked: false,
+      isReposted: false,
+    } satisfies Record<string, unknown>;
+    writePostDetailCache(id, publicPayload);
+    return publicPayload;
+  })().finally(() => {
+    postDetailInFlight.delete(id);
+  });
+
+  postDetailInFlight.set(id, loadPromise);
+
+  let sharedPost: Record<string, unknown>;
+  try {
+    sharedPost = await loadPromise;
+  } catch (error) {
+    if (error instanceof Error && error.message === "__POST_NOT_FOUND__") {
+      return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
+    }
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    return c.json(
+      { error: { message: "Post is temporarily unavailable", code: "POST_UNAVAILABLE" } },
+      503
+    );
+  }
+
+  if (!user) {
+    return c.json({ data: sharedPost });
+  }
+
+  // Check user interactions
+  const [like, repost] = await Promise.all([
+    prisma.like.findUnique({
+      where: { userId_postId: { userId: user.id, postId: id } },
+    }),
+    prisma.repost.findUnique({
+      where: { userId_postId: { userId: user.id, postId: id } },
+    }),
+  ]);
 
   return c.json({
     data: {
-      ...post,
-      isLiked,
-      isReposted,
+      ...sharedPost,
+      isLiked: !!like,
+      isReposted: !!repost,
     }
   });
 });
@@ -6017,6 +6130,7 @@ postsRouter.get("/:id", async (c) => {
 // Like a post
 postsRouter.post("/:id/like", requireNotBanned, async (c) => {
   const user = c.get("user");
+  const session = c.get("session");
   const postId = c.req.param("id");
 
   if (!user) {
@@ -6033,35 +6147,21 @@ postsRouter.post("/:id/like", requireNotBanned, async (c) => {
   }
 
   // Repeated taps or stale UI should reconcile to the final liked state instead of surfacing a DB race.
-  const existingLike = await prisma.like.findUnique({
-    where: { userId_postId: { userId: user.id, postId } },
-  });
-
-  let createdLike = false;
-  if (!existingLike) {
-    try {
-      await prisma.like.create({
-        data: {
+  const createdLike = (
+    await prisma.like.createMany({
+      data: [
+        {
           userId: user.id,
           postId,
         },
-      });
-      createdLike = true;
-    } catch (error) {
-      if (!isPrismaKnownRequestError(error, "P2002")) {
-        throw error;
-      }
-    }
-  }
+      ],
+      skipDuplicates: true,
+    })
+  ).count > 0;
 
   // Create notification for post author (if not liking own post)
   if (createdLike && post.authorId !== user.id) {
-    // Get current user's name from database
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { name: true },
-    });
-    const userName = dbUser?.name || "Someone";
+    const userName = session?.user?.name?.trim() || "Someone";
 
     await createNotificationSafely({
       operation: "like_author_notification",
@@ -6089,6 +6189,7 @@ postsRouter.post("/:id/like", requireNotBanned, async (c) => {
 
   // Get updated count
   const likeCount = await prisma.like.count({ where: { postId } });
+  invalidatePostDetailCache(postId);
 
   return c.json({ data: { liked: true, likeCount } });
 });
@@ -6115,6 +6216,7 @@ postsRouter.delete("/:id/like", requireNotBanned, async (c) => {
 
   // Get updated count
   const likeCount = await prisma.like.count({ where: { postId } });
+  invalidatePostDetailCache(postId);
 
   return c.json({ data: { liked: false, likeCount } });
 });
@@ -6122,6 +6224,7 @@ postsRouter.delete("/:id/like", requireNotBanned, async (c) => {
 // Repost a post
 postsRouter.post("/:id/repost", requireNotBanned, async (c) => {
   const user = c.get("user");
+  const session = c.get("session");
   const postId = c.req.param("id");
 
   if (!user) {
@@ -6130,23 +6233,20 @@ postsRouter.post("/:id/repost", requireNotBanned, async (c) => {
 
   // Rate limit check: max 10 reposts per 24 hours
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const repostCountLast24h = await prisma.repost.count({
+  const recentReposts = await prisma.repost.findMany({
     where: {
       userId: user.id,
       createdAt: { gte: twentyFourHoursAgo },
     },
+    orderBy: { createdAt: "asc" },
+    take: DAILY_REPOST_LIMIT,
+    select: { createdAt: true },
   });
+  const repostCountLast24h = recentReposts.length;
 
   if (repostCountLast24h >= DAILY_REPOST_LIMIT) {
     // Calculate time until reset
-    const oldestRepost = await prisma.repost.findFirst({
-      where: {
-        userId: user.id,
-        createdAt: { gte: twentyFourHoursAgo },
-      },
-      orderBy: { createdAt: "asc" },
-      select: { createdAt: true },
-    });
+    const oldestRepost = recentReposts[0] ?? null;
 
     const resetTime = oldestRepost
       ? new Date(oldestRepost.createdAt.getTime() + 24 * 60 * 60 * 1000)
@@ -6181,35 +6281,21 @@ postsRouter.post("/:id/repost", requireNotBanned, async (c) => {
   }
 
   // Repeated taps or stale UI should reconcile to the final reposted state instead of surfacing a DB race.
-  const existingRepost = await prisma.repost.findUnique({
-    where: { userId_postId: { userId: user.id, postId } },
-  });
-
-  let createdRepost = false;
-  if (!existingRepost) {
-    try {
-      await prisma.repost.create({
-        data: {
+  const createdRepost = (
+    await prisma.repost.createMany({
+      data: [
+        {
           userId: user.id,
           postId,
         },
-      });
-      createdRepost = true;
-    } catch (error) {
-      if (!isPrismaKnownRequestError(error, "P2002")) {
-        throw error;
-      }
-    }
-  }
+      ],
+      skipDuplicates: true,
+    })
+  ).count > 0;
 
   // Create notification for post author
-  // Get current user's name from database
   if (createdRepost) {
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { name: true },
-    });
-    const userName = dbUser?.name || "Someone";
+    const userName = session?.user?.name?.trim() || "Someone";
 
     await createNotificationSafely({
       operation: "repost_author_notification",
@@ -6237,6 +6323,7 @@ postsRouter.post("/:id/repost", requireNotBanned, async (c) => {
 
   // Get updated count
   const repostCount = await prisma.repost.count({ where: { postId } });
+  invalidatePostDetailCache(postId);
 
   return c.json({ data: { reposted: true, repostCount } });
 });
@@ -6263,6 +6350,7 @@ postsRouter.delete("/:id/repost", requireNotBanned, async (c) => {
 
   // Get updated count
   const repostCount = await prisma.repost.count({ where: { postId } });
+  invalidatePostDetailCache(postId);
 
   return c.json({ data: { reposted: false, repostCount } });
 });

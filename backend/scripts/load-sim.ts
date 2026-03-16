@@ -78,6 +78,8 @@ type RouteStats = {
 };
 
 const BASE_URL = "https://www.phew.run";
+const runtimeArgv =
+  typeof Bun !== "undefined" && Array.isArray(Bun.argv) ? Bun.argv : process.argv;
 const ALLOWED_ORIGIN = "https://www.phew.run";
 
 class Semaphore {
@@ -110,16 +112,16 @@ class Semaphore {
 
 function readNumberArg(name: string, fallback: number): number {
   const envKey = name.replace(/^--/, "").replace(/-/g, "_").toUpperCase();
-  const argIndex = Bun.argv.indexOf(name);
-  const raw = argIndex >= 0 ? Bun.argv[argIndex + 1] : process.env[`LOAD_SIM_${envKey}`];
+  const argIndex = runtimeArgv.indexOf(name);
+  const raw = argIndex >= 0 ? runtimeArgv[argIndex + 1] : process.env[`LOAD_SIM_${envKey}`];
   const parsed = raw ? Number(raw) : Number.NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function readBooleanArg(name: string, fallback: boolean): boolean {
   const envKey = name.replace(/^--/, "").replace(/-/g, "_").toUpperCase();
-  const argIndex = Bun.argv.indexOf(name);
-  const raw = argIndex >= 0 ? Bun.argv[argIndex + 1] : process.env[`LOAD_SIM_${envKey}`];
+  const argIndex = runtimeArgv.indexOf(name);
+  const raw = argIndex >= 0 ? runtimeArgv[argIndex + 1] : process.env[`LOAD_SIM_${envKey}`];
   if (!raw) return fallback;
   const normalized = raw.trim().toLowerCase();
   if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
@@ -128,8 +130,8 @@ function readBooleanArg(name: string, fallback: boolean): boolean {
 }
 
 function readAuthMode(): AuthMode {
-  const argIndex = Bun.argv.indexOf("--auth-mode");
-  const raw = (argIndex >= 0 ? Bun.argv[argIndex + 1] : process.env.LOAD_SIM_AUTH_MODE)?.trim().toLowerCase();
+  const argIndex = runtimeArgv.indexOf("--auth-mode");
+  const raw = (argIndex >= 0 ? runtimeArgv[argIndex + 1] : process.env.LOAD_SIM_AUTH_MODE)?.trim().toLowerCase();
   if (raw === "internal" || raw === "cookie" || raw === "bearer" || raw === "none") {
     return raw;
   }
@@ -575,9 +577,10 @@ const config: SimulationConfig = {
 
 console.log("[load-sim] config", config);
 
+const runtimeModuleExtension = typeof Bun !== "undefined" ? "ts" : "js";
 const [appModule, prismaModule] = await Promise.all([
-  import("../src/index.ts"),
-  import("../src/prisma.ts"),
+  import(`../src/index.${runtimeModuleExtension}`),
+  import(`../src/prisma.${runtimeModuleExtension}`),
 ]);
 const app = (appModule as AppModule).app;
 const prismaRuntime = prismaModule as unknown as PrismaModule;

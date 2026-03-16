@@ -21,6 +21,8 @@ type SentryModule = {
   init: (options: {
     dsn: string;
     environment: string;
+    release?: string;
+    serverName?: string;
     tracesSampleRate: number;
     includeLocalVariables: boolean;
     sendDefaultPii: boolean;
@@ -32,17 +34,41 @@ type SentryModule = {
 };
 
 const SENTRY_DSN = process.env.SENTRY_DSN?.trim() || "";
+const SENTRY_ENVIRONMENT =
+  process.env.SENTRY_ENVIRONMENT?.trim() ||
+  process.env.VERCEL_ENV?.trim() ||
+  process.env.NODE_ENV ||
+  "development";
+const SENTRY_RELEASE =
+  process.env.SENTRY_RELEASE?.trim() ||
+  process.env.VERCEL_GIT_COMMIT_SHA?.trim() ||
+  process.env.SOURCE_VERSION?.trim() ||
+  "";
+const SENTRY_SERVER_NAME =
+  process.env.VERCEL_URL?.trim() ||
+  process.env.BACKEND_URL?.trim() ||
+  "";
+const parsedTracesSampleRate = Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0");
+const SENTRY_TRACES_SAMPLE_RATE =
+  Number.isFinite(parsedTracesSampleRate) &&
+  parsedTracesSampleRate >= 0 &&
+  parsedTracesSampleRate <= 1
+    ? parsedTracesSampleRate
+    : 0;
+
 const sentryModuleName = "@sentry/node";
 const sentryModule = (await import(sentryModuleName).catch(() => null)) as SentryModule | null;
 const isEnabled = SENTRY_DSN.length > 0 && Boolean(sentryModule);
 
 if (SENTRY_DSN && !sentryModule) {
-  console.warn("[Sentry] @sentry/node is not installed — error tracking disabled");
+  console.warn("[Sentry] @sentry/node is not installed - error tracking disabled");
 } else if (isEnabled && sentryModule) {
   sentryModule.init({
     dsn: SENTRY_DSN,
-    environment: process.env.NODE_ENV ?? "development",
-    tracesSampleRate: 0,
+    environment: SENTRY_ENVIRONMENT,
+    ...(SENTRY_RELEASE ? { release: SENTRY_RELEASE } : {}),
+    ...(SENTRY_SERVER_NAME ? { serverName: SENTRY_SERVER_NAME } : {}),
+    tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
     includeLocalVariables: false,
     sendDefaultPii: false,
     beforeSend(event) {
@@ -50,14 +76,20 @@ if (SENTRY_DSN && !sentryModule) {
         delete event.request.headers.authorization;
         delete event.request.headers.cookie;
         delete event.request.headers["x-session-token"];
+        delete event.request.headers["x-forwarded-for"];
+        delete event.request.headers["cf-connecting-ip"];
       }
       return event;
     },
   });
 
-  console.log("[Sentry] Initialized — error tracking active");
+  console.log("[Sentry] Initialized - error tracking active", {
+    environment: SENTRY_ENVIRONMENT,
+    release: SENTRY_RELEASE || "unset",
+    tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
+  });
 } else {
-  console.log("[Sentry] DSN not configured — error tracking disabled");
+  console.log("[Sentry] DSN not configured - error tracking disabled");
 }
 
 export function captureException(
@@ -85,6 +117,9 @@ export function captureException(
     if (context?.method) {
       scope.setTag("method", context.method);
     }
+    if (SENTRY_RELEASE) {
+      scope.setTag("release", SENTRY_RELEASE);
+    }
 
     const extra: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(context ?? {})) {
@@ -108,6 +143,9 @@ export function captureMessage(
   if (!isEnabled || !sentryModule) return;
 
   sentryModule.withScope((scope) => {
+    if (SENTRY_RELEASE) {
+      scope.setTag("release", SENTRY_RELEASE);
+    }
     if (context) {
       scope.setExtras(context);
     }

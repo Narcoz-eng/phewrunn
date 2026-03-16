@@ -310,6 +310,14 @@ export function createErrorHandler() {
       }
 
       // Generic database error
+      captureException(err, {
+        path: c.req.path,
+        method: c.req.method,
+        requestId,
+        userId: (c.get("user") as { id?: string } | undefined)?.id,
+        prismaCode: prismaError.code,
+        prismaMeta: prismaError.meta,
+      });
       return c.json(
         {
           error: {
@@ -356,6 +364,13 @@ export function createErrorHandler() {
         );
       }
 
+      captureException(err, {
+        path: c.req.path,
+        method: c.req.method,
+        requestId,
+        userId: (c.get("user") as { id?: string } | undefined)?.id,
+        prismaMessage: prismaUnknown.message,
+      });
       return c.json(
         {
           error: {
@@ -369,6 +384,15 @@ export function createErrorHandler() {
 
     if (err.name === "PrismaClientInitializationError") {
       console.error("[PrismaInitializationError]", logData);
+
+      if (!isTransientPrismaFailure(err)) {
+        captureException(err, {
+          path: c.req.path,
+          method: c.req.method,
+          requestId,
+          userId: (c.get("user") as { id?: string } | undefined)?.id,
+        });
+      }
 
       return c.json(
         {

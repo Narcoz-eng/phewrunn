@@ -101,6 +101,15 @@ const envSchema = z.object({
   // Optional: Sentry DSN for error tracking
   SENTRY_DSN: z
     .preprocess(normalizeOptionalStringEnv, z.string().url("SENTRY_DSN must be a valid URL").optional()),
+  SENTRY_ENVIRONMENT: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "SENTRY_ENVIRONMENT cannot be empty").optional()),
+  SENTRY_RELEASE: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "SENTRY_RELEASE cannot be empty").optional()),
+  SENTRY_TRACES_SAMPLE_RATE: z
+    .preprocess(
+      normalizeOptionalStringEnv,
+      z.string().regex(/^(\d+(\.\d+)?|0?\.\d+)$/, "SENTRY_TRACES_SAMPLE_RATE must be a numeric string").optional()
+    ),
 });
 
 /**
@@ -155,6 +164,12 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
         "Shared session revocation is not configured; enable Redis or AUTH_SESSION_REVOCATION_DB_ENABLED=true"
       );
     }
+
+    if (parsed.SENTRY_DSN && !parsed.SENTRY_RELEASE) {
+      warnings.push(
+        "SENTRY_DSN is configured without SENTRY_RELEASE; set SENTRY_RELEASE or rely on your deployment SHA for better release tracking"
+      );
+    }
   }
 
   return warnings;
@@ -201,6 +216,9 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     UPSTASH_REDIS_REST_TOKEN: parsed.UPSTASH_REDIS_REST_TOKEN ? "configured" : "not set",
     REDIS_URL: parsed.REDIS_URL ? "configured" : "not set",
     SENTRY_DSN: parsed.SENTRY_DSN ? "configured" : "not set",
+    SENTRY_ENVIRONMENT: parsed.SENTRY_ENVIRONMENT ?? parsed.NODE_ENV,
+    SENTRY_RELEASE: parsed.SENTRY_RELEASE ?? "not set",
+    SENTRY_TRACES_SAMPLE_RATE: parsed.SENTRY_TRACES_SAMPLE_RATE ?? "0",
   };
 }
 

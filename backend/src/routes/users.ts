@@ -527,6 +527,12 @@ type SocialPostRecord = {
   [key: string]: unknown;
 };
 
+type UserPostCountSummary = {
+  likes: number;
+  comments: number;
+  reposts: number;
+};
+
 function buildPublicSocialPostPayload(posts: SocialPostRecord[]): UserPostsRoutePayload {
   return {
     data: posts.map((post) => ({
@@ -536,6 +542,67 @@ function buildPublicSocialPostPayload(posts: SocialPostRecord[]): UserPostsRoute
       isFollowingAuthor: false,
     })),
   };
+}
+
+async function loadUserPostCountSummaries(postIds: string[]): Promise<Map<string, UserPostCountSummary>> {
+  if (postIds.length === 0) {
+    return new Map();
+  }
+
+  const [likes, comments, reposts] = await Promise.all([
+    prisma.like.groupBy({
+      by: ["postId"],
+      where: {
+        postId: { in: postIds },
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+    prisma.comment.groupBy({
+      by: ["postId"],
+      where: {
+        postId: { in: postIds },
+        deletedAt: null,
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+    prisma.repost.groupBy({
+      by: ["postId"],
+      where: {
+        postId: { in: postIds },
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+  ]);
+
+  const counts = new Map<string, UserPostCountSummary>();
+  for (const postId of postIds) {
+    counts.set(postId, {
+      likes: 0,
+      comments: 0,
+      reposts: 0,
+    });
+  }
+
+  for (const row of likes) {
+    const current = counts.get(row.postId);
+    if (current) current.likes = row._count._all;
+  }
+  for (const row of comments) {
+    const current = counts.get(row.postId);
+    if (current) current.comments = row._count._all;
+  }
+  for (const row of reposts) {
+    const current = counts.get(row.postId);
+    if (current) current.reposts = row._count._all;
+  }
+
+  return counts;
 }
 
 function withSingleAuthorSocialState(
@@ -2876,48 +2943,52 @@ usersRouter.get("/:identifier/posts", async (c) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let posts: any[] = [];
   try {
-    posts = await withPrismaRetry(() => prisma.post.findMany({
-      where: { authorId: user.id },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        content: true,
-        authorId: true,
-        contractAddress: true,
-        chainType: true,
-        tokenName: true,
-        tokenSymbol: true,
-        tokenImage: true,
-        entryMcap: true,
-        currentMcap: true,
-        mcap1h: true,
-        mcap6h: true,
-        settled: true,
-        settledAt: true,
-        isWin: true,
-        createdAt: true,
-        viewCount: true,
-        dexscreenerUrl: true,
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-            level: true,
-            xp: true,
-            isVerified: true,
+    posts = await withPrismaRetry(async () => {
+      const records = await prisma.post.findMany({
+        where: { authorId: user.id },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          content: true,
+          authorId: true,
+          contractAddress: true,
+          chainType: true,
+          tokenName: true,
+          tokenSymbol: true,
+          tokenImage: true,
+          entryMcap: true,
+          currentMcap: true,
+          mcap1h: true,
+          mcap6h: true,
+          settled: true,
+          settledAt: true,
+          isWin: true,
+          createdAt: true,
+          viewCount: true,
+          dexscreenerUrl: true,
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+              xp: true,
+              isVerified: true,
+            },
           },
         },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-            reposts: true,
-          },
+      });
+      const countSummaries = await loadUserPostCountSummaries(records.map((record) => record.id));
+      return records.map((record) => ({
+        ...record,
+        _count: countSummaries.get(record.id) ?? {
+          likes: 0,
+          comments: 0,
+          reposts: 0,
         },
-      },
-    }), { label: "users:profile-posts.posts" });
+      }));
+    }, { label: "users:profile-posts.posts" });
   } catch (error) {
     if (isTransientPrismaError(error)) {
       console.warn("[users/profile-posts] transient post lookup degraded; returning stale or empty posts", {
@@ -3101,52 +3172,59 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let reposts: any[] = [];
   try {
-    reposts = await prisma.repost.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      select: {
-        post: {
-          select: {
-            id: true,
-            content: true,
-            authorId: true,
-            contractAddress: true,
-            chainType: true,
-            tokenName: true,
-            tokenSymbol: true,
-            tokenImage: true,
-            entryMcap: true,
-            currentMcap: true,
-            mcap1h: true,
-            mcap6h: true,
-            settled: true,
-            settledAt: true,
-            isWin: true,
-            createdAt: true,
-            viewCount: true,
-            dexscreenerUrl: true,
-            author: {
-              select: {
-                id: true,
-                name: true,
-                username: true,
-                image: true,
-                level: true,
-                xp: true,
-                isVerified: true,
-              },
-            },
-            _count: {
-              select: {
-                likes: true,
-                comments: true,
-                reposts: true,
+    reposts = await withPrismaRetry(async () => {
+      const rows = await prisma.repost.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        select: {
+          post: {
+            select: {
+              id: true,
+              content: true,
+              authorId: true,
+              contractAddress: true,
+              chainType: true,
+              tokenName: true,
+              tokenSymbol: true,
+              tokenImage: true,
+              entryMcap: true,
+              currentMcap: true,
+              mcap1h: true,
+              mcap6h: true,
+              settled: true,
+              settledAt: true,
+              isWin: true,
+              createdAt: true,
+              viewCount: true,
+              dexscreenerUrl: true,
+              author: {
+                select: {
+                  id: true,
+                  name: true,
+                  username: true,
+                  image: true,
+                  level: true,
+                  xp: true,
+                  isVerified: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
+      const posts = rows.map((row) => row.post);
+      const countSummaries = await loadUserPostCountSummaries(posts.map((post) => post.id));
+      return rows.map((row) => ({
+        post: {
+          ...row.post,
+          _count: countSummaries.get(row.post.id) ?? {
+            likes: 0,
+            comments: 0,
+            reposts: 0,
+          },
+        },
+      }));
+    }, { label: "users:profile-reposts.reposts" });
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
