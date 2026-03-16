@@ -945,6 +945,200 @@ function mergeTokenPageDataWithCached(
   };
 }
 
+function getTokenIntelligenceRichnessFromPost(post: Post): number {
+  return (
+    Number(typeof post.confidenceScore === "number" && Number.isFinite(post.confidenceScore)) +
+    Number(typeof post.hotAlphaScore === "number" && Number.isFinite(post.hotAlphaScore)) +
+    Number(typeof post.earlyRunnerScore === "number" && Number.isFinite(post.earlyRunnerScore)) +
+    Number(typeof post.highConvictionScore === "number" && Number.isFinite(post.highConvictionScore)) +
+    Number(typeof post.sentimentScore === "number" && Number.isFinite(post.sentimentScore)) +
+    Number(typeof post.tokenRiskScore === "number" && Number.isFinite(post.tokenRiskScore)) +
+    Number(typeof post.liquidity === "number" && Number.isFinite(post.liquidity) && post.liquidity > 0) +
+    Number(typeof post.volume24h === "number" && Number.isFinite(post.volume24h) && post.volume24h > 0) +
+    Number(typeof post.holderCount === "number" && Number.isFinite(post.holderCount) && post.holderCount > 0) +
+    Number(typeof post.largestHolderPct === "number" && Number.isFinite(post.largestHolderPct)) +
+    Number(typeof post.top10HolderPct === "number" && Number.isFinite(post.top10HolderPct)) +
+    Number(typeof post.bundledWalletCount === "number" && Number.isFinite(post.bundledWalletCount) && post.bundledWalletCount > 0) +
+    Number(typeof resolveEstimatedBundledSupplyPct({
+      estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+      bundleClusters: post.bundleClusters,
+    }) === "number") +
+    Number(hasResolvedBundleEvidence({
+      bundleRiskLabel: post.bundleRiskLabel,
+      bundleScanCompletedAt: post.bundleScanCompletedAt,
+      bundledWalletCount: post.bundledWalletCount,
+      estimatedBundledSupplyPct: post.estimatedBundledSupplyPct,
+      bundleClusters: post.bundleClusters,
+    }))
+  );
+}
+
+function pickBestCachedTokenPost(posts: Post[] | null | undefined): Post | null {
+  let best: Post | null = null;
+
+  for (const candidate of posts ?? []) {
+    if (!candidate?.id) continue;
+    if (!best) {
+      best = candidate;
+      continue;
+    }
+
+    const candidateHasResolvedBundle = hasResolvedBundleEvidence({
+      bundleRiskLabel: candidate.bundleRiskLabel,
+      bundleScanCompletedAt: candidate.bundleScanCompletedAt,
+      bundledWalletCount: candidate.bundledWalletCount,
+      estimatedBundledSupplyPct: candidate.estimatedBundledSupplyPct,
+      bundleClusters: candidate.bundleClusters,
+    });
+    const bestHasResolvedBundle = hasResolvedBundleEvidence({
+      bundleRiskLabel: best.bundleRiskLabel,
+      bundleScanCompletedAt: best.bundleScanCompletedAt,
+      bundledWalletCount: best.bundledWalletCount,
+      estimatedBundledSupplyPct: best.estimatedBundledSupplyPct,
+      bundleClusters: best.bundleClusters,
+    });
+
+    if (candidateHasResolvedBundle !== bestHasResolvedBundle) {
+      if (candidateHasResolvedBundle) {
+        best = candidate;
+      }
+      continue;
+    }
+
+    const candidateVersion = parseTimestamp(
+      candidate.lastIntelligenceAt ?? candidate.bundleScanCompletedAt ?? candidate.lastMcapUpdate ?? candidate.createdAt
+    );
+    const bestVersion = parseTimestamp(
+      best.lastIntelligenceAt ?? best.bundleScanCompletedAt ?? best.lastMcapUpdate ?? best.createdAt
+    );
+
+    if (candidateVersion !== bestVersion) {
+      if (candidateVersion > bestVersion) {
+        best = candidate;
+      }
+      continue;
+    }
+
+    if (getTokenIntelligenceRichnessFromPost(candidate) > getTokenIntelligenceRichnessFromPost(best)) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+function mergeTokenPageDataWithCachedPosts(
+  current: TokenPageData,
+  cachedPosts: Post[] | null | undefined
+): TokenPageData {
+  const mergedRecentCalls = mergePreferredPostCollections(current.recentCalls, cachedPosts);
+  const bestPost = pickBestCachedTokenPost(mergedRecentCalls);
+
+  if (!bestPost) {
+    return mergedRecentCalls === current.recentCalls
+      ? current
+      : {
+          ...current,
+          recentCalls: mergedRecentCalls,
+        };
+  }
+
+  const currentIntelligenceVersion = getTokenIntelligenceVersion(current);
+  const postIntelligenceVersion = parseTimestamp(
+    bestPost.lastIntelligenceAt ?? bestPost.bundleScanCompletedAt ?? bestPost.lastMcapUpdate ?? bestPost.createdAt
+  );
+  const preferPostIntelligence = postIntelligenceVersion > 0 && postIntelligenceVersion >= currentIntelligenceVersion;
+  const currentEstimatedBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: current.estimatedBundledSupplyPct,
+    bundleClusters: current.bundleClusters,
+  });
+  const postEstimatedBundledSupplyPct = resolveEstimatedBundledSupplyPct({
+    estimatedBundledSupplyPct: bestPost.estimatedBundledSupplyPct,
+    bundleClusters: bestPost.bundleClusters,
+  });
+  const currentBundleState = {
+    bundleRiskLabel: current.bundleRiskLabel,
+    bundleScanCompletedAt: current.bundleScanCompletedAt,
+    bundledWalletCount: current.bundledWalletCount,
+    estimatedBundledSupplyPct: currentEstimatedBundledSupplyPct,
+    bundleClusters: current.bundleClusters,
+  };
+  const postBundleState = {
+    bundleRiskLabel: bestPost.bundleRiskLabel,
+    bundleScanCompletedAt: bestPost.bundleScanCompletedAt,
+    bundledWalletCount: bestPost.bundledWalletCount,
+    estimatedBundledSupplyPct: postEstimatedBundledSupplyPct,
+    bundleClusters: bestPost.bundleClusters,
+  };
+  const shouldPreferPostBundleState =
+    hasResolvedBundleEvidence(postBundleState) && isBundlePlaceholderState(currentBundleState);
+  const nextBundleClusters =
+    Array.isArray(bestPost.bundleClusters) &&
+    bestPost.bundleClusters.length > 0 &&
+    (shouldPreferPostBundleState || current.bundleClusters.length === 0)
+      ? bestPost.bundleClusters
+      : current.bundleClusters;
+  const nextEstimatedBundledSupplyPct = shouldPreferPostBundleState
+    ? postEstimatedBundledSupplyPct
+    : pickMergedMetric(currentEstimatedBundledSupplyPct, postEstimatedBundledSupplyPct, preferPostIntelligence);
+  const nextBundleRiskLabel = shouldPreferPostBundleState
+    ? bestPost.bundleRiskLabel ?? current.bundleRiskLabel
+    : current.bundleRiskLabel ?? bestPost.bundleRiskLabel ?? null;
+  const nextBundleScanCompletedAt = shouldPreferPostBundleState
+    ? bestPost.bundleScanCompletedAt ?? current.bundleScanCompletedAt ?? null
+    : current.bundleScanCompletedAt ?? bestPost.bundleScanCompletedAt ?? null;
+  const nextBundledWalletCount = shouldPreferPostBundleState
+    ? bestPost.bundledWalletCount ?? current.bundledWalletCount ?? null
+    : pickMergedMetric(current.bundledWalletCount, bestPost.bundledWalletCount, preferPostIntelligence, {
+        positive: true,
+      });
+  const nextTokenRiskScore = shouldPreferPostBundleState
+    ? pickMergedMetric(current.tokenRiskScore, bestPost.tokenRiskScore, true)
+    : pickMergedMetric(current.tokenRiskScore, bestPost.tokenRiskScore, preferPostIntelligence);
+  const nextLastIntelligenceAt =
+    shouldPreferPostBundleState || preferPostIntelligence
+      ? bestPost.lastIntelligenceAt ?? bestPost.bundleScanCompletedAt ?? current.lastIntelligenceAt ?? null
+      : current.lastIntelligenceAt ?? bestPost.lastIntelligenceAt ?? bestPost.bundleScanCompletedAt ?? null;
+
+  return {
+    ...current,
+    symbol: current.symbol ?? bestPost.tokenSymbol ?? null,
+    name: current.name ?? bestPost.tokenName ?? null,
+    imageUrl: current.imageUrl ?? bestPost.tokenImage ?? null,
+    dexscreenerUrl: current.dexscreenerUrl ?? bestPost.dexscreenerUrl ?? null,
+    liquidity: pickMergedMetric(current.liquidity, bestPost.liquidity, preferPostIntelligence, { positive: true }),
+    volume24h: pickMergedMetric(current.volume24h, bestPost.volume24h, preferPostIntelligence, { positive: true }),
+    holderCount: pickMergedMetric(current.holderCount, bestPost.holderCount, preferPostIntelligence, { positive: true }),
+    largestHolderPct: pickMergedMetric(current.largestHolderPct, bestPost.largestHolderPct, preferPostIntelligence),
+    top10HolderPct: pickMergedMetric(current.top10HolderPct, bestPost.top10HolderPct, preferPostIntelligence),
+    bundledWalletCount: nextBundledWalletCount ?? null,
+    estimatedBundledSupplyPct: nextEstimatedBundledSupplyPct ?? null,
+    bundleRiskLabel: nextBundleRiskLabel,
+    bundleScanCompletedAt: nextBundleScanCompletedAt,
+    tokenRiskScore: nextTokenRiskScore ?? null,
+    sentimentScore: pickMergedMetric(current.sentimentScore, bestPost.sentimentScore, preferPostIntelligence),
+    confidenceScore: pickMergedMetric(current.confidenceScore, bestPost.confidenceScore, preferPostIntelligence),
+    hotAlphaScore: pickMergedMetric(current.hotAlphaScore, bestPost.hotAlphaScore, preferPostIntelligence),
+    earlyRunnerScore: pickMergedMetric(current.earlyRunnerScore, bestPost.earlyRunnerScore, preferPostIntelligence),
+    highConvictionScore: pickMergedMetric(current.highConvictionScore, bestPost.highConvictionScore, preferPostIntelligence),
+    lastIntelligenceAt: nextLastIntelligenceAt,
+    bundleClusters: nextBundleClusters,
+    risk: {
+      ...current.risk,
+      tokenRiskScore: nextTokenRiskScore ?? null,
+      bundleRiskLabel: nextBundleRiskLabel,
+      largestHolderPct: pickMergedMetric(current.risk.largestHolderPct, bestPost.largestHolderPct, preferPostIntelligence),
+      top10HolderPct: pickMergedMetric(current.risk.top10HolderPct, bestPost.top10HolderPct, preferPostIntelligence),
+      bundledWalletCount: nextBundledWalletCount ?? null,
+      estimatedBundledSupplyPct: nextEstimatedBundledSupplyPct ?? null,
+      holderCount: pickMergedMetric(current.risk.holderCount, bestPost.holderCount, preferPostIntelligence, {
+        positive: true,
+      }),
+    },
+    recentCalls: mergedRecentCalls,
+  };
+}
+
 function mergeTokenPageDataWithLiveSnapshot(
   current: TokenPageData,
   live: TokenLiveData
@@ -1077,7 +1271,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v18:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v19:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
@@ -1085,6 +1279,14 @@ export default function TokenPage() {
     [tokenCacheKey]
   );
   const cachedToken = cachedTokenEntry?.data ?? null;
+  const cachedPostsForToken = useMemo(
+    () => getCachedPostsForToken(queryClient, tokenAddress ?? null),
+    [queryClient, tokenAddress]
+  );
+  const cachedTokenWithPostIntelligence = useMemo(
+    () => (cachedToken ? mergeTokenPageDataWithCachedPosts(cachedToken, cachedPostsForToken) : null),
+    [cachedPostsForToken, cachedToken]
+  );
   // Track last known valid token across query-key changes (e.g. auth loading changes viewerScope)
   const lastKnownTokenRef = useRef<TokenPageData | null>(null);
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
@@ -1116,12 +1318,18 @@ export default function TokenPage() {
       const currentQueryData = queryClient.getQueryData<TokenPageData>(tokenQueryKey);
       const latestCachedToken =
         tokenCacheKey ? readSessionCacheEntry<TokenPageData>(tokenCacheKey, TOKEN_PAGE_CACHE_TTL_MS)?.data ?? null : null;
-      return mergeTokenPageDataWithCached(
-        data,
-        currentQueryData ?? lastKnownTokenRef.current ?? latestCachedToken ?? cachedToken
+      return mergeTokenPageDataWithCachedPosts(
+        mergeTokenPageDataWithCached(
+          data,
+          currentQueryData ??
+            lastKnownTokenRef.current ??
+            latestCachedToken ??
+            cachedTokenWithPostIntelligence
+        ),
+        cachedPostsForToken
       );
     },
-    initialData: cachedToken ?? undefined,
+    initialData: cachedTokenWithPostIntelligence ?? undefined,
     initialDataUpdatedAt: cachedTokenEntry?.cachedAt,
     placeholderData: (previousData) => previousData,
     enabled: !!tokenAddress,
@@ -1141,7 +1349,11 @@ export default function TokenPage() {
   }
   // Fall back to the last known good data when the current query errored but had valid data before
   // (e.g. when viewerScope changes from "anonymous" to userId and the user-scoped fetch fails).
-  const token = tokenQueryData ?? (error ? (lastKnownTokenRef.current ?? undefined) : undefined);
+  const tokenBase = tokenQueryData ?? (error ? (lastKnownTokenRef.current ?? undefined) : undefined);
+  const token = useMemo(
+    () => (tokenBase ? mergeTokenPageDataWithCachedPosts(tokenBase, cachedPostsForToken) : tokenBase),
+    [cachedPostsForToken, tokenBase]
+  );
 
   const bundleScanPending = token
     ? isBundleScanPending({
@@ -1351,10 +1563,6 @@ export default function TokenPage() {
     };
   }, [liveChartData]);
 
-  const cachedPostsForToken = useMemo(
-    () => getCachedPostsForToken(queryClient, token?.address ?? tokenAddress ?? null),
-    [queryClient, token?.address, tokenAddress]
-  );
   const recentCalls = useMemo(
     () => mergePreferredPostCollections(token?.recentCalls ?? [], cachedPostsForToken),
     [cachedPostsForToken, token?.recentCalls]
