@@ -94,25 +94,13 @@ function hasResolvedHolderRoleFields(holder: unknown): boolean {
   const candidate = holder as {
     badges?: unknown;
     devRole?: unknown;
-    activeAgeDays?: unknown;
-    fundedBy?: unknown;
-    tradeVolume90dSol?: unknown;
-    solBalance?: unknown;
-    label?: unknown;
   };
 
   const badges =
     Array.isArray(candidate.badges) &&
     candidate.badges.some((badge) => typeof badge === "string" && badge.trim().length > 0);
   const devRole = typeof candidate.devRole === "string" && candidate.devRole.trim().length > 0;
-  const activeAgeDays = typeof candidate.activeAgeDays === "number" && Number.isFinite(candidate.activeAgeDays);
-  const fundedBy = typeof candidate.fundedBy === "string" && candidate.fundedBy.trim().length > 0;
-  const tradeVolume90dSol =
-    typeof candidate.tradeVolume90dSol === "number" && Number.isFinite(candidate.tradeVolume90dSol);
-  const solBalance = typeof candidate.solBalance === "number" && Number.isFinite(candidate.solBalance);
-  const label = typeof candidate.label === "string" && candidate.label.trim().length > 0;
-
-  return badges || devRole || activeAgeDays || fundedBy || tradeVolume90dSol || solBalance || label;
+  return badges || devRole;
 }
 
 function hasResolvedHolderRoleIntelligence(payload: TokenLiveIntelligencePayload): boolean {

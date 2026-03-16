@@ -571,15 +571,7 @@ function hasResolvedHolderRoleFields(
     return false;
   }
 
-  return Boolean(
-    holder.badges.length > 0 ||
-      holder.devRole !== null ||
-      holder.activeAgeDays !== null ||
-      holder.fundedBy !== null ||
-      holder.tradeVolume90dSol !== null ||
-      holder.solBalance !== null ||
-      (typeof holder.label === "string" && holder.label.trim().length > 0)
-  );
+  return Boolean(holder.badges.length > 0 || holder.devRole !== null);
 }
 
 function hasResolvedHolderRoleIntelligence(
@@ -762,7 +754,35 @@ function mergeTopHolderSnapshots(
     merged.push(holder);
   }
 
-  return [...merged].sort((left, right) => {
+  const coalesced: TokenHolder[] = [];
+  for (const holder of merged) {
+    const matchingIndex = coalesced.findIndex((existingHolder) => {
+      const exactSharedKey = holderSnapshotKeys(existingHolder).some((key) => holderSnapshotKeys(holder).includes(key));
+      if (exactSharedKey) {
+        return true;
+      }
+
+      return (
+        (getHolderRoleRichness(holder) > 0 || getHolderRoleRichness(existingHolder) > 0) &&
+        hasApproximateHolderPositionMatch(existingHolder, holder)
+      );
+    });
+
+    if (matchingIndex < 0) {
+      coalesced.push(holder);
+      continue;
+    }
+
+    const existingHolder = coalesced[matchingIndex]!;
+    const richerHolder =
+      getHolderRoleRichness(holder) > getHolderRoleRichness(existingHolder)
+        ? holder
+        : existingHolder;
+    const thinnerHolder = richerHolder === holder ? existingHolder : holder;
+    coalesced[matchingIndex] = mergeHolderSnapshot(richerHolder, thinnerHolder);
+  }
+
+  return [...coalesced].sort((left, right) => {
     if (right.supplyPct !== left.supplyPct) {
       return right.supplyPct - left.supplyPct;
     }
@@ -1426,78 +1446,9 @@ export default function TokenPage() {
   const devPositionStatus = getDevPositionStatus(devWallet);
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
-  const isStoredLowerBoundHolderCount =
-    token?.holderCountSource === "stored" &&
-    hasLiveHolderDistribution &&
-    topHolderRows.length >= 10 &&
-    typeof token.holderCount === "number" &&
-    Number.isFinite(token.holderCount) &&
-    token.holderCount <= 20;
-  const isSuspiciousCappedHolderCount =
-    (token?.holderCountSource === "stored" ||
-      token?.holderCountSource === "helius" ||
-      token?.holderCountSource === "rpc_scan" ||
-      token?.holderCountSource === "birdeye") &&
-    typeof token.holderCount === "number" &&
-    Number.isFinite(token.holderCount) &&
-    token.holderCount === 1000;
-  const isHolderCountLowerBound =
-    token?.holderCountSource === "largest_accounts" ||
-    isStoredLowerBoundHolderCount ||
-    isSuspiciousCappedHolderCount;
-  const hasVerifiedHolderCount = hasResolvedHolderCount(token?.holderCount, token?.holderCountSource);
-  const observedHolderLowerBound =
-    hasLiveHolderDistribution
-      ? Math.max(
-          topHolderRows.length,
-          typeof token?.holderCount === "number" && Number.isFinite(token.holderCount) && token.holderCount > 0
-            ? Math.round(token.holderCount)
-            : 0
-        )
-      : 0;
-  const holderCountValue = token
-    ? formatIntegerMetric(token.holderCount, {
-        emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
-      })
-    : "Scanning";
-  const holderCountLowerBoundValue =
-    isSuspiciousCappedHolderCount && token?.holderCount
-      ? `${new Intl.NumberFormat("en-US").format(Math.round(token.holderCount))}+`
-      : token?.holderCountSource === "largest_accounts" && typeof token.holderCount === "number" && token.holderCount > 0
-        ? `${new Intl.NumberFormat("en-US").format(Math.round(token.holderCount))}+`
-        : !hasVerifiedHolderCount && observedHolderLowerBound > 0
-          ? `${new Intl.NumberFormat("en-US").format(observedHolderLowerBound)}+`
-        : null;
-  const holderCountLabel = hasVerifiedHolderCount
-    ? holderCountValue
-    : holderCountLowerBoundValue
-      ? holderCountLowerBoundValue
-      : isHolderCountLowerBound
-        ? hasLiveHolderDistribution
-          ? "Pending"
-          : "Scanning"
-        : holderCountValue;
-  const holderMetricTitle = hasVerifiedHolderCount ? "Total holders" : "Holder scan";
-  const holderMetricBadge = hasVerifiedHolderCount
-    ? "Verified"
-    : hasLiveHolderDistribution
-      ? "Live"
-      : "Scanning";
-  const holderMetricDisplay = hasVerifiedHolderCount
-    ? holderCountLabel
-    : hasLiveHolderDistribution
-      ? "Top wallets live"
-      : "Scanning";
-  const holderMetricCopy = hasVerifiedHolderCount
-    ? "Verified holder total from the latest live chain scan."
-    : hasLiveHolderDistribution
-      ? "Top-holder intelligence is live. Total holder count stays hidden until the full chain scan resolves."
-      : "Scanning top wallets, wallet roles, and developer-wallet intelligence for this token.";
-  const topHolderSectionCopy = hasVerifiedHolderCount
-    ? "Top wallets, developer wallet, and role tags from the current chain scan."
-    : hasLiveHolderDistribution
-      ? "Top wallets are live. Full holder count is still being refined from the chain scan."
-      : "Scanning top wallets, holder count, and developer-wallet intelligence for this token.";
+  const topHolderSectionCopy = holderIntelligencePending
+    ? "Scanning top wallets, role tags, and developer-wallet intelligence for this token."
+    : "Top wallets, role tags, and developer-wallet intelligence from the latest chain scan.";
   const recentCallsEmptyCopy =
     isLoading || isFetching
       ? "Recent token calls are still loading for this address."
@@ -1613,7 +1564,7 @@ export default function TokenPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_repeat(2,minmax(0,1fr))]">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
                   <div className="min-w-0 rounded-[28px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-5 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -1654,22 +1605,6 @@ export default function TokenPage() {
                     </div>
                     <div className="mt-3 text-sm text-muted-foreground">
                       Pool depth on the active trading pair.
-                    </div>
-                  </div>
-                  <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {holderMetricTitle}
-                      </div>
-                      <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                        {holderMetricBadge}
-                      </span>
-                    </div>
-                    <div className="mt-3 min-w-0 text-[clamp(2rem,4vw,2.8rem)] font-bold leading-none text-foreground tabular-nums">
-                      {holderMetricDisplay}
-                    </div>
-                    <div className="mt-3 text-sm text-muted-foreground">
-                      {holderMetricCopy}
                     </div>
                   </div>
                 </div>
@@ -2113,7 +2048,7 @@ export default function TokenPage() {
                         Developer wallet not detected yet
                       </div>
                       <div className="mt-1 text-sm text-muted-foreground">
-                        {hasLiveHolderDistribution || hasVerifiedHolderCount
+                        {hasLiveHolderDistribution
                           ? "The latest chain scan did not confirm a creator, authority, or earliest mint signer wallet for this token."
                           : "The current chain scan has not confirmed a creator, authority, or earliest mint signer wallet for this token yet."}
                       </div>
@@ -2251,11 +2186,11 @@ export default function TokenPage() {
                   <div className="mb-4 flex items-center justify-between">
                     <div>
                       <h3 className="text-base font-semibold text-foreground">Sentiment + market health</h3>
-                      <p className="text-sm text-muted-foreground">Community reactions, liquidity, holders, and volume</p>
+                      <p className="text-sm text-muted-foreground">Community reactions, liquidity, and volume</p>
                     </div>
                     <span className="text-xs font-semibold text-primary">Live intelligence</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Liquidity</div>
                       <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</div>
@@ -2265,10 +2200,6 @@ export default function TokenPage() {
                       <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{holderMetricTitle}</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{holderMetricDisplay}</div>
-                    </div>
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Sentiment</div>
                       <div className={cn("mt-2 text-xl font-semibold", scoreTone(token.sentiment.score))}>{token.sentiment.score.toFixed(0)}</div>
                     </div>
@@ -2276,11 +2207,6 @@ export default function TokenPage() {
                   <p className="mt-3 text-xs text-muted-foreground">
                     Sentiment starts neutral, then moves with community reactions, 24h price trend, and buy versus sell pressure.
                   </p>
-                  {isHolderCountLowerBound ? (
-                    <p className="mt-2 text-[11px] text-muted-foreground">
-                      Full holder count is still resolving. Holder intelligence is already live in the right column.
-                    </p>
-                  ) : null}
                   <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bullish {token.sentiment.bullishPct.toFixed(0)}%</span>
                     <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bearish {token.sentiment.bearishPct.toFixed(0)}%</span>

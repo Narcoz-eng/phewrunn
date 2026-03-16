@@ -273,15 +273,7 @@ function hasResolvedHolderRoleFields(
     return false;
   }
 
-  return Boolean(
-    holder.badges.length > 0 ||
-      holder.devRole !== null ||
-      holder.activeAgeDays !== null ||
-      holder.fundedBy !== null ||
-      holder.tradeVolume90dSol !== null ||
-      holder.solBalance !== null ||
-      (typeof holder.label === "string" && holder.label.trim().length > 0)
-  );
+  return Boolean(holder.badges.length > 0 || holder.devRole !== null);
 }
 
 function hasResolvedHolderRoleIntelligence(snapshot: TokenDistributionSnapshot | null | undefined): boolean {

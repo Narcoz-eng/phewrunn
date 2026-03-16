@@ -1279,6 +1279,10 @@ async function resolveCachedPostPricePayload(
 ): Promise<PostPriceResponsePayload | null> {
   const cachedPayload = await readPostPriceCache(postId, opts);
   if (cachedPayload) {
+    const cachedPost = findCachedFeedPostPriceRecord(postId);
+    if (cachedPost) {
+      triggerMaintenanceForStaleCandidates("price:cached", [cachedPost]);
+    }
     return cachedPayload;
   }
 
@@ -1287,6 +1291,7 @@ async function resolveCachedPostPricePayload(
     return null;
   }
 
+  triggerMaintenanceForStaleCandidates("price:feed-cache", [cachedPost]);
   const payload = buildPostPricePayloadFromRecord(cachedPost);
   writePostPriceCache(postId, payload);
   return payload;
@@ -1343,6 +1348,7 @@ async function loadPostPricePayload(
         return { state: "not_found" } as const;
       }
 
+      triggerMaintenanceForStaleCandidates("price:single", [post]);
       const payloadById = new Map([[post.id, await resolvePostPricePayload(post)]]);
       await attachRealtimeIntelligenceToPostPricePayloads([post], payloadById, "single");
       const data = payloadById.get(post.id)!;
@@ -8570,6 +8576,12 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
   c.header("Cache-Control", "no-store");
   const { ids } = c.req.valid("json");
   const uniqueIds = [...new Set(ids)].slice(0, 50);
+  const cachedCandidatePosts = uniqueIds
+    .map((id) => findCachedFeedPostPriceRecord(id))
+    .filter((post): post is PriceRoutePostRecord => post !== null);
+  if (cachedCandidatePosts.length > 0) {
+    triggerMaintenanceForStaleCandidates("prices:cached", cachedCandidatePosts);
+  }
   const freshCachedEntries = await Promise.all(
     uniqueIds.map(async (id) => [id, await resolveCachedPostPricePayload(id)] as const)
   );
@@ -8613,6 +8625,7 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
   }
 
   if (posts.length > 0) {
+    triggerMaintenanceForStaleCandidates("prices:batch", posts);
     const resolvedPayloadById = new Map(
       await Promise.all(
       posts.map(async (post) => {
