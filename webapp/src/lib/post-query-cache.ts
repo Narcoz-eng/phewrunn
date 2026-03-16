@@ -197,6 +197,66 @@ function pickPreferredPost(existing: Post | undefined, candidate: Post): Post {
   return candidateRichness > existingRichness ? candidate : existing;
 }
 
+function buildPostLookup(posts: Post[] | null | undefined): Map<string, Post> {
+  const lookup = new Map<string, Post>();
+  for (const post of posts ?? []) {
+    if (!post?.id) continue;
+    lookup.set(post.id, pickPreferredPost(lookup.get(post.id), post));
+  }
+  return lookup;
+}
+
+function syncPostArrayFromLookup(
+  posts: Post[] | undefined,
+  lookup: ReadonlyMap<string, Post>
+): Post[] | undefined {
+  if (!Array.isArray(posts) || posts.length === 0 || lookup.size === 0) {
+    return posts;
+  }
+
+  let didChange = false;
+  const nextPosts = posts.map((post) => {
+    const candidate = lookup.get(post.id);
+    if (!candidate) {
+      return post;
+    }
+
+    const nextPost = pickPreferredPost(post, candidate);
+    if (nextPost !== post) {
+      didChange = true;
+    }
+    return nextPost;
+  });
+
+  return didChange ? nextPosts : posts;
+}
+
+export function mergePreferredPostCollections(
+  primary: Post[] | null | undefined,
+  fallback: Post[] | null | undefined
+): Post[] {
+  const orderedIds: string[] = [];
+  const mergedById = new Map<string, Post>();
+  const rememberPost = (post: Post | null | undefined) => {
+    if (!post?.id) {
+      return;
+    }
+    if (!mergedById.has(post.id)) {
+      orderedIds.push(post.id);
+    }
+    mergedById.set(post.id, pickPreferredPost(mergedById.get(post.id), post));
+  };
+
+  for (const post of primary ?? []) {
+    rememberPost(post);
+  }
+  for (const post of fallback ?? []) {
+    rememberPost(post);
+  }
+
+  return orderedIds.map((id) => mergedById.get(id)!).filter(Boolean);
+}
+
 export function collectCachedPosts(queryClient: QueryClient): Post[] {
   const postsById = new Map<string, Post>();
   const rememberPost = (candidate: Post | null | undefined) => {
@@ -286,11 +346,91 @@ export function getCachedPostsForAuthor(queryClient: QueryClient, identifier: st
   });
 }
 
+export function getCachedPostsForToken(queryClient: QueryClient, tokenAddress: string | null | undefined): Post[] {
+  const normalizedTokenAddress = normalizeIdentifier(tokenAddress);
+  if (!normalizedTokenAddress) {
+    return [];
+  }
+
+  return collectCachedPosts(queryClient).filter((post) => {
+    const normalizedPostAddress = normalizeIdentifier(post.contractAddress);
+    return normalizedPostAddress === normalizedTokenAddress;
+  });
+}
+
 export function syncPostsIntoQueryCache(queryClient: QueryClient, posts: Post[] | null | undefined): void {
-  for (const post of posts ?? []) {
+  const lookup = buildPostLookup(posts);
+  if (lookup.size === 0) {
+    return;
+  }
+
+  for (const post of lookup.values()) {
     if (!post?.id) continue;
     queryClient.setQueryData<Post>(["post", post.id], (existing) => pickPreferredPost(existing, post));
   }
+
+  queryClient.setQueriesData<InfiniteData<FeedPageLike>>({ queryKey: ["posts"] }, (current) => {
+    if (!current) return current;
+
+    let didChange = false;
+    const nextPages = current.pages.map((page) => {
+      const nextItems = syncPostArrayFromLookup(page.items, lookup);
+      if (nextItems !== page.items) {
+        didChange = true;
+        return {
+          ...page,
+          items: nextItems ?? page.items,
+        };
+      }
+      return page;
+    });
+
+    return didChange ? { ...current, pages: nextPages } : current;
+  });
+
+  const syncArrayCache = (queryKey: readonly string[]) => {
+    queryClient.setQueriesData<Post[]>({ queryKey }, (current) => syncPostArrayFromLookup(current, lookup) ?? current);
+  };
+
+  syncArrayCache(["userPosts"]);
+  syncArrayCache(["userReposts"]);
+  syncArrayCache(["profile", "posts"]);
+  syncArrayCache(["profile", "reposts"]);
+  syncArrayCache(["token-calls"]);
+
+  queryClient.setQueriesData<TokenPageLike>({ queryKey: ["token-page"] }, (current) => {
+    if (!current) return current;
+    const nextRecentCalls = syncPostArrayFromLookup(current.recentCalls, lookup);
+    return nextRecentCalls === current.recentCalls
+      ? current
+      : {
+          ...current,
+          recentCalls: nextRecentCalls ?? current.recentCalls,
+        };
+  });
+
+  queryClient.setQueriesData<IntelligenceLeaderboardsCacheLike>({ queryKey: ["leaderboards"] }, (current) => {
+    if (!current) return current;
+
+    const nextTopAlphaToday = syncPostArrayFromLookup(current.topAlphaToday, lookup);
+    const nextBiggestRoiToday = syncPostArrayFromLookup(current.biggestRoiToday, lookup);
+    const nextBestEntryToday = syncPostArrayFromLookup(current.bestEntryToday, lookup);
+
+    if (
+      nextTopAlphaToday === current.topAlphaToday &&
+      nextBiggestRoiToday === current.biggestRoiToday &&
+      nextBestEntryToday === current.bestEntryToday
+    ) {
+      return current;
+    }
+
+    return {
+      ...current,
+      topAlphaToday: nextTopAlphaToday ?? current.topAlphaToday,
+      biggestRoiToday: nextBiggestRoiToday ?? current.biggestRoiToday,
+      bestEntryToday: nextBestEntryToday ?? current.bestEntryToday,
+    };
+  });
 }
 
 export function syncFollowStateAcrossPostCaches(

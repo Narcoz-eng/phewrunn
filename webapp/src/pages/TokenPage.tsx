@@ -24,6 +24,10 @@ import {
   getTokenLiveIntelligence,
 } from "@/lib/token-live-intelligence";
 import {
+  getCachedPostsForToken,
+  mergePreferredPostCollections,
+} from "@/lib/post-query-cache";
+import {
   Area,
   AreaChart,
   CartesianGrid,
@@ -622,6 +626,38 @@ function mergeHolderBadges(
   return [...new Set([...(primary ?? []), ...(fallback ?? [])])];
 }
 
+function getHolderRoleRichness(holder: TokenHolder | null | undefined): number {
+  if (!holder) {
+    return 0;
+  }
+
+  return (
+    holder.badges.length * 10 +
+    Number(holder.devRole !== null) * 8 +
+    Number(holder.activeAgeDays !== null) * 4 +
+    Number(holder.tradeVolume90dSol !== null) * 4 +
+    Number(holder.solBalance !== null) * 3 +
+    Number(holder.fundedBy !== null) * 2 +
+    Number(typeof holder.label === "string" && holder.label.trim().length > 0) * 2
+  );
+}
+
+function hasApproximateHolderPositionMatch(left: TokenHolder, right: TokenHolder): boolean {
+  const leftSupplyPct = typeof left.supplyPct === "number" && Number.isFinite(left.supplyPct) ? left.supplyPct : null;
+  const rightSupplyPct = typeof right.supplyPct === "number" && Number.isFinite(right.supplyPct) ? right.supplyPct : null;
+  const leftAmount = typeof left.amount === "number" && Number.isFinite(left.amount) ? left.amount : null;
+  const rightAmount = typeof right.amount === "number" && Number.isFinite(right.amount) ? right.amount : null;
+
+  if (leftSupplyPct === null || rightSupplyPct === null || leftAmount === null || rightAmount === null) {
+    return false;
+  }
+
+  const supplyDiff = Math.abs(leftSupplyPct - rightSupplyPct);
+  const amountDiff = Math.abs(leftAmount - rightAmount);
+  const amountTolerance = Math.max(1, Math.abs(rightAmount) * 0.0025);
+  return supplyDiff <= 0.05 && amountDiff <= amountTolerance;
+}
+
 function mergeHolderSnapshot(
   primary: TokenHolder,
   fallback: TokenHolder | null | undefined
@@ -705,10 +741,40 @@ function mergeTopHolderSnapshots(
 
   for (const holder of fallbackRows) {
     if (seenFallbackRows.has(holder)) continue;
+
+    const approximateMatchIndex = merged.findIndex((existingHolder) => {
+      const exactSharedKey = holderSnapshotKeys(existingHolder).some((key) => holderSnapshotKeys(holder).includes(key));
+      if (exactSharedKey) {
+        return true;
+      }
+
+      return (
+        getHolderRoleRichness(holder) > getHolderRoleRichness(existingHolder) &&
+        hasApproximateHolderPositionMatch(existingHolder, holder)
+      );
+    });
+
+    if (approximateMatchIndex >= 0) {
+      merged[approximateMatchIndex] = mergeHolderSnapshot(merged[approximateMatchIndex]!, holder);
+      continue;
+    }
+
     merged.push(holder);
   }
 
-  return merged;
+  return [...merged].sort((left, right) => {
+    if (right.supplyPct !== left.supplyPct) {
+      return right.supplyPct - left.supplyPct;
+    }
+
+    const rightAmount = typeof right.amount === "number" && Number.isFinite(right.amount) ? right.amount : 0;
+    const leftAmount = typeof left.amount === "number" && Number.isFinite(left.amount) ? left.amount : 0;
+    if (rightAmount !== leftAmount) {
+      return rightAmount - leftAmount;
+    }
+
+    return getHolderRoleRichness(right) - getHolderRoleRichness(left);
+  });
 }
 
 function mergeTokenPageDataWithCached(
@@ -836,7 +902,7 @@ function mergeTokenPageDataWithCached(
         : cached.risk.devWallet,
     },
     timeline: live.timeline.length > 0 ? live.timeline : cached.timeline,
-    recentCalls: live.recentCalls.length > 0 ? live.recentCalls : cached.recentCalls,
+    recentCalls: mergePreferredPostCollections(live.recentCalls, cached.recentCalls),
   };
 }
 
@@ -1047,13 +1113,29 @@ export default function TokenPage() {
         bundleClusters: token.bundleClusters,
       })
     : true;
+  const mergedTopHolders = token
+    ? mergeTopHolderSnapshots(token.topHolders, token.risk.topHolders ?? [])
+    : [];
+  const mergedDevWallet = token
+    ? token.devWallet
+      ? mergeHolderSnapshot(token.devWallet, token.risk.devWallet ?? undefined)
+      : token.risk.devWallet ?? null
+    : null;
   const resolvedBundledSupplyPct = token
     ? resolveEstimatedBundledSupplyPct({
         estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
         bundleClusters: token.bundleClusters,
       })
     : null;
-  const holderIntelligencePending = token ? isHolderIntelligencePending(token) : true;
+  const holderIntelligencePending = token
+    ? isHolderIntelligencePending({
+        chainType: token.chainType,
+        topHolders: mergedTopHolders,
+        holderCount: token.holderCount,
+        holderCountSource: token.holderCountSource,
+        devWallet: mergedDevWallet,
+      })
+    : true;
   const shouldForceFreshDistribution = Boolean(token && (bundleScanPending || holderIntelligencePending));
 
   const liveTokenQuery = useQuery<TokenLiveData>({
@@ -1230,7 +1312,14 @@ export default function TokenPage() {
     };
   }, [liveChartData]);
 
-  const recentCalls = useMemo(() => token?.recentCalls ?? [], [token?.recentCalls]);
+  const cachedPostsForToken = useMemo(
+    () => getCachedPostsForToken(queryClient, token?.address ?? tokenAddress ?? null),
+    [queryClient, token?.address, tokenAddress]
+  );
+  const recentCalls = useMemo(
+    () => mergePreferredPostCollections(token?.recentCalls ?? [], cachedPostsForToken),
+    [cachedPostsForToken, token?.recentCalls]
+  );
   const recentCallsCount = Math.max(token?.callsCount ?? 0, recentCalls.length);
   const primaryTradeCall = useMemo(
     () => recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
@@ -1332,14 +1421,8 @@ export default function TokenPage() {
   }, [hasConsumedTradeDeepLink, primaryTradeCall, shouldAutoOpenTradePanel]);
 
   const showTokenLoading = !token && isLoading;
-  const topHolders = token
-    ? mergeTopHolderSnapshots(token.topHolders, token.risk.topHolders ?? [])
-    : [];
-  const devWallet = token
-    ? token.devWallet
-      ? mergeHolderSnapshot(token.devWallet, token.risk.devWallet ?? undefined)
-      : token.risk.devWallet ?? null
-    : null;
+  const topHolders = mergedTopHolders;
+  const devWallet = mergedDevWallet;
   const devPositionStatus = getDevPositionStatus(devWallet);
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
@@ -1394,25 +1477,22 @@ export default function TokenPage() {
           ? "Pending"
           : "Scanning"
         : holderCountValue;
-  const holderMetricTitle = "Total holders";
+  const holderMetricTitle = hasVerifiedHolderCount ? "Total holders" : "Holder scan";
   const holderMetricBadge = hasVerifiedHolderCount
     ? "Verified"
-    : holderCountLowerBoundValue
-      ? "Minimum"
-      : isHolderCountLowerBound
-        ? hasLiveHolderDistribution
-          ? "Top 10 ready"
-          : "Scanning"
-        : "Refreshing";
+    : hasLiveHolderDistribution
+      ? "Live"
+      : "Scanning";
+  const holderMetricDisplay = hasVerifiedHolderCount
+    ? holderCountLabel
+    : hasLiveHolderDistribution
+      ? "Top wallets live"
+      : "Scanning";
   const holderMetricCopy = hasVerifiedHolderCount
     ? "Verified holder total from the latest live chain scan."
-    : holderCountLowerBoundValue
-      ? "Minimum confirmed holder count. Full count is still being resolved."
-      : isHolderCountLowerBound
-        ? hasLiveHolderDistribution
-          ? "Largest wallets are loaded now. Full holder count is still resolving."
-          : "Fetching the full holder count for this token."
-        : "Refreshing holder count from the live route.";
+    : hasLiveHolderDistribution
+      ? "Top-holder intelligence is live. Total holder count stays hidden until the full chain scan resolves."
+      : "Scanning top wallets, wallet roles, and developer-wallet intelligence for this token.";
   const topHolderSectionCopy = hasVerifiedHolderCount
     ? "Top wallets, developer wallet, and role tags from the current chain scan."
     : hasLiveHolderDistribution
@@ -1586,7 +1666,7 @@ export default function TokenPage() {
                       </span>
                     </div>
                     <div className="mt-3 min-w-0 text-[clamp(2rem,4vw,2.8rem)] font-bold leading-none text-foreground tabular-nums">
-                      {holderCountLabel}
+                      {holderMetricDisplay}
                     </div>
                     <div className="mt-3 text-sm text-muted-foreground">
                       {holderMetricCopy}
@@ -2186,7 +2266,7 @@ export default function TokenPage() {
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{holderMetricTitle}</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{holderCountLabel}</div>
+                      <div className="mt-2 text-xl font-semibold text-foreground">{holderMetricDisplay}</div>
                     </div>
                     <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
                       <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Sentiment</div>

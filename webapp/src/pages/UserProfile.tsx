@@ -442,6 +442,18 @@ export default function UserProfile() {
   }, [isUserFetched, queryClient, user, userId, userProfileCacheKey]);
 
   useEffect(() => {
+    if (!user || !isUserFetched) return;
+    syncFollowStateAcrossPostCaches(
+      queryClient,
+      {
+        id: user.id ?? userId ?? "",
+        username: user.username ?? null,
+      },
+      Boolean(user.isFollowing)
+    );
+  }, [isUserFetched, queryClient, user, userId]);
+
+  useEffect(() => {
     if (!isPostsFetched || !userPostsCacheKey) return;
     writeSessionCache(userPostsCacheKey, posts);
     syncPostsIntoQueryCache(queryClient, posts);
