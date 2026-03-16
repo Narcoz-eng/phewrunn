@@ -825,7 +825,7 @@ export default function Notifications() {
                             />
                           </label>
                           <label className="space-y-1">
-                            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Max bundle risk</span>
+                            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Max bundled %</span>
                             <Input
                               type="number"
                               defaultValue={alertPreferences.maxBundleRiskScore ?? 45}

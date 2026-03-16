@@ -63,7 +63,7 @@ const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_SNAPSHOT_TTL_MS = 2 * 60_000;
 const LEADERBOARD_SNAPSHOT_STALE_REVALIDATE_MS = 20 * 60_000;
-const LEADERBOARD_SNAPSHOT_VERSION = 3;
+const LEADERBOARD_SNAPSHOT_VERSION = 4;
 const DAILY_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:daily:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const FIRST_CALLER_LEADERBOARD_SNAPSHOT_KEY = `intelligence:leaderboards:first-callers:v${LEADERBOARD_SNAPSHOT_VERSION}`;
 const MARKET_CONTEXT_CACHE_TTL_MS = 10 * 60_000;
@@ -1866,6 +1866,7 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
 
     writeTokenLookupCacheValue(refreshedToken.address, refreshedToken);
     void fanoutTokenSignalAlerts({
+      marketCap,
       token: refreshedToken,
       previousToken: existing,
     }).catch(() => undefined);
@@ -3630,6 +3631,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
     const unresolvedDistributionHolderCount =
       distributionFallback?.holderCountSource === "largest_accounts"
         ? distributionFallback?.holderCount
+        : minimumObservedHolderCount > 0 && !hasResolvedDistributionHolderCount
+          ? minimumObservedHolderCount
         : null;
     const resolvedHolderCount = Math.round(
       pickFirstPositiveMetric(
@@ -3647,8 +3650,12 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             ? "stored"
             : unresolvedDistributionHolderCount !== null
               ? distributionFallback?.holderCountSource ??
-                (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null)
-              : (staleTopHolders.length > 0 ? staleToken?.holderCountSource ?? "largest_accounts" : null)
+                (minimumObservedHolderCount > 0 || staleTopHolders.length > 0
+                  ? staleToken?.holderCountSource ?? "largest_accounts"
+                  : null)
+              : (minimumObservedHolderCount > 0 || staleTopHolders.length > 0
+                  ? staleToken?.holderCountSource ?? "largest_accounts"
+                  : null)
           : resolvedHolderCount !== null
             ? "stored"
             : null;
@@ -4097,18 +4104,17 @@ export async function getTraderOverview(handle: string, viewerId: string | null)
 }
 
 async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const leaderboardWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   const todaysCallsRaw = await prisma.post.findMany({
     where: {
       createdAt: {
-        gte: startOfDay,
+        gte: leaderboardWindowStart,
       },
     },
     select: CALL_SELECT,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 120,
+    take: 180,
   });
 
   const todaysCalls = await hydrateCalls(todaysCallsRaw, null, {
@@ -4118,12 +4124,26 @@ async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
     persistComputed: false,
     preferStoredIntelligence: true,
   });
-  const qualifiedCallsToday = todaysCalls.filter((call) => {
+  const primaryQualifiedCallsToday = todaysCalls.filter((call) => {
     return (
       finite(call.confidenceScore) >= 45 &&
       (call.roiCurrentPct === null || call.roiCurrentPct > -50)
     );
   });
+  const fallbackQualifiedCallsToday = todaysCalls.filter((call) => {
+    const hasStrongSignal =
+      finite(call.confidenceScore) >= 35 ||
+      finite(call.hotAlphaScore) >= 60 ||
+      finite(call.earlyRunnerScore) >= 60 ||
+      finite(call.highConvictionScore) >= 60;
+    return hasStrongSignal && (call.roiCurrentPct === null || call.roiCurrentPct > -70);
+  });
+  const qualifiedCallsToday =
+    primaryQualifiedCallsToday.length > 0
+      ? primaryQualifiedCallsToday
+      : fallbackQualifiedCallsToday.length > 0
+        ? fallbackQualifiedCallsToday
+        : todaysCalls.filter((call) => call.roiCurrentPct === null || call.roiCurrentPct > -80);
   const traderMap = new Map<string, LeaderboardsPayload["topTradersToday"][number] & { wins: number }>();
 
   for (const call of qualifiedCallsToday) {

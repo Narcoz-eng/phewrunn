@@ -1277,6 +1277,15 @@ export default function TokenPage() {
     isStoredLowerBoundHolderCount ||
     isSuspiciousCappedHolderCount;
   const hasVerifiedHolderCount = hasResolvedHolderCount(token?.holderCount, token?.holderCountSource);
+  const observedHolderLowerBound =
+    hasLiveHolderDistribution
+      ? Math.max(
+          topHolderRows.length,
+          typeof token?.holderCount === "number" && Number.isFinite(token.holderCount) && token.holderCount > 0
+            ? Math.round(token.holderCount)
+            : 0
+        )
+      : 0;
   const holderCountValue = token
     ? formatIntegerMetric(token.holderCount, {
         emptyLabel: isRefreshingLive ? "Scanning" : "Unavailable",
@@ -1287,31 +1296,37 @@ export default function TokenPage() {
       ? `${new Intl.NumberFormat("en-US").format(Math.round(token.holderCount))}+`
       : token?.holderCountSource === "largest_accounts" && typeof token.holderCount === "number" && token.holderCount > 0
         ? `${new Intl.NumberFormat("en-US").format(Math.round(token.holderCount))}+`
+        : !hasVerifiedHolderCount && observedHolderLowerBound > 0
+          ? `${new Intl.NumberFormat("en-US").format(observedHolderLowerBound)}+`
         : null;
   const holderCountLabel = hasVerifiedHolderCount
     ? holderCountValue
-    : isHolderCountLowerBound
-      ? hasLiveHolderDistribution
-        ? (holderCountLowerBoundValue ?? "Pending")
-        : "Scanning"
-      : holderCountValue;
+    : holderCountLowerBoundValue
+      ? holderCountLowerBoundValue
+      : isHolderCountLowerBound
+        ? hasLiveHolderDistribution
+          ? "Pending"
+          : "Scanning"
+        : holderCountValue;
   const holderMetricTitle = "Total holders";
   const holderMetricBadge = hasVerifiedHolderCount
     ? "Verified"
-    : isHolderCountLowerBound
-      ? hasLiveHolderDistribution
-        ? holderCountLowerBoundValue ? "Minimum" : "Top 10 ready"
-        : "Scanning"
-      : "Refreshing";
+    : holderCountLowerBoundValue
+      ? "Minimum"
+      : isHolderCountLowerBound
+        ? hasLiveHolderDistribution
+          ? "Top 10 ready"
+          : "Scanning"
+        : "Refreshing";
   const holderMetricCopy = hasVerifiedHolderCount
     ? "Verified holder total from the latest live chain scan."
-    : isHolderCountLowerBound
-      ? hasLiveHolderDistribution
-        ? holderCountLowerBoundValue
-          ? "Minimum confirmed holder count. Full count is still being resolved."
-          : "Largest wallets are loaded now. Full holder count is still resolving."
-        : "Fetching the full holder count for this token."
-      : "Refreshing holder count from the live route.";
+    : holderCountLowerBoundValue
+      ? "Minimum confirmed holder count. Full count is still being resolved."
+      : isHolderCountLowerBound
+        ? hasLiveHolderDistribution
+          ? "Largest wallets are loaded now. Full holder count is still resolving."
+          : "Fetching the full holder count for this token."
+        : "Refreshing holder count from the live route.";
   const topHolderSectionCopy = hasVerifiedHolderCount
     ? "Top wallets, developer wallet, and role tags from the current chain scan."
     : hasLiveHolderDistribution

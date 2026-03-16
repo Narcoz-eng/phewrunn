@@ -58,7 +58,7 @@ const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
 const TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 12;
+const TOKEN_ROUTE_CACHE_VERSION = 13;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
 const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();
@@ -513,8 +513,12 @@ tokensRouter.get(
           ? null
           : rawStoredHolderCount;
       const unresolvedDistributionHolderCount =
-        chainType === "solana" && distributionHolderCountSource === "largest_accounts"
-          ? distributionHolderCount
+        chainType === "solana"
+          ? distributionHolderCountSource === "largest_accounts"
+            ? distributionHolderCount
+            : observedTopHolderCount > 0 && !hasResolvedHolderCount(distributionHolderCount, distributionHolderCountSource)
+              ? observedTopHolderCount
+              : null
           : null;
       const holderCount =
         chainType === "solana"
@@ -530,7 +534,7 @@ tokensRouter.get(
               ? storedHolderCount !== null
                 ? "stored"
                 : unresolvedDistributionHolderCount !== null
-                  ? distributionHolderCountSource ?? null
+                  ? distributionHolderCountSource ?? "largest_accounts"
                   : null
               : null
           : holderCount !== null

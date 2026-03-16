@@ -55,6 +55,8 @@ type AlertPreferenceSnapshot = {
   notifyConfidenceCross: boolean;
 };
 
+const ALERT_MIN_MARKET_CAP = 5_000;
+
 function bucketKey(prefix: string, now = new Date()): string {
   const bucket = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}${String(now.getUTCHours()).padStart(2, "0")}`;
   return `${prefix}:${bucket}`;
@@ -188,8 +190,13 @@ export async function fanoutPostedAlphaAlert(args: {
   tokenSymbol: string | null;
   confidenceScore: number | null;
   liquidity: number | null;
-  bundleRiskScore: number | null;
+  entryMcap: number | null;
+  estimatedBundledSupplyPct: number | null;
 }): Promise<void> {
+  if (args.entryMcap === null || args.entryMcap < ALERT_MIN_MARKET_CAP) {
+    return;
+  }
+
   const [follows, tokenFollows, prefs] = await Promise.all([
     prisma.follow.findMany({
       where: { followingId: args.authorId },
@@ -221,9 +228,9 @@ export async function fanoutPostedAlphaAlert(args: {
           return false;
         }
         if (
-          args.bundleRiskScore !== null &&
           pref.maxBundleRiskScore !== null &&
-          args.bundleRiskScore > pref.maxBundleRiskScore
+          args.estimatedBundledSupplyPct !== null &&
+          args.estimatedBundledSupplyPct > pref.maxBundleRiskScore
         ) {
           return false;
         }
@@ -254,6 +261,7 @@ export async function fanoutPostedAlphaAlert(args: {
 }
 
 export async function fanoutTokenSignalAlerts(args: {
+  marketCap: number | null;
   token: {
     id: string;
     address: string;
@@ -262,6 +270,7 @@ export async function fanoutTokenSignalAlerts(args: {
     liquidity: number | null;
     bundleRiskLabel: string | null;
     tokenRiskScore: number | null;
+    estimatedBundledSupplyPct: number | null;
     confidenceScore: number | null;
     hotAlphaScore: number | null;
     earlyRunnerScore: number | null;
@@ -277,6 +286,10 @@ export async function fanoutTokenSignalAlerts(args: {
     highConvictionScore: number | null;
   } | null;
 }): Promise<void> {
+  if (args.marketCap === null || args.marketCap < ALERT_MIN_MARKET_CAP) {
+    return;
+  }
+
   const [prefs, tokenFollows] = await Promise.all([
     readAlertPreferences(),
     prisma.tokenFollow.findMany({
@@ -371,8 +384,8 @@ export async function fanoutTokenSignalAlerts(args: {
       }
       if (
         pref.maxBundleRiskScore !== null &&
-        args.token.tokenRiskScore !== null &&
-        args.token.tokenRiskScore > pref.maxBundleRiskScore
+        args.token.estimatedBundledSupplyPct !== null &&
+        args.token.estimatedBundledSupplyPct > pref.maxBundleRiskScore
       ) {
         return;
       }
@@ -450,11 +463,13 @@ export async function fanoutTokenSignalAlerts(args: {
         payload: {
           tokenAddress: args.token.address,
           symbol: args.token.symbol,
+          marketCap: args.marketCap,
           confidenceScore: args.token.confidenceScore,
           hotAlphaScore: args.token.hotAlphaScore,
           earlyRunnerScore: args.token.earlyRunnerScore,
           highConvictionScore: args.token.highConvictionScore,
           bundleRiskLabel: args.token.bundleRiskLabel,
+          estimatedBundledSupplyPct: args.token.estimatedBundledSupplyPct,
         },
         dedupeKey: buildTokenSignalDedupeKey({
           alertKey: strongestAlert.key,

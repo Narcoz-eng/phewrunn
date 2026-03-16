@@ -5221,7 +5221,8 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
       tokenSymbol: enrichedCall.tokenSymbol,
       confidenceScore: enrichedCall.confidenceScore,
       liquidity: enrichedCall.liquidity,
-      bundleRiskScore: enrichedCall.tokenRiskScore,
+      entryMcap: enrichedCall.entryMcap,
+      estimatedBundledSupplyPct: enrichedCall.estimatedBundledSupplyPct,
     }).catch(() => undefined);
   }
 
