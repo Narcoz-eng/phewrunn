@@ -428,36 +428,71 @@ function mapRawNotificationRow(row: RawNotificationRow) {
 
 async function queryNotificationsRaw(userId: string, includeDismissed: boolean): Promise<unknown[]> {
   const dismissedCondition = includeDismissed ? Prisma.sql`` : Prisma.sql`AND n.dismissed = false`;
-  const rows = await prisma.$queryRaw<RawNotificationRow[]>(Prisma.sql`
-    SELECT
-      n.id,
-      n."userId",
-      n.type,
-      n.message,
-      n.read,
-      n."entityType",
-      n."entityId",
-      n."reasonCode",
-      n.payload,
-      n."postId",
-      n."fromUserId",
-      n."createdAt",
-      fu.name AS "fromUserName",
-      fu.username AS "fromUserUsername",
-      fu.image AS "fromUserImage",
-      fu.level AS "fromUserLevel",
-      p.content AS "postContent",
-      p."contractAddress" AS "postContractAddress"
-    FROM "Notification" n
-    LEFT JOIN "User" fu ON fu.id = n."fromUserId"
-    LEFT JOIN "Post" p ON p.id = n."postId"
-    WHERE n."userId" = ${userId}
-    ${dismissedCondition}
-    ORDER BY n."createdAt" DESC
-    LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
-  `);
-
-  return rows.map(mapRawNotificationRow);
+  try {
+    const rows = await prisma.$queryRaw<RawNotificationRow[]>(Prisma.sql`
+      SELECT
+        n.id,
+        n."userId",
+        n.type,
+        n.message,
+        n.read,
+        n."entityType",
+        n."entityId",
+        n."reasonCode",
+        n.payload,
+        n."postId",
+        n."fromUserId",
+        n."createdAt",
+        fu.name AS "fromUserName",
+        fu.username AS "fromUserUsername",
+        fu.image AS "fromUserImage",
+        fu.level AS "fromUserLevel",
+        p.content AS "postContent",
+        p."contractAddress" AS "postContractAddress"
+      FROM "Notification" n
+      LEFT JOIN "User" fu ON fu.id = n."fromUserId"
+      LEFT JOIN "Post" p ON p.id = n."postId"
+      WHERE n."userId" = ${userId}
+      ${dismissedCondition}
+      ORDER BY n."createdAt" DESC
+      LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
+    `);
+    return rows.map(mapRawNotificationRow);
+  } catch (error) {
+    // If dismissed column doesn't exist in DB, retry without the filter
+    const message = getErrorMessage(error).toLowerCase();
+    if (!message.includes("dismissed") || !message.includes("does not exist")) {
+      throw error;
+    }
+    const rows = await prisma.$queryRaw<RawNotificationRow[]>(Prisma.sql`
+      SELECT
+        n.id,
+        n."userId",
+        n.type,
+        n.message,
+        n.read,
+        n."entityType",
+        n."entityId",
+        n."reasonCode",
+        n.payload,
+        n."postId",
+        n."fromUserId",
+        n."createdAt",
+        fu.name AS "fromUserName",
+        fu.username AS "fromUserUsername",
+        fu.image AS "fromUserImage",
+        fu.level AS "fromUserLevel",
+        p.content AS "postContent",
+        p."contractAddress" AS "postContractAddress"
+      FROM "Notification" n
+      LEFT JOIN "User" fu ON fu.id = n."fromUserId"
+      LEFT JOIN "Post" p ON p.id = n."postId"
+      WHERE n."userId" = ${userId}
+      ORDER BY n."createdAt" DESC
+      LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
+    `);
+    return rows.map(mapRawNotificationRow);
+  }
 }
 
 async function queryUnreadNotificationsRaw(userId: string): Promise<Array<{
@@ -467,34 +502,41 @@ async function queryUnreadNotificationsRaw(userId: string): Promise<Array<{
   postId: string | null;
   message: string;
 }>> {
-  const rows = await prisma.$queryRaw<Array<{
-    id: string;
-    type: string;
-    fromUserId: string | null;
-    postId: string | null;
-    message: string;
-  }>>(Prisma.sql`
-    SELECT
-      n.id,
-      n.type,
-      n."fromUserId",
-      n."postId",
-      n.message
-    FROM "Notification" n
-    WHERE n."userId" = ${userId}
-      AND n.read = false
-      AND n.dismissed = false
-    ORDER BY n."createdAt" DESC
-    LIMIT 200
-  `);
-
-  return rows.map((row) => ({
+  type UnreadRow = { id: string; type: string; fromUserId: string | null; postId: string | null; message: string };
+  const mapRow = (row: UnreadRow) => ({
     id: row.id,
     type: row.type,
     fromUserId: row.fromUserId ?? null,
     postId: row.postId ?? null,
     message: row.message,
-  }));
+  });
+
+  try {
+    const rows = await prisma.$queryRaw<UnreadRow[]>(Prisma.sql`
+      SELECT n.id, n.type, n."fromUserId", n."postId", n.message
+      FROM "Notification" n
+      WHERE n."userId" = ${userId}
+        AND n.read = false
+        AND n.dismissed = false
+      ORDER BY n."createdAt" DESC
+      LIMIT 200
+    `);
+    return rows.map(mapRow);
+  } catch (error) {
+    const message = getErrorMessage(error).toLowerCase();
+    if (!message.includes("dismissed") || !message.includes("does not exist")) {
+      throw error;
+    }
+    const rows = await prisma.$queryRaw<UnreadRow[]>(Prisma.sql`
+      SELECT n.id, n.type, n."fromUserId", n."postId", n.message
+      FROM "Notification" n
+      WHERE n."userId" = ${userId}
+        AND n.read = false
+      ORDER BY n."createdAt" DESC
+      LIMIT 200
+    `);
+    return rows.map(mapRow);
+  }
 }
 
 async function countUnreadNotifications(userId: string): Promise<number> {
