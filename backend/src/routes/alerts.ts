@@ -18,6 +18,11 @@ const AlertPreferenceSchema = z.object({
   notifyHighConviction: z.boolean().optional(),
   notifyBundleChanges: z.boolean().optional(),
   notifyConfidenceCross: z.boolean().optional(),
+  notifyLiquiditySurge: z.boolean().optional(),
+  notifyHolderGrowth: z.boolean().optional(),
+  notifyMomentum: z.boolean().optional(),
+  notifyWhaleAccumulating: z.boolean().optional(),
+  notifySmartMoney: z.boolean().optional(),
 });
 
 function buildDefaultAlertPreference(userId: string) {
@@ -36,6 +41,11 @@ function buildDefaultAlertPreference(userId: string) {
     notifyHighConviction: true,
     notifyBundleChanges: true,
     notifyConfidenceCross: true,
+    notifyLiquiditySurge: true,
+    notifyHolderGrowth: true,
+    notifyMomentum: true,
+    notifyWhaleAccumulating: true,
+    notifySmartMoney: true,
     createdAt: now,
     updatedAt: now,
   };
@@ -65,6 +75,11 @@ alertsRouter.get("/", requireAuth, async (c) => {
                     "high_conviction_detected",
                     "bundle_risk_changed",
                     "token_confidence_crossed",
+                    "token_liquidity_surge",
+                    "token_holder_growth",
+                    "token_momentum",
+                    "token_whale_accumulating",
+                    "token_smart_money",
                   ],
                 },
               },

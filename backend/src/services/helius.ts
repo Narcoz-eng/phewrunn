@@ -1153,6 +1153,31 @@ export async function getWalletActivityProfile(params: {
   };
 }
 
+// Extracts per-token trade data (bought/sold amounts) from the cached wallet base snapshot.
+// Must be called with the same sinceMs used for getWalletActivityProfile to hit the cache.
+export async function getWalletMintTradeFromBase(params: {
+  walletAddress: string | null | undefined;
+  mintAddress: string | null | undefined;
+  sinceMs: number | null;
+}): Promise<{ boughtAmount: number | null; soldAmount: number | null; holdingAmount: number | null; netAmount: number | null } | null> {
+  if (!HELIUS_RPC_URL) return null;
+  if (!isLikelySolanaAddress(params.walletAddress) || !isLikelySolanaAddress(params.mintAddress)) return null;
+
+  const base = await getWalletBaseSnapshot({ walletAddress: params.walletAddress!, sinceMs: params.sinceMs });
+  if (!base) return null;
+
+  const mint = params.mintAddress!;
+  const trade = base.tradeByMint.get(mint) ?? base.tradeByMint.get(mint.toLowerCase()) ?? null;
+  const holding = base.holdingsByMint.get(mint) ?? base.holdingsByMint.get(mint.toLowerCase());
+  const holdingAmount = typeof holding?.amount === "number" && Number.isFinite(holding.amount) ? holding.amount : null;
+  const boughtAmount = trade ? trade.boughtAmount : null;
+  const soldAmount = trade ? trade.soldAmount : null;
+  const netAmount = boughtAmount !== null && soldAmount !== null ? boughtAmount - soldAmount : null;
+
+  if (boughtAmount === null && soldAmount === null && holdingAmount === null) return null;
+  return { boughtAmount, soldAmount, holdingAmount, netAmount };
+}
+
 export async function getWalletTradeSnapshotForSolanaToken(params: {
   walletAddress: string | null | undefined;
   tokenMint: string | null | undefined;

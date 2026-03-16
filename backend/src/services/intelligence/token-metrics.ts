@@ -6,6 +6,7 @@ import {
   getLikelyMintCreatorWallet,
   getHeliusTokenMetadataForMint,
   getWalletTradeSnapshotForSolanaToken,
+  getWalletMintTradeFromBase,
   getWalletActivityProfile,
 } from "../helius.js";
 import { computeTokenRiskScore, determineBundleRiskLabel } from "./scoring.js";
@@ -1163,13 +1164,16 @@ export async function analyzeSolanaTokenDistribution(
       .map((holder) => holder.ownerAddress ?? holder.address)
       .filter((address): address is string => isLikelySolanaWallet(address));
 
+    // Compute sinceMs once so all calls share the same wallet base cache key.
+    const holderActivitySinceMs = Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS;
+
     const [walletActivityEntries, devWalletProfileEntries, authorityAssetSummaryEntries, devHoldingEntries, holderTradeSnapshotEntries] = await Promise.all([
       Promise.all(
         candidateWallets.map(async (address) => [
           address,
           await getWalletActivityProfile({
             walletAddress: address,
-            sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
+            sinceMs: holderActivitySinceMs,
             excludeMints: [mintAddress],
             includeNonBaseTokenHoldingsUsd: false,
           }),
@@ -1202,13 +1206,15 @@ export async function analyzeSolanaTokenDistribution(
           }),
         ] as const)
       ),
+      // Use cached wallet base (already fetched above) to get per-token buy/sell history.
+      // getWalletMintTradeFromBase hits the walletBaseCache via the same sinceMs key.
       Promise.all(
         topHolderWallets.map(async (address) => [
           address,
-          await getWalletTradeSnapshotForSolanaToken({
+          await getWalletMintTradeFromBase({
             walletAddress: address,
-            tokenMint: mintAddress,
-            chainType: "solana",
+            mintAddress,
+            sinceMs: holderActivitySinceMs,
           }),
         ] as const)
       ),
@@ -1217,7 +1223,7 @@ export async function analyzeSolanaTokenDistribution(
     const devWalletProfileMap = new Map<string, Awaited<ReturnType<typeof getWalletActivityProfile>>>(devWalletProfileEntries);
     const authorityAssetSummaryMap = new Map<string, Awaited<ReturnType<typeof getHeliusAuthorityAssetSummary>>>(authorityAssetSummaryEntries);
     const devHoldingMap = new Map<string, Awaited<ReturnType<typeof getWalletTradeSnapshotForSolanaToken>>>(devHoldingEntries);
-    const holderTradeSnapshotMap = new Map<string, Awaited<ReturnType<typeof getWalletTradeSnapshotForSolanaToken>>>(holderTradeSnapshotEntries);
+    const holderTradeSnapshotMap = new Map<string, Awaited<ReturnType<typeof getWalletMintTradeFromBase>>>(holderTradeSnapshotEntries);
     const authorityHeuristicEntries = await Promise.all(
       authorityScanWallets.map(async (address) => {
         const summary = authorityAssetSummaryMap.get(address) ?? null;
@@ -1249,7 +1255,7 @@ export async function analyzeSolanaTokenDistribution(
         address,
         await getWalletActivityProfile({
           walletAddress: address,
-          sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
+          sinceMs: holderActivitySinceMs,
           excludeMints: [mintAddress],
           includeNonBaseTokenHoldingsUsd: true,
         }),

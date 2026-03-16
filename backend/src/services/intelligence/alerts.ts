@@ -18,6 +18,11 @@ function buildPushPayload(data: {
     high_conviction_detected: "High Conviction Signal",
     bundle_risk_changed: "Bundle Risk Changed",
     token_confidence_crossed: "Confidence Threshold Crossed",
+    token_liquidity_surge: "Liquidity Surge",
+    token_holder_growth: "Holders Growing",
+    token_momentum: "Momentum Building",
+    token_whale_accumulating: "Whales Accumulating",
+    token_smart_money: "Smart Money Entering",
     liquidity_spike: "Liquidity Spike",
     volume_spike: "Volume Spike",
     settlement_win: "Trade Won",
@@ -53,6 +58,11 @@ type AlertPreferenceSnapshot = {
   notifyHighConviction: boolean;
   notifyBundleChanges: boolean;
   notifyConfidenceCross: boolean;
+  notifyLiquiditySurge: boolean;
+  notifyHolderGrowth: boolean;
+  notifyMomentum: boolean;
+  notifyWhaleAccumulating: boolean;
+  notifySmartMoney: boolean;
 };
 
 const ALERT_MIN_MARKET_CAP = 5_000;
@@ -158,6 +168,11 @@ async function readAlertPreferences(): Promise<AlertPreferenceSnapshot[]> {
       notifyHighConviction: true,
       notifyBundleChanges: true,
       notifyConfidenceCross: true,
+      notifyLiquiditySurge: true,
+      notifyHolderGrowth: true,
+      notifyMomentum: true,
+      notifyWhaleAccumulating: true,
+      notifySmartMoney: true,
     },
   });
 
@@ -176,6 +191,11 @@ async function readAlertPreferences(): Promise<AlertPreferenceSnapshot[]> {
       notifyHighConviction: pref?.notifyHighConviction ?? true,
       notifyBundleChanges: pref?.notifyBundleChanges ?? true,
       notifyConfidenceCross: pref?.notifyConfidenceCross ?? true,
+      notifyLiquiditySurge: pref?.notifyLiquiditySurge ?? true,
+      notifyHolderGrowth: pref?.notifyHolderGrowth ?? true,
+      notifyMomentum: pref?.notifyMomentum ?? true,
+      notifyWhaleAccumulating: pref?.notifyWhaleAccumulating ?? true,
+      notifySmartMoney: pref?.notifySmartMoney ?? true,
     };
   });
 }
@@ -282,6 +302,14 @@ export async function fanoutTokenSignalAlerts(args: {
     hotAlphaScore: number | null;
     earlyRunnerScore: number | null;
     highConvictionScore: number | null;
+    liquidity?: number | null;
+    holderCount?: number | null;
+  } | null;
+  holderStats?: {
+    holderCount: number | null;
+    previousHolderCount: number | null;
+    whaleAccumulatingCount: number;
+    smartMoneyCount: number;
   } | null;
 }): Promise<void> {
   if (args.marketCap === null || args.marketCap < ALERT_MIN_MARKET_CAP) {
@@ -305,6 +333,34 @@ export async function fanoutTokenSignalAlerts(args: {
     const safeScore = Math.max(threshold, Math.round(score ?? threshold));
     return `${Math.floor(safeScore / 5) * 5}`;
   };
+
+  // Smart signal computations
+  const prevLiquidity = args.previousToken?.liquidity ?? null;
+  const currLiquidity = args.token.liquidity;
+  const liquiditySurgePassed =
+    currLiquidity !== null && prevLiquidity !== null && prevLiquidity > 0
+      ? currLiquidity / prevLiquidity >= 1.5
+      : false;
+
+  const currHolders = args.holderStats?.holderCount ?? null;
+  const prevHolders = args.holderStats?.previousHolderCount ?? null;
+  const holderGrowthPassed =
+    currHolders !== null && prevHolders !== null && prevHolders > 0
+      ? currHolders / prevHolders >= 1.15
+      : false;
+
+  const prevMcap = args.previousToken ? (args.marketCap ?? 0) * 0.7 : null; // fallback: estimate
+  const momentumPassed =
+    args.marketCap !== null && args.previousToken !== null
+      ? (() => {
+          // Use confidence score jump as a momentum proxy when mcap delta isn't passed
+          const confJump = (args.token.confidenceScore ?? 0) - (args.previousToken?.confidenceScore ?? 0);
+          return confJump >= 15 || thresholdPassed(args.token.hotAlphaScore, args.previousToken?.hotAlphaScore ?? null, 65);
+        })()
+      : false;
+
+  const whaleAccumulatingPassed = (args.holderStats?.whaleAccumulatingCount ?? 0) >= 1;
+  const smartMoneyPassed = (args.holderStats?.smartMoneyCount ?? 0) >= 1;
 
   const alertDefs = [
     {
@@ -359,7 +415,58 @@ export async function fanoutTokenSignalAlerts(args: {
       reasonCode: "confidence_threshold_crossed",
       type: "token_confidence_crossed",
     },
-  ] as const;
+    // Smart money & on-chain signals
+    {
+      key: "smart_money",
+      priority: 8,
+      cooldownMinutes: 6 * 60,
+      enabled: (pref: AlertPreferenceSnapshot) => pref.notifySmartMoney,
+      passed: smartMoneyPassed,
+      message: `Smart money wallets are entering ${symbol}`,
+      reasonCode: "smart_money_detected",
+      type: "token_smart_money",
+    },
+    {
+      key: "whale_accumulating",
+      priority: 7,
+      cooldownMinutes: 6 * 60,
+      enabled: (pref: AlertPreferenceSnapshot) => pref.notifyWhaleAccumulating,
+      passed: whaleAccumulatingPassed,
+      message: `Whales are accumulating ${symbol}`,
+      reasonCode: "whale_accumulating",
+      type: "token_whale_accumulating",
+    },
+    {
+      key: "momentum",
+      priority: 6,
+      cooldownMinutes: 4 * 60,
+      enabled: (pref: AlertPreferenceSnapshot) => pref.notifyMomentum,
+      passed: momentumPassed,
+      message: `${symbol} is picking up momentum`,
+      reasonCode: "momentum_detected",
+      type: "token_momentum",
+    },
+    {
+      key: "holder_growth",
+      priority: 4,
+      cooldownMinutes: 4 * 60,
+      enabled: (pref: AlertPreferenceSnapshot) => pref.notifyHolderGrowth,
+      passed: holderGrowthPassed,
+      message: `${symbol} holders are growing fast`,
+      reasonCode: "holder_growth_detected",
+      type: "token_holder_growth",
+    },
+    {
+      key: "liquidity_surge",
+      priority: 6,
+      cooldownMinutes: 4 * 60,
+      enabled: (pref: AlertPreferenceSnapshot) => pref.notifyLiquiditySurge,
+      passed: liquiditySurgePassed,
+      message: `${symbol} liquidity surged 50%+`,
+      reasonCode: "liquidity_surge_detected",
+      type: "token_liquidity_surge",
+    },
+  ];
 
   await Promise.all(
     prefs.map(async (pref) => {
@@ -369,7 +476,12 @@ export async function fanoutTokenSignalAlerts(args: {
         !pref.notifyEarlyRunners &&
         !pref.notifyHotAlpha &&
         !pref.notifyHighConviction &&
-        !pref.notifyConfidenceCross
+        !pref.notifyConfidenceCross &&
+        !pref.notifyLiquiditySurge &&
+        !pref.notifyHolderGrowth &&
+        !pref.notifyMomentum &&
+        !pref.notifyWhaleAccumulating &&
+        !pref.notifySmartMoney
       ) {
         return;
       }
