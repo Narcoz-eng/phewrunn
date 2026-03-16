@@ -158,10 +158,20 @@ function buildEmptyTopUsersResponse(page: number, limit: number): TopUsersRespon
 }
 
 export function invalidateLeaderboardCaches() {
-  dailyGainersCache = null;
+  // Mark caches as expired without losing the data — stale data is still used as a
+  // fallback when a fresh DB query fails (e.g. timeout after heavy write traffic).
+  // Setting expiresAtMs = 0 makes readCache() return null (forces a fresh fetch) while
+  // readStaleCache() can still return the previous payload to prevent showing empty UI.
+  if (dailyGainersCache) {
+    dailyGainersCache = { data: dailyGainersCache.data, expiresAtMs: 0 };
+  }
   dailyGainersInFlight = null;
-  topUsersCache.clear();
-  statsCache = null;
+  for (const [key, entry] of topUsersCache.entries()) {
+    topUsersCache.set(key, { data: entry.data, expiresAtMs: 0 });
+  }
+  if (statsCache) {
+    statsCache = { data: statsCache.data, expiresAtMs: 0 };
+  }
   statsInFlight = null;
   leaderboardCacheVersionReadCache = null;
   leaderboardCacheVersionMemory += 1;
