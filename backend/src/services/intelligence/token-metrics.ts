@@ -636,8 +636,7 @@ function buildHolderBadges(params: {
   }
   if (
     (params.balanceSol !== null && params.balanceSol >= WHALE_BALANCE_SOL_THRESHOLD) ||
-    (params.balanceUsd !== null && params.balanceUsd >= WHALE_BALANCE_USD_THRESHOLD) ||
-    params.supplyPct >= 5.0
+    (params.balanceUsd !== null && params.balanceUsd >= WHALE_BALANCE_USD_THRESHOLD)
   ) {
     badges.push("whale");
   }
@@ -705,9 +704,6 @@ function buildHolderBadges(params: {
       params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
     ) {
       badges.push("fresh_wallet");
-    } else if (params.supplyPct >= 1.0) {
-      // Fallback: any wallet holding ≥1% of supply is a whale by token concentration
-      badges.push("whale");
     }
   }
 
@@ -1222,19 +1218,7 @@ export async function analyzeSolanaTokenDistribution(
     );
     const ultraDegenCandidateWallets = topHoldersBase
       .filter((holder) => isLikelySolanaWallet(holder.ownerAddress ?? holder.address))
-      .filter((holder, index) => {
-        const walletAddress = holder.ownerAddress ?? holder.address;
-        const activity = walletActivityMap.get(walletAddress) ?? null;
-        const authority = authorityHeuristicMap.get(walletAddress) ?? null;
-        return (
-          index < 4 ||
-          (activity?.balanceSol ?? 0) >= 120 ||
-          (activity?.totalTradeVolumeSol ?? 0) >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD ||
-          (activity?.distinctMintsTraded ?? 0) >= HIGH_ACTIVITY_MINTS_THRESHOLD ||
-          (authority?.authorityAssetCount ?? 0) >= 3
-        );
-      })
-      .slice(0, 6)
+      .slice(0, 10)
       .map((holder) => holder.ownerAddress ?? holder.address);
     const ultraDegenProfileEntries = await Promise.all(
       ultraDegenCandidateWallets.map(async (address) => [
