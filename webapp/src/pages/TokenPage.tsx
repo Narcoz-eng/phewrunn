@@ -590,8 +590,25 @@ function hasResolvedHolderRoleIntelligence(
   );
 }
 
-function holderSnapshotKey(holder: Pick<TokenHolder, "address" | "ownerAddress">): string {
-  return (holder.ownerAddress ?? holder.address).trim().toLowerCase();
+function normalizeHolderIdentifier(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function holderSnapshotKeys(
+  holder: Pick<TokenHolder, "address" | "ownerAddress" | "tokenAccountAddress">
+): string[] {
+  return [...new Set(
+    [
+      normalizeHolderIdentifier(holder.ownerAddress),
+      normalizeHolderIdentifier(holder.address),
+      normalizeHolderIdentifier(holder.tokenAccountAddress),
+    ].filter((value): value is string => value !== null)
+  )];
 }
 
 function mergeHolderBadges(
@@ -609,10 +626,28 @@ function mergeHolderSnapshot(
     return primary;
   }
 
+  const resolvedOwnerAddress = primary.ownerAddress ?? fallback.ownerAddress ?? null;
+  const resolvedTokenAccountAddress =
+    primary.tokenAccountAddress ??
+    fallback.tokenAccountAddress ??
+    (() => {
+      const primaryAddressKey = normalizeHolderIdentifier(primary.address);
+      const fallbackAddressKey = normalizeHolderIdentifier(fallback.address);
+      const ownerAddressKey = normalizeHolderIdentifier(resolvedOwnerAddress);
+
+      if (primaryAddressKey && primaryAddressKey !== ownerAddressKey) {
+        return primary.address;
+      }
+      if (fallbackAddressKey && fallbackAddressKey !== ownerAddressKey) {
+        return fallback.address;
+      }
+      return null;
+    })();
+
   return {
-    address: primary.address || fallback.address,
-    ownerAddress: primary.ownerAddress ?? fallback.ownerAddress ?? null,
-    tokenAccountAddress: primary.tokenAccountAddress ?? fallback.tokenAccountAddress ?? null,
+    address: resolvedOwnerAddress ?? primary.address ?? fallback.address,
+    ownerAddress: resolvedOwnerAddress,
+    tokenAccountAddress: resolvedTokenAccountAddress,
     amount: pickMergedMetric(primary.amount, fallback.amount, { positive: true }),
     supplyPct: pickMergedMetric(primary.supplyPct, fallback.supplyPct) ?? 0,
     valueUsd: pickMergedMetric(primary.valueUsd, fallback.valueUsd, { positive: true }),
@@ -642,19 +677,30 @@ function mergeTopHolderSnapshots(
     return primaryRows;
   }
 
-  const fallbackByKey = new Map(fallbackRows.map((holder) => [holderSnapshotKey(holder), holder] as const));
+  const fallbackByKey = new Map<string, TokenHolder>();
+  for (const holder of fallbackRows) {
+    for (const key of holderSnapshotKeys(holder)) {
+      if (!fallbackByKey.has(key)) {
+        fallbackByKey.set(key, holder);
+      }
+    }
+  }
+
   const merged: TokenHolder[] = [];
-  const seenKeys = new Set<string>();
+  const seenFallbackRows = new Set<TokenHolder>();
 
   for (const holder of primaryRows) {
-    const key = holderSnapshotKey(holder);
-    seenKeys.add(key);
-    merged.push(mergeHolderSnapshot(holder, fallbackByKey.get(key)));
+    const matchingFallback = holderSnapshotKeys(holder)
+      .map((key) => fallbackByKey.get(key) ?? null)
+      .find((candidate): candidate is TokenHolder => candidate !== null) ?? null;
+    if (matchingFallback) {
+      seenFallbackRows.add(matchingFallback);
+    }
+    merged.push(mergeHolderSnapshot(holder, matchingFallback));
   }
 
   for (const holder of fallbackRows) {
-    const key = holderSnapshotKey(holder);
-    if (seenKeys.has(key)) continue;
+    if (seenFallbackRows.has(holder)) continue;
     merged.push(holder);
   }
 
