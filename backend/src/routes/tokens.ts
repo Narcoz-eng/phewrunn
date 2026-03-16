@@ -13,7 +13,6 @@ import {
   findTokenByAddress,
   getTokenOverviewByAddress,
   invalidateViewerSocialCaches,
-  refreshTokenIntelligence,
 } from "../services/intelligence/engine.js";
 import { computeTokenRiskScore, determineBundleRiskLabel } from "../services/intelligence/scoring.js";
 
@@ -23,6 +22,7 @@ type TokenRoutePayload = NonNullable<Awaited<ReturnType<typeof getTokenOverviewB
 type TokenRouteCacheEntry<T> = {
   data: T;
   expiresAtMs: number;
+  staleUntilMs: number;
 };
 type TokenLivePayload = {
   marketCap: number | null;
@@ -55,9 +55,9 @@ type TokenLivePayload = {
 };
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
+const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
-const TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_ROUTE_CACHE_VERSION = 14;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
@@ -79,14 +79,20 @@ function buildTokenLiveRouteCacheKey(tokenAddress: string, options?: { fresh?: b
   return `route:token-live:${options?.fresh ? "fresh" : "default"}:${tokenAddress.trim().toLowerCase()}`;
 }
 
-function readTokenRouteCache(key: string): TokenRoutePayload | null {
+function readTokenRouteCache(key: string, opts?: { allowStale?: boolean }): TokenRoutePayload | null {
   const cached = tokenRouteCache.get(key);
   if (!cached) return null;
-  if (cached.expiresAtMs <= Date.now()) {
-    tokenRouteCache.delete(key);
-    return null;
+  const now = Date.now();
+  if (cached.expiresAtMs > now) {
+    return cached.data;
   }
-  return cached.data;
+  if (opts?.allowStale && cached.staleUntilMs > now) {
+    return cached.data;
+  }
+  if (cached.staleUntilMs <= now) {
+    tokenRouteCache.delete(key);
+  }
+  return null;
 }
 
 function readTokenLiveRouteCache(key: string): TokenLivePayload | null {
@@ -109,20 +115,40 @@ function hasResolvedLiveTokenPayload(payload: TokenLivePayload): boolean {
 }
 
 function writeTokenRouteCache(key: string, data: TokenRoutePayload): void {
+  const now = Date.now();
   tokenRouteCache.set(key, {
     data,
-    expiresAtMs: Date.now() + TOKEN_ROUTE_CACHE_TTL_MS,
+    expiresAtMs: now + TOKEN_ROUTE_CACHE_TTL_MS,
+    staleUntilMs: now + TOKEN_ROUTE_STALE_FALLBACK_MS,
   });
 }
 
-async function readBestEffortTokenRouteCache(key: string): Promise<TokenRoutePayload | null> {
-  const local = readTokenRouteCache(key);
+async function readBestEffortTokenRouteCache(
+  key: string,
+  opts?: { allowStale?: boolean }
+): Promise<TokenRoutePayload | null> {
+  const local = readTokenRouteCache(key, opts);
   if (local) {
     return local;
   }
 
-  const redisCached = await cacheGetJson<TokenRoutePayload>(key);
+  const redisRaw = await cacheGetJson<unknown>(key);
+  const envelope =
+    redisRaw &&
+    typeof redisRaw === "object" &&
+    !Array.isArray(redisRaw) &&
+    "data" in redisRaw
+      ? (redisRaw as { data?: TokenRoutePayload; cachedAt?: unknown })
+      : null;
+  const redisCached = envelope?.data ?? (redisRaw as TokenRoutePayload | null);
+  const cachedAtMs =
+    envelope && typeof envelope.cachedAt === "number" && Number.isFinite(envelope.cachedAt)
+      ? envelope.cachedAt
+      : Date.now() - TOKEN_ROUTE_CACHE_TTL_MS;
   if (redisCached) {
+    if (!opts?.allowStale && Date.now() - cachedAtMs > TOKEN_ROUTE_CACHE_TTL_MS) {
+      return null;
+    }
     writeTokenRouteCache(key, redisCached);
     return redisCached;
   }
@@ -132,7 +158,14 @@ async function readBestEffortTokenRouteCache(key: string): Promise<TokenRoutePay
 
 function writeBestEffortTokenRouteCache(key: string, data: TokenRoutePayload): void {
   writeTokenRouteCache(key, data);
-  void cacheSetJson(key, data, TOKEN_ROUTE_CACHE_TTL_MS);
+  void cacheSetJson(
+    key,
+    {
+      data,
+      cachedAt: Date.now(),
+    },
+    TOKEN_ROUTE_STALE_FALLBACK_MS
+  );
 }
 
 function invalidateTokenRouteCache(tokenAddress: string): void {
@@ -441,19 +474,6 @@ function needsFreshSolanaHolderDistributionSnapshot(
   );
 }
 
-function shouldRefreshLiveDistribution(token: TokenLookupPayload | null | undefined): boolean {
-  if (!token || token.chainType !== "solana") {
-    return false;
-  }
-
-  if (!hasStoredSolanaDistributionTelemetry(token)) {
-    return true;
-  }
-
-  const lastIntelligenceAt = toTimestampMs(token.lastIntelligenceAt);
-  return lastIntelligenceAt <= 0 || Date.now() - lastIntelligenceAt > TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS;
-}
-
 tokensRouter.get(
   "/:tokenAddress/live",
   zValidator("param", TokenAddressParamSchema),
@@ -498,10 +518,6 @@ tokensRouter.get(
         (shouldPreferFreshDistribution
           ? needsFreshSolanaHolderDistributionSnapshot(cachedDistribution)
           : !cachedDistribution && (!token || !hasStoredSolanaDistributionTelemetry(token)));
-
-      if (token?.id && shouldRefreshLiveDistribution(token)) {
-        void refreshTokenIntelligence(token.id).catch(() => undefined);
-      }
 
       const [marketSnapshot, distributionSnapshot] = await Promise.all([
         getCachedMarketCapSnapshot(tokenAddress, chainType),
@@ -667,6 +683,11 @@ tokensRouter.get(
         (hasResolvedLiveTokenPayload(payload)
           ? TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS
           : TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS),
+      staleUntilMs:
+        Date.now() +
+        (hasResolvedLiveTokenPayload(payload)
+          ? TOKEN_ROUTE_STALE_FALLBACK_MS
+          : TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS),
     });
     return c.json({ data: payload }, 200, buildLiveTokenRouteHeaders());
   } catch (error) {
@@ -692,6 +713,14 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   const cachedSharedPayload =
     viewerCacheKey !== sharedCacheKey ? await readBestEffortTokenRouteCache(sharedCacheKey) : cachedViewerPayload;
   const cached = cachedViewerPayload ?? cachedSharedPayload;
+  const staleCachedViewerPayload = viewerCacheKey
+    ? await readBestEffortTokenRouteCache(viewerCacheKey, { allowStale: true })
+    : null;
+  const staleCachedSharedPayload =
+    viewerCacheKey !== sharedCacheKey
+      ? await readBestEffortTokenRouteCache(sharedCacheKey, { allowStale: true })
+      : staleCachedViewerPayload;
+  const staleCached = staleCachedViewerPayload ?? staleCachedSharedPayload;
   if (isPersonalized) {
     c.header("Vary", "Cookie");
   }
@@ -699,18 +728,30 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   if (cachedViewerPayload) {
     return c.json({ data: cachedViewerPayload }, 200, buildTokenRouteHeaders(isPersonalized));
   }
+  if (staleCached) {
+    void getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null)
+      .then((overview) => {
+        if (!overview) return;
+        const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : staleCached;
+        if (!isMeaningfulTokenRoutePayload(data)) return;
+        writeBestEffortTokenRouteCache(viewerCacheKey, data);
+        writeBestEffortTokenRouteCache(sharedCacheKey, toSharedTokenRoutePayload(data));
+      })
+      .catch(() => undefined);
+    return c.json({ data: staleCached }, 200, buildTokenRouteHeaders(isPersonalized));
+  }
 
   let overview;
   try {
     overview = await getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null);
   } catch (error) {
-    if (cached) {
+    if (cached ?? staleCached) {
       console.warn("[tokens] serving stale cached token overview", {
         tokenAddress,
         viewerId: viewer?.id ?? null,
         message: error instanceof Error ? error.message : String(error),
       });
-      return c.json({ data: cached }, 200, buildTokenRouteHeaders(isPersonalized));
+      return c.json({ data: (cached ?? staleCached)! }, 200, buildTokenRouteHeaders(isPersonalized));
     }
     throw error;
   }
@@ -719,7 +760,7 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : cached ?? overview.token;
+  const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : staleCached ?? overview.token;
   if (isMeaningfulTokenRoutePayload(data)) {
     writeBestEffortTokenRouteCache(viewerCacheKey, data);
     writeBestEffortTokenRouteCache(sharedCacheKey, toSharedTokenRoutePayload(data));

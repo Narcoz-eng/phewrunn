@@ -86,6 +86,7 @@ type TimedUserRouteCacheEntry<T> = {
 const userProfileRouteCache = new Map<string, TimedUserRouteCacheEntry<UserProfileRoutePayload>>();
 const userPostsRouteCache = new Map<string, TimedUserRouteCacheEntry<UserPostsRoutePayload>>();
 const userRepostsRouteCache = new Map<string, TimedUserRouteCacheEntry<UserPostsRoutePayload>>();
+const userProfileRouteInFlight = new Map<string, Promise<UserProfileRoutePayload | null>>();
 
 function shouldUseUserRouteCache(viewerId: string | null | undefined): boolean {
   return !viewerId;
@@ -510,6 +511,97 @@ function buildPublicUserProfileDto(params: {
       winRate: params.stats.winRate,
       totalProfitPercent: params.stats.totalProfitPercent,
     },
+  };
+}
+
+class PublicUserProfileUnavailableError extends Error {
+  constructor() {
+    super("PROFILE_UNAVAILABLE");
+    this.name = "PublicUserProfileUnavailableError";
+  }
+}
+
+async function loadPublicUserProfileRoutePayload(
+  identifier: string
+): Promise<UserProfileRoutePayload | null> {
+  let user:
+    | {
+        id: string;
+        image: string | null;
+        username: string | null;
+        level: number;
+        xp: number;
+        isVerified: boolean;
+        createdAt: Date;
+        _count: {
+          posts: number;
+          followers: number;
+          following: number;
+        };
+      }
+    | null = null;
+  let profileLookupUnavailable = false;
+
+  try {
+    user = await withPrismaRetry(
+      () =>
+        prisma.user.findFirst({
+          where: buildUserIdentifierWhere(identifier),
+          select: {
+            id: true,
+            image: true,
+            username: true,
+            level: true,
+            xp: true,
+            isVerified: true,
+            createdAt: true,
+            _count: {
+              select: {
+                posts: true,
+                followers: true,
+                following: true,
+              },
+            },
+          },
+        }),
+      { label: "users:profile" }
+    );
+  } catch (error) {
+    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+      throw error;
+    }
+    console.warn("[users/profile] prisma user lookup degraded; using raw fallback", {
+      message: getErrorMessage(error),
+    });
+    try {
+      user = isTransientPrismaError(error)
+        ? await findUserProfileByIdentifierMinimalRaw(identifier)
+        : await findUserProfileByIdentifierRaw(identifier);
+    } catch (rawError) {
+      try {
+        user = await findUserProfileByIdentifierMinimalRaw(identifier);
+      } catch (minimalRawError) {
+        profileLookupUnavailable = true;
+        console.warn("[users/profile] raw user lookup degraded", {
+          message: getErrorMessage(rawError),
+        });
+        console.warn("[users/profile] minimal raw user lookup degraded", {
+          message: getErrorMessage(minimalRawError),
+        });
+      }
+    }
+  }
+
+  if (!user) {
+    if (profileLookupUnavailable) {
+      throw new PublicUserProfileUnavailableError();
+    }
+    return null;
+  }
+
+  const stats = await getUserStatsSafely(user.id);
+  return {
+    data: buildPublicUserProfileDto({ user, isFollowing: false, stats }),
   };
 }
 
@@ -2497,6 +2589,7 @@ usersRouter.get("/:identifier", async (c) => {
     (await readUserRouteCache(userProfileRouteCache, profileCacheKey, profileRedisKey, {
       allowStale: true,
     }));
+  const profileInFlight = userProfileRouteInFlight.get(profileCacheKey);
   if (cachedProfileResponse) {
     if (!isPersonalized) {
       return c.json(cachedProfileResponse);
@@ -2505,82 +2598,68 @@ usersRouter.get("/:identifier", async (c) => {
     return c.json(withProfileFollowState(cachedProfileResponse, isFollowing));
   }
 
-  let user:
-    | {
-        id: string;
-        image: string | null;
-        username: string | null;
-        level: number;
-        xp: number;
-        isVerified: boolean;
-        createdAt: Date;
-        _count: {
-          posts: number;
-          followers: number;
-          following: number;
-        };
-      }
-    | null = null;
-  let profileLookupUnavailable = false;
+  const refreshProfile = async (): Promise<UserProfileRoutePayload | null> => {
+    const payload = await loadPublicUserProfileRoutePayload(identifier);
+    if (payload) {
+      writeUserRouteCache(
+        userProfileRouteCache,
+        profileCacheKey,
+        profileRedisKey,
+        payload
+      );
+    }
+    return payload;
+  };
 
-  try {
-    user = await withPrismaRetry(
-      () => prisma.user.findFirst({
-        where: buildUserIdentifierWhere(identifier),
-        select: {
-          id: true,
-          image: true,
-          username: true,
-          level: true,
-          xp: true,
-          isVerified: true,
-          createdAt: true,
-          _count: {
-            select: {
-              posts: true,
-              followers: true,
-              following: true,
-            },
-          },
-        },
-      }),
-      { label: "users:profile" }
-    );
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
-      throw error;
-    }
-    console.warn("[users/profile] prisma user lookup degraded; using raw fallback", {
-      message: getErrorMessage(error),
-    });
-    try {
-      user = isTransientPrismaError(error)
-        ? await findUserProfileByIdentifierMinimalRaw(identifier)
-        : await findUserProfileByIdentifierRaw(identifier);
-    } catch (rawError) {
-      try {
-        user = await findUserProfileByIdentifierMinimalRaw(identifier);
-      } catch (minimalRawError) {
-        profileLookupUnavailable = true;
-        console.warn("[users/profile] raw user lookup degraded", {
-          message: getErrorMessage(rawError),
+  if (staleCachedProfileResponse) {
+    if (!profileInFlight) {
+      let trackedRequest: Promise<UserProfileRoutePayload | null>;
+      trackedRequest = refreshProfile()
+        .catch((error) => {
+          if (!(error instanceof PublicUserProfileUnavailableError)) {
+            throw error;
+          }
+          return staleCachedProfileResponse;
+        })
+        .finally(() => {
+          if (userProfileRouteInFlight.get(profileCacheKey) === trackedRequest) {
+            userProfileRouteInFlight.delete(profileCacheKey);
+          }
         });
-        console.warn("[users/profile] minimal raw user lookup degraded", {
-          message: getErrorMessage(minimalRawError),
-        });
-      }
+      userProfileRouteInFlight.set(profileCacheKey, trackedRequest);
     }
+    if (!isPersonalized) {
+      return c.json(staleCachedProfileResponse);
+    }
+    const isFollowing = await getIsFollowingSafely(currentUser?.id, staleCachedProfileResponse.data.id);
+    return c.json(withProfileFollowState(staleCachedProfileResponse, isFollowing));
   }
 
-  if (!user) {
-    if (profileLookupUnavailable) {
-      if (staleCachedProfileResponse) {
-        if (!isPersonalized) {
-          return c.json(staleCachedProfileResponse);
+  try {
+    let request = profileInFlight;
+    if (!request) {
+      let trackedRequest: Promise<UserProfileRoutePayload | null>;
+      trackedRequest = refreshProfile().finally(() => {
+        if (userProfileRouteInFlight.get(profileCacheKey) === trackedRequest) {
+          userProfileRouteInFlight.delete(profileCacheKey);
         }
-        const isFollowing = await getIsFollowingSafely(currentUser?.id, staleCachedProfileResponse.data.id);
-        return c.json(withProfileFollowState(staleCachedProfileResponse, isFollowing));
-      }
+      });
+      request = trackedRequest;
+    }
+    if (!profileInFlight) {
+      userProfileRouteInFlight.set(profileCacheKey, request);
+    }
+    const sharedProfilePayload = await request;
+    if (!sharedProfilePayload) {
+      return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+    }
+    if (!isPersonalized) {
+      return c.json(sharedProfilePayload);
+    }
+    const isFollowing = await getIsFollowingSafely(currentUser?.id, sharedProfilePayload.data.id);
+    return c.json(withProfileFollowState(sharedProfilePayload, isFollowing));
+  } catch (error) {
+    if (error instanceof PublicUserProfileUnavailableError) {
       return c.json(
         {
           error: {
@@ -2591,23 +2670,8 @@ usersRouter.get("/:identifier", async (c) => {
         503
       );
     }
-    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+    throw error;
   }
-
-  const isFollowing = await getIsFollowingSafely(currentUser?.id, user.id);
-  const stats = await getUserStatsSafely(user.id);
-  const baseResponsePayload: UserProfileRoutePayload = {
-    data: buildPublicUserProfileDto({ user, isFollowing, stats }),
-  };
-  const sharedProfilePayload = withProfileFollowState(baseResponsePayload, false);
-  writeUserRouteCache(
-    userProfileRouteCache,
-    profileCacheKey,
-    profileRedisKey,
-    sharedProfilePayload
-  );
-
-  return c.json(isPersonalized ? withProfileFollowState(sharedProfilePayload, isFollowing) : sharedProfilePayload);
 });
 
 // Update current user's profile

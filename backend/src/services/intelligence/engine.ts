@@ -75,6 +75,14 @@ const INTELLIGENCE_PREWARM_INTERVAL_MS = 3 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
 const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 80;
 const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
+const IS_SERVERLESS_RUNTIME =
+  !!process.env.VERCEL ||
+  !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  !!process.env.K_SERVICE ||
+  !!process.env.FUNCTIONS_WORKER_RUNTIME;
+const READ_PATH_TOKEN_REFRESH_ENABLED =
+  process.env.ENABLE_READ_PATH_TOKEN_REFRESH?.trim().toLowerCase() === "true" ||
+  !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 
 // Global LRU size registry — every cache Map registers here so writeCacheValue
 // can enforce limits on every write without touching each call site.
@@ -1375,7 +1383,7 @@ function hasFreshStoredTokenIntelligence(
 }
 
 function scheduleTokenIntelligenceRefresh(token: TokenRecord | null): void {
-  if (!token || !shouldRefreshToken(token)) {
+  if (!READ_PATH_TOKEN_REFRESH_ENABLED || !token || !shouldRefreshToken(token)) {
     return;
   }
 

@@ -18,6 +18,8 @@ const NOTIFICATIONS_LIST_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const NOTIFICATIONS_UNREAD_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 15 * 60_000 : 5 * 60_000;
+const NOTIFICATIONS_DEGRADED_CACHE_TTL_MS =
+  process.env.NODE_ENV === "production" ? 4_000 : 1_500;
 const NOTIFICATIONS_CACHE_MAX_ENTRIES =
   process.env.NODE_ENV === "production" ? 20_000 : 2_000;
 const NOTIFICATIONS_LIST_REDIS_KEY_PREFIX = "notifications:list:v1";
@@ -202,6 +204,30 @@ function writeNotificationsUnreadCountCache(userId: string, count: number): void
     { count, cachedAt: Date.now() },
     NOTIFICATIONS_UNREAD_STALE_FALLBACK_MS
   );
+}
+
+function writeNotificationsListDegradedFallback(cacheKey: string, data: unknown[]): void {
+  if (notificationsListCache.has(cacheKey)) {
+    notificationsListCache.delete(cacheKey);
+  }
+  trimNotificationCache(notificationsListCache);
+  notificationsListCache.set(cacheKey, {
+    data,
+    expiresAtMs: Date.now() + NOTIFICATIONS_DEGRADED_CACHE_TTL_MS,
+    staleUntilMs: Date.now() + NOTIFICATIONS_DEGRADED_CACHE_TTL_MS,
+  });
+}
+
+function writeNotificationsUnreadCountDegradedFallback(userId: string, count: number): void {
+  if (notificationsUnreadCountCache.has(userId)) {
+    notificationsUnreadCountCache.delete(userId);
+  }
+  trimNotificationCache(notificationsUnreadCountCache);
+  notificationsUnreadCountCache.set(userId, {
+    count,
+    expiresAtMs: Date.now() + NOTIFICATIONS_DEGRADED_CACHE_TTL_MS,
+    staleUntilMs: Date.now() + NOTIFICATIONS_DEGRADED_CACHE_TTL_MS,
+  });
 }
 
 export function invalidateNotificationsCache(userId: string): void {
@@ -667,11 +693,13 @@ async function loadNotificationsListFresh(
 
   const loadPromise = (async () => {
     let notifications: unknown[] = [];
+    let loadedFresh = false;
     try {
       notifications = await withPrismaRetry(
         () => queryNotificationsMinimalRaw(userId, includeDismissed),
         { label: "notifications:list" }
       );
+      loadedFresh = true;
     } catch (error) {
       if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
         throw error;
@@ -682,7 +710,11 @@ async function loadNotificationsListFresh(
       notifications = staleCachedNotifications ?? [];
     }
 
-    writeNotificationsListCache(listCacheKey, notifications);
+    if (loadedFresh) {
+      writeNotificationsListCache(listCacheKey, notifications);
+    } else {
+      writeNotificationsListDegradedFallback(listCacheKey, notifications);
+    }
     return notifications;
   })().finally(() => {
     notificationsListInFlight.delete(listCacheKey);
@@ -703,11 +735,13 @@ async function loadNotificationsUnreadCountFresh(
 
   const loadPromise = (async () => {
     let count = staleUnreadCount ?? 0;
+    let loadedFresh = false;
     try {
       count = await withPrismaRetry(
         () => countUnreadNotifications(userId),
         { label: "notifications:unread-count" }
       );
+      loadedFresh = true;
     } catch (error) {
       if (!isPrismaClientError(error) && !isPrismaSchemaDriftError(error)) {
         throw error;
@@ -718,7 +752,11 @@ async function loadNotificationsUnreadCountFresh(
       });
     }
 
-    writeNotificationsUnreadCountCache(userId, count);
+    if (loadedFresh) {
+      writeNotificationsUnreadCountCache(userId, count);
+    } else {
+      writeNotificationsUnreadCountDegradedFallback(userId, count);
+    }
     return count;
   })().finally(() => {
     notificationsUnreadCountInFlight.delete(userId);

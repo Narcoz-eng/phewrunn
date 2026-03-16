@@ -1140,6 +1140,26 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     };
     return c.json({ data: redisCached });
   }
+  if (staleCached) {
+    if (!dailyGainersInFlight) {
+      let trackedRequest: Promise<Array<unknown>>;
+      trackedRequest = (async () => {
+        const dailyGainers = await getDailyGainersRaw(trace);
+        dailyGainersCache = {
+          data: dailyGainers,
+          expiresAtMs: Date.now() + DAILY_GAINERS_CACHE_TTL_MS,
+        };
+        void cacheSetJson(redisKey, dailyGainers, DAILY_GAINERS_CACHE_TTL_MS);
+        return dailyGainers;
+      })().finally(() => {
+        if (dailyGainersInFlight === trackedRequest) {
+          dailyGainersInFlight = null;
+        }
+      });
+      dailyGainersInFlight = trackedRequest;
+    }
+    return c.json({ data: staleCached });
+  }
   if (dailyGainersInFlight) {
     try {
       const data = await dailyGainersInFlight;
@@ -1382,6 +1402,27 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     return c.json(redisCached);
   }
   const staleCached = cached?.data ?? null;
+  if (staleCached) {
+    if (!topUsersInFlight.has(topUsersCacheKey)) {
+      const request = withLeaderboardTimeout(
+        getTopUsersResponseRaw(trace, sortBy, page, limit),
+        "leaderboard.top-users"
+      )
+        .then((responsePayload) => {
+          topUsersCache.set(topUsersCacheKey, {
+            data: responsePayload,
+            expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
+          });
+          void cacheSetJson(redisKey, responsePayload, TOP_USERS_CACHE_TTL_MS);
+          return responsePayload;
+        })
+        .finally(() => {
+          topUsersInFlight.delete(topUsersCacheKey);
+        });
+      topUsersInFlight.set(topUsersCacheKey, request);
+    }
+    return c.json(staleCached);
+  }
   const inFlight = topUsersInFlight.get(topUsersCacheKey);
   if (inFlight) {
     try {
@@ -1451,6 +1492,12 @@ leaderboardRouter.get("/stats", async (c) => {
   if (redisCached) {
     writeLeaderboardStatsLocalCache(redisCached);
     return c.json({ data: redisCached });
+  }
+  if (staleCached) {
+    void queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace).catch((error) => {
+      logLeaderboardFallback("stats/background-refresh", error, true);
+    });
+    return c.json({ data: staleCached });
   }
   const snapshotCached = await readLeaderboardStatsSnapshot(cacheVersion);
   if (snapshotCached.fresh) {
