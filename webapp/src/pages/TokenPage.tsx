@@ -374,7 +374,11 @@ function getNormalizedHolderBadges(
     return [];
   }
 
-  return [...new Set(holder.badges)];
+  const badges = [...holder.badges];
+  if (holder.devRole && !badges.includes("dev_wallet")) {
+    badges.unshift("dev_wallet");
+  }
+  return [...new Set(badges)];
 }
 
 function getPrimaryHolderBadge(
@@ -1282,7 +1286,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v21:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v22:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(

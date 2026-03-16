@@ -707,6 +707,10 @@ function buildHolderBadges(params: {
     }
   }
 
+  if (params.devRole && !badges.includes("dev_wallet")) {
+    badges.unshift("dev_wallet");
+  }
+
   const priority: Record<TokenHolderBadge, number> = {
     dev_wallet: 99,
     serial_rugger: 1,
