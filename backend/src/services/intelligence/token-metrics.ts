@@ -1322,6 +1322,16 @@ export async function analyzeSolanaTokenDistribution(
           ruggedDeploymentCount: authorityHeuristic.ruggedDeploymentCount,
         }),
         devRole,
+        tradeSnapshot: (() => {
+          const snap = holderTradeSnapshotMap.get(walletAddress) ?? null;
+          if (!snap) return null;
+          return {
+            boughtAmount: snap.boughtAmount ?? null,
+            soldAmount: snap.soldAmount ?? null,
+            holdingAmount: snap.holdingAmount ?? null,
+            netAmount: snap.netAmount ?? null,
+          };
+        })(),
       };
     });
 

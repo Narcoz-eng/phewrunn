@@ -778,6 +778,7 @@ function mergeHolderSnapshot(
     solBalance: pickMergedMetric(primary.solBalance, fallback.solBalance, { positive: true }),
     badges: mergeHolderBadges(primary.badges, fallback.badges),
     devRole: primary.devRole ?? fallback.devRole ?? null,
+    tradeSnapshot: primary.tradeSnapshot ?? fallback.tradeSnapshot ?? null,
   };
 }
 
@@ -1337,7 +1338,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v25:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v26:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
