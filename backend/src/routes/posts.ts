@@ -360,6 +360,14 @@ const postPriceResponseCache = new Map<
     staleUntilMs: number;
   }
 >();
+const postPriceResponseInFlight = new Map<
+  string,
+  Promise<
+    | { state: "ok"; data: PostPriceResponsePayload }
+    | { state: "not_found" }
+    | { state: "unavailable" }
+  >
+>();
 const hasCronMaintenanceConfigured = !!process.env.CRON_SECRET?.trim();
 const POST_DETAIL_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 20_000 : 5_000;
 const POST_DETAIL_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
@@ -1273,6 +1281,73 @@ async function resolveCachedPostPricePayload(
   const payload = buildPostPricePayloadFromRecord(cachedPost);
   writePostPriceCache(postId, payload);
   return payload;
+}
+
+async function loadPostPricePayload(
+  postId: string
+): Promise<
+  | { state: "ok"; data: PostPriceResponsePayload }
+  | { state: "not_found" }
+  | { state: "unavailable" }
+> {
+  const cachedPayload = await resolveCachedPostPricePayload(postId);
+  if (cachedPayload) {
+    return { state: "ok", data: cachedPayload };
+  }
+
+  const existingRequest = postPriceResponseInFlight.get(postId);
+  if (existingRequest) {
+    return await existingRequest;
+  }
+
+  const request: Promise<
+    | { state: "ok"; data: PostPriceResponsePayload }
+    | { state: "not_found" }
+    | { state: "unavailable" }
+  > = (async () => {
+      let post: IntelligenceCallRecord | null = null;
+      let lookupError: unknown = null;
+      try {
+        post = await prisma.post.findUnique({
+          where: { id: postId },
+          select: INTELLIGENCE_CALL_SELECT,
+        });
+      } catch (error) {
+        if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
+          throw error;
+        }
+        lookupError = error;
+        console.warn("[posts/price] price lookup degraded; serving cached snapshot when possible", {
+          postId,
+          message: getErrorMessage(error),
+        });
+      }
+
+      if (!post && lookupError) {
+        const stalePayload = await resolveCachedPostPricePayload(postId, { allowStale: true });
+        return stalePayload
+          ? ({ state: "ok", data: stalePayload } as const)
+          : ({ state: "unavailable" } as const);
+      }
+
+      if (!post) {
+        return { state: "not_found" } as const;
+      }
+
+      const payloadById = new Map([[post.id, await resolvePostPricePayload(post)]]);
+      await attachRealtimeIntelligenceToPostPricePayloads([post], payloadById, "single");
+      const data = payloadById.get(post.id)!;
+      writePostPriceCache(post.id, data);
+      return { state: "ok", data } as const;
+    })().finally(() => {
+      const current = postPriceResponseInFlight.get(postId);
+      if (current === request) {
+        postPriceResponseInFlight.delete(postId);
+      }
+    });
+  postPriceResponseInFlight.set(postId, request);
+
+  return await request;
 }
 
 async function loadEmergencyFeedPosts(
@@ -6881,12 +6956,6 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
     return buildPostPricePayloadFromRecord(post);
   }
 
-  // Live post polling can still nudge settlement forward when cron is unavailable, but it
-  // must not run the heavier market-refresh job on this hot request path.
-  if (shouldRunOpportunisticMaintenance() && shouldTriggerMaintenanceForPost(post)) {
-    triggerSettlementCycleNonBlocking(`price:${post.id}`);
-  }
-
   const trackingMode = determineTrackingMode(post.createdAt);
   let finalMcap = post.currentMcap;
   let responseUpdatedAt = post.lastMcapUpdate ?? new Date();
@@ -8489,7 +8558,7 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
   const { ids } = c.req.valid("json");
   const uniqueIds = [...new Set(ids)].slice(0, 50);
   const freshCachedEntries = await Promise.all(
-    uniqueIds.map(async (id) => [id, await readPostPriceCache(id)] as const)
+    uniqueIds.map(async (id) => [id, await resolveCachedPostPricePayload(id)] as const)
   );
   const payloadById = new Map<string, PostPriceResponsePayload>();
   for (const [id, cached] of freshCachedEntries) {
@@ -8531,7 +8600,6 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
   }
 
   if (posts.length > 0) {
-    triggerMaintenanceForStaleCandidates("prices:batch", posts);
     const resolvedPayloadById = new Map(
       await Promise.all(
       posts.map(async (post) => {
@@ -8584,48 +8652,20 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
 postsRouter.get("/:id/price", async (c) => {
   c.header("Cache-Control", "no-store");
   const postId = c.req.param("id");
-
-  let post: IntelligenceCallRecord | null = null;
-  let lookupError: unknown = null;
-  try {
-    post = await prisma.post.findUnique({
-      where: { id: postId },
-      select: INTELLIGENCE_CALL_SELECT,
-    });
-  } catch (error) {
-    if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
-      throw error;
-    }
-    lookupError = error;
-    console.warn("[posts/price] price lookup degraded; serving cached snapshot when possible", {
-      postId,
-      message: getErrorMessage(error),
-    });
+  const result = await loadPostPricePayload(postId);
+  if (result.state === "ok") {
+    return c.json({ data: result.data });
   }
-
-  if (!post && lookupError) {
-    const cachedPayload = await resolveCachedPostPricePayload(postId, { allowStale: true });
-    if (cachedPayload) {
-      return c.json({ data: cachedPayload });
-    }
-    return c.json(
-      {
-        error: {
-          message: "Post price is temporarily unavailable. Please retry shortly.",
-          code: "POST_PRICE_UNAVAILABLE",
-        },
-      },
-      503
-    );
-  }
-
-  if (!post) {
+  if (result.state === "not_found") {
     return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
   }
-
-  const payloadById = new Map([[post.id, await resolvePostPricePayload(post)]]);
-  await attachRealtimeIntelligenceToPostPricePayloads([post], payloadById, "single");
-  const data = payloadById.get(post.id)!;
-  writePostPriceCache(post.id, data);
-  return c.json({ data });
+  return c.json(
+    {
+      error: {
+        message: "Post price is temporarily unavailable. Please retry shortly.",
+        code: "POST_PRICE_UNAVAILABLE",
+      },
+    },
+    503
+  );
 });

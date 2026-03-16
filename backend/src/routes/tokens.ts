@@ -58,7 +58,7 @@ const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
 const TOKEN_LIVE_DISTRIBUTION_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_ROUTE_CACHE_VERSION = 13;
+const TOKEN_ROUTE_CACHE_VERSION = 14;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
 const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();
@@ -77,10 +77,6 @@ function buildTokenRouteCacheKey(tokenAddress: string, viewerId: string | null):
 
 function buildTokenLiveRouteCacheKey(tokenAddress: string, options?: { fresh?: boolean }): string {
   return `route:token-live:${options?.fresh ? "fresh" : "default"}:${tokenAddress.trim().toLowerCase()}`;
-}
-
-function shouldUseTokenRouteCache(viewerId: string | null | undefined): boolean {
-  return !viewerId;
 }
 
 function readTokenRouteCache(key: string): TokenRoutePayload | null {
@@ -143,6 +139,26 @@ function invalidateTokenRouteCache(tokenAddress: string): void {
   const anonymousKey = buildTokenRouteCacheKey(tokenAddress, null);
   tokenRouteCache.delete(anonymousKey);
   void redisDelete(anonymousKey);
+}
+
+function stripViewerStateFromRecentCalls(
+  recentCalls: TokenRoutePayload["recentCalls"]
+): TokenRoutePayload["recentCalls"] {
+  return recentCalls.map((call) => ({
+    ...call,
+    isLiked: false,
+    isReposted: false,
+    isFollowingAuthor: false,
+    currentReactionType: null,
+  }));
+}
+
+function toSharedTokenRoutePayload(data: TokenRoutePayload): TokenRoutePayload {
+  return {
+    ...data,
+    isFollowing: false,
+    recentCalls: stripViewerStateFromRecentCalls(data.recentCalls),
+  };
 }
 
 function isMeaningfulTokenRoutePayload(token: TokenRoutePayload): boolean {
@@ -670,11 +686,18 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   const { tokenAddress } = c.req.valid("param");
   const viewer = c.get("user");
   const isPersonalized = Boolean(viewer?.id);
-  const shouldUseCache = shouldUseTokenRouteCache(viewer?.id ?? null);
-  const cacheKey = shouldUseCache ? buildTokenRouteCacheKey(tokenAddress, null) : null;
-  const cached = cacheKey ? await readBestEffortTokenRouteCache(cacheKey) : null;
+  const sharedCacheKey = buildTokenRouteCacheKey(tokenAddress, null);
+  const viewerCacheKey = viewer?.id ? buildTokenRouteCacheKey(tokenAddress, viewer.id) : sharedCacheKey;
+  const cachedViewerPayload = viewerCacheKey ? await readBestEffortTokenRouteCache(viewerCacheKey) : null;
+  const cachedSharedPayload =
+    viewerCacheKey !== sharedCacheKey ? await readBestEffortTokenRouteCache(sharedCacheKey) : cachedViewerPayload;
+  const cached = cachedViewerPayload ?? cachedSharedPayload;
   if (isPersonalized) {
     c.header("Vary", "Cookie");
+  }
+
+  if (cachedViewerPayload) {
+    return c.json({ data: cachedViewerPayload }, 200, buildTokenRouteHeaders(isPersonalized));
   }
 
   let overview;
@@ -697,8 +720,9 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   }
 
   const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : cached ?? overview.token;
-  if (cacheKey && isMeaningfulTokenRoutePayload(data)) {
-    writeBestEffortTokenRouteCache(cacheKey, data);
+  if (isMeaningfulTokenRoutePayload(data)) {
+    writeBestEffortTokenRouteCache(viewerCacheKey, data);
+    writeBestEffortTokenRouteCache(sharedCacheKey, toSharedTokenRoutePayload(data));
   }
 
   return c.json({ data }, 200, buildTokenRouteHeaders(isPersonalized));
