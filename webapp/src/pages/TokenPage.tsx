@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, BarChart3, Coins, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users } from "lucide-react";
+import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
@@ -988,6 +988,16 @@ export default function TokenPage() {
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("15");
   const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
 
+  const handleCopyTokenAddress = async () => {
+    if (!token?.address) return;
+    try {
+      await navigator.clipboard.writeText(token.address);
+      toast.success("Contract address copied");
+    } catch {
+      toast.error("Failed to copy contract address");
+    }
+  };
+
   const {
     data: tokenQueryData,
     isLoading,
@@ -1322,10 +1332,14 @@ export default function TokenPage() {
   }, [hasConsumedTradeDeepLink, primaryTradeCall, shouldAutoOpenTradePanel]);
 
   const showTokenLoading = !token && isLoading;
-  const topHolders = token?.topHolders.length
-    ? token.topHolders
-    : (token?.risk.topHolders ?? []);
-  const devWallet = token?.devWallet ?? token?.risk.devWallet ?? null;
+  const topHolders = token
+    ? mergeTopHolderSnapshots(token.topHolders, token.risk.topHolders ?? [])
+    : [];
+  const devWallet = token
+    ? token.devWallet
+      ? mergeHolderSnapshot(token.devWallet, token.risk.devWallet ?? undefined)
+      : token.risk.devWallet ?? null
+    : null;
   const devPositionStatus = getDevPositionStatus(devWallet);
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
@@ -1477,7 +1491,19 @@ export default function TokenPage() {
                           </span>
                         ) : null}
                       </div>
-                      <p className="mt-1 break-all text-xs text-muted-foreground">{token.address}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <p className="min-w-0 break-all text-xs text-muted-foreground">{token.address}</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleCopyTokenAddress}
+                          className="h-7 w-7 shrink-0 rounded-full border-border/60 bg-secondary text-muted-foreground hover:text-foreground"
+                          aria-label="Copy contract address"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                       {token.earlyRunnerReasons?.length ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {token.earlyRunnerReasons.map((reason) => (
