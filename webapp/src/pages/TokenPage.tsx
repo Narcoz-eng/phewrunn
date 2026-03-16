@@ -374,11 +374,7 @@ function getNormalizedHolderBadges(
     return [];
   }
 
-  const badges = [...holder.badges];
-  if (holder.devRole && !badges.includes("dev_wallet")) {
-    badges.unshift("dev_wallet");
-  }
-  return [...new Set(badges)];
+  return [...new Set(holder.badges)];
 }
 
 function getPrimaryHolderBadge(
@@ -590,7 +586,14 @@ function hasResolvedHolderRoleFields(
     return false;
   }
 
-  return Boolean(holder.badges.length > 0 || holder.devRole !== null);
+  return Boolean(
+    holder.badges.length > 0 ||
+      holder.activeAgeDays !== null ||
+      holder.fundedBy !== null ||
+      holder.tradeVolume90dSol !== null ||
+      holder.solBalance !== null ||
+      (typeof holder.label === "string" && holder.label.trim().length > 0)
+  );
 }
 
 function hasResolvedHolderRoleIntelligence(
@@ -603,10 +606,7 @@ function hasResolvedHolderRoleIntelligence(
     return false;
   }
 
-  return (
-    token.topHolders.some((holder) => hasResolvedHolderRoleFields(holder)) ||
-    hasResolvedHolderRoleFields(token.devWallet)
-  );
+  return token.topHolders.some((holder) => hasResolvedHolderRoleFields(holder));
 }
 
 function normalizeHolderIdentifier(value: string | null | undefined): string | null {
@@ -1271,7 +1271,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v19:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v20:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
@@ -1672,8 +1672,8 @@ export default function TokenPage() {
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
   const topHolderSectionCopy = holderIntelligencePending
-    ? "Scanning top wallets, role tags, and developer-wallet intelligence for this token."
-    : "Top wallets, role tags, and developer-wallet intelligence from the latest chain scan.";
+    ? "Scanning top wallets and role tags for this token."
+    : "Top wallets and role tags from the latest chain scan.";
   const recentCallsEmptyCopy =
     isLoading || isFetching
       ? "Recent token calls are still loading for this address."
@@ -2261,7 +2261,7 @@ export default function TokenPage() {
                     ) : (
                       <p className="text-sm text-muted-foreground">
                         {holderIntelligencePending
-                          ? "Scanning holder wallets and developer-wallet intelligence for this token."
+                          ? "Scanning holder wallets and role tags for this token."
                           : "No holder wallets were returned by the latest chain scan."}
                       </p>
                     )}

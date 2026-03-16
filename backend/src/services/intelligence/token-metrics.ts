@@ -163,24 +163,20 @@ const TOKEN_DISTRIBUTION_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 
 const TOKEN_DISTRIBUTION_STALE_TTL_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 90_000;
 const TOKEN_DISTRIBUTION_RETRY_MS = process.env.NODE_ENV === "production" ? 30_000 : 7_500;
 const TOKEN_DISTRIBUTION_VISIBLE_REFRESH_MS = process.env.NODE_ENV === "production" ? 4_500 : 1_500;
-const FRESH_WALLET_DAYS_THRESHOLD = 5;
-const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 5;
+const FRESH_WALLET_DAYS_THRESHOLD = 3;
+const OBSERVED_FRESH_WALLET_DAYS_THRESHOLD = 3;
 const LOW_HISTORY_MINT_THRESHOLD = 2;
 const LOW_HISTORY_TX_THRESHOLD = 12;
-const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 180;
-const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 75;
-const HIGH_ACTIVITY_MINTS_THRESHOLD = 6;
+const HIGH_VOLUME_TRADER_SOL_THRESHOLD = 120;
+const SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD = 70;
+const HIGH_ACTIVITY_MINTS_THRESHOLD = 4;
 const HIGH_ACTIVITY_TX_THRESHOLD = 18;
-const WHALE_BALANCE_SOL_THRESHOLD = 250;
-const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 200;
-const WHALE_BALANCE_USD_THRESHOLD = 45_000;
-const SOFT_WHALE_BALANCE_USD_THRESHOLD = 35_000;
-const ULTRA_DEGEN_TRADE_VOLUME_SOL_THRESHOLD = 220;
-const SOFT_ULTRA_DEGEN_TRADE_VOLUME_SOL_THRESHOLD = 90;
-const ULTRA_DEGEN_DISTINCT_MINTS_THRESHOLD = 9;
-const SOFT_ULTRA_DEGEN_DISTINCT_MINTS_THRESHOLD = 5;
-const ULTRA_DEGEN_TX_THRESHOLD = 36;
-const SOFT_ULTRA_DEGEN_TX_THRESHOLD = 18;
+const WHALE_BALANCE_SOL_THRESHOLD = 300;
+const SOFT_WHALE_BALANCE_SOL_THRESHOLD = 240;
+const WHALE_BALANCE_USD_THRESHOLD = 48_000;
+const SOFT_WHALE_BALANCE_USD_THRESHOLD = 38_000;
+const ULTRA_DEGEN_TOKEN_HOLDINGS_USD_THRESHOLD = 50_000;
+const SOFT_ULTRA_DEGEN_TOKEN_HOLDINGS_USD_THRESHOLD = 35_000;
 const SERIAL_DEPLOYER_ASSET_THRESHOLD = 5;
 const SERIAL_RUGGER_DEPLOYMENT_THRESHOLD = 3;
 const HOLDER_ACTIVITY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -278,7 +274,14 @@ function hasResolvedHolderRoleFields(
     return false;
   }
 
-  return Boolean(holder.badges.length > 0 || holder.devRole !== null);
+  return Boolean(
+    holder.badges.length > 0 ||
+      holder.activeAgeDays !== null ||
+      holder.fundedBy !== null ||
+      holder.tradeVolume90dSol !== null ||
+      holder.solBalance !== null ||
+      (typeof holder.label === "string" && holder.label.trim().length > 0)
+  );
 }
 
 function hasResolvedHolderRoleIntelligence(snapshot: TokenDistributionSnapshot | null | undefined): boolean {
@@ -286,10 +289,7 @@ function hasResolvedHolderRoleIntelligence(snapshot: TokenDistributionSnapshot |
     return false;
   }
 
-  return (
-    snapshot.topHolders.some((holder) => hasResolvedHolderRoleFields(holder)) ||
-    hasResolvedHolderRoleFields(snapshot.devWallet)
-  );
+  return snapshot.topHolders.some((holder) => hasResolvedHolderRoleFields(holder));
 }
 
 function cloneDistributionSnapshot(
@@ -593,6 +593,7 @@ function isLikelySolanaWallet(value: string | null | undefined): value is string
 function buildHolderBadges(params: {
   supplyPct: number;
   balanceUsd: number | null;
+  nonBaseTokenHoldingsUsd: number | null;
   activeAgeDays: number | null;
   tradeVolume90dSol: number | null;
   balanceSol: number | null;
@@ -612,8 +613,11 @@ function buildHolderBadges(params: {
     params.tradeVolume90dSol !== null && Number.isFinite(params.tradeVolume90dSol)
       ? params.tradeVolume90dSol / observedTradingDays
       : null;
+  const externalTokenHoldingsUsd =
+    params.nonBaseTokenHoldingsUsd !== null && Number.isFinite(params.nonBaseTokenHoldingsUsd)
+      ? Math.max(0, params.nonBaseTokenHoldingsUsd)
+      : null;
 
-  if (params.devRole) badges.push("dev_wallet");
   if (
     params.authorityAssetCount !== null &&
     params.authorityAssetCount >= SERIAL_DEPLOYER_ASSET_THRESHOLD &&
@@ -627,22 +631,7 @@ function buildHolderBadges(params: {
   ) {
     badges.push("serial_deployer");
   }
-  if (
-    (
-      params.tradeVolume90dSol !== null &&
-      params.tradeVolume90dSol >= ULTRA_DEGEN_TRADE_VOLUME_SOL_THRESHOLD &&
-      (
-        params.distinctMintsTraded >= ULTRA_DEGEN_DISTINCT_MINTS_THRESHOLD ||
-        params.observedTxCount >= ULTRA_DEGEN_TX_THRESHOLD
-      )
-    ) ||
-    (
-      avgDailyTradeSol !== null &&
-      avgDailyTradeSol >= 3 &&
-      params.distinctMintsTraded >= Math.max(6, ULTRA_DEGEN_DISTINCT_MINTS_THRESHOLD - 1) &&
-      params.observedTxCount >= 20
-    )
-  ) {
+  if (externalTokenHoldingsUsd !== null && externalTokenHoldingsUsd >= ULTRA_DEGEN_TOKEN_HOLDINGS_USD_THRESHOLD) {
     badges.push("ultra_degen");
   }
   if (
@@ -654,39 +643,30 @@ function buildHolderBadges(params: {
   if (
     (
       params.tradeVolume90dSol !== null &&
-      params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD
+      params.tradeVolume90dSol >= HIGH_VOLUME_TRADER_SOL_THRESHOLD &&
+      params.observedTxCount >= HIGH_ACTIVITY_TX_THRESHOLD &&
+      params.distinctMintsTraded >= HIGH_ACTIVITY_MINTS_THRESHOLD
     ) ||
     (
       avgDailyTradeSol !== null &&
-      avgDailyTradeSol >= 2 &&
+      avgDailyTradeSol >= 1.5 &&
       params.tradeVolume90dSol !== null &&
-      params.tradeVolume90dSol >= 30
+      params.tradeVolume90dSol >= 45 &&
+      params.observedTxCount >= 12
     )
   ) {
     badges.push("high_volume_trader");
   }
-  if (params.activeAgeDays !== null && params.activeAgeDays <= FRESH_WALLET_DAYS_THRESHOLD) {
+  if (params.activeAgeDays !== null && params.activeAgeDays < FRESH_WALLET_DAYS_THRESHOLD) {
     badges.push("fresh_wallet");
   }
 
   if (badges.length === 0) {
-    if (params.authorityAssetCount !== null && params.authorityAssetCount >= 2) {
+    if (params.authorityAssetCount !== null && params.authorityAssetCount >= 3) {
       badges.push("serial_deployer");
     } else if (
-      (
-        params.tradeVolume90dSol !== null &&
-        params.tradeVolume90dSol >= SOFT_ULTRA_DEGEN_TRADE_VOLUME_SOL_THRESHOLD &&
-        (
-          params.distinctMintsTraded >= SOFT_ULTRA_DEGEN_DISTINCT_MINTS_THRESHOLD ||
-          params.observedTxCount >= SOFT_ULTRA_DEGEN_TX_THRESHOLD
-        )
-      ) ||
-      (
-        avgDailyTradeSol !== null &&
-        avgDailyTradeSol >= 1.4 &&
-        params.distinctMintsTraded >= 4 &&
-        params.observedTxCount >= 12
-      )
+      externalTokenHoldingsUsd !== null &&
+      externalTokenHoldingsUsd >= SOFT_ULTRA_DEGEN_TOKEN_HOLDINGS_USD_THRESHOLD
     ) {
       badges.push("ultra_degen");
     } else if (
@@ -697,7 +677,9 @@ function buildHolderBadges(params: {
     } else if (
       (
         params.tradeVolume90dSol !== null &&
-        params.tradeVolume90dSol >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD
+        params.tradeVolume90dSol >= SOFT_HIGH_VOLUME_TRADER_SOL_THRESHOLD &&
+        params.observedTxCount >= 10 &&
+        params.distinctMintsTraded >= 3
       ) ||
       (
         avgDailyTradeSol !== null &&
@@ -726,7 +708,7 @@ function buildHolderBadges(params: {
   }
 
   const priority: Record<TokenHolderBadge, number> = {
-    dev_wallet: 0,
+    dev_wallet: 99,
     serial_rugger: 1,
     serial_deployer: 2,
     ultra_degen: 3,
@@ -1171,6 +1153,7 @@ export async function analyzeSolanaTokenDistribution(
           await getWalletActivityProfile({
             walletAddress: address,
             sinceMs: Date.now() - HOLDER_ACTIVITY_LOOKBACK_MS,
+            excludeMints: [mintAddress],
           }),
         ] as const)
       ),
@@ -1180,6 +1163,7 @@ export async function analyzeSolanaTokenDistribution(
           await getWalletActivityProfile({
             walletAddress: address,
             sinceMs: null,
+            excludeMints: [mintAddress],
           }),
         ] as const)
       ),
@@ -1247,10 +1231,10 @@ export async function analyzeSolanaTokenDistribution(
       return {
         ...holder,
         label:
-          devRole === "creator" && walletAddress === creatorHistoryWalletAddress
-            ? "Detected from earliest mint signer"
-            : (activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0) > 0
-              ? `${activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0} mints traded`
+          (activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0) > 0
+            ? `${activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0} mints traded`
+            : authorityHeuristic.authorityAssetCount !== null && authorityHeuristic.authorityAssetCount >= 2
+              ? `${authorityHeuristic.authorityAssetCount} launches tracked`
               : null,
         domain: null,
         accountType: null,
@@ -1267,6 +1251,8 @@ export async function analyzeSolanaTokenDistribution(
         badges: buildHolderBadges({
           supplyPct: holder.supplyPct,
           balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
+          nonBaseTokenHoldingsUsd:
+            activity?.nonBaseTokenHoldingsUsd ?? devProfile?.nonBaseTokenHoldingsUsd ?? null,
           activeAgeDays:
             activity?.observedAgeDays ??
             devProfile?.observedAgeDays ??
@@ -1331,13 +1317,11 @@ export async function analyzeSolanaTokenDistribution(
           supplyPct,
           valueUsd: devHolding?.holdingUsd ?? null,
           label:
-            devRole === "creator"
-              ? walletAddress === creatorHistoryWalletAddress
-                ? "Detected from earliest mint signer"
-                : "Detected from token creation authority"
-              : devRole === "mint_authority"
-                ? "Detected from mint authority on-chain"
-                : "Detected from freeze authority on-chain",
+            (activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0) > 0
+              ? `${activity?.distinctMintsTraded ?? devProfile?.distinctMintsTraded ?? 0} mints traded`
+              : authorityHeuristic.authorityAssetCount !== null && authorityHeuristic.authorityAssetCount >= 2
+                ? `${authorityHeuristic.authorityAssetCount} launches tracked`
+                : null,
           domain: null,
           accountType: null,
           activeAgeDays:
@@ -1353,6 +1337,8 @@ export async function analyzeSolanaTokenDistribution(
           badges: buildHolderBadges({
             supplyPct,
             balanceUsd: activity?.balanceUsd ?? devProfile?.balanceUsd ?? null,
+            nonBaseTokenHoldingsUsd:
+              activity?.nonBaseTokenHoldingsUsd ?? devProfile?.nonBaseTokenHoldingsUsd ?? null,
             activeAgeDays:
               activity?.observedAgeDays ??
               devProfile?.observedAgeDays ??

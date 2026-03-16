@@ -45,7 +45,7 @@ const FEED_LIST_SOFT_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
-const TOKEN_OVERVIEW_CACHE_VERSION = 6;
+const TOKEN_OVERVIEW_CACHE_VERSION = 7;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
 const TOKEN_LOOKUP_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
@@ -1210,23 +1210,27 @@ function hasVerifiedSolanaHolderCount(
 }
 
 function hasResolvedHolderRoleFields(
-  holder: Pick<TokenHolderSnapshot, "badges" | "devRole"> | null | undefined
+  holder: Pick<TokenHolderSnapshot, "badges" | "devRole" | "activeAgeDays" | "fundedBy" | "tradeVolume90dSol" | "solBalance" | "label"> | null | undefined
 ): boolean {
   if (!holder) {
     return false;
   }
 
-  return holder.badges.length > 0 || holder.devRole !== null;
+  return Boolean(
+    holder.badges.length > 0 ||
+      holder.activeAgeDays !== null ||
+      holder.fundedBy !== null ||
+      holder.tradeVolume90dSol !== null ||
+      holder.solBalance !== null ||
+      (typeof holder.label === "string" && holder.label.trim().length > 0)
+  );
 }
 
 function hasResolvedHolderRoleIntelligence(
   topHolders: TokenHolderSnapshot[] | null | undefined,
   devWallet: TokenHolderSnapshot | null | undefined
 ): boolean {
-  return Boolean(
-    (topHolders ?? []).some((holder) => hasResolvedHolderRoleFields(holder)) ||
-      hasResolvedHolderRoleFields(devWallet)
-  );
+  return Boolean((topHolders ?? []).some((holder) => hasResolvedHolderRoleFields(holder)));
 }
 
 function toNumber(value: number | bigint | string | null | undefined): number | null {

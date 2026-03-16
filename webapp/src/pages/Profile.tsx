@@ -445,11 +445,7 @@ export default function Profile() {
       return failureCount < 1;
     },
   });
-  const shouldBackfillProfileCounters =
-    Boolean(session?.user?.id) &&
-    (!hasCompleteProfileCounters(user ?? sessionBackedProfile) ||
-      hasOnlyZeroProfileCounters(user ?? sessionBackedProfile) ||
-      hasSuspiciousZeroSocialCounts(user ?? sessionBackedProfile));
+  const shouldBackfillProfileCounters = Boolean(session?.user?.id);
   const { data: publicProfileCounters } = useQuery({
     queryKey: ["profile", "me", "public-counters", session?.user?.id ?? "anonymous"],
     queryFn: async () => {

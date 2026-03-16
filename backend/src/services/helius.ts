@@ -43,6 +43,7 @@ export type WalletActivityProfile = {
   walletAddress: string;
   balanceSol: number | null;
   balanceUsd: number | null;
+  nonBaseTokenHoldingsUsd: number | null;
   totalTradeVolumeSol: number | null;
   distinctMintsTraded: number;
   observedAgeDays: number | null;
@@ -242,6 +243,8 @@ const HELIUS_RPC_URL =
   null;
 
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const SOLANA_WALLET_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -266,6 +269,7 @@ const heliusAuthorityAssetSummaryCache = new Map<string, { value: HeliusAuthorit
 const heliusAuthorityAssetSummaryInFlight = new Map<string, Promise<HeliusAuthorityAssetSummary | null>>();
 const heliusMintCreatorCache = new Map<string, { value: MintCreatorResolution | null; expiresAtMs: number }>();
 const heliusMintCreatorInFlight = new Map<string, Promise<MintCreatorResolution | null>>();
+const NON_BASE_TOKEN_EXCLUDE_MINTS = new Set<string>([WRAPPED_SOL_MINT, USDC_MINT, USDT_MINT]);
 
 function isLikelySolanaAddress(value: string | null | undefined): value is string {
   return typeof value === "string" && SOLANA_WALLET_REGEX.test(value);
@@ -955,6 +959,38 @@ function roundMoney(value: number | null): number | null {
   return Math.round(value * 100) / 100;
 }
 
+async function estimateWalletNonBaseTokenHoldingsUsd(params: {
+  base: WalletBaseSnapshot;
+  excludeMints?: Array<string | null | undefined>;
+}): Promise<number | null> {
+  const excludeMints = new Set(
+    [
+      ...NON_BASE_TOKEN_EXCLUDE_MINTS,
+      ...(params.excludeMints ?? []).filter((mint): mint is string => isLikelySolanaAddress(mint)),
+    ].map((mint) => mint.trim())
+  );
+  const candidateMints = [...params.base.holdingsByMint.entries()]
+    .filter(([mint, holding]) => !excludeMints.has(mint) && Number.isFinite(holding.amount) && holding.amount > 0)
+    .map(([mint]) => mint);
+  if (candidateMints.length === 0) {
+    return 0;
+  }
+
+  const prices = await Promise.all(candidateMints.map(async (mint) => [mint, await fetchDexTokenPriceUsd(mint)] as const));
+  let totalUsd = 0;
+  let resolvedAnyValue = false;
+  for (const [mint, priceUsd] of prices) {
+    const amount = params.base.holdingsByMint.get(mint)?.amount ?? 0;
+    if (!Number.isFinite(amount) || amount <= 0 || priceUsd === null || !Number.isFinite(priceUsd) || priceUsd <= 0) {
+      continue;
+    }
+    totalUsd += amount * priceUsd;
+    resolvedAnyValue = true;
+  }
+
+  return resolvedAnyValue ? roundMoney(totalUsd) : null;
+}
+
 function buildTokenSnapshotFromBase(params: {
   mint: string;
   base: WalletBaseSnapshot;
@@ -1068,12 +1104,18 @@ export async function getWalletPortfolioOverviewForPostedTokens(params: {
 export async function getWalletActivityProfile(params: {
   walletAddress: string | null | undefined;
   sinceMs?: number | null;
+  excludeMints?: Array<string | null | undefined>;
 }): Promise<WalletActivityProfile | null> {
   if (!HELIUS_RPC_URL) return null;
   if (!isLikelySolanaAddress(params.walletAddress)) return null;
 
   const base = await getWalletBaseSnapshot({ walletAddress: params.walletAddress, sinceMs: params.sinceMs ?? null });
   if (!base) return null;
+
+  const nonBaseTokenHoldingsUsd = await estimateWalletNonBaseTokenHoldingsUsd({
+    base,
+    excludeMints: params.excludeMints,
+  });
 
   let totalTradeVolumeSol = 0;
   for (const trade of base.tradeByMint.values()) {
@@ -1098,6 +1140,7 @@ export async function getWalletActivityProfile(params: {
     walletAddress: params.walletAddress,
     balanceSol: base.balanceSol,
     balanceUsd,
+    nonBaseTokenHoldingsUsd,
     totalTradeVolumeSol: totalTradeVolumeSol > 0 ? roundMoney(totalTradeVolumeSol) : null,
     distinctMintsTraded: base.tradeByMint.size,
     observedAgeDays,

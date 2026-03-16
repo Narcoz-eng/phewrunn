@@ -58,7 +58,7 @@ const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_
 const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
-const TOKEN_ROUTE_CACHE_VERSION = 16;
+const TOKEN_ROUTE_CACHE_VERSION = 17;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
 const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();
@@ -434,7 +434,14 @@ function hasResolvedHolderRoleFields(
     return false;
   }
 
-  return Boolean(holder.badges.length > 0 || holder.devRole !== null);
+  return Boolean(
+    holder.badges.length > 0 ||
+      holder.activeAgeDays !== null ||
+      holder.fundedBy !== null ||
+      holder.tradeVolume90dSol !== null ||
+      holder.solBalance !== null ||
+      (typeof holder.label === "string" && holder.label.trim().length > 0)
+  );
 }
 
 function hasResolvedHolderRoleIntelligence(
@@ -446,10 +453,7 @@ function hasResolvedHolderRoleIntelligence(
     | null
     | undefined
 ): boolean {
-  return Boolean(
-    (topHolders ?? []).some((holder) => hasResolvedHolderRoleFields(holder)) ||
-      hasResolvedHolderRoleFields(devWallet)
-  );
+  return Boolean((topHolders ?? []).some((holder) => hasResolvedHolderRoleFields(holder)));
 }
 
 function needsFreshSolanaHolderDistributionSnapshot(
