@@ -468,11 +468,9 @@ async function readLeaderboardStatsSnapshot(
       return { fresh: payload, stale: payload };
     }
 
-    const isUsableStale =
-      snapshot.capturedAt.getTime() + LEADERBOARD_STATS_STALE_REVALIDATE_MS > now;
     return {
       fresh: null,
-      stale: isUsableStale ? payload : null,
+      stale: payload,
     };
   } catch (error) {
     console.warn("[leaderboard] stats snapshot read failed", {

@@ -395,6 +395,21 @@ type RawNotificationRow = {
   postContractAddress: string | null;
 };
 
+type RawNotificationFallbackRow = {
+  id: string;
+  userId: string;
+  type: string;
+  message: string;
+  read: boolean | null;
+  entityType: string | null;
+  entityId: string | null;
+  reasonCode: string | null;
+  payload: Prisma.JsonValue | null;
+  postId: string | null;
+  fromUserId: string | null;
+  createdAt: Date;
+};
+
 function mapRawNotificationRow(row: RawNotificationRow) {
   return {
     id: row.id,
@@ -424,6 +439,25 @@ function mapRawNotificationRow(row: RawNotificationRow) {
           contractAddress: row.postContractAddress ?? null,
         }
       : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapFallbackNotificationRow(row: RawNotificationFallbackRow) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    type: row.type,
+    message: row.message,
+    read: row.read === true,
+    entityType: row.entityType ?? null,
+    entityId: row.entityId ?? null,
+    reasonCode: row.reasonCode ?? null,
+    payload: row.payload ?? null,
+    postId: row.postId ?? null,
+    fromUserId: row.fromUserId ?? null,
+    fromUser: null,
+    post: null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -494,6 +528,60 @@ async function queryNotificationsRaw(userId: string, includeDismissed: boolean):
       LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
     `);
     return rows.map(mapRawNotificationRow);
+  }
+}
+
+async function queryNotificationsMinimalRaw(
+  userId: string,
+  includeDismissed: boolean
+): Promise<unknown[]> {
+  const dismissedCondition = includeDismissed ? Prisma.sql`` : Prisma.sql`AND n.dismissed = false`;
+  try {
+    const rows = await prisma.$queryRaw<RawNotificationFallbackRow[]>(Prisma.sql`
+      SELECT
+        n.id,
+        n."userId",
+        n.type,
+        n.message,
+        n.read,
+        n."entityType",
+        n."entityId",
+        n."reasonCode",
+        n.payload,
+        n."postId",
+        n."fromUserId",
+        n."createdAt"
+      FROM "Notification" n
+      WHERE n."userId" = ${userId}
+      ${dismissedCondition}
+      ORDER BY n."createdAt" DESC
+      LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
+    `);
+    return rows.map(mapFallbackNotificationRow);
+  } catch (error) {
+    if (!isPrismaMissingColumnError(error, "dismissed")) {
+      throw error;
+    }
+    const rows = await prisma.$queryRaw<RawNotificationFallbackRow[]>(Prisma.sql`
+      SELECT
+        n.id,
+        n."userId",
+        n.type,
+        n.message,
+        n.read,
+        n."entityType",
+        n."entityId",
+        n."reasonCode",
+        n.payload,
+        n."postId",
+        n."fromUserId",
+        n."createdAt"
+      FROM "Notification" n
+      WHERE n."userId" = ${userId}
+      ORDER BY n."createdAt" DESC
+      LIMIT ${Prisma.raw(String(NOTIFICATIONS_LIST_LIMIT))}
+    `);
+    return rows.map(mapFallbackNotificationRow);
   }
 }
 
@@ -595,9 +683,9 @@ async function loadNotificationsListFresh(
         notifications = staleCachedNotifications ?? [];
       } else {
         try {
-          notifications = await queryNotificationsRaw(userId, includeDismissed);
+          notifications = await queryNotificationsMinimalRaw(userId, includeDismissed);
         } catch (rawError) {
-          console.warn("[notifications/list] raw fallback unavailable; returning cached or empty notifications", {
+          console.warn("[notifications/list] fallback unavailable; returning cached or empty notifications", {
             message: getErrorMessage(rawError),
           });
           notifications = staleCachedNotifications ?? [];
@@ -790,13 +878,21 @@ notificationsRouter.get("/", requireAuth, async (c) => {
   if (cachedNotifications) {
     return c.json({ data: cachedNotifications });
   }
-  const notifications = await loadNotificationsListFresh(
-    listCacheKey,
-    user.id,
-    includeDismissed,
-    staleCachedNotifications
-  );
-  return c.json({ data: notifications });
+  try {
+    const notifications = await loadNotificationsListFresh(
+      listCacheKey,
+      user.id,
+      includeDismissed,
+      staleCachedNotifications
+    );
+    return c.json({ data: notifications });
+  } catch (error) {
+    logNotificationsQueryFailure("notification.list", error, {
+      userId: user.id,
+      includeDismissed,
+    });
+    return c.json({ data: staleCachedNotifications ?? [] });
+  }
 });
 
 // Get unread notification count (excludes dismissed)
@@ -812,9 +908,16 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
   if (cachedUnreadCount !== null) {
     return c.json({ data: { count: cachedUnreadCount } });
   }
-  const count = await loadNotificationsUnreadCountFresh(user.id, staleUnreadCount);
-  writeNotificationsUnreadCountCache(user.id, count);
-  return c.json({ data: { count } });
+  try {
+    const count = await loadNotificationsUnreadCountFresh(user.id, staleUnreadCount);
+    writeNotificationsUnreadCountCache(user.id, count);
+    return c.json({ data: { count } });
+  } catch (error) {
+    logNotificationsQueryFailure("notification.count", error, {
+      userId: user.id,
+    });
+    return c.json({ data: { count: staleUnreadCount ?? 0 } });
+  }
 });
 
 // Mark notification as read
