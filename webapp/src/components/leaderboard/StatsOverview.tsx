@@ -9,6 +9,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getAvatarUrl } from "@/types";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   Users,
   Activity,
@@ -106,15 +107,37 @@ interface StatsOverviewProps {
   enabled?: boolean;
 }
 
+const PLATFORM_STATS_CACHE_KEY = "phew.leaderboard.stats:v1";
+const PLATFORM_STATS_CACHE_TTL_MS = 15 * 60_000;
+
+function hasMeaningfulPlatformStats(stats: PlatformStats | null | undefined): boolean {
+  if (!stats) return false;
+  return (
+    stats.alphas.total > 0 ||
+    stats.totalUsers > 0 ||
+    stats.activeUsers.today > 0 ||
+    stats.topUsersThisWeek.length > 0 ||
+    stats.levelDistribution.some((entry) => entry.count > 0)
+  );
+}
+
 export function StatsOverview({ enabled = true }: StatsOverviewProps) {
   const navigate = useNavigate();
+  const cachedStats = readSessionCache<PlatformStats>(PLATFORM_STATS_CACHE_KEY, PLATFORM_STATS_CACHE_TTL_MS);
   const { data: stats, isLoading, error, refetch } = useQuery({
     queryKey: ["leaderboard", "stats"],
     queryFn: async () => {
       const data = await api.get<PlatformStats>("/api/leaderboard/stats");
-      return data;
+      const resolved = hasMeaningfulPlatformStats(data) ? data : cachedStats ?? data;
+      if (hasMeaningfulPlatformStats(resolved)) {
+        writeSessionCache(PLATFORM_STATS_CACHE_KEY, resolved);
+      }
+      return resolved;
     },
     enabled,
+    initialData: cachedStats ?? undefined,
+    initialDataUpdatedAt: cachedStats ? Date.now() : undefined,
+    placeholderData: (previousData) => previousData ?? cachedStats ?? undefined,
     refetchOnWindowFocus: false,
     retry: 0,
     staleTime: 10 * 60 * 1000, // Consider data stale after 10 minutes
@@ -153,7 +176,7 @@ export function StatsOverview({ enabled = true }: StatsOverviewProps) {
     );
   }
 
-  if (error || !stats) {
+  if ((error && !cachedStats) || !stats) {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
         <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">

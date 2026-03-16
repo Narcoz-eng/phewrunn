@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getAvatarUrl, type Post, formatMarketCap, formatTimeAgo } from "@/types";
 import { buildProfilePath } from "@/lib/profile-path";
 import { cn } from "@/lib/utils";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import {
   Award,
   Flame,
@@ -61,6 +62,10 @@ function hasMeaningfulFirstCallerRows(
 ): rows is FirstCallerRow[] {
   return Array.isArray(rows) && rows.length > 0;
 }
+
+const DAILY_LEADERBOARDS_CACHE_KEY = "phew.leaderboards.daily:v1";
+const FIRST_CALLERS_CACHE_KEY = "phew.leaderboards.first-callers:v1";
+const LEADERBOARDS_CACHE_TTL_MS = 15 * 60_000;
 
 function BoardSkeleton({ rows = 4 }: { rows?: number }) {
   return (
@@ -307,6 +312,8 @@ interface IntelligenceLeaderboardsProps {
 
 export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderboardsProps) {
   const [firstCallersReady, setFirstCallersReady] = useState(false);
+  const cachedDaily = readSessionCache<DailyLeaderboards>(DAILY_LEADERBOARDS_CACHE_KEY, LEADERBOARDS_CACHE_TTL_MS);
+  const cachedFirstCallers = readSessionCache<FirstCallerRow[]>(FIRST_CALLERS_CACHE_KEY, LEADERBOARDS_CACHE_TTL_MS);
 
   useEffect(() => {
     setFirstCallersReady(false);
@@ -327,9 +334,18 @@ export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderb
     refetch: refetchDaily,
   } = useQuery({
     queryKey: ["leaderboards", "daily"],
-    queryFn: () => api.get<DailyLeaderboards>("/api/leaderboards/daily"),
+    queryFn: async () => {
+      const liveData = await api.get<DailyLeaderboards>("/api/leaderboards/daily");
+      const resolved = hasMeaningfulDailyLeaderboards(liveData) ? liveData : cachedDaily ?? liveData;
+      if (hasMeaningfulDailyLeaderboards(resolved)) {
+        writeSessionCache(DAILY_LEADERBOARDS_CACHE_KEY, resolved);
+      }
+      return resolved;
+    },
     enabled,
-    placeholderData: (previousData) => previousData,
+    initialData: cachedDaily ?? undefined,
+    initialDataUpdatedAt: cachedDaily ? Date.now() : undefined,
+    placeholderData: (previousData) => previousData ?? cachedDaily ?? undefined,
     refetchOnWindowFocus: false,
     retry: 0,
     staleTime: 90_000,
@@ -344,9 +360,18 @@ export function IntelligenceLeaderboards({ enabled = true }: IntelligenceLeaderb
     refetch: refetchFirstCallers,
   } = useQuery({
     queryKey: ["leaderboards", "first-callers"],
-    queryFn: () => api.get<FirstCallerRow[]>("/api/leaderboards/first-callers"),
+    queryFn: async () => {
+      const liveData = await api.get<FirstCallerRow[]>("/api/leaderboards/first-callers");
+      const resolved = hasMeaningfulFirstCallerRows(liveData) ? liveData : cachedFirstCallers ?? liveData;
+      if (hasMeaningfulFirstCallerRows(resolved)) {
+        writeSessionCache(FIRST_CALLERS_CACHE_KEY, resolved);
+      }
+      return resolved;
+    },
     enabled: enabled && firstCallersReady,
-    placeholderData: (previousData) => previousData,
+    initialData: cachedFirstCallers ?? undefined,
+    initialDataUpdatedAt: cachedFirstCallers ? Date.now() : undefined,
+    placeholderData: (previousData) => previousData ?? cachedFirstCallers ?? undefined,
     refetchOnWindowFocus: false,
     retry: 0,
     staleTime: 90_000,

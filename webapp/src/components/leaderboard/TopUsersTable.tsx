@@ -10,6 +10,7 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { getAvatarUrl } from "@/types";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
+import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { Trophy, Medal, Award, Users, ChevronLeft, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
 
 // Type for top user from API
@@ -44,6 +45,11 @@ interface TopUsersResponse {
 }
 
 type SortOption = 'level' | 'activity' | 'winrate';
+const TOP_USERS_CACHE_TTL_MS = 10 * 60_000;
+
+function buildTopUsersCacheKey(page: number, sortBy: SortOption): string {
+  return `phew.leaderboard.top-users:v1:${sortBy}:${page}`;
+}
 
 function getRankDisplay(rank: number) {
   if (rank === 1) {
@@ -100,6 +106,8 @@ export function TopUsersTable({ enabled = true }: TopUsersTableProps) {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<SortOption>('level');
   const limit = 20;
+  const topUsersCacheKey = buildTopUsersCacheKey(page, sortBy);
+  const cachedTopUsers = readSessionCache<TopUsersResponse>(topUsersCacheKey, TOP_USERS_CACHE_TTL_MS);
 
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ["leaderboard", "top-users", page, sortBy],
@@ -121,18 +129,24 @@ export function TopUsersTable({ enabled = true }: TopUsersTableProps) {
         const json = await response.json();
         // Backend returns { data: users[], pagination: {...} }
         const payload = json as TopUsersResponse;
-        return payload;
+        const resolved = payload.data.length > 0 ? payload : cachedTopUsers ?? payload;
+        if (resolved.data.length > 0) {
+          writeSessionCache(topUsersCacheKey, resolved);
+        }
+        return resolved;
       } catch (err) {
         console.error("[TopUsersTable] Error fetching data:", err);
         throw err;
       }
     },
     enabled,
+    initialData: cachedTopUsers ?? undefined,
+    initialDataUpdatedAt: cachedTopUsers ? Date.now() : undefined,
     refetchOnWindowFocus: false,
     retry: 0,
     staleTime: 2 * 60 * 1000, // Consider data stale after 2 minutes
     gcTime: 10 * 60 * 1000,
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData) => previousData ?? cachedTopUsers ?? undefined,
   });
 
   const handleSortChange = (newSort: SortOption) => {

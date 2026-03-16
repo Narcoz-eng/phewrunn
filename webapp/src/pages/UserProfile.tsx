@@ -134,6 +134,38 @@ function buildUserProfileFromSnapshot(
   };
 }
 
+function buildUserProfileFromPostAuthorSnapshot(
+  posts: Post[] | null | undefined,
+  identifier: string | null | undefined
+): UserProfileData | null {
+  const author = posts?.find((post) => post.author)?.author;
+  if (!author?.id) {
+    return null;
+  }
+
+  return {
+    id: author.id,
+    name: author.name ?? author.username ?? null,
+    image: author.image ?? null,
+    username: author.username ?? (identifier?.trim() || null),
+    level: typeof author.level === "number" && Number.isFinite(author.level) ? author.level : 0,
+    xp: typeof author.xp === "number" && Number.isFinite(author.xp) ? author.xp : 0,
+    isVerified: typeof author.isVerified === "boolean" ? author.isVerified : false,
+    createdAt: new Date(0).toISOString(),
+    isFollowing: typeof posts?.[0]?.isFollowingAuthor === "boolean" ? posts[0].isFollowingAuthor : false,
+    stats: {
+      posts: posts?.length ?? 0,
+      followers: 0,
+      following: 0,
+      totalCalls: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 0,
+      totalProfitPercent: 0,
+    },
+  };
+}
+
 export default function UserProfile() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -213,6 +245,10 @@ export default function UserProfile() {
     () => getCachedPostsForAuthor(queryClient, userId),
     [queryClient, userId]
   );
+  const cachedProfileFromPosts = useMemo(
+    () => buildUserProfileFromPostAuthorSnapshot(cachedFeedPostsForProfile, userId),
+    [cachedFeedPostsForProfile, userId]
+  );
 
   // Fetch user profile
   const {
@@ -278,6 +314,9 @@ export default function UserProfile() {
           if (fallbackProfile) {
             return fallbackProfile;
           }
+          if (cachedProfileFromPosts) {
+            return cachedProfileFromPosts;
+          }
         }
         throw error;
       }
@@ -310,8 +349,8 @@ export default function UserProfile() {
                   : cachedProfileSnapshot?.lossesCount ?? 0,
             },
           }
-        : undefined,
-    initialDataUpdatedAt: cachedUserProfile ? Date.now() : undefined,
+        : cachedProfileFromPosts ?? undefined,
+    initialDataUpdatedAt: cachedUserProfile || cachedProfileFromPosts ? Date.now() : undefined,
     enabled: !!userId,
     staleTime: 60000,
     gcTime: 300000,
@@ -367,7 +406,7 @@ export default function UserProfile() {
         const fallbackPosts = cachedFeedPostsForProfile;
         return fallbackPosts.length > 0 ? fallbackPosts : undefined;
       })(),
-    enabled: !!userId,
+    enabled: !!userId && (!!user || !!cachedUserPosts?.length || cachedFeedPostsForProfile.length > 0),
     staleTime: 60000,
     gcTime: 300000,
     refetchInterval: false,

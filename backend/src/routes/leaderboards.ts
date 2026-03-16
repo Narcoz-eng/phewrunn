@@ -19,8 +19,8 @@ type RouteCacheEntry<T> = {
 const LEADERBOARDS_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 20_000;
 const LEADERBOARDS_ROUTE_STALE_FALLBACK_MS =
   process.env.NODE_ENV === "production" ? 30 * 60_000 : 2 * 60_000;
-const DAILY_LEADERBOARDS_ROUTE_CACHE_KEY = "route:leaderboards:daily:v3";
-const FIRST_CALLERS_ROUTE_CACHE_KEY = "route:leaderboards:first-callers:v2";
+const DAILY_LEADERBOARDS_ROUTE_CACHE_KEY = "route:leaderboards:daily:v4";
+const FIRST_CALLERS_ROUTE_CACHE_KEY = "route:leaderboards:first-callers:v3";
 const dailyLeaderboardsRouteCache = new Map<string, RouteCacheEntry<LeaderboardsPayload>>();
 const firstCallersRouteCache = new Map<string, RouteCacheEntry<FirstCallerLeaderboardRow[]>>();
 const dailyLeaderboardsInFlight = new Map<string, Promise<LeaderboardsPayload>>();

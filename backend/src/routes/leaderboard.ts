@@ -67,6 +67,7 @@ const LEADERBOARD_STATS_STALE_REVALIDATE_MS =
   process.env.NODE_ENV === "production" ? 20 * 60_000 : 3 * 60_000;
 const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 9_000 : 6_000;
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
+const LEADERBOARD_ROUTE_CACHE_VERSION = 2;
 const LEADERBOARD_STATS_SNAPSHOT_KEY = "leaderboard:stats";
 const ALPHA_SCORE_BUCKET_SECONDS = 6 * 60 * 60;
 const LEADERBOARD_BUCKET_SECONDS_SQL = Prisma.raw(String(ALPHA_SCORE_BUCKET_SECONDS));
@@ -383,7 +384,7 @@ async function getLeaderboardCacheVersion(): Promise<number> {
 }
 
 function buildLeaderboardRedisKey(kind: string, version: number, suffix?: string): string {
-  return `leaderboard:v${version}:${kind}${suffix ? `:${suffix}` : ""}`;
+  return `leaderboard:rv${LEADERBOARD_ROUTE_CACHE_VERSION}:v${version}:${kind}${suffix ? `:${suffix}` : ""}`;
 }
 
 function asLeaderboardStatsPayload(value: Prisma.JsonValue | null): LeaderboardStatsPayload | null {
