@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError, TimeoutError } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users } from "lucide-react";
@@ -1381,6 +1381,7 @@ export default function TokenPage() {
     isLoading,
     isFetching,
     error,
+    refetch: refetchToken,
   } = useQuery({
     queryKey: tokenQueryKey,
     queryFn: async () => {
@@ -1781,10 +1782,29 @@ export default function TokenPage() {
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertCircle className="h-8 w-8 text-destructive" />
             </div>
-            <p className="text-lg font-semibold text-foreground">Token not found</p>
-            <p className="text-sm text-muted-foreground">
-              We could not load token intelligence for this address.
-            </p>
+            {error && !(error instanceof ApiError && error.status === 404) ? (
+              <>
+                <p className="text-lg font-semibold text-foreground">Failed to load token</p>
+                <p className="text-sm text-muted-foreground">
+                  {error instanceof TimeoutError
+                    ? "The request timed out. Please try again."
+                    : "Something went wrong loading this token. Please try again."}
+                </p>
+                <button
+                  onClick={() => void refetchToken()}
+                  className="mt-2 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
+                >
+                  Try again
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-semibold text-foreground">Token not found</p>
+                <p className="text-sm text-muted-foreground">
+                  We could not load token intelligence for this address.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-5">

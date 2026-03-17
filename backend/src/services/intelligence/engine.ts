@@ -1529,29 +1529,39 @@ async function ensureTokensForCalls(records: CallRecord[]): Promise<Map<string, 
     writeTokenLookupCacheValue(token.address, token);
   }
 
-  for (const candidate of uniqueCandidates) {
-    if (tokenMap.has(candidate.key)) {
-      continue;
-    }
+  const missingCandidates = uniqueCandidates.filter((c) => !tokenMap.has(c.key));
+  if (missingCandidates.length > 0) {
+    // Batch create all missing tokens in a single query instead of sequential creates.
+    // skipDuplicates handles race conditions where another instance created the token first.
+    await prisma.token.createMany({
+      data: missingCandidates.map((c) => ({
+        chainType: c.chainType,
+        address: c.address,
+        symbol: c.symbol,
+        name: c.name,
+        imageUrl: c.imageUrl,
+        dexscreenerUrl: c.dexscreenerUrl,
+        launchAt: c.launchAt,
+        liquidity: c.liquidity,
+        volume24h: c.volume24h,
+      })),
+      skipDuplicates: true,
+    }).catch(() => {});
 
-    const created = await prisma.token.create({
-      data: {
-        chainType: candidate.chainType,
-        address: candidate.address,
-        symbol: candidate.symbol,
-        name: candidate.name,
-        imageUrl: candidate.imageUrl,
-        dexscreenerUrl: candidate.dexscreenerUrl,
-        launchAt: candidate.launchAt,
-        liquidity: candidate.liquidity,
-        volume24h: candidate.volume24h,
+    // createMany doesn't return records, so fetch them (including any created by other instances)
+    const createdTokens = await prisma.token.findMany({
+      where: {
+        OR: missingCandidates.map((c) => ({
+          chainType: c.chainType,
+          address: c.address,
+        })),
       },
       select: TOKEN_SELECT,
-    }).catch(() => null);
+    }).catch(() => []);
 
-    if (created) {
-      tokenMap.set(candidate.key, created);
-      writeTokenLookupCacheValue(created.address, created);
+    for (const token of createdTokens) {
+      tokenMap.set(buildTokenKey(token.chainType, token.address), token);
+      writeTokenLookupCacheValue(token.address, token);
     }
   }
 
@@ -3545,7 +3555,18 @@ export async function findTokenByAddress(address: string): Promise<TokenRecord |
       if (!post) return null;
       const tokenMap = await ensureTokensForCalls([post]);
       const key = buildTokenKey(post.chainType, normalizedAddress);
-      const resolved = tokenMap.get(key) ?? null;
+      let resolved = tokenMap.get(key) ?? null;
+
+      // If ensureTokensForCalls didn't populate the map (e.g. batch create failed silently),
+      // do one final direct lookup so the token page isn't falsely shown as "not found".
+      if (!resolved) {
+        resolved = await prisma.token.findFirst({
+          where: { address: normalizedAddress },
+          select: TOKEN_SELECT,
+          orderBy: { updatedAt: "desc" },
+        }).catch(() => null);
+      }
+
       if (resolved) {
         void cacheSetJson(buildTokenLookupRedisKey(normalizedAddress), JSON.parse(serializeWithDates(resolved)), TOKEN_LOOKUP_REDIS_TTL_MS);
       }

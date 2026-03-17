@@ -323,8 +323,18 @@ export default function Notifications() {
         requestError.status = response.status;
         throw requestError;
       }
-      const payload = (await response.json().catch(() => null)) as { data?: Notification[] } | null;
+      const payload = (await response.json().catch(() => null)) as { data?: Notification[]; degraded?: boolean } | null;
       const data = Array.isArray(payload?.data) ? payload.data : [];
+      // DB was unavailable and no stale data — throw so the error state shows
+      // instead of falsely presenting the user with "no notifications yet"
+      if (payload?.degraded && data.length === 0) {
+        if (fallbackNotifications && fallbackNotifications.length > 0) {
+          return fallbackNotifications;
+        }
+        const degradedError = new Error("Notifications temporarily unavailable") as Error & { status?: number };
+        degradedError.status = 503;
+        throw degradedError;
+      }
       if (data.length === 0 && fallbackNotifications && fallbackNotifications.length > 0) {
         return fallbackNotifications;
       }

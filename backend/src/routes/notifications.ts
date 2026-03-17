@@ -707,7 +707,12 @@ async function loadNotificationsListFresh(
       console.warn("[notifications/list] database unavailable; returning stale or empty notifications", {
         message: getErrorMessage(error),
       });
-      notifications = staleCachedNotifications ?? [];
+      // No stale and DB is unavailable — surface the error so the route
+      // can return a degraded response instead of empty-looking 200.
+      if (!staleCachedNotifications) {
+        throw error;
+      }
+      notifications = staleCachedNotifications;
     }
 
     if (loadedFresh) {
@@ -932,7 +937,11 @@ notificationsRouter.get("/", requireAuth, async (c) => {
       userId: user.id,
       includeDismissed,
     });
-    return c.json({ data: staleCachedNotifications ?? [] });
+    if (staleCachedNotifications) {
+      return c.json({ data: staleCachedNotifications });
+    }
+    // No stale data and DB failed — return degraded flag so frontend shows error
+    return c.json({ data: [], degraded: true });
   }
 });
 
