@@ -6590,6 +6590,33 @@ postsRouter.post("/:id/comments", requireNotBanned, zValidator("json", CreateCom
     },
   });
 
+  // Notify post author — fire non-blocking so it never delays the response
+  if (post.authorId !== user.id) {
+    const commenterName = (user.name || "Someone").trim();
+    void createNotificationSafely({
+      operation: "comment_author_notification",
+      data: {
+        userId: post.authorId,
+        type: "comment",
+        message: `${commenterName} commented on your Alpha`,
+        dedupeKey: buildNotificationDedupeKey({
+          type: "comment",
+          userId: post.authorId,
+          fromUserId: user.id,
+          postId: post.id,
+        }),
+        postId: post.id,
+        fromUserId: user.id,
+      },
+      fallbackData: {
+        userId: post.authorId,
+        type: "comment",
+        message: `${commenterName} commented on your Alpha`,
+        postId: post.id,
+      },
+    }).catch(() => {});
+  }
+
   return c.json({ data: comment });
 });
 
