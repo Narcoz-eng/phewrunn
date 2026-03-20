@@ -1300,6 +1300,43 @@ function getAccessCodeBootstrapDebugCode(
   }
 }
 
+function applyAccessCodeBootstrapFailure(params: {
+  owner: PrivyAuthBootstrapOwner;
+  mode: PrivyAuthBootstrapMode;
+  userId: string;
+  attempt: number;
+  totalAttempts: number;
+  backendSyncStarted: boolean;
+  error: unknown;
+}): void {
+  const debugCode = getAccessCodeBootstrapDebugCode(params.error);
+  if (!debugCode) {
+    return;
+  }
+
+  const message = getPrivyBootstrapErrorMessage(params.error);
+  writePrivySyncFailureSnapshot(message);
+  setPrivyAuthBootstrapState("failed", {
+    owner: params.owner,
+    mode: params.mode,
+    userId: params.userId,
+    detail: message,
+    debugCode,
+    backendSyncStarted: params.backendSyncStarted,
+    attempt: params.attempt,
+    totalAttempts: params.totalAttempts,
+  });
+  console.warn("[AuthFlow] bootstrap blocked pending access code", {
+    owner: params.owner,
+    mode: params.mode,
+    userId: params.userId,
+    attempt: params.attempt,
+    totalAttempts: params.totalAttempts,
+    debugCode,
+    reason: message,
+  });
+}
+
 async function waitForPendingPrivyIdentityToken(
   pendingPromise: Promise<string | undefined>,
   timeoutMs: number
@@ -1902,17 +1939,35 @@ export async function startPrivyAuthBootstrap({
       }
 
       if (privyReady === true && privyAuthenticated === true) {
-        const accessTokenFastPathUser = await trySyncPrivySessionWithoutIdentityToken({
-          owner,
-          mode,
-          userId: user.id,
-          attemptId: privyBootstrapAttemptId,
-          attempt: 0,
-          totalAttempts,
-          privyAccessToken,
-          getLatestPrivyAccessToken,
-          reason: "authenticated_sdk_access_token_fast_path",
-        });
+        let accessTokenFastPathUser: AuthUser | null = null;
+        try {
+          accessTokenFastPathUser = await trySyncPrivySessionWithoutIdentityToken({
+            owner,
+            mode,
+            userId: user.id,
+            attemptId: privyBootstrapAttemptId,
+            attempt: 0,
+            totalAttempts,
+            privyAccessToken,
+            getLatestPrivyAccessToken,
+            reason: "authenticated_sdk_access_token_fast_path",
+          });
+        } catch (error) {
+          const accessCodeDebugCode = getAccessCodeBootstrapDebugCode(error);
+          if (accessCodeDebugCode) {
+            applyAccessCodeBootstrapFailure({
+              owner,
+              mode,
+              userId: user.id,
+              attempt: 0,
+              totalAttempts,
+              backendSyncStarted: false,
+              error,
+            });
+            return null;
+          }
+          throw error;
+        }
         if (accessTokenFastPathUser) {
           return accessTokenFastPathUser;
         }
@@ -2161,25 +2216,14 @@ export async function startPrivyAuthBootstrap({
           const finalizing = isPrivyFinalizationPendingMessage(message);
 
           if (accessCodeDebugCode) {
-            writePrivySyncFailureSnapshot(message);
-            setPrivyAuthBootstrapState("failed", {
+            applyAccessCodeBootstrapFailure({
               owner,
               mode,
               userId: user.id,
-              detail: message,
-              debugCode: accessCodeDebugCode,
+              attempt,
+              totalAttempts,
               backendSyncStarted: backendSyncStartedForAttempt,
-              attempt,
-              totalAttempts,
-            });
-            console.warn("[AuthFlow] bootstrap blocked pending access code", {
-              owner,
-              mode,
-              userId: user.id,
-              attempt,
-              totalAttempts,
-              debugCode: accessCodeDebugCode,
-              reason: message,
+              error,
             });
             return null;
           }
