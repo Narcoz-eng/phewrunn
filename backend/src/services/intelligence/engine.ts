@@ -71,9 +71,9 @@ const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" 
 const TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS =
   process.env.NODE_ENV === "production" ? 5_000 : 7_500;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-12T00:00:00.000Z");
-const INTELLIGENCE_PREWARM_INTERVAL_MS = 3 * 60_000;
+const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
-const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 80;
+const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 30;
 const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
 const IS_SERVERLESS_RUNTIME =
   !!process.env.VERCEL ||
@@ -2587,27 +2587,35 @@ async function hydrateCalls(
     return buildEmptySocialState();
   });
 
-  const [socialState, bundleClustersByTokenId, timingMetaByPostId, tokenGrowthById, marketContext] =
-    await Promise.all([
-      socialStatePromise,
-      preferStoredIntelligence
-        ? Promise.resolve(new Map<string, EnrichedCall["bundleClusters"]>())
-        : readTokenClusters(Array.from(new Set(Array.from(tokenMap.values()).map((token) => token.id)))),
-      preferStoredIntelligence
-        ? Promise.resolve(new Map<string, Awaited<ReturnType<typeof readTimingMetaForCalls>> extends Map<string, infer TValue> ? TValue : never>())
-        : readTimingMetaForCalls(records),
-      preferStoredIntelligence
-        ? Promise.resolve(new Map<string, { volumeGrowthPct: number; liquidityGrowthPct: number; holderGrowthPct: number; mcapGrowthPct: number }>())
-        : readLatestTokenGrowthById(tokenIds),
-      preferStoredIntelligence
-        ? Promise.resolve<MarketContextSnapshot>({
-            label: "balanced",
-            breadthScore: 50,
-            confidenceBias: 0,
-            accelerationMultiplier: 1,
-          })
-        : getMarketContextSnapshot(),
-    ]);
+  // ── Batch 1: social state + market context ───────────────────────────────
+  // Run these first so the viewer's like/follow/repost state is ready.
+  // socialStatePromise already spawns up to 4 sub-queries internally;
+  // keeping this batch to 2 outer tasks limits peak concurrent connections.
+  const [socialState, marketContext] = await Promise.all([
+    socialStatePromise,
+    preferStoredIntelligence
+      ? Promise.resolve<MarketContextSnapshot>({
+          label: "balanced",
+          breadthScore: 50,
+          confidenceBias: 0,
+          accelerationMultiplier: 1,
+        })
+      : getMarketContextSnapshot(),
+  ]);
+
+  // ── Batch 2: token enrichment data ───────────────────────────────────────
+  // Runs after batch 1 so we never hold more than ~3 DB connections at once.
+  const [bundleClustersByTokenId, timingMetaByPostId, tokenGrowthById] = await Promise.all([
+    preferStoredIntelligence
+      ? Promise.resolve(new Map<string, EnrichedCall["bundleClusters"]>())
+      : readTokenClusters(Array.from(new Set(Array.from(tokenMap.values()).map((token) => token.id)))),
+    preferStoredIntelligence
+      ? Promise.resolve(new Map<string, Awaited<ReturnType<typeof readTimingMetaForCalls>> extends Map<string, infer TValue> ? TValue : never>())
+      : readTimingMetaForCalls(records),
+    preferStoredIntelligence
+      ? Promise.resolve(new Map<string, { volumeGrowthPct: number; liquidityGrowthPct: number; holderGrowthPct: number; mcapGrowthPct: number }>())
+      : readLatestTokenGrowthById(tokenIds),
+  ]);
 
   const callsByTokenId = new Map<string, typeof relatedCalls>();
   for (const call of relatedCalls) {

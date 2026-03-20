@@ -1,8 +1,10 @@
 /**
  * Market Alert Scanner
  *
- * Monitors all active (unsettled) posts for liquidity and volume spikes.
- * When a spike is detected, broadcasts a notification to ALL users.
+ * Monitors active posts for liquidity and volume spikes.
+ * Notifications are sent ONLY to users who:
+ *   1. Follow the token OR follow the trader who called it
+ *   2. Have the matching alert preference enabled (default: true)
  *
  * Thresholds:
  *   - Liquidity spike: current >= previous × 1.5  (+50%)
@@ -66,27 +68,81 @@ function buildDedupeKey(type: "liquidity_spike" | "volume_spike", address: strin
   return `${type}:${address.toLowerCase().slice(0, 20)}:${userId}:${bucket}`;
 }
 
-async function broadcastToAllUsers(
+/**
+ * Resolve the target user IDs for a market alert notification.
+ * Returns only users who:
+ *   - Follow the token OR follow the trader who posted the call
+ *   - Are not banned
+ *   - Have the relevant alert preference enabled (defaults to true when no record exists)
+ */
+async function resolveTargetUsers(
+  type: "liquidity_spike" | "volume_spike",
+  address: string,
+  authorId: string | null,
+): Promise<string[]> {
+  // 1. Find token record by contract address
+  const token = await prisma.token.findFirst({
+    where: { address: { equals: address.toLowerCase() } },
+    select: { id: true },
+  }).catch(() => null);
+
+  // 2. Collect followers in parallel
+  const [tokenFollows, traderFollows] = await Promise.all([
+    token
+      ? prisma.tokenFollow.findMany({
+          where: { tokenId: token.id },
+          select: { userId: true },
+        }).catch(() => [])
+      : Promise.resolve([]),
+    authorId
+      ? prisma.follow.findMany({
+          where: { followingId: authorId },
+          select: { followerId: true },
+        }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  const candidateIds = [
+    ...new Set([
+      ...tokenFollows.map((f) => f.userId),
+      ...traderFollows.map((f) => f.followerId),
+    ]),
+  ];
+
+  if (candidateIds.length === 0) return [];
+
+  // 3. Filter by alert preferences (default true when no record)
+  const [prefs, activeUsers] = await Promise.all([
+    prisma.alertPreference.findMany({
+      where: { userId: { in: candidateIds } },
+      select: { userId: true, notifyLiquiditySurge: true, notifyMomentum: true },
+    }).catch(() => []),
+    prisma.user.findMany({
+      where: { id: { in: candidateIds }, isBanned: false },
+      select: { id: true },
+    }).catch(() => []),
+  ]);
+
+  const prefMap = new Map(prefs.map((p) => [p.userId, p]));
+  const activeSet = new Set(activeUsers.map((u) => u.id));
+
+  return candidateIds.filter((id) => {
+    if (!activeSet.has(id)) return false;
+    const pref = prefMap.get(id);
+    if (!pref) return true; // default: all toggles enabled
+    return type === "liquidity_spike" ? pref.notifyLiquiditySurge : pref.notifyMomentum;
+  });
+}
+
+async function notifyTargetedUsers(
   type: "liquidity_spike" | "volume_spike",
   message: string,
   address: string,
   postId: string | null,
+  authorId: string | null,
 ): Promise<void> {
-  // Fetch all active user IDs (non-banned)
-  const users = await prisma.user.findMany({
-    where: { isBanned: false },
-    select: { id: true },
-  });
-
-  if (users.length === 0) return;
-
-  const notifications = users.map((u) => ({
-    userId: u.id,
-    type,
-    message,
-    dedupeKey: buildDedupeKey(type, address, u.id),
-    postId: postId ?? undefined,
-  }));
+  const targetUserIds = await resolveTargetUsers(type, address, authorId);
+  if (targetUserIds.length === 0) return;
 
   const pushPayload = {
     title: type === "liquidity_spike" ? "Liquidity Spike" : "Volume Spike",
@@ -97,17 +153,21 @@ async function broadcastToAllUsers(
     tag: type,
   };
 
-  // Batch insert to avoid giant single query
-  for (let i = 0; i < notifications.length; i += NOTIFICATION_BATCH_SIZE) {
-    const batch = notifications.slice(i, i + NOTIFICATION_BATCH_SIZE);
+  for (let i = 0; i < targetUserIds.length; i += NOTIFICATION_BATCH_SIZE) {
+    const batch = targetUserIds.slice(i, i + NOTIFICATION_BATCH_SIZE);
+    const notifications = batch.map((userId) => ({
+      userId,
+      type,
+      message,
+      dedupeKey: buildDedupeKey(type, address, userId),
+      postId: postId ?? undefined,
+    }));
     try {
-      await prisma.notification.createMany({ data: batch, skipDuplicates: true });
-      const userIds = [...new Set(batch.map((n) => n.userId))];
-      for (const userId of userIds) {
+      await prisma.notification.createMany({ data: notifications, skipDuplicates: true });
+      for (const userId of batch) {
         invalidateNotificationsCache(userId);
       }
-      // Send push to this batch of users (non-blocking)
-      void sendPushToUsers(userIds, pushPayload).catch(() => {});
+      void sendPushToUsers(batch, pushPayload).catch(() => {});
     } catch (err) {
       console.warn("[market-alerts] batch notification insert failed", {
         batchIndex: i,
@@ -124,6 +184,7 @@ type ContractEntry = {
   chainType: string | null;
   tokenSymbol: string | null;
   postId: string;
+  authorId: string | null;
 };
 
 async function checkContract(entry: ContractEntry): Promise<{ liq: boolean; vol: boolean }> {
@@ -152,8 +213,8 @@ async function checkContract(entry: ContractEntry): Promise<{ liq: boolean; vol:
         const cooling = await isCoolingDown(coolKey);
         if (!cooling) {
           const pct = Math.round((ratio - 1) * 100);
-          const msg = `🌊 $${symbol} liquidity surged +${pct}% — a called token is heating up`;
-          await broadcastToAllUsers("liquidity_spike", msg, entry.address, entry.postId);
+          const msg = `🌊 $${symbol} liquidity surged +${pct}% — a token you follow is heating up`;
+          await notifyTargetedUsers("liquidity_spike", msg, entry.address, entry.postId, entry.authorId);
           await setCooldown(coolKey);
           result.liq = true;
           console.log(`[market-alerts] liquidity spike: ${symbol} +${pct}% (${prevLiq} → ${currentLiq})`);
@@ -176,8 +237,8 @@ async function checkContract(entry: ContractEntry): Promise<{ liq: boolean; vol:
         const cooling = await isCoolingDown(coolKey);
         if (!cooling) {
           const mult = ratio.toFixed(1);
-          const msg = `🔥 $${symbol} volume spiked ${mult}x in 24h — high-activity called token`;
-          await broadcastToAllUsers("volume_spike", msg, entry.address, entry.postId);
+          const msg = `🔥 $${symbol} volume spiked ${mult}x in 24h — high-activity token you follow`;
+          await notifyTargetedUsers("volume_spike", msg, entry.address, entry.postId, entry.authorId);
           await setCooldown(coolKey);
           result.vol = true;
           console.log(`[market-alerts] volume spike: ${symbol} ${mult}x (${prevVol} → ${currentVol})`);
@@ -210,7 +271,7 @@ export async function runMarketAlertScan(): Promise<MarketAlertScanResult> {
     errors: 0,
   };
 
-  // Get unique contract addresses from the last 200 posts (settled or not)
+  // Get unique contract addresses from the last 400 posts
   // One representative postId per contract (for notification deep link)
   const rows = await prisma.post.findMany({
     where: {
@@ -221,9 +282,10 @@ export async function runMarketAlertScan(): Promise<MarketAlertScanResult> {
       contractAddress: true,
       chainType: true,
       tokenSymbol: true,
+      authorId: true,
     },
     orderBy: { createdAt: "desc" },
-    take: 400, // source pool before deduplication — wider history, settled or not
+    take: 400,
   });
 
   // Deduplicate by contractAddress — keep the most recent post per contract
@@ -239,6 +301,7 @@ export async function runMarketAlertScan(): Promise<MarketAlertScanResult> {
       chainType: row.chainType,
       tokenSymbol: row.tokenSymbol,
       postId: row.id,
+      authorId: row.authorId,
     });
     if (contracts.length >= MAX_CONTRACTS_PER_RUN) break;
   }
