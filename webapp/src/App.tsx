@@ -36,6 +36,7 @@ const Terms = lazyPage(() => import("./pages/Terms"), "route:terms");
 const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
 const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
+const AccessCodeEntry = lazyPage(() => import("./pages/AccessCodeEntry"), "route:access-code");
 
 // Loading fallback component
 function PageSkeleton() {
@@ -205,6 +206,7 @@ function AnimatedRoutes() {
           <Route path="/terms" element={<Terms />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/access-code" element={<AccessCodeEntry />} />
           <Route path="/:userId" element={<PublicHandleProfileRoute />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

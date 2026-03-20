@@ -28,6 +28,8 @@ import { radarRouter } from "./routes/radar.js";
 import { alertsRouter } from "./routes/alerts.js";
 import { pushRouter } from "./routes/push.js";
 import { leaderboardsRouter } from "./routes/leaderboards.js";
+import { invitesRouter } from "./routes/invites.js";
+import { adminInvitesRouter, getGlobalSettingBool } from "./routes/admin-invites.js";
 import {
   clearCachedMeResponse,
   type MeResponseUser,
@@ -2115,6 +2117,7 @@ const PrivySyncRequestSchema = z
   .object({
     privyIdToken: z.string().trim().min(1).max(4096).optional(),
     name: z.string().trim().max(120).optional(),
+    code: z.string().trim().max(30).optional(),
   })
   .strict();
 
@@ -2550,14 +2553,78 @@ async function handleVerifiedPrivySyncRequest(c: Context) {
     }
 
     if (!user) {
-      user = await upsertAuthUserByEmail({
-        email: verifiedEmail,
-        displayName:
-          normalizeOptionalDisplayName(name) ??
-          verifiedEmail.split("@")[0] ??
-          "User",
-        now,
-      });
+      // Gate new signups behind invite/access code when invite-only mode is active
+      const isInviteOnly = await getGlobalSettingBool("inviteOnly").catch(() => false);
+      if (isInviteOnly) {
+        const submittedCode = (parsed.data.code ?? "").trim().toUpperCase() || null;
+        if (!submittedCode) {
+          return c.json(
+            { error: { message: "An invite or access code is required to join.", code: "ACCESS_CODE_REQUIRED" } },
+            403
+          );
+        }
+        // Validate code but defer consumption until user is created
+        const codeRecord = await prisma.accessCode.findUnique({ where: { code: submittedCode } });
+        const now2 = new Date();
+        if (
+          !codeRecord ||
+          codeRecord.isRevoked ||
+          (codeRecord.expiresAt && codeRecord.expiresAt < now2) ||
+          (codeRecord.maxUses > 0 && codeRecord.useCount >= codeRecord.maxUses)
+        ) {
+          return c.json(
+            { error: { message: "Invalid or expired access code.", code: "ACCESS_CODE_INVALID" } },
+            403
+          );
+        }
+
+        // For user-type codes, check the creator still has quota
+        if (codeRecord.type === "user") {
+          const creator = await prisma.user.findUnique({
+            where: { id: codeRecord.createdById },
+            select: { inviteQuota: true, _count: { select: { invitees: true } } },
+          });
+          if (!creator || creator._count.invitees >= creator.inviteQuota) {
+            return c.json(
+              { error: { message: "This invite link has reached its limit.", code: "ACCESS_CODE_INVALID" } },
+              403
+            );
+          }
+        }
+
+        user = await upsertAuthUserByEmail({
+          email: verifiedEmail,
+          displayName:
+            normalizeOptionalDisplayName(name) ??
+            verifiedEmail.split("@")[0] ??
+            "User",
+          now,
+        });
+
+        // Consume code and link inviter
+        await prisma.$transaction([
+          prisma.accessCode.update({
+            where: { id: codeRecord.id },
+            data: { useCount: { increment: 1 } },
+          }),
+          prisma.accessCodeUse.create({
+            data: { codeId: codeRecord.id, usedById: user.id },
+          }),
+          prisma.user.update({
+            where: { id: user.id },
+            data: { invitedById: codeRecord.createdById },
+          }),
+        ]);
+      } else {
+        user = await upsertAuthUserByEmail({
+          email: verifiedEmail,
+          displayName:
+            normalizeOptionalDisplayName(name) ??
+            verifiedEmail.split("@")[0] ??
+            "User",
+          now,
+        });
+      }
     }
 
     resolvedAuthUser = user;
@@ -3730,6 +3797,8 @@ app.route("/api/notifications", notificationsRouter);
 app.route("/api/reports", reportsRouter);
 app.route("/api/announcements", announcementsRouter);
 app.route("/api/leaderboard", leaderboardRouter);
+app.route("/api/invites", invitesRouter);
+app.route("/api/admin", adminInvitesRouter);
 
 // =====================================================
 // Static File Serving (Production Only)

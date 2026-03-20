@@ -707,18 +707,9 @@ function buildHolderBadges(params: {
       params.observedTxCount <= LOW_HISTORY_TX_THRESHOLD
     ) {
       badges.push("fresh_wallet");
-    } else if (
-      // All activity fields are unresolved (Helius data unavailable or wallet has no
-      // detectable history in the lookback window). Wallets already classified as whale,
-      // serial_deployer, or ultra_degen never reach this branch.
-      params.activeAgeDays === null &&
-      params.lastSeenHours === null &&
-      params.tradeVolume90dSol === null &&
-      params.distinctMintsTraded === 0 &&
-      params.observedTxCount === 0
-    ) {
-      badges.push("fresh_wallet");
     }
+    // Note: wallets with no resolvable activity data get no badge — unknown history
+    // is not the same as a fresh wallet.
   }
 
   if (params.devRole && !badges.includes("dev_wallet")) {

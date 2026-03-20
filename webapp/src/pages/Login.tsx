@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Suspense, lazy, useRef, type ReactNode } from "react";
 import { useAuth, usePrivySyncFailureSnapshot } from "@/lib/auth-client";
@@ -324,6 +324,18 @@ function PrivyLoginButton() {
       navigate(user.username ? "/" : "/welcome", { replace: true }),
   });
   const isLoading = isSyncing;
+
+  useEffect(() => {
+    if (!syncError) return;
+    const lowerErr = syncError.toLowerCase();
+    if (
+      lowerErr.includes("invite or access code") ||
+      lowerErr.includes("access_code_required") ||
+      lowerErr.includes("access_code_invalid")
+    ) {
+      navigate("/access-code");
+    }
+  }, [syncError, navigate]);
   const privySyncFailure = usePrivySyncFailureSnapshot();
   // Once we have any recovered user, keep the UI in a pending state until the
   // backend session confirms instead of flashing a stale failure.
@@ -443,6 +455,7 @@ function FallbackLoginButton() {
 
 export default function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, hasLiveSession, isReady } = useAuth();
   const privyAvailable = usePrivyAvailable();
   const isMobile = useIsMobile();
@@ -451,6 +464,13 @@ export default function Login() {
   const shouldDeferMarketing =
     isMobile || (typeof window !== "undefined" && window.innerWidth < 768);
   const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const urlCode = searchParams.get("code");
+    if (urlCode) {
+      sessionStorage.setItem("phew.pending-invite-code", urlCode.trim().toUpperCase());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!isReady || !hasLiveSession) return;

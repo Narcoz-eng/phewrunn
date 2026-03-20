@@ -5541,11 +5541,10 @@ export function PostCard({
                     <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Bundle risk</div>
                     <div className="mt-1">
                       {bundleScanPending ? (
-                        <BundleScanLoop
-                          title="Bundle scan live"
-                          hint="Mapping bundled supply and cluster links."
-                          className="w-full"
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
+                          <span className="font-semibold text-foreground">Scanning...</span>
+                        </div>
                       ) : (
                         <div className="font-semibold text-foreground">{bundleRiskSummary}</div>
                       )}
