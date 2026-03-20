@@ -2683,11 +2683,9 @@ async function hydrateCalls(
     );
     const marketAdjustedMomentumPct = Math.max(0, roiCurrentPct ?? 0) * marketContext.accelerationMultiplier;
     const compositeMomentumPct = Math.max(marketAdjustedMomentumPct, Math.max(0, mcapGrowthPct) * marketContext.accelerationMultiplier);
-    const confidenceScore = roundMetricOrZero(
-      shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
+    const confidenceScoreBase = shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
         ? record.confidenceScore
-        :
-        computeConfidenceScore({
+        : computeConfidenceScore({
           traderWinRate30d: record.author.winRate30d,
           traderAvgRoi30d: record.author.avgRoi30d,
           traderTrustScore: record.author.trustScore,
@@ -2709,7 +2707,17 @@ async function hydrateCalls(
           marketBreadthScore: marketContext.breadthScore,
           roiCurrentPct,
           sentimentScore,
-        })
+        });
+    const confidenceScore = roundMetricOrZero(
+      shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
+        ? applyConfidenceGuardrails({
+            baseScore: confidenceScoreBase,
+            tokenRiskScore: token?.tokenRiskScore ?? null,
+            top10HolderPct: token?.top10HolderPct ?? null,
+            roiCurrentPct,
+            sentimentScore,
+          })
+        : confidenceScoreBase
     );
     const weightedEngagementPerHour = computeWeightedEngagementPerHour({
       reactions: reactionCounts,

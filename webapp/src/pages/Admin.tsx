@@ -72,6 +72,8 @@ import {
   Pencil,
   Coins,
   Flag,
+  Ticket,
+  Link2,
 } from "lucide-react";
 import {
   BarChart,
@@ -87,6 +89,8 @@ import {
 } from "recharts";
 import { AnnouncementManager } from "@/components/admin/AnnouncementManager";
 import { ReportsManager } from "@/components/admin/ReportsManager";
+import { InvitesManager } from "@/components/admin/InvitesManager";
+import { AccessCodesManager } from "@/components/admin/AccessCodesManager";
 import { toast } from "sonner";
 
 const ADMIN_EMAIL = "rengarro@gmail.com";
@@ -1131,7 +1135,7 @@ export default function Admin() {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full max-w-2xl grid-cols-5">
+          <TabsList className="grid w-full max-w-4xl grid-cols-7">
             <TabsTrigger value="overview" className="flex items-center gap-2">
               <Activity className="h-4 w-4" />
               Overview
@@ -1151,6 +1155,14 @@ export default function Admin() {
             <TabsTrigger value="announcements" className="flex items-center gap-2">
               <Megaphone className="h-4 w-4" />
               Announce
+            </TabsTrigger>
+            <TabsTrigger value="invites" className="flex items-center gap-2">
+              <Link2 className="h-4 w-4" />
+              Invites
+            </TabsTrigger>
+            <TabsTrigger value="codes" className="flex items-center gap-2">
+              <Ticket className="h-4 w-4" />
+              Codes
             </TabsTrigger>
           </TabsList>
 
@@ -1172,6 +1184,14 @@ export default function Admin() {
 
           <TabsContent value="announcements">
             <AnnouncementManager />
+          </TabsContent>
+
+          <TabsContent value="invites">
+            <InvitesManager />
+          </TabsContent>
+
+          <TabsContent value="codes">
+            <AccessCodesManager />
           </TabsContent>
         </Tabs>
       </div>
