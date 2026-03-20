@@ -34,10 +34,26 @@ const MARKETCAP_SNAPSHOT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 
 // Simple in-memory rate limiter
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL_MS = 200; // Min 200ms between requests
+
+// LRU-capped snapshot cache — prevents unbounded memory growth when many
+// unique contract addresses are queried over time.
+const MARKET_SNAPSHOT_CACHE_MAX_ENTRIES = 500;
 const marketSnapshotCache = new Map<
   string,
   { result: MarketCapResult; expiresAtMs: number }
 >();
+
+function setMarketSnapshotCacheEntry(key: string, value: { result: MarketCapResult; expiresAtMs: number }): void {
+  // Delete-then-set moves the key to the end (most-recently-used position)
+  marketSnapshotCache.delete(key);
+  marketSnapshotCache.set(key, value);
+  // Evict oldest entries (front of Map insertion order) when over the cap
+  if (marketSnapshotCache.size > MARKET_SNAPSHOT_CACHE_MAX_ENTRIES) {
+    const oldest = marketSnapshotCache.keys().next().value;
+    if (oldest !== undefined) marketSnapshotCache.delete(oldest);
+  }
+}
+
 const marketSnapshotInFlight = new Map<string, Promise<MarketCapResult>>();
 
 /**
@@ -435,7 +451,7 @@ export async function getCachedMarketCapSnapshot(
 
   const request = fetchMarketCap(address, chainType)
     .then((result) => {
-      marketSnapshotCache.set(cacheKey, {
+      setMarketSnapshotCacheEntry(cacheKey, {
         result: cloneMarketCapResult(result),
         expiresAtMs: Date.now() + MARKETCAP_SNAPSHOT_CACHE_TTL_MS,
       });
