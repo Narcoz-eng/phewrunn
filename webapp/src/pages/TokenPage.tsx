@@ -2261,8 +2261,20 @@ export default function TokenPage() {
                         {topHolderSectionCopy}
                       </div>
                     </div>
-                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                      {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Live scan"}
+                    <div className={cn(
+                      "rounded-full border px-3 py-1 text-[11px]",
+                      holderIntelligencePending
+                        ? "border-primary/30 bg-primary/10 text-primary font-medium"
+                        : "border-border/60 bg-secondary text-muted-foreground"
+                    )}>
+                      {holderIntelligencePending ? (
+                        <span className="flex items-center gap-1.5">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {topHolderRows.length > 0 ? `${topHolderRows.length} wallets` : "Scanning"}
+                        </span>
+                      ) : (
+                        `${topHolderRows.length} wallets`
+                      )}
                     </div>
                   </div>
                   <div className="max-h-[360px] space-y-2.5 overflow-y-auto pr-1">
@@ -2354,11 +2366,15 @@ export default function TokenPage() {
                           </div>
                         </div>
                       ))
+                    ) : holderIntelligencePending ? (
+                      <BundleScanLoop
+                        title="Holder scan active"
+                        hint="Tracing wallet concentration, role tags, and early holder expansion."
+                        className="w-full"
+                      />
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        {holderIntelligencePending
-                          ? "Scanning holder wallets and role tags for this token."
-                          : "No holder wallets were returned by the latest chain scan."}
+                        No holder wallets were returned by the latest chain scan.
                       </p>
                     )}
                   </div>
