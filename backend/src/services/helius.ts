@@ -735,6 +735,56 @@ function normalizeTsToMs(ts: number | undefined): number | null {
   return ts > 10_000_000_000 ? ts : ts * 1000;
 }
 
+/**
+ * Lightweight fallback using standard getSignaturesForAddress RPC (no API key needed).
+ * Fetches the most recent `limit` signatures to determine:
+ *   - lastActivityAtMs  — when the wallet was last seen (for lastSeenHours)
+ *   - firstActivityAtMs — oldest of the fetched batch (lower bound on wallet age)
+ *   - txCount           — transactions within the optional sinceMs window
+ *
+ * Does NOT filter by sinceMs when computing age so that old-but-inactive wallets
+ * are not misclassified as fresh. sinceMs only affects txCount.
+ */
+async function fetchWalletSignatureTimings(params: {
+  walletAddress: string;
+  sinceMs?: number | null;
+  limit?: number;
+}): Promise<{ txCount: number; firstActivityAtMs: number | null; lastActivityAtMs: number | null }> {
+  const limit = Math.min(params.limit ?? 100, 1000);
+  type SigEntry = { signature: string; blockTime?: number | null; err?: unknown };
+  const signatures = await heliusRpcCall<SigEntry[]>(
+    "getSignaturesForAddress",
+    [params.walletAddress, { limit, commitment: "confirmed" }],
+    `wallet-sig-timings-${params.walletAddress.slice(0, 8)}`
+  );
+
+  if (!Array.isArray(signatures) || signatures.length === 0) {
+    return { txCount: 0, firstActivityAtMs: null, lastActivityAtMs: null };
+  }
+
+  // getSignaturesForAddress returns reverse-chronological order.
+  // Compute age from ALL fetched signatures (no sinceMs filter) so old wallets
+  // are not wrongly tagged as fresh just because they haven't traded recently.
+  const allTimestamps = signatures
+    .filter((s) => !s.err)
+    .map((s) => normalizeTsToMs(s.blockTime ?? undefined))
+    .filter((t): t is number => t !== null);
+
+  if (allTimestamps.length === 0) {
+    return { txCount: 0, firstActivityAtMs: null, lastActivityAtMs: null };
+  }
+
+  const lastActivityAtMs = Math.max(...allTimestamps);
+  const firstActivityAtMs = Math.min(...allTimestamps);
+
+  // txCount = how many of those fall inside the activity lookback window
+  const txCount = params.sinceMs
+    ? allTimestamps.filter((t) => t >= params.sinceMs!).length
+    : allTimestamps.length;
+
+  return { txCount, firstActivityAtMs, lastActivityAtMs };
+}
+
 async function fetchEnhancedTransactionsByAddress(params: {
   walletAddress: string;
   sinceMs?: number | null;
@@ -906,7 +956,26 @@ async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?
   ]);
 
   if (balanceSol === null && holdingsByMint === null && txs.length === 0) {
-    return null;
+    // Last-resort check via RPC signature list — works without a Helius API key.
+    // If even this returns nothing the wallet genuinely has no on-chain history.
+    const rpcTimings = await fetchWalletSignatureTimings({
+      walletAddress: params.walletAddress,
+      sinceMs: params.sinceMs,
+    });
+    if (rpcTimings.txCount === 0) return null;
+    // We have some RPC data but no balance/holdings — return a minimal snapshot
+    // so badge logic can at least compute wallet age and activity count.
+    return {
+      walletAddress: params.walletAddress,
+      balanceSol: null,
+      solPriceUsd,
+      holdingsByMint: new Map(),
+      tradeByMint: new Map(),
+      observedFirstActivityAtMs: rpcTimings.firstActivityAtMs,
+      observedLastActivityAtMs: rpcTimings.lastActivityAtMs,
+      observedTxCount: rpcTimings.txCount,
+      fundedBy: null,
+    };
   }
 
   const tradeByMint = aggregateWalletTradesFromEnhancedTx({
@@ -914,14 +983,34 @@ async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?
     txs,
     sinceMs: params.sinceMs,
   });
-  const observedTxTimestamps = txs
-    .map((tx) => normalizeTsToMs(tx.timestamp))
-    .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp))
-    .sort((left, right) => left - right);
-  const observedFirstActivityAtMs = observedTxTimestamps[0] ?? null;
-  const observedLastActivityAtMs = observedTxTimestamps.length > 0
-    ? observedTxTimestamps[observedTxTimestamps.length - 1] ?? null
-    : null;
+
+  // Compute activity timestamps from enhanced tx data first.
+  // If enhanced API returned nothing (no API key), fall back to RPC signature list
+  // which provides blockTimes from getSignaturesForAddress without needing the key.
+  let observedFirstActivityAtMs: number | null = null;
+  let observedLastActivityAtMs: number | null = null;
+  let observedTxCount = txs.length;
+
+  if (txs.length > 0) {
+    const observedTxTimestamps = txs
+      .map((tx) => normalizeTsToMs(tx.timestamp))
+      .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp))
+      .sort((left, right) => left - right);
+    observedFirstActivityAtMs = observedTxTimestamps[0] ?? null;
+    observedLastActivityAtMs = observedTxTimestamps.length > 0
+      ? observedTxTimestamps[observedTxTimestamps.length - 1] ?? null
+      : null;
+  } else {
+    // Enhanced tx API returned nothing — use getSignaturesForAddress as fallback.
+    // This is a standard RPC method that works with any Solana RPC URL.
+    const rpcTimings = await fetchWalletSignatureTimings({
+      walletAddress: params.walletAddress,
+      sinceMs: params.sinceMs,
+    });
+    observedFirstActivityAtMs = rpcTimings.firstActivityAtMs;
+    observedLastActivityAtMs = rpcTimings.lastActivityAtMs;
+    observedTxCount = rpcTimings.txCount;
+  }
 
   return {
     walletAddress: params.walletAddress,
@@ -931,7 +1020,7 @@ async function buildWalletBaseSnapshot(params: { walletAddress: string; sinceMs?
     tradeByMint,
     observedFirstActivityAtMs,
     observedLastActivityAtMs,
-    observedTxCount: txs.length,
+    observedTxCount,
     fundedBy: inferWalletFundingSource({ walletAddress: params.walletAddress, txs }),
   };
 }
