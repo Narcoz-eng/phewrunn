@@ -737,24 +737,23 @@ function normalizeTsToMs(ts: number | undefined): number | null {
 
 /**
  * Lightweight fallback using standard getSignaturesForAddress RPC (no API key needed).
- * Fetches the most recent `limit` signatures to determine:
+ * Fetches up to 1000 recent signatures to determine:
  *   - lastActivityAtMs  — when the wallet was last seen (for lastSeenHours)
- *   - firstActivityAtMs — oldest of the fetched batch (lower bound on wallet age)
+ *   - firstActivityAtMs — oldest of ALL fetched sigs, or null if we hit the limit
+ *                         (if we got exactly 1000 results there are even older txs;
+ *                          in that case we can't cheaply determine true wallet age
+ *                          and return null so the wallet is NOT misclassified as fresh)
  *   - txCount           — transactions within the optional sinceMs window
- *
- * Does NOT filter by sinceMs when computing age so that old-but-inactive wallets
- * are not misclassified as fresh. sinceMs only affects txCount.
  */
 async function fetchWalletSignatureTimings(params: {
   walletAddress: string;
   sinceMs?: number | null;
-  limit?: number;
 }): Promise<{ txCount: number; firstActivityAtMs: number | null; lastActivityAtMs: number | null }> {
-  const limit = Math.min(params.limit ?? 100, 1000);
+  const FETCH_LIMIT = 1000;
   type SigEntry = { signature: string; blockTime?: number | null; err?: unknown };
   const signatures = await heliusRpcCall<SigEntry[]>(
     "getSignaturesForAddress",
-    [params.walletAddress, { limit, commitment: "confirmed" }],
+    [params.walletAddress, { limit: FETCH_LIMIT, commitment: "confirmed" }],
     `wallet-sig-timings-${params.walletAddress.slice(0, 8)}`
   );
 
@@ -763,8 +762,6 @@ async function fetchWalletSignatureTimings(params: {
   }
 
   // getSignaturesForAddress returns reverse-chronological order.
-  // Compute age from ALL fetched signatures (no sinceMs filter) so old wallets
-  // are not wrongly tagged as fresh just because they haven't traded recently.
   const allTimestamps = signatures
     .filter((s) => !s.err)
     .map((s) => normalizeTsToMs(s.blockTime ?? undefined))
@@ -775,7 +772,12 @@ async function fetchWalletSignatureTimings(params: {
   }
 
   const lastActivityAtMs = Math.max(...allTimestamps);
-  const firstActivityAtMs = Math.min(...allTimestamps);
+
+  // If we received exactly FETCH_LIMIT results the wallet has even older transactions
+  // we didn't fetch. We cannot determine true wallet age cheaply, so return null for
+  // firstActivityAtMs to prevent old high-activity wallets being tagged as fresh.
+  const hitLimit = signatures.length >= FETCH_LIMIT;
+  const firstActivityAtMs = hitLimit ? null : Math.min(...allTimestamps);
 
   // txCount = how many of those fall inside the activity lookback window
   const txCount = params.sinceMs
