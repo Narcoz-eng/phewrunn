@@ -175,6 +175,56 @@ adminInvitesRouter.patch("/access-codes/:id/revoke", async (c) => {
   return c.json({ data: toCodeDto(code) });
 });
 
+// ---- Invite Stats ----
+
+adminInvitesRouter.get("/invites/stats", async (c) => {
+  const [totalInvited, topInviters] = await Promise.all([
+    prisma.user.count({ where: { invitedById: { not: null } } }),
+    prisma.user.findMany({
+      where: { invitees: { some: {} } },
+      select: {
+        id: true,
+        username: true,
+        image: true,
+        inviteQuota: true,
+        _count: { select: { invitees: true } },
+      },
+      orderBy: { invitees: { _count: "desc" } },
+      take: 20,
+    }),
+  ]);
+
+  return c.json({
+    data: {
+      totalInvited,
+      topInviters: topInviters.map((u) => ({
+        id: u.id,
+        username: u.username,
+        image: u.image,
+        inviteQuota: u.inviteQuota,
+        inviteCount: u._count.invitees,
+      })),
+    },
+  });
+});
+
+// ---- Add Invites to User ----
+
+adminInvitesRouter.post(
+  "/invites/:userId/add",
+  zValidator("json", z.object({ amount: z.number().int().min(1).max(100) })),
+  async (c) => {
+    const { userId } = c.req.param();
+    const { amount } = c.req.valid("json");
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { inviteQuota: { increment: amount } },
+      select: { id: true, username: true, inviteQuota: true },
+    });
+    return c.json({ data: user });
+  }
+);
+
 // ---- Invite Tree ----
 
 adminInvitesRouter.get(

@@ -1214,3 +1214,18 @@ export const AdminInvitesResponseSchema = z.object({
 });
 
 export type AdminInvitesResponse = z.infer<typeof AdminInvitesResponseSchema>;
+
+export const AdminInviteStatsSchema = z.object({
+  totalInvited: z.number(),
+  topInviters: z.array(
+    z.object({
+      id: z.string(),
+      username: z.string().nullable(),
+      image: z.string().nullable(),
+      inviteQuota: z.number(),
+      inviteCount: z.number(),
+    })
+  ),
+});
+
+export type AdminInviteStats = z.infer<typeof AdminInviteStatsSchema>;
