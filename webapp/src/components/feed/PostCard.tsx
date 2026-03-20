@@ -659,33 +659,42 @@ type TokenPageCacheLike = {
 
 type PriceFlash = "up" | "down" | null;
 
-function usePriceFlash(value: string | null | undefined): PriceFlash {
-  const prevRef = useRef(value);
+function usePriceFlash(numericValue: number | null | undefined): PriceFlash {
+  const prevRef = useRef(numericValue);
   const [flash, setFlash] = useState<PriceFlash>(null);
 
   useEffect(() => {
-    if (value !== prevRef.current && prevRef.current !== undefined && value !== undefined && value !== null && prevRef.current !== null) {
-      setFlash(value > prevRef.current ? "up" : value < prevRef.current ? "down" : null);
+    const prev = prevRef.current;
+    if (
+      typeof numericValue === "number" &&
+      Number.isFinite(numericValue) &&
+      typeof prev === "number" &&
+      Number.isFinite(prev) &&
+      numericValue !== prev
+    ) {
+      setFlash(numericValue > prev ? "up" : "down");
       const timer = setTimeout(() => setFlash(null), 850);
-      prevRef.current = value;
+      prevRef.current = numericValue;
       return () => clearTimeout(timer);
     }
-    prevRef.current = value;
-  }, [value]);
+    prevRef.current = numericValue;
+  }, [numericValue]);
 
   return flash;
 }
 
 function AnimatedPriceText({
   value,
+  numericValue,
   className,
   flashClassName,
 }: {
   value: string;
+  numericValue: number | null | undefined;
   className?: string;
   flashClassName?: string;
 }) {
-  const flash = usePriceFlash(value);
+  const flash = usePriceFlash(numericValue);
   return (
     <motion.span
       key={value}
@@ -706,12 +715,14 @@ function AnimatedPriceText({
 
 function AnimatedMultiplierBadge({
   text,
+  numericValue,
   className,
 }: {
   text: string;
+  numericValue: number | null | undefined;
   className?: string;
 }) {
-  const flash = usePriceFlash(text);
+  const flash = usePriceFlash(numericValue);
   return (
     <motion.span
       key={text}
@@ -5321,6 +5332,7 @@ export function PostCard({
                               {isLoss && <TrendingDown className="h-4 w-4 text-loss" />}
                               <AnimatedMultiplierBadge
                                 text={multiplier1h?.text ?? "N/A"}
+                                numericValue={localMcap1h}
                                 className={cn(
                                   "text-sm font-mono font-bold px-2 py-0.5 rounded",
                                   m1hStyles.text,
@@ -5366,6 +5378,7 @@ export function PostCard({
                               {isLoss6h && <TrendingDown className="h-3 w-3 text-loss" />}
                               <AnimatedMultiplierBadge
                                 text={multiplier6h?.text ?? "N/A"}
+                                numericValue={localMcap6h}
                                 className={cn(
                                   "text-xs font-mono font-medium px-1.5 py-0.5 rounded",
                                   m6hStyles.text,
@@ -5419,6 +5432,7 @@ export function PostCard({
                               {isLossCurrent && <TrendingDown className="h-3 w-3 text-loss" />}
                               <AnimatedMultiplierBadge
                                 text={multiplierCurrent?.text ?? "N/A"}
+                                numericValue={currentMcap}
                                 className={cn(
                                   "text-xs font-mono font-medium px-1.5 py-0.5 rounded",
                                   mCurrentStyles.text,
@@ -5430,6 +5444,7 @@ export function PostCard({
                           </div>
                           <AnimatedPriceText
                             value={formatMarketCap(currentMcap)}
+                            numericValue={currentMcap}
                             className={cn(
                               "block text-sm font-mono font-semibold mt-0.5",
                               isGainCurrent && "text-gain",
@@ -5468,6 +5483,7 @@ export function PostCard({
                             </div>
                             <AnimatedPriceText
                               value={formatMarketCap(currentMcap)}
+                              numericValue={currentMcap}
                               className="block text-base font-mono font-semibold text-foreground mt-1"
                             />
                           </div>
@@ -5483,6 +5499,7 @@ export function PostCard({
                               {isLoss ? <TrendingDown className="h-4 w-4 text-loss" /> : null}
                               <AnimatedMultiplierBadge
                                 text={multiplierLive?.text ?? "N/A"}
+                                numericValue={currentMcap}
                                 className={cn(
                                   "text-base font-mono font-bold px-1.5 py-0.5 rounded",
                                   mLiveStyles.text,
