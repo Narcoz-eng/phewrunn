@@ -655,6 +655,82 @@ type TokenPageCacheLike = {
   recentCalls: Post[];
 };
 
+// ---- Animated price display helpers ----
+
+type PriceFlash = "up" | "down" | null;
+
+function usePriceFlash(value: string | null | undefined): PriceFlash {
+  const prevRef = useRef(value);
+  const [flash, setFlash] = useState<PriceFlash>(null);
+
+  useEffect(() => {
+    if (value !== prevRef.current && prevRef.current !== undefined && value !== undefined && value !== null && prevRef.current !== null) {
+      setFlash(value > prevRef.current ? "up" : value < prevRef.current ? "down" : null);
+      const timer = setTimeout(() => setFlash(null), 850);
+      prevRef.current = value;
+      return () => clearTimeout(timer);
+    }
+    prevRef.current = value;
+  }, [value]);
+
+  return flash;
+}
+
+function AnimatedPriceText({
+  value,
+  className,
+  flashClassName,
+}: {
+  value: string;
+  className?: string;
+  flashClassName?: string;
+}) {
+  const flash = usePriceFlash(value);
+  return (
+    <motion.span
+      key={value}
+      initial={{ opacity: 0.6, y: flash === "up" ? 6 : flash === "down" ? -6 : 0 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: "easeOut" }}
+      className={cn(
+        className,
+        flash === "up" && (flashClassName ?? "text-gain"),
+        flash === "down" && (flashClassName ?? "text-loss"),
+        flash !== null && "transition-colors duration-700"
+      )}
+    >
+      {value}
+    </motion.span>
+  );
+}
+
+function AnimatedMultiplierBadge({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  const flash = usePriceFlash(text);
+  return (
+    <motion.span
+      key={text}
+      initial={{ scale: 0.85, opacity: 0.5 }}
+      animate={{
+        scale: flash ? [1, 1.12, 1] : 1,
+        opacity: 1,
+      }}
+      transition={{
+        scale: { duration: 0.4, ease: "easeOut" },
+        opacity: { duration: 0.3 },
+      }}
+      className={className}
+    >
+      {text}
+    </motion.span>
+  );
+}
+
 function parseMarketStateTimestamp(value: string | null | undefined): number {
   if (!value) return 0;
   const parsed = new Date(value).getTime();
@@ -1436,7 +1512,19 @@ export function PostCard({
 
     if (shouldAdoptIncomingMarketState) {
       latestMarketStateVersionRef.current = incomingVersion;
-      setCurrentMcap(post.currentMcap);
+      // Don't overwrite a live currentMcap with a baseline value (entry === current).
+      // The feed query can return stale baseline values that reset live-polled data to 0.0%.
+      const incomingLooksBaseline =
+        post.entryMcap !== null &&
+        post.currentMcap !== null &&
+        post.currentMcap === post.entryMcap;
+      const existingLooksLive =
+        currentMcap !== null &&
+        post.entryMcap !== null &&
+        currentMcap !== post.entryMcap;
+      if (!(incomingLooksBaseline && existingLooksLive)) {
+        setCurrentMcap(post.currentMcap);
+      }
       setLocalSettled(post.settled);
       setLocalMcap1h(post.mcap1h);
       setLocalMcap6h(post.mcap6h);
@@ -5231,16 +5319,15 @@ export function PostCard({
                             <div className="flex items-center gap-1">
                               {isGain && <TrendingUp className="h-4 w-4 text-gain" />}
                               {isLoss && <TrendingDown className="h-4 w-4 text-loss" />}
-                              <span
+                              <AnimatedMultiplierBadge
+                                text={multiplier1h?.text ?? "N/A"}
                                 className={cn(
                                   "text-sm font-mono font-bold px-2 py-0.5 rounded",
                                   m1hStyles.text,
                                   multiplier1h?.tier === 'high' && "bg-yellow-500/20",
                                   multiplier1h?.tier === 'mega' && "bg-gradient-to-r from-yellow-500/30 to-amber-500/30 animate-pulse"
                                 )}
-                              >
-                                {multiplier1h?.text ?? "N/A"}
-                              </span>
+                              />
                             </div>
                           </div>
                         </div>
@@ -5277,16 +5364,15 @@ export function PostCard({
                             <div className="flex items-center gap-1">
                               {isGain6h && <TrendingUp className="h-3 w-3 text-gain" />}
                               {isLoss6h && <TrendingDown className="h-3 w-3 text-loss" />}
-                              <span
+                              <AnimatedMultiplierBadge
+                                text={multiplier6h?.text ?? "N/A"}
                                 className={cn(
                                   "text-xs font-mono font-medium px-1.5 py-0.5 rounded",
                                   m6hStyles.text,
                                   multiplier6h?.tier === 'high' && "bg-yellow-500/15",
                                   multiplier6h?.tier === 'mega' && "bg-gradient-to-r from-yellow-500/25 to-amber-500/25"
                                 )}
-                              >
-                                {multiplier6h?.text ?? "N/A"}
-                              </span>
+                              />
                             </div>
                           </div>
                           <p className={cn(
@@ -5331,26 +5417,26 @@ export function PostCard({
                             <div className="flex items-center gap-1">
                               {isGainCurrent && <TrendingUp className="h-3 w-3 text-gain" />}
                               {isLossCurrent && <TrendingDown className="h-3 w-3 text-loss" />}
-                              <span
+                              <AnimatedMultiplierBadge
+                                text={multiplierCurrent?.text ?? "N/A"}
                                 className={cn(
                                   "text-xs font-mono font-medium px-1.5 py-0.5 rounded",
                                   mCurrentStyles.text,
                                   multiplierCurrent?.tier === 'high' && "bg-yellow-500/15",
                                   multiplierCurrent?.tier === 'mega' && "bg-gradient-to-r from-yellow-500/25 to-amber-500/25"
                                 )}
-                              >
-                                {multiplierCurrent?.text ?? "N/A"}
-                              </span>
+                              />
                             </div>
                           </div>
-                          <p className={cn(
-                            "text-sm font-mono font-semibold mt-0.5",
-                            isGainCurrent && "text-gain",
-                            isLossCurrent && "text-loss",
-                            !isGainCurrent && !isLossCurrent && "text-foreground"
-                          )}>
-                            {formatMarketCap(currentMcap)}
-                          </p>
+                          <AnimatedPriceText
+                            value={formatMarketCap(currentMcap)}
+                            className={cn(
+                              "block text-sm font-mono font-semibold mt-0.5",
+                              isGainCurrent && "text-gain",
+                              isLossCurrent && "text-loss",
+                              !isGainCurrent && !isLossCurrent && "text-foreground"
+                            )}
+                          />
                         </div>
                       );
                     })()}
@@ -5380,9 +5466,10 @@ export function PostCard({
                               </span>
                               <p className="text-[10px] text-primary uppercase tracking-wider font-semibold">LIVE</p>
                             </div>
-                            <p className="text-base font-mono font-semibold text-foreground mt-1">
-                              {formatMarketCap(currentMcap)}
-                            </p>
+                            <AnimatedPriceText
+                              value={formatMarketCap(currentMcap)}
+                              className="block text-base font-mono font-semibold text-foreground mt-1"
+                            />
                           </div>
                           <div
                             className={cn(
@@ -5392,18 +5479,17 @@ export function PostCard({
                           >
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Change</p>
                             <div className="flex items-center gap-1 mt-1">
-                              {isGain && <TrendingUp className="h-4 w-4 text-gain" />}
-                              {isLoss && <TrendingDown className="h-4 w-4 text-loss" />}
-                              <p
+                              {isGain ? <TrendingUp className="h-4 w-4 text-gain" /> : null}
+                              {isLoss ? <TrendingDown className="h-4 w-4 text-loss" /> : null}
+                              <AnimatedMultiplierBadge
+                                text={multiplierLive?.text ?? "N/A"}
                                 className={cn(
                                   "text-base font-mono font-bold px-1.5 py-0.5 rounded",
                                   mLiveStyles.text,
                                   multiplierLive?.tier === 'high' && "bg-yellow-500/15",
                                   multiplierLive?.tier === 'mega' && "bg-gradient-to-r from-yellow-500/25 to-amber-500/25 animate-pulse"
                                 )}
-                              >
-                                {multiplierLive?.text ?? "N/A"}
-                              </p>
+                              />
                             </div>
                           </div>
                         </>
