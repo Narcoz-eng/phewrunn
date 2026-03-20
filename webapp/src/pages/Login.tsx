@@ -2,7 +2,12 @@
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Suspense, lazy, useRef, type ReactNode } from "react";
-import { useAuth, usePrivySyncFailureSnapshot } from "@/lib/auth-client";
+import {
+  clearPrivySyncFailureState,
+  setPrivyAuthBootstrapState,
+  useAuth,
+  usePrivySyncFailureSnapshot,
+} from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -469,6 +474,14 @@ export default function Login() {
     const urlCode = searchParams.get("code");
     if (urlCode) {
       sessionStorage.setItem("phew.pending-invite-code", urlCode.trim().toUpperCase());
+      clearPrivySyncFailureState();
+      setPrivyAuthBootstrapState("idle", {
+        owner: "system",
+        mode: "system",
+        userId: null,
+        detail: "invite/access code updated from login URL",
+        debugCode: "access_code_url_prefill",
+      });
     }
   }, [searchParams]);
 

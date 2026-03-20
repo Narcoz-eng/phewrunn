@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { KeyRound, ArrowRight } from "lucide-react";
+import { clearPrivySyncFailureState, setPrivyAuthBootstrapState } from "@/lib/auth-client";
 
 const PENDING_CODE_KEY = "phew.pending-invite-code";
 
@@ -34,7 +35,15 @@ export default function AccessCodeEntry() {
     }
     sessionStorage.setItem(PENDING_CODE_KEY, trimmed);
     // Navigate back to login — the code will be picked up on next privy-sync
-    navigate("/login");
+    clearPrivySyncFailureState();
+    setPrivyAuthBootstrapState("idle", {
+      owner: "system",
+      mode: "system",
+      userId: null,
+      detail: "invite/access code updated",
+      debugCode: "access_code_submitted",
+    });
+    navigate("/login", { replace: true });
   };
 
   return (

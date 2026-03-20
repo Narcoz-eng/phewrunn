@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePrivy, useIdentityToken, useUser } from "@privy-io/react-auth";
 import {
   hasValidatedAuthSession,
+  isAccessCodeBootstrapDebugCode,
   isRecentExplicitLogoutSuppressed,
   isPrivyAuthBootstrapStatePending,
   registerPreLogoutHook,
@@ -220,6 +221,9 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       sameUserSnapshot?.owner === "AuthInitializer" &&
       currentState === "awaiting_identity_verification_finalization" &&
       hookIdentityTokenPresent;
+    const isAccessCodeBlockedFailure =
+      sameUserSnapshot?.state === "failed" &&
+      isAccessCodeBootstrapDebugCode(sameUserSnapshot.debugCode);
     const shouldPreserveSettledAuth =
       hasAuthoritativeBackendSession ||
       hasLiveSession ||
@@ -295,6 +299,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       sameUserSnapshot &&
       (currentState === "failed_rate_limited" ||
         currentState === "authenticated" ||
+        isAccessCodeBlockedFailure ||
         (sameUserSnapshot.owner === "AuthInitializer" &&
           currentState === "failed" &&
           !hookIdentityTokenPresent))
@@ -302,6 +307,7 @@ function AuthInitializerInner({ children }: AuthInitializerProps) {
       console.info("[AuthFlow] AuthInitializer leaving terminal auth state untouched", {
         userId: user.id,
         state: currentState,
+        debugCode: sameUserSnapshot.debugCode ?? null,
       });
       return;
     }

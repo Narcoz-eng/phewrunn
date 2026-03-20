@@ -100,6 +100,14 @@ type PrivySyncFailureSnapshot = {
   recordedAt: number;
 };
 
+const ACCESS_CODE_BOOTSTRAP_DEBUG_CODES = [
+  "access_code_required",
+  "access_code_invalid",
+] as const;
+
+type AccessCodeBootstrapDebugCode =
+  (typeof ACCESS_CODE_BOOTSTRAP_DEBUG_CODES)[number];
+
 export type PrivyAuthBootstrapState =
   | "idle"
   | "privy_hydrating"
@@ -633,12 +641,27 @@ export function getAuthUiState(options: {
     case "syncing_backend":
       return "connecting_backend_session";
     case "failed":
-      return privyAuthenticated ? "finalizing_identity_verification" : "signed_out";
+      return isAccessCodeBootstrapDebugCode(snapshot?.debugCode)
+        ? "signed_out"
+        : privyAuthenticated
+          ? "finalizing_identity_verification"
+          : "signed_out";
     case "anonymous":
     case "idle":
     default:
       return "signed_out";
   }
+}
+
+export function isAccessCodeBootstrapDebugCode(
+  value: unknown
+): value is AccessCodeBootstrapDebugCode {
+  return (
+    typeof value === "string" &&
+    (
+      ACCESS_CODE_BOOTSTRAP_DEBUG_CODES as readonly string[]
+    ).includes(value)
+  );
 }
 
 export function readPrivyAuthBootstrapSnapshot(): PrivyAuthBootstrapSnapshot | null {
@@ -1250,6 +1273,33 @@ function getPrivyBootstrapErrorMessage(error: unknown): string {
   return "Failed to finish sign-in";
 }
 
+function getPrivyBootstrapErrorCode(error: unknown): string | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    const normalizedCode = (error as { code: string }).code.trim();
+    return normalizedCode.length > 0 ? normalizedCode : null;
+  }
+
+  return null;
+}
+
+function getAccessCodeBootstrapDebugCode(
+  error: unknown
+): AccessCodeBootstrapDebugCode | null {
+  switch (getPrivyBootstrapErrorCode(error)) {
+    case "ACCESS_CODE_REQUIRED":
+      return "access_code_required";
+    case "ACCESS_CODE_INVALID":
+      return "access_code_invalid";
+    default:
+      return null;
+  }
+}
+
 async function waitForPendingPrivyIdentityToken(
   pendingPromise: Promise<string | undefined>,
   timeoutMs: number
@@ -1431,6 +1481,23 @@ async function trySyncPrivySessionWithoutIdentityToken(options: {
     });
     return syncResult.user;
   } catch (error) {
+    const accessCodeDebugCode = getAccessCodeBootstrapDebugCode(error);
+    if (accessCodeDebugCode) {
+      console.warn("[AuthFlow] backend sync without identity token blocked by access code requirement", {
+        owner: options.owner,
+        mode: options.mode,
+        userId: options.userId,
+        attemptId: options.attemptId,
+        attempt: options.attempt,
+        totalAttempts: options.totalAttempts,
+        reason: options.reason,
+        hasPrivyAccessToken: Boolean(resolvedPrivyAccessToken),
+        debugCode: accessCodeDebugCode,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
     console.warn("[AuthFlow] backend sync without identity token failed", {
       owner: options.owner,
       mode: options.mode,
@@ -2089,8 +2156,33 @@ export async function startPrivyAuthBootstrap({
           return syncResult.user;
         } catch (error) {
           const message = getPrivyBootstrapErrorMessage(error);
+          const accessCodeDebugCode = getAccessCodeBootstrapDebugCode(error);
           const rateLimited = isPrivyRateLimitedMessage(message);
           const finalizing = isPrivyFinalizationPendingMessage(message);
+
+          if (accessCodeDebugCode) {
+            writePrivySyncFailureSnapshot(message);
+            setPrivyAuthBootstrapState("failed", {
+              owner,
+              mode,
+              userId: user.id,
+              detail: message,
+              debugCode: accessCodeDebugCode,
+              backendSyncStarted: backendSyncStartedForAttempt,
+              attempt,
+              totalAttempts,
+            });
+            console.warn("[AuthFlow] bootstrap blocked pending access code", {
+              owner,
+              mode,
+              userId: user.id,
+              attempt,
+              totalAttempts,
+              debugCode: accessCodeDebugCode,
+              reason: message,
+            });
+            return null;
+          }
 
           if (rateLimited) {
             attemptState.rateLimited = true;
