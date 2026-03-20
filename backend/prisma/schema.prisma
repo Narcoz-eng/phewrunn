@@ -77,6 +77,14 @@ model User {
   traderMetricDays   TraderMetricDaily[]
   alertPreference    AlertPreference?
 
+  // Invite system
+  inviteQuota       Int       @default(2)          // invites this user can send
+  invitedById       String?                         // who invited this user
+  invitedBy         User?     @relation("UserInvites", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitees          User[]    @relation("UserInvites")
+  createdAccessCodes AccessCode[]  @relation("AdminCreatedCodes")
+  accessCodeUses    AccessCodeUse[] @relation("UsedAccessCodes")
+
   @@index([createdAt])
   @@index([level, xp])
   @@index([role])
@@ -647,4 +655,44 @@ model AnnouncementView {
   @@unique([userId, announcementId])
   @@index([userId, viewedAt])
   @@index([announcementId, viewedAt])
+}
+
+model AccessCode {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  label       String?
+  type        String    @default("admin")  // "admin" | "user"
+  maxUses     Int       @default(1)        // 0 = unlimited
+  useCount    Int       @default(0)
+  expiresAt   DateTime?
+  isRevoked   Boolean   @default(false)
+  createdById String
+  createdBy   User      @relation("AdminCreatedCodes", fields: [createdById], references: [id], onDelete: Cascade)
+  uses        AccessCodeUse[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([code])
+  @@index([isRevoked, expiresAt])
+  @@index([createdById, createdAt])
+  @@index([type, createdById])
+}
+
+model AccessCodeUse {
+  id       String     @id @default(cuid())
+  codeId   String
+  code     AccessCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  usedById String
+  usedBy   User       @relation("UsedAccessCodes", fields: [usedById], references: [id], onDelete: Cascade)
+  usedAt   DateTime   @default(now())
+
+  @@unique([codeId, usedById])
+  @@index([usedById])
+  @@index([codeId, usedAt])
+}
+
+model GlobalSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

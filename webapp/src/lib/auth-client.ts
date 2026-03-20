@@ -3488,6 +3488,10 @@ export async function syncPrivySession(
         body: JSON.stringify({
           ...(normalizedPrivyIdToken ? { privyIdToken: normalizedPrivyIdToken } : {}),
           ...(name ? { name } : {}),
+          ...((() => {
+            const stored = sessionStorage.getItem("phew.pending-invite-code");
+            return stored ? { code: stored } : {};
+          })()),
         }),
       });
 
@@ -3521,6 +3525,13 @@ export async function syncPrivySession(
             return finalizeRecoveredPrivySyncUser(recoveredUser);
           }
         }
+        const errorCode = (data as { error?: { code?: string } } | null)?.error?.code ?? null;
+        if (errorCode === "ACCESS_CODE_REQUIRED" || errorCode === "ACCESS_CODE_INVALID") {
+          const err = new Error(message) as Error & { code: string };
+          err.code = errorCode;
+          console.error("[Auth] privy-sync failed:", message, errorCode);
+          throw err;
+        }
         console.error("[Auth] privy-sync failed:", message);
         throw new Error(message);
       }
@@ -3533,6 +3544,7 @@ export async function syncPrivySession(
         throw new Error("Session sync completed after logout");
       }
 
+      sessionStorage.removeItem("phew.pending-invite-code");
       explicitLogoutAt = 0;
       lastPrivySyncAt = Date.now();
       sessionRateLimitedUntil = 0;

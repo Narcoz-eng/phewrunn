@@ -1116,3 +1116,101 @@ export const UserStatsSchema = z.object({
 });
 
 export type UserStats = z.infer<typeof UserStatsSchema>;
+
+// =====================================================
+// Invite / Access Code Types
+// =====================================================
+
+export const GenerateAccessCodesSchema = z.object({
+  count: z.number().int().min(1).max(200).default(10),
+  maxUses: z.number().int().min(0).default(1),
+  expiresAt: z.string().datetime().optional(),
+  label: z.string().max(100).optional(),
+});
+
+export type GenerateAccessCodes = z.infer<typeof GenerateAccessCodesSchema>;
+
+export const AccessCodeSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  label: z.string().nullable(),
+  type: z.string(),
+  maxUses: z.number(),
+  useCount: z.number(),
+  expiresAt: z.string().nullable(),
+  isRevoked: z.boolean(),
+  createdAt: z.string(),
+  createdBy: z.object({ id: z.string(), username: z.string().nullable(), image: z.string().nullable() }).optional(),
+  isExpired: z.boolean(),
+  isExhausted: z.boolean(),
+});
+
+export type AccessCode = z.infer<typeof AccessCodeSchema>;
+
+export const AccessCodeListResponseSchema = z.object({
+  codes: z.array(AccessCodeSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+  totalPages: z.number(),
+});
+
+export type AccessCodeListResponse = z.infer<typeof AccessCodeListResponseSchema>;
+
+export const AccessCodeUseEntrySchema = z.object({
+  id: z.string(),
+  usedAt: z.string(),
+  usedBy: z.object({ id: z.string(), username: z.string().nullable(), image: z.string().nullable() }),
+});
+
+export type AccessCodeUseEntry = z.infer<typeof AccessCodeUseEntrySchema>;
+
+export const InviteEntrySchema = z.object({
+  id: z.string(),
+  username: z.string().nullable(),
+  image: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export type InviteEntry = z.infer<typeof InviteEntrySchema>;
+
+export const MyInviteInfoSchema = z.object({
+  inviteCode: z.string(),
+  inviteLink: z.string(),
+  quotaTotal: z.number(),
+  quotaUsed: z.number(),
+  quotaRemaining: z.number(),
+  invitees: z.array(InviteEntrySchema),
+});
+
+export type MyInviteInfo = z.infer<typeof MyInviteInfoSchema>;
+
+export const GlobalSettingsSchema = z.object({
+  inviteOnly: z.boolean(),
+  defaultInviteQuota: z.number().int().min(0),
+});
+
+export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
+
+export const AdminInviteUserSchema = z.object({
+  id: z.string(),
+  username: z.string().nullable(),
+  image: z.string().nullable(),
+  inviteQuota: z.number(),
+  inviteeCount: z.number(),
+  invitedBy: z.object({ id: z.string(), username: z.string().nullable() }).nullable(),
+  createdAt: z.string(),
+});
+
+export type AdminInviteUser = z.infer<typeof AdminInviteUserSchema>;
+
+export const AdminInvitesResponseSchema = z.object({
+  users: z.array(AdminInviteUserSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+  totalPages: z.number(),
+  treeSize: z.number(),
+});
+
+export type AdminInvitesResponse = z.infer<typeof AdminInvitesResponseSchema>;

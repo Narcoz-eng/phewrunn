@@ -63,6 +63,7 @@ import {
 } from "@/lib/profile-cache";
 import { PhewEditIcon } from "@/components/icons/PhewIcons";
 import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
+import { MyInvitesSection } from "@/components/profile/MyInvitesSection";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -1499,6 +1500,9 @@ export default function Profile() {
 
             {/* Wallet Connection Section */}
             <WalletConnection deferMs={2600} />
+
+            {/* My Invites Section */}
+            <MyInvitesSection />
 
             {/* Followers/Following */}
             <div className="flex items-center justify-center gap-6 py-3">
