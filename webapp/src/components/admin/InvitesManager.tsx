@@ -18,7 +18,7 @@ export function InvitesManager() {
 
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ["admin", "settings"],
-    queryFn: () => api.get<GlobalSettings>("/api/admin/settings"),
+    queryFn: () => api.get<GlobalSettings>("/api/admin/settings/invites"),
   });
 
   const { data: inviteStats, isLoading: statsLoading } = useQuery({
@@ -28,7 +28,7 @@ export function InvitesManager() {
 
   const toggleInviteOnly = useMutation({
     mutationFn: (inviteOnly: boolean) =>
-      api.patch("/api/admin/settings", { inviteOnly }),
+      api.patch("/api/admin/settings/invites", { inviteOnly }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "settings"] });
       toast.success("Settings updated");
