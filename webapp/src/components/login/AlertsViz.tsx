@@ -20,7 +20,7 @@ interface LoginNotification {
   token: string;
   message: string;
   creator: string;
-  avatarGradient: string;
+  avatarUrl: string;
   time: string;
   detail: string;
 }
@@ -33,7 +33,7 @@ const ALL_NOTIFICATIONS: LoginNotification[] = [
     token: "$SOL",
     message: "posted a new call on $SOL",
     creator: "SolMaxi",
-    avatarGradient: "from-blue-500 to-cyan-400",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=SolMaxi&backgroundColor=0a0a0f",
     time: "Just now",
     detail: "Entry $183.40 — flagged as Early Runner with 94% confidence",
   },
@@ -44,7 +44,7 @@ const ALL_NOTIFICATIONS: LoginNotification[] = [
     token: "$BONK",
     message: "Volume spike detected on $BONK",
     creator: "DeFiAlpha",
-    avatarGradient: "from-amber-500 to-yellow-400",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=DeFiAlpha&backgroundColor=0a0a0f",
     time: "3m ago",
     detail: "3.1x multiplier potential — 87% confidence score",
   },
@@ -55,7 +55,7 @@ const ALL_NOTIFICATIONS: LoginNotification[] = [
     token: "$WIF",
     message: "shared hot alpha on $WIF",
     creator: "WhaleWatch",
-    avatarGradient: "from-orange-500 to-red-400",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=WhaleWatch&backgroundColor=0a0a0f",
     time: "12m ago",
     detail: "Entry $1.82 — whale accumulation pattern confirmed",
   },
@@ -66,7 +66,7 @@ const ALL_NOTIFICATIONS: LoginNotification[] = [
     token: "$PEPE",
     message: "High conviction alert for $PEPE",
     creator: "OnchainOracle",
-    avatarGradient: "from-emerald-500 to-teal-400",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=OnchainOracle&backgroundColor=0a0a0f",
     time: "28m ago",
     detail: "4.2x potential — supply shock pattern, 91% confidence",
   },
@@ -77,7 +77,7 @@ const ALL_NOTIFICATIONS: LoginNotification[] = [
     token: "$JUP",
     message: "posted liquidity analysis on $JUP",
     creator: "LiqHunter",
-    avatarGradient: "from-violet-500 to-indigo-500",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=LiqHunter&backgroundColor=0a0a0f",
     time: "41m ago",
     detail: "Entry $0.82 — liquidity inflow surge, 2.9x target",
   },
@@ -150,11 +150,11 @@ function NotificationCard({ notif, index }: { notif: LoginNotification; index: n
       {/* Creator row with avatar */}
       <div className="flex items-start gap-2.5">
         <div className="relative flex-shrink-0">
-          <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${notif.avatarGradient} flex items-center justify-center ring-1 ring-white/10 shadow-md`}>
-            <span className="text-[11px] font-bold text-white drop-shadow-sm">
-              {notif.creator.charAt(0)}
-            </span>
-          </div>
+          <img
+            src={notif.avatarUrl}
+            alt={notif.creator}
+            className="w-8 h-8 rounded-full object-cover ring-1 ring-white/10 shadow-md bg-white/5"
+          />
           <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${m.dot} border-[1.5px] border-[rgba(10,16,28,0.97)]`} />
         </div>
         <div className="flex-1 min-w-0">
@@ -215,7 +215,7 @@ export function AlertsViz() {
             </div>
             <div>
               <h3 className="font-heading font-bold text-sm text-white/90">Live Notifications</h3>
-              <p className="text-[10px] text-white/35 mt-0.5">Signals from every post, as they happen</p>
+              <p className="text-[10px] text-white/35 mt-0.5">From live posts & on-chain intelligence</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -238,7 +238,7 @@ export function AlertsViz() {
         </div>
         {/* Description */}
         <p className="text-[11px] text-white/40 leading-relaxed">
-          Every time a creator posts a call, you get instant notifications with signal type, confidence score, and entry details — so you never miss alpha.
+          Get notified when creators post calls and when our intelligence detects signals like volume spikes, liquidity surges, and early runner patterns — so you never miss alpha.
         </p>
       </div>
 
@@ -255,7 +255,7 @@ export function AlertsViz() {
       <div className="px-5 py-3 border-t border-white/[0.05] bg-white/[0.02] flex items-center justify-between text-[11px]">
         <span className="flex items-center gap-1.5 text-white/35">
           <MessageSquare className="w-3 h-3" />
-          Pushed from every new post
+          Posts & intelligence signals
         </span>
         <span className="flex items-center gap-1 text-emerald-400 font-medium">
           <Zap className="w-3 h-3" />
