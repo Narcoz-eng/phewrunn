@@ -13,19 +13,19 @@ import {
   Zap,
 } from "lucide-react";
 
-interface Notification {
+interface LoginNotification {
   id: number;
   type: "signal" | "post" | "milestone";
   signalType: "hot_alpha" | "early_runner" | "high_conviction" | "volume_spike" | "liquidity_spike";
   token: string;
   message: string;
   creator: string;
-  creatorAvatar: string;
+  avatarGradient: string;
   time: string;
   detail: string;
 }
 
-const ALL_NOTIFICATIONS: Notification[] = [
+const ALL_NOTIFICATIONS: LoginNotification[] = [
   {
     id: 1,
     type: "post",
@@ -33,7 +33,7 @@ const ALL_NOTIFICATIONS: Notification[] = [
     token: "$SOL",
     message: "posted a new call on $SOL",
     creator: "SolMaxi",
-    creatorAvatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=80&h=80&fit=crop&crop=face",
+    avatarGradient: "from-blue-500 to-cyan-400",
     time: "Just now",
     detail: "Entry $183.40 — flagged as Early Runner with 94% confidence",
   },
@@ -44,7 +44,7 @@ const ALL_NOTIFICATIONS: Notification[] = [
     token: "$BONK",
     message: "Volume spike detected on $BONK",
     creator: "DeFiAlpha",
-    creatorAvatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop&crop=face",
+    avatarGradient: "from-amber-500 to-yellow-400",
     time: "3m ago",
     detail: "3.1x multiplier potential — 87% confidence score",
   },
@@ -55,7 +55,7 @@ const ALL_NOTIFICATIONS: Notification[] = [
     token: "$WIF",
     message: "shared hot alpha on $WIF",
     creator: "WhaleWatch",
-    creatorAvatar: "https://images.unsplash.com/photo-1599566150163-29194dcabd9c?w=80&h=80&fit=crop&crop=face",
+    avatarGradient: "from-orange-500 to-red-400",
     time: "12m ago",
     detail: "Entry $1.82 — whale accumulation pattern confirmed",
   },
@@ -66,7 +66,7 @@ const ALL_NOTIFICATIONS: Notification[] = [
     token: "$PEPE",
     message: "High conviction alert for $PEPE",
     creator: "OnchainOracle",
-    creatorAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&crop=face",
+    avatarGradient: "from-emerald-500 to-teal-400",
     time: "28m ago",
     detail: "4.2x potential — supply shock pattern, 91% confidence",
   },
@@ -77,14 +77,14 @@ const ALL_NOTIFICATIONS: Notification[] = [
     token: "$JUP",
     message: "posted liquidity analysis on $JUP",
     creator: "LiqHunter",
-    creatorAvatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&crop=face",
+    avatarGradient: "from-violet-500 to-indigo-500",
     time: "41m ago",
     detail: "Entry $0.82 — liquidity inflow surge, 2.9x target",
   },
 ];
 
 const SIGNAL_META: Record<
-  Notification["signalType"],
+  LoginNotification["signalType"],
   { icon: React.ElementType; label: string; text: string; dot: string; border: string; bg: string; glow: string }
 > = {
   hot_alpha: {
@@ -134,7 +134,7 @@ const SIGNAL_META: Record<
   },
 };
 
-function NotificationCard({ notif, index }: { notif: Notification; index: number }) {
+function NotificationCard({ notif, index }: { notif: LoginNotification; index: number }) {
   const m = SIGNAL_META[notif.signalType];
   const Icon = m.icon;
 
@@ -150,11 +150,11 @@ function NotificationCard({ notif, index }: { notif: Notification; index: number
       {/* Creator row with avatar */}
       <div className="flex items-start gap-2.5">
         <div className="relative flex-shrink-0">
-          <img
-            src={notif.creatorAvatar}
-            alt={notif.creator}
-            className="w-8 h-8 rounded-full object-cover ring-1 ring-white/10"
-          />
+          <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${notif.avatarGradient} flex items-center justify-center ring-1 ring-white/10 shadow-md`}>
+            <span className="text-[11px] font-bold text-white drop-shadow-sm">
+              {notif.creator.charAt(0)}
+            </span>
+          </div>
           <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${m.dot} border-[1.5px] border-[rgba(10,16,28,0.97)]`} />
         </div>
         <div className="flex-1 min-w-0">
@@ -188,7 +188,7 @@ function NotificationCard({ notif, index }: { notif: Notification; index: number
 }
 
 export function AlertsViz() {
-  const [notifications, setNotifications] = useState<Notification[]>(ALL_NOTIFICATIONS.slice(0, 3));
+  const [notifications, setNotifications] = useState<LoginNotification[]>(ALL_NOTIFICATIONS.slice(0, 3));
   const [newCount, setNewCount] = useState<number>(12);
 
   useEffect(() => {
