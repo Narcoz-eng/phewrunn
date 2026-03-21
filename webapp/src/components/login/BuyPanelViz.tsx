@@ -2,19 +2,80 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import {
   ArrowDownUp,
+  AlertTriangle,
   BadgeCheck,
+  BarChart2,
   ChevronDown,
+  Droplets,
+  Flame,
   Shield,
+  Star,
   TrendingDown,
   TrendingUp,
   Wallet,
   Zap,
 } from "lucide-react";
+import { LevelBadge } from "@/components/feed/LevelBar";
+
+interface SignalDef {
+  icon: React.ElementType;
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+}
+
+const SIGNAL_DEFS: Record<string, SignalDef> = {
+  early_runner: {
+    icon: TrendingUp,
+    label: "Early Runner",
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/25",
+  },
+  hot_alpha: {
+    icon: Flame,
+    label: "Hot Alpha",
+    color: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/25",
+  },
+  high_conviction: {
+    icon: Star,
+    label: "High Conviction",
+    color: "text-violet-400",
+    bg: "bg-violet-500/10",
+    border: "border-violet-500/25",
+  },
+  liquidity_spike: {
+    icon: Droplets,
+    label: "Liq Spike",
+    color: "text-cyan-400",
+    bg: "bg-cyan-500/10",
+    border: "border-cyan-500/25",
+  },
+  volume_spike: {
+    icon: BarChart2,
+    label: "Vol Spike",
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/25",
+  },
+  bundle_risk: {
+    icon: AlertTriangle,
+    label: "Bundle Risk",
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/25",
+  },
+};
 
 interface MockTokenData {
   symbol: string;
   caller: string;
   callText: string;
+  level: number;
+  signals: string[];
   solAmount: string;
   receiveAmount: string;
   receiveUsd: string;
@@ -29,6 +90,8 @@ const MOCK_TOKENS: MockTokenData[] = [
     symbol: "WIF",
     caller: "cryptosage",
     callText: "$WIF — accumulating here at 0.35, expecting move to 0.55+. Degen size.",
+    level: 7,
+    signals: ["early_runner", "high_conviction"],
     solAmount: "0.5",
     receiveAmount: "274.32 WIF",
     receiveUsd: "~$91.40",
@@ -41,6 +104,8 @@ const MOCK_TOKENS: MockTokenData[] = [
     symbol: "BONK",
     caller: "alpha_hound",
     callText: "$BONK breaking out of 3-week range. Vol spike + whale accumulation confirmed.",
+    level: 5,
+    signals: ["volume_spike", "liquidity_spike", "hot_alpha"],
     solAmount: "0.25",
     receiveAmount: "22.4M BONK",
     receiveUsd: "~$45.60",
@@ -53,6 +118,8 @@ const MOCK_TOKENS: MockTokenData[] = [
     symbol: "PEPE",
     caller: "onchain_oracle",
     callText: "$PEPE — CT sleeping on this. Supply shock incoming, chart looks clean.",
+    level: 9,
+    signals: ["hot_alpha", "early_runner"],
     solAmount: "1",
     receiveAmount: "78.3M PEPE",
     receiveUsd: "~$183.20",
@@ -82,6 +149,20 @@ const chipSurface =
 const softSection =
   "rounded-xl border border-white/[0.07] bg-[linear-gradient(180deg,rgba(9,15,27,0.95),rgba(5,10,19,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]";
 
+function SignalChip({ signalKey }: { signalKey: string }) {
+  const def = SIGNAL_DEFS[signalKey];
+  if (!def) return null;
+  const Icon = def.icon;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${def.bg} ${def.border} ${def.color}`}
+    >
+      <Icon className="w-2.5 h-2.5" />
+      {def.label}
+    </span>
+  );
+}
+
 export function BuyPanelViz() {
   const [tokenIdx, setTokenIdx] = useState<number>(0);
   const [execPing, setExecPing] = useState(false);
@@ -103,8 +184,10 @@ export function BuyPanelViz() {
 
       {/* ── Post header ── */}
       <div className="px-4 pt-4 pb-3 border-b border-white/[0.06]">
+        {/* Top row: avatar + name + level + LIVE */}
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2.5">
+            {/* Avatar */}
             <AnimatePresence mode="wait">
               <motion.div
                 key={tokenIdx}
@@ -119,11 +202,13 @@ export function BuyPanelViz() {
                 </span>
               </motion.div>
             </AnimatePresence>
+
+            {/* Name + level */}
             <div>
               <AnimatePresence mode="wait">
                 <motion.div
                   key={tokenIdx}
-                  className="flex items-center gap-1"
+                  className="flex items-center gap-1.5"
                   initial={{ opacity: 0, x: -4 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0 }}
@@ -131,21 +216,25 @@ export function BuyPanelViz() {
                 >
                   <span className="text-[13px] font-semibold text-white/90">@{token.caller}</span>
                   <BadgeCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <LevelBadge level={token.level} size="sm" />
                 </motion.div>
               </AnimatePresence>
               <span className="text-[10px] text-white/35">2m ago</span>
             </div>
           </div>
+
+          {/* LIVE badge */}
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
             LIVE
           </span>
         </div>
 
+        {/* Call text */}
         <AnimatePresence mode="wait">
           <motion.p
             key={tokenIdx}
-            className="text-[13px] text-white/72 leading-snug"
+            className="text-[13px] text-white/72 leading-snug mb-2.5"
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
@@ -153,6 +242,22 @@ export function BuyPanelViz() {
           >
             {token.callText}
           </motion.p>
+        </AnimatePresence>
+
+        {/* Market signals strip */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tokenIdx}
+            className="flex items-center gap-1.5 flex-wrap"
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            {token.signals.map((sig) => (
+              <SignalChip key={sig} signalKey={sig} />
+            ))}
+          </motion.div>
         </AnimatePresence>
       </div>
 
