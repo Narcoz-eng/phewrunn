@@ -6592,7 +6592,7 @@ postsRouter.post("/:id/comments", requireNotBanned, zValidator("json", CreateCom
 
   // Notify post author — fire non-blocking so it never delays the response
   if (post.authorId !== user.id) {
-    const commenterName = (user.name || "Someone").trim();
+    const commenterName = (user.email || "Someone").trim();
     void createNotificationSafely({
       operation: "comment_author_notification",
       data: {

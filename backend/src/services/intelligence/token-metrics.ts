@@ -1079,6 +1079,7 @@ export async function analyzeSolanaTokenDistribution(
                 solBalance: null,
                 badges: [],
                 devRole: null,
+                tradeSnapshot: null,
               };
             })
             .filter((holder): holder is TokenHolderSnapshot => holder !== null)
