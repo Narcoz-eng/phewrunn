@@ -14,7 +14,6 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { InboxRouteIcon, RouteArrowIcon } from "@/components/login/LoginPageIcons";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 // ─── Animated stat counter ──────────────────────────────────────────────────
 
@@ -41,48 +40,6 @@ function AnimatedStat({ rawValue, suffix, label, delay }: { rawValue: number; su
       </div>
       <div className="text-[11px] sm:text-xs text-muted-foreground mt-0.5">{label}</div>
     </motion.div>
-  );
-}
-
-// ─── Floating background particles ──────────────────────────────────────────
-
-const PARTICLES = Array.from({ length: 18 }, (_, i) => ({
-  id: i,
-  x: 5 + ((i * 37) % 90),
-  size: 1.5 + (i % 3) * 0.8,
-  delay: (i * 0.4) % 5,
-  duration: 8 + (i % 5) * 2,
-  opacity: 0.08 + (i % 4) * 0.04,
-}));
-
-function FloatingParticles() {
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {PARTICLES.map((p) => (
-        <motion.div
-          key={p.id}
-          className="absolute rounded-full bg-primary"
-          style={{
-            left: `${p.x}%`,
-            bottom: "-10px",
-            width: p.size,
-            height: p.size,
-            opacity: p.opacity,
-          }}
-          animate={{
-            y: [0, -(window.innerHeight + 40)],
-            x: [0, (p.id % 2 === 0 ? 1 : -1) * (10 + (p.id % 4) * 8)],
-            opacity: [0, p.opacity * 2, p.opacity, 0],
-          }}
-          transition={{
-            duration: p.duration,
-            delay: p.delay,
-            repeat: Infinity,
-            ease: "linear",
-          }}
-        />
-      ))}
-    </div>
   );
 }
 
@@ -221,29 +178,6 @@ function FallbackLoginButton() {
   );
 }
 
-// ─── Rotating card border ────────────────────────────────────────────────────
-
-function RotatingCardBorder({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="relative rounded-[28px] p-[1px] overflow-hidden shadow-[0_32px_100px_-40px_hsl(var(--primary)/0.55)]">
-      {/* Rotating conic gradient ring */}
-      <motion.div
-        className="absolute inset-[-100%] opacity-70"
-        style={{
-          background:
-            "conic-gradient(from 0deg, transparent 0%, hsl(var(--primary)/0.9) 25%, transparent 50%, hsl(var(--accent)/0.6) 75%, transparent 100%)",
-        }}
-        animate={{ rotate: 360 }}
-        transition={{ duration: 7, repeat: Infinity, ease: "linear" }}
-      />
-      {/* Static base border so it doesn't fully disappear */}
-      <div className="absolute inset-0 rounded-[28px] bg-[linear-gradient(160deg,hsl(var(--primary)/0.35),hsl(var(--accent)/0.15),transparent_70%)]" />
-      {/* Content */}
-      <div className="relative">{children}</div>
-    </div>
-  );
-}
-
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 const stats = [
@@ -257,7 +191,6 @@ export default function Login() {
   const [searchParams] = useSearchParams();
   const { user, hasLiveSession, isReady } = useAuth();
   const privyAvailable = usePrivyAvailable();
-  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     const urlCode = searchParams.get("code");
@@ -279,65 +212,32 @@ export default function Login() {
     navigate(user?.username ? "/" : "/welcome", { replace: true });
   }, [hasLiveSession, isReady, navigate, user?.username]);
 
-  useEffect(() => {
-    const t = window.setTimeout(() => setLoaded(true), 30);
-    return () => window.clearTimeout(t);
-  }, []);
-
   return (
     <div className="min-h-screen bg-background flex flex-col overflow-x-hidden">
 
       {/* ── Background ── */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        {/* Orb 1 — top right, primary */}
-        <motion.div
-          className="absolute rounded-full blur-[120px]"
+        {/* Orb 1 — top right, primary — CSS animation for perf */}
+        <div
+          className="absolute rounded-full blur-[120px] animate-[orbFloat1_20s_ease-in-out_infinite]"
           style={{
-            width: 680,
-            height: 680,
+            width: 600,
+            height: 600,
             top: "-20%",
             right: "-8%",
             background: "radial-gradient(ellipse, hsl(var(--primary)/0.28) 0%, transparent 65%)",
           }}
-          animate={{
-            x: [0, 50, -30, 20, 0],
-            y: [0, -40, 20, -15, 0],
-            scale: [1, 1.08, 0.96, 1.04, 1],
-          }}
-          transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
         />
         {/* Orb 2 — bottom left, accent */}
-        <motion.div
-          className="absolute rounded-full blur-[100px]"
+        <div
+          className="absolute rounded-full blur-[100px] animate-[orbFloat2_24s_ease-in-out_infinite]"
           style={{
-            width: 560,
-            height: 560,
+            width: 500,
+            height: 500,
             bottom: "-14%",
             left: "-10%",
             background: "radial-gradient(ellipse, hsl(var(--accent)/0.22) 0%, transparent 65%)",
           }}
-          animate={{
-            x: [0, -40, 25, -15, 0],
-            y: [0, 30, -20, 10, 0],
-            scale: [1, 1.06, 0.94, 1.02, 1],
-          }}
-          transition={{ duration: 22, repeat: Infinity, ease: "easeInOut", delay: 3 }}
-        />
-        {/* Orb 3 — center, subtle */}
-        <motion.div
-          className="absolute rounded-full blur-[140px]"
-          style={{
-            width: 400,
-            height: 400,
-            top: "35%",
-            left: "40%",
-            background: "radial-gradient(ellipse, hsl(var(--primary)/0.12) 0%, transparent 65%)",
-          }}
-          animate={{
-            x: [0, 60, -40, 30, 0],
-            y: [0, -50, 30, -20, 0],
-          }}
-          transition={{ duration: 26, repeat: Infinity, ease: "easeInOut", delay: 6 }}
         />
 
         {/* Subtle grid */}
@@ -348,30 +248,23 @@ export default function Login() {
             backgroundSize: "64px 64px",
           }}
         />
-        {/* Radial vignette to blend grid edges */}
+        {/* Radial vignette */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent_0%,hsl(var(--background))_80%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom,transparent_0%,hsl(var(--background)/0.6)_90%)]" />
-
-        {/* Floating particles */}
-        <FloatingParticles />
       </div>
 
       {/* ── Header ── */}
       <motion.header
         className="relative z-50 border-b border-border/35 backdrop-blur-xl bg-background/65"
         initial={{ opacity: 0, y: -8 }}
-        animate={loaded ? { opacity: 1, y: 0 } : {}}
+        animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
       >
         <div className="max-w-6xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
           <BrandLogo size="sm" showTagline={false} />
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-muted-foreground border border-border/50 rounded-full px-2.5 py-1 bg-card/40">
-              <motion.span
-                className="w-1.5 h-1.5 rounded-full bg-gain inline-block"
-                animate={{ opacity: [1, 0.3, 1] }}
-                transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-              />
+              <span className="w-1.5 h-1.5 rounded-full bg-gain inline-block animate-pulse" />
               Live
             </span>
             <ThemeToggle size="icon" className="h-8 w-8" />
@@ -388,21 +281,17 @@ export default function Login() {
             <motion.div
               className="order-2 lg:order-1 max-w-xl"
               initial={{ opacity: 0, x: -20 }}
-              animate={loaded ? { opacity: 1, x: 0 } : {}}
-              transition={{ duration: 0.6, delay: 0.05, ease: "easeOut" }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5, delay: 0.05, ease: "easeOut" }}
             >
               {/* Eyebrow */}
               <motion.div
                 className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/8 px-3 py-1 text-[11px] font-medium text-primary mb-7"
                 initial={{ opacity: 0, scale: 0.9 }}
-                animate={loaded ? { opacity: 1, scale: 1 } : {}}
-                transition={{ duration: 0.4, delay: 0.1, ease: "easeOut" }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.35, delay: 0.1, ease: "easeOut" }}
               >
-                <motion.span
-                  className="w-1.5 h-1.5 rounded-full bg-primary inline-block"
-                  animate={{ opacity: [1, 0.3, 1] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block animate-pulse" />
                 Good alpha first. Fees follow.
               </motion.div>
 
@@ -410,8 +299,8 @@ export default function Login() {
               <motion.h1
                 className="font-heading text-4xl sm:text-5xl lg:text-[3.25rem] xl:text-6xl font-extrabold tracking-tight leading-[1.06] mb-5"
                 initial={{ opacity: 0, y: 20 }}
-                animate={loaded ? { opacity: 1, y: 0 } : {}}
-                transition={{ duration: 0.55, delay: 0.15, ease: "easeOut" }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.15, ease: "easeOut" }}
               >
                 Post a Call.
                 <br />
@@ -424,8 +313,8 @@ export default function Login() {
               <motion.p
                 className="text-base sm:text-lg text-muted-foreground leading-relaxed mb-10 max-w-[440px]"
                 initial={{ opacity: 0, y: 16 }}
-                animate={loaded ? { opacity: 1, y: 0 } : {}}
-                transition={{ duration: 0.5, delay: 0.22, ease: "easeOut" }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, delay: 0.22, ease: "easeOut" }}
               >
                 Be first with good alpha, capture the buy route, and earn{" "}
                 <span className="text-foreground font-semibold">0.5%</span> every time
@@ -434,7 +323,7 @@ export default function Login() {
 
               {/* Stats */}
               <div className="flex items-center gap-6 sm:gap-8">
-                {loaded && stats.map((stat, i) => (
+                {stats.map((stat, i) => (
                   <AnimatedStat
                     key={stat.label}
                     rawValue={stat.rawValue}
@@ -450,10 +339,15 @@ export default function Login() {
             <motion.div
               className="order-1 lg:order-2 w-full max-w-[440px] mx-auto lg:mx-0"
               initial={{ opacity: 0, x: 20 }}
-              animate={loaded ? { opacity: 1, x: 0 } : {}}
-              transition={{ duration: 0.6, delay: 0.12, ease: "easeOut" }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5, delay: 0.1, ease: "easeOut" }}
             >
-              <RotatingCardBorder>
+              {/* Card with static gradient border */}
+              <div className="relative rounded-[28px] p-[1px] overflow-hidden shadow-[0_32px_100px_-40px_hsl(var(--primary)/0.45)]"
+                style={{
+                  background: "linear-gradient(160deg, hsl(var(--primary)/0.6) 0%, hsl(var(--accent)/0.3) 40%, transparent 70%)",
+                }}
+              >
                 <div className="relative rounded-[27px] overflow-hidden border border-white/6 bg-background/94 backdrop-blur-2xl">
                   {/* Inner top glow */}
                   <div className="absolute inset-[15%] top-0 h-[40%] rounded-full bg-primary/8 blur-3xl pointer-events-none" />
@@ -464,24 +358,24 @@ export default function Login() {
                       <motion.div
                         className="text-[10px] uppercase tracking-[0.3em] text-primary/70 mb-2"
                         initial={{ opacity: 0 }}
-                        animate={loaded ? { opacity: 1 } : {}}
-                        transition={{ duration: 0.4, delay: 0.3 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.4, delay: 0.25 }}
                       >
                         Creator access
                       </motion.div>
                       <motion.h2
                         className="text-2xl font-heading font-bold tracking-tight"
                         initial={{ opacity: 0, y: 6 }}
-                        animate={loaded ? { opacity: 1, y: 0 } : {}}
-                        transition={{ duration: 0.4, delay: 0.35 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.35, delay: 0.3 }}
                       >
                         Sign in to Phew
                       </motion.h2>
                       <motion.p
                         className="text-sm text-muted-foreground mt-1.5"
                         initial={{ opacity: 0 }}
-                        animate={loaded ? { opacity: 1 } : {}}
-                        transition={{ duration: 0.4, delay: 0.4 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.35, delay: 0.35 }}
                       >
                         Instant account. No wallet needed to start.
                       </motion.p>
@@ -490,8 +384,8 @@ export default function Login() {
                     {/* Auth buttons */}
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
-                      animate={loaded ? { opacity: 1, y: 0 } : {}}
-                      transition={{ duration: 0.4, delay: 0.45 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.35, delay: 0.4 }}
                     >
                       {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
                     </motion.div>
@@ -500,17 +394,13 @@ export default function Login() {
                     <motion.div
                       className="mt-6 pt-5 border-t border-border/40"
                       initial={{ opacity: 0 }}
-                      animate={loaded ? { opacity: 1 } : {}}
-                      transition={{ duration: 0.4, delay: 0.52 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.35, delay: 0.48 }}
                     >
                       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                         <span>Secure email verification</span>
                         <span className="flex items-center gap-1.5">
-                          <motion.span
-                            className="w-1.5 h-1.5 rounded-full bg-gain inline-block"
-                            animate={{ scale: [1, 1.4, 1], opacity: [1, 0.6, 1] }}
-                            transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
-                          />
+                          <span className="w-1.5 h-1.5 rounded-full bg-gain inline-block animate-pulse" />
                           Payout rail active
                         </span>
                       </div>
@@ -525,14 +415,14 @@ export default function Login() {
                     </div>
                   </div>
                 </div>
-              </RotatingCardBorder>
+              </div>
 
               {/* Trust note */}
               <motion.p
                 className="text-center text-[11px] text-muted-foreground mt-4"
                 initial={{ opacity: 0 }}
-                animate={loaded ? { opacity: 1 } : {}}
-                transition={{ duration: 0.4, delay: 0.6 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.35, delay: 0.55 }}
               >
                 Wallet linking handled separately after sign-in.
               </motion.p>
