@@ -73,9 +73,10 @@ function Background() {
           top: "-20%",
           right: "-8%",
           background: "radial-gradient(ellipse, hsl(var(--primary)/0.26) 0%, transparent 65%)",
+          willChange: "transform",
         }}
         animate={{ x: [0, 44, -22, 0], y: [0, -32, 16, 0], scale: [1, 1.06, 0.97, 1] }}
-        transition={{ duration: 20, ease: "easeInOut", repeat: Infinity, repeatType: "loop" }}
+        transition={{ duration: 22, ease: "easeInOut", repeat: Infinity, repeatType: "loop" }}
       />
       {/* Orb 2 — bottom left */}
       <motion.div
@@ -86,9 +87,10 @@ function Background() {
           bottom: "-14%",
           left: "-10%",
           background: "radial-gradient(ellipse, hsl(var(--accent)/0.20) 0%, transparent 65%)",
+          willChange: "transform",
         }}
         animate={{ x: [0, -32, 22, 0], y: [0, 22, -14, 0], scale: [1, 1.05, 0.96, 1] }}
-        transition={{ duration: 24, ease: "easeInOut", repeat: Infinity, repeatType: "loop" }}
+        transition={{ duration: 26, ease: "easeInOut", repeat: Infinity, repeatType: "loop" }}
       />
       {/* Orb 3 — mid right accent */}
       <motion.div
@@ -99,9 +101,10 @@ function Background() {
           top: "40%",
           right: "5%",
           background: "radial-gradient(ellipse, hsl(var(--primary)/0.10) 0%, transparent 70%)",
+          willChange: "transform",
         }}
         animate={{ x: [0, 20, -10, 0], y: [0, -20, 10, 0] }}
-        transition={{ duration: 17, ease: "easeInOut", repeat: Infinity, repeatType: "loop" }}
+        transition={{ duration: 19, ease: "easeInOut", repeat: Infinity, repeatType: "loop" }}
       />
 
       {/* Subtle grid */}
