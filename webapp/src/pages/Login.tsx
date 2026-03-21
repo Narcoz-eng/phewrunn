@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, useMotionValue, animate } from "framer-motion";
 import {
   clearPrivySyncFailureState,
   setPrivyAuthBootstrapState,
@@ -18,16 +18,17 @@ import { cn } from "@/lib/utils";
 
 // ─── Animated stat counter ──────────────────────────────────────────────────
 
-function AnimatedStat({ rawValue, label, delay }: { rawValue: number; suffix: string; label: string; delay: number }) {
+function AnimatedStat({ rawValue, suffix, label, delay }: { rawValue: number; suffix: string; label: string; delay: number }) {
   const motionVal = useMotionValue(0);
-  const rounded = useTransform(motionVal, (v) => Math.round(v));
   const [display, setDisplay] = useState("0");
 
   useEffect(() => {
-    const unsub = rounded.on("change", (v) => setDisplay(String(v)));
+    const unsub = motionVal.on("change", (v) => {
+      setDisplay(rawValue % 1 !== 0 ? v.toFixed(1) : String(Math.round(v)));
+    });
     const ctrl = animate(motionVal, rawValue, { duration: 1.6, delay, ease: "easeOut" });
     return () => { ctrl.stop(); unsub(); };
-  }, [rawValue, delay, motionVal, rounded]);
+  }, [rawValue, delay, motionVal]);
 
   return (
     <motion.div
@@ -36,8 +37,7 @@ function AnimatedStat({ rawValue, label, delay }: { rawValue: number; suffix: st
       transition={{ duration: 0.5, delay, ease: "easeOut" }}
     >
       <div className="text-2xl sm:text-3xl font-mono font-bold tracking-tight">
-        {display}
-        <span className="text-primary/70">{rawValue >= 1000 ? "K+" : rawValue >= 100 ? "%" : ""}</span>
+        {display}<span className="text-primary/70">{suffix}</span>
       </div>
       <div className="text-[11px] sm:text-xs text-muted-foreground mt-0.5">{label}</div>
     </motion.div>
@@ -247,9 +247,9 @@ function RotatingCardBorder({ children }: { children: React.ReactNode }) {
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 const stats = [
-  { value: "10K+", rawValue: 10, suffix: "K+", label: "Calls settled" },
-  { value: "68%", rawValue: 68, suffix: "%", label: "Avg accuracy" },
-  { value: "2.4K", rawValue: 2400, suffix: "+", label: "Active traders" },
+  { rawValue: 10, suffix: "K+", label: "Calls settled" },
+  { rawValue: 68, suffix: "%", label: "Avg accuracy" },
+  { rawValue: 2.4, suffix: "K", label: "Active traders" },
 ];
 
 export default function Login() {
@@ -297,7 +297,7 @@ export default function Login() {
             height: 680,
             top: "-20%",
             right: "-8%",
-            background: "radial-gradient(ellipse, hsl(var(--primary)/0.14) 0%, transparent 65%)",
+            background: "radial-gradient(ellipse, hsl(var(--primary)/0.28) 0%, transparent 65%)",
           }}
           animate={{
             x: [0, 50, -30, 20, 0],
@@ -314,7 +314,7 @@ export default function Login() {
             height: 560,
             bottom: "-14%",
             left: "-10%",
-            background: "radial-gradient(ellipse, hsl(var(--accent)/0.11) 0%, transparent 65%)",
+            background: "radial-gradient(ellipse, hsl(var(--accent)/0.22) 0%, transparent 65%)",
           }}
           animate={{
             x: [0, -40, 25, -15, 0],
@@ -331,7 +331,7 @@ export default function Login() {
             height: 400,
             top: "35%",
             left: "40%",
-            background: "radial-gradient(ellipse, hsl(var(--primary)/0.06) 0%, transparent 65%)",
+            background: "radial-gradient(ellipse, hsl(var(--primary)/0.12) 0%, transparent 65%)",
           }}
           animate={{
             x: [0, 60, -40, 30, 0],
