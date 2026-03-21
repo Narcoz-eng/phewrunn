@@ -73,6 +73,8 @@ const SIGNAL_DEFS: Record<string, SignalDef> = {
 interface MockTokenData {
   symbol: string;
   caller: string;
+  displayName: string;
+  avatarUrl: string;
   callText: string;
   level: number;
   signals: string[];
@@ -89,6 +91,8 @@ const MOCK_TOKENS: MockTokenData[] = [
   {
     symbol: "WIF",
     caller: "cryptosage",
+    displayName: "CryptoSage",
+    avatarUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&crop=face",
     callText: "$WIF — accumulating here at 0.35, expecting move to 0.55+. Degen size.",
     level: 7,
     signals: ["early_runner", "high_conviction"],
@@ -103,6 +107,8 @@ const MOCK_TOKENS: MockTokenData[] = [
   {
     symbol: "BONK",
     caller: "alpha_hound",
+    displayName: "AlphaHound",
+    avatarUrl: "https://images.unsplash.com/photo-1599566150163-29194dcabd9c?w=80&h=80&fit=crop&crop=face",
     callText: "$BONK breaking out of 3-week range. Vol spike + whale accumulation confirmed.",
     level: 5,
     signals: ["volume_spike", "liquidity_spike", "hot_alpha"],
@@ -117,6 +123,8 @@ const MOCK_TOKENS: MockTokenData[] = [
   {
     symbol: "PEPE",
     caller: "onchain_oracle",
+    displayName: "OnchainOracle",
+    avatarUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&crop=face",
     callText: "$PEPE — CT sleeping on this. Supply shock incoming, chart looks clean.",
     level: 9,
     signals: ["hot_alpha", "early_runner"],
@@ -177,7 +185,6 @@ export function BuyPanelViz() {
   }, []);
 
   const token = MOCK_TOKENS[tokenIdx]!;
-  const avatarGradient = AVATAR_COLORS[token.caller] ?? "from-slate-500 to-slate-400";
 
   return (
     <div className="rounded-[22px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(10,16,28,0.97),rgba(6,10,18,0.99))] shadow-[0_0_48px_-8px_rgba(16,185,129,0.18),0_0_0_1px_rgba(255,255,255,0.04)] overflow-hidden">
@@ -191,15 +198,18 @@ export function BuyPanelViz() {
             <AnimatePresence mode="wait">
               <motion.div
                 key={tokenIdx}
-                className={`w-8 h-8 rounded-full bg-gradient-to-br ${avatarGradient} flex items-center justify-center flex-shrink-0`}
+                className="relative w-9 h-9 rounded-full flex-shrink-0 ring-2 ring-emerald-500/20 ring-offset-1 ring-offset-[rgba(10,16,28,0.97)]"
                 initial={{ opacity: 0, scale: 0.85 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.85 }}
                 transition={{ duration: 0.2 }}
               >
-                <span className="text-[11px] font-bold text-white">
-                  {token.caller.charAt(0).toUpperCase()}
-                </span>
+                <img
+                  src={token.avatarUrl}
+                  alt={token.displayName}
+                  className="w-full h-full rounded-full object-cover"
+                />
+                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[rgba(10,16,28,0.97)]" />
               </motion.div>
             </AnimatePresence>
 
@@ -214,7 +224,7 @@ export function BuyPanelViz() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.18 }}
                 >
-                  <span className="text-[13px] font-semibold text-white/90">@{token.caller}</span>
+                  <span className="text-[13px] font-semibold text-white/90">@{token.displayName}</span>
                   <BadgeCheck className="w-3.5 h-3.5 text-emerald-400" />
                   <LevelBadge level={token.level} size="sm" />
                 </motion.div>

@@ -495,12 +495,19 @@ export default function Login() {
                 <BuyPanelViz />
               </motion.div>
 
-              {/* Alerts */}
+              {/* Notifications */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.6, ease: "easeOut" }}
               >
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/25 bg-violet-500/8 px-2.5 py-1 text-[11px] font-medium text-violet-400">
+                    <Zap className="w-3 h-3" />
+                    Real-time alerts
+                  </span>
+                  <span className="text-[12px] text-muted-foreground">Never miss a call — signals pushed to you instantly</span>
+                </div>
                 <AlertsViz />
               </motion.div>
             </motion.div>
