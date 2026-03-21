@@ -122,6 +122,16 @@ export default {
           "0%": { transform: "scale(1)", opacity: "0.8" },
           "100%": { transform: "scale(2)", opacity: "0" },
         },
+        orbFloat1: {
+          "0%, 100%": { transform: "translate(0px, 0px) scale(1)" },
+          "33%": { transform: "translate(40px, -30px) scale(1.06)" },
+          "66%": { transform: "translate(-20px, 15px) scale(0.97)" },
+        },
+        orbFloat2: {
+          "0%, 100%": { transform: "translate(0px, 0px) scale(1)" },
+          "33%": { transform: "translate(-30px, 20px) scale(1.05)" },
+          "66%": { transform: "translate(20px, -12px) scale(0.96)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -133,6 +143,8 @@ export default {
         "slide-in-right": "slide-in-right 0.4s ease-out forwards",
         "scale-in": "scale-in 0.2s ease-out forwards",
         "pulse-ring": "pulse-ring 2s ease-out infinite",
+        orbFloat1: "orbFloat1 20s ease-in-out infinite",
+        orbFloat2: "orbFloat2 24s ease-in-out infinite",
       },
       boxShadow: {
         "glow-sm": "0 0 15px hsl(var(--primary) / 0.15)",
