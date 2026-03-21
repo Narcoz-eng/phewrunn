@@ -219,7 +219,7 @@ export default function Login() {
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
         {/* Orb 1 — top right, primary — CSS animation for perf */}
         <div
-          className="absolute rounded-full blur-[120px] animate-[orbFloat1_20s_ease-in-out_infinite]"
+          className="absolute rounded-full blur-[120px] animate-orbFloat1"
           style={{
             width: 600,
             height: 600,
@@ -230,7 +230,7 @@ export default function Login() {
         />
         {/* Orb 2 — bottom left, accent */}
         <div
-          className="absolute rounded-full blur-[100px] animate-[orbFloat2_24s_ease-in-out_infinite]"
+          className="absolute rounded-full blur-[100px] animate-orbFloat2"
           style={{
             width: 500,
             height: 500,
