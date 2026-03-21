@@ -13,7 +13,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { InboxRouteIcon, RouteArrowIcon } from "@/components/login/LoginPageIcons";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, Zap } from "lucide-react";
 import { BuyPanelViz } from "@/components/login/BuyPanelViz";
 import { AlertsViz } from "@/components/login/AlertsViz";
 
@@ -485,6 +485,13 @@ export default function Login() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.45, ease: "easeOut" }}
               >
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/8 px-2.5 py-1 text-[11px] font-medium text-emerald-400">
+                    <Zap className="w-3 h-3" />
+                    In-post trading
+                  </span>
+                  <span className="text-[12px] text-muted-foreground">Every call has an instant swap panel built in</span>
+                </div>
                 <BuyPanelViz />
               </motion.div>
 
