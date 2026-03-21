@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Zap } from "lucide-react";
 import { BuyPanelViz } from "@/components/login/BuyPanelViz";
 import { AlertsViz } from "@/components/login/AlertsViz";
+import { WeeklyBestSection } from "@/components/login/WeeklyBestSection";
 
 // ─── Animated stat counter ──────────────────────────────────────────────────
 
@@ -506,7 +507,7 @@ export default function Login() {
                     <Zap className="w-3 h-3" />
                     Real-time alerts
                   </span>
-                  <span className="text-[12px] text-muted-foreground">Never miss a call — signals pushed to you instantly</span>
+                  <span className="text-[12px] text-muted-foreground">From live posts & our on-chain intelligence</span>
                 </div>
                 <AlertsViz />
               </motion.div>
@@ -520,6 +521,9 @@ export default function Login() {
           </div>
         </div>
       </main>
+
+      {/* ── Weekly Best Section ── */}
+      <WeeklyBestSection optimizeMotion={false} />
     </div>
   );
 }

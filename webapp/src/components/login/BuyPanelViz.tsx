@@ -74,7 +74,7 @@ interface MockTokenData {
   symbol: string;
   caller: string;
   displayName: string;
-  avatarGradient: string;
+  avatarUrl: string;
   callText: string;
   level: number;
   signals: string[];
@@ -92,7 +92,7 @@ const MOCK_TOKENS: MockTokenData[] = [
     symbol: "WIF",
     caller: "cryptosage",
     displayName: "CryptoSage",
-    avatarGradient: "from-violet-500 to-indigo-500",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=CryptoSage&backgroundColor=0a0a0f",
     callText: "$WIF — accumulating here at 0.35, expecting move to 0.55+. Degen size.",
     level: 7,
     signals: ["early_runner", "high_conviction"],
@@ -108,7 +108,7 @@ const MOCK_TOKENS: MockTokenData[] = [
     symbol: "BONK",
     caller: "alpha_hound",
     displayName: "AlphaHound",
-    avatarGradient: "from-orange-500 to-amber-400",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=AlphaHound&backgroundColor=0a0a0f",
     callText: "$BONK breaking out of 3-week range. Vol spike + whale accumulation confirmed.",
     level: 5,
     signals: ["volume_spike", "liquidity_spike", "hot_alpha"],
@@ -124,7 +124,7 @@ const MOCK_TOKENS: MockTokenData[] = [
     symbol: "PEPE",
     caller: "onchain_oracle",
     displayName: "OnchainOracle",
-    avatarGradient: "from-emerald-500 to-teal-400",
+    avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=OnchainOracle&backgroundColor=0a0a0f",
     callText: "$PEPE — CT sleeping on this. Supply shock incoming, chart looks clean.",
     level: 9,
     signals: ["hot_alpha", "early_runner"],
@@ -192,15 +192,17 @@ export function BuyPanelViz() {
             <AnimatePresence mode="wait">
               <motion.div
                 key={tokenIdx}
-                className={`relative w-9 h-9 rounded-full flex-shrink-0 bg-gradient-to-br ${token.avatarGradient} flex items-center justify-center ring-2 ring-white/10 ring-offset-1 ring-offset-[rgba(10,16,28,0.97)] shadow-lg`}
+                className="relative w-9 h-9 rounded-full flex-shrink-0 ring-2 ring-emerald-500/20 ring-offset-1 ring-offset-[rgba(10,16,28,0.97)]"
                 initial={{ opacity: 0, scale: 0.85 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.85 }}
                 transition={{ duration: 0.2 }}
               >
-                <span className="text-[13px] font-bold text-white drop-shadow-sm">
-                  {token.displayName.charAt(0)}
-                </span>
+                <img
+                  src={token.avatarUrl}
+                  alt={token.displayName}
+                  className="w-full h-full rounded-full object-cover bg-white/5"
+                />
                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[rgba(10,16,28,0.97)]" />
               </motion.div>
             </AnimatePresence>
