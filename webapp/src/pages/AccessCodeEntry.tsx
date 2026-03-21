@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { KeyRound, ArrowRight } from "lucide-react";
+import { KeyRound, ArrowRight, ArrowLeft } from "lucide-react";
 import { clearPrivySyncFailureState, setPrivyAuthBootstrapState } from "@/lib/auth-client";
 
 const PENDING_CODE_KEY = "phew.pending-invite-code";
@@ -82,6 +82,13 @@ export default function AccessCodeEntry() {
             <p className="text-center text-xs text-muted-foreground">
               Don&apos;t have a code? Ask someone on phew.run to invite you.
             </p>
+            <Link
+              to="/login"
+              className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back to login
+            </Link>
           </form>
         </CardContent>
       </Card>
