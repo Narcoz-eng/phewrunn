@@ -3,44 +3,95 @@ import { useEffect, useState } from "react";
 import {
   BarChart2,
   Bell,
+  BellRing,
   Clock,
   Droplets,
   Flame,
+  MessageSquare,
   Star,
   TrendingUp,
-  User,
   Zap,
 } from "lucide-react";
 
-interface Alert {
+interface Notification {
   id: number;
+  type: "signal" | "post" | "milestone";
   signalType: "hot_alpha" | "early_runner" | "high_conviction" | "volume_spike" | "liquidity_spike";
   token: string;
-  entry: string;
-  multiplier: string;
-  confidence: number;
-  time: string;
+  message: string;
   creator: string;
+  creatorAvatar: string;
+  time: string;
+  detail: string;
 }
 
-const ALL_ALERTS: Alert[] = [
-  { id: 1, signalType: "early_runner",    token: "$SOL",  entry: "$183.40",    multiplier: "2.4x", confidence: 94, time: "2m ago",  creator: "7xKX..gAsU" },
-  { id: 2, signalType: "volume_spike",    token: "$BONK", entry: "$0.0000224", multiplier: "3.1x", confidence: 87, time: "14m ago", creator: "TkN8..3rXp" },
-  { id: 3, signalType: "hot_alpha",       token: "$WIF",  entry: "$1.82",      multiplier: "1.8x", confidence: 79, time: "31m ago", creator: "mT3P..vY8n" },
-  { id: 4, signalType: "high_conviction", token: "$PEPE", entry: "$0.0000128", multiplier: "4.2x", confidence: 91, time: "45m ago", creator: "xE7L..pN2k" },
-  { id: 5, signalType: "liquidity_spike", token: "$JUP",  entry: "$0.82",      multiplier: "2.9x", confidence: 88, time: "1h ago",  creator: "Rk2W..9mLp" },
+const ALL_NOTIFICATIONS: Notification[] = [
+  {
+    id: 1,
+    type: "post",
+    signalType: "early_runner",
+    token: "$SOL",
+    message: "posted a new call on $SOL",
+    creator: "SolMaxi",
+    creatorAvatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=80&h=80&fit=crop&crop=face",
+    time: "Just now",
+    detail: "Entry $183.40 — flagged as Early Runner with 94% confidence",
+  },
+  {
+    id: 2,
+    type: "signal",
+    signalType: "volume_spike",
+    token: "$BONK",
+    message: "Volume spike detected on $BONK",
+    creator: "DeFiAlpha",
+    creatorAvatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop&crop=face",
+    time: "3m ago",
+    detail: "3.1x multiplier potential — 87% confidence score",
+  },
+  {
+    id: 3,
+    type: "post",
+    signalType: "hot_alpha",
+    token: "$WIF",
+    message: "shared hot alpha on $WIF",
+    creator: "WhaleWatch",
+    creatorAvatar: "https://images.unsplash.com/photo-1599566150163-29194dcabd9c?w=80&h=80&fit=crop&crop=face",
+    time: "12m ago",
+    detail: "Entry $1.82 — whale accumulation pattern confirmed",
+  },
+  {
+    id: 4,
+    type: "signal",
+    signalType: "high_conviction",
+    token: "$PEPE",
+    message: "High conviction alert for $PEPE",
+    creator: "OnchainOracle",
+    creatorAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&crop=face",
+    time: "28m ago",
+    detail: "4.2x potential — supply shock pattern, 91% confidence",
+  },
+  {
+    id: 5,
+    type: "post",
+    signalType: "liquidity_spike",
+    token: "$JUP",
+    message: "posted liquidity analysis on $JUP",
+    creator: "LiqHunter",
+    creatorAvatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&crop=face",
+    time: "41m ago",
+    detail: "Entry $0.82 — liquidity inflow surge, 2.9x target",
+  },
 ];
 
 const SIGNAL_META: Record<
-  Alert["signalType"],
-  { icon: React.ElementType; label: string; text: string; dot: string; bar: string; border: string; bg: string; glow: string }
+  Notification["signalType"],
+  { icon: React.ElementType; label: string; text: string; dot: string; border: string; bg: string; glow: string }
 > = {
   hot_alpha: {
     icon: Flame,
     label: "HOT ALPHA",
     text: "text-orange-400",
     dot: "bg-orange-400",
-    bar: "bg-gradient-to-r from-orange-500 to-amber-400",
     border: "border-orange-500/20",
     bg: "bg-[linear-gradient(180deg,rgba(234,88,12,0.07),rgba(194,65,12,0.04))]",
     glow: "shadow-[0_0_0_1px_rgba(234,88,12,0.12)]",
@@ -50,7 +101,6 @@ const SIGNAL_META: Record<
     label: "EARLY RUNNER",
     text: "text-emerald-400",
     dot: "bg-emerald-400",
-    bar: "bg-gradient-to-r from-emerald-500 to-teal-400",
     border: "border-emerald-500/20",
     bg: "bg-[linear-gradient(180deg,rgba(16,185,129,0.07),rgba(5,150,105,0.04))]",
     glow: "shadow-[0_0_0_1px_rgba(16,185,129,0.12)]",
@@ -60,7 +110,6 @@ const SIGNAL_META: Record<
     label: "HIGH CONVICTION",
     text: "text-violet-400",
     dot: "bg-violet-400",
-    bar: "bg-gradient-to-r from-violet-500 to-purple-400",
     border: "border-violet-500/20",
     bg: "bg-[linear-gradient(180deg,rgba(139,92,246,0.07),rgba(109,40,217,0.04))]",
     glow: "shadow-[0_0_0_1px_rgba(139,92,246,0.12)]",
@@ -70,7 +119,6 @@ const SIGNAL_META: Record<
     label: "VOL SPIKE",
     text: "text-amber-400",
     dot: "bg-amber-400",
-    bar: "bg-gradient-to-r from-amber-500 to-yellow-400",
     border: "border-amber-500/20",
     bg: "bg-[linear-gradient(180deg,rgba(245,158,11,0.07),rgba(217,119,6,0.04))]",
     glow: "shadow-[0_0_0_1px_rgba(245,158,11,0.12)]",
@@ -80,15 +128,14 @@ const SIGNAL_META: Record<
     label: "LIQ SPIKE",
     text: "text-cyan-400",
     dot: "bg-cyan-400",
-    bar: "bg-gradient-to-r from-cyan-500 to-sky-400",
     border: "border-cyan-500/20",
     bg: "bg-[linear-gradient(180deg,rgba(6,182,212,0.07),rgba(8,145,178,0.04))]",
     glow: "shadow-[0_0_0_1px_rgba(6,182,212,0.12)]",
   },
 };
 
-function AlertCard({ alert, index }: { alert: Alert; index: number }) {
-  const m = SIGNAL_META[alert.signalType];
+function NotificationCard({ notif, index }: { notif: Notification; index: number }) {
+  const m = SIGNAL_META[notif.signalType];
   const Icon = m.icon;
 
   return (
@@ -98,68 +145,58 @@ function AlertCard({ alert, index }: { alert: Alert; index: number }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -16, transition: { duration: 0.2 } }}
       transition={{ duration: 0.3, delay: index * 0.05 }}
-      className={`rounded-xl border ${m.border} ${m.bg} ${m.glow} p-3 space-y-2`}
+      className={`rounded-xl border ${m.border} ${m.bg} ${m.glow} p-3.5 space-y-2.5`}
     >
-      {/* Top row */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${m.dot} animate-pulse`} />
-          <Icon className={`w-3 h-3 flex-shrink-0 ${m.text}`} />
-          <span className={`text-[10px] font-bold tracking-widest uppercase ${m.text} flex-shrink-0`}>
-            {m.label}
-          </span>
-          <span className="font-mono font-bold text-sm text-white/90 truncate">{alert.token}</span>
-        </div>
-        <div className="flex items-center gap-1 text-[10px] text-white/35 flex-shrink-0">
-          <Clock className="w-2.5 h-2.5" />
-          {alert.time}
-        </div>
-      </div>
-
-      {/* Entry + multiplier */}
-      <div className="flex items-center gap-3 text-[11px]">
-        <span className="text-white/45">
-          Entry <span className="font-mono text-white/80 font-medium">{alert.entry}</span>
-        </span>
-        <TrendingUp className={`w-3 h-3 flex-shrink-0 ${m.text}`} />
-        <span className={`font-bold ${m.text}`}>{alert.multiplier}</span>
-      </div>
-
-      {/* Confidence bar */}
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[10px] text-white/40">
-          <span>Confidence</span>
-          <span className={`font-semibold ${m.text}`}>{alert.confidence}%</span>
-        </div>
-        <div className="h-1 rounded-full bg-white/[0.07] overflow-hidden">
-          <motion.div
-            className={`h-full rounded-full ${m.bar}`}
-            initial={{ width: "0%" }}
-            animate={{ width: `${alert.confidence}%` }}
-            transition={{ duration: 0.7, delay: index * 0.08 + 0.1, ease: "easeOut" }}
+      {/* Creator row with avatar */}
+      <div className="flex items-start gap-2.5">
+        <div className="relative flex-shrink-0">
+          <img
+            src={notif.creatorAvatar}
+            alt={notif.creator}
+            className="w-8 h-8 rounded-full object-cover ring-1 ring-white/10"
           />
+          <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${m.dot} border-[1.5px] border-[rgba(10,16,28,0.97)]`} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[12px] text-white/80 leading-snug">
+              <span className="font-semibold text-white/95">{notif.creator}</span>{" "}
+              {notif.message}
+            </p>
+            <div className="flex items-center gap-1 text-[10px] text-white/30 flex-shrink-0">
+              <Clock className="w-2.5 h-2.5" />
+              {notif.time}
+            </div>
+          </div>
+          {/* Signal badge */}
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold tracking-wider uppercase ${m.text} bg-white/[0.04] border border-white/[0.06]`}>
+              <Icon className="w-2.5 h-2.5" />
+              {m.label}
+            </span>
+            <span className="font-mono font-bold text-[12px] text-white/90">{notif.token}</span>
+          </div>
         </div>
       </div>
 
-      {/* Creator */}
-      <div className="flex items-center gap-1.5 text-[10px] text-white/30">
-        <User className="w-2.5 h-2.5 flex-shrink-0" />
-        <span className="font-mono">{alert.creator}</span>
+      {/* Detail line */}
+      <div className="pl-[42px] text-[11px] text-white/45 leading-relaxed">
+        {notif.detail}
       </div>
     </motion.div>
   );
 }
 
 export function AlertsViz() {
-  const [alerts, setAlerts] = useState<Alert[]>(ALL_ALERTS.slice(0, 3));
-  const [newCount, setNewCount] = useState<number>(4);
+  const [notifications, setNotifications] = useState<Notification[]>(ALL_NOTIFICATIONS.slice(0, 3));
+  const [newCount, setNewCount] = useState<number>(12);
 
   useEffect(() => {
     const iv = window.setInterval(() => {
-      setAlerts((prev) => {
-        const lastIdx = ALL_ALERTS.findIndex((a) => a.id === prev[prev.length - 1]?.id);
-        const nextAlert = ALL_ALERTS[(lastIdx + 1) % ALL_ALERTS.length]!;
-        return [...prev.slice(1), nextAlert];
+      setNotifications((prev) => {
+        const lastIdx = ALL_NOTIFICATIONS.findIndex((a) => a.id === prev[prev.length - 1]?.id);
+        const nextNotif = ALL_NOTIFICATIONS[(lastIdx + 1) % ALL_NOTIFICATIONS.length]!;
+        return [...prev.slice(1), nextNotif];
       });
       setNewCount((n) => n + 1);
     }, 4000);
@@ -170,44 +207,56 @@ export function AlertsViz() {
     <div className="rounded-[22px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(10,16,28,0.97),rgba(6,10,18,0.99))] shadow-[0_0_40px_-12px_rgba(16,185,129,0.12),0_0_0_1px_rgba(255,255,255,0.04)] overflow-hidden">
 
       {/* Header */}
-      <div className="px-5 pt-5 pb-4 border-b border-white/[0.06] flex items-center justify-between">
-        <div>
-          <h3 className="font-heading font-bold text-sm text-white/90">Active Signals</h3>
-          <p className="text-[11px] text-white/40 mt-0.5">Real-time calls from top creators</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Bell count */}
-          <div className="flex items-center gap-1.5 text-[10px] font-medium text-white/60 border border-white/[0.1] bg-white/[0.04] rounded-full px-2.5 py-1">
-            <Bell className="w-2.5 h-2.5 flex-shrink-0" />
-            <motion.span
-              key={newCount}
-              initial={{ scale: 1.3 }}
-              animate={{ scale: 1 }}
-              transition={{ duration: 0.2 }}
-            >
-              {newCount}
-            </motion.span>
+      <div className="px-5 pt-5 pb-4 border-b border-white/[0.06]">
+        <div className="flex items-center justify-between mb-2.5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+              <BellRing className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <h3 className="font-heading font-bold text-sm text-white/90">Live Notifications</h3>
+              <p className="text-[10px] text-white/35 mt-0.5">Signals from every post, as they happen</p>
+            </div>
           </div>
-          {/* Live badge */}
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/25 bg-emerald-500/10 rounded-full px-2.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
-            Live
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium text-white/60 border border-white/[0.1] bg-white/[0.04] rounded-full px-2.5 py-1">
+              <Bell className="w-2.5 h-2.5 flex-shrink-0" />
+              <motion.span
+                key={newCount}
+                initial={{ scale: 1.3 }}
+                animate={{ scale: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                {newCount}
+              </motion.span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/25 bg-emerald-500/10 rounded-full px-2.5 py-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+              Live
+            </div>
           </div>
         </div>
+        {/* Description */}
+        <p className="text-[11px] text-white/40 leading-relaxed">
+          Every time a creator posts a call, you get instant notifications with signal type, confidence score, and entry details — so you never miss alpha.
+        </p>
       </div>
 
-      {/* Cards */}
+      {/* Notification cards */}
       <div className="p-4 space-y-2.5">
         <AnimatePresence mode="popLayout">
-          {alerts.map((alert, i) => (
-            <AlertCard key={alert.id} alert={alert} index={i} />
+          {notifications.map((notif, i) => (
+            <NotificationCard key={notif.id} notif={notif} index={i} />
           ))}
         </AnimatePresence>
       </div>
 
       {/* Footer */}
       <div className="px-5 py-3 border-t border-white/[0.05] bg-white/[0.02] flex items-center justify-between text-[11px]">
-        <span className="text-white/35">Updating live as creators post</span>
+        <span className="flex items-center gap-1.5 text-white/35">
+          <MessageSquare className="w-3 h-3" />
+          Pushed from every new post
+        </span>
         <span className="flex items-center gap-1 text-emerald-400 font-medium">
           <Zap className="w-3 h-3" />
           View all
