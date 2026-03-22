@@ -44,12 +44,25 @@ const SIGNAL_DEFS: Record<string, SignalDef> = {
 
 function SolChainIcon({ size = 14 }: { size?: number }) {
   return (
-    <div
-      style={{ width: size, height: size }}
-      className="rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center flex-shrink-0"
-    >
-      <span style={{ fontSize: size * 0.55 }} className="font-bold text-white leading-none">S</span>
-    </div>
+    <svg width={size} height={size} viewBox="0 0 397 311" fill="none" className="flex-shrink-0">
+      <defs>
+        <linearGradient id="solGradA" x1="360.879" y1="-0.353" x2="141.213" y2="360.245" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#00FFA3" />
+          <stop offset="1" stopColor="#DC1FFF" />
+        </linearGradient>
+        <linearGradient id="solGradB" x1="264.829" y1="-47.505" x2="45.163" y2="313.093" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#00FFA3" />
+          <stop offset="1" stopColor="#DC1FFF" />
+        </linearGradient>
+        <linearGradient id="solGradC" x1="312.548" y1="-23.688" x2="92.882" y2="336.91" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#00FFA3" />
+          <stop offset="1" stopColor="#DC1FFF" />
+        </linearGradient>
+      </defs>
+      <path d="M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h320.3c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1l62.7-62.7z" fill="url(#solGradA)" />
+      <path d="M64.6 3.8C67.1 1.4 70.4 0 73.8 0h320.3c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1L64.6 3.8z" fill="url(#solGradB)" />
+      <path d="M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H3.6c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h320.3c5.8 0 8.7-7 4.6-11.1l-62.7-62.7z" fill="url(#solGradC)" />
+    </svg>
   );
 }
 
@@ -131,7 +144,7 @@ const MOCK_TOKENS: MockTokenData[] = [
   {
     symbol: "WIF",
     chain: "solana",
-    tokenImage: "https://assets.coingecko.com/coins/images/33566/small/wif.png",
+    tokenImage: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm/logo.png",
     displayName: "CryptoSage",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=CryptoSage&backgroundColor=0a0a0f",
     callText: "$WIF — accumulating here at 0.35, expecting move to 0.55+. Degen size.",
