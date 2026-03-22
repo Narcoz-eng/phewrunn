@@ -3994,12 +3994,35 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       distributionFallback?.bundleRiskLabel ??
       currentTokenBundleRiskLabel ??
       (resolvedTokenRiskScore !== null ? determineBundleRiskLabel(resolvedTokenRiskScore) : null);
-    const resolvedTopHolders =
+    const rawTopHolders =
       hasFreshDistributionTelemetry &&
       distributionFallback?.topHolders &&
       distributionFallback.topHolders.length > 0
         ? cloneCachedValue(distributionFallback.topHolders)
         : staleTopHolders;
+
+    // Cross-reference top holder wallets against phew user accounts
+    const holderWallets = rawTopHolders.map((h) => h.ownerAddress ?? h.address).filter(Boolean) as string[];
+    const linkedUsers = holderWallets.length > 0
+      ? await prisma.user.findMany({
+          where: { walletAddress: { in: holderWallets } },
+          select: { id: true, walletAddress: true, username: true, image: true },
+        }).catch(() => [])
+      : [];
+    const linkedUserMap = new Map(linkedUsers.map((u) => [u.walletAddress!, { id: u.id, username: u.username, image: u.image }]));
+    const callerEntryMcapByUserId = new Map<string, number | null>();
+    for (const call of recentCalls) {
+      if (!callerEntryMcapByUserId.has(call.author.id) && typeof call.entryMcap === "number") {
+        callerEntryMcapByUserId.set(call.author.id, call.entryMcap);
+      }
+    }
+    const resolvedTopHolders: TokenHolderSnapshot[] = rawTopHolders.map((h) => {
+      const walletKey = h.ownerAddress ?? h.address;
+      const linked = walletKey ? linkedUserMap.get(walletKey) : undefined;
+      const phewEntryMcap = linked ? (callerEntryMcapByUserId.get(linked.id) ?? null) : null;
+      return { ...h, phewHandle: linked?.username ?? null, phewImage: linked?.image ?? null, phewEntryMcap };
+    });
+
     const resolvedDevWallet = distributionFallback?.devWallet
       ? cloneCachedValue(distributionFallback.devWallet)
       : staleDevWallet;
