@@ -2250,6 +2250,7 @@ export default function TokenPage() {
                     ) : null}
                   </div>
               </div>
+            </div>
 
               {/* Quick buy sidebar */}
               <div className="space-y-4">
