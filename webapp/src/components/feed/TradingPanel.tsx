@@ -31,6 +31,7 @@ interface TradingPanelProps {
   tokenSymbol: string;
   tokenName: string;
   tokenImage: string | null;
+  chainType?: "solana" | "ethereum";
   slippageBps: number;
   onSlippageChange: (bps: number) => void;
   jupiterOutputFormatted: string;
@@ -78,6 +79,28 @@ function formatUsdEstimate(value: number | null): string | null {
   }).format(value);
 }
 
+function SolIcon() {
+  return (
+    <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center flex-shrink-0">
+      <span className="text-[8px] font-bold text-white">S</span>
+    </div>
+  );
+}
+
+function EthIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="flex-shrink-0">
+      <circle cx="8" cy="8" r="8" fill="#627EEA" />
+      <path d="M8 2.5L8 6.5L11.5 8L8 2.5Z" fill="white" fillOpacity="0.6" />
+      <path d="M8 2.5L4.5 8L8 6.5L8 2.5Z" fill="white" />
+      <path d="M8 9.5L8 13.5L11.5 8.75L8 9.5Z" fill="white" fillOpacity="0.6" />
+      <path d="M8 13.5L8 9.5L4.5 8.75L8 13.5Z" fill="white" />
+      <path d="M8 8.75L11.5 8L8 6.5L8 8.75Z" fill="white" fillOpacity="0.2" />
+      <path d="M4.5 8L8 8.75L8 6.5L4.5 8Z" fill="white" fillOpacity="0.6" />
+    </svg>
+  );
+}
+
 export function TradingPanel({
   tradeSide,
   onTradeSideChange,
@@ -88,6 +111,7 @@ export function TradingPanel({
   tokenSymbol,
   tokenName,
   tokenImage,
+  chainType = "solana",
   slippageBps,
   onSlippageChange,
   jupiterOutputFormatted,
@@ -135,9 +159,10 @@ export function TradingPanel({
   const inputValue = isBuy ? buyAmountSol : sellAmountToken;
   const onInputChange = isBuy ? onBuyAmountChange : onSellAmountChange;
 
+  const chainCurrencySymbol = chainType === "ethereum" ? "ETH" : "SOL";
   const availableBalanceLabel = isBuy
     ? walletBalance !== null
-      ? `${walletBalance.toFixed(4)} SOL`
+      ? `${walletBalance.toFixed(4)} ${chainCurrencySymbol}`
       : walletBalanceLoading
         ? "Loading..."
       : "--"
@@ -272,10 +297,10 @@ export function TradingPanel({
             <div className={cn("absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2 rounded-lg px-2.5 py-1.5", chipSurfaceClassName)}>
               {isBuy ? (
                 <div className="flex items-center gap-1.5">
-                  <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center">
-                    <span className="text-[8px] font-bold text-white">S</span>
-                  </div>
-                  <span className="text-xs font-semibold text-slate-700 dark:text-white/70">SOL</span>
+                  {chainType === "ethereum" ? <EthIcon /> : <SolIcon />}
+                  <span className="text-xs font-semibold text-slate-700 dark:text-white/70">
+                    {chainType === "ethereum" ? "ETH" : "SOL"}
+                  </span>
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5">
@@ -372,16 +397,16 @@ export function TradingPanel({
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5">
-                  <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center">
-                    <span className="text-[8px] font-bold text-white">S</span>
-                  </div>
-                  <span className="text-xs font-semibold text-slate-700 dark:text-white/70">SOL</span>
+                  {chainType === "ethereum" ? <EthIcon /> : <SolIcon />}
+                  <span className="text-xs font-semibold text-slate-700 dark:text-white/70">
+                    {chainType === "ethereum" ? "ETH" : "SOL"}
+                  </span>
                 </div>
               )}
             </div>
           </div>
           <div className="flex items-center justify-between text-[10px] text-slate-400 dark:text-white/32">
-            <span>{isBuy ? "Quoted receive value" : "Estimated SOL proceeds"}</span>
+            <span>{isBuy ? "Quoted receive value" : `Estimated ${chainType === "ethereum" ? "ETH" : "SOL"} proceeds`}</span>
             <span>{receiveAmountUsdLabel ? `~${receiveAmountUsdLabel}` : "--"}</span>
           </div>
         </div>
@@ -422,11 +447,11 @@ export function TradingPanel({
               </div>
               <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
                 <Shield className="w-2.5 h-2.5" />
-                <span>Jito bundles</span>
+                <span>{chainType === "ethereum" ? "Flashbots" : "Jito bundles"}</span>
               </div>
               <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
                 <Zap className="w-2.5 h-2.5" />
-                <span>Skip validators</span>
+                <span>{chainType === "ethereum" ? "MEV-Share" : "Skip validators"}</span>
               </div>
             </div>
           ) : null}
@@ -575,8 +600,8 @@ export function TradingPanel({
               <DetailRow label="Total Route Fee" value={routeFeeDisplay} />
               <DetailRow label="Creator Reward" value={creatorFeeDisplay} />
               <DetailRow label="Platform Fee" value={platformFeeDisplay} />
-              <DetailRow label="Route" value="Jupiter v6" />
-              <DetailRow label="MEV Protection" value={mevEnabled ? "Enabled (Jito)" : "Disabled"} />
+              <DetailRow label="Route" value={chainType === "ethereum" ? "Uniswap v3" : "Jupiter v6"} />
+              <DetailRow label="MEV Protection" value={mevEnabled ? (chainType === "ethereum" ? "Enabled (Flashbots)" : "Enabled (Jito)") : "Disabled"} />
             </div>
           </div>
         ) : null}
@@ -630,7 +655,7 @@ export function TradingPanel({
           </div>
           {txSignature ? (
             <a
-              href={`https://solscan.io/tx/${txSignature}`}
+              href={chainType === "ethereum" ? `https://etherscan.io/tx/${txSignature}` : `https://solscan.io/tx/${txSignature}`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 text-[11px] text-slate-500 transition-colors hover:text-slate-700 dark:text-white/30 dark:hover:text-white/60"
