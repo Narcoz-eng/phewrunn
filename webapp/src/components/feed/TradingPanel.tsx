@@ -12,8 +12,13 @@ import {
   ChevronDown,
   ChevronUp,
   Shield,
+  ShieldCheck,
+  Lock,
   TrendingUp,
   TrendingDown,
+  Crosshair,
+  CircleAlert,
+  Target,
 } from "lucide-react";
 
 interface TradingPanelProps {
@@ -119,6 +124,12 @@ export function TradingPanel({
 }: TradingPanelProps) {
   const isBuy = tradeSide === "buy";
   const [showDetails, setShowDetails] = useState(false);
+  const [mevEnabled, setMevEnabled] = useState(() => {
+    try { return localStorage.getItem("phew.trade.mev-protection") !== "false"; } catch { return true; }
+  });
+  const [stopLossEnabled, setStopLossEnabled] = useState(() => {
+    try { return localStorage.getItem("phew.trade.stop-loss") === "true"; } catch { return false; }
+  });
   const detailsRef = useRef<HTMLDivElement>(null);
 
   const inputValue = isBuy ? buyAmountSol : sellAmountToken;
@@ -161,6 +172,16 @@ export function TradingPanel({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [showDetails]);
+
+  const handleMevToggle = (val: boolean) => {
+    setMevEnabled(val);
+    try { localStorage.setItem("phew.trade.mev-protection", String(val)); } catch {}
+  };
+
+  const handleStopLossToggle = (val: boolean) => {
+    setStopLossEnabled(val);
+    try { localStorage.setItem("phew.trade.stop-loss", String(val)); } catch {}
+  };
 
   return (
     <div className={panelSurfaceClassName}>
@@ -215,7 +236,7 @@ export function TradingPanel({
             <span className={cn("text-[11px] font-medium uppercase tracking-widest", mutedTextClassName)}>
               You Pay
             </span>
-            {walletConnected && (
+            {walletConnected ? (
               <button
                 onClick={() => {
                   if (isBuy && walletBalance !== null) {
@@ -231,7 +252,7 @@ export function TradingPanel({
                   <span className="text-slate-400 dark:text-white/30"> ({availableBalanceUsdLabel})</span>
                 ) : null}
               </button>
-            )}
+            ) : null}
           </div>
           <div className="relative group">
             <Input
@@ -365,6 +386,114 @@ export function TradingPanel({
           </div>
         </div>
 
+        {/* MEV Protection */}
+        <div className={cn(
+          "rounded-xl border px-3 py-2.5",
+          mevEnabled
+            ? "border-emerald-500/20 bg-emerald-500/[0.04] dark:border-emerald-500/15 dark:bg-emerald-500/[0.04]"
+            : "border-slate-900/[0.06] bg-slate-50/50 dark:border-white/[0.06] dark:bg-white/[0.02]"
+        )}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "flex items-center justify-center w-6 h-6 rounded-lg",
+                mevEnabled ? "bg-emerald-500/15" : "bg-slate-900/[0.05] dark:bg-white/[0.06]"
+              )}>
+                <ShieldCheck className={cn("w-3.5 h-3.5", mevEnabled ? "text-emerald-500 dark:text-emerald-400" : "text-slate-400 dark:text-white/40")} />
+              </div>
+              <div>
+                <span className={cn("text-[11px] font-semibold", mevEnabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-white/60")}>
+                  MEV Protection
+                </span>
+                <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Frontrun & sandwich guard</p>
+              </div>
+            </div>
+            <Switch
+              checked={mevEnabled}
+              onCheckedChange={handleMevToggle}
+              className="data-[state=checked]:bg-emerald-500/80 scale-[0.75]"
+            />
+          </div>
+          {mevEnabled ? (
+            <div className="flex items-center gap-3 mt-2 pt-2 border-t border-emerald-500/10 dark:border-emerald-500/10">
+              <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
+                <Lock className="w-2.5 h-2.5" />
+                <span>Private mempool</span>
+              </div>
+              <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
+                <Shield className="w-2.5 h-2.5" />
+                <span>Jito bundles</span>
+              </div>
+              <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
+                <Zap className="w-2.5 h-2.5" />
+                <span>Skip validators</span>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Stop Loss / Take Profit */}
+        <div className={cn(
+          "rounded-xl border px-3 py-2.5",
+          stopLossEnabled
+            ? "border-amber-500/20 bg-amber-500/[0.03] dark:border-amber-500/15 dark:bg-amber-500/[0.03]"
+            : "border-slate-900/[0.06] bg-slate-50/50 dark:border-white/[0.06] dark:bg-white/[0.02]"
+        )}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "flex items-center justify-center w-6 h-6 rounded-lg",
+                stopLossEnabled ? "bg-amber-500/15" : "bg-slate-900/[0.05] dark:bg-white/[0.06]"
+              )}>
+                <Crosshair className={cn("w-3.5 h-3.5", stopLossEnabled ? "text-amber-500 dark:text-amber-400" : "text-slate-400 dark:text-white/40")} />
+              </div>
+              <div>
+                <span className={cn("text-[11px] font-semibold", stopLossEnabled ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-white/60")}>
+                  Stop Loss / Take Profit
+                </span>
+                <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Auto-exit on price triggers</p>
+              </div>
+            </div>
+            <Switch
+              checked={stopLossEnabled}
+              onCheckedChange={handleStopLossToggle}
+              className="data-[state=checked]:bg-amber-500/80 scale-[0.75]"
+            />
+          </div>
+          {stopLossEnabled ? (
+            <div className="mt-2 pt-2 border-t border-amber-500/10 dark:border-amber-500/10 space-y-2">
+              {/* Stop Loss */}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-1">
+                  <CircleAlert className="w-3 h-3 text-rose-400 flex-shrink-0" />
+                  <span className="text-[10px] text-rose-500 dark:text-rose-400/80 font-medium w-10 flex-shrink-0">Stop</span>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="-15%"
+                    className={cn("h-7 text-[11px] font-mono", fieldSurfaceClassName)}
+                    defaultValue="-15%"
+                  />
+                </div>
+              </div>
+              {/* Take Profit */}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-1">
+                  <Target className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                  <span className="text-[10px] text-emerald-500 dark:text-emerald-400/80 font-medium w-10 flex-shrink-0">Target</span>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="+50%"
+                    className={cn("h-7 text-[11px] font-mono", fieldSurfaceClassName)}
+                    defaultValue="+50%"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         {/* Expandable Order Details */}
         <button
           onClick={() => setShowDetails(!showDetails)}
@@ -393,7 +522,7 @@ export function TradingPanel({
           )}
         </button>
 
-        {showDetails && (
+        {showDetails ? (
           <div ref={detailsRef} className="scroll-mt-4 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
             {/* Slippage Quick Adjust */}
             <div className={cn("space-y-2 p-3", softSectionClassName)}>
@@ -447,9 +576,10 @@ export function TradingPanel({
               <DetailRow label="Creator Reward" value={creatorFeeDisplay} />
               <DetailRow label="Platform Fee" value={platformFeeDisplay} />
               <DetailRow label="Route" value="Jupiter v6" />
+              <DetailRow label="MEV Protection" value={mevEnabled ? "Enabled (Jito)" : "Disabled"} />
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Execute / Connect */}
         {!walletConnected ? (
@@ -498,7 +628,7 @@ export function TradingPanel({
               className="data-[state=checked]:bg-amber-500/80 scale-[0.7] -ml-1"
             />
           </div>
-          {txSignature && (
+          {txSignature ? (
             <a
               href={`https://solscan.io/tx/${txSignature}`}
               target="_blank"
@@ -508,7 +638,7 @@ export function TradingPanel({
               View Tx
               <ExternalLink className="w-2.5 h-2.5" />
             </a>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
