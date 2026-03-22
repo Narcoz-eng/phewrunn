@@ -2485,125 +2485,108 @@ export default function TokenPage() {
                       </p>
                     )}
                   </div>
-                </section>
               </div>
-            </section>
+            </motion.section>
 
-            <section className="grid gap-5 lg:items-start lg:grid-cols-[0.85fr_1.15fr]">
-              <div className="space-y-5">
-                <div className="app-surface self-start p-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <TrendingUp className="h-4.5 w-4.5 text-primary" />
-                    <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
-                  </div>
-                  <div className="space-y-3">
-                    {token.timeline.length > 0 ? (
-                      token.timeline.map((event) => {
-                        const timelineCopy = buildTimelineCopy(event);
-                        return (
-                          <div key={event.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="font-medium text-foreground">{timelineCopy.title}</div>
-                              <div className="text-xs text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
+            {/* ── SECTION 5: TIMELINE + SENTIMENT ── */}
+            <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_1fr]">
+              <div className="app-surface p-5">
+                <div className="mb-5 flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-primary" />
+                  <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
+                </div>
+                <div className="relative space-y-0">
+                  {token.timeline.length > 0 ? (
+                    token.timeline.map((event, idx) => {
+                      const timelineCopy = buildTimelineCopy(event);
+                      return (
+                        <div key={event.id} className="relative flex gap-4 pb-5 last:pb-0">
+                          <div className="relative flex flex-col items-center">
+                            <div className="z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
+                              <div className="h-2 w-2 rounded-full bg-primary" />
                             </div>
-                            <div className="mt-1 text-sm text-muted-foreground">{timelineCopy.description}</div>
+                            {idx < token.timeline.length - 1 ? (
+                              <div className="mt-1 w-px flex-1 bg-border/50" />
+                            ) : null}
                           </div>
-                        );
-                      })
-                    ) : (
-                      <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
-                        Timeline events are being assembled from calls and token signals.
+                          <div className="min-w-0 flex-1 pb-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-sm font-semibold text-foreground">{timelineCopy.title}</div>
+                              <div className="shrink-0 text-[11px] text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">{timelineCopy.description}</div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
+                      Timeline events are being assembled from calls and token signals.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <div className="app-surface p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Flame className="h-4 w-4 text-primary" />
+                        <h3 className="text-base font-semibold text-foreground">Sentiment</h3>
                       </div>
-                    )}
+                      <p className="mt-0.5 text-xs text-muted-foreground">Community signal and market health</p>
+                    </div>
+                    <div className={cn("rounded-full border px-2.5 py-1 text-[11px] font-semibold", scoreTone(token.sentiment.score))}>
+                      {token.sentiment.score.toFixed(0)}
+                    </div>
+                  </div>
+                  <SentimentSplit bullish={token.sentiment.bullishPct} bearish={token.sentiment.bearishPct} />
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <div className="rounded-[16px] border border-border/60 bg-secondary p-3 text-center">
+                      <div className="text-base font-bold text-foreground">{formatMarketMetric(token.liquidity)}</div>
+                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Liquidity</div>
+                    </div>
+                    <div className="rounded-[16px] border border-border/60 bg-secondary p-3 text-center">
+                      <div className="text-base font-bold text-foreground">{formatMarketMetric(token.volume24h)}</div>
+                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Vol 24h</div>
+                    </div>
+                    <div className="rounded-[16px] border border-border/60 bg-secondary p-3 text-center">
+                      <div className={cn("text-base font-bold", token.sentiment.bullishPct >= 50 ? "text-gain" : "text-loss")}>{token.sentiment.bullishPct.toFixed(0)}%</div>
+                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bullish</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">⚡ Alpha {token.sentiment.reactions.alpha}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">🔥 Based {token.sentiment.reactions.based}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">💰 Printed {token.sentiment.reactions.printed}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">⚠️ Rug {token.sentiment.reactions.rug}</span>
                   </div>
                 </div>
 
-              </div>
-
-              <div className="space-y-4">
-                <section className="app-surface p-5">
-                  <div className="mb-4 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-semibold text-foreground">Sentiment + market health</h3>
-                      <p className="text-sm text-muted-foreground">Community reactions, liquidity, and volume</p>
-                    </div>
-                    <span className="text-xs font-semibold text-primary">Live intelligence</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Liquidity</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</div>
-                    </div>
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Volume 24h</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</div>
-                    </div>
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Sentiment</div>
-                      <div className={cn("mt-2 text-xl font-semibold", scoreTone(token.sentiment.score))}>{token.sentiment.score.toFixed(0)}</div>
-                    </div>
-                  </div>
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Sentiment starts neutral, then moves with community reactions, 24h price trend, and buy versus sell pressure.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bullish {token.sentiment.bullishPct.toFixed(0)}%</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Bearish {token.sentiment.bearishPct.toFixed(0)}%</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Alpha {token.sentiment.reactions.alpha}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Based {token.sentiment.reactions.based}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Printed {token.sentiment.reactions.printed}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Rug {token.sentiment.reactions.rug}</span>
-                  </div>
-                </section>
-
-                <section ref={recentCallsRef} className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-foreground">Recent calls</h3>
-                    <span className="text-sm text-muted-foreground">{recentCallsCount} calls</span>
-                  </div>
-                  {recentCalls.length > 0 ? (
-                    recentCalls.map((post) => (
-                      <PostCard
-                        key={post.id}
-                        post={post}
-                        currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
-                        autoOpenTradePanel={pendingTradeCallId === post.id}
-                        autoPrefillBuyAmountSol={pendingTradeCallId === post.id ? pendingQuickBuyAmountSol : null}
-                        onTradePanelAutoOpened={() => {
-                          setPendingTradeCallId((current) => (current === post.id ? null : current));
-                          setPendingQuickBuyAmountSol(null);
-                        }}
-                      />
-                    ))
-                  ) : (
-                    <div className="rounded-[20px] border border-dashed border-border/60 bg-secondary/60 p-5 text-sm text-muted-foreground">
-                      {recentCallsEmptyCopy}
-                    </div>
-                  )}
-                </section>
-
-                <section className="app-surface p-5">
+                <div className="app-surface p-5">
                   <div className="mb-4 flex items-center gap-2">
-                    <Users className="h-4.5 w-4.5 text-primary" />
+                    <Users className="h-4 w-4 text-primary" />
                     <h3 className="text-base font-semibold text-foreground">Top traders</h3>
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {token.topTraders.length > 0 ? (
-                      token.topTraders.map((trader) => (
+                      token.topTraders.map((trader, idx) => (
                         <div key={trader.id} className="flex items-center gap-3 rounded-[18px] border border-border/60 bg-secondary p-3">
-                          <Avatar className="h-10 w-10 border border-border">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-bold text-primary dark:bg-white/[0.05]">
+                            {idx + 1}
+                          </div>
+                          <Avatar className="h-8 w-8 border border-border">
                             <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
                             <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate font-semibold text-foreground">{trader.username || trader.name}</div>
-                            <div className="line-clamp-2 break-words text-xs text-muted-foreground">
-                              {trader.reputationTier || "Unranked"} | {trader.callsCount} calls | {trader.avgConfidenceScore.toFixed(0)}% avg confidence
-                            </div>
+                            <div className="truncate text-sm font-semibold text-foreground">{trader.username || trader.name}</div>
+                            <div className="text-[11px] text-muted-foreground">{trader.reputationTier || "Unranked"} · {trader.callsCount} calls</div>
                           </div>
-                          <div className="text-right">
-                            <div className="text-sm font-semibold text-gain">{trader.bestRoiPct.toFixed(1)}%</div>
-                            <div className="text-[11px] text-muted-foreground">best ROI</div>
+                          <div className="shrink-0 text-right">
+                            <div className="text-sm font-bold text-gain">+{trader.bestRoiPct.toFixed(1)}%</div>
+                            <div className="text-[10px] text-muted-foreground">best ROI</div>
                           </div>
                         </div>
                       ))
@@ -2613,10 +2596,42 @@ export default function TokenPage() {
                       </div>
                     )}
                   </div>
-                </section>
+                </div>
               </div>
-            </section>
-          </div>
+            </motion.section>
+
+            {/* ── SECTION 6: RECENT CALLS ── */}
+            <motion.section variants={sectionVariants}>
+              <div ref={recentCallsRef} className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Target className="h-4 w-4 text-primary" />
+                    <h3 className="text-lg font-semibold text-foreground">Recent calls</h3>
+                  </div>
+                  <span className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-xs text-muted-foreground">{recentCallsCount} calls</span>
+                </div>
+                {recentCalls.length > 0 ? (
+                  recentCalls.map((post) => (
+                    <PostCard
+                      key={post.id}
+                      post={post}
+                      currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
+                      autoOpenTradePanel={pendingTradeCallId === post.id}
+                      autoPrefillBuyAmountSol={pendingTradeCallId === post.id ? pendingQuickBuyAmountSol : null}
+                      onTradePanelAutoOpened={() => {
+                        setPendingTradeCallId((current) => (current === post.id ? null : current));
+                        setPendingQuickBuyAmountSol(null);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <div className="rounded-[20px] border border-dashed border-border/60 bg-secondary/60 p-5 text-sm text-muted-foreground">
+                    {recentCallsEmptyCopy}
+                  </div>
+                )}
+              </div>
+            </motion.section>
+          </motion.div>
         )}
       </main>
     </div>
