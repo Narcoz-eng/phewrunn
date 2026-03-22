@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users } from "lucide-react";
+import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
@@ -1317,6 +1318,139 @@ function mergeTokenPageDataWithLiveSnapshot(
   };
 }
 
+const containerVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.07 } },
+};
+
+const sectionVariants = {
+  hidden: { opacity: 0, y: 18 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] } },
+};
+
+function ScoreRing({ value, size = 80 }: { value: number | null | undefined; size?: number }) {
+  const radius = (size - 10) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct =
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+  const offset = circumference - (pct / 100) * circumference;
+  const color =
+    pct >= 75 ? "#10b981" : pct >= 50 ? "#f59e0b" : pct >= 25 ? "#94a3b8" : "#475569";
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      style={{ transform: "rotate(-90deg)", display: "block" }}
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        strokeWidth={6}
+        fill="none"
+        stroke="rgba(148,163,184,0.15)"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        strokeWidth={6}
+        fill="none"
+        stroke={color}
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        style={{ transition: "stroke-dashoffset 1.2s cubic-bezier(0.16,1,0.3,1)" }}
+      />
+    </svg>
+  );
+}
+
+function RiskBar({
+  label,
+  value,
+  max = 100,
+  danger = 30,
+  warn = 15,
+  pending = false,
+}: {
+  label: string;
+  value: number | null | undefined;
+  max?: number;
+  danger?: number;
+  warn?: number;
+  pending?: boolean;
+}) {
+  const pct =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.max(0, Math.min((value / max) * 100, 100))
+      : 0;
+  const realValue = typeof value === "number" && Number.isFinite(value) ? value : null;
+  const barColor =
+    realValue === null
+      ? "bg-border/40"
+      : realValue >= danger
+      ? "bg-rose-500"
+      : realValue >= warn
+      ? "bg-amber-500"
+      : "bg-emerald-500";
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-medium uppercase tracking-[0.13em] text-muted-foreground">
+          {label}
+        </span>
+        <span className="font-mono font-semibold text-foreground">
+          {pending ? (
+            <span className="text-primary">Scanning</span>
+          ) : realValue !== null ? (
+            `${realValue.toFixed(1)}%`
+          ) : (
+            "—"
+          )}
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/30">
+        <div
+          className={`h-full rounded-full transition-all duration-1000 ${barColor}`}
+          style={{ width: pending ? "100%" : `${pct}%`, opacity: pending ? 0.35 : 1 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SentimentSplit({
+  bullishPct,
+  bearishPct,
+}: {
+  bullishPct: number;
+  bearishPct: number;
+}) {
+  const b = Math.max(0, Math.min(100, bullishPct));
+  const r = Math.max(0, Math.min(100, bearishPct));
+  return (
+    <div className="space-y-2">
+      <div className="flex overflow-hidden rounded-full h-2.5 bg-border/30">
+        <div
+          className="h-full bg-emerald-500 transition-all duration-1000"
+          style={{ width: `${b}%` }}
+        />
+        <div
+          className="h-full bg-rose-500 transition-all duration-1000"
+          style={{ width: `${r}%` }}
+        />
+      </div>
+      <div className="flex justify-between text-[11px]">
+        <span className="font-semibold text-emerald-500">{b.toFixed(0)}% Bullish</span>
+        <span className="font-semibold text-rose-500">{r.toFixed(0)}% Bearish</span>
+      </div>
+    </div>
+  );
+}
+
 function scoreTone(value: number | null | undefined): string {
   const score = typeof value === "number" && Number.isFinite(value) ? value : 0;
   if (score >= 75) return "text-gain";
@@ -1754,23 +1888,36 @@ export default function TokenPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="app-topbar">
-        <div className="mx-auto flex h-[4.4rem] max-w-[980px] items-center gap-3 px-4 sm:px-5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-            onClick={() => navigate(-1)}
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/80">Phew Ultra</div>
-            <h1 className="font-semibold text-lg">Token Lab</h1>
+        <div className="mx-auto flex h-[4.4rem] max-w-[980px] items-center justify-between gap-3 px-4 sm:px-5">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
+              onClick={() => navigate(-1)}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/80">Phew Ultra</div>
+              <h1 className="font-semibold text-lg">Token Lab</h1>
+            </div>
           </div>
+          {isRefreshingLive ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+              <Activity className="h-3 w-3 animate-pulse" />
+              Live
+            </span>
+          ) : token ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Intelligence ready
+            </span>
+          ) : null}
         </div>
       </header>
 
-      <main className="mx-auto max-w-[980px] px-4 pb-10 pt-5 sm:px-5">
+      <main className="mx-auto max-w-[980px] px-4 pb-12 pt-5 sm:px-5">
         {showTokenLoading ? (
           <TokenScanningState
             address={tokenAddress}
@@ -1807,223 +1954,202 @@ export default function TokenPage() {
             )}
           </div>
         ) : (
-          <div className="space-y-5">
-            <section className="app-surface p-5 sm:p-6">
-              <div className="space-y-5">
-                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="min-w-0 flex items-start gap-4">
-                    <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-border/60 bg-secondary">
+          <motion.div
+            className="space-y-5"
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            {/* ── SECTION 1: HERO ── */}
+            <motion.section variants={sectionVariants} className="overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(160deg,rgba(255,255,255,0.96),rgba(243,249,245,0.97))] shadow-[0_32px_80px_-40px_hsl(var(--primary)/0.18)] dark:bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.11),transparent_48%),linear-gradient(180deg,rgba(10,16,24,0.98),rgba(5,10,16,0.99))] dark:shadow-none">
+              {/* Top stripe: identity */}
+              <div className="flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-start lg:justify-between">
+                {/* Left: image + name + address */}
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="relative shrink-0">
+                    <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-full border-2 border-primary/30 bg-secondary shadow-[0_0_32px_rgba(16,185,129,0.28)]">
                       {token.imageUrl ? (
-                        <img src={token.imageUrl} alt={token.symbol ?? token.name ?? "Token"} className="h-full w-full object-cover" />
+                        <img src={token.imageUrl} alt={token.symbol ?? "Token"} className="h-full w-full object-cover" />
                       ) : (
-                        <Coins className="h-7 w-7 text-primary" />
+                        <Coins className="h-8 w-8 text-primary" />
                       )}
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="break-words text-2xl font-bold text-foreground">
-                          {token.symbol || token.name || token.address.slice(0, 8)}
-                        </h2>
-                        <span
-                          className={cn(
-                            "rounded-full border px-3 py-1 text-xs font-semibold",
-                            bundleScanPending ? "border-primary/25 bg-primary/10 text-primary" : riskTone(token.bundleRiskLabel)
-                          )}
-                        >
-                          {bundleScanPending ? "Scanning risk" : token.bundleRiskLabel || "Unknown Risk"}
-                        </span>
-                        {token.isEarlyRunner ? (
-                          <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                            Early Runner
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <p className="min-w-0 break-all text-xs text-muted-foreground">{token.address}</p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={handleCopyTokenAddress}
-                          className="h-7 w-7 shrink-0 rounded-full border-border/60 bg-secondary text-muted-foreground hover:text-foreground"
-                          aria-label="Copy contract address"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                      {token.earlyRunnerReasons?.length ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {token.earlyRunnerReasons.map((reason) => (
-                            <span key={reason} className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                              {reason}
-                            </span>
-                          ))}
-                        </div>
+                    <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-background bg-emerald-500">
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-3xl font-black tracking-tight text-foreground">
+                        {token.symbol || token.address.slice(0, 6)}
+                      </h2>
+                      {token.name && token.name !== token.symbol ? (
+                        <span className="text-base font-medium text-muted-foreground">{token.name}</span>
                       ) : null}
                     </div>
-                  </div>
-
-                  <div className="grid w-full gap-3 sm:grid-cols-2 xl:w-[420px] xl:grid-cols-4">
-                    {[
-                      { label: "Confidence", value: token.confidenceScore },
-                      { label: "Hot Alpha", value: token.hotAlphaScore },
-                      { label: "Early Runner", value: token.earlyRunnerScore },
-                      { label: "High Conviction", value: token.highConvictionScore },
-                    ].map((metric) => (
-                      <div key={metric.label} className="min-w-0 rounded-[20px] border border-border/60 bg-white/55 p-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:bg-white/[0.03] dark:shadow-none">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{metric.label}</div>
-                        <div className={cn("mt-2 text-xl font-bold sm:text-2xl", scoreTone(metric.value))}>
-                          {typeof metric.value === "number" ? `${metric.value.toFixed(0)}%` : "N/A"}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-                  <div className="min-w-0 rounded-[28px] border border-primary/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.22),transparent_56%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(236,248,241,0.92))] p-5 shadow-[0_24px_48px_-34px_hsl(var(--primary)/0.45)] dark:bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_58%),linear-gradient(180deg,rgba(15,22,20,0.94),rgba(8,13,12,0.98))] dark:shadow-none">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/80">
-                          Live market cap
-                        </div>
-                        <div className="mt-3 min-w-0 text-[clamp(2.9rem,6vw,4.6rem)] font-black leading-[0.88] tracking-[-0.06em] text-foreground tabular-nums">
-                          {formatMarketMetric(token.marketCap)}
-                        </div>
-                        <div className="mt-3 text-sm text-muted-foreground">
-                          Shared with postcard pricing and refreshed from the live market route.
-                        </div>
-                      </div>
-                      <span className="shrink-0 rounded-full border border-primary/25 bg-white/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary dark:bg-white/[0.05]">
-                        Live
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                        bundleScanPending ? "border-primary/25 bg-primary/10 text-primary" : riskTone(token.bundleRiskLabel)
+                      )}>
+                        {bundleScanPending ? (
+                          <span className="flex items-center gap-1"><Loader2 className="h-2.5 w-2.5 animate-spin" />Scanning</span>
+                        ) : (token.bundleRiskLabel || "Unknown Risk")}
                       </span>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                      <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
-                        24h volume <span className="ml-1 font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
-                      </span>
-                      <span className="rounded-full border border-border/60 bg-white/70 px-3 py-1 dark:bg-white/[0.04]">
-                        {isRefreshingLive ? "Refreshing now" : "Live snapshot active"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="min-w-0 rounded-[22px] border border-border/60 bg-white/55 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.72)] dark:bg-white/[0.03] dark:shadow-none">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        Liquidity
-                      </div>
-                      <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                        Live
-                      </span>
-                    </div>
-                    <div className="mt-3 min-w-0 text-[clamp(2.1rem,4vw,2.95rem)] font-bold leading-none text-foreground tabular-nums">
-                      {formatMarketMetric(token.liquidity)}
-                    </div>
-                    <div className="mt-3 text-sm text-muted-foreground">
-                      Pool depth on the active trading pair.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(190px,auto)] lg:max-w-[560px] lg:flex-1">
-                    <Button
-                      onClick={handleOpenTradePanel}
-                      disabled={!primaryTradeCall}
-                      className="group min-h-[60px] min-w-0 justify-start gap-3 rounded-[22px] border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.92))] px-4 py-3 text-left text-slate-950 shadow-[0_22px_50px_-24px_hsl(var(--primary)/0.58)] hover:brightness-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white/20 text-slate-950">
-                        <PhewTradeIcon className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex flex-col items-start text-left">
-                        <span className="text-sm font-semibold text-slate-950">Open trade panel</span>
-                        <span className="mt-1 whitespace-normal text-[11px] leading-[1.25] text-slate-900/75">
-                          Jump straight to the latest trade-ready post for this token.
+                      {token.isEarlyRunner ? (
+                        <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-300">
+                          ⚡ Early Runner
                         </span>
+                      ) : null}
+                      <span className="rounded-full border border-border/50 bg-secondary px-2.5 py-0.5 text-[11px] font-mono text-muted-foreground uppercase tracking-wider">
+                        {token.chainType}
                       </span>
-                    </Button>
-                    <Button
-                      variant={token.isFollowing ? "outline" : "default"}
-                      onClick={() => followMutation.mutate()}
-                      disabled={followMutation.isPending}
-                      className="min-h-[60px] rounded-[22px] px-5"
-                    >
-                      {followMutation.isPending ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Updating
-                        </>
-                      ) : token.isFollowing ? (
-                        "Following token"
-                      ) : (
-                        "Follow token"
-                      )}
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <a
-                      href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-9 items-center gap-2 rounded-full border border-border/60 bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      Open Dexscreener
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                    {isRefreshingLive ? (
-                      <span className="inline-flex h-9 items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Refreshing live intelligence
-                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <span className="font-mono text-[11px] text-muted-foreground">{token.address.slice(0, 6)}…{token.address.slice(-4)}</span>
+                      <button
+                        onClick={handleCopyTokenAddress}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/60 bg-secondary text-muted-foreground transition-colors hover:text-foreground"
+                        aria-label="Copy address"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {token.earlyRunnerReasons?.length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {token.earlyRunnerReasons.map((reason) => (
+                          <span key={reason} className="rounded-full border border-border/50 bg-secondary/60 px-2.5 py-0.5 text-[10px] text-muted-foreground">
+                            {reason}
+                          </span>
+                        ))}
+                      </div>
                     ) : null}
                   </div>
+                </div>
+
+                {/* Right: action buttons */}
+                <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-col lg:items-end">
+                  <Button
+                    onClick={handleOpenTradePanel}
+                    disabled={!primaryTradeCall}
+                    className="h-10 gap-2 rounded-full border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.9))] px-5 text-sm font-semibold text-slate-950 shadow-[0_16px_40px_-16px_hsl(var(--primary)/0.55)] hover:brightness-[1.04] disabled:opacity-50"
+                  >
+                    <PhewTradeIcon className="h-3.5 w-3.5" />
+                    Trade
+                  </Button>
+                  <Button
+                    variant={token.isFollowing ? "outline" : "outline"}
+                    onClick={() => followMutation.mutate()}
+                    disabled={followMutation.isPending}
+                    className={cn("h-10 rounded-full px-5 text-sm font-semibold transition-all",
+                      token.isFollowing
+                        ? "border-primary/30 bg-primary/8 text-primary hover:bg-primary/12"
+                        : "border-border/60 bg-secondary hover:border-primary/30"
+                    )}
+                  >
+                    {followMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : token.isFollowing ? "✓ Following" : "Follow"}
+                  </Button>
+                  <a
+                    href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-10 items-center gap-2 rounded-full border border-border/60 bg-secondary px-4 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Dexscreener
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
                 </div>
               </div>
-            </section>
 
-            <section className="grid gap-5 lg:items-start lg:grid-cols-[1.35fr_0.65fr]">
+              {/* Bottom stripe: live market stats */}
+              <div className="grid grid-cols-2 gap-px border-t border-border/40 bg-border/40 sm:grid-cols-4">
+                {[
+                  { label: "Market Cap", value: formatMarketMetric(token.marketCap), highlight: true },
+                  { label: "Liquidity", value: formatMarketMetric(token.liquidity), highlight: false },
+                  { label: "Volume 24h", value: formatMarketMetric(token.volume24h), highlight: false },
+                  { label: "Holders", value: formatIntegerMetric(token.holderCount, { emptyLabel: "Scanning" }), highlight: false },
+                ].map((stat) => (
+                  <div key={stat.label} className="bg-[rgba(255,255,255,0.7)] px-5 py-4 dark:bg-[rgba(10,16,24,0.9)]">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{stat.label}</div>
+                    <div className={cn("mt-1.5 text-xl font-bold tabular-nums", stat.highlight ? "text-primary" : "text-foreground")}>
+                      {stat.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.section>
+
+            {/* ── SECTION 2: SCORE RINGS ── */}
+            <motion.section variants={sectionVariants}>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: "Confidence", value: token.confidenceScore, icon: <Target className="h-3.5 w-3.5" />, desc: "Signal quality" },
+                  { label: "Hot Alpha", value: token.hotAlphaScore, icon: <Flame className="h-3.5 w-3.5" />, desc: "Momentum score" },
+                  { label: "Early Runner", value: token.earlyRunnerScore, icon: <Zap className="h-3.5 w-3.5" />, desc: "Entry timing" },
+                  { label: "High Conviction", value: token.highConvictionScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Conviction level" },
+                ].map((s) => {
+                  const pct = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
+                  const color = pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
+                  return (
+                    <div key={s.label} className="relative overflow-hidden rounded-[22px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">{s.icon}<span className="text-[10px] font-semibold uppercase tracking-[0.15em]">{s.label}</span></div>
+                          <div className={cn("text-3xl font-black tabular-nums", color)}>
+                            {pct !== null ? `${pct.toFixed(0)}` : "—"}
+                            {pct !== null ? <span className="text-lg font-semibold opacity-70">%</span> : null}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">{s.desc}</div>
+                        </div>
+                        <div className="shrink-0 opacity-80">
+                          <ScoreRing value={s.value} size={56} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.section>
+
+            {/* ── SECTION 3: CHART + QUICK BUY ── */}
+            <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_270px]">
               <div className="app-surface p-5 sm:p-6">
-                <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h3 className="text-lg font-semibold text-foreground">Live price chart</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Real-time candles from the market route, with token snapshots held as fallback telemetry.
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-primary" />
+                      <h3 className="text-base font-semibold text-foreground">Live price chart</h3>
+                      {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct) ? (
+                        <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-bold",
+                          liveChartPriceChangePct >= 0 ? "border-gain/25 bg-gain/10 text-gain" : "border-loss/25 bg-loss/10 text-loss"
+                        )}>
+                          {liveChartPriceChangePct >= 0 ? "+" : ""}{liveChartPriceChangePct.toFixed(2)}%
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {hasLiveChartTelemetry ? liveChartSourceLabel : hasChartTelemetry ? `${chartData.length} snapshot points` : "Awaiting market data"}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-xs text-muted-foreground">
-                      <BarChart3 className="mr-1 inline h-3.5 w-3.5" />
-                      {hasLiveChartTelemetry ? liveChartSourceLabel : hasChartTelemetry ? `${chartData.length} snapshot points` : "Scanning"}
-                    </div>
-                    {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct) ? (
-                      <div className={cn(
-                        "rounded-full border px-3 py-1 text-xs font-semibold",
-                        liveChartPriceChangePct >= 0
-                          ? "border-gain/25 bg-gain/10 text-gain"
-                          : "border-loss/25 bg-loss/10 text-loss"
-                      )}>
-                        {liveChartPriceChangePct >= 0 ? "+" : ""}
-                        {liveChartPriceChangePct.toFixed(2)}%
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="mb-4 flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                   {TOKEN_CHART_INTERVAL_OPTIONS.map((option) => (
-                    <Button
+                    <button
                       key={option.value}
                       type="button"
-                      variant={chartInterval === option.value ? "default" : "outline"}
-                      className="h-9 rounded-full px-3"
                       onClick={() => setChartInterval(option.value)}
+                      className={cn(
+                        "h-7 rounded-lg px-3 text-[11px] font-semibold transition-all",
+                        chartInterval === option.value
+                          ? "bg-primary text-slate-950 shadow-[0_4px_14px_-4px_hsl(var(--primary)/0.5)]"
+                          : "border border-border/60 bg-secondary text-muted-foreground hover:text-foreground"
+                      )}
                     >
                       {option.label}
-                    </Button>
+                    </button>
                   ))}
                 </div>
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_230px]">
-                  <div className="space-y-4">
-                    <div className="h-[320px] w-full">
+                {/* Chart area */}
+                <div className="mt-4 space-y-4">
+                  <div className="h-[340px] w-full">
                       {hasLiveChartTelemetry ? (
                         <div className="h-full rounded-[24px] border border-border/60 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.09),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
                           <CandlestickChart
@@ -2123,114 +2249,95 @@ export default function TokenPage() {
                       </div>
                     ) : null}
                   </div>
+              </div>
 
-                  <div className="space-y-4">
-                    <div className="rounded-[24px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.7),rgba(243,250,245,0.92))] p-4 shadow-[0_24px_54px_-40px_hsl(var(--primary)/0.35)] dark:bg-[linear-gradient(180deg,rgba(10,17,27,0.96),rgba(5,10,18,0.98))] dark:shadow-none">
-                      <div className="text-sm font-semibold text-foreground">Quick buy</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Open the first trade-ready call with a preset amount already loaded.
-                      </div>
-                      <div className="mt-4 grid grid-cols-2 gap-2">
-                        {TOKEN_QUICK_BUY_PRESETS.map((amount) => (
-                          <Button
-                            key={amount}
-                            type="button"
-                            variant="outline"
-                            onClick={() => handleQuickBuyPreset(amount)}
-                            disabled={!primaryTradeCall}
-                            className="h-11 rounded-[18px] border-primary/20 bg-white/70 text-sm font-semibold text-foreground hover:border-primary/35 hover:bg-primary/8 dark:bg-white/[0.03]"
-                          >
-                            {amount} SOL
-                          </Button>
-                        ))}
-                      </div>
+              {/* Quick buy sidebar */}
+              <div className="space-y-4">
+                <div className="app-surface p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-primary" />
+                    <div className="text-sm font-semibold text-foreground">Quick buy</div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {TOKEN_QUICK_BUY_PRESETS.map((amount) => (
                       <Button
+                        key={amount}
                         type="button"
-                        onClick={handleOpenTradePanel}
+                        variant="outline"
+                        onClick={() => handleQuickBuyPreset(amount)}
                         disabled={!primaryTradeCall}
-                        className="mt-3 h-11 w-full rounded-[18px] border border-primary/25 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),rgba(52,211,153,0.88))] text-sm font-semibold text-slate-950 shadow-[0_18px_36px_-26px_hsl(var(--primary)/0.48)] hover:brightness-[1.03] disabled:opacity-60"
+                        className="h-11 rounded-[18px] border-primary/20 bg-white/70 text-sm font-semibold text-foreground hover:border-primary/35 hover:bg-primary/8 dark:bg-white/[0.03]"
                       >
-                        Open full trade panel
+                        {amount} SOL
                       </Button>
-                    </div>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={handleOpenTradePanel}
+                    disabled={!primaryTradeCall}
+                    className="mt-3 h-11 w-full rounded-[18px] border border-primary/25 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),rgba(52,211,153,0.88))] text-sm font-semibold text-slate-950 shadow-[0_18px_36px_-26px_hsl(var(--primary)/0.48)] hover:brightness-[1.03] disabled:opacity-60"
+                  >
+                    Open full trade panel
+                  </Button>
+                </div>
 
-                    <div className="rounded-[24px] border border-border/60 bg-white/50 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-white/[0.03] dark:shadow-none">
-                      <div className="text-sm font-semibold text-foreground">Live route</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {hasLiveChartTelemetry
-                          ? `${liveChartSourceLabel} is updating this panel in real time.`
-                          : "Live candles will appear here as soon as market route data is available."}
-                      </div>
-                      <div className="mt-4 space-y-2 text-xs text-muted-foreground">
-                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                          <span>Current MCAP</span>
-                          <span className="font-semibold text-foreground">{formatMarketMetric(token.marketCap)}</span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                          <span>Current liquidity</span>
-                          <span className="font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                          <span>24h volume</span>
-                          <span className="font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                          <span>Confidence</span>
-                          <span className={cn("font-semibold", scoreTone(token.confidenceScore))}>
-                            {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)}%` : "N/A"}
-                          </span>
-                        </div>
-                      </div>
+                <div className="app-surface p-5">
+                  <div className="text-sm font-semibold text-foreground">Live route</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {hasLiveChartTelemetry
+                      ? `${liveChartSourceLabel} is updating this panel in real time.`
+                      : "Live candles will appear here as soon as market route data is available."}
+                  </div>
+                  <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                      <span>Current MCAP</span>
+                      <span className="font-semibold text-foreground">{formatMarketMetric(token.marketCap)}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                      <span>Current liquidity</span>
+                      <span className="font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                      <span>24h volume</span>
+                      <span className="font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                      <span>Confidence</span>
+                      <span className={cn("font-semibold", scoreTone(token.confidenceScore))}>
+                        {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)}%` : "N/A"}
+                      </span>
                     </div>
                   </div>
                 </div>
               </div>
+            </motion.section>
 
-              <div className="space-y-5">
-                <section className="app-surface p-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <ShieldAlert className="h-4.5 w-4.5 text-primary" />
-                    <h3 className="text-base font-semibold text-foreground">Risk panel</h3>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Largest holder</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatPct(token.risk.largestHolderPct)}</div>
+            {/* ── SECTION 4: RISK + HOLDERS ── */}
+            <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_1fr]">
+              <div className="app-surface p-5">
+                <div className="mb-4 flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-primary" />
+                  <h3 className="text-base font-semibold text-foreground">Risk panel</h3>
+                </div>
+                <div className="space-y-3">
+                  <RiskBar label="Largest holder" value={token.risk.largestHolderPct ?? 0} max={100} danger={30} warn={15} />
+                  <RiskBar label="Top 10 holders" value={token.risk.top10HolderPct ?? 0} max={100} danger={60} warn={35} />
+                  {bundleScanPending ? (
+                    <div className="space-y-3">
+                      <BundleScanLoop title="Scanning bundled wallets" hint="Resolving linked wallets." className="w-full" />
+                      <BundleScanLoop title="Scanning bundled supply" hint="Measuring bundled supply." className="w-full" />
                     </div>
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top 10 holders</div>
-                      <div className="mt-2 text-xl font-semibold text-foreground">{formatPct(token.risk.top10HolderPct)}</div>
-                    </div>
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundled wallets</div>
-                      {bundleScanPending ? (
-                        <BundleScanLoop
-                          title="Scan live"
-                          hint="Resolving linked wallets."
-                          className="mt-2 w-full"
-                        />
-                      ) : (
-                        <div className="mt-2 text-xl font-semibold text-foreground">
-                          {formatIntegerMetric(token.risk.bundledWalletCount, { zeroIsValid: true })}
-                        </div>
-                      )}
-                    </div>
-                    <div className="rounded-[18px] border border-border/60 bg-secondary p-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundled supply</div>
-                      {bundleScanPending ? (
-                        <BundleScanLoop
-                          title="Scan live"
-                          hint="Measuring bundled supply."
-                          className="mt-2 w-full"
-                        />
-                      ) : (
-                        <div className="mt-2 text-xl font-semibold text-foreground">{formatPct(resolvedBundledSupplyPct)}</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-4 rounded-[20px] border border-border/60 bg-white/55 p-3 dark:bg-white/[0.03]">
-                    <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Bundle clusters</div>
-                    <div className="mt-3 space-y-2">
+                  ) : (
+                    <>
+                      <RiskBar label="Bundled wallets" value={typeof token.risk.bundledWalletCount === "number" ? Math.min(token.risk.bundledWalletCount, 50) : 0} max={50} danger={20} warn={5} />
+                      <RiskBar label="Bundled supply" value={resolvedBundledSupplyPct ?? 0} max={100} danger={25} warn={10} />
+                    </>
+                  )}
+                </div>
+                  <div className="mt-4 rounded-[20px] border border-border/60 bg-secondary/60 p-4">
+                    <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Bundle clusters</div>
+                    <div className="space-y-2">
                       {token.bundleClusters.length > 0 ? (
                         token.bundleClusters.map((cluster) => (
                           <div key={cluster.id ?? cluster.clusterLabel} className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2 text-sm">
@@ -2251,12 +2358,12 @@ export default function TokenPage() {
                       )}
                     </div>
                   </div>
-                </section>
+              </div>
 
-                <section className="app-surface p-5">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Holder intelligence</div>
+              <div className="app-surface p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Holder intelligence</div>
                       <div className="mt-1 text-sm text-muted-foreground">
                         {topHolderSectionCopy}
                       </div>
