@@ -163,6 +163,7 @@ export function TradingPanel({
   onAutoConfirmChange,
 }: TradingPanelProps) {
   const isBuy = tradeSide === "buy";
+  const [tokenImageError, setTokenImageError] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [mevEnabled, setMevEnabled] = useState(() => {
     try { return localStorage.getItem("phew.trade.mev-protection") !== "false"; } catch { return true; }
@@ -171,6 +172,11 @@ export function TradingPanel({
     try { return localStorage.getItem("phew.trade.stop-loss") === "true"; } catch { return false; }
   });
   const detailsRef = useRef<HTMLDivElement>(null);
+  const prevTokenImageRef = useRef<string | null>(null);
+  if (prevTokenImageRef.current !== tokenImage) {
+    prevTokenImageRef.current = tokenImage;
+    if (tokenImageError) setTokenImageError(false);
+  }
 
   const inputValue = isBuy ? buyAmountSol : sellAmountToken;
   const onInputChange = isBuy ? onBuyAmountChange : onSellAmountChange;
@@ -320,8 +326,8 @@ export function TradingPanel({
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5">
-                  {tokenImage ? (
-                    <img src={tokenImage} alt={tokenSymbol} className="w-4 h-4 rounded-full" />
+                  {tokenImage && !tokenImageError ? (
+                    <img src={tokenImage} alt={tokenSymbol} className="w-4 h-4 rounded-full" onError={() => setTokenImageError(true)} />
                   ) : (
                     <div className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900/10 text-[8px] font-bold text-slate-500 dark:bg-white/10 dark:text-white/50">
                       {tokenSymbol.charAt(0)}
@@ -402,8 +408,8 @@ export function TradingPanel({
             <div className={cn("flex items-center gap-2 rounded-lg px-2.5 py-1.5", chipSurfaceClassName)}>
               {isBuy ? (
                 <div className="flex items-center gap-1.5">
-                  {tokenImage ? (
-                    <img src={tokenImage} alt={tokenSymbol} className="w-4 h-4 rounded-full" />
+                  {tokenImage && !tokenImageError ? (
+                    <img src={tokenImage} alt={tokenSymbol} className="w-4 h-4 rounded-full" onError={() => setTokenImageError(true)} />
                   ) : (
                     <div className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900/10 text-[8px] font-bold text-slate-500 dark:bg-white/10 dark:text-white/50">
                       {tokenSymbol.charAt(0)}

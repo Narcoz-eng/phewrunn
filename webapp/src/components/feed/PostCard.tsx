@@ -518,8 +518,6 @@ function pickDexImageUrlFromPair(
     token?.icon,
     token?.logoURI,
     pair?.info?.imageUrl,
-    pair?.info?.header,
-    pair?.info?.openGraph,
   ];
   for (const candidate of candidates) {
     const value = candidate?.trim();
@@ -1091,6 +1089,7 @@ export function PostCard({
   const [winCardPreviewUrl, setWinCardPreviewUrl] = useState<string | null>(null);
   const [winCardPreviewError, setWinCardPreviewError] = useState<string | null>(null);
   const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false);
+  const [tradeDialogTokenImageError, setTradeDialogTokenImageError] = useState(false);
   const [isWalletConnectDialogOpen, setIsWalletConnectDialogOpen] = useState(false);
   const [pendingBuyAfterWalletConnect, setPendingBuyAfterWalletConnect] = useState(false);
   const [tradeSide, setTradeSide] = useState<TradeSide>("buy");
@@ -1272,6 +1271,7 @@ export function PostCard({
     const activeId = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
     if (isBuyDialogOpen) {
       document.body.dataset.phewActiveTradeDialogPostId = post.id;
+      setTradeDialogTokenImageError(false);
       return;
     }
     if (activeId === post.id) {
@@ -3446,6 +3446,7 @@ export function PostCard({
             !post.tokenSymbol ||
             !post.dexscreenerUrl))),
     staleTime: 3 * 60 * 1000,
+    placeholderData: (previousData) => previousData,
     retry: 1,
     refetchOnWindowFocus: false,
     refetchInterval: isBuyDialogOpen ? 20_000 : false,
@@ -5947,8 +5948,8 @@ export function PostCard({
                 <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Selected token</div>
                 <div className="mt-3 flex items-center gap-3">
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-900/10 bg-slate-900/[0.04] dark:border-white/10 dark:bg-black/30">
-                    {resolvedTokenImage ? (
-                      <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" />
+                    {resolvedTokenImage && !tradeDialogTokenImageError ? (
+                      <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-full w-full object-cover" onError={() => setTradeDialogTokenImageError(true)} />
                     ) : (
                       <Coins className="h-4 w-4 text-muted-foreground" />
                     )}
@@ -6258,8 +6259,8 @@ export function PostCard({
           <DialogHeader className={tradeDialogHeaderClassName}>
             <div className="flex items-center justify-between gap-3">
               <DialogTitle className="flex items-center gap-2.5 text-sm font-semibold text-slate-900 dark:text-white sm:text-base">
-                {resolvedTokenImage ? (
-                  <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-6 w-6 rounded-full ring-1 ring-slate-900/10 dark:ring-white/[0.1]" />
+                {resolvedTokenImage && !tradeDialogTokenImageError ? (
+                  <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-6 w-6 rounded-full ring-1 ring-slate-900/10 dark:ring-white/[0.1]" onError={() => setTradeDialogTokenImageError(true)} />
                 ) : (
                   <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/[0.04] ring-1 ring-slate-900/10 dark:bg-white/[0.06] dark:ring-white/[0.1]">
                     <Coins className="h-3 w-3 text-slate-500 dark:text-white/40" />
