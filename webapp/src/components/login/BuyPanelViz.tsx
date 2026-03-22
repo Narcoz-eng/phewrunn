@@ -40,16 +40,78 @@ const SIGNAL_DEFS: Record<string, SignalDef> = {
   bundle_risk: { icon: AlertTriangle, label: "Bundle Risk", color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/25" },
 };
 
+/* ─── Chain icons ─── */
+
+function SolChainIcon({ size = 14 }: { size?: number }) {
+  return (
+    <div
+      style={{ width: size, height: size }}
+      className="rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center flex-shrink-0"
+    >
+      <span style={{ fontSize: size * 0.55 }} className="font-bold text-white leading-none">S</span>
+    </div>
+  );
+}
+
+function EthChainIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" className="flex-shrink-0">
+      <circle cx="8" cy="8" r="8" fill="#627EEA" />
+      <path d="M8 2.5L8 6.5L11.5 8L8 2.5Z" fill="white" fillOpacity="0.6" />
+      <path d="M8 2.5L4.5 8L8 6.5L8 2.5Z" fill="white" />
+      <path d="M8 9.5L8 13.5L11.5 8.75L8 9.5Z" fill="white" fillOpacity="0.6" />
+      <path d="M8 13.5L8 9.5L4.5 8.75L8 13.5Z" fill="white" />
+      <path d="M8 8.75L11.5 8L8 6.5L8 8.75Z" fill="white" fillOpacity="0.2" />
+      <path d="M4.5 8L8 8.75L8 6.5L4.5 8Z" fill="white" fillOpacity="0.6" />
+    </svg>
+  );
+}
+
+/* ─── Sparkline chart ─── */
+
+function Sparkline({ data, color = "#10b981" }: { data: number[]; color?: string }) {
+  if (data.length < 2) return null;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const w = 100;
+  const h = 32;
+  const pad = 2;
+  const points = data.map((v, i) => {
+    const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x},${y}`;
+  });
+  const pathD = `M${points.join(" L")}`;
+  const areaD = `M${points[0]} L${points.join(" L")} L${100 - pad},${h} L${pad},${h} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-8" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaD} fill="url(#sparkGrad)" />
+      <path d={pathD} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /* ─── Token data ─── */
 
 interface MockTokenData {
   symbol: string;
+  chain: "solana" | "ethereum";
+  tokenImage: string;
   displayName: string;
   avatarUrl: string;
   callText: string;
   level: number;
   signals: string[];
   price: number;
+  sparkline: number[];
+  priceDeltaPct: number;
   balance: string;
   balanceUsd: string;
   quantity: number;
@@ -68,12 +130,16 @@ interface MockTokenData {
 const MOCK_TOKENS: MockTokenData[] = [
   {
     symbol: "WIF",
+    chain: "solana",
+    tokenImage: "https://assets.coingecko.com/coins/images/33566/small/wif.png",
     displayName: "CryptoSage",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=CryptoSage&backgroundColor=0a0a0f",
     callText: "$WIF — accumulating here at 0.35, expecting move to 0.55+. Degen size.",
     level: 7,
     signals: ["early_runner", "high_conviction"],
     price: 0.3521,
+    sparkline: [0.28, 0.29, 0.31, 0.30, 0.32, 0.31, 0.33, 0.34, 0.33, 0.35, 0.3521],
+    priceDeltaPct: 8.4,
     balance: "705.33 USD",
     balanceUsd: "705.33",
     quantity: 274.32,
@@ -101,12 +167,16 @@ const MOCK_TOKENS: MockTokenData[] = [
   },
   {
     symbol: "BONK",
+    chain: "solana",
+    tokenImage: "https://assets.coingecko.com/coins/images/28600/small/bonk.jpg",
     displayName: "AlphaHound",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=AlphaHound&backgroundColor=0a0a0f",
     callText: "$BONK breaking out of 3-week range. Vol spike + whale accumulation confirmed.",
     level: 5,
     signals: ["volume_spike", "liquidity_spike", "hot_alpha"],
     price: 0.00002034,
+    sparkline: [0.000016, 0.000017, 0.000016, 0.000018, 0.000019, 0.000018, 0.000020, 0.000021, 0.000020, 0.000020, 0.00002034],
+    priceDeltaPct: 12.1,
     balance: "412.80 USD",
     balanceUsd: "412.80",
     quantity: 22400000,
@@ -134,12 +204,16 @@ const MOCK_TOKENS: MockTokenData[] = [
   },
   {
     symbol: "PEPE",
+    chain: "ethereum",
+    tokenImage: "https://assets.coingecko.com/coins/images/29850/small/pepe-token.jpeg",
     displayName: "OnchainOracle",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=OnchainOracle&backgroundColor=0a0a0f",
     callText: "$PEPE — CT sleeping on this. Supply shock incoming, chart looks clean.",
     level: 9,
     signals: ["hot_alpha", "early_runner"],
     price: 0.00001183,
+    sparkline: [0.0000090, 0.0000095, 0.0000093, 0.0000100, 0.0000108, 0.0000105, 0.0000112, 0.0000118, 0.0000115, 0.0000119, 0.00001183],
+    priceDeltaPct: 31.4,
     balance: "1,247.60 USD",
     balanceUsd: "1,247.60",
     quantity: 78300000,
@@ -283,10 +357,21 @@ export function BuyPanelViz() {
               <span className="text-[10px] text-white/35">2m ago</span>
             </div>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
-            LIVE
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold tracking-wide uppercase"
+              style={token.chain === "ethereum"
+                ? { borderColor: "rgba(98,126,234,0.35)", background: "rgba(98,126,234,0.12)", color: "#8ba4f8" }
+                : { borderColor: "rgba(153,69,255,0.35)", background: "rgba(153,69,255,0.10)", color: "#c084fc" }
+              }
+            >
+              {token.chain === "ethereum" ? <EthChainIcon size={10} /> : <SolChainIcon size={10} />}
+              {token.chain === "ethereum" ? "ETH" : "SOL"}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+              LIVE
+            </span>
+          </div>
         </div>
 
         <AnimatePresence mode="wait">
@@ -316,6 +401,33 @@ export function BuyPanelViz() {
             ))}
           </motion.div>
         </AnimatePresence>
+
+        {/* ── Sparkline chart ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tokenIdx}
+            className="mt-2.5 flex items-end gap-3"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <div className="flex-1 min-w-0">
+              <Sparkline
+                data={token.sparkline}
+                color={token.priceDeltaPct >= 0 ? "#10b981" : "#f43f5e"}
+              />
+            </div>
+            <div className="flex flex-col items-end shrink-0 pb-1">
+              <span className="text-[11px] font-bold font-mono text-white/80">
+                {token.price < 0.001 ? token.price.toFixed(8) : token.price.toFixed(4)}
+              </span>
+              <span className={`text-[10px] font-semibold font-mono ${token.priceDeltaPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                {token.priceDeltaPct >= 0 ? "+" : ""}{token.priceDeltaPct.toFixed(1)}%
+              </span>
+            </div>
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {/* ── Panel label ── */}
@@ -328,18 +440,33 @@ export function BuyPanelViz() {
 
       {/* ── Two-column: Order Book + Trading Form ── */}
       <div className="flex flex-col overflow-hidden border-t-0 border border-white/[0.06] border-t-transparent rounded-b-2xl bg-[radial-gradient(circle_at_14%_0%,rgba(16,185,129,0.06),transparent_28%),linear-gradient(180deg,rgba(8,12,20,0.98),rgba(4,8,14,0.99))]">
-        <div className="grid grid-cols-[1fr_1fr] min-h-0">
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr] min-h-0">
 
           {/* ── Left: Order Book ── */}
-          <div className="border-r border-white/[0.06] flex flex-col">
+          <div className="border-b sm:border-b-0 sm:border-r border-white/[0.06] flex flex-col">
             {/* Book / Trades tabs */}
-            <div className="flex items-center border-b border-white/[0.06]">
-              <div className="px-3 py-2 text-[11px] font-semibold text-emerald-400 border-b border-emerald-400">
-                Book
+            <div className="flex items-center justify-between border-b border-white/[0.06] pr-2">
+              <div className="flex items-center">
+                <div className="px-3 py-2 text-[11px] font-semibold text-emerald-400 border-b border-emerald-400">
+                  Book
+                </div>
+                <div className="px-3 py-2 text-[11px] font-medium text-white/35">
+                  Trades
+                </div>
               </div>
-              <div className="px-3 py-2 text-[11px] font-medium text-white/35">
-                Trades
-              </div>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={tokenIdx}
+                  className="flex items-center gap-1.5"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  <img src={token.tokenImage} alt={token.symbol} className="w-4 h-4 rounded-full object-cover" />
+                  <span className="text-[10px] font-semibold text-white/60">{token.symbol}</span>
+                </motion.div>
+              </AnimatePresence>
             </div>
 
             {/* Column headers */}
@@ -369,8 +496,8 @@ export function BuyPanelViz() {
                 <span className="text-[12px] font-bold text-emerald-400 font-mono">
                   {token.price < 0.01 ? token.price.toFixed(8) : token.price.toFixed(4)}
                 </span>
-                <span className="text-[9px] text-emerald-400/60 font-medium">
-                  +0.44%
+                <span className={`text-[9px] font-semibold ${token.priceDeltaPct >= 0 ? "text-emerald-400/70" : "text-rose-400/70"}`}>
+                  {token.priceDeltaPct >= 0 ? "+" : ""}{token.priceDeltaPct.toFixed(2)}%
                 </span>
               </motion.div>
             </AnimatePresence>
@@ -496,9 +623,11 @@ export function BuyPanelViz() {
                     </AnimatePresence>
                   </div>
                   <div className="flex items-center gap-1 pr-2">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 text-[8px] font-bold text-white/50">
-                      {token.symbol.charAt(0)}
-                    </div>
+                    <img
+                      src={token.tokenImage}
+                      alt={token.symbol}
+                      className="w-5 h-5 rounded-full object-cover bg-white/10"
+                    />
                     <AnimatePresence mode="wait">
                       <motion.span
                         key={tokenIdx}
@@ -566,9 +695,7 @@ export function BuyPanelViz() {
                     transition={{ duration: 0.18 }}
                   >
                     <span className="text-[14px] font-bold text-white font-mono">{token.orderValue}</span>
-                    <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center">
-                      <span className="text-[7px] font-bold text-white">$</span>
-                    </div>
+                    {token.chain === "ethereum" ? <EthChainIcon size={16} /> : <SolChainIcon size={16} />}
                   </motion.div>
                 </AnimatePresence>
               </div>
