@@ -44,6 +44,7 @@ const SIGNAL_DEFS: Record<string, SignalDef> = {
 
 interface MockTokenData {
   symbol: string;
+  chain: "sol" | "eth";
   displayName: string;
   avatarUrl: string;
   callText: string;
@@ -62,12 +63,14 @@ interface MockTokenData {
   stopLossPct: string;
   takeProfit: string;
   takeProfitPct: string;
+  chartPoints: number[];
   orderBook: { price: string; size: string; total: string; side: "bid" | "ask" }[];
 }
 
 const MOCK_TOKENS: MockTokenData[] = [
   {
     symbol: "WIF",
+    chain: "sol",
     displayName: "CryptoSage",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=CryptoSage&backgroundColor=0a0a0f",
     callText: "$WIF — accumulating here at 0.35, expecting move to 0.55+. Degen size.",
@@ -86,6 +89,7 @@ const MOCK_TOKENS: MockTokenData[] = [
     stopLossPct: "-15%",
     takeProfit: "0.5500",
     takeProfitPct: "+56%",
+    chartPoints: [38,35,36,34,33,35,37,36,38,40,39,41,40,38,37,38,39,40,41,42,40,39,38,37,36,35,36,38,40,43,45,44,46,48,47,49,51,52,50,51,53,55,54,56,55,57,58,60],
     orderBook: [
       { price: "0.3580", size: "3.11", total: "2,589.91", side: "ask" },
       { price: "0.3564", size: "334.27", total: "2,586.90", side: "ask" },
@@ -101,6 +105,7 @@ const MOCK_TOKENS: MockTokenData[] = [
   },
   {
     symbol: "BONK",
+    chain: "sol",
     displayName: "AlphaHound",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=AlphaHound&backgroundColor=0a0a0f",
     callText: "$BONK breaking out of 3-week range. Vol spike + whale accumulation confirmed.",
@@ -119,6 +124,7 @@ const MOCK_TOKENS: MockTokenData[] = [
     stopLossPct: "-15%",
     takeProfit: "0.00003200",
     takeProfitPct: "+57%",
+    chartPoints: [55,53,51,50,48,47,46,44,43,42,41,40,38,37,36,35,34,33,35,36,37,38,40,41,43,45,47,49,51,53,55,57,58,60,61,62,63,64,63,65,66,68,67,69,70,72,73,75],
     orderBook: [
       { price: "0.00002098", size: "12.4M", total: "84.2M", side: "ask" },
       { price: "0.00002078", size: "8.9M", total: "71.8M", side: "ask" },
@@ -134,6 +140,7 @@ const MOCK_TOKENS: MockTokenData[] = [
   },
   {
     symbol: "PEPE",
+    chain: "eth",
     displayName: "OnchainOracle",
     avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=OnchainOracle&backgroundColor=0a0a0f",
     callText: "$PEPE — CT sleeping on this. Supply shock incoming, chart looks clean.",
@@ -145,13 +152,14 @@ const MOCK_TOKENS: MockTokenData[] = [
     quantity: 78300000,
     sliderPct: 65,
     orderValue: "183.20",
-    creatorFee: "0.00510 SOL",
+    creatorFee: "0.000142 ETH",
     impact: "0.06%",
     minReceive: "77.5M PEPE",
     stopLoss: "0.00001005",
     stopLossPct: "-15%",
     takeProfit: "0.00001890",
     takeProfitPct: "+60%",
+    chartPoints: [40,42,44,46,48,50,52,51,50,49,48,47,46,45,44,43,42,41,42,43,45,47,49,51,53,55,54,53,52,53,55,57,59,61,63,65,67,68,69,70,71,72,71,73,75,77,79,80],
     orderBook: [
       { price: "0.00001215", size: "42.1M", total: "192.4M", side: "ask" },
       { price: "0.00001205", size: "28.7M", total: "150.3M", side: "ask" },
@@ -211,6 +219,74 @@ function OrderBookRow({
       <span className="relative z-10 text-right text-white/60">{row.size}</span>
       <span className="relative z-10 text-right text-white/40">{row.total}</span>
     </motion.div>
+  );
+}
+
+/* ─── Chain icons ─── */
+
+function SolanaIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 397 311" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1l62.7-62.7z" fill="url(#sol-g1)"/>
+      <path d="M64.6 3.8C67.1 1.4 70.4 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5C.7 77.6-2.2 70.6 1.9 66.5l62.7-62.7z" fill="url(#sol-g2)"/>
+      <path d="M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1l-62.7-62.7z" fill="url(#sol-g3)"/>
+      <defs>
+        <linearGradient id="sol-g1" x1="360.9" y1="351.2" x2="57.2" y2="-9.1" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#00FFA3"/><stop offset="1" stopColor="#DC1FFF"/>
+        </linearGradient>
+        <linearGradient id="sol-g2" x1="360.9" y1="351.2" x2="57.2" y2="-9.1" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#00FFA3"/><stop offset="1" stopColor="#DC1FFF"/>
+        </linearGradient>
+        <linearGradient id="sol-g3" x1="360.9" y1="351.2" x2="57.2" y2="-9.1" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#00FFA3"/><stop offset="1" stopColor="#DC1FFF"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+function EthIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 256 417" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#8A92B2" d="M127.9 0 0 212.5l127.9 75.3V154.9z"/>
+      <path fill="#62688F" d="M127.9 287.8 0 212.5l127.9 75.3z"/>
+      <path fill="#62688F" d="M256 212.5 127.9 0v154.9z"/>
+      <path fill="#454A75" d="M127.9 287.8 256 212.5l-128.1 75.3z"/>
+      <path fill="#8A92B2" d="M0 237.5 127.9 417v-103.5z"/>
+      <path fill="#62688F" d="M127.9 313.5V417l128.1-179.5z"/>
+    </svg>
+  );
+}
+
+function ChainIcon({ chain, className }: { chain: "sol" | "eth"; className?: string }) {
+  return chain === "eth" ? <EthIcon className={className} /> : <SolanaIcon className={className} />;
+}
+
+/* ─── Mini chart ─── */
+
+function MiniChart({ points, color = "#10b981" }: { points: number[]; color?: string }) {
+  const w = 240;
+  const h = 56;
+  const pad = 4;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const toX = (i: number) => pad + (i / (points.length - 1)) * (w - pad * 2);
+  const toY = (v: number) => h - pad - ((v - min) / range) * (h - pad * 2);
+  const polyline = points.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
+  const areaPath = `M${toX(0)},${toY(points[0]!)} ${points.map((v, i) => `L${toX(i)},${toY(v)}`).join(" ")} L${toX(points.length - 1)},${h} L${toX(0)},${h} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="none" style={{ height: h }}>
+      <defs>
+        <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.18"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill="url(#chartFill)" />
+      <polyline points={polyline} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx={toX(points.length - 1)} cy={toY(points[points.length - 1]!)} r="2.5" fill={color} />
+    </svg>
   );
 }
 
@@ -326,12 +402,20 @@ export function BuyPanelViz() {
         </span>
       </div>
 
+      {/* ── Mini chart ── */}
+      <div className="px-4 py-2 border-b border-white/[0.06] bg-[linear-gradient(180deg,rgba(6,10,18,0.98),rgba(4,8,14,0.99))]">
+        <MiniChart
+          points={token.chartPoints}
+          color={token.chain === "eth" ? "#6366f1" : "#10b981"}
+        />
+      </div>
+
       {/* ── Two-column: Order Book + Trading Form ── */}
       <div className="flex flex-col overflow-hidden border-t-0 border border-white/[0.06] border-t-transparent rounded-b-2xl bg-[radial-gradient(circle_at_14%_0%,rgba(16,185,129,0.06),transparent_28%),linear-gradient(180deg,rgba(8,12,20,0.98),rgba(4,8,14,0.99))]">
-        <div className="grid grid-cols-[1fr_1fr] min-h-0">
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr] min-h-0">
 
-          {/* ── Left: Order Book ── */}
-          <div className="border-r border-white/[0.06] flex flex-col">
+          {/* ── Left: Order Book (hidden on mobile) ── */}
+          <div className="hidden sm:flex border-r border-white/[0.06] flex-col">
             {/* Book / Trades tabs */}
             <div className="flex items-center border-b border-white/[0.06]">
               <div className="px-3 py-2 text-[11px] font-semibold text-emerald-400 border-b border-emerald-400">
@@ -496,8 +580,8 @@ export function BuyPanelViz() {
                     </AnimatePresence>
                   </div>
                   <div className="flex items-center gap-1 pr-2">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 text-[8px] font-bold text-white/50">
-                      {token.symbol.charAt(0)}
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 text-[8px] font-bold text-white/50 overflow-hidden">
+                      <span>{token.symbol.charAt(0)}</span>
                     </div>
                     <AnimatePresence mode="wait">
                       <motion.span
@@ -566,9 +650,7 @@ export function BuyPanelViz() {
                     transition={{ duration: 0.18 }}
                   >
                     <span className="text-[14px] font-bold text-white font-mono">{token.orderValue}</span>
-                    <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center">
-                      <span className="text-[7px] font-bold text-white">$</span>
-                    </div>
+                    <ChainIcon chain={token.chain} className="w-4 h-4" />
                   </motion.div>
                 </AnimatePresence>
               </div>
@@ -734,7 +816,7 @@ export function BuyPanelViz() {
                 </div>
                 <div className="flex items-center justify-between text-[10px]">
                   <span className="text-white/40">Route</span>
-                  <span className="text-white/60 font-medium">Jupiter v6</span>
+                  <span className="text-white/60 font-medium">{token.chain === "eth" ? "Uniswap v3" : "Jupiter v6"}</span>
                 </div>
                 <div className="flex items-center justify-between text-[10px]">
                   <span className="text-white/40">Creator Reward</span>
@@ -752,8 +834,19 @@ export function BuyPanelViz() {
                 </div>
               </div>
 
+              {/* Chain indicator */}
+              <div className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5">
+                <ChainIcon chain={token.chain} className="w-4 h-4" />
+                <span className="text-[10px] font-semibold text-white/60">
+                  {token.chain === "eth" ? "Ethereum" : "Solana"} · {token.chain === "eth" ? "Uniswap v3" : "Jupiter v6"}
+                </span>
+                <span className={`ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded ${token.chain === "eth" ? "bg-indigo-500/15 text-indigo-400" : "bg-emerald-500/15 text-emerald-400"}`}>
+                  {token.chain.toUpperCase()}
+                </span>
+              </div>
+
               {/* CTA button */}
-              <div className="w-full h-11 text-[13px] font-bold rounded-xl flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-[0_0_20px_-4px_rgba(16,185,129,0.35)]">
+              <div className={`w-full h-11 text-[13px] font-bold rounded-xl flex items-center justify-center gap-2 text-white ${token.chain === "eth" ? "bg-gradient-to-r from-indigo-600 to-violet-600 shadow-[0_0_20px_-4px_rgba(99,102,241,0.35)]" : "bg-gradient-to-r from-emerald-600 to-emerald-500 shadow-[0_0_20px_-4px_rgba(16,185,129,0.35)]"}`}>
                 <Wallet className="w-4 h-4" />
                 Connect Wallet to Trade
               </div>
