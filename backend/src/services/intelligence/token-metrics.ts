@@ -71,6 +71,9 @@ export type TokenHolderSnapshot = {
   badges: TokenHolderBadge[];
   devRole: "creator" | "mint_authority" | "freeze_authority" | null;
   tradeSnapshot: TokenHolderTradeSnapshot | null;
+  phewHandle: string | null;
+  phewImage: string | null;
+  phewEntryMcap: number | null;
 };
 
 export type TokenDistributionSnapshot = {
@@ -1080,6 +1083,9 @@ export async function analyzeSolanaTokenDistribution(
                 badges: [],
                 devRole: null,
                 tradeSnapshot: null,
+                phewHandle: null,
+                phewImage: null,
+                phewEntryMcap: null,
               };
             })
             .filter((holder): holder is TokenHolderSnapshot => holder !== null)
@@ -1431,6 +1437,9 @@ export async function analyzeSolanaTokenDistribution(
               netAmount: snap.netAmount ?? null,
             };
           })(),
+          phewHandle: null,
+          phewImage: null,
+          phewEntryMcap: null,
         } satisfies TokenHolderSnapshot;
       })();
 

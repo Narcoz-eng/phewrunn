@@ -169,6 +169,9 @@ type TokenHolder = {
   >;
   devRole: "creator" | "mint_authority" | "freeze_authority" | null;
   tradeSnapshot: TokenHolderTradeSnapshot | null;
+  phewHandle: string | null;
+  phewImage: string | null;
+  phewEntryMcap: number | null;
 };
 
 type TokenRisk = {
@@ -189,7 +192,7 @@ type TokenBundleCluster = {
   clusterLabel: string;
   walletCount: number;
   estimatedSupplyPct: number;
-  evidenceJson?: unknown;
+  evidenceJson?: { bucket?: string; holderPcts?: number[] } | null;
 };
 
 type TokenTimelineEvent = {
@@ -1495,6 +1498,7 @@ export default function TokenPage() {
   // Track last known valid token across query-key changes (e.g. auth loading changes viewerScope)
   const lastKnownTokenRef = useRef<TokenPageData | null>(null);
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
+  const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
   const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("15");
@@ -2061,12 +2065,11 @@ export default function TokenPage() {
               </div>
 
               {/* Bottom stripe: live market stats */}
-              <div className="grid grid-cols-2 gap-px border-t border-border/40 bg-border/40 sm:grid-cols-4">
+              <div className="grid grid-cols-3 gap-px border-t border-border/40 bg-border/40">
                 {[
                   { label: "Market Cap", value: formatMarketMetric(token.marketCap), highlight: true },
                   { label: "Liquidity", value: formatMarketMetric(token.liquidity), highlight: false },
                   { label: "Volume 24h", value: formatMarketMetric(token.volume24h), highlight: false },
-                  { label: "Holders", value: formatIntegerMetric(token.holderCount, { emptyLabel: "Scanning" }), highlight: false },
                 ].map((stat) => (
                   <div key={stat.label} className="bg-[rgba(255,255,255,0.7)] px-5 py-4 dark:bg-[rgba(10,16,24,0.9)]">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{stat.label}</div>
@@ -2339,14 +2342,66 @@ export default function TokenPage() {
                   <div className="mt-4 rounded-[20px] border border-border/60 bg-secondary/60 p-4">
                     <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Bundle clusters</div>
                     <div className="space-y-2">
-                      {token.bundleClusters.length > 0 ? (
-                        token.bundleClusters.map((cluster) => (
-                          <div key={cluster.id ?? cluster.clusterLabel} className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2 text-sm">
-                            <span className="font-medium text-foreground">{cluster.clusterLabel}</span>
-                            <span className="font-mono text-muted-foreground">{cluster.estimatedSupplyPct.toFixed(1)}%</span>
-                          </div>
-                        ))
-                      ) : bundleScanPending ? (
+                      {token.bundleClusters.length > 0 ? (() => {
+                        const clusterColors = [
+                          { bg: "bg-orange-500/15", border: "border-orange-500/40", text: "text-orange-400", dot: "bg-orange-400" },
+                          { bg: "bg-purple-500/15", border: "border-purple-500/40", text: "text-purple-400", dot: "bg-purple-400" },
+                          { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-400", dot: "bg-rose-400" },
+                          { bg: "bg-amber-500/15", border: "border-amber-500/40", text: "text-amber-400", dot: "bg-amber-400" },
+                        ];
+                        return token.bundleClusters.map((cluster, ci) => {
+                          const clusterKey = cluster.id ?? cluster.clusterLabel;
+                          const isExpanded = expandedClusters.has(clusterKey);
+                          const color = clusterColors[ci % clusterColors.length]!;
+                          const clusterPcts = new Set(
+                            (cluster.evidenceJson?.holderPcts ?? []).map((p) => Math.round(p * 100) / 100)
+                          );
+                          const clusterWallets = token.risk.topHolders.filter(
+                            (h) => clusterPcts.has(Math.round(h.supplyPct * 100) / 100)
+                          );
+                          return (
+                            <div key={clusterKey} className={cn("rounded-[16px] border overflow-hidden", color.bg, color.border)}>
+                              <button
+                                onClick={() => setExpandedClusters((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(clusterKey)) next.delete(clusterKey);
+                                  else next.add(clusterKey);
+                                  return next;
+                                })}
+                                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm"
+                              >
+                                <div className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-full", color.bg, color.border, "border")}>
+                                  <div className={cn("h-2 w-2 rounded-full", color.dot)} />
+                                </div>
+                                <span className="font-semibold text-foreground flex-1 text-left">{cluster.clusterLabel}</span>
+                                <span className={cn("text-[10px] uppercase tracking-[0.12em]", color.text)}>{cluster.walletCount} wallets</span>
+                                <span className={cn("font-mono text-sm font-semibold", color.text)}>{cluster.estimatedSupplyPct.toFixed(1)}%</span>
+                                <span className={cn("text-[10px]", color.text)}>{isExpanded ? "▲" : "▼"}</span>
+                              </button>
+                              {isExpanded ? (
+                                <div className="border-t border-inherit px-3 pb-2.5 pt-2 space-y-1.5">
+                                  {clusterWallets.length > 0 ? (
+                                    clusterWallets.map((h, i) => (
+                                      <div key={h.address} className="flex items-center justify-between text-[11px]">
+                                        <div className="flex items-center gap-2">
+                                          <span className={cn("font-semibold", color.text)}>{i + 1}.</span>
+                                          <span className="font-mono text-foreground">{formatHolderAddress(h.ownerAddress ?? h.address)}</span>
+                                          {h.phewHandle ? (
+                                            <span className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-semibold", color.bg, color.border, color.text)}>@{h.phewHandle}</span>
+                                          ) : null}
+                                        </div>
+                                        <span className={cn("font-mono font-semibold", color.text)}>{h.supplyPct.toFixed(2)}%</span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <p className={cn("text-[11px]", color.text, "opacity-70")}>Wallet data not yet resolved for this cluster.</p>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        });
+                      })() : bundleScanPending ? (
                         <BundleScanLoop
                           title="Cluster loop active"
                           hint="Mapping linked holder groups and supply pockets."
@@ -2386,15 +2441,39 @@ export default function TokenPage() {
                     </div>
                   </div>
                   <div className="max-h-[360px] space-y-2.5 overflow-y-auto pr-1">
-                    {topHolderRows.length > 0 ? (
-                      topHolderRows.map((holder, index) => (
+                    {topHolderRows.length > 0 ? (() => {
+                      const clusterColors = [
+                        { bg: "bg-orange-500/15", border: "border-orange-500/40", text: "text-orange-400", dot: "bg-orange-400" },
+                        { bg: "bg-purple-500/15", border: "border-purple-500/40", text: "text-purple-400", dot: "bg-purple-400" },
+                        { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-400", dot: "bg-rose-400" },
+                        { bg: "bg-amber-500/15", border: "border-amber-500/40", text: "text-amber-400", dot: "bg-amber-400" },
+                      ];
+                      // Build supplyPct → cluster index map
+                      const pctToClusterIdx = new Map<number, number>();
+                      token.bundleClusters.forEach((cluster, ci) => {
+                        (cluster.evidenceJson?.holderPcts ?? []).forEach((p) => {
+                          pctToClusterIdx.set(Math.round(p * 100) / 100, ci);
+                        });
+                      });
+                      return topHolderRows.map((holder, index) => {
+                        const clusterIdx = pctToClusterIdx.get(Math.round(holder.supplyPct * 100) / 100) ?? null;
+                        const clusterColor = clusterIdx !== null ? clusterColors[clusterIdx % clusterColors.length] : null;
+                        return (
                         <div
                           key={`${holder.address}:${index}`}
                           className={cn(
                             "rounded-[18px] border px-3 py-3 text-sm",
-                            getHolderRoleSurfaceClass(getPrimaryHolderBadge(holder))
+                            clusterColor ? `${clusterColor.bg} ${clusterColor.border}` : ""
                           )}
                         >
+                          {clusterColor && clusterIdx !== null ? (
+                            <div className="mb-2 flex items-center gap-1.5">
+                              <div className={cn("h-2 w-2 rounded-full", clusterColor.dot)} />
+                              <span className={cn("text-[10px] font-semibold uppercase tracking-[0.12em]", clusterColor.text)}>
+                                {token.bundleClusters[clusterIdx]?.clusterLabel ?? "Bundled"}
+                              </span>
+                            </div>
+                          ) : null}
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-3">
                               <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-semibold text-primary dark:bg-white/[0.05]">
@@ -2404,6 +2483,16 @@ export default function TokenPage() {
                                 <div className="font-mono text-[12px] font-semibold text-foreground">
                                   {formatHolderAddress(holder.address)}
                                 </div>
+                                {holder.phewHandle ? (
+                                  <div className="mt-1 flex items-center gap-1.5">
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                                      @{holder.phewHandle}
+                                    </span>
+                                    {holder.phewEntryMcap ? (
+                                      <span className="text-[10px] text-muted-foreground">bought at {formatMarketCap(holder.phewEntryMcap)}</span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                                 {getPrimaryHolderBadge(holder) ? (
                                   <div className="mt-1">
                                     <span
@@ -2468,13 +2557,14 @@ export default function TokenPage() {
                           </div>
                           <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/55">
                             <div
-                              className="h-full rounded-full bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]"
+                              className={cn("h-full rounded-full", clusterColor ? clusterColor.dot : "bg-[linear-gradient(90deg,hsl(var(--primary)),rgba(52,211,153,0.82))]")}
                               style={{ width: `${Math.max(6, Math.min(holder.supplyPct, 100))}%` }}
                             />
                           </div>
                         </div>
-                      ))
-                    ) : holderIntelligencePending ? (
+                        );
+                      });
+                    })() : holderIntelligencePending ? (
                       <BundleScanLoop
                         title="Holder scan active"
                         hint="Tracing wallet concentration, role tags, and early holder expansion."
@@ -2497,9 +2587,17 @@ export default function TokenPage() {
                   <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
                 </div>
                 <div className="relative space-y-0">
-                  {token.timeline.length > 0 ? (
-                    token.timeline.map((event, idx) => {
+                  {token.timeline.length > 0 ? (() => {
+                    const holderHandleMap = new Map(
+                      token.risk.topHolders
+                        .filter((h) => h.phewHandle)
+                        .map((h) => [h.phewHandle!, h])
+                    );
+                    return token.timeline.map((event, idx) => {
                       const timelineCopy = buildTimelineCopy(event);
+                      const linkedHolder = event.metadata?.traderHandle
+                        ? holderHandleMap.get(event.metadata.traderHandle)
+                        : null;
                       return (
                         <div key={event.id} className="relative flex gap-4 pb-5 last:pb-0">
                           <div className="relative flex flex-col items-center">
@@ -2516,11 +2614,18 @@ export default function TokenPage() {
                               <div className="shrink-0 text-[11px] text-muted-foreground">{formatTimeAgo(event.timestamp)}</div>
                             </div>
                             <div className="mt-1 text-xs text-muted-foreground">{timelineCopy.description}</div>
+                            {linkedHolder ? (
+                              <div className="mt-1">
+                                <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-500">
+                                  still holding · {linkedHolder.supplyPct.toFixed(2)}% supply{linkedHolder.phewEntryMcap ? ` · bought at ${formatMarketCap(linkedHolder.phewEntryMcap)}` : ""}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       );
-                    })
-                  ) : (
+                    });
+                  })() : (
                     <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
                       Timeline events are being assembled from calls and token signals.
                     </div>
@@ -2571,27 +2676,42 @@ export default function TokenPage() {
                     <h3 className="text-base font-semibold text-foreground">Top traders</h3>
                   </div>
                   <div className="space-y-2.5">
-                    {token.topTraders.length > 0 ? (
-                      token.topTraders.map((trader, idx) => (
-                        <div key={trader.id} className="flex items-center gap-3 rounded-[18px] border border-border/60 bg-secondary p-3">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-bold text-primary dark:bg-white/[0.05]">
-                            {idx + 1}
+                    {token.topTraders.length > 0 ? (() => {
+                      const holderHandleSet = new Map(
+                        token.risk.topHolders.filter((h) => h.phewHandle).map((h) => [h.phewHandle!, h])
+                      );
+                      return token.topTraders.map((trader, idx) => {
+                        const linkedHolder = trader.username ? holderHandleSet.get(trader.username) : null;
+                        return (
+                          <div key={trader.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/18 bg-white/70 text-[11px] font-bold text-primary dark:bg-white/[0.05]">
+                                {idx + 1}
+                              </div>
+                              <Avatar className="h-8 w-8 border border-border">
+                                <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
+                                <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-semibold text-foreground">{trader.username || trader.name}</div>
+                                <div className="text-[11px] text-muted-foreground">{trader.reputationTier || "Unranked"} · {trader.callsCount} calls</div>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <div className="text-sm font-bold text-gain">+{trader.bestRoiPct.toFixed(1)}%</div>
+                                <div className="text-[10px] text-muted-foreground">best ROI</div>
+                              </div>
+                            </div>
+                            {linkedHolder ? (
+                              <div className="mt-2 pl-11">
+                                <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-500">
+                                  holding · {linkedHolder.supplyPct.toFixed(2)}% supply{linkedHolder.phewEntryMcap ? ` · bought at ${formatMarketCap(linkedHolder.phewEntryMcap)}` : ""}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
-                          <Avatar className="h-8 w-8 border border-border">
-                            <AvatarImage src={getAvatarUrl(trader.id, trader.image)} />
-                            <AvatarFallback>{(trader.username || trader.name || "?").charAt(0)}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold text-foreground">{trader.username || trader.name}</div>
-                            <div className="text-[11px] text-muted-foreground">{trader.reputationTier || "Unranked"} · {trader.callsCount} calls</div>
-                          </div>
-                          <div className="shrink-0 text-right">
-                            <div className="text-sm font-bold text-gain">+{trader.bestRoiPct.toFixed(1)}%</div>
-                            <div className="text-[10px] text-muted-foreground">best ROI</div>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
+                        );
+                      });
+                    })() : (
                       <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
                         We are still ranking trader quality for this token.
                       </div>
