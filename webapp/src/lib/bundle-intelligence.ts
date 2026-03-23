@@ -71,7 +71,7 @@ export function hasResolvedBundleEvidence(input: BundleSignalLike): boolean {
   }
 
   const normalizedLabel = normalizeBundleRiskLabel(input.bundleRiskLabel);
-  return normalizedLabel.length > 0 && normalizedLabel !== "clean" && normalizedLabel !== "unknown";
+  return normalizedLabel.length > 0 && normalizedLabel !== "unknown";
 }
 
 export function isBundlePlaceholderState(input: BundleSignalLike): boolean {
