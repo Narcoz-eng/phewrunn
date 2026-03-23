@@ -54,13 +54,9 @@ function normalizeDatabaseUrl(
     const isPoolerHost =
       hostname.includes(".pooler.") || hostname.includes("-pooler.") || hostname.includes("pooler");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const desiredConnectionLimit = isServerlessRuntime
-      ? 1
-      : (configuredConnectionLimit ?? (isProduction ? 10 : 5));
+    const desiredConnectionLimit = configuredConnectionLimit ?? (isServerlessRuntime ? 3 : (isProduction ? 10 : 5));
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
-    const desiredPoolTimeout = isServerlessRuntime
-      ? Math.min(configuredPoolTimeout ?? (isProduction ? 3 : 8), isProduction ? 3 : 8)
-      : (configuredPoolTimeout ?? (isProduction ? 8 : 10));
+    const desiredPoolTimeout = configuredPoolTimeout ?? (isServerlessRuntime ? (isProduction ? 10 : 8) : (isProduction ? 8 : 10));
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
