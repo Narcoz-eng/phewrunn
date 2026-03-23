@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <radialGradient id="og_bg" cx="35%" cy="50%" r="65%" gradientUnits="userSpaceOnUse" gradientTransform="translate(0,0) scale(1200,630)">
+      <stop offset="0%" stop-color="#0B1A10"/>
+      <stop offset="100%" stop-color="#060B0E"/>
+    </radialGradient>
+
+    <!-- Logo glow halos -->
+    <radialGradient id="og_glowL" gradientUnits="userSpaceOnUse" cx="46" cy="66" r="44">
+      <stop offset="0%" stop-color="#9BFF37" stop-opacity=".9"/>
+      <stop offset="58%" stop-color="#78FF49" stop-opacity=".28"/>
+      <stop offset="100%" stop-color="#78FF49" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="og_glowR" gradientUnits="userSpaceOnUse" cx="84" cy="66" r="44">
+      <stop offset="0%" stop-color="#20E7F4" stop-opacity=".88"/>
+      <stop offset="58%" stop-color="#20E7F4" stop-opacity=".26"/>
+      <stop offset="100%" stop-color="#20E7F4" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Runner stroke gradients -->
+    <linearGradient id="og_runL" gradientUnits="userSpaceOnUse" x1="22" y1="96" x2="66" y2="30">
+      <stop stop-color="#5BDF14"/>
+      <stop offset=".55" stop-color="#91FF33"/>
+      <stop offset="1" stop-color="#D3FF49"/>
+    </linearGradient>
+    <linearGradient id="og_runR" gradientUnits="userSpaceOnUse" x1="66" y1="98" x2="106" y2="30">
+      <stop stop-color="#00C9D8"/>
+      <stop offset=".58" stop-color="#1FE5F2"/>
+      <stop offset="1" stop-color="#5BF4FF"/>
+    </linearGradient>
+
+    <!-- Large ambient glow behind logo -->
+    <radialGradient id="og_ambient" gradientUnits="userSpaceOnUse" cx="290" cy="315" r="260">
+      <stop offset="0%" stop-color="#1A4020" stop-opacity="0.7"/>
+      <stop offset="60%" stop-color="#0D2818" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#060B0E" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Right side accent glow -->
+    <radialGradient id="og_rightglow" gradientUnits="userSpaceOnUse" cx="860" cy="320" r="320">
+      <stop offset="0%" stop-color="#122018" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#060B0E" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="og_shadow" x="-20%" y="-20%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity=".5"/>
+    </filter>
+    <filter id="og_tglow" x="-5%" y="-40%" width="115%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feColorMatrix in="b" type="matrix" values="1 0 0 0 0.9  0 1 0 0 0.9  0 0 1 0 0.9  0 0 0 0.3 0" result="glow"/>
+      <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="og_gglow" x="-5%" y="-40%" width="115%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feColorMatrix in="b" type="matrix" values="0 0 0 0 0.35  0 1 0 0 0.6  0 0 0 0 0  0 0 0 0.45 0" result="glow"/>
+      <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ── Background ── -->
+  <rect width="1200" height="630" fill="#070C10"/>
+  <rect width="1200" height="630" fill="url(#og_bg)"/>
+
+  <!-- Subtle grid -->
+  <g stroke="#1C3820" stroke-width="1" opacity="0.5">
+    <line x1="120" y1="0" x2="120" y2="630"/>
+    <line x1="240" y1="0" x2="240" y2="630"/>
+    <line x1="360" y1="0" x2="360" y2="630"/>
+    <line x1="480" y1="0" x2="480" y2="630"/>
+    <line x1="600" y1="0" x2="600" y2="630"/>
+    <line x1="720" y1="0" x2="720" y2="630"/>
+    <line x1="840" y1="0" x2="840" y2="630"/>
+    <line x1="960" y1="0" x2="960" y2="630"/>
+    <line x1="1080" y1="0" x2="1080" y2="630"/>
+    <line x1="0" y1="126" x2="1200" y2="126"/>
+    <line x1="0" y1="252" x2="1200" y2="252"/>
+    <line x1="0" y1="378" x2="1200" y2="378"/>
+    <line x1="0" y1="504" x2="1200" y2="504"/>
+  </g>
+
+  <!-- Ambient glows -->
+  <ellipse cx="290" cy="315" rx="300" ry="240" fill="url(#og_ambient)"/>
+  <ellipse cx="860" cy="320" rx="360" ry="300" fill="url(#og_rightglow)"/>
+
+  <!-- Outer border glow -->
+  <rect x="1" y="1" width="1198" height="628" rx="4" fill="none" stroke="#2A5530" stroke-width="1.5" stroke-opacity="0.6"/>
+
+  <!-- ── LOGO MARK scaled 2.25× centered at (290, 315) ── -->
+  <!-- 128 × 2.25 = 288  →  top-left = (290−144, 315−144) = (146, 171) -->
+  <g transform="translate(146, 171) scale(2.25)">
+    <rect x="3" y="3" width="122" height="122" rx="22" fill="#0A0F12"/>
+    <rect x="3.5" y="3.5" width="121" height="121" rx="21.5" stroke="rgba(255,255,255,.10)" stroke-width="1"/>
+
+    <!-- inner glows -->
+    <circle cx="46" cy="66" r="42" fill="url(#og_glowL)"/>
+    <circle cx="84" cy="66" r="42" fill="url(#og_glowR)"/>
+
+    <!-- speed lines -->
+    <g opacity=".65" stroke-linecap="round">
+      <path d="M16 52h8" stroke="#8CFF40" stroke-width="2.8"/>
+      <path d="M12 58h14" stroke="#8CFF40" stroke-width="3"/>
+      <path d="M98 71h10" stroke="#21E4F0" stroke-width="2.8"/>
+      <path d="M102 77h14" stroke="#21E4F0" stroke-width="3"/>
+    </g>
+
+    <!-- runners -->
+    <g filter="url(#og_shadow)">
+      <g stroke="#071012" stroke-width="8.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M28 46l12-9h16l-9 12"/>
+        <path d="M39 48l-10 25 18-14"/>
+        <path d="M44 49l16 2-8 10"/>
+        <path d="M51 38l8 9"/>
+        <circle cx="48" cy="29" r="5.8" fill="#071012"/>
+        <path d="M66 46l10-9 14 8"/>
+        <path d="M75 49l16 16"/>
+        <path d="M69 51l13 1-8 9"/>
+        <path d="M84 39l8 9"/>
+        <path d="M72 63l15 8-10 11h18"/>
+        <circle cx="83" cy="29" r="5.8" fill="#071012"/>
+      </g>
+      <g stroke-linecap="round" stroke-linejoin="round">
+        <g stroke="url(#og_runL)" stroke-width="6.8">
+          <path d="M28 46l12-9h16l-9 12"/>
+          <path d="M39 48l-10 25 18-14"/>
+          <path d="M44 49l16 2-8 10"/>
+          <path d="M51 38l8 9"/>
+        </g>
+        <circle cx="48" cy="29" r="5.8" fill="url(#og_runL)" stroke="#1B320A" stroke-width="1.2"/>
+        <g stroke="url(#og_runR)" stroke-width="6.8">
+          <path d="M66 46l10-9 14 8"/>
+          <path d="M75 49l16 16"/>
+          <path d="M69 51l13 1-8 9"/>
+          <path d="M84 39l8 9"/>
+          <path d="M72 63l15 8-10 11h18"/>
+        </g>
+        <circle cx="83" cy="29" r="5.8" fill="url(#og_runR)" stroke="#082A31" stroke-width="1.2"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- Vertical divider -->
+  <line x1="532" y1="70" x2="532" y2="560" stroke="#1C3820" stroke-width="1" stroke-opacity="0.9"/>
+
+  <!-- ── RIGHT SIDE TEXT ── -->
+
+  <!-- Category label -->
+  <text x="866" y="196"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="15" font-weight="600" letter-spacing="0.22em"
+    fill="#4CC F14" text-anchor="middle">
+    <tspan fill="#5BDF14">SOCIALFI</tspan>
+    <tspan fill="#2A5530" dx="4">·</tspan>
+    <tspan fill="#35B8A0" dx="4">ALPHA</tspan>
+    <tspan fill="#2A5530" dx="4">·</tspan>
+    <tspan fill="#5BDF14" dx="4">REPUTATION</tspan>
+  </text>
+
+  <!-- "Phew" white -->
+  <text x="558" y="335"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="108" font-weight="800"
+    fill="#FFFFFF"
+    filter="url(#og_tglow)">Phew</text>
+
+  <!-- ".run" green — positioned after "Phew" (~285px at 108px) -->
+  <text x="846" y="335"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="108" font-weight="800"
+    fill="#7FFF2F"
+    filter="url(#og_gglow)">.run</text>
+
+  <!-- Thin separator -->
+  <line x1="558" y1="358" x2="1150" y2="358" stroke="#1C3820" stroke-width="1"/>
+
+  <!-- Tagline line 1 -->
+  <text x="558" y="397"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="22" font-weight="400" letter-spacing="0.02em"
+    fill="#6E9080">Build your reputation through verified crypto calls.</text>
+
+  <!-- Tagline line 2 -->
+  <text x="558" y="428"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="22" font-weight="400" letter-spacing="0.02em"
+    fill="#6E9080">Track accuracy. Climb the ranks. Invite only.</text>
+
+  <!-- phew.run badge pill -->
+  <rect x="558" y="480" width="162" height="38" rx="8"
+    fill="#0C1F14" stroke="#2A5530" stroke-width="1.5"/>
+  <text x="640" y="504"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="15" font-weight="600" letter-spacing="0.07em"
+    fill="#5BDF14" text-anchor="middle">phew.run</text>
+
+  <!-- Corner accent — top-right -->
+  <g opacity="0.35" stroke-linecap="round">
+    <line x1="1120" y1="44" x2="1190" y2="44" stroke="#20E7F4" stroke-width="2.5"/>
+    <line x1="1140" y1="62" x2="1200" y2="62" stroke="#20E7F4" stroke-width="2"/>
+  </g>
+  <!-- Corner accent — bottom-left -->
+  <g opacity="0.35" stroke-linecap="round">
+    <line x1="10" y1="568" x2="80" y2="568" stroke="#8CFF40" stroke-width="2.5"/>
+    <line x1="0" y1="586" x2="60" y2="586" stroke="#8CFF40" stroke-width="2"/>
+  </g>
+</svg>
