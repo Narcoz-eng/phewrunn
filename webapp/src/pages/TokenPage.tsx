@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
+import { ArrowLeft, AlertCircle, AlertTriangle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
@@ -635,11 +635,18 @@ function hasResolvedHolderCount(
 
 function isHolderIntelligencePending(
   token:
-    | Pick<TokenPageData, "chainType" | "topHolders" | "holderCount" | "holderCountSource" | "devWallet">
+    | (Pick<TokenPageData, "chainType" | "topHolders" | "holderCount" | "holderCountSource" | "devWallet"> & {
+        bundleScanCompletedAt?: string | null;
+      })
     | null
     | undefined
 ): boolean {
   if (!token || token.chainType !== "solana") {
+    return false;
+  }
+
+  // If backend completed the scan, trust it — holder intelligence is settled
+  if (token.bundleScanCompletedAt) {
     return false;
   }
 
@@ -1595,6 +1602,7 @@ export default function TokenPage() {
         holderCount: token.holderCount,
         holderCountSource: token.holderCountSource,
         devWallet: mergedDevWallet,
+        bundleScanCompletedAt: token.bundleScanCompletedAt,
       })
     : true;
   const shouldForceFreshDistribution = Boolean(token && (bundleScanPending || holderIntelligencePending));
@@ -1783,6 +1791,12 @@ export default function TokenPage() {
     [recentCalls]
   );
   const isRefreshingLive = isFetching || liveTokenQuery.isFetching;
+  const liveMarketCap = liveTokenQuery.data?.marketCap ?? null;
+  const livePriceChange24h = liveTokenQuery.data?.priceChange24hPct ?? null;
+  const isTokenApparentlyDead = Boolean(
+    (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap < 10_000) ||
+    (typeof livePriceChange24h === "number" && Number.isFinite(livePriceChange24h) && livePriceChange24h < -85)
+  );
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
     (point) =>
@@ -2083,6 +2097,14 @@ export default function TokenPage() {
 
             {/* ── SECTION 2: SCORE RINGS ── */}
             <motion.section variants={sectionVariants}>
+              {isTokenApparentlyDead ? (
+                <div className="mb-3 flex items-center gap-2 rounded-xl border border-loss/30 bg-loss/8 px-3.5 py-2.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-loss" />
+                  <p className="text-[11px] font-medium text-loss/90">
+                    Scores below reflect when this token was active — they have not been updated since the price collapsed.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
                   { label: "Confidence", value: token.confidenceScore, icon: <Target className="h-3.5 w-3.5" />, desc: "Signal quality" },
@@ -2091,9 +2113,11 @@ export default function TokenPage() {
                   { label: "High Conviction", value: token.highConvictionScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Conviction level" },
                 ].map((s) => {
                   const pct = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
-                  const color = pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
+                  const color = isTokenApparentlyDead
+                    ? "text-muted-foreground/50"
+                    : pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
                   return (
-                    <div key={s.label} className="relative overflow-hidden rounded-[22px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none">
+                    <div key={s.label} className={cn("relative overflow-hidden rounded-[22px] border p-4", isTokenApparentlyDead ? "border-border/30 bg-[linear-gradient(180deg,rgba(255,255,255,0.6),rgba(248,248,248,0.65))] opacity-75 dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.7),rgba(8,12,20,0.75))]" : "border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none")}>
                       <div className="flex items-start justify-between">
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5 text-muted-foreground">{s.icon}<span className="text-[10px] font-semibold uppercase tracking-[0.15em]">{s.label}</span></div>
@@ -2103,8 +2127,8 @@ export default function TokenPage() {
                           </div>
                           <div className="text-[10px] text-muted-foreground">{s.desc}</div>
                         </div>
-                        <div className="shrink-0 opacity-80">
-                          <ScoreRing value={s.value} size={56} />
+                        <div className={cn("shrink-0", isTokenApparentlyDead ? "opacity-30" : "opacity-80")}>
+                          <ScoreRing value={isTokenApparentlyDead ? null : s.value} size={56} />
                         </div>
                       </div>
                     </div>
