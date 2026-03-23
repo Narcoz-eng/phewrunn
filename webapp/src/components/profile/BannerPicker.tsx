@@ -12,9 +12,10 @@ import { Lock } from "lucide-react";
 
 const LEVEL_GROUPS = [
   { label: "Free", minLevel: 0 },
-  { label: "Level 5", minLevel: 5 },
-  { label: "Level 7", minLevel: 7 },
-  { label: "Level 10", minLevel: 10 },
+  { label: "Level 3 · Credible", minLevel: 3 },
+  { label: "Level 5 · Veteran", minLevel: 5 },
+  { label: "Level 7 · High Veteran", minLevel: 7 },
+  { label: "Level 10 · Apex", minLevel: 10 },
 ];
 
 interface BannerPickerProps {
