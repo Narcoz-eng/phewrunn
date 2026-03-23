@@ -875,6 +875,7 @@ function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser
     level: user.level,
     xp: user.xp,
     bio: user.bio,
+    bannerImage: (user as Record<string, unknown>).bannerImage as string | null ?? null,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
@@ -895,6 +896,7 @@ function buildMeResponseUserFromDbRecord(
     level?: number | null;
     xp?: number | null;
     bio?: string | null;
+    bannerImage?: string | null;
     role?: string | null;
     isAdmin?: boolean | null;
     isVerified?: boolean | null;
@@ -914,6 +916,7 @@ function buildMeResponseUserFromDbRecord(
     level: user.level ?? 0,
     xp: user.xp ?? 0,
     bio: user.bio ?? null,
+    bannerImage: user.bannerImage ?? null,
     isAdmin: user.role === "admin" || (user.isAdmin ?? false),
     isVerified: user.isVerified ?? false,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? true,
@@ -950,6 +953,7 @@ async function queryMeResponseUserRaw(userId: string): Promise<MeResponseUser | 
     level: toNum(row.level, 0),
     xp: toNum(row.xp, 0),
     bio: (row.bio as string) ?? null,
+    bannerImage: (row.bannerImage as string) ?? null,
     isAdmin: row.role === "admin" || row.isAdmin === true,
     isVerified: row.isVerified === true,
     tradeFeeRewardsEnabled: row.tradeFeeRewardsEnabled !== false,
@@ -3493,6 +3497,7 @@ app.get("/api/me", async (c) => {
         level: session.user.level,
         xp: session.user.xp,
         bio: session.user.bio,
+        bannerImage: (session.user as Record<string, unknown>).bannerImage as string | null ?? null,
         isAdmin: session.user.role === "admin" || session.user.isAdmin,
         isVerified: session.user.isVerified,
         tradeFeeRewardsEnabled:
