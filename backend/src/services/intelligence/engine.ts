@@ -4162,7 +4162,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           {
             timestamp:
               normalizeOptionalDate(currentToken.lastIntelligenceAt)?.toISOString() ??
-              currentToken.updatedAt.toISOString(),
+              (normalizeOptionalDate(currentToken.updatedAt)?.toISOString() ?? new Date().toISOString()),
             marketCap: resolvedMarketCap,
             liquidity: resolvedLiquidity,
             volume24h: resolvedVolume24h,
