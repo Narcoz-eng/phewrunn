@@ -447,6 +447,7 @@ const AUTH_RESPONSE_USER_SELECT = {
   level: true,
   xp: true,
   bio: true,
+  bannerImage: true,
   role: true,
   isAdmin: true,
   isVerified: true,
@@ -492,6 +493,7 @@ type AuthResponseUser = {
   level: number;
   xp: number;
   bio: string | null;
+  bannerImage: string | null;
   role: string;
   isAdmin: boolean;
   isVerified: boolean;
@@ -875,7 +877,7 @@ function buildMeResponseUserFromAuthUser(user: AuthResponseUser): MeResponseUser
     level: user.level,
     xp: user.xp,
     bio: user.bio,
-    bannerImage: (user as Record<string, unknown>).bannerImage as string | null ?? null,
+    bannerImage: user.bannerImage ?? null,
     isAdmin: user.isAdmin,
     isVerified: user.isVerified,
     tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled,
@@ -1064,6 +1066,7 @@ function normalizeAuthResponseUser(
     level?: number | null;
     xp?: number | null;
     bio?: string | null;
+    bannerImage?: string | null;
     role?: string | null;
     isAdmin?: boolean | null;
     isVerified?: boolean | null;
@@ -1085,6 +1088,7 @@ function normalizeAuthResponseUser(
     level: user.level ?? 0,
     xp: user.xp ?? 0,
     bio: user.bio ?? null,
+    bannerImage: user.bannerImage ?? null,
     role: normalizedRole,
     isAdmin: normalizedRole === "admin" || (user.isAdmin ?? false),
     isVerified: user.isVerified ?? false,
@@ -3497,7 +3501,7 @@ app.get("/api/me", async (c) => {
         level: session.user.level,
         xp: session.user.xp,
         bio: session.user.bio,
-        bannerImage: (session.user as Record<string, unknown>).bannerImage as string | null ?? null,
+        bannerImage: session.user.bannerImage ?? null,
         isAdmin: session.user.role === "admin" || session.user.isAdmin,
         isVerified: session.user.isVerified,
         tradeFeeRewardsEnabled:

@@ -108,11 +108,15 @@ function hasResolvedHolderRoleIntelligence(payload: TokenLiveIntelligencePayload
 }
 
 function isPendingLiveDistributionPayload(payload: TokenLiveIntelligencePayload): boolean {
+  // If the backend explicitly set bundleScanCompletedAt, trust that the scan
+  // is done — the backend's resolved criteria are broader than what the client
+  // can inspect (e.g. it checks largestHolderPct, deployerSupplyPct, etc.).
+  if (payload.bundleScanCompletedAt) {
+    return false;
+  }
   return (
-    !payload.bundleScanCompletedAt ||
     payload.topHolders.length === 0 ||
-    !hasResolvedHolderCount(payload.holderCount, payload.holderCountSource) ||
-    !hasResolvedHolderRoleIntelligence(payload)
+    !hasResolvedHolderCount(payload.holderCount, payload.holderCountSource)
   );
 }
 
