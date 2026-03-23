@@ -924,12 +924,12 @@ export default function UserProfile() {
             )}
 
             {/* Profile Header */}
-            <div className="flex flex-col items-center text-center">
+            <div className="-mx-4">
               {/* Banner */}
-              <div className="w-full -mx-0 mb-4 rounded-xl overflow-hidden">
-                <ProfileBanner bannerImage={user.bannerImage} />
-              </div>
+              <ProfileBanner bannerImage={user.bannerImage} />
 
+              {/* Avatar + info — overlaps banner */}
+              <div className="px-4 -mt-14 flex flex-col items-center text-center pb-2">
               {/* Avatar */}
               <div className="relative">
                 <Avatar className="h-28 w-28 border-4 border-background ring-4 ring-primary/20">
@@ -969,7 +969,8 @@ export default function UserProfile() {
                   <span>Joined {formatJoinDate(user.createdAt)}</span>
                 </div>
               </div>
-            </div>
+              </div>{/* end inner px-4 overlap */}
+            </div>{/* end -mx-4 banner block */}
 
             {/* Profile Dashboard - XP, Stats, Recent Trades */}
             <ProfileDashboard
