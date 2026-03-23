@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { DailyGainersTable } from "@/components/leaderboard/DailyGainersTable";
-import { IntelligenceLeaderboards } from "@/components/leaderboard/IntelligenceLeaderboards";
 import { TopUsersTable } from "@/components/leaderboard/TopUsersTable";
-import { StatsOverview } from "@/components/leaderboard/StatsOverview";
+import { LeaderboardStats } from "@/components/leaderboard/LeaderboardStats";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import { User } from "@/types";
@@ -26,9 +25,6 @@ import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 import {
   ArrowLeft,
-  Trophy,
-  Users,
-  BarChart3,
   Bell,
   LogOut,
   Settings,
@@ -39,13 +35,12 @@ import {
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 
+type Period = 'day' | 'week';
+
 export default function Leaderboard() {
   const navigate = useNavigate();
-  const [intelligenceReady, setIntelligenceReady] = useState(false);
-  const [dailyGainersReady, setDailyGainersReady] = useState(false);
-  const [topUsersReady, setTopUsersReady] = useState(false);
-  const [statsReady, setStatsReady] = useState(false);
-  const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
+  const [period, setPeriod] = useState<Period>('week');
+  const [isPortfolioOpen, setIsPortfolioOpen] = useState<boolean>(false);
   const { data: session } = useSession();
   const { signOut, hasLiveSession } = useAuth();
   const unreadCacheKey = session?.user?.id
@@ -110,28 +105,6 @@ export default function Leaderboard() {
 
   const unreadCount = hasLiveSession ? (unreadData?.count ?? 0) : 0;
 
-  useEffect(() => {
-    const intelligenceTimer = window.setTimeout(() => {
-      setIntelligenceReady(true);
-    }, 150);
-    const dailyGainersTimer = window.setTimeout(() => {
-      setDailyGainersReady(true);
-    }, 800);
-    const topUsersTimer = window.setTimeout(() => {
-      setTopUsersReady(true);
-    }, 1600);
-    const statsTimer = window.setTimeout(() => {
-      setStatsReady(true);
-    }, 2400);
-
-    return () => {
-      window.clearTimeout(intelligenceTimer);
-      window.clearTimeout(dailyGainersTimer);
-      window.clearTimeout(topUsersTimer);
-      window.clearTimeout(statsTimer);
-    };
-  }, []);
-
   const handleLogout = async () => {
     await signOut();
     navigate("/login");
@@ -152,17 +125,14 @@ export default function Leaderboard() {
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <div className="flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-primary" />
-              <span className="font-bold text-lg">Leaderboard</span>
-            </div>
+            <span className="font-semibold text-base">Leaderboard</span>
           </div>
 
           {/* Right - Actions */}
           <div className="flex items-center gap-2">
             <ThemeToggle size="icon" className="h-8 w-8" />
 
-            {user && (
+            {user ? (
               <>
                 {/* Notification Bell */}
                 <Button
@@ -172,11 +142,11 @@ export default function Leaderboard() {
                   onClick={() => navigate("/notifications")}
                 >
                   <Bell className="h-4 w-4" />
-                  {unreadCount > 0 && (
+                  {unreadCount > 0 ? (
                     <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[16px] h-4 px-1 text-[10px] font-bold text-primary-foreground bg-primary rounded-full">
                       {unreadCount > 99 ? "99+" : unreadCount}
                     </span>
-                  )}
+                  ) : null}
                 </Button>
 
                 <DropdownMenu>
@@ -246,91 +216,39 @@ export default function Leaderboard() {
                   walletAddress={user.walletAddress ?? null}
                 />
               </>
-            )}
+            ) : null}
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-6">
-        {/* Page Title */}
-        <div className="mb-8">
-          <h1 className="text-2xl md:text-3xl font-bold">Leaderboard</h1>
-          <p className="text-muted-foreground mt-1">
-            AI-ranked alpha races, first callers, top performers, and platform stats
+      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+        {/* Page header */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Leaderboard</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Top traders ranked by level, activity, and win rate
           </p>
         </div>
 
-        {/* Content Grid */}
-        <div className="space-y-8">
-          <QueryErrorBoundary sectionName="Alpha Race">
-            {intelligenceReady ? (
-              <IntelligenceLeaderboards enabled={intelligenceReady} />
-            ) : (
-              <div className="grid gap-4 xl:grid-cols-2">
-                <div className="rounded-xl border border-border bg-card/40 h-72 animate-pulse" />
-                <div className="rounded-xl border border-border bg-card/40 h-72 animate-pulse" />
-              </div>
-            )}
-          </QueryErrorBoundary>
+        {/* Day / Week toggle */}
+        <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
+          <TabsList className="h-9 p-1">
+            <TabsTrigger value="day" className="px-5 text-sm">
+              Day
+            </TabsTrigger>
+            <TabsTrigger value="week" className="px-5 text-sm">
+              Week
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-          {/* Daily Top Gainers Section */}
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="p-2 rounded-lg bg-yellow-500/10">
-                <Trophy className="h-5 w-5 text-yellow-500" />
-              </div>
-              <h2 className="text-xl font-semibold">Daily Top Gainers</h2>
-            </div>
-            <QueryErrorBoundary sectionName="Daily Gainers">
-              {dailyGainersReady ? (
-                <DailyGainersTable enabled={dailyGainersReady} />
-              ) : (
-                <div className="space-y-3">
-                  {[...Array(5)].map((_, index) => (
-                    <div
-                      key={index}
-                      className="rounded-lg border border-border bg-card/40 h-20 animate-pulse"
-                    />
-                  ))}
-                </div>
-              )}
-            </QueryErrorBoundary>
-          </section>
+        {/* Unified leaderboard */}
+        <QueryErrorBoundary sectionName="Leaderboard">
+          <TopUsersTable enabled period={period} />
+        </QueryErrorBoundary>
 
-          {/* Top Users Section */}
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="p-2 rounded-lg bg-primary/10">
-                <Users className="h-5 w-5 text-primary" />
-              </div>
-              <h2 className="text-xl font-semibold">Top Users (All Time)</h2>
-            </div>
-            <QueryErrorBoundary sectionName="Top Users">
-              {topUsersReady ? (
-                <TopUsersTable enabled={topUsersReady} />
-              ) : (
-                <div className="rounded-xl border border-border bg-card/40 h-48 animate-pulse" />
-              )}
-            </QueryErrorBoundary>
-          </section>
-
-          {/* Platform Statistics Section */}
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="p-2 rounded-lg bg-green-500/10">
-                <BarChart3 className="h-5 w-5 text-green-500" />
-              </div>
-              <h2 className="text-xl font-semibold">Platform Stats</h2>
-            </div>
-            <QueryErrorBoundary sectionName="Platform Stats">
-              {statsReady ? (
-                <StatsOverview enabled={statsReady} />
-              ) : (
-                <div className="rounded-xl border border-border bg-card/40 h-64 animate-pulse" />
-              )}
-            </QueryErrorBoundary>
-          </section>
-        </div>
+        {/* Bottom stats bar */}
+        <LeaderboardStats />
       </main>
     </div>
   );

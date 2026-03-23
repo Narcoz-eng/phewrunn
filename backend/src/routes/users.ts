@@ -346,6 +346,7 @@ function isPrismaSchemaDriftError(error: unknown): boolean {
 type RawResolvedUserProfile = {
   id: string;
   image: string | null;
+  bannerImage: string | null;
   username: string | null;
   level: number;
   xp: number;
@@ -468,6 +469,7 @@ async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawRe
   return {
     id: row.id,
     image: row.image ?? null,
+    bannerImage: null,
     username: row.username ?? null,
     level: toSafeNumber(row.level),
     xp: toSafeNumber(row.xp),
@@ -496,6 +498,7 @@ function buildPublicUserProfileDto(params: {
     id: params.user.id,
     username: params.user.username,
     image: params.user.image,
+    bannerImage: params.user.bannerImage ?? null,
     level: params.user.level,
     xp: params.user.xp,
     isVerified: params.user.isVerified,
@@ -528,6 +531,7 @@ async function loadPublicUserProfileRoutePayload(
     | {
         id: string;
         image: string | null;
+        bannerImage: string | null;
         username: string | null;
         level: number;
         xp: number;
@@ -550,6 +554,7 @@ async function loadPublicUserProfileRoutePayload(
           select: {
             id: true,
             image: true,
+            bannerImage: true,
             username: true,
             level: true,
             xp: true,
@@ -640,6 +645,7 @@ async function findUserProfileByIdentifierMinimalRaw(
   return {
     id: row.id,
     image: row.image ?? null,
+    bannerImage: null,
     username: row.username ?? null,
     level: toSafeNumber(row.level),
     xp: toSafeNumber(row.xp),
@@ -2685,6 +2691,7 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
     username,
     bio,
     image,
+    bannerImage,
     tradeFeeRewardsEnabled,
     tradeFeeShareBps,
     tradeFeePayoutAddress,
@@ -2803,6 +2810,9 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
   if (bio !== undefined) {
     updateData.bio = bio || null;
   }
+  if (bannerImage !== undefined) {
+    updateData.bannerImage = bannerImage || null;
+  }
   if (tradeFeeRewardsEnabled !== undefined) {
     updateData.tradeFeeRewardsEnabled = tradeFeeRewardsEnabled;
   }
@@ -2821,6 +2831,7 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
     name: true,
     email: true,
     image: true,
+    bannerImage: true,
     walletAddress: true,
     username: true,
     level: true,
@@ -2839,6 +2850,7 @@ usersRouter.patch("/me", requireNotBanned, zValidator("json", UpdateProfileSchem
     name: true,
     email: true,
     image: true,
+    bannerImage: true,
     walletAddress: true,
     username: true,
     level: true,

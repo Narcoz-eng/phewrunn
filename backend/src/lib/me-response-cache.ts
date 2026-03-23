@@ -16,6 +16,7 @@ export type MeResponseUser = {
   level: number;
   xp: number;
   bio: string | null;
+  bannerImage: string | null;
   isAdmin: boolean;
   isVerified: boolean;
   tradeFeeRewardsEnabled: boolean;
@@ -92,6 +93,7 @@ function normalizeCachedMeResponse(data: unknown): MeResponseUser | null {
     level: candidate.level,
     xp: candidate.xp,
     bio: typeof candidate.bio === "string" ? candidate.bio : null,
+    bannerImage: typeof candidate.bannerImage === "string" ? candidate.bannerImage : null,
     isAdmin: candidate.isAdmin,
     isVerified: candidate.isVerified,
     tradeFeeRewardsEnabled: candidate.tradeFeeRewardsEnabled,
