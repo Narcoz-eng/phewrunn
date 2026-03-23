@@ -35,7 +35,7 @@ export const UpdateProfileSchema = z
       .optional(),
     bio: z.string().max(200).optional(),
     image: z.string().url().optional(),
-    bannerImage: z.string().url().optional(),
+    bannerImage: z.union([z.string().url(), z.string().regex(/^[a-z0-9-]+$/)]).optional(),
     tradeFeeRewardsEnabled: z.boolean().optional(),
     tradeFeeShareBps: z.number().int().min(0).max(50).optional(),
     tradeFeePayoutAddress: z.union([
