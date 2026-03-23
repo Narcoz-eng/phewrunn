@@ -12,6 +12,7 @@ export interface User {
   bio: string | null;
   isAdmin: boolean;
   isVerified?: boolean;
+  bannerImage?: string | null;
   tradeFeeRewardsEnabled?: boolean;
   tradeFeeShareBps?: number;
   tradeFeePayoutAddress?: string | null;

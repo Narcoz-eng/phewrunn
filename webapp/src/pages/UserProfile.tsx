@@ -48,6 +48,9 @@ import {
   syncPostsIntoQueryCache,
 } from "@/lib/post-query-cache";
 import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
+import { ProfileBanner } from "@/components/profile/ProfileBanner";
+import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
+import { Share2 } from "lucide-react";
 
 interface UserProfileData {
   id?: string | null;
@@ -57,6 +60,7 @@ interface UserProfileData {
   level: number;
   xp: number;
   isVerified?: boolean;
+  bannerImage?: string | null;
   createdAt: string;
   isFollowing?: boolean;
   stats: {
@@ -174,6 +178,7 @@ export default function UserProfile() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
+  const [showShareCard, setShowShareCard] = useState<boolean>(false);
   const viewerCacheScope = session?.user?.id ?? "anonymous";
   const userProfileQueryKey = useMemo(
     () => ["userProfile", userId, viewerCacheScope] as const,
@@ -791,6 +796,15 @@ export default function UserProfile() {
 
           {!isOwnProfile && user && (
             <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowShareCard(true)}
+                className="h-8 px-3 gap-1.5"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                Share
+              </Button>
               {canPerformAuthenticatedWrites ? (
                 <ReportDialog
                   targetType="user"
@@ -836,15 +850,28 @@ export default function UserProfile() {
           )}
 
           {isOwnProfile && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate("/profile")}
-              disabled={!hasLiveSession}
-              className="h-8 px-3"
-            >
-              Edit Profile
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/profile")}
+                disabled={!hasLiveSession}
+                className="h-8 px-3"
+              >
+                Edit Profile
+              </Button>
+              {user && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowShareCard(true)}
+                  className="h-8 px-3 gap-1.5"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  Share
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </header>
@@ -898,6 +925,11 @@ export default function UserProfile() {
 
             {/* Profile Header */}
             <div className="flex flex-col items-center text-center">
+              {/* Banner */}
+              <div className="w-full -mx-0 mb-4 rounded-xl overflow-hidden">
+                <ProfileBanner bannerImage={user.bannerImage} />
+              </div>
+
               {/* Avatar */}
               <div className="relative">
                 <Avatar className="h-28 w-28 border-4 border-background ring-4 ring-primary/20">
@@ -1112,6 +1144,30 @@ export default function UserProfile() {
           </div>
         ) : null}
       </main>
+
+      {/* Share Profile Card Dialog */}
+      {user && (
+        <ShareableProfileCard
+          open={showShareCard}
+          onOpenChange={setShowShareCard}
+          user={{
+            id: user.id ?? userId ?? "",
+            username: user.username,
+            name: user.name,
+            image: user.image,
+            level: user.level,
+            xp: user.xp,
+            isVerified: user.isVerified,
+            bannerImage: user.bannerImage,
+            stats: {
+              wins: user.stats.wins,
+              losses: user.stats.losses,
+              winRate: user.stats.winRate,
+              totalCalls: user.stats.totalCalls,
+            },
+          }}
+        />
+      )}
     </div>
   );
 }

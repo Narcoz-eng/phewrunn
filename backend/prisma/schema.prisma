@@ -27,6 +27,7 @@ model User {
   level         Int       @default(0)  // -5 to 10
   xp            Int       @default(0)  // numerical XP for leveling
   bio           String?                // user bio
+  bannerImage   String?                // user banner/header image
   role          String    @default("user") // "user" | "admin"
   isAdmin       Boolean   @default(false) // for admin dashboard access
   isBanned      Boolean   @default(false) // banned users cannot post/comment

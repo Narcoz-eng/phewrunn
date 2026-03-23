@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -47,8 +47,10 @@ interface TopUsersResponse {
 type SortOption = 'level' | 'activity' | 'winrate';
 const TOP_USERS_CACHE_TTL_MS = 10 * 60_000;
 
-function buildTopUsersCacheKey(page: number, sortBy: SortOption): string {
-  return `phew.leaderboard.top-users:v1:${sortBy}:${page}`;
+type Period = 'day' | 'week';
+
+function buildTopUsersCacheKey(page: number, sortBy: SortOption, period: Period): string {
+  return `phew.leaderboard.top-users:v1:${sortBy}:${period}:${page}`;
 }
 
 function getRankDisplay(rank: number) {
@@ -99,30 +101,23 @@ function TopUserSkeleton() {
 
 interface TopUsersTableProps {
   enabled?: boolean;
+  period?: Period;
 }
 
-export function TopUsersTable({ enabled = true }: TopUsersTableProps) {
+export function TopUsersTable({ enabled = true, period = 'week' }: TopUsersTableProps) {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<SortOption>('level');
   const limit = 20;
-  const topUsersCacheKey = buildTopUsersCacheKey(page, sortBy);
+  const topUsersCacheKey = buildTopUsersCacheKey(page, sortBy, period);
   const cachedTopUsers = readSessionCache<TopUsersResponse>(topUsersCacheKey, TOP_USERS_CACHE_TTL_MS);
 
   const { data, isLoading, error, isFetching } = useQuery({
-    queryKey: ["leaderboard", "top-users", page, sortBy],
+    queryKey: ["leaderboard", "top-users", page, sortBy, period],
     queryFn: async () => {
       try {
-        // Use api.get which unwraps the outer { data } envelope
-        // The response from backend is { data: users[], pagination: {...} }
-        // After unwrap, we get { data: users[], pagination: {...} } directly
-        // But wait - api.get unwraps json.data, so we get: users[] | { data: users[], pagination } ??
-        // Actually, the backend returns c.json({ data: usersWithStats, pagination: {...} })
-        // This means the JSON response is { data: usersWithStats, pagination: {...} }
-        // api.get does json.data, returning usersWithStats directly (losing pagination)
-
         // Use raw to get the full response with pagination
-        const response = await api.raw(`/api/leaderboard/top-users?page=${page}&limit=${limit}&sortBy=${sortBy}`);
+        const response = await api.raw(`/api/leaderboard/top-users?page=${page}&limit=${limit}&sortBy=${sortBy}&period=${period}`);
         if (!response.ok) {
           throw new Error(`Failed to load leaderboard: ${response.status}`);
         }
@@ -148,6 +143,10 @@ export function TopUsersTable({ enabled = true }: TopUsersTableProps) {
     gcTime: 10 * 60 * 1000,
     placeholderData: (previousData) => previousData ?? cachedTopUsers ?? undefined,
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [period]);
 
   const handleSortChange = (newSort: SortOption) => {
     setSortBy(newSort);
@@ -325,7 +324,7 @@ export function TopUsersTable({ enabled = true }: TopUsersTableProps) {
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    posts (7d)
+                    posts ({period === 'day' ? '24h' : '7d'})
                   </div>
                 </>
               ) : sortBy === 'winrate' ? (

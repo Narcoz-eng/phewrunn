@@ -9,6 +9,7 @@ export const UserSchema = z.object({
   name: z.string(),
   email: z.string().email(),
   image: z.string().nullable(),
+  bannerImage: z.string().nullable().optional(),
   walletAddress: z.string().nullable(),
   username: z.string().nullable(),
   level: z.number().int().min(-5).max(10),
@@ -34,6 +35,7 @@ export const UpdateProfileSchema = z
       .optional(),
     bio: z.string().max(200).optional(),
     image: z.string().url().optional(),
+    bannerImage: z.string().url().optional(),
     tradeFeeRewardsEnabled: z.boolean().optional(),
     tradeFeeShareBps: z.number().int().min(0).max(50).optional(),
     tradeFeePayoutAddress: z.union([
@@ -70,6 +72,7 @@ export const PublicUserProfileDTOSchema = z
     id: z.string().min(1),
     username: z.string().nullable(),
     image: z.string().nullable(),
+    bannerImage: z.string().nullable().optional(),
     level: z.number().int(),
     xp: z.number().int(),
     isVerified: z.boolean().default(false),

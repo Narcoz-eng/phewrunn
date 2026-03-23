@@ -64,6 +64,10 @@ import {
 import { PhewEditIcon } from "@/components/icons/PhewIcons";
 import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 import { MyInvitesSection } from "@/components/profile/MyInvitesSection";
+import { ProfileBanner } from "@/components/profile/ProfileBanner";
+import { BannerPicker } from "@/components/profile/BannerPicker";
+import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
+import { Share2, ImageIcon } from "lucide-react";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -256,6 +260,9 @@ export default function Profile() {
   // Edit form state
   const [editUsername, setEditUsername] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [editBannerImage, setEditBannerImage] = useState<string | null>(null);
+  const [isBannerPickerOpen, setIsBannerPickerOpen] = useState(false);
+  const [isShareCardOpen, setIsShareCardOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isCropDialogOpen, setIsCropDialogOpen] = useState(false);
   const [cropSourceImage, setCropSourceImage] = useState<string | null>(null);
@@ -695,7 +702,7 @@ export default function Profile() {
 
   // Mutation for updating profile
   const updateProfileMutation = useMutation({
-    mutationFn: async (updateData: { username?: string; bio?: string; image?: string }) => {
+    mutationFn: async (updateData: { username?: string; bio?: string; image?: string; bannerImage?: string }) => {
       return await api.patch<ExtendedUser>("/api/users/me", updateData);
     },
     onSuccess: (updatedUser) => {
@@ -957,7 +964,7 @@ export default function Profile() {
       return;
     }
 
-    const updateData: { username?: string; bio?: string; image?: string } = {
+    const updateData: { username?: string; bio?: string; image?: string; bannerImage?: string } = {
       bio: editBio.trim() || undefined,
     };
 
@@ -969,6 +976,10 @@ export default function Profile() {
       updateData.image = previewImage;
     }
 
+    if (editBannerImage !== null) {
+      updateData.bannerImage = editBannerImage;
+    }
+
     updateProfileMutation.mutate(updateData);
   };
 
@@ -978,6 +989,7 @@ export default function Profile() {
     setEditUsername(user?.username || "");
     setEditBio(user?.bio || "");
     setPreviewImage(null);
+    setEditBannerImage(null);
     resetCropDialog();
   };
 
@@ -1135,15 +1147,25 @@ export default function Profile() {
 
           {profileViewTab === "profile" ? (
             !isEditing ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsEditing(true)}
-                className="h-9 gap-1.5 rounded-full px-3"
-              >
-                <PhewEditIcon className="h-3.5 w-3.5" />
-                Edit
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 rounded-full"
+                  onClick={() => setIsShareCardOpen(true)}
+                >
+                  <Share2 className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsEditing(true)}
+                  className="h-9 gap-1.5 rounded-full px-3"
+                >
+                  <PhewEditIcon className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              </div>
             ) : (
               <div className="flex items-center gap-2">
                 <Button
@@ -1342,8 +1364,24 @@ export default function Profile() {
                   </div>
                 )}
 
+            {/* Profile Banner */}
+            <div className="relative -mx-4">
+              <ProfileBanner bannerImage={editBannerImage ?? user.bannerImage} />
+              {isEditing && (
+                <button
+                  onClick={() => setIsBannerPickerOpen(true)}
+                  className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
+                >
+                  <div className="flex items-center gap-2 bg-black/60 text-white text-sm px-3 py-1.5 rounded-full">
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    Change Banner
+                  </div>
+                </button>
+              )}
+            </div>
+
             {/* Profile Header */}
-            <div className="flex flex-col items-center text-center">
+            <div className="flex flex-col items-center text-center -mt-14">
               {/* Avatar */}
               <div className="relative group">
                 <Avatar
@@ -1497,6 +1535,39 @@ export default function Profile() {
               onOpenChange={setIsPortfolioOpen}
               walletAddress={displayWalletAddress ?? user.walletAddress ?? null}
             />
+
+            <BannerPicker
+              open={isBannerPickerOpen}
+              onOpenChange={setIsBannerPickerOpen}
+              currentBanner={editBannerImage ?? user.bannerImage ?? null}
+              onSelect={(banner) => {
+                setEditBannerImage(banner);
+                setIsBannerPickerOpen(false);
+              }}
+            />
+
+            {isShareCardOpen && (
+              <ShareableProfileCard
+                open={isShareCardOpen}
+                onOpenChange={setIsShareCardOpen}
+                user={{
+                  id: user.id,
+                  username: user.username,
+                  name: user.name,
+                  image: user.image,
+                  level: user.level,
+                  xp: user.xp,
+                  isVerified: user.isVerified,
+                  bannerImage: user.bannerImage,
+                  stats: {
+                    wins: winsCount,
+                    losses: lossesCount,
+                    winRate,
+                    totalCalls: totalSettled,
+                  },
+                }}
+              />
+            )}
 
             {/* Wallet Connection Section */}
             <WalletConnection deferMs={2600} />
