@@ -32,6 +32,7 @@ const SESSION_USER_SELECT = {
   level: true,
   xp: true,
   bio: true,
+  bannerImage: true,
   role: true,
   isAdmin: true,
   isBanned: true,
@@ -58,6 +59,7 @@ const SESSION_USER_FALLBACK_SELECT = {
   level: true,
   xp: true,
   bio: true,
+  bannerImage: true,
   isAdmin: true,
   isBanned: true,
   isVerified: true,
@@ -187,6 +189,7 @@ type SessionRecord = {
     level: number;
     xp: number;
     bio: string | null;
+    bannerImage: string | null;
     role: string;
     isAdmin: boolean;
     isBanned: boolean;
@@ -337,6 +340,7 @@ function toSessionUser(
     level?: number | null;
     xp?: number | null;
     bio?: string | null;
+    bannerImage?: string | null;
     role?: string | null;
     isAdmin?: boolean | null;
     isBanned?: boolean | null;
@@ -365,6 +369,7 @@ function toSessionUser(
     level: user.level ?? 0,
     xp: user.xp ?? 0,
     bio: user.bio ?? null,
+    bannerImage: user.bannerImage ?? null,
     role: user.role?.trim().toLowerCase() || "user",
     isAdmin: user.role?.trim().toLowerCase() === "admin" || (user.isAdmin ?? false),
     isBanned: user.isBanned ?? false,
