@@ -1,15 +1,113 @@
 import { cn } from "@/lib/utils";
 
-export const BANNER_PRESETS: Record<string, string> = {
-  "gradient-1": "linear-gradient(135deg, #0f0f1a 0%, #1a1040 50%, #0d1f3c 100%)",
-  "gradient-2": "linear-gradient(135deg, #0a0a0f 0%, #1a2a1a 50%, #0f1a0f 100%)",
-  "gradient-3": "linear-gradient(135deg, #1a0a0a 0%, #2d1010 50%, #1a0505 100%)",
-  "gradient-4": "linear-gradient(135deg, #0f1a2a 0%, #1a2d3d 50%, #0a1520 100%)",
-  "gradient-5": "linear-gradient(135deg, #1a1a0a 0%, #2d2d10 50%, #1a1a05 100%)",
-  "gradient-6": "linear-gradient(135deg, #0a1a1a 0%, #102d2d 50%, #051a1a 100%)",
-  "gradient-7": "linear-gradient(135deg, #1a0a1a 0%, #2d102d 50%, #1a051a 100%)",
-  "gradient-8": "linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 50%, #0a0a0a 100%)",
-};
+export interface BannerConfig {
+  key: string;
+  label: string;
+  gradient: string;
+  animated: boolean;
+  requiredLevel: number;
+  animationName?: string;
+}
+
+export const BANNER_CONFIGS: BannerConfig[] = [
+  // Free (level 0+)
+  {
+    key: "void",
+    label: "Void",
+    gradient: "linear-gradient(135deg, #0a0a0f 0%, #12121e 50%, #0a0a0f 100%)",
+    animated: false,
+    requiredLevel: 0,
+  },
+  {
+    key: "night",
+    label: "Night",
+    gradient: "linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%)",
+    animated: false,
+    requiredLevel: 0,
+  },
+  // Level 5+
+  {
+    key: "nebula",
+    label: "Nebula",
+    gradient: "linear-gradient(270deg, #0d0d2b, #1a0533, #0d1f3c, #1a0533, #0d0d2b)",
+    animated: true,
+    requiredLevel: 5,
+    animationName: "bannerShift",
+  },
+  {
+    key: "ember",
+    label: "Ember",
+    gradient: "linear-gradient(270deg, #1a0500, #2d0a00, #1a0800, #3d1000, #1a0500)",
+    animated: true,
+    requiredLevel: 5,
+    animationName: "bannerShift",
+  },
+  {
+    key: "ocean",
+    label: "Ocean",
+    gradient: "linear-gradient(270deg, #001a1a, #003333, #001f2d, #003333, #001a1a)",
+    animated: true,
+    requiredLevel: 5,
+    animationName: "bannerShift",
+  },
+  // Level 7+
+  {
+    key: "aurora",
+    label: "Aurora",
+    gradient: "linear-gradient(270deg, #001a0d, #0d2b1a, #001a1a, #0a2d0a, #001a0d)",
+    animated: true,
+    requiredLevel: 7,
+    animationName: "bannerPulse",
+  },
+  {
+    key: "inferno",
+    label: "Inferno",
+    gradient: "linear-gradient(270deg, #1a0000, #2d0500, #1a0800, #2d1000, #1a0000)",
+    animated: true,
+    requiredLevel: 7,
+    animationName: "bannerPulse",
+  },
+  // Level 10
+  {
+    key: "apex",
+    label: "Apex",
+    gradient: "linear-gradient(270deg, #1a1400, #0d1f00, #001a0a, #1a1400, #0d0d1a, #1a1400)",
+    animated: true,
+    requiredLevel: 10,
+    animationName: "bannerApex",
+  },
+];
+
+// Keep backward compat with old gradient-N keys
+export const BANNER_PRESETS: Record<string, string> = Object.fromEntries(
+  BANNER_CONFIGS.map((b) => [b.key, b.gradient])
+);
+
+export function getBannerConfig(bannerImage: string | null | undefined): BannerConfig {
+  if (!bannerImage) return BANNER_CONFIGS[0];
+  // strip "gradient:" prefix if present
+  const key = bannerImage.startsWith("gradient:") ? bannerImage.slice(9) : bannerImage;
+  return BANNER_CONFIGS.find((b) => b.key === key) ?? BANNER_CONFIGS[0];
+}
+
+const BANNER_ANIMATION_CSS = `
+@keyframes bannerShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@keyframes bannerPulse {
+  0% { background-position: 0% 50%; opacity: 0.9; }
+  33% { background-position: 60% 50%; opacity: 1; }
+  66% { background-position: 100% 50%; opacity: 0.85; }
+  100% { background-position: 0% 50%; opacity: 0.9; }
+}
+@keyframes bannerApex {
+  0%   { background-position: 0% 50%; filter: hue-rotate(0deg); }
+  50%  { background-position: 100% 50%; filter: hue-rotate(40deg); }
+  100% { background-position: 0% 50%; filter: hue-rotate(0deg); }
+}
+`;
 
 interface ProfileBannerProps {
   bannerImage?: string | null;
@@ -17,31 +115,22 @@ interface ProfileBannerProps {
 }
 
 export function ProfileBanner({ bannerImage, className }: ProfileBannerProps) {
-  const getBannerStyle = (): React.CSSProperties => {
-    if (!bannerImage) {
-      return { background: BANNER_PRESETS["gradient-1"] };
-    }
-    if (bannerImage.startsWith("gradient:")) {
-      const key = bannerImage.replace("gradient:", "");
-      const gradient = BANNER_PRESETS[key];
-      return gradient ? { background: gradient } : { background: BANNER_PRESETS["gradient-1"] };
-    }
-    // Check if it's one of the preset keys directly
-    if (BANNER_PRESETS[bannerImage]) {
-      return { background: BANNER_PRESETS[bannerImage] };
-    }
-    // It's a URL
-    return {
-      backgroundImage: `url(${bannerImage})`,
-      backgroundSize: "cover",
-      backgroundPosition: "center",
-    };
-  };
+  const config = getBannerConfig(bannerImage);
+
+  const style: React.CSSProperties = config.animated
+    ? {
+        background: config.gradient,
+        backgroundSize: "400% 400%",
+        animation: `${config.animationName} ${config.key === "apex" ? "6s" : "8s"} ease infinite`,
+      }
+    : {
+        background: config.gradient,
+      };
 
   return (
-    <div
-      className={cn("w-full h-36 md:h-44", className)}
-      style={getBannerStyle()}
-    />
+    <>
+      <style>{BANNER_ANIMATION_CSS}</style>
+      <div className={cn("w-full h-36 md:h-44", className)} style={style} />
+    </>
   );
 }

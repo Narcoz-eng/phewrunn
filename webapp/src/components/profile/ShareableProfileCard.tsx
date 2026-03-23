@@ -129,7 +129,7 @@ export function ShareableProfileCard({ open, onOpenChange, user }: ShareableProf
             {/* Watermark */}
             <div className="flex justify-end">
               <span className="text-[10px] text-muted-foreground/50 font-mono tracking-wider">
-                phewrunn.com
+                phew.run
               </span>
             </div>
           </div>

@@ -1364,24 +1364,26 @@ export default function Profile() {
                   </div>
                 )}
 
-            {/* Profile Banner */}
-            <div className="relative -mx-4">
-              <ProfileBanner bannerImage={editBannerImage ?? user.bannerImage} />
-              {isEditing && (
-                <button
-                  onClick={() => setIsBannerPickerOpen(true)}
-                  className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
-                >
-                  <div className="flex items-center gap-2 bg-black/60 text-white text-sm px-3 py-1.5 rounded-full">
-                    <ImageIcon className="h-3.5 w-3.5" />
-                    Change Banner
-                  </div>
-                </button>
-              )}
-            </div>
+            {/* Profile Banner + Avatar overlap block */}
+            <div className="-mx-4">
+              {/* Banner */}
+              <div className="relative">
+                <ProfileBanner bannerImage={editBannerImage ?? user.bannerImage} />
+                {isEditing && (
+                  <button
+                    onClick={() => setIsBannerPickerOpen(true)}
+                    className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
+                  >
+                    <div className="flex items-center gap-2 bg-black/60 text-white text-sm px-3 py-1.5 rounded-full">
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      Change Banner
+                    </div>
+                  </button>
+                )}
+              </div>
 
-            {/* Profile Header */}
-            <div className="flex flex-col items-center text-center -mt-14">
+              {/* Profile Header - inside the banner block, pulled up with negative margin */}
+              <div className="px-4 -mt-14 flex flex-col items-center text-center pb-2">
               {/* Avatar */}
               <div className="relative group">
                 <Avatar
@@ -1495,6 +1497,7 @@ export default function Profile() {
                 </div>
               </div>
             </div>
+            </div>{/* end banner+header block */}
 
             {/* Profile Dashboard - XP, Stats, Recent Trades */}
             <ProfileDashboard
@@ -1540,6 +1543,7 @@ export default function Profile() {
               open={isBannerPickerOpen}
               onOpenChange={setIsBannerPickerOpen}
               currentBanner={editBannerImage ?? user.bannerImage ?? null}
+              userLevel={user.level}
               onSelect={(banner) => {
                 setEditBannerImage(banner);
                 setIsBannerPickerOpen(false);
