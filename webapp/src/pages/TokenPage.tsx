@@ -1572,7 +1572,11 @@ export default function TokenPage() {
     [cachedPostsForToken, tokenBase]
   );
 
-  const bundleScanPending = token
+  // If the backend has already run intelligence at least once, don't show scanning states —
+  // whatever data exists is the best available. Only show scanning for truly new/unprocessed tokens.
+  const intelligenceHasRun = Boolean(token?.lastIntelligenceAt || token?.bundleScanCompletedAt);
+
+  const bundleScanPending = !intelligenceHasRun && token
     ? isBundleScanPending({
         bundleRiskLabel: token.risk.bundleRiskLabel,
         bundleScanCompletedAt: token.bundleScanCompletedAt,
@@ -1595,7 +1599,7 @@ export default function TokenPage() {
         bundleClusters: token.bundleClusters,
       })
     : null;
-  const holderIntelligencePending = token
+  const holderIntelligencePending = !intelligenceHasRun && token
     ? isHolderIntelligencePending({
         chainType: token.chainType,
         topHolders: mergedTopHolders,
@@ -1604,7 +1608,7 @@ export default function TokenPage() {
         devWallet: mergedDevWallet,
         bundleScanCompletedAt: token.bundleScanCompletedAt,
       })
-    : true;
+    : false;
   const shouldForceFreshDistribution = Boolean(token && (bundleScanPending || holderIntelligencePending));
 
   const liveTokenQuery = useQuery<TokenLiveData>({
