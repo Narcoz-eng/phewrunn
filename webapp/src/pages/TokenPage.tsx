@@ -1585,7 +1585,7 @@ export default function TokenPage() {
         estimatedBundledSupplyPct: token.risk.estimatedBundledSupplyPct,
         bundleClusters: token.bundleClusters,
       })
-    : true;
+    : false;
   const mergedTopHolders = token
     ? mergeTopHolderSnapshots(token.topHolders, token.risk.topHolders ?? [])
     : [];
