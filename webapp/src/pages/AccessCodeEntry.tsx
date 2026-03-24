@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { KeyRound, ArrowRight, ArrowLeft } from "lucide-react";
+import { KeyRound, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
 import { clearPrivySyncFailureState, setPrivyAuthBootstrapState } from "@/lib/auth-client";
+import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 
 const PENDING_CODE_KEY = "phew.pending-invite-code";
 
@@ -14,6 +15,22 @@ export default function AccessCodeEntry() {
   const [error, setError] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  const { login, authenticated, isSyncing, syncError } = usePrivyLogin({
+    onSuccess: (user) => navigate(user.username ? "/" : "/welcome", { replace: true }),
+  });
+
+  useEffect(() => {
+    if (!syncError) return;
+    const lowerErr = syncError.toLowerCase();
+    if (
+      lowerErr.includes("invite or access code") ||
+      lowerErr.includes("access_code_required") ||
+      lowerErr.includes("access_code_invalid")
+    ) {
+      setError("That code didn't work. Please check and try again.");
+    }
+  }, [syncError]);
 
   useEffect(() => {
     const urlCode = searchParams.get("code");
@@ -33,17 +50,31 @@ export default function AccessCodeEntry() {
       setError("Please enter an invite or access code.");
       return;
     }
+    setError(null);
     sessionStorage.setItem(PENDING_CODE_KEY, trimmed);
-    // Navigate back to login — the code will be picked up on next privy-sync
     clearPrivySyncFailureState();
-    setPrivyAuthBootstrapState("idle", {
-      owner: "system",
-      mode: "system",
-      userId: null,
-      detail: "invite/access code updated",
-      debugCode: "access_code_submitted",
-    });
-    navigate("/login", { replace: true });
+
+    if (authenticated) {
+      // User is already Privy-authenticated — re-trigger backend sync with the new code
+      setPrivyAuthBootstrapState("idle", {
+        owner: "system",
+        mode: "system",
+        userId: null,
+        detail: "invite/access code updated, retrying sync",
+        debugCode: "access_code_submitted",
+      });
+      login();
+    } else {
+      // Not Privy-authenticated yet — send them back to login to start over
+      setPrivyAuthBootstrapState("idle", {
+        owner: "system",
+        mode: "system",
+        userId: null,
+        detail: "invite/access code updated",
+        debugCode: "access_code_submitted",
+      });
+      navigate("/login", { replace: true });
+    }
   };
 
   return (
@@ -76,8 +107,17 @@ export default function AccessCodeEntry() {
               />
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
             </div>
-            <Button type="submit" className="w-full gap-2">
-              Continue <ArrowRight className="h-4 w-4" />
+            <Button type="submit" className="w-full gap-2" disabled={isSyncing}>
+              {isSyncing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  Continue <ArrowRight className="h-4 w-4" />
+                </>
+              )}
             </Button>
             <p className="text-center text-xs text-muted-foreground">
               Don&apos;t have a code? Ask someone on phew.run to invite you.
