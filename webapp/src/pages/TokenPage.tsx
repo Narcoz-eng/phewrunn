@@ -1802,15 +1802,27 @@ export default function TokenPage() {
     (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap < 10_000) ||
     (typeof livePriceChange24h === "number" && Number.isFinite(livePriceChange24h) && livePriceChange24h < -85)
   );
-  // Compute live ROI using the best available entry mcap from recent calls + live market cap.
-  // Used to cap displayed scores so they always reflect current collapse severity.
+  // Compute live ROI. Prefer post.currentMcap (updated by background job) over the live endpoint
+  // which can be stale when DexScreener/GeckoTerminal cache lags behind the actual collapse.
   const liveRoiPct = (() => {
-    if (typeof liveMarketCap !== "number" || !Number.isFinite(liveMarketCap) || liveMarketCap <= 0) return null;
+    const bestCall = token?.recentCalls.find(
+      (c) =>
+        typeof c.entryMcap === "number" && Number.isFinite(c.entryMcap) && c.entryMcap > 0 &&
+        typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
+    );
+    const bestCurrentMcap =
+      (typeof bestCall?.currentMcap === "number" && Number.isFinite(bestCall.currentMcap) && bestCall.currentMcap > 0
+        ? bestCall.currentMcap
+        : null) ??
+      (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap > 0
+        ? liveMarketCap
+        : null);
+    if (!bestCurrentMcap) return null;
     const bestEntryMcap = token?.recentCalls
       .map((c) => c.entryMcap)
       .find((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
     if (!bestEntryMcap) return null;
-    return ((liveMarketCap - bestEntryMcap) / bestEntryMcap) * 100;
+    return ((bestCurrentMcap - bestEntryMcap) / bestEntryMcap) * 100;
   })();
   // Hard cap on displayed scores based on live ROI — mirrors backend guardrail tiers
   const liveScoreCap = (() => {
@@ -1822,6 +1834,18 @@ export default function TokenPage() {
     if (liveRoiPct <= -40) return 30;
     if (liveRoiPct <= -25) return 44;
     return 100;
+  })();
+  // Use the post's currentMcap when it's significantly lower than what the live endpoint reports.
+  // GeckoTerminal/DexScreener can lag badly for dead/low-volume tokens.
+  const displayMarketCap = (() => {
+    const postCurrentMcap = token?.recentCalls.find(
+      (c) => typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
+    )?.currentMcap ?? null;
+    const storedMcap = token?.marketCap ?? null;
+    if (postCurrentMcap !== null && storedMcap !== null && postCurrentMcap < storedMcap * 0.4) {
+      return postCurrentMcap;
+    }
+    return storedMcap;
   })();
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
@@ -2107,7 +2131,7 @@ export default function TokenPage() {
               {/* Bottom stripe: live market stats */}
               <div className="grid grid-cols-3 gap-px border-t border-border/40 bg-border/40">
                 {[
-                  { label: "Market Cap", value: formatMarketMetric(token.marketCap), highlight: true },
+                  { label: "Market Cap", value: formatMarketMetric(displayMarketCap), highlight: true },
                   { label: "Liquidity", value: formatMarketMetric(token.liquidity), highlight: false },
                   { label: "Volume 24h", value: formatMarketMetric(token.volume24h), highlight: false },
                 ].map((stat) => (
