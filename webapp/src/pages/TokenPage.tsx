@@ -1802,25 +1802,20 @@ export default function TokenPage() {
     (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap < 10_000) ||
     (typeof livePriceChange24h === "number" && Number.isFinite(livePriceChange24h) && livePriceChange24h < -85)
   );
-  // Compute live ROI. Prefer post.currentMcap (updated by background job) over the live endpoint
-  // which can be stale when DexScreener/GeckoTerminal cache lags behind the actual collapse.
+  // Compute live ROI. Look up currentMcap and entryMcap independently — they may be on different calls.
+  // post.currentMcap is updated by the background job and reliable even when GeckoTerminal lags.
   const liveRoiPct = (() => {
-    const bestCall = token?.recentCalls.find(
-      (c) =>
-        typeof c.entryMcap === "number" && Number.isFinite(c.entryMcap) && c.entryMcap > 0 &&
-        typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
-    );
     const bestCurrentMcap =
-      (typeof bestCall?.currentMcap === "number" && Number.isFinite(bestCall.currentMcap) && bestCall.currentMcap > 0
-        ? bestCall.currentMcap
-        : null) ??
+      token?.recentCalls.find(
+        (c) => typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
+      )?.currentMcap ??
       (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap > 0
         ? liveMarketCap
         : null);
     if (!bestCurrentMcap) return null;
-    const bestEntryMcap = token?.recentCalls
-      .map((c) => c.entryMcap)
-      .find((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
+    const bestEntryMcap = token?.recentCalls.find(
+      (c) => typeof c.entryMcap === "number" && Number.isFinite(c.entryMcap) && c.entryMcap > 0
+    )?.entryMcap;
     if (!bestEntryMcap) return null;
     return ((bestCurrentMcap - bestEntryMcap) / bestEntryMcap) * 100;
   })();
