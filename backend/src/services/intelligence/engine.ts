@@ -71,6 +71,7 @@ const TOKEN_OVERVIEW_SECTION_TIMEOUT_MS = process.env.NODE_ENV === "production" 
 const TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS =
   process.env.NODE_ENV === "production" ? 5_000 : 7_500;
 const TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS = Date.parse("2026-03-12T00:00:00.000Z");
+const STORED_POST_INTELLIGENCE_STALE_MS = 10 * 60_000; // recompute confidence every 10 min
 const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
 const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 30;
@@ -1162,6 +1163,10 @@ function shouldUseStoredPostIntelligence(
     return false;
   }
   if (lastIntelligenceAt < TOKEN_CONFIDENCE_MODEL_UPDATED_AT_MS) {
+    return false;
+  }
+  // Expire stored confidence after 10 minutes so holder growth, volume, sentiment & momentum signals stay fresh
+  if (Date.now() - lastIntelligenceAt > STORED_POST_INTELLIGENCE_STALE_MS) {
     return false;
   }
 
