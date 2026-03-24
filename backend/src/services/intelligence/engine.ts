@@ -2756,15 +2756,13 @@ async function hydrateCalls(
           sentimentScore,
         });
     const confidenceScore = roundMetricOrZero(
-      shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
-        ? applyConfidenceGuardrails({
-            baseScore: confidenceScoreBase,
-            tokenRiskScore: token?.tokenRiskScore ?? null,
-            top10HolderPct: token?.top10HolderPct ?? null,
-            roiCurrentPct,
-            sentimentScore,
-          })
-        : confidenceScoreBase
+      applyConfidenceGuardrails({
+        baseScore: confidenceScoreBase,
+        tokenRiskScore: token?.tokenRiskScore ?? null,
+        top10HolderPct: token?.top10HolderPct ?? null,
+        roiCurrentPct,
+        sentimentScore,
+      })
     );
     const weightedEngagementPerHour = computeWeightedEngagementPerHour({
       reactions: reactionCounts,
