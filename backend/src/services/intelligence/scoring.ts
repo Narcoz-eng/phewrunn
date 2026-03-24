@@ -239,12 +239,13 @@ function computeConfidenceDrawdownPenalty(roiCurrentPct: number | null | undefin
   const roi = finite(roiCurrentPct);
   if (roi >= 0) return 0;
   const drawdown = Math.abs(roi);
-  if (drawdown >= 85) return 100;
-  if (drawdown >= 70) return 90;
-  if (drawdown >= 55) return 72;
-  if (drawdown >= 40) return 54;
-  if (drawdown >= 25) return 34;
-  return pct(drawdown, 25) * 0.7;
+  if (drawdown >= 90) return 100;
+  if (drawdown >= 80) return 100;
+  if (drawdown >= 70) return 95;
+  if (drawdown >= 55) return 80;
+  if (drawdown >= 40) return 60;
+  if (drawdown >= 25) return 40;
+  return pct(drawdown, 25) * 0.8;
 }
 
 function computeNegativeSentimentPenalty(sentimentScore: number | null | undefined): number {
@@ -287,11 +288,12 @@ function computeConfidenceScoreCap(args: {
   else if (risk >= 65) cap = Math.min(cap, 28);
   else if (risk >= 50) cap = Math.min(cap, 42);
 
-  if (currentRoi <= -85) cap = Math.min(cap, 8);
-  else if (currentRoi <= -70) cap = Math.min(cap, 14);
-  else if (currentRoi <= -55) cap = Math.min(cap, 22);
-  else if (currentRoi <= -40) cap = Math.min(cap, 30);
-  else if (currentRoi <= -25) cap = Math.min(cap, 44);
+  if (currentRoi <= -90) cap = Math.min(cap, 4);
+  else if (currentRoi <= -80) cap = Math.min(cap, 7);
+  else if (currentRoi <= -70) cap = Math.min(cap, 12);
+  else if (currentRoi <= -55) cap = Math.min(cap, 20);
+  else if (currentRoi <= -40) cap = Math.min(cap, 28);
+  else if (currentRoi <= -25) cap = Math.min(cap, 42);
 
   return cap;
 }
@@ -311,11 +313,12 @@ function computeConfidenceScoreMultiplier(args: {
   else if (risk >= 50) multiplier *= 0.78;
   else if (risk >= 40) multiplier *= 0.9;
 
-  if (currentRoi <= -85) multiplier *= 0.22;
-  else if (currentRoi <= -70) multiplier *= 0.34;
-  else if (currentRoi <= -55) multiplier *= 0.5;
-  else if (currentRoi <= -40) multiplier *= 0.68;
-  else if (currentRoi <= -25) multiplier *= 0.84;
+  if (currentRoi <= -90) multiplier *= 0.08;
+  else if (currentRoi <= -80) multiplier *= 0.15;
+  else if (currentRoi <= -70) multiplier *= 0.28;
+  else if (currentRoi <= -55) multiplier *= 0.44;
+  else if (currentRoi <= -40) multiplier *= 0.62;
+  else if (currentRoi <= -25) multiplier *= 0.80;
 
   if (sentiment <= 25) multiplier *= 0.72;
   else if (sentiment <= 35) multiplier *= 0.84;
