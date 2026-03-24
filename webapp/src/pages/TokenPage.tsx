@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, AlertTriangle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
+import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
@@ -1802,6 +1802,27 @@ export default function TokenPage() {
     (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap < 10_000) ||
     (typeof livePriceChange24h === "number" && Number.isFinite(livePriceChange24h) && livePriceChange24h < -85)
   );
+  // Compute live ROI using the best available entry mcap from recent calls + live market cap.
+  // Used to cap displayed scores so they always reflect current collapse severity.
+  const liveRoiPct = (() => {
+    if (typeof liveMarketCap !== "number" || !Number.isFinite(liveMarketCap) || liveMarketCap <= 0) return null;
+    const bestEntryMcap = token?.recentCalls
+      .map((c) => c.entryMcap)
+      .find((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
+    if (!bestEntryMcap) return null;
+    return ((liveMarketCap - bestEntryMcap) / bestEntryMcap) * 100;
+  })();
+  // Hard cap on displayed scores based on live ROI — mirrors backend guardrail tiers
+  const liveScoreCap = (() => {
+    if (liveRoiPct === null || liveRoiPct >= 0) return 100;
+    if (liveRoiPct <= -90) return 4;
+    if (liveRoiPct <= -80) return 8;
+    if (liveRoiPct <= -70) return 14;
+    if (liveRoiPct <= -55) return 22;
+    if (liveRoiPct <= -40) return 30;
+    if (liveRoiPct <= -25) return 44;
+    return 100;
+  })();
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
     (point) =>
@@ -2102,12 +2123,6 @@ export default function TokenPage() {
 
             {/* ── SECTION 2: SCORE RINGS ── */}
             <motion.section variants={sectionVariants}>
-              {isTokenApparentlyDead ? (
-                <div className="mb-3 flex items-center gap-1.5 rounded-xl border border-muted/40 bg-muted/20 px-3 py-2">
-                  <AlertTriangle className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                  <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wide">Token inactive — scores reflect current market conditions</p>
-                </div>
-              ) : null}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
                   { label: "Confidence", value: token.confidenceScore, icon: <Target className="h-3.5 w-3.5" />, desc: "Signal quality" },
@@ -2115,7 +2130,8 @@ export default function TokenPage() {
                   { label: "Early Runner", value: token.earlyRunnerScore, icon: <Zap className="h-3.5 w-3.5" />, desc: "Entry timing" },
                   { label: "High Conviction", value: token.highConvictionScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Conviction level" },
                 ].map((s) => {
-                  const pct = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
+                  const raw = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
+                  const pct = raw !== null ? Math.min(raw, liveScoreCap) : null;
                   const color = pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
                   return (
                     <div key={s.label} className="relative overflow-hidden rounded-[22px] border p-4 border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none">
@@ -2129,7 +2145,7 @@ export default function TokenPage() {
                           <div className="text-[10px] text-muted-foreground">{s.desc}</div>
                         </div>
                         <div className="shrink-0 opacity-80">
-                          <ScoreRing value={s.value} size={56} />
+                          <ScoreRing value={pct} size={56} />
                         </div>
                       </div>
                     </div>
