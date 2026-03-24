@@ -4014,7 +4014,14 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         staleToken?.estimatedBundledSupplyPct
       )
     );
-    const canUseCurrentTokenStoredIntelligence = hasFreshStoredTokenIntelligence(currentToken);
+    // Don't trust stored scores when liquidity has collapsed — they reflect old active state
+    const tokenLiquidityIsDead =
+      typeof currentToken.liquidity === "number" &&
+      Number.isFinite(currentToken.liquidity) &&
+      currentToken.liquidity > 0 &&
+      currentToken.liquidity < 5_000;
+    const canUseCurrentTokenStoredIntelligence =
+      !tokenLiquidityIsDead && hasFreshStoredTokenIntelligence(currentToken);
     const currentTokenConfidenceScore = canUseCurrentTokenStoredIntelligence
       ? currentToken.confidenceScore
       : null;
