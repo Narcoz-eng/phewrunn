@@ -193,6 +193,7 @@ type TokenBundleCluster = {
   walletCount: number;
   estimatedSupplyPct: number;
   evidenceJson?: { bucket?: string; holderPcts?: number[] } | null;
+  currentAction?: string | null;
 };
 
 type TokenTimelineEvent = {
@@ -1572,7 +1573,11 @@ export default function TokenPage() {
     [cachedPostsForToken, tokenBase]
   );
 
-  const bundleScanPending = token
+  // If the backend has already run intelligence at least once, don't show scanning states —
+  // whatever data exists is the best available. Only show scanning for truly new/unprocessed tokens.
+  const intelligenceHasRun = Boolean(token?.lastIntelligenceAt || token?.bundleScanCompletedAt);
+
+  const bundleScanPending = !intelligenceHasRun && token
     ? isBundleScanPending({
         bundleRiskLabel: token.risk.bundleRiskLabel,
         bundleScanCompletedAt: token.bundleScanCompletedAt,
@@ -1595,7 +1600,7 @@ export default function TokenPage() {
         bundleClusters: token.bundleClusters,
       })
     : null;
-  const holderIntelligencePending = token
+  const holderIntelligencePending = !intelligenceHasRun && token
     ? isHolderIntelligencePending({
         chainType: token.chainType,
         topHolders: mergedTopHolders,
@@ -1604,7 +1609,7 @@ export default function TokenPage() {
         devWallet: mergedDevWallet,
         bundleScanCompletedAt: token.bundleScanCompletedAt,
       })
-    : true;
+    : false;
   const shouldForceFreshDistribution = Boolean(token && (bundleScanPending || holderIntelligencePending));
 
   const liveTokenQuery = useQuery<TokenLiveData>({
@@ -2399,6 +2404,13 @@ export default function TokenPage() {
                                 </div>
                                 <span className="font-semibold text-foreground flex-1 text-left">{cluster.clusterLabel}</span>
                                 <span className={cn("text-[10px] uppercase tracking-[0.12em]", color.text)}>{cluster.walletCount} wallets</span>
+                                {cluster.currentAction === "distributing" ? (
+                                  <span className="rounded-full bg-red-500/15 border border-red-500/30 px-1.5 py-0.5 text-[9px] font-semibold text-red-400 uppercase tracking-wide">↓ Selling</span>
+                                ) : cluster.currentAction === "accumulating" ? (
+                                  <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 uppercase tracking-wide">↑ Buying</span>
+                                ) : cluster.currentAction === "holding" ? (
+                                  <span className="rounded-full bg-zinc-500/15 border border-zinc-500/30 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-400 uppercase tracking-wide">→ Holding</span>
+                                ) : null}
                                 <span className={cn("font-mono text-sm font-semibold", color.text)}>{cluster.estimatedSupplyPct.toFixed(1)}%</span>
                                 <span className={cn("text-[10px]", color.text)}>{isExpanded ? "▲" : "▼"}</span>
                               </button>
