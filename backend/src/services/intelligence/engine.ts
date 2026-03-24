@@ -1292,6 +1292,7 @@ async function getMarketContextSnapshot(): Promise<MarketContextSnapshot> {
             hotAlphaScore: true,
             earlyRunnerScore: true,
             highConvictionScore: true,
+            liquidity: true,
           },
           orderBy: { updatedAt: "desc" },
           take: 120,
@@ -1330,14 +1331,30 @@ async function getMarketContextSnapshot(): Promise<MarketContextSnapshot> {
               ) >= 60
             ).length / activeTokens.length) * 100
           : 50;
+      // Tracks what share of recent calls have severely collapsed — feeds market risk-off bias
+      const severeCollapseRate =
+        callRois.length > 0
+          ? (callRois.filter((value) => value <= -70).length / callRois.length) * 100
+          : 0;
+      // Tracks how many active tokens have near-zero liquidity (effectively dead)
+      const deadLiquidityShare =
+        activeTokens.length > 0
+          ? (activeTokens.filter((token) => {
+              const liq = finite(token.liquidity);
+              return liq > 0 && liq < 5_000;
+            }).length / activeTokens.length) * 100
+          : 0;
+      // Combine collapse signals into a single bearish pressure score (0–100, higher = more dead tokens)
+      const marketStressScore = clampScore(0.6 * severeCollapseRate + 0.4 * deadLiquidityShare);
 
       const breadthScore = clampScore(
-        0.24 * positiveCallShare +
-          0.18 * positiveMomentumScore +
-          0.18 * realizedWinShare +
-          0.16 * averageSentimentScore +
-          0.12 * lowRiskShare +
-          0.12 * activeSignalShare
+        0.22 * positiveCallShare +
+          0.16 * positiveMomentumScore +
+          0.17 * realizedWinShare +
+          0.15 * averageSentimentScore +
+          0.11 * lowRiskShare +
+          0.11 * activeSignalShare -
+          0.08 * marketStressScore
       );
 
       if (breadthScore >= 68) {
@@ -3841,7 +3858,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
                 refreshTokens: false,
                 ensureTokenLinks: false,
                 persistComputed: false,
-                preferStoredIntelligence: true,
+                preferStoredIntelligence: false,
               }),
             staleToken?.recentCalls ?? ([] as EnrichedCall[])
           )

@@ -2103,11 +2103,9 @@ export default function TokenPage() {
             {/* ── SECTION 2: SCORE RINGS ── */}
             <motion.section variants={sectionVariants}>
               {isTokenApparentlyDead ? (
-                <div className="mb-3 flex items-center gap-2 rounded-xl border border-loss/30 bg-loss/8 px-3.5 py-2.5">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-loss" />
-                  <p className="text-[11px] font-medium text-loss/90">
-                    Scores below reflect when this token was active — they have not been updated since the price collapsed.
-                  </p>
+                <div className="mb-3 flex items-center gap-1.5 rounded-xl border border-muted/40 bg-muted/20 px-3 py-2">
+                  <AlertTriangle className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                  <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wide">Token inactive — scores reflect current market conditions</p>
                 </div>
               ) : null}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -2118,11 +2116,9 @@ export default function TokenPage() {
                   { label: "High Conviction", value: token.highConvictionScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Conviction level" },
                 ].map((s) => {
                   const pct = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
-                  const color = isTokenApparentlyDead
-                    ? "text-muted-foreground/50"
-                    : pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
+                  const color = pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
                   return (
-                    <div key={s.label} className={cn("relative overflow-hidden rounded-[22px] border p-4", isTokenApparentlyDead ? "border-border/30 bg-[linear-gradient(180deg,rgba(255,255,255,0.6),rgba(248,248,248,0.65))] opacity-75 dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.7),rgba(8,12,20,0.75))]" : "border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none")}>
+                    <div key={s.label} className="relative overflow-hidden rounded-[22px] border p-4 border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none">
                       <div className="flex items-start justify-between">
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5 text-muted-foreground">{s.icon}<span className="text-[10px] font-semibold uppercase tracking-[0.15em]">{s.label}</span></div>
@@ -2132,8 +2128,8 @@ export default function TokenPage() {
                           </div>
                           <div className="text-[10px] text-muted-foreground">{s.desc}</div>
                         </div>
-                        <div className={cn("shrink-0", isTokenApparentlyDead ? "opacity-30" : "opacity-80")}>
-                          <ScoreRing value={isTokenApparentlyDead ? null : s.value} size={56} />
+                        <div className="shrink-0 opacity-80">
+                          <ScoreRing value={s.value} size={56} />
                         </div>
                       </div>
                     </div>
