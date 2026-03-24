@@ -531,6 +531,7 @@ tokensRouter.get(
           walletCount: cluster.walletCount,
           estimatedSupplyPct: cluster.estimatedSupplyPct,
           evidenceJson: cluster.evidenceJson,
+          currentAction: null as string | null,
         })) ?? [];
       const distributionHolderCount =
         chainType === "solana"
