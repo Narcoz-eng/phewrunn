@@ -329,6 +329,7 @@ export type EnrichedCall = CallRecord & {
     walletCount: number;
     estimatedSupplyPct: number;
     evidenceJson: unknown;
+    currentAction: string | null;
   }>;
   radarReasons: string[];
 };
@@ -395,6 +396,7 @@ export type TokenOverview = {
       walletCount: number;
       estimatedSupplyPct: number;
       evidenceJson: unknown;
+      currentAction: string | null;
     }>;
     chart: Array<{
       timestamp: string;
@@ -1911,20 +1913,41 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
     const deferredWrites: Promise<unknown>[] = [];
     if (distribution?.clusters) {
       deferredWrites.push(
-        prisma.tokenBundleCluster.deleteMany({ where: { tokenId } })
-          .then(() => (
-            distribution.clusters.length > 0
-              ? prisma.tokenBundleCluster.createMany({
-                  data: distribution.clusters.map((cluster) => ({
-                    tokenId,
-                    clusterLabel: cluster.clusterLabel,
-                    walletCount: cluster.walletCount,
-                    estimatedSupplyPct: roundMetricOrZero(cluster.estimatedSupplyPct),
-                    evidenceJson: cluster.evidenceJson,
-                  })),
-                })
-              : null
-          ))
+        prisma.tokenBundleCluster.findMany({
+          where: { tokenId },
+          select: { clusterLabel: true, estimatedSupplyPct: true },
+        })
+          .then((existingClusters) => {
+            const prevByLabel = new Map<string, number>(
+              existingClusters.map((c) => [c.clusterLabel, c.estimatedSupplyPct])
+            );
+            const computeAction = (label: string, newPct: number): string => {
+              const prev = prevByLabel.get(label);
+              if (prev === undefined) return "new";
+              const delta = newPct - prev;
+              if (delta <= -0.5) return "distributing";
+              if (delta >= 0.5) return "accumulating";
+              return "holding";
+            };
+            return prisma.tokenBundleCluster.deleteMany({ where: { tokenId } })
+              .then(() => (
+                distribution.clusters.length > 0
+                  ? prisma.tokenBundleCluster.createMany({
+                      data: distribution.clusters.map((cluster) => ({
+                        tokenId,
+                        clusterLabel: cluster.clusterLabel,
+                        walletCount: cluster.walletCount,
+                        estimatedSupplyPct: roundMetricOrZero(cluster.estimatedSupplyPct),
+                        evidenceJson: cluster.evidenceJson,
+                        currentAction: computeAction(
+                          cluster.clusterLabel,
+                          roundMetricOrZero(cluster.estimatedSupplyPct)
+                        ),
+                      })),
+                    })
+                  : null
+              ));
+          })
           .catch((error) => {
             console.warn("[intelligence/token] bundle cluster write skipped", {
               tokenId,
@@ -2303,6 +2326,7 @@ async function readTokenClusters(tokenIds: string[]): Promise<Map<string, TokenO
       walletCount: true,
       estimatedSupplyPct: true,
       evidenceJson: true,
+      currentAction: true,
     },
     orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
   });
@@ -2316,6 +2340,7 @@ async function readTokenClusters(tokenIds: string[]): Promise<Map<string, TokenO
       walletCount: row.walletCount,
       estimatedSupplyPct: row.estimatedSupplyPct,
       evidenceJson: row.evidenceJson,
+      currentAction: row.currentAction ?? null,
     });
     byTokenId.set(row.tokenId, bucket);
   }
@@ -3699,6 +3724,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
               walletCount: true,
               estimatedSupplyPct: true,
               evidenceJson: true,
+              currentAction: true,
             },
             orderBy: [{ estimatedSupplyPct: "desc" }, { clusterLabel: "asc" }],
           }),
@@ -3708,6 +3734,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           walletCount: number;
           estimatedSupplyPct: number;
           evidenceJson: unknown;
+          currentAction: string | null;
         }>
       ),
       resolveTokenOverviewSection(
@@ -4189,6 +4216,7 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             walletCount: cluster.walletCount,
             estimatedSupplyPct: cluster.estimatedSupplyPct,
             evidenceJson: cluster.evidenceJson,
+            currentAction: null,
           }));
 
     const timeline = [
