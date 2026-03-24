@@ -1,36 +1,32 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { usePrivy, useIdentityToken } from "@privy-io/react-auth";
+import { useUser } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { KeyRound, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
-import { clearPrivySyncFailureState, setPrivyAuthBootstrapState } from "@/lib/auth-client";
-import { usePrivyLogin } from "@/hooks/usePrivyLogin";
+import {
+  clearPrivySyncFailureState,
+  isAccessCodeBootstrapDebugCode,
+  readPrivyAuthBootstrapSnapshot,
+  setPrivyAuthBootstrapState,
+  startPrivyAuthBootstrap,
+} from "@/lib/auth-client";
+import type { PrivyUserLike } from "@/lib/privy-user";
 
 const PENDING_CODE_KEY = "phew.pending-invite-code";
 
 export default function AccessCodeEntry() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-
-  const { login, authenticated, isSyncing, syncError } = usePrivyLogin({
-    onSuccess: (user) => navigate(user.username ? "/" : "/welcome", { replace: true }),
-  });
-
-  useEffect(() => {
-    if (!syncError) return;
-    const lowerErr = syncError.toLowerCase();
-    if (
-      lowerErr.includes("invite or access code") ||
-      lowerErr.includes("access_code_required") ||
-      lowerErr.includes("access_code_invalid")
-    ) {
-      setError("That code didn't work. Please check and try again.");
-    }
-  }, [syncError]);
+  const { ready, authenticated, user, getAccessToken } = usePrivy();
+  const { identityToken } = useIdentityToken();
+  const { refreshUser } = useUser();
 
   useEffect(() => {
     const urlCode = searchParams.get("code");
@@ -43,7 +39,7 @@ export default function AccessCodeEntry() {
     }
   }, [searchParams]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) {
@@ -51,29 +47,67 @@ export default function AccessCodeEntry() {
       return;
     }
     setError(null);
+
+    // Store code FIRST so the backend sync request will include it
     sessionStorage.setItem(PENDING_CODE_KEY, trimmed);
     clearPrivySyncFailureState();
 
-    if (authenticated) {
-      // User is already Privy-authenticated — re-trigger backend sync with the new code
+    if (!authenticated || !user) {
+      // Not signed in with Privy yet — reset state and go to login
       setPrivyAuthBootstrapState("idle", {
         owner: "system",
-        mode: "system",
+        mode: "manual",
         userId: null,
-        detail: "invite/access code updated, retrying sync",
-        debugCode: "access_code_submitted",
-      });
-      login();
-    } else {
-      // Not Privy-authenticated yet — send them back to login to start over
-      setPrivyAuthBootstrapState("idle", {
-        owner: "system",
-        mode: "system",
-        userId: null,
-        detail: "invite/access code updated",
+        detail: "access code entered, needs Privy sign-in first",
         debugCode: "access_code_submitted",
       });
       navigate("/login", { replace: true });
+      return;
+    }
+
+    // Reset bootstrap state so guards don't block the retry
+    setPrivyAuthBootstrapState("idle", {
+      owner: "system",
+      mode: "manual",
+      userId: null,
+      detail: "access code submitted, retrying backend sync",
+      debugCode: "access_code_submitted",
+    });
+
+    setIsSyncing(true);
+    try {
+      // Call startPrivyAuthBootstrap directly to bypass usePrivyLogin's
+      // intermediate layers which can silently return null without feedback.
+      const syncedUser = await startPrivyAuthBootstrap({
+        owner: "usePrivyLogin",
+        mode: "manual",
+        user: user as PrivyUserLike,
+        getLatestUser: () => user as PrivyUserLike,
+        privyReady: ready,
+        privyAuthenticated: authenticated,
+        privyIdentityToken: identityToken ?? null,
+        getLatestPrivyIdentityToken: () => identityToken ?? null,
+        refreshPrivyAuthState: async () => (await refreshUser()) as PrivyUserLike,
+        getLatestPrivyAccessToken: () => getAccessToken(),
+        triggerSource: "manual_user_action",
+      });
+
+      if (syncedUser) {
+        navigate(syncedUser.username ? "/" : "/welcome", { replace: true });
+        return;
+      }
+
+      // Bootstrap returned null — determine why and show appropriate error
+      const snapshot = readPrivyAuthBootstrapSnapshot();
+      if (isAccessCodeBootstrapDebugCode(snapshot?.debugCode)) {
+        setError("That code didn't work. Please check and try again.");
+      } else {
+        setError("Could not sign you in. Please try again.");
+      }
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
