@@ -605,6 +605,37 @@ function pickMergedMetric(
   return first ?? second ?? null;
 }
 
+function getBestPostCurrentMcap(posts: Post[] | null | undefined): number | null {
+  return (
+    posts?.find(
+      (post) =>
+        typeof post.currentMcap === "number" &&
+        Number.isFinite(post.currentMcap) &&
+        post.currentMcap > 0
+    )?.currentMcap ?? null
+  );
+}
+
+function pickStableMarketCap(
+  live: number | null | undefined,
+  cached: number | null | undefined,
+  posts: Post[] | null | undefined
+): number | null {
+  const merged = pickMergedMetric(live, cached, { positive: true });
+  const postCurrentMcap = getBestPostCurrentMcap(posts);
+
+  if (typeof postCurrentMcap === "number" && Number.isFinite(postCurrentMcap) && postCurrentMcap > 0) {
+    if (typeof merged === "number" && Number.isFinite(merged) && merged > 0) {
+      const ratio = Math.max(merged, postCurrentMcap) / Math.max(1, Math.min(merged, postCurrentMcap));
+      if (ratio >= 2.5) {
+        return postCurrentMcap;
+      }
+    }
+  }
+
+  return merged;
+}
+
 function getTokenIntelligenceVersion(token: Pick<TokenPageData, "lastIntelligenceAt"> | null | undefined): number {
   if (!token?.lastIntelligenceAt) {
     return 0;
@@ -938,9 +969,10 @@ function mergeTokenPageDataWithCached(
   };
   const shouldKeepCachedBundleState =
     hasResolvedBundleEvidence(cachedBundleState) && isBundlePlaceholderState(liveBundleState);
+  const mergedRecentCalls = mergePreferredPostCollections(live.recentCalls, cached.recentCalls);
   return {
     ...live,
-    marketCap: pickMergedMetric(live.marketCap, cached.marketCap, { positive: true }),
+    marketCap: pickStableMarketCap(live.marketCap, cached.marketCap, mergedRecentCalls),
     liquidity: pickMergedMetric(live.liquidity, cached.liquidity, { positive: true }),
     volume24h: pickMergedMetric(live.volume24h, cached.volume24h, { positive: true }),
     holderCount: pickMergedMetric(live.holderCount, cached.holderCount, { positive: true }),
@@ -1024,7 +1056,7 @@ function mergeTokenPageDataWithCached(
         : cached.risk.devWallet,
     },
     timeline: live.timeline.length > 0 ? live.timeline : cached.timeline,
-    recentCalls: mergePreferredPostCollections(live.recentCalls, cached.recentCalls),
+    recentCalls: mergedRecentCalls,
   };
 }
 
@@ -1284,6 +1316,7 @@ function mergeTokenPageDataWithLiveSnapshot(
   const lastIntelligenceAt = shouldKeepCurrentBundleState
     ? current.lastIntelligenceAt ?? live.bundleScanCompletedAt ?? live.updatedAt ?? null
     : live.bundleScanCompletedAt ?? live.updatedAt ?? current.lastIntelligenceAt ?? null;
+  const marketCap = pickStableMarketCap(live.marketCap, current.marketCap, current.recentCalls);
 
   return {
     ...current,
@@ -1292,7 +1325,7 @@ function mergeTokenPageDataWithLiveSnapshot(
     imageUrl: live.imageUrl ?? current.imageUrl,
     dexscreenerUrl: live.dexscreenerUrl ?? current.dexscreenerUrl,
     pairAddress: live.pairAddress ?? current.pairAddress,
-    marketCap: pickMergedMetric(live.marketCap, current.marketCap, { positive: true }),
+    marketCap,
     liquidity: pickMergedMetric(live.liquidity, current.liquidity, { positive: true }),
     volume24h: pickMergedMetric(live.volume24h, current.volume24h, { positive: true }),
     holderCount,
@@ -1833,14 +1866,7 @@ export default function TokenPage() {
   // Use the post's currentMcap when it's significantly lower than what the live endpoint reports.
   // GeckoTerminal/DexScreener can lag badly for dead/low-volume tokens.
   const displayMarketCap = (() => {
-    const postCurrentMcap = token?.recentCalls.find(
-      (c) => typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
-    )?.currentMcap ?? null;
-    const storedMcap = token?.marketCap ?? null;
-    if (postCurrentMcap !== null && storedMcap !== null && postCurrentMcap < storedMcap * 0.4) {
-      return postCurrentMcap;
-    }
-    return storedMcap;
+    return pickStableMarketCap(token?.marketCap ?? null, null, recentCalls);
   })();
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(

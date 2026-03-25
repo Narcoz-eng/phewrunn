@@ -52,9 +52,10 @@ import {
   INTELLIGENCE_CALL_SELECT,
   type IntelligenceCallRecord,
   type RealtimePostIntelligenceSnapshot,
+  prewarmRecentTokenIntelligence,
 } from "../services/intelligence/engine.js";
 import { fanoutPostedAlphaAlert } from "../services/intelligence/alerts.js";
-import { runMarketAlertScan } from "../services/marketAlerts.js";
+import { runMarketAlertScan, type MarketAlertScanResult } from "../services/marketAlerts.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 const IS_SERVERLESS_RUNTIME =
@@ -85,6 +86,14 @@ type MaintenanceRunResult = {
   durationMs: number;
   settlement: SettlementRunResult;
   marketRefresh: MarketRefreshRunResult;
+  intelligenceRefresh: {
+    attempted: number;
+    refreshed: number;
+    skipped: number;
+    errors: number;
+    durationMs: number;
+  };
+  marketAlerts: MarketAlertScanResult;
   snapshotWarmup?: {
     attempted: number;
     succeeded: number;
@@ -220,8 +229,12 @@ let lastSettlementRunStartedAt = 0;
 let lastCronMaintenanceCompletedAt = 0;
 let lastLeaderboardSnapshotWarmAt = 0;
 let leaderboardSnapshotWarmCursor = 0;
+let maintenanceLoopTimer: ReturnType<typeof setInterval> | null = null;
+let maintenanceLoopCanRun: (() => boolean) | null = null;
 const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
 const SETTLEMENT_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 20_000 : 4_000;
+const BACKGROUND_MAINTENANCE_LOOP_START_DELAY_MS = process.env.NODE_ENV === "production" ? 20_000 : 6_000;
+const BACKGROUND_MAINTENANCE_LOOP_INTERVAL_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
 const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const CRON_MAINTENANCE_HEALTH_WINDOW_MS =
@@ -4354,6 +4367,8 @@ async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Pr
   const startedAtMs = Date.now();
   const settlement = await checkAndSettlePosts();
   const marketRefresh = await refreshTrackedMarketCaps();
+  const intelligenceRefresh = await prewarmRecentTokenIntelligence({ awaitSignalAlerts: true });
+  const marketAlerts = await runMarketAlertScan();
   const snapshotWarmup = options?.prewarmSnapshots
     ? await prewarmLeaderboardSnapshots()
     : {
@@ -4370,6 +4385,8 @@ async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Pr
     durationMs: Date.now() - startedAtMs,
     settlement,
     marketRefresh,
+    intelligenceRefresh,
+    marketAlerts,
     snapshotWarmup,
   };
 
@@ -4381,6 +4398,11 @@ async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Pr
     marketRefresh.refreshedContracts ||
     marketRefresh.updatedPosts ||
     marketRefresh.errors ||
+    intelligenceRefresh.refreshed ||
+    intelligenceRefresh.errors ||
+    marketAlerts.liquiditySpikes ||
+    marketAlerts.volumeSpikes ||
+    marketAlerts.errors ||
     (snapshotWarmup.succeeded > 0 || snapshotWarmup.failed > 0)
   ) {
     console.log("[Maintenance] Run result:", summary);
@@ -4390,16 +4412,6 @@ async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Pr
   if (marketRefresh.updatedPosts > 0) {
     trendingCache = null;
   }
-
-  // Fire market-alert scan non-blocking — checks liquidity/volume spikes
-  // across all unsettled posts and broadcasts notifications to all users.
-  void runMarketAlertScan().then((alertResult) => {
-    if (alertResult.liquiditySpikes > 0 || alertResult.volumeSpikes > 0 || alertResult.errors > 0) {
-      console.log("[Maintenance] Market alert scan:", alertResult);
-    }
-  }).catch((err) => {
-    console.warn("[Maintenance] Market alert scan failed", { error: err instanceof Error ? err.message : String(err) });
-  });
 
   return summary;
 }
@@ -4418,7 +4430,12 @@ function triggerMaintenanceCycleNonBlocking(reason: string): void {
         result.settlement.levelChanges6h ||
         result.settlement.errors ||
         result.marketRefresh.updatedPosts ||
-        result.marketRefresh.errors
+        result.marketRefresh.errors ||
+        result.intelligenceRefresh.refreshed ||
+        result.intelligenceRefresh.errors ||
+        result.marketAlerts.liquiditySpikes ||
+        result.marketAlerts.volumeSpikes ||
+        result.marketAlerts.errors
       ) {
         console.log("[Maintenance] Opportunistic trigger completed", { reason, result });
       }
@@ -4433,6 +4450,8 @@ function triggerMaintenanceCycleNonBlocking(reason: string): void {
         durationMs: Date.now() - now,
         settlement: { settled1h: 0, snapshot6h: 0, levelChanges6h: 0, errors: 1 },
         marketRefresh: { scannedPosts: 0, eligiblePosts: 0, refreshedContracts: 0, updatedPosts: 0, errors: 1 },
+        intelligenceRefresh: { attempted: 0, refreshed: 0, skipped: 0, errors: 1, durationMs: 0 },
+        marketAlerts: { contractsChecked: 0, liquiditySpikes: 0, volumeSpikes: 0, durationMs: 0, errors: 1 },
         snapshotWarmup: {
           attempted: 0,
           succeeded: 0,
@@ -4468,6 +4487,30 @@ function triggerSettlementCycleNonBlocking(reason: string): void {
     .finally(() => {
       settlementRunInFlight = null;
     });
+}
+
+export function startMaintenanceLoop(opts?: { canRun?: () => boolean }): void {
+  if (opts?.canRun) {
+    maintenanceLoopCanRun = opts.canRun;
+  }
+  if (maintenanceLoopTimer) {
+    return;
+  }
+
+  const triggerLoop = () => {
+    if (maintenanceLoopCanRun && !maintenanceLoopCanRun()) {
+      return;
+    }
+    triggerMaintenanceCycleNonBlocking("background_loop");
+  };
+
+  setTimeout(() => {
+    triggerLoop();
+  }, BACKGROUND_MAINTENANCE_LOOP_START_DELAY_MS);
+
+  maintenanceLoopTimer = setInterval(() => {
+    triggerLoop();
+  }, BACKGROUND_MAINTENANCE_LOOP_INTERVAL_MS);
 }
 
 // Get all posts (feed) with sorting and filtering

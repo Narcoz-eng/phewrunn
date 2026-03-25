@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "postinstall": "prisma generate",
+    "pretypecheck": "npm run db:generate",
     "dev": "bun run --hot src/index.ts",
     "start": "node_modules/.bin/prisma generate && node ./scripts/prisma-migrate-deploy.mjs && bun run src/index.ts",
     "build": "npx prisma@6 generate",

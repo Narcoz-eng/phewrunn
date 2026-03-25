@@ -13,7 +13,7 @@ import {
   type AuthVariables,
 } from "./auth.js";
 import { prisma, withPrismaRetry, ensurePrismaReady } from "./prisma.js";
-import { postsRouter } from "./routes/posts.js";
+import { postsRouter, startMaintenanceLoop } from "./routes/posts.js";
 import { usersRouter } from "./routes/users.js";
 import { adminRouter } from "./routes/admin.js";
 import { notificationsRouter } from "./routes/notifications.js";
@@ -140,10 +140,16 @@ const INTELLIGENCE_PRIORITY_LOOP_ENABLED = (() => {
   if (raw === "false") return false;
   return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 })();
+const BACKGROUND_MAINTENANCE_LOOP_ENABLED = (() => {
+  const raw = process.env.BACKGROUND_MAINTENANCE_LOOP_ENABLED?.trim().toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+})();
 const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 10_000 : 5_000;
 let lastAuthSensitiveRequestAt = Date.now();
-let intelligencePriorityLoopBootstrapped = false;
-let intelligencePriorityLoopBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundLoopsBootstrapped = false;
+let backgroundLoopsBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
 
 function isAuthSensitivePath(path: string): boolean {
   return path === "/api/me" || path === "/api/me/stats" || path.startsWith("/api/auth/");
@@ -162,32 +168,36 @@ function isIntelligenceSurfacePath(path: string): boolean {
   );
 }
 
-function scheduleIntelligencePriorityLoopBootstrap(): void {
-  if (!INTELLIGENCE_PRIORITY_LOOP_ENABLED) {
+function scheduleBackgroundLoopBootstrap(): void {
+  if (!INTELLIGENCE_PRIORITY_LOOP_ENABLED && !BACKGROUND_MAINTENANCE_LOOP_ENABLED) {
     return;
   }
 
-  if (intelligencePriorityLoopBootstrapped) {
+  if (backgroundLoopsBootstrapped) {
     return;
   }
 
   const quietForMs = Date.now() - lastAuthSensitiveRequestAt;
   const remainingQuietMs = Math.max(0, INTELLIGENCE_PRIORITY_AUTH_QUIET_MS - quietForMs);
 
-  if (intelligencePriorityLoopBootstrapTimer) {
-    clearTimeout(intelligencePriorityLoopBootstrapTimer);
+  if (backgroundLoopsBootstrapTimer) {
+    clearTimeout(backgroundLoopsBootstrapTimer);
   }
 
-  intelligencePriorityLoopBootstrapTimer = setTimeout(() => {
-    intelligencePriorityLoopBootstrapTimer = null;
+  backgroundLoopsBootstrapTimer = setTimeout(() => {
+    backgroundLoopsBootstrapTimer = null;
     if (Date.now() - lastAuthSensitiveRequestAt < INTELLIGENCE_PRIORITY_AUTH_QUIET_MS) {
-      scheduleIntelligencePriorityLoopBootstrap();
+      scheduleBackgroundLoopBootstrap();
       return;
     }
-    intelligencePriorityLoopBootstrapped = true;
-    startIntelligencePriorityLoop({
-      canRun: () => Date.now() - lastAuthSensitiveRequestAt >= INTELLIGENCE_PRIORITY_AUTH_QUIET_MS,
-    });
+    backgroundLoopsBootstrapped = true;
+    const canRun = () => Date.now() - lastAuthSensitiveRequestAt >= INTELLIGENCE_PRIORITY_AUTH_QUIET_MS;
+    if (INTELLIGENCE_PRIORITY_LOOP_ENABLED) {
+      startIntelligencePriorityLoop({ canRun });
+    }
+    if (BACKGROUND_MAINTENANCE_LOOP_ENABLED) {
+      startMaintenanceLoop({ canRun });
+    }
   }, remainingQuietMs);
 }
 
@@ -228,10 +238,14 @@ app.use("/api/*", async (c, next) => {
 
 app.use("/api/*", async (c, next) => {
   const path = c.req.path;
-  if (INTELLIGENCE_PRIORITY_LOOP_ENABLED && isAuthSensitivePath(path)) {
+  if ((INTELLIGENCE_PRIORITY_LOOP_ENABLED || BACKGROUND_MAINTENANCE_LOOP_ENABLED) && isAuthSensitivePath(path)) {
     lastAuthSensitiveRequestAt = Date.now();
-  } else if (INTELLIGENCE_PRIORITY_LOOP_ENABLED && isIntelligenceSurfacePath(path)) {
-    scheduleIntelligencePriorityLoopBootstrap();
+    scheduleBackgroundLoopBootstrap();
+  } else if (
+    (INTELLIGENCE_PRIORITY_LOOP_ENABLED || BACKGROUND_MAINTENANCE_LOOP_ENABLED) &&
+    isIntelligenceSurfacePath(path)
+  ) {
+    scheduleBackgroundLoopBootstrap();
   }
   return next();
 });
@@ -3858,6 +3872,8 @@ console.log(`
   Auth: Better Auth (email/password)
 ====================================
 `);
+
+scheduleBackgroundLoopBootstrap();
 
 // =====================================================
 // TODO: Production Improvements

@@ -615,6 +615,14 @@ type TokenRefreshResult = {
   refreshed: boolean;
 };
 
+type IntelligencePrewarmResult = {
+  attempted: number;
+  refreshed: number;
+  skipped: number;
+  errors: number;
+  durationMs: number;
+};
+
 type MarketContextSnapshot = {
   label: "risk-on" | "balanced" | "risk-off";
   breadthScore: number;
@@ -1607,7 +1615,10 @@ async function ensureTokensForCalls(records: CallRecord[]): Promise<Map<string, 
   return tokenMap;
 }
 
-export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRefreshResult | null> {
+export async function refreshTokenIntelligence(
+  tokenId: string,
+  opts?: { awaitSignalAlerts?: boolean }
+): Promise<TokenRefreshResult | null> {
   const existingRequest = tokenRefreshInFlight.get(tokenId);
   if (existingRequest) {
     return existingRequest;
@@ -2084,12 +2095,15 @@ export async function refreshTokenIntelligence(tokenId: string): Promise<TokenRe
       whaleAccumulatingCount: topHolders.filter((h) => isWhale(h) && isAccumulating(h)).length,
       smartMoneyCount: topHolders.filter((h) => isSmartMoney(h) && isAccumulating(h)).length,
     };
-    void fanoutTokenSignalAlerts({
+    const signalAlertTask = fanoutTokenSignalAlerts({
       marketCap,
       token: { ...refreshedToken, liquidity },
       previousToken: existing ? { ...existing, liquidity: existing.liquidity ?? null } : null,
       holderStats,
     }).catch(() => undefined);
+    if (opts?.awaitSignalAlerts) {
+      await signalAlertTask;
+    }
 
     return {
       token: refreshedToken,
@@ -2730,7 +2744,8 @@ async function hydrateCalls(
     );
     const marketAdjustedMomentumPct = Math.max(0, roiCurrentPct ?? 0) * marketContext.accelerationMultiplier;
     const compositeMomentumPct = Math.max(marketAdjustedMomentumPct, Math.max(0, mcapGrowthPct) * marketContext.accelerationMultiplier);
-    const confidenceScoreBase = shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
+    const confidenceScore = roundMetricOrZero(
+      shouldUseStoredIntelligence && hasFiniteMetric(record.confidenceScore)
         ? record.confidenceScore
         : computeConfidenceScore({
           traderWinRate30d: record.author.winRate30d,
@@ -2754,15 +2769,7 @@ async function hydrateCalls(
           marketBreadthScore: marketContext.breadthScore,
           roiCurrentPct,
           sentimentScore,
-        });
-    const confidenceScore = roundMetricOrZero(
-      applyConfidenceGuardrails({
-        baseScore: confidenceScoreBase,
-        tokenRiskScore: token?.tokenRiskScore ?? null,
-        top10HolderPct: token?.top10HolderPct ?? null,
-        roiCurrentPct,
-        sentimentScore,
-      })
+        })
     );
     const weightedEngagementPerHour = computeWeightedEngagementPerHour({
       reactions: reactionCounts,
@@ -2975,46 +2982,15 @@ function buildFeedCursorWhere(cursorBoundary: FeedCursorBoundary | null): Prisma
   };
 }
 
-function buildRankedFeedWhere(kind: FeedKind): Prisma.PostWhereInput | undefined {
-  if (kind === "latest" || kind === "following") {
-    return undefined;
-  }
-
-  if (kind === "hot-alpha") {
-    return {
-      hotAlphaScore: { gte: HOT_ALPHA_THRESHOLD },
-      OR: [{ roiCurrentPct: null }, { roiCurrentPct: { gt: -45 } }],
-    };
-  }
-
-  if (kind === "early-runners") {
-    return {
-      earlyRunnerScore: { gte: EARLY_RUNNER_THRESHOLD },
-      OR: [{ roiCurrentPct: null }, { roiCurrentPct: { gt: -50 } }],
-    };
-  }
-
-  return {
-    highConvictionScore: { gte: HIGH_CONVICTION_THRESHOLD },
-    confidenceScore: { gte: 45 },
-    OR: [{ roiCurrentPct: null }, { roiCurrentPct: { gt: -35 } }],
-  };
-}
-
 function buildFeedOrderBy(kind: FeedKind): Prisma.PostOrderByWithRelationInput[] {
   if (kind === "latest" || kind === "following") {
     return [{ createdAt: "desc" }, { id: "desc" }];
   }
 
-  if (kind === "hot-alpha") {
-    return [{ hotAlphaScore: "desc" }, { createdAt: "desc" }, { id: "desc" }];
-  }
-
-  if (kind === "early-runners") {
-    return [{ earlyRunnerScore: "desc" }, { createdAt: "desc" }, { id: "desc" }];
-  }
-
-  return [{ highConvictionScore: "desc" }, { createdAt: "desc" }, { id: "desc" }];
+  // Ranked feeds are sorted in-memory after fresh intelligence hydration.
+  // Pull the freshest candidate window instead of depending on persisted
+  // post score columns, which can lag or be unset on new posts.
+  return [{ createdAt: "desc" }, { id: "desc" }];
 }
 
 async function getFollowingSnapshot(viewerId: string | null): Promise<{
@@ -3250,7 +3226,11 @@ export async function computeRealtimeIntelligenceSnapshots(
   );
 }
 
-async function prewarmRecentTokenIntelligence(): Promise<void> {
+export async function prewarmRecentTokenIntelligence(
+  opts?: { limit?: number; awaitSignalAlerts?: boolean }
+): Promise<IntelligencePrewarmResult> {
+  const startedAtMs = Date.now();
+  const limit = Math.max(1, Math.trunc(opts?.limit ?? INTELLIGENCE_PREWARM_TOKEN_LIMIT));
   const recentRecords = await prisma.post.findMany({
     where: {
       OR: [
@@ -3260,11 +3240,17 @@ async function prewarmRecentTokenIntelligence(): Promise<void> {
     },
     select: CALL_SELECT,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: Math.max(INTELLIGENCE_PREWARM_TOKEN_LIMIT * 3, 72),
+    take: Math.max(limit * 3, 72),
   });
 
   if (recentRecords.length === 0) {
-    return;
+    return {
+      attempted: 0,
+      refreshed: 0,
+      skipped: 0,
+      errors: 0,
+      durationMs: Date.now() - startedAtMs,
+    };
   }
 
   const ensuredTokenMap = await ensureTokensForCalls(recentRecords);
@@ -3278,12 +3264,44 @@ async function prewarmRecentTokenIntelligence(): Promise<void> {
       }
       return (right.updatedAt?.getTime?.() ?? 0) - (left.updatedAt?.getTime?.() ?? 0);
     })
-    .slice(0, INTELLIGENCE_PREWARM_TOKEN_LIMIT);
+    .slice(0, limit);
+
+  let attempted = 0;
+  let refreshed = 0;
+  let skipped = 0;
+  let errors = 0;
 
   for (let index = 0; index < tokensToRefresh.length; index += 5) {
     const batch = tokensToRefresh.slice(index, index + 5);
-    await Promise.allSettled(batch.map((token) => refreshTokenIntelligence(token.id)));
+    const results = await Promise.allSettled(
+      batch.map((token) =>
+        refreshTokenIntelligence(
+          token.id,
+          opts?.awaitSignalAlerts ? { awaitSignalAlerts: true } : undefined
+        )
+      )
+    );
+    attempted += batch.length;
+    for (const result of results) {
+      if (result.status === "rejected") {
+        errors += 1;
+        continue;
+      }
+      if (result.value?.refreshed) {
+        refreshed += 1;
+      } else {
+        skipped += 1;
+      }
+    }
   }
+
+  return {
+    attempted,
+    refreshed,
+    skipped,
+    errors,
+    durationMs: Date.now() - startedAtMs,
+  };
 }
 
 async function runIntelligencePriorityLoop(): Promise<void> {
@@ -3392,11 +3410,6 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         });
       }
 
-      const rankedWhere = buildRankedFeedWhere(args.kind);
-      if (rankedWhere) {
-        whereClauses.push(rankedWhere);
-      }
-
       const cursorWhere = buildFeedCursorWhere(cursorBoundary);
       if (cursorWhere) {
         whereClauses.push(cursorWhere);
@@ -3409,7 +3422,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             ? whereClauses[0]
             : { AND: whereClauses };
       const isDirectChronologicalFeed = args.kind === "latest" || args.kind === "following";
-      const preferStoredFeedIntelligence = true;
+      const preferStoredFeedIntelligence = isDirectChronologicalFeed;
       const candidateLimit = isDirectChronologicalFeed
         ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
         : Math.max(
@@ -4534,18 +4547,30 @@ async function computeDailyLeaderboardsPayload(): Promise<LeaderboardsPayload> {
       return right.winRatePct - left.winRatePct;
     })
     .slice(0, 12);
+  const sortedHotAlphaToday = [...qualifiedCallsToday].sort((left, right) => {
+    const hotDelta = right.hotAlphaScore - left.hotAlphaScore;
+    if (hotDelta !== 0) return hotDelta;
+    const confidenceDelta = right.confidenceScore - left.confidenceScore;
+    if (confidenceDelta !== 0) return confidenceDelta;
+    return right.createdAt.getTime() - left.createdAt.getTime();
+  });
+  const hardRankedHotAlphaToday = sortedHotAlphaToday.filter((call) =>
+    isEligibleForRankedFeed("hot-alpha", call)
+  );
+  const fallbackHotAlphaToday = sortedHotAlphaToday.filter((call) => {
+    return (
+      finite(call.hotAlphaScore) >= 35 ||
+      finite(call.confidenceScore) >= 35 ||
+      finite(call.earlyRunnerScore) >= 50 ||
+      finite(call.highConvictionScore) >= 50
+    );
+  });
 
   return {
     topTradersToday,
-    topAlphaToday: [...qualifiedCallsToday]
-      .filter((call) => isEligibleForRankedFeed("hot-alpha", call))
-      .sort((left, right) => {
-        const hotDelta = right.hotAlphaScore - left.hotAlphaScore;
-        if (hotDelta !== 0) return hotDelta;
-        const confidenceDelta = right.confidenceScore - left.confidenceScore;
-        if (confidenceDelta !== 0) return confidenceDelta;
-        return right.createdAt.getTime() - left.createdAt.getTime();
-      })
+    topAlphaToday: (hardRankedHotAlphaToday.length > 0
+      ? hardRankedHotAlphaToday
+      : fallbackHotAlphaToday)
       .slice(0, 12),
     biggestRoiToday: [...qualifiedCallsToday]
       .filter((call) => finite(call.roiPeakPct, -100) > 0)

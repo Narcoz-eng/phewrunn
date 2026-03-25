@@ -6,6 +6,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { TopUsersTable } from "@/components/leaderboard/TopUsersTable";
 import { LeaderboardStats } from "@/components/leaderboard/LeaderboardStats";
+import { IntelligenceLeaderboards } from "@/components/leaderboard/IntelligenceLeaderboards";
+import { DailyGainersTable } from "@/components/leaderboard/DailyGainersTable";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import { User } from "@/types";
@@ -226,9 +228,25 @@ export default function Leaderboard() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Leaderboard</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Top traders ranked by level, activity, and win rate
+            Daily alpha races, best calls of the day, and trader rankings
           </p>
         </div>
+
+        <QueryErrorBoundary sectionName="Alpha Race">
+          <IntelligenceLeaderboards />
+        </QueryErrorBoundary>
+
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Daily Top Gainers</h2>
+            <p className="text-sm text-muted-foreground">
+              Strongest settled calls across the 1H and 6H snapshot windows.
+            </p>
+          </div>
+          <QueryErrorBoundary sectionName="Daily Gainers">
+            <DailyGainersTable />
+          </QueryErrorBoundary>
+        </section>
 
         {/* Day / Week toggle */}
         <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
@@ -243,9 +261,17 @@ export default function Leaderboard() {
         </Tabs>
 
         {/* Unified leaderboard */}
-        <QueryErrorBoundary sectionName="Leaderboard">
-          <TopUsersTable enabled period={period} />
-        </QueryErrorBoundary>
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Top Traders</h2>
+            <p className="text-sm text-muted-foreground">
+              Ranked by level, activity, and win rate across the platform.
+            </p>
+          </div>
+          <QueryErrorBoundary sectionName="Leaderboard">
+            <TopUsersTable enabled period={period} />
+          </QueryErrorBoundary>
+        </section>
 
         {/* Bottom stats bar */}
         <LeaderboardStats />
