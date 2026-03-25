@@ -1,5 +1,5 @@
 import { Prisma, type AlertPreference } from "@prisma/client";
-import { prisma, isTransientPrismaError } from "../../prisma.js";
+import { prisma, isPrismaPoolPressureActive, isTransientPrismaError } from "../../prisma.js";
 import {
   applyConfidenceGuardrails,
   buildReactionCounts,
@@ -3365,6 +3365,27 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
     return freshCached;
   }
   const staleCached = peekCacheValue(feedListCache, cacheKey);
+  if (isPrismaPoolPressureActive()) {
+    if (staleCached) {
+      console.warn("[intelligence/feed] serving stale feed cache during prisma pool pressure", {
+        kind: args.kind,
+        viewerId: args.viewerId,
+      });
+      return staleCached;
+    }
+
+    console.warn("[intelligence/feed] pool pressure active; serving degraded empty feed", {
+      kind: args.kind,
+      viewerId: args.viewerId,
+    });
+    return {
+      items: [],
+      hasMore: false,
+      nextCursor: null,
+      totalItems: 0,
+      degraded: true,
+    };
+  }
   const currentInFlight = feedListInFlight.get(cacheKey);
   if (currentInFlight) {
     if (staleCached) {

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
-import { prisma } from "../prisma.js";
+import { prisma, isPrismaPoolPressureActive } from "../prisma.js";
 import { type AuthVariables } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete, redisGetString, redisIncr, redisSetString } from "../lib/redis.js";
 import {
@@ -1341,6 +1341,15 @@ leaderboardRouter.get("/weekly-best", async (c) => {
   if (redisCached) {
     weeklyBestCache = { data: redisCached, expiresAtMs: Date.now() + WEEKLY_BEST_CACHE_TTL_MS };
     return c.json({ data: redisCached });
+  }
+
+  if (isPrismaPoolPressureActive()) {
+    console.warn("[leaderboard] weekly-best skipped during prisma pool pressure");
+    if (staleCached) {
+      return c.json({ data: staleCached });
+    }
+    weeklyBestCache = { data: [], expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS };
+    return c.json({ data: [] });
   }
 
   if (weeklyBestInFlight) {

@@ -34,6 +34,16 @@ function getPositiveIntEnv(name: string): number | null {
   return parsed;
 }
 
+function resolveRuntimeConnectionLimit(configuredLimit: number | null): number {
+  if (isServerlessRuntime) {
+    const requestedLimit = configuredLimit ?? (isProduction ? 1 : 2);
+    const safeUpperBound = isProduction ? 1 : 3;
+    return Math.max(1, Math.min(requestedLimit, safeUpperBound));
+  }
+
+  return configuredLimit ?? (isProduction ? 10 : 5);
+}
+
 function normalizeDatabaseUrl(
   rawUrl: string | undefined,
   directUrl: string | undefined
@@ -54,7 +64,7 @@ function normalizeDatabaseUrl(
     const isPoolerHost =
       hostname.includes(".pooler.") || hostname.includes("-pooler.") || hostname.includes("pooler");
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
-    const desiredConnectionLimit = configuredConnectionLimit ?? (isServerlessRuntime ? 3 : (isProduction ? 10 : 5));
+    const desiredConnectionLimit = resolveRuntimeConnectionLimit(configuredConnectionLimit);
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
     const desiredPoolTimeout = configuredPoolTimeout ?? (isServerlessRuntime ? (isProduction ? 10 : 8) : (isProduction ? 8 : 10));
 
@@ -83,6 +93,13 @@ function normalizeDatabaseUrl(
       ) {
         parsed.searchParams.set("connection_limit", String(desiredConnectionLimit));
         notes.push(`set connection_limit=${desiredConnectionLimit}`);
+      }
+      if (
+        isServerlessRuntime &&
+        configuredConnectionLimit !== null &&
+        configuredConnectionLimit > desiredConnectionLimit
+      ) {
+        notes.push(`capped PRISMA_CONNECTION_LIMIT from ${configuredConnectionLimit} to ${desiredConnectionLimit}`);
       }
 
       const existingPoolTimeout = Number(parsed.searchParams.get("pool_timeout") ?? "");
@@ -748,6 +765,15 @@ let lastPostgresCompatRefreshStartedAt = 0;
 let lastPostgresCompatRefreshSucceededAt = 0;
 let lastPostgresCompatRefreshFailedAt = 0;
 let lastPostgresCompatRefreshError: string | null = null;
+const PRISMA_PRESSURE_COOLDOWN_MS =
+  getPositiveIntEnv("PRISMA_PRESSURE_COOLDOWN_MS") ??
+  (isProduction ? 15_000 : 5_000);
+const PRISMA_PRESSURE_LOG_COOLDOWN_MS =
+  getPositiveIntEnv("PRISMA_PRESSURE_LOG_COOLDOWN_MS") ??
+  (isProduction ? 5_000 : 2_000);
+let prismaPressureUntilMs = 0;
+let prismaPressureLastReason: string | null = null;
+let prismaPressureLastLoggedAt = 0;
 
 async function refreshPrismaCompatGuardrails(options?: {
   force?: boolean;
@@ -879,6 +905,9 @@ async function withPrismaRetry<T>(
     } catch (error) {
       lastError = error;
       const isTransient = isTransientPrismaError(error);
+      if (isTransient) {
+        markPrismaPressure(error, opts?.label);
+      }
       const attemptDurationMs = Date.now() - attemptStartedAtMs;
       const totalDurationMs = Date.now() - startedAtMs;
       if (!isTransient || attempt >= maxRetries) {
@@ -907,6 +936,35 @@ async function withPrismaRetry<T>(
   }
 
   throw lastError;
+}
+
+function markPrismaPressure(error: unknown, label?: string): void {
+  if (!isTransientPrismaError(error)) {
+    return;
+  }
+
+  const now = Date.now();
+  prismaPressureUntilMs = Math.max(prismaPressureUntilMs, now + PRISMA_PRESSURE_COOLDOWN_MS);
+  prismaPressureLastReason =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : label ?? "transient_prisma_error";
+
+  if (now - prismaPressureLastLoggedAt >= PRISMA_PRESSURE_LOG_COOLDOWN_MS) {
+    prismaPressureLastLoggedAt = now;
+    console.warn("[Prisma] Pool-pressure guard active", {
+      label: label ?? null,
+      cooldownMs: PRISMA_PRESSURE_COOLDOWN_MS,
+      until: new Date(prismaPressureUntilMs).toISOString(),
+      reason: prismaPressureLastReason,
+    });
+  }
+}
+
+function isPrismaPoolPressureActive(): boolean {
+  return Date.now() < prismaPressureUntilMs;
 }
 
 function isTransientPrismaError(error: unknown): boolean {
@@ -943,5 +1001,6 @@ export {
   ensurePrismaReady,
   withPrismaRetry,
   isTransientPrismaError,
+  isPrismaPoolPressureActive,
   refreshPrismaCompatGuardrails,
 };

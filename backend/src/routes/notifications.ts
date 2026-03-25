@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
-import { prisma, withPrismaRetry, isTransientPrismaError } from "../prisma.js";
+import { prisma, withPrismaRetry, isPrismaPoolPressureActive, isTransientPrismaError } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { NotificationsQuerySchema } from "../types.js";
@@ -924,6 +924,13 @@ notificationsRouter.get("/", requireAuth, async (c) => {
     });
     return c.json({ data: staleCachedNotifications });
   }
+  if (isPrismaPoolPressureActive()) {
+    console.warn("[notifications/list] pool pressure active; serving degraded empty state", {
+      userId: user.id,
+      includeDismissed,
+    });
+    return c.json({ data: [], degraded: true });
+  }
   try {
     const notifications = await loadNotificationsListFresh(
       listCacheKey,
@@ -965,6 +972,12 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
       });
     });
     return c.json({ data: { count: staleUnreadCount } });
+  }
+  if (isPrismaPoolPressureActive()) {
+    console.warn("[notifications/unread-count] pool pressure active; serving zero fallback", {
+      userId: user.id,
+    });
+    return c.json({ data: { count: 0 } });
   }
   try {
     const count = await loadNotificationsUnreadCountFresh(user.id, staleUnreadCount);

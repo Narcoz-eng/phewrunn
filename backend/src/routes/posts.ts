@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { prisma, withPrismaRetry } from "../prisma.js";
+import { prisma, withPrismaRetry, isPrismaPoolPressureActive } from "../prisma.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import {
   CreatePostSchema,
@@ -257,7 +257,7 @@ const FEED_CARD_SNAPSHOT_TTL_MS = process.env.NODE_ENV === "production" ? 10 * 6
 const FEED_CARD_SNAPSHOT_MAX_ENTRIES = process.env.NODE_ENV === "production" ? 16_000 : 2_000;
 const FEED_DEGRADED_CIRCUIT_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 15_000;
 const FEED_TOTAL_POST_COUNT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
-const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 12_000 : 4_000;
+const POST_PRICE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 18_000 : 4_000;
 const POST_PRICE_LIVE_INTELLIGENCE_REFRESH_INTERVAL_MS =
   process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
 const POST_PRICE_ACTIVE_STALE_FALLBACK_MS =
@@ -1335,6 +1335,13 @@ async function loadPostPricePayload(
   const existingRequest = postPriceResponseInFlight.get(postId);
   if (existingRequest) {
     return await existingRequest;
+  }
+
+  if (isPrismaPoolPressureActive()) {
+    const stalePayload = await resolveCachedPostPricePayload(postId, { allowStale: true });
+    return stalePayload
+      ? ({ state: "ok", data: stalePayload } as const)
+      : ({ state: "unavailable" } as const);
   }
 
   const request: Promise<
@@ -5776,6 +5783,11 @@ postsRouter.get("/trending", async (c) => {
     }
   }
 
+  if (isPrismaPoolPressureActive()) {
+    console.warn("[posts/trending] pool pressure active; serving stale-or-empty payload");
+    return c.json({ data: trendingCache?.data ?? [] });
+  }
+
   trendingInFlight = (async () => {
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
@@ -7114,6 +7126,10 @@ async function attachRealtimeIntelligenceToPostPricePayloads(
   context: "batch" | "single"
 ): Promise<void> {
   if (posts.length === 0 || payloadsById.size === 0) {
+    return;
+  }
+
+  if (isPrismaPoolPressureActive()) {
     return;
   }
 
@@ -8677,6 +8693,31 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
   const missingIds = uniqueIds.filter((id) => !payloadById.has(id));
 
   if (missingIds.length === 0) {
+    return c.json({
+      data: Object.fromEntries(
+        uniqueIds.flatMap((id) => {
+          const payload = payloadById.get(id);
+          return payload ? [[id, payload] as const] : [];
+        })
+      ),
+    });
+  }
+
+  if (isPrismaPoolPressureActive()) {
+    const staleCachedEntries = await Promise.all(
+      missingIds.map(async (id) => [id, await resolveCachedPostPricePayload(id, { allowStale: true })] as const)
+    );
+    for (const [id, cached] of staleCachedEntries) {
+      if (cached) {
+        payloadById.set(id, cached);
+      }
+    }
+
+    console.warn("[posts/prices] pool pressure active; serving cached-or-empty batch payload", {
+      requestedIds: uniqueIds.length,
+      cachedIds: payloadById.size,
+    });
+
     return c.json({
       data: Object.fromEntries(
         uniqueIds.flatMap((id) => {

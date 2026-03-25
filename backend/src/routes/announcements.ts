@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { prisma, withPrismaRetry } from "../prisma.js";
+import { prisma, withPrismaRetry, isPrismaPoolPressureActive } from "../prisma.js";
 import { type AuthVariables, requireAuth } from "../auth.js";
 import { type Announcement } from "../types.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
@@ -11,6 +11,8 @@ type CachedAnnouncement = Omit<Announcement, "isViewed">;
 
 const ANNOUNCEMENTS_CACHE_TTL_MS =
   process.env.NODE_ENV === "production" ? 60_000 : 10_000;
+const ANNOUNCEMENTS_DEGRADED_CACHE_TTL_MS =
+  process.env.NODE_ENV === "production" ? 5_000 : 2_000;
 const ANNOUNCEMENTS_CACHE_KEY = "announcements:pinned:v1";
 let announcementsCache:
   | {
@@ -60,6 +62,13 @@ function writeAnnouncementsCache(data: CachedAnnouncement[]): void {
     expiresAtMs: Date.now() + ANNOUNCEMENTS_CACHE_TTL_MS,
   };
   void cacheSetJson(ANNOUNCEMENTS_CACHE_KEY, data, ANNOUNCEMENTS_CACHE_TTL_MS);
+}
+
+function writeAnnouncementsDegradedCache(data: CachedAnnouncement[]): void {
+  announcementsCache = {
+    data,
+    expiresAtMs: Date.now() + ANNOUNCEMENTS_DEGRADED_CACHE_TTL_MS,
+  };
 }
 
 export function invalidateAnnouncementsCache(): void {
@@ -127,6 +136,11 @@ announcementsRouter.get("/", async (c) => {
 
   let announcements = await readAnnouncementsCache();
   if (!announcements) {
+    if (isPrismaPoolPressureActive()) {
+      console.warn("[announcements/list] pool pressure active; serving empty state");
+      announcements = [];
+      writeAnnouncementsDegradedCache(announcements);
+    } else {
     try {
       const rows = await withPrismaRetry(
         () => prisma.announcement.findMany({
@@ -159,13 +173,14 @@ announcementsRouter.get("/", async (c) => {
         recoverable: isPrismaClientError(error),
       });
       announcements = [];
-      writeAnnouncementsCache(announcements);
+      writeAnnouncementsDegradedCache(announcements);
+    }
     }
   }
 
   // If user is authenticated, get their viewed announcements
   let viewedIds: Set<string> = new Set();
-  if (user && announcements.length > 0) {
+  if (user && announcements.length > 0 && !isPrismaPoolPressureActive()) {
     try {
       const views = await prisma.announcementView.findMany({
         where: {

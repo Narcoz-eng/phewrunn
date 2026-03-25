@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
-import { isTransientPrismaError, prisma } from "../prisma.js";
+import { isPrismaPoolPressureActive, isTransientPrismaError, prisma } from "../prisma.js";
 import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
 import {
   analyzeSolanaTokenDistribution,
@@ -624,6 +624,7 @@ tokensRouter.get(
   const { tokenAddress } = c.req.valid("param");
   const { fresh } = c.req.valid("query");
   const shouldPreferFreshDistribution = fresh === "1" || fresh === "true";
+  const shouldAvoidFreshDbReads = isPrismaPoolPressureActive();
   const cacheKey = buildTokenLiveRouteCacheKey(tokenAddress, {
     fresh: shouldPreferFreshDistribution,
   });
@@ -668,62 +669,92 @@ tokensRouter.get(
               preferFresh: shouldPreferFreshDistribution,
             })
           : Promise.resolve(cachedDistribution),
-        prisma.post.findMany({
-          where: {
-            contractAddress: tokenAddress,
-          },
-          select: {
-            id: true,
-            authorId: true,
-            createdAt: true,
-            entryMcap: true,
-            currentMcap: true,
-            lastMcapUpdate: true,
-            lastIntelligenceAt: true,
-            roiCurrentPct: true,
-            threadCount: true,
-            reactionCounts: true,
-            entryQualityScore: true,
-            author: {
+        shouldAvoidFreshDbReads
+          ? Promise.resolve([] as Array<{
+              id: string;
+              authorId: string;
+              createdAt: Date;
+              entryMcap: number | null;
+              currentMcap: number | null;
+              lastMcapUpdate: Date | null;
+              lastIntelligenceAt: Date | null;
+              roiCurrentPct: number | null;
+              threadCount: number | null;
+              reactionCounts: unknown;
+              entryQualityScore: number | null;
+              author: {
+                id: string;
+                trustScore: number | null;
+                winRate30d: number | null;
+                avgRoi30d: number | null;
+              };
+              _count: {
+                comments: number;
+              };
+            }>)
+          : prisma.post.findMany({
+              where: {
+                contractAddress: tokenAddress,
+              },
               select: {
                 id: true,
-                trustScore: true,
-                winRate30d: true,
-                avgRoi30d: true,
+                authorId: true,
+                createdAt: true,
+                entryMcap: true,
+                currentMcap: true,
+                lastMcapUpdate: true,
+                lastIntelligenceAt: true,
+                roiCurrentPct: true,
+                threadCount: true,
+                reactionCounts: true,
+                entryQualityScore: true,
+                author: {
+                  select: {
+                    id: true,
+                    trustScore: true,
+                    winRate30d: true,
+                    avgRoi30d: true,
+                  },
+                },
+                _count: {
+                  select: {
+                    comments: true,
+                  },
+                },
               },
-            },
-            _count: {
-              select: {
-                comments: true,
-              },
-            },
-          },
-          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-          take: 24,
-        }).catch(() => [] as Array<{
-          id: string;
-          authorId: string;
-          createdAt: Date;
-          entryMcap: number | null;
-          currentMcap: number | null;
-          lastMcapUpdate: Date | null;
-          lastIntelligenceAt: Date | null;
-          roiCurrentPct: number | null;
-          threadCount: number | null;
-          reactionCounts: unknown;
-          entryQualityScore: number | null;
-          author: {
-            id: string;
-            trustScore: number | null;
-            winRate30d: number | null;
-            avgRoi30d: number | null;
-          };
-          _count: {
-            comments: number;
-          };
-        }>),
-        token?.id
-          ? prisma.tokenMetricSnapshot.findMany({
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              take: 24,
+            }).catch(() => [] as Array<{
+              id: string;
+              authorId: string;
+              createdAt: Date;
+              entryMcap: number | null;
+              currentMcap: number | null;
+              lastMcapUpdate: Date | null;
+              lastIntelligenceAt: Date | null;
+              roiCurrentPct: number | null;
+              threadCount: number | null;
+              reactionCounts: unknown;
+              entryQualityScore: number | null;
+              author: {
+                id: string;
+                trustScore: number | null;
+                winRate30d: number | null;
+                avgRoi30d: number | null;
+              };
+              _count: {
+                comments: number;
+              };
+            }>),
+        shouldAvoidFreshDbReads || !token?.id
+          ? Promise.resolve([] as Array<{
+              capturedAt: Date;
+              marketCap: number | null;
+              liquidity: number | null;
+              volume24h: number | null;
+              holderCount: number | null;
+            }>)
+          : prisma.tokenMetricSnapshot.findMany({
               where: { tokenId: token.id },
               select: {
                 capturedAt: true,
@@ -735,13 +766,6 @@ tokensRouter.get(
               orderBy: { capturedAt: "desc" },
               take: 6,
             }).catch(() => [] as Array<{
-              capturedAt: Date;
-              marketCap: number | null;
-              liquidity: number | null;
-              volume24h: number | null;
-              holderCount: number | null;
-            }>)
-          : Promise.resolve([] as Array<{
               capturedAt: Date;
               marketCap: number | null;
               liquidity: number | null;

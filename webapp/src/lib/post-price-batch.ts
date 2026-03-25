@@ -33,7 +33,7 @@ type PendingResolver = (value: BatchedPostPriceSnapshot | null) => void;
 
 const BATCH_WINDOW_MS = 24;
 const MAX_BATCH_SIZE = 40;
-const PRICE_CACHE_TTL_MS = 12_000;
+const PRICE_CACHE_TTL_MS = 18_000;
 const POST_PRICE_SESSION_CACHE_PREFIX = "phew.post-price.v1";
 
 const pendingById = new Map<string, PendingResolver[]>();
