@@ -46,6 +46,13 @@ type TokenLivePayload = {
   imageUrl: string | null;
   symbol: string | null;
   name: string | null;
+  sentimentScore: number | null;
+  confidenceScore: number | null;
+  hotAlphaScore: number | null;
+  earlyRunnerScore: number | null;
+  highConvictionScore: number | null;
+  sentiment: TokenRoutePayload["sentiment"];
+  lastIntelligenceAt: string | null;
   priceUsd: number | null;
   priceChange24hPct: number | null;
   buys24h: number | null;
@@ -267,6 +274,11 @@ function toTimestampMs(value: Date | string | null | undefined): number {
   return 0;
 }
 
+function toIsoTimestamp(value: Date | string | null | undefined): string | null {
+  const timestamp = toTimestampMs(value);
+  return timestamp > 0 ? new Date(timestamp).toISOString() : null;
+}
+
 function hasResolvedHolderCount(
   value: number | null | undefined,
   source: TokenRoutePayload["holderCountSource"] | TokenLivePayload["holderCountSource"]
@@ -372,6 +384,11 @@ function hasUsefulLiveTokenPayload(payload: TokenLivePayload): boolean {
     payload.marketCap !== null ||
     payload.liquidity !== null ||
     payload.volume24h !== null ||
+    payload.sentimentScore !== null ||
+    payload.confidenceScore !== null ||
+    payload.hotAlphaScore !== null ||
+    payload.earlyRunnerScore !== null ||
+    payload.highConvictionScore !== null ||
     payload.priceUsd !== null ||
     payload.symbol !== null ||
     payload.name !== null ||
@@ -629,6 +646,21 @@ tokensRouter.get(
           : chainType === "solana"
             ? distributionSnapshot?.bundleRiskLabel ?? token?.bundleRiskLabel ?? null
             : token?.bundleRiskLabel ?? null;
+      const sharedOverviewCacheKey = buildTokenRouteCacheKey(tokenAddress, null);
+      const sharedOverviewToken =
+        (await readBestEffortTokenRouteCache(sharedOverviewCacheKey)) ??
+        (await getTokenOverviewByAddress(tokenAddress, null).then((overview) => overview?.token ?? null).catch(() => null));
+      const sentiment = sharedOverviewToken?.sentiment ?? {
+        score: roundMetric(sharedOverviewToken?.sentimentScore ?? token?.sentimentScore) ?? 0,
+        reactions: {
+          alpha: 0,
+          based: 0,
+          printed: 0,
+          rug: 0,
+        },
+        bullishPct: 0,
+        bearishPct: 0,
+      };
 
       const payload = {
         marketCap: roundMetric(pickFirstPositiveMetric(marketSnapshot.mcap)),
@@ -652,6 +684,23 @@ tokensRouter.get(
         imageUrl: marketSnapshot.tokenImage ?? token?.imageUrl ?? null,
         symbol: marketSnapshot.tokenSymbol ?? token?.symbol ?? null,
         name: marketSnapshot.tokenName ?? token?.name ?? null,
+        sentimentScore: roundMetric(sharedOverviewToken?.sentimentScore ?? token?.sentimentScore),
+        confidenceScore: roundMetric(sharedOverviewToken?.confidenceScore ?? token?.confidenceScore),
+        hotAlphaScore: roundMetric(sharedOverviewToken?.hotAlphaScore ?? token?.hotAlphaScore),
+        earlyRunnerScore: roundMetric(sharedOverviewToken?.earlyRunnerScore ?? token?.earlyRunnerScore),
+        highConvictionScore: roundMetric(sharedOverviewToken?.highConvictionScore ?? token?.highConvictionScore),
+        sentiment: {
+          score: roundMetric(sentiment.score) ?? 0,
+          reactions: {
+            alpha: roundCount(sentiment.reactions.alpha) ?? 0,
+            based: roundCount(sentiment.reactions.based) ?? 0,
+            printed: roundCount(sentiment.reactions.printed) ?? 0,
+            rug: roundCount(sentiment.reactions.rug) ?? 0,
+          },
+          bullishPct: roundMetric(sentiment.bullishPct) ?? 0,
+          bearishPct: roundMetric(sentiment.bearishPct) ?? 0,
+        },
+        lastIntelligenceAt: toIsoTimestamp(sharedOverviewToken?.lastIntelligenceAt ?? token?.lastIntelligenceAt ?? null),
         priceUsd: roundMetric(marketSnapshot.priceUsd ?? null),
         priceChange24hPct: roundMetric(marketSnapshot.priceChange24hPct ?? null),
         buys24h: roundCount(marketSnapshot.buys24h ?? null),

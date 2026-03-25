@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import { resolveEstimatedBundledSupplyPct } from "@/lib/bundle-intelligence";
-import type { TokenBundleCluster } from "@/types";
+import type { ReactionCounts, TokenBundleCluster } from "@/types";
 import type { TokenIntelligenceSnapshot } from "@/lib/token-intelligence-cache";
 
 export type TokenLiveIntelligencePayload = {
@@ -25,6 +25,18 @@ export type TokenLiveIntelligencePayload = {
   imageUrl: string | null;
   symbol: string | null;
   name: string | null;
+  sentimentScore: number | null;
+  confidenceScore: number | null;
+  hotAlphaScore: number | null;
+  earlyRunnerScore: number | null;
+  highConvictionScore: number | null;
+  sentiment: {
+    score: number;
+    reactions: ReactionCounts;
+    bullishPct: number;
+    bearishPct: number;
+  };
+  lastIntelligenceAt: string | null;
   priceUsd: number | null;
   priceChange24hPct: number | null;
   buys24h: number | null;
@@ -202,12 +214,12 @@ export function buildTokenIntelligenceSnapshotFromLivePayload(
     estimatedBundledSupplyPct,
     bundleRiskLabel: payload.bundleRiskLabel,
     tokenRiskScore: payload.tokenRiskScore,
-    sentimentScore: null,
-    confidenceScore: null,
-    hotAlphaScore: null,
-    earlyRunnerScore: null,
-    highConvictionScore: null,
-    lastIntelligenceAt: payload.bundleScanCompletedAt ?? payload.updatedAt ?? null,
+    sentimentScore: payload.sentimentScore,
+    confidenceScore: payload.confidenceScore,
+    hotAlphaScore: payload.hotAlphaScore,
+    earlyRunnerScore: payload.earlyRunnerScore,
+    highConvictionScore: payload.highConvictionScore,
+    lastIntelligenceAt: payload.lastIntelligenceAt ?? payload.bundleScanCompletedAt ?? payload.updatedAt ?? null,
     bundleClusters: payload.bundleClusters ?? [],
   };
 }

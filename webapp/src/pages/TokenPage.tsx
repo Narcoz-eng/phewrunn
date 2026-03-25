@@ -285,6 +285,18 @@ type TokenLiveData = {
   imageUrl: string | null;
   symbol: string | null;
   name: string | null;
+  sentimentScore: number | null;
+  confidenceScore: number | null;
+  hotAlphaScore: number | null;
+  earlyRunnerScore: number | null;
+  highConvictionScore: number | null;
+  sentiment: {
+    score: number;
+    reactions: ReactionCounts;
+    bullishPct: number;
+    bearishPct: number;
+  };
+  lastIntelligenceAt: string | null;
   priceUsd: number | null;
   priceChange24hPct: number | null;
   buys24h: number | null;
@@ -642,6 +654,96 @@ function getTokenIntelligenceVersion(token: Pick<TokenPageData, "lastIntelligenc
   }
   const parsed = new Date(token.lastIntelligenceAt).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function clampPercentage(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, value));
+}
+
+function sanitizeReactionCounts(
+  reactions: Partial<ReactionCounts> | null | undefined
+): ReactionCounts {
+  return {
+    alpha:
+      typeof reactions?.alpha === "number" && Number.isFinite(reactions.alpha) && reactions.alpha > 0
+        ? Math.round(reactions.alpha)
+        : 0,
+    based:
+      typeof reactions?.based === "number" && Number.isFinite(reactions.based) && reactions.based > 0
+        ? Math.round(reactions.based)
+        : 0,
+    printed:
+      typeof reactions?.printed === "number" && Number.isFinite(reactions.printed) && reactions.printed > 0
+        ? Math.round(reactions.printed)
+        : 0,
+    rug:
+      typeof reactions?.rug === "number" && Number.isFinite(reactions.rug) && reactions.rug > 0
+        ? Math.round(reactions.rug)
+        : 0,
+  };
+}
+
+function resolveSentimentSplit(args: {
+  bullishPct: number | null | undefined;
+  bearishPct: number | null | undefined;
+  sentimentScore?: number | null | undefined;
+}): { bullishPct: number; bearishPct: number } {
+  const bullishPct = clampPercentage(args.bullishPct);
+  const bearishPct = clampPercentage(args.bearishPct);
+
+  if (bullishPct !== null && bearishPct !== null) {
+    const total = bullishPct + bearishPct;
+    if (total > 0) {
+      return {
+        bullishPct: (bullishPct / total) * 100,
+        bearishPct: (bearishPct / total) * 100,
+      };
+    }
+  }
+
+  if (bullishPct !== null) {
+    return { bullishPct, bearishPct: 100 - bullishPct };
+  }
+  if (bearishPct !== null) {
+    return { bullishPct: 100 - bearishPct, bearishPct };
+  }
+
+  const fallbackScore = clampPercentage(args.sentimentScore);
+  if (fallbackScore !== null) {
+    return {
+      bullishPct: fallbackScore,
+      bearishPct: 100 - fallbackScore,
+    };
+  }
+
+  return { bullishPct: 50, bearishPct: 50 };
+}
+
+function sanitizeSentimentView(
+  sentiment: TokenPageData["sentiment"] | TokenLiveData["sentiment"] | null | undefined,
+  fallbackScore: number | null | undefined
+): {
+  score: number;
+  reactions: ReactionCounts;
+  bullishPct: number;
+  bearishPct: number;
+} {
+  const score = clampPercentage(sentiment?.score ?? fallbackScore) ?? 0;
+  const split = resolveSentimentSplit({
+    bullishPct: sentiment?.bullishPct,
+    bearishPct: sentiment?.bearishPct,
+    sentimentScore: score,
+  });
+
+  return {
+    score,
+    reactions: sanitizeReactionCounts(sentiment?.reactions),
+    bullishPct: split.bullishPct,
+    bearishPct: split.bearishPct,
+  };
 }
 
 function hasResolvedHolderCount(
@@ -1258,6 +1360,10 @@ function mergeTokenPageDataWithLiveSnapshot(
   current: TokenPageData,
   live: TokenLiveData
 ): TokenPageData {
+  const currentIntelligenceVersion = getTokenIntelligenceVersion(current);
+  const liveIntelligenceVersion = getTokenIntelligenceVersion(live);
+  const preferCurrentIntelligence =
+    currentIntelligenceVersion > 0 && currentIntelligenceVersion > liveIntelligenceVersion;
   const holderCount = hasResolvedHolderCount(live.holderCount, live.holderCountSource)
     ? live.holderCount
     : hasResolvedHolderCount(current.holderCount, current.holderCountSource)
@@ -1314,9 +1420,10 @@ function mergeTokenPageDataWithLiveSnapshot(
     ? current.bundleScanCompletedAt ?? live.bundleScanCompletedAt ?? null
     : live.bundleScanCompletedAt ?? current.bundleScanCompletedAt ?? null;
   const lastIntelligenceAt = shouldKeepCurrentBundleState
-    ? current.lastIntelligenceAt ?? live.bundleScanCompletedAt ?? live.updatedAt ?? null
-    : live.bundleScanCompletedAt ?? live.updatedAt ?? current.lastIntelligenceAt ?? null;
+    ? current.lastIntelligenceAt ?? live.lastIntelligenceAt ?? live.bundleScanCompletedAt ?? live.updatedAt ?? null
+    : live.lastIntelligenceAt ?? live.bundleScanCompletedAt ?? live.updatedAt ?? current.lastIntelligenceAt ?? null;
   const marketCap = pickStableMarketCap(live.marketCap, current.marketCap, current.recentCalls);
+  const sentiment = sanitizeSentimentView(live.sentiment, live.sentimentScore);
 
   return {
     ...current,
@@ -1339,6 +1446,16 @@ function mergeTokenPageDataWithLiveSnapshot(
     bundleScanCompletedAt,
     lastIntelligenceAt,
     tokenRiskScore,
+    sentimentScore: pickMergedMetric(live.sentimentScore, current.sentimentScore, preferCurrentIntelligence),
+    confidenceScore: pickMergedMetric(live.confidenceScore, current.confidenceScore, preferCurrentIntelligence),
+    hotAlphaScore: pickMergedMetric(live.hotAlphaScore, current.hotAlphaScore, preferCurrentIntelligence),
+    earlyRunnerScore: pickMergedMetric(live.earlyRunnerScore, current.earlyRunnerScore, preferCurrentIntelligence),
+    highConvictionScore: pickMergedMetric(
+      live.highConvictionScore,
+      current.highConvictionScore,
+      preferCurrentIntelligence
+    ),
+    sentiment,
     topHolders,
     devWallet,
     bundleClusters,
@@ -1469,12 +1586,17 @@ function RiskBar({
 function SentimentSplit({
   bullishPct,
   bearishPct,
+  sentimentScore,
 }: {
-  bullishPct: number;
-  bearishPct: number;
+  bullishPct: number | null | undefined;
+  bearishPct: number | null | undefined;
+  sentimentScore?: number | null | undefined;
 }) {
-  const b = Math.max(0, Math.min(100, bullishPct));
-  const r = Math.max(0, Math.min(100, bearishPct));
+  const { bullishPct: b, bearishPct: r } = resolveSentimentSplit({
+    bullishPct,
+    bearishPct,
+    sentimentScore,
+  });
   return (
     <div className="space-y-2">
       <div className="flex overflow-hidden rounded-full h-2.5 bg-border/30">
@@ -1831,6 +1953,10 @@ export default function TokenPage() {
   const isRefreshingLive = isFetching || liveTokenQuery.isFetching;
   const liveMarketCap = liveTokenQuery.data?.marketCap ?? null;
   const livePriceChange24h = liveTokenQuery.data?.priceChange24hPct ?? null;
+  const sentimentView = useMemo(
+    () => sanitizeSentimentView(token?.sentiment, token?.sentimentScore),
+    [token?.sentiment, token?.sentimentScore]
+  );
   const isTokenApparentlyDead = Boolean(
     (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap < 10_000) ||
     (typeof livePriceChange24h === "number" && Number.isFinite(livePriceChange24h) && livePriceChange24h < -85)
@@ -2236,6 +2362,7 @@ export default function TokenPage() {
                     </button>
                   ))}
                 </div>
+                </div>
                 {/* Chart area */}
                 <div className="mt-4 space-y-4">
                   <div className="h-[340px] w-full">
@@ -2339,7 +2466,6 @@ export default function TokenPage() {
                     ) : null}
                   </div>
               </div>
-            </div>
 
               {/* Quick buy sidebar */}
               <div className="space-y-4">
@@ -2736,11 +2862,15 @@ export default function TokenPage() {
                       </div>
                       <p className="mt-0.5 text-xs text-muted-foreground">Community signal and market health</p>
                     </div>
-                    <div className={cn("rounded-full border px-2.5 py-1 text-[11px] font-semibold", scoreTone(token.sentiment.score))}>
-                      {token.sentiment.score.toFixed(0)}
+                    <div className={cn("rounded-full border px-2.5 py-1 text-[11px] font-semibold", scoreTone(sentimentView.score))}>
+                      {sentimentView.score.toFixed(0)}
                     </div>
                   </div>
-                  <SentimentSplit bullish={token.sentiment.bullishPct} bearish={token.sentiment.bearishPct} />
+                  <SentimentSplit
+                    bullishPct={sentimentView.bullishPct}
+                    bearishPct={sentimentView.bearishPct}
+                    sentimentScore={sentimentView.score}
+                  />
                   <div className="mt-4 grid grid-cols-3 gap-2">
                     <div className="rounded-[16px] border border-border/60 bg-secondary p-3 text-center">
                       <div className="text-base font-bold text-foreground">{formatMarketMetric(token.liquidity)}</div>
@@ -2751,15 +2881,17 @@ export default function TokenPage() {
                       <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Vol 24h</div>
                     </div>
                     <div className="rounded-[16px] border border-border/60 bg-secondary p-3 text-center">
-                      <div className={cn("text-base font-bold", token.sentiment.bullishPct >= 50 ? "text-gain" : "text-loss")}>{token.sentiment.bullishPct.toFixed(0)}%</div>
+                      <div className={cn("text-base font-bold", sentimentView.bullishPct >= 50 ? "text-gain" : "text-loss")}>
+                        {sentimentView.bullishPct.toFixed(0)}%
+                      </div>
                       <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bullish</div>
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">⚡ Alpha {token.sentiment.reactions.alpha}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">🔥 Based {token.sentiment.reactions.based}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">💰 Printed {token.sentiment.reactions.printed}</span>
-                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">⚠️ Rug {token.sentiment.reactions.rug}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">⚡ Alpha {sentimentView.reactions.alpha}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">🔥 Based {sentimentView.reactions.based}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">💰 Printed {sentimentView.reactions.printed}</span>
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">⚠️ Rug {sentimentView.reactions.rug}</span>
                   </div>
                 </div>
 
