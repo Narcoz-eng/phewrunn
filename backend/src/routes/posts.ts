@@ -6959,6 +6959,7 @@ const JupiterSwapProxySchema = z
     tradeSide: z.enum(["buy", "sell"]).optional(),
     wrapAndUnwrapSol: z.boolean().optional(),
     dynamicComputeUnitLimit: z.boolean().optional(),
+    mevProtection: z.boolean().optional(),
   })
   .strict();
 
@@ -7443,14 +7444,16 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
     userPublicKey: payload.userPublicKey,
     wrapAndUnwrapSol: payload.wrapAndUnwrapSol ?? true,
     dynamicComputeUnitLimit: payload.dynamicComputeUnitLimit ?? true,
-    prioritizationFeeLamports: {
+  };
+  if (payload.mevProtection !== false) {
+    outboundPayload.prioritizationFeeLamports = {
       priorityLevelWithMaxLamports: {
         priorityLevel: JUPITER_PRIORITY_LEVEL,
         maxLamports: JUPITER_MAX_PRIORITY_FEE_LAMPORTS,
         global: false,
       },
-    },
-  };
+    };
+  }
   if (platformFeeBps > 0) {
     outboundPayload.feeAccount = JUPITER_PLATFORM_FEE_ACCOUNT;
   }

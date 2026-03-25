@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export type CandlestickChartPoint = {
@@ -80,8 +80,16 @@ export function CandlestickChart({
   const overviewPointerActiveRef = useRef(false);
   const suppressHoverUntilRef = useRef(0);
   const hoverRafRef = useRef<number>(0);
+  const latestCandleSignatureRef = useRef<string | null>(null);
+  const pulseClearTimeoutRef = useRef<number | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredVisibleIndex, setHoveredVisibleIndex] = useState<number | null>(null);
+  const [latestCandlePulseKey, setLatestCandlePulseKey] = useState(0);
+  const [latestCandlePulseActive, setLatestCandlePulseActive] = useState(false);
+  const chartInstanceId = useId().replace(/[:]/g, "");
+  const lineFillId = `${chartInstanceId}-candlestick-line-fill`;
+  const glowFilterId = `${chartInstanceId}-latest-glow`;
+  const sparkleFilterId = `${chartInstanceId}-sparkle-glow`;
 
   useEffect(() => {
     const node = containerRef.current;
@@ -158,6 +166,42 @@ export function CandlestickChart({
     suppressHoverUntilRef.current =
       typeof performance !== "undefined" ? performance.now() + INITIAL_HOVER_LOCK_MS : 0;
   }, [resetHoverKey]);
+
+  useEffect(() => {
+    const latestPoint = data[data.length - 1];
+    if (!latestPoint) return;
+
+    const nextSignature = [
+      latestPoint.ts,
+      latestPoint.open,
+      latestPoint.high,
+      latestPoint.low,
+      latestPoint.close,
+      latestPoint.volume,
+    ].join(":");
+
+    if (latestCandleSignatureRef.current && latestCandleSignatureRef.current !== nextSignature) {
+      setLatestCandlePulseKey((current) => current + 1);
+      setLatestCandlePulseActive(true);
+      if (typeof window !== "undefined") {
+        if (pulseClearTimeoutRef.current !== null) {
+          window.clearTimeout(pulseClearTimeoutRef.current);
+        }
+        pulseClearTimeoutRef.current = window.setTimeout(() => {
+          setLatestCandlePulseActive(false);
+        }, 1_050);
+      }
+    }
+
+    latestCandleSignatureRef.current = nextSignature;
+
+    return () => {
+      if (typeof window !== "undefined" && pulseClearTimeoutRef.current !== null) {
+        window.clearTimeout(pulseClearTimeoutRef.current);
+        pulseClearTimeoutRef.current = null;
+      }
+    };
+  }, [data]);
 
   const width = size.width;
   const height = size.height;
@@ -390,6 +434,7 @@ export function CandlestickChart({
           return entryIndex >= 0 ? xForVisibleIndex(entryIndex) : null;
         })()
       : null;
+  const latestVisibleIndex = isShowingLatestEdge && visibleData.length > 0 ? visibleData.length - 1 : null;
   const priceGridStroke = "hsl(var(--foreground) / 0.09)";
   const axisLabelColor = "hsl(var(--muted-foreground) / 0.85)";
   const axisBoundaryLabelColor = "hsl(var(--foreground) / 0.66)";
@@ -431,10 +476,20 @@ export function CandlestickChart({
     >
       <svg width="100%" height="100%" viewBox={`0 0 ${Math.max(width, 1)} ${Math.max(height, 1)}`} preserveAspectRatio="none">
         <defs>
-          <linearGradient id="candlestick-line-fill" x1="0" x2="0" y1="0" y2="1">
+          <linearGradient id={lineFillId} x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor={stroke} stopOpacity="0.24" />
             <stop offset="100%" stopColor={fill} stopOpacity="0.04" />
           </linearGradient>
+          <filter id={glowFilterId} x="-120%" y="-120%" width="340%" height="340%">
+            <feGaussianBlur stdDeviation="5.5" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id={sparkleFilterId} x="-160%" y="-160%" width="420%" height="420%">
+            <feGaussianBlur stdDeviation="2.6" />
+          </filter>
         </defs>
 
         {yTicks.map((tick, index) => (
@@ -508,17 +563,32 @@ export function CandlestickChart({
             const top = Math.min(openY, closeY);
             const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
             const bodyColor = point.isBullish ? "#22c55e" : "#ef4444";
+            const isLatestVisiblePoint = latestVisibleIndex === index;
+            const shouldPulse = isLatestVisiblePoint && latestCandlePulseActive;
+            const centerY = top + bodyHeight / 2;
 
             return (
               <g key={`candle-${point.ts}`}>
+                {isLatestVisiblePoint ? (
+                  <g filter={`url(#${glowFilterId})`} opacity={shouldPulse ? 0.95 : 0.38}>
+                    <circle
+                      cx={x}
+                      cy={centerY}
+                      r={Math.max(8, candleBodyWidth * (shouldPulse ? 2.4 : 1.55))}
+                      fill={bodyColor}
+                      fillOpacity={shouldPulse ? 0.24 : 0.1}
+                    />
+                  </g>
+                ) : null}
                 <line
                   x1={x}
                   x2={x}
                   y1={highY}
                   y2={lowY}
                   stroke={bodyColor}
-                  strokeWidth={1.25}
+                  strokeWidth={isLatestVisiblePoint ? 1.5 : 1.25}
                   strokeLinecap="round"
+                  opacity={isLatestVisiblePoint ? 0.98 : 0.88}
                 />
                 <rect
                   x={x - candleBodyWidth / 2}
@@ -527,8 +597,30 @@ export function CandlestickChart({
                   height={bodyHeight}
                   rx="1"
                   fill={bodyColor}
-                  fillOpacity={0.92}
+                  fillOpacity={isLatestVisiblePoint ? 0.98 : 0.92}
                 />
+                {shouldPulse ? (
+                  <g key={`spark-${latestCandlePulseKey}`} pointerEvents="none">
+                    <circle cx={x} cy={centerY} r={Math.max(8, candleBodyWidth * 1.3)} fill={bodyColor} opacity="0.24" filter={`url(#${sparkleFilterId})`}>
+                      <animate attributeName="r" values={`${Math.max(8, candleBodyWidth * 1.3)};${Math.max(18, candleBodyWidth * 3.5)}`} dur="0.9s" />
+                      <animate attributeName="opacity" values="0.26;0" dur="0.9s" />
+                    </circle>
+                    <circle cx={x + candleBodyWidth * 1.3} cy={highY - 8} r="1.6" fill="#f8fafc">
+                      <animate attributeName="cy" values={`${highY - 8};${highY - 14}`} dur="0.7s" />
+                      <animate attributeName="opacity" values="0;1;0" dur="0.7s" />
+                    </circle>
+                    <circle cx={x - candleBodyWidth * 1.45} cy={top + 10} r="1.2" fill={bodyColor}>
+                      <animate attributeName="cx" values={`${x - candleBodyWidth * 1.45};${x - candleBodyWidth * 2.2}`} dur="0.72s" />
+                      <animate attributeName="cy" values={`${top + 10};${top + 3}`} dur="0.72s" />
+                      <animate attributeName="opacity" values="0;1;0" dur="0.72s" />
+                    </circle>
+                    <circle cx={x + candleBodyWidth * 0.45} cy={lowY + 6} r="1.25" fill="#fde68a">
+                      <animate attributeName="cx" values={`${x + candleBodyWidth * 0.45};${x + candleBodyWidth * 1.9}`} dur="0.78s" />
+                      <animate attributeName="cy" values={`${lowY + 6};${lowY + 12}`} dur="0.78s" />
+                      <animate attributeName="opacity" values="0;0.95;0" dur="0.78s" />
+                    </circle>
+                  </g>
+                ) : null}
               </g>
             );
           })
@@ -536,7 +628,7 @@ export function CandlestickChart({
           <>
             <path
               d={`${visibleLinePath} L ${visibleLinePoints[visibleLinePoints.length - 1]?.x ?? MAIN_PADDING_LEFT} ${priceBottom} L ${visibleLinePoints[0]?.x ?? MAIN_PADDING_LEFT} ${priceBottom} Z`}
-              fill="url(#candlestick-line-fill)"
+              fill={`url(#${lineFillId})`}
             />
             <path
               d={visibleLinePath}

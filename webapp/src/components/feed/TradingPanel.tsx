@@ -65,6 +65,16 @@ interface TradingPanelProps {
   onSellPercentClick: (percent: number) => void;
   autoConfirmEnabled: boolean;
   onAutoConfirmChange: (enabled: boolean) => void;
+  mevProtectionEnabled: boolean;
+  onMevProtectionChange: (enabled: boolean) => void;
+  protectionEnabled: boolean;
+  onProtectionEnabledChange: (enabled: boolean) => void;
+  stopLossPercent: string;
+  onStopLossPercentChange: (value: string) => void;
+  takeProfitPercent: string;
+  onTakeProfitPercentChange: (value: string) => void;
+  protectionStatusLabel?: string | null;
+  protectionStatusTone?: "idle" | "armed" | "triggered";
 }
 
 const SLIPPAGE_QUICK = [50, 100, 200, 500];
@@ -161,16 +171,20 @@ export function TradingPanel({
   onSellPercentClick,
   autoConfirmEnabled,
   onAutoConfirmChange,
+  mevProtectionEnabled,
+  onMevProtectionChange,
+  protectionEnabled,
+  onProtectionEnabledChange,
+  stopLossPercent,
+  onStopLossPercentChange,
+  takeProfitPercent,
+  onTakeProfitPercentChange,
+  protectionStatusLabel = null,
+  protectionStatusTone = "idle",
 }: TradingPanelProps) {
   const isBuy = tradeSide === "buy";
   const [tokenImageError, setTokenImageError] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [mevEnabled, setMevEnabled] = useState(() => {
-    try { return localStorage.getItem("phew.trade.mev-protection") !== "false"; } catch { return true; }
-  });
-  const [stopLossEnabled, setStopLossEnabled] = useState(() => {
-    try { return localStorage.getItem("phew.trade.stop-loss") === "true"; } catch { return false; }
-  });
   const detailsRef = useRef<HTMLDivElement>(null);
   const prevTokenImageRef = useRef<string | null>(null);
   if (prevTokenImageRef.current !== tokenImage) {
@@ -219,16 +233,6 @@ export function TradingPanel({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [showDetails]);
-
-  const handleMevToggle = (val: boolean) => {
-    setMevEnabled(val);
-    try { localStorage.setItem("phew.trade.mev-protection", String(val)); } catch {}
-  };
-
-  const handleStopLossToggle = (val: boolean) => {
-    setStopLossEnabled(val);
-    try { localStorage.setItem("phew.trade.stop-loss", String(val)); } catch {}
-  };
 
   return (
     <div className={panelSurfaceClassName}>
@@ -436,7 +440,7 @@ export function TradingPanel({
         {/* MEV Protection */}
         <div className={cn(
           "rounded-xl border px-3 py-2.5",
-          mevEnabled
+          mevProtectionEnabled
             ? "border-emerald-500/20 bg-emerald-500/[0.04] dark:border-emerald-500/15 dark:bg-emerald-500/[0.04]"
             : "border-slate-900/[0.06] bg-slate-50/50 dark:border-white/[0.06] dark:bg-white/[0.02]"
         )}>
@@ -444,24 +448,24 @@ export function TradingPanel({
             <div className="flex items-center gap-2">
               <div className={cn(
                 "flex items-center justify-center w-6 h-6 rounded-lg",
-                mevEnabled ? "bg-emerald-500/15" : "bg-slate-900/[0.05] dark:bg-white/[0.06]"
+                mevProtectionEnabled ? "bg-emerald-500/15" : "bg-slate-900/[0.05] dark:bg-white/[0.06]"
               )}>
-                <ShieldCheck className={cn("w-3.5 h-3.5", mevEnabled ? "text-emerald-500 dark:text-emerald-400" : "text-slate-400 dark:text-white/40")} />
+                <ShieldCheck className={cn("w-3.5 h-3.5", mevProtectionEnabled ? "text-emerald-500 dark:text-emerald-400" : "text-slate-400 dark:text-white/40")} />
               </div>
               <div>
-                <span className={cn("text-[11px] font-semibold", mevEnabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-white/60")}>
+                <span className={cn("text-[11px] font-semibold", mevProtectionEnabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-white/60")}>
                   MEV Protection
                 </span>
                 <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Frontrun & sandwich guard</p>
               </div>
             </div>
             <Switch
-              checked={mevEnabled}
-              onCheckedChange={handleMevToggle}
+              checked={mevProtectionEnabled}
+              onCheckedChange={onMevProtectionChange}
               className="data-[state=checked]:bg-emerald-500/80 scale-[0.75]"
             />
           </div>
-          {mevEnabled ? (
+          {mevProtectionEnabled ? (
             <div className="flex items-center gap-3 mt-2 pt-2 border-t border-emerald-500/10 dark:border-emerald-500/10">
               <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
                 <Lock className="w-2.5 h-2.5" />
@@ -482,7 +486,7 @@ export function TradingPanel({
         {/* Stop Loss / Take Profit */}
         <div className={cn(
           "rounded-xl border px-3 py-2.5",
-          stopLossEnabled
+          protectionEnabled
             ? "border-amber-500/20 bg-amber-500/[0.03] dark:border-amber-500/15 dark:bg-amber-500/[0.03]"
             : "border-slate-900/[0.06] bg-slate-50/50 dark:border-white/[0.06] dark:bg-white/[0.02]"
         )}>
@@ -490,24 +494,24 @@ export function TradingPanel({
             <div className="flex items-center gap-2">
               <div className={cn(
                 "flex items-center justify-center w-6 h-6 rounded-lg",
-                stopLossEnabled ? "bg-amber-500/15" : "bg-slate-900/[0.05] dark:bg-white/[0.06]"
+                protectionEnabled ? "bg-amber-500/15" : "bg-slate-900/[0.05] dark:bg-white/[0.06]"
               )}>
-                <Crosshair className={cn("w-3.5 h-3.5", stopLossEnabled ? "text-amber-500 dark:text-amber-400" : "text-slate-400 dark:text-white/40")} />
+                <Crosshair className={cn("w-3.5 h-3.5", protectionEnabled ? "text-amber-500 dark:text-amber-400" : "text-slate-400 dark:text-white/40")} />
               </div>
               <div>
-                <span className={cn("text-[11px] font-semibold", stopLossEnabled ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-white/60")}>
+                <span className={cn("text-[11px] font-semibold", protectionEnabled ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-white/60")}>
                   Stop Loss / Take Profit
                 </span>
                 <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Auto-exit on price triggers</p>
               </div>
             </div>
             <Switch
-              checked={stopLossEnabled}
-              onCheckedChange={handleStopLossToggle}
+              checked={protectionEnabled}
+              onCheckedChange={onProtectionEnabledChange}
               className="data-[state=checked]:bg-amber-500/80 scale-[0.75]"
             />
           </div>
-          {stopLossEnabled ? (
+          {protectionEnabled ? (
             <div className="mt-2 pt-2 border-t border-amber-500/10 dark:border-amber-500/10 space-y-2">
               {/* Stop Loss */}
               <div className="flex items-center gap-2">
@@ -519,7 +523,8 @@ export function TradingPanel({
                     inputMode="decimal"
                     placeholder="-15%"
                     className={cn("h-7 text-[11px] font-mono", fieldSurfaceClassName)}
-                    defaultValue="-15%"
+                    value={stopLossPercent}
+                    onChange={(event) => onStopLossPercentChange(event.target.value)}
                   />
                 </div>
               </div>
@@ -533,10 +538,25 @@ export function TradingPanel({
                     inputMode="decimal"
                     placeholder="+50%"
                     className={cn("h-7 text-[11px] font-mono", fieldSurfaceClassName)}
-                    defaultValue="+50%"
+                    value={takeProfitPercent}
+                    onChange={(event) => onTakeProfitPercentChange(event.target.value)}
                   />
                 </div>
               </div>
+              {protectionStatusLabel ? (
+                <div
+                  className={cn(
+                    "rounded-lg px-2.5 py-2 text-[10px] font-medium",
+                    protectionStatusTone === "triggered"
+                      ? "border border-rose-500/20 bg-rose-500/[0.07] text-rose-600 dark:text-rose-300"
+                      : protectionStatusTone === "armed"
+                        ? "border border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
+                        : "border border-slate-900/[0.06] bg-slate-900/[0.03] text-slate-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white/65"
+                  )}
+                >
+                  {protectionStatusLabel}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -623,7 +643,7 @@ export function TradingPanel({
               <DetailRow label="Creator Reward" value={creatorFeeDisplay} />
               <DetailRow label="Platform Fee" value={platformFeeDisplay} />
               <DetailRow label="Route" value={chainType === "ethereum" ? "Uniswap v3" : "Jupiter v6"} />
-              <DetailRow label="MEV Protection" value={mevEnabled ? (chainType === "ethereum" ? "Enabled (Flashbots)" : "Enabled (Jito)") : "Disabled"} />
+              <DetailRow label="MEV Protection" value={mevProtectionEnabled ? (chainType === "ethereum" ? "Enabled (Flashbots)" : "Enabled (Jito)") : "Disabled"} />
             </div>
           </div>
         ) : null}

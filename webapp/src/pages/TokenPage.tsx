@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
+import { appendMicroChartSample, buildMicroChartCandles, type MicroChartSample } from "@/lib/micro-candles";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
@@ -43,14 +44,17 @@ import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
 const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
 const TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS = 10_000;
+const TOKEN_MICRO_CHART_REFRESH_INTERVAL_MS = 1_250;
 const TOKEN_LIVE_CHART_VISIBLE_POINTS = 72;
 const TOKEN_LIVE_CHART_FUTURE_SLOTS = 6;
 const FRESH_POST_MCAP_WINDOW_MS = 30 * 60_000;
 const TOKEN_CHART_INTERVAL_OPTIONS = [
-  { value: "5", label: "5m" },
-  { value: "15", label: "15m" },
-  { value: "60", label: "1h" },
-  { value: "240", label: "4h" },
+  { value: "1S", label: "1s" },
+  { value: "1m", label: "1m" },
+  { value: "5m", label: "5m" },
+  { value: "15m", label: "15m" },
+  { value: "1h", label: "1h" },
+  { value: "4h", label: "4h" },
   { value: "1D", label: "1D" },
 ] as const;
 const TOKEN_QUICK_BUY_PRESETS = ["0.10", "0.20", "0.50", "1.00"] as const;
@@ -1407,6 +1411,51 @@ function pickBestCachedTokenPost(posts: Post[] | null | undefined): Post | null 
   return best;
 }
 
+function pickPrimaryTradeCall(posts: Post[] | null | undefined): Post | null {
+  let best: Post | null = null;
+
+  for (const candidate of posts ?? []) {
+    if (!candidate?.id || !candidate.contractAddress || candidate.chainType !== "solana") {
+      continue;
+    }
+
+    if (!best) {
+      best = candidate;
+      continue;
+    }
+
+    const candidateVersion = parseTimestamp(
+      candidate.lastIntelligenceAt ?? candidate.bundleScanCompletedAt ?? candidate.lastMcapUpdate ?? candidate.createdAt
+    );
+    const bestVersion = parseTimestamp(
+      best.lastIntelligenceAt ?? best.bundleScanCompletedAt ?? best.lastMcapUpdate ?? best.createdAt
+    );
+    if (candidateVersion !== bestVersion) {
+      if (candidateVersion > bestVersion) {
+        best = candidate;
+      }
+      continue;
+    }
+
+    const candidateRouteQuality =
+      Number(Boolean(candidate.pairAddress || candidate.dexscreenerUrl)) +
+      Number(typeof candidate.currentMcap === "number" && Number.isFinite(candidate.currentMcap) && candidate.currentMcap > 0) +
+      Number(typeof candidate.liquidity === "number" && Number.isFinite(candidate.liquidity) && candidate.liquidity > 0) +
+      getTokenIntelligenceRichnessFromPost(candidate);
+    const bestRouteQuality =
+      Number(Boolean(best.pairAddress || best.dexscreenerUrl)) +
+      Number(typeof best.currentMcap === "number" && Number.isFinite(best.currentMcap) && best.currentMcap > 0) +
+      Number(typeof best.liquidity === "number" && Number.isFinite(best.liquidity) && best.liquidity > 0) +
+      getTokenIntelligenceRichnessFromPost(best);
+
+    if (candidateRouteQuality > bestRouteQuality) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
 function mergeTokenPageDataWithCachedPosts(
   current: TokenPageData,
   cachedPosts: Post[] | null | undefined
@@ -1830,8 +1879,13 @@ export default function TokenPage() {
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
   const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
-  const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("15");
+  const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("5m");
+  const [microChartSamples, setMicroChartSamples] = useState<MicroChartSample[]>([]);
   const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
+
+  useEffect(() => {
+    setMicroChartSamples([]);
+  }, [tokenAddress]);
 
   const handleCopyTokenAddress = async () => {
     if (!token?.address) return;
@@ -1983,19 +2037,23 @@ export default function TokenPage() {
 
   const chartRequestConfig = useMemo(() => {
     switch (chartInterval) {
-      case "5":
+      case "1S":
+      case "1m":
         return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
-      case "15":
+      case "5m":
         return { timeframe: "minute" as const, aggregate: 5, limit: 360 };
-      case "60":
+      case "15m":
+        return { timeframe: "minute" as const, aggregate: 15, limit: 360 };
+      case "1h":
         return { timeframe: "hour" as const, aggregate: 1, limit: 320 };
-      case "240":
+      case "4h":
         return { timeframe: "hour" as const, aggregate: 4, limit: 320 };
       case "1D":
       default:
         return { timeframe: "day" as const, aggregate: 1, limit: 260 };
     }
   }, [chartInterval]);
+  const isMicroChartInterval = chartInterval === "1S";
 
   const liveChartQuery = useQuery<TokenChartCandlesResponse>({
     queryKey: [
@@ -2006,14 +2064,16 @@ export default function TokenPage() {
       chartRequestConfig.aggregate,
       chartRequestConfig.limit,
     ],
-    enabled: Boolean(tokenAddress && token && (token.pairAddress || token.address)),
+    enabled: Boolean(!isMicroChartInterval && tokenAddress && token && (token.pairAddress || token.address)),
     staleTime: 4_000,
     gcTime: 8 * 60_000,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
     retry: 1,
     refetchInterval:
-      chartRequestConfig.timeframe === "minute"
+      isMicroChartInterval
+        ? false
+        : chartRequestConfig.timeframe === "minute"
         ? chartRequestConfig.aggregate <= 5
           ? 5_000
           : 8_000
@@ -2095,17 +2155,39 @@ export default function TokenPage() {
       })),
     [liveChartQuery.data?.candles]
   );
+  const microChartData = useMemo(
+    () =>
+      buildMicroChartCandles(microChartSamples, 1_000).map((candle) => ({
+        ts: candle.timestamp,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        isBullish: candle.close >= candle.open,
+        label: new Date(candle.timestamp).toLocaleTimeString([], { minute: "2-digit", second: "2-digit" }),
+        fullLabel: new Date(candle.timestamp).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }),
+      })),
+    [microChartSamples]
+  );
 
   const liveChartWindow = useMemo(() => {
-    if (liveChartData.length === 0) {
+    const sourceData = isMicroChartInterval ? microChartData : liveChartData;
+    if (sourceData.length === 0) {
       return { startIndex: 0, endIndex: -1 };
     }
-    const visiblePoints = Math.min(TOKEN_LIVE_CHART_VISIBLE_POINTS, liveChartData.length);
+    const visiblePoints = Math.min(TOKEN_LIVE_CHART_VISIBLE_POINTS, sourceData.length);
     return {
-      startIndex: Math.max(0, liveChartData.length - visiblePoints),
-      endIndex: liveChartData.length - 1,
+      startIndex: Math.max(0, sourceData.length - visiblePoints),
+      endIndex: sourceData.length - 1,
     };
-  }, [liveChartData]);
+  }, [isMicroChartInterval, liveChartData, microChartData]);
 
   const recentCalls = useMemo(
     () =>
@@ -2115,6 +2197,48 @@ export default function TokenPage() {
       ),
     [cachedPostsForToken, token?.recentCalls]
   );
+  const primaryTradeCall = useMemo(
+    () => pickPrimaryTradeCall(recentCalls),
+    [recentCalls]
+  );
+
+  useEffect(() => {
+    if (!isMicroChartInterval || !primaryTradeCall?.id) return;
+    let cancelled = false;
+
+    const fetchMicroSnapshot = async () => {
+      try {
+        const payload = await api.get<{ currentMcap?: number | null }>(`/api/posts/${primaryTradeCall.id}/price`, {
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        if (typeof payload.currentMcap === "number" && Number.isFinite(payload.currentMcap) && payload.currentMcap > 0) {
+          setMicroChartSamples((current) =>
+            appendMicroChartSample(
+              current,
+              {
+                timestamp: Date.now(),
+                value: payload.currentMcap,
+                volume: typeof token?.volume24h === "number" ? token.volume24h : 0,
+              },
+              360
+            )
+          );
+        }
+      } catch {
+        // Quiet fallback: token live polling already hydrates market cap snapshots.
+      }
+    };
+
+    void fetchMicroSnapshot();
+    const intervalId = window.setInterval(fetchMicroSnapshot, TOKEN_MICRO_CHART_REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isMicroChartInterval, primaryTradeCall?.id, token?.volume24h]);
+
+  const displayLiveChartData = isMicroChartInterval ? microChartData : liveChartData;
   const displayTimeline = useMemo(
     () => mergeTimelineEvents(token?.timeline ?? [], deriveTimelineFromCalls(recentCalls)),
     [recentCalls, token?.timeline]
@@ -2124,10 +2248,6 @@ export default function TokenPage() {
     [recentCalls, token?.topTraders]
   );
   const recentCallsCount = Math.max(token?.callsCount ?? 0, recentCalls.length);
-  const primaryTradeCall = useMemo(
-    () => recentCalls.find((post) => Boolean(post.contractAddress) && post.chainType === "solana") ?? null,
-    [recentCalls]
-  );
   const isRefreshingLive = isFetching || liveTokenQuery.isFetching;
   const liveMarketCap = liveTokenQuery.data?.marketCap ?? null;
   const livePriceChange24h = liveTokenQuery.data?.priceChange24hPct ?? null;
@@ -2172,6 +2292,22 @@ export default function TokenPage() {
   const displayMarketCap = (() => {
     return pickStableMarketCap(liveMarketCap ?? token?.marketCap ?? null, token?.marketCap ?? null, recentCalls);
   })();
+  useEffect(() => {
+    if (typeof displayMarketCap !== "number" || !Number.isFinite(displayMarketCap) || displayMarketCap <= 0) {
+      return;
+    }
+    setMicroChartSamples((current) =>
+      appendMicroChartSample(
+        current,
+        {
+          timestamp: Date.now(),
+          value: displayMarketCap,
+          volume: typeof token?.volume24h === "number" ? token.volume24h : 0,
+        },
+        360
+      )
+    );
+  }, [displayMarketCap, token?.volume24h]);
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
     (point) =>
@@ -2179,13 +2315,15 @@ export default function TokenPage() {
         (value) => typeof value === "number" && Number.isFinite(value) && value > 0
       )
   );
-  const hasLiveChartTelemetry = liveChartData.length > 1;
+  const hasLiveChartTelemetry = displayLiveChartData.length > 1;
   const liveChartPriceChangePct =
-    liveChartData.length > 1
-      ? ((liveChartData[liveChartData.length - 1]!.close - liveChartData[0]!.open) / liveChartData[0]!.open) * 100
+    displayLiveChartData.length > 1
+      ? ((displayLiveChartData[displayLiveChartData.length - 1]!.close - displayLiveChartData[0]!.open) / displayLiveChartData[0]!.open) * 100
       : null;
   const liveChartSourceLabel =
-    liveChartQuery.data?.source === "birdeye"
+    isMicroChartInterval
+      ? "Phew micro live"
+      : liveChartQuery.data?.source === "birdeye"
       ? "Birdeye live"
       : liveChartQuery.data?.source === "geckoterminal"
         ? "GeckoTerminal live"
@@ -2547,7 +2685,7 @@ export default function TokenPage() {
                       {hasLiveChartTelemetry ? (
                         <div className="h-full rounded-[24px] border border-border/60 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.09),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
                           <CandlestickChart
-                            data={liveChartData}
+                            data={displayLiveChartData}
                             visibleStartIndex={liveChartWindow.startIndex}
                             visibleEndIndex={liveChartWindow.endIndex}
                             futureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
@@ -2558,8 +2696,9 @@ export default function TokenPage() {
                             formatPrice={formatTokenPrice}
                             formatTick={(timestampMs) =>
                               new Date(timestampMs).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
+                                ...(isMicroChartInterval
+                                  ? ({ minute: "2-digit", second: "2-digit" } as const)
+                                  : ({ hour: "2-digit", minute: "2-digit" } as const)),
                               })
                             }
                             className="h-full"
@@ -2686,7 +2825,7 @@ export default function TokenPage() {
                   <div className="mt-4 space-y-2 text-xs text-muted-foreground">
                     <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
                       <span>Current MCAP</span>
-                      <span className="font-semibold text-foreground">{formatMarketMetric(token.marketCap)}</span>
+                      <span className="font-semibold text-foreground">{formatMarketMetric(displayMarketCap)}</span>
                     </div>
                     <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
                       <span>Current liquidity</span>

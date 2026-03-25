@@ -34,6 +34,7 @@ import { CandlestickChart } from "./CandlestickChart";
 import { BundleScanLoop, isBundleScanPending } from "./BundleScanLoop";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api, ApiError } from "@/lib/api";
+import { appendMicroChartSample, buildMicroChartCandles, type MicroChartSample } from "@/lib/micro-candles";
 import { getPostPriceSnapshotBatched, type BatchedPostPriceSnapshot } from "@/lib/post-price-batch";
 import {
   buildTokenIntelligenceSnapshotFromLivePayload,
@@ -111,6 +112,10 @@ const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
 const TRADE_AUTO_CONFIRM_STORAGE_KEY = "phew.trade.auto-confirm";
 const TRADE_QUICK_BUY_PRESETS_STORAGE_KEY = "phew.trade.quick-buy-presets-sol";
+const TRADE_MEV_PROTECTION_STORAGE_KEY = "phew.trade.mev-protection";
+const TRADE_PRICE_PROTECTION_ENABLED_STORAGE_KEY = "phew.trade.price-protection-enabled";
+const TRADE_STOP_LOSS_PCT_STORAGE_KEY = "phew.trade.stop-loss-pct";
+const TRADE_TAKE_PROFIT_PCT_STORAGE_KEY = "phew.trade.take-profit-pct";
 const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
@@ -124,12 +129,16 @@ const SHARED_ALPHA_QUERY_STALE_TIME_MS = 60_000;
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const MAX_CREATOR_ROUTE_FEE_BPS = 50;
 const DEFAULT_TOTAL_ROUTE_FEE_BPS = 100;
+const FAST_TRADE_PRICE_POLL_INTERVAL_MS = 1_250;
+const MICRO_CHART_SAMPLE_LIMIT = 360;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
-  { value: "5", label: "5m" },
-  { value: "15", label: "15m" },
-  { value: "60", label: "1h" },
-  { value: "240", label: "4h" },
+  { value: "1S", label: "1s" },
+  { value: "1m", label: "1m" },
+  { value: "5m", label: "5m" },
+  { value: "15m", label: "15m" },
+  { value: "1h", label: "1h" },
+  { value: "4h", label: "4h" },
   { value: "1D", label: "1D" },
 ] as const;
 const REACTION_BUTTONS: Array<{ type: ReactionType; emoji: string; label: string }> = [
@@ -150,6 +159,44 @@ const CHART_TOUCH_PAN_STEP_PX = 14;
 const CHART_TOUCH_PINCH_THRESHOLD_PX = 18;
 
 type TradeSide = "buy" | "sell";
+type TradeProtectionTrigger = "stop-loss" | "take-profit";
+type ArmedTradeProtection = {
+  anchorMcap: number;
+  stopLossPct: number | null;
+  takeProfitPct: number | null;
+  armedAtMs: number;
+  trigger: TradeProtectionTrigger | null;
+  triggeredAtMs: number | null;
+};
+
+function parsePercentInput(value: string): number | null {
+  const normalized = value.replace(/%/g, "").replace(/\s+/g, "").trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeStopLossInput(value: string): string {
+  const parsed = parsePercentInput(value);
+  if (parsed === null) return "";
+  const clamped = Math.min(95, Math.max(1, Math.abs(parsed)));
+  return `-${clamped.toFixed(clamped % 1 === 0 ? 0 : 2)}`;
+}
+
+function normalizeTakeProfitInput(value: string): string {
+  const parsed = parsePercentInput(value);
+  if (parsed === null) return "";
+  const clamped = Math.min(1000, Math.max(1, Math.abs(parsed)));
+  return `${clamped.toFixed(clamped % 1 === 0 ? 0 : 2)}`;
+}
+
+function formatTradeDecimalInputValue(value: number, fractionDigits: number): string {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: fractionDigits,
+    useGrouping: false,
+  });
+}
 
 function getTouchMidpoint(touches: TouchList): { x: number; y: number } | null {
   const first = touches[0];
@@ -1100,10 +1147,38 @@ export function PostCard({
   const [showSlippageSettings, setShowSlippageSettings] = useState(false);
   const [quickBuyPresetsSol, setQuickBuyPresetsSol] = useState<string[]>(DEFAULT_QUICK_BUY_PRESETS_SOL);
   const [pendingQuickBuyAutoExecute, setPendingQuickBuyAutoExecute] = useState(false);
+  const [pendingProtectionAutoExecute, setPendingProtectionAutoExecute] = useState(false);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
+  const [mevProtectionEnabled, setMevProtectionEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(TRADE_MEV_PROTECTION_STORAGE_KEY) !== "false";
+  });
+  const [priceProtectionEnabled, setPriceProtectionEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(TRADE_PRICE_PROTECTION_ENABLED_STORAGE_KEY) === "true";
+  });
+  const [stopLossPercentInput, setStopLossPercentInput] = useState(() => {
+    if (typeof window === "undefined") return "-15";
+    return window.localStorage.getItem(TRADE_STOP_LOSS_PCT_STORAGE_KEY) || "-15";
+  });
+  const [takeProfitPercentInput, setTakeProfitPercentInput] = useState(() => {
+    if (typeof window === "undefined") return "50";
+    return window.localStorage.getItem(TRADE_TAKE_PROFIT_PCT_STORAGE_KEY) || "50";
+  });
+  const [armedTradeProtection, setArmedTradeProtection] = useState<ArmedTradeProtection | null>(null);
+  const [microChartSamples, setMicroChartSamples] = useState<MicroChartSample[]>([]);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
+  const protectionAutoSellRetryCountRef = useRef(0);
+  const protectionAutoArmCooldownUntilRef = useRef(0);
+
+  useEffect(() => {
+    setMicroChartSamples([]);
+    setPendingProtectionAutoExecute(false);
+    setArmedTradeProtection(null);
+    protectionAutoArmCooldownUntilRef.current = 0;
+  }, [post.id]);
 
   useEffect(() => {
     setReactionCounts(post.reactionCounts ?? {
@@ -1122,7 +1197,7 @@ export function PostCard({
   const [portfolioPositions, setPortfolioPositions] = useState<PortfolioPosition[]>([]);
   const [portfolioTotalPnl, setPortfolioTotalPnl] = useState<number | null>(null);
   const [isPortfolioLoading, setIsPortfolioLoading] = useState(false);
-  const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("15");
+  const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("5m");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
   const [chartWindow, setChartWindow] = useState<{ startIndex: number; endIndex: number } | null>(null);
@@ -1167,6 +1242,46 @@ export function PostCard({
     const ua = navigator.userAgent || "";
     return /android|iphone|ipad|ipod|mobile/i.test(ua);
   }, []);
+  const parsedStopLossPct = useMemo(() => {
+    const parsed = parsePercentInput(stopLossPercentInput);
+    if (parsed === null) return null;
+    return -Math.min(95, Math.max(1, Math.abs(parsed)));
+  }, [stopLossPercentInput]);
+  const parsedTakeProfitPct = useMemo(() => {
+    const parsed = parsePercentInput(takeProfitPercentInput);
+    if (parsed === null) return null;
+    return Math.min(1000, Math.max(1, Math.abs(parsed)));
+  }, [takeProfitPercentInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TRADE_MEV_PROTECTION_STORAGE_KEY, String(mevProtectionEnabled));
+  }, [mevProtectionEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TRADE_PRICE_PROTECTION_ENABLED_STORAGE_KEY, String(priceProtectionEnabled));
+  }, [priceProtectionEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (stopLossPercentInput.trim()) {
+      window.localStorage.setItem(
+        TRADE_STOP_LOSS_PCT_STORAGE_KEY,
+        normalizeStopLossInput(stopLossPercentInput) || stopLossPercentInput
+      );
+    }
+  }, [stopLossPercentInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (takeProfitPercentInput.trim()) {
+      window.localStorage.setItem(
+        TRADE_TAKE_PROFIT_PCT_STORAGE_KEY,
+        normalizeTakeProfitInput(takeProfitPercentInput) || takeProfitPercentInput
+      );
+    }
+  }, [takeProfitPercentInput]);
 
   const hasGlobalDialogOpen = useCallback(() => {
     if (typeof document === "undefined") return false;
@@ -3512,21 +3627,25 @@ export function PostCard({
 
   const chartRequestConfig = useMemo(() => {
     switch (chartInterval) {
-      case "5":
+      case "1S":
+      case "1m":
         return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
-      case "15":
+      case "5m":
         return { timeframe: "minute" as const, aggregate: 5, limit: 360 };
-      case "60":
+      case "15m":
+        return { timeframe: "minute" as const, aggregate: 15, limit: 360 };
+      case "1h":
         return { timeframe: "hour" as const, aggregate: 1, limit: 320 };
-      case "240":
+      case "4h":
         return { timeframe: "hour" as const, aggregate: 4, limit: 320 };
       case "1D":
       default:
         return { timeframe: "day" as const, aggregate: 1, limit: 260 };
     }
   }, [chartInterval]);
+  const isMicroChartInterval = chartInterval === "1S";
   const canRequestChartCandles =
-    !!resolvedPairAddress || !!post.contractAddress;
+    !isMicroChartInterval && (!!resolvedPairAddress || !!post.contractAddress);
 
   const chartCandlesQuery = useQuery<ChartCandlesResponse>({
     queryKey: [
@@ -3774,13 +3893,16 @@ export function PostCard({
 
   const jupiterQuoteQuery = useQuery<JupiterQuoteResponse>({
     queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
-    enabled: (isBuyDialogOpen || pendingQuickBuyAutoExecute) && isSolanaTradeSupported && !!tradeAmountAtomic,
+    enabled:
+      (isBuyDialogOpen || pendingQuickBuyAutoExecute || pendingProtectionAutoExecute) &&
+      isSolanaTradeSupported &&
+      !!tradeAmountAtomic,
     staleTime: 2_500,
     gcTime: 45_000,
     retry: 1,
     retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
     placeholderData: (previousData) => previousData,
-    refetchInterval: isBuyDialogOpen ? (q) => (q.state.data ? 5_000 : 2_200) : false,
+    refetchInterval: isBuyDialogOpen || pendingProtectionAutoExecute ? (q) => (q.state.data ? 5_000 : 2_200) : false,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
       if (!tradeAmountAtomic) {
@@ -3928,6 +4050,38 @@ export function PostCard({
     setSellAmountToken(formatDecimalInputValue(nextValue, Math.max(2, outputTokenDecimals)));
   };
 
+  const appendMicroSample = useCallback((value: number | null | undefined, timestampMs = Date.now()) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return;
+    setMicroChartSamples((current) =>
+      appendMicroChartSample(
+        current,
+        {
+          timestamp: timestampMs,
+          value,
+          volume: 0,
+        },
+        MICRO_CHART_SAMPLE_LIMIT
+      )
+    );
+  }, []);
+
+  const armTradeProtection = useCallback(
+    (anchorMcap: number | null | undefined) => {
+      if (!priceProtectionEnabled) return;
+      if (typeof anchorMcap !== "number" || !Number.isFinite(anchorMcap) || anchorMcap <= 0) return;
+      if (parsedStopLossPct === null && parsedTakeProfitPct === null) return;
+      setArmedTradeProtection({
+        anchorMcap,
+        stopLossPct: parsedStopLossPct,
+        takeProfitPct: parsedTakeProfitPct,
+        armedAtMs: Date.now(),
+        trigger: null,
+        triggeredAtMs: null,
+      });
+    },
+    [parsedStopLossPct, parsedTakeProfitPct, priceProtectionEnabled]
+  );
+
   const handleOpenBuyDialog = () => {
     setBuyTxSignature(null);
     setIsBuyDialogOpen(true);
@@ -4047,6 +4201,7 @@ export function PostCard({
         tradeSide,
         String(tradeAmountAtomic ?? ""),
         String(slippageBps),
+        mevProtectionEnabled ? "mev-on" : "mev-off",
         quote.inAmount,
         quote.outAmount,
         quote.otherAmountThreshold,
@@ -4071,6 +4226,7 @@ export function PostCard({
           tradeSide,
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
+          mevProtection: mevProtectionEnabled,
         });
 
         const swapRes = await api.raw("/api/posts/jupiter/swap", {
@@ -4104,7 +4260,7 @@ export function PostCard({
       swapBuildInFlightRef.current = { key: cacheKey, promise: requestPromise };
       return requestPromise;
     },
-    [jupiterQuoteData, post.id, slippageBps, tradeAmountAtomic, tradeSide, walletPublicKey]
+    [jupiterQuoteData, mevProtectionEnabled, post.id, slippageBps, tradeAmountAtomic, tradeSide, walletPublicKey]
   );
 
   const handleExecuteJupiterBuy = useCallback(async () => {
@@ -4194,6 +4350,21 @@ export function PostCard({
       }
 
       setBuyTxSignature(signature);
+      void refetchWalletNativeBalance();
+      void refetchWalletTokenBalance();
+      const latestProtectionAnchor =
+        typeof currentMcap === "number" && Number.isFinite(currentMcap) && currentMcap > 0
+          ? currentMcap
+          : typeof post.currentMcap === "number" && Number.isFinite(post.currentMcap) && post.currentMcap > 0
+            ? post.currentMcap
+            : null;
+      if (tradeSide === "buy") {
+        protectionAutoArmCooldownUntilRef.current = 0;
+        armTradeProtection(latestProtectionAnchor);
+      } else if (armedTradeProtection?.trigger) {
+        protectionAutoArmCooldownUntilRef.current = Date.now() + 30_000;
+        setArmedTradeProtection(null);
+      }
       if (swapPayload.tradeFeeEventId) {
         void api.post("/api/posts/jupiter/fee-confirm", {
             tradeFeeEventId: swapPayload.tradeFeeEventId,
@@ -4225,12 +4396,19 @@ export function PostCard({
     refetchJupiterQuote,
     sellAmountExceedsBalance,
     createJupiterQuotePayload,
+    currentMcap,
     tradeAmountAtomic,
     tradeReadConnection,
     tradeSide,
     autoConfirmEnabled,
+    armTradeProtection,
     walletPublicKey,
     walletSignTransaction,
+    armedTradeProtection?.trigger,
+    post.currentMcap,
+    protectionAutoArmCooldownUntilRef,
+    refetchWalletNativeBalance,
+    refetchWalletTokenBalance,
   ]);
 
   // Navigate to user profile (prefer username over ID for cleaner URLs)
@@ -4451,8 +4629,261 @@ export function PostCard({
     jupiterQuoteQuery.isLoading || jupiterNoRouteDetected || jupiterPriceImpactPct === null || !Number.isFinite(jupiterPriceImpactPct)
       ? "-"
       : `${jupiterPriceImpactPct.toFixed(2)}%`;
+  const protectionStatus = useMemo(() => {
+    if (!priceProtectionEnabled) {
+      return { label: null, tone: "idle" as const };
+    }
+    if (parsedStopLossPct === null && parsedTakeProfitPct === null) {
+      return { label: "Set a stop or target percent to arm exits.", tone: "idle" as const };
+    }
+    if (!armedTradeProtection) {
+      return {
+        label:
+          walletTokenBalance !== null && walletTokenBalance > 0
+            ? "Waiting for live market cap before arming."
+            : "Price guard will arm after your next filled buy.",
+        tone: "idle" as const,
+      };
+    }
+    if (armedTradeProtection.trigger === "stop-loss") {
+      return {
+        label: `Stop loss hit from ${formatMarketCap(armedTradeProtection.anchorMcap)}. Preparing full exit.`,
+        tone: "triggered" as const,
+      };
+    }
+    if (armedTradeProtection.trigger === "take-profit") {
+      return {
+        label: `Take profit hit from ${formatMarketCap(armedTradeProtection.anchorMcap)}. Preparing full exit.`,
+        tone: "triggered" as const,
+      };
+    }
+    const stopLabel =
+      typeof armedTradeProtection.stopLossPct === "number"
+        ? `stop ${armedTradeProtection.stopLossPct.toFixed(0)}%`
+        : null;
+    const targetLabel =
+      typeof armedTradeProtection.takeProfitPct === "number"
+        ? `target +${armedTradeProtection.takeProfitPct.toFixed(0)}%`
+        : null;
+    return {
+      label: `Armed from ${formatMarketCap(armedTradeProtection.anchorMcap)} with ${[stopLabel, targetLabel].filter(Boolean).join(" / ")}.`,
+      tone: "armed" as const,
+    };
+  }, [
+    armedTradeProtection,
+    parsedStopLossPct,
+    parsedTakeProfitPct,
+    priceProtectionEnabled,
+    walletTokenBalance,
+  ]);
+  useEffect(() => {
+    if ((!isBuyDialogOpen || !isMicroChartInterval) && !armedTradeProtection && !pendingProtectionAutoExecute) {
+      return;
+    }
+    appendMicroSample(currentMcap ?? null);
+  }, [
+    appendMicroSample,
+    armedTradeProtection,
+    currentMcap,
+    isBuyDialogOpen,
+    isMicroChartInterval,
+    pendingProtectionAutoExecute,
+  ]);
+
+  useEffect(() => {
+    if (!post.contractAddress) return;
+    const shouldUseFastPolling =
+      (isBuyDialogOpen && isMicroChartInterval) || Boolean(armedTradeProtection) || pendingProtectionAutoExecute;
+    if (!shouldUseFastPolling) return;
+
+    let cancelled = false;
+
+    const fetchLatestTradePrice = async () => {
+      try {
+        const latest = await api.get<BatchedPostPriceSnapshot>(`/api/posts/${post.id}/price`, {
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        syncRealtimeSnapshotToCachedPosts(queryClient, post.id, latest);
+        const snapshotVersion = getSnapshotDynamicStateVersion(latest);
+        if (snapshotVersion > latestMarketStateVersionRef.current) {
+          latestMarketStateVersionRef.current = snapshotVersion;
+        }
+        const nextMcap = resolveSnapshotCurrentMcap(currentMcap, post.entryMcap, latest);
+        setCurrentMcap(nextMcap);
+        appendMicroSample(nextMcap);
+        if (latest.settled && !localSettled) {
+          setLocalSettled(true);
+        }
+        if (latest.mcap1h !== null && latest.mcap1h !== localMcap1h) {
+          setLocalMcap1h(latest.mcap1h);
+        }
+        if (latest.mcap6h !== null && latest.mcap6h !== localMcap6h) {
+          setLocalMcap6h(latest.mcap6h);
+        }
+      } catch {
+        // Silent: fast polling should not spam console during route hiccups.
+      }
+    };
+
+    void fetchLatestTradePrice();
+    const intervalId = window.setInterval(fetchLatestTradePrice, FAST_TRADE_PRICE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    appendMicroSample,
+    armedTradeProtection,
+    currentMcap,
+    isBuyDialogOpen,
+    isMicroChartInterval,
+    localMcap1h,
+    localMcap6h,
+    localSettled,
+    pendingProtectionAutoExecute,
+    post.contractAddress,
+    post.entryMcap,
+    post.id,
+    queryClient,
+  ]);
+
+  useEffect(() => {
+    if (!priceProtectionEnabled) {
+      setArmedTradeProtection(null);
+      setPendingProtectionAutoExecute(false);
+      protectionAutoSellRetryCountRef.current = 0;
+      return;
+    }
+
+    if (parsedStopLossPct === null && parsedTakeProfitPct === null) {
+      setArmedTradeProtection(null);
+      return;
+    }
+
+    setArmedTradeProtection((current) =>
+      current
+        ? {
+            ...current,
+            stopLossPct: parsedStopLossPct,
+            takeProfitPct: parsedTakeProfitPct,
+          }
+        : current
+    );
+  }, [parsedStopLossPct, parsedTakeProfitPct, priceProtectionEnabled]);
+
+  useEffect(() => {
+    if (!priceProtectionEnabled) return;
+    if (armedTradeProtection) return;
+    if (Date.now() < protectionAutoArmCooldownUntilRef.current) return;
+    if (walletTokenBalance === null || walletTokenBalance <= 0) return;
+    if (currentMcap === null) return;
+    armTradeProtection(currentMcap);
+  }, [armTradeProtection, armedTradeProtection, currentMcap, priceProtectionEnabled, walletTokenBalance]);
+
+  useEffect(() => {
+    if (!armedTradeProtection) return;
+    if (armedTradeProtection.trigger) return;
+    if (currentMcap === null || !Number.isFinite(currentMcap) || currentMcap <= 0) return;
+
+    const stopLossHit =
+      typeof armedTradeProtection.stopLossPct === "number" &&
+      currentMcap <= armedTradeProtection.anchorMcap * (1 + armedTradeProtection.stopLossPct / 100);
+    const takeProfitHit =
+      typeof armedTradeProtection.takeProfitPct === "number" &&
+      currentMcap >= armedTradeProtection.anchorMcap * (1 + armedTradeProtection.takeProfitPct / 100);
+
+    if (!stopLossHit && !takeProfitHit) {
+      return;
+    }
+
+    const trigger: TradeProtectionTrigger = stopLossHit ? "stop-loss" : "take-profit";
+    setArmedTradeProtection((current) =>
+      current
+        ? {
+            ...current,
+            trigger,
+            triggeredAtMs: Date.now(),
+          }
+        : current
+    );
+    setTradeSide("sell");
+    setIsBuyDialogOpen(true);
+    toast.warning(
+      trigger === "stop-loss"
+        ? "Stop loss hit. Preparing a full exit."
+        : "Take profit hit. Preparing a full exit."
+    );
+    void refetchWalletTokenBalance();
+    setPendingProtectionAutoExecute(true);
+  }, [armedTradeProtection, currentMcap, refetchWalletTokenBalance]);
+
+  useEffect(() => {
+    if (!pendingProtectionAutoExecute) return;
+    if (walletTokenBalance === null || walletTokenBalance <= 0) {
+      void refetchWalletTokenBalance();
+      return;
+    }
+    setTradeSide("sell");
+    setSellAmountToken(formatTradeDecimalInputValue(walletTokenBalance, Math.max(2, outputTokenDecimals)));
+  }, [
+    outputTokenDecimals,
+    pendingProtectionAutoExecute,
+    refetchWalletTokenBalance,
+    walletTokenBalance,
+  ]);
+
+  useEffect(() => {
+    if (!pendingProtectionAutoExecute) return;
+
+    if (sellHasNoTokens || sellBlockedByRpcTokenInfo) {
+      protectionAutoSellRetryCountRef.current += 1;
+      if (protectionAutoSellRetryCountRef.current >= 3) {
+        setPendingProtectionAutoExecute(false);
+      }
+      return;
+    }
+
+    if (jupiterNoRouteDetected) {
+      setPendingProtectionAutoExecute(false);
+      return;
+    }
+
+    if (jupiterQuoteUnavailable) {
+      if (protectionAutoSellRetryCountRef.current < 2) {
+        protectionAutoSellRetryCountRef.current += 1;
+        void refetchJupiterQuote();
+        return;
+      }
+      setPendingProtectionAutoExecute(false);
+      return;
+    }
+
+    if (!canExecuteJupiterBuy || isExecutingBuy || tradeSide !== "sell") return;
+
+    protectionAutoSellRetryCountRef.current = 0;
+    setPendingProtectionAutoExecute(false);
+    void handleExecuteJupiterBuy();
+  }, [
+    canExecuteJupiterBuy,
+    handleExecuteJupiterBuy,
+    isExecutingBuy,
+    jupiterNoRouteDetected,
+    jupiterQuoteUnavailable,
+    pendingProtectionAutoExecute,
+    refetchJupiterQuote,
+    sellBlockedByRpcTokenInfo,
+    sellHasNoTokens,
+    tradeSide,
+  ]);
+  const microChartCandles = useMemo(
+    () => buildMicroChartCandles(microChartSamples, 1_000),
+    [microChartSamples]
+  );
   const professionalChartData = useMemo(() => {
-    const providerCandles = chartCandlesQuery.data?.candles ?? [];
+    const providerCandles = isMicroChartInterval
+      ? microChartCandles
+      : chartCandlesQuery.data?.candles ?? [];
     const fallbackIntervalMs =
       chartRequestConfig.timeframe === "day"
         ? chartRequestConfig.aggregate * 86_400_000
@@ -4486,7 +4917,11 @@ export function PostCard({
           })
         : [];
 
-    const candles = providerCandles.length >= 2 ? providerCandles : fallbackCandles;
+    const candles = isMicroChartInterval
+      ? providerCandles
+      : providerCandles.length >= 2
+        ? providerCandles
+        : fallbackCandles;
     return candles
       .map((candle) => {
         const open = Number(candle.open);
@@ -4500,7 +4935,12 @@ export function PostCard({
             : candle.timestamp * 1000;
         const date = new Date(normalizedTs);
         const label =
-          chartRequestConfig.timeframe === "day"
+          isMicroChartInterval
+            ? date.toLocaleTimeString(undefined, {
+                minute: "2-digit",
+                second: "2-digit",
+              })
+            : chartRequestConfig.timeframe === "day"
             ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
             : date.toLocaleTimeString(undefined, {
                 hour: "2-digit",
@@ -4511,6 +4951,7 @@ export function PostCard({
           day: "numeric",
           hour: "2-digit",
           minute: "2-digit",
+          ...(isMicroChartInterval ? { second: "2-digit" as const } : {}),
         });
         return {
           ...candle,
@@ -4533,8 +4974,18 @@ export function PostCard({
         Number.isFinite(point.close)
       )
       .sort((a, b) => a.ts - b.ts);
-  }, [chartCandlesQuery.data?.candles, chartRequestConfig.aggregate, chartRequestConfig.timeframe, post.createdAt, tradeChartData]);
-  const hasProviderChartCandles = (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
+  }, [
+    chartCandlesQuery.data?.candles,
+    chartRequestConfig.aggregate,
+    chartRequestConfig.timeframe,
+    isMicroChartInterval,
+    microChartCandles,
+    post.createdAt,
+    tradeChartData,
+  ]);
+  const hasProviderChartCandles = isMicroChartInterval
+    ? microChartCandles.length >= 2
+    : (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
   const hasProfessionalChartData = professionalChartData.length >= 2;
   const isFallbackChartData = hasProfessionalChartData && !hasProviderChartCandles;
   const chartTotalPoints = professionalChartData.length;
@@ -4584,13 +5035,16 @@ export function PostCard({
     if (!chartVisibleStartPoint || !chartVisibleEndPoint) return "No chart range";
     const formatTimestamp = (ts: number) => {
       const date = new Date(ts);
+      if (isMicroChartInterval) {
+        return date.toLocaleTimeString(undefined, { minute: "2-digit", second: "2-digit" });
+      }
       if (chartRequestConfig.timeframe === "day") {
         return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       }
       return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     };
     return `${formatTimestamp(chartVisibleStartPoint.ts)} - ${formatTimestamp(chartVisibleEndPoint.ts)}`;
-  }, [chartRequestConfig.timeframe, chartVisibleEndPoint, chartVisibleStartPoint]);
+  }, [chartRequestConfig.timeframe, chartVisibleEndPoint, chartVisibleStartPoint, isMicroChartInterval]);
   const chartRangeDetailLabel = useMemo(() => {
     if (!chartVisibleStartPoint || !chartVisibleEndPoint) return "";
     return `${chartVisibleStartPoint.fullLabel} -> ${chartVisibleEndPoint.fullLabel}`;
@@ -4600,12 +5054,15 @@ export function PostCard({
       const ts = typeof value === "number" ? value : Number(value);
       if (!Number.isFinite(ts)) return "";
       const date = new Date(ts);
+      if (isMicroChartInterval) {
+        return date.toLocaleTimeString(undefined, { minute: "2-digit", second: "2-digit" });
+      }
       if (chartRequestConfig.timeframe === "day") {
         return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       }
       return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     },
-    [chartRequestConfig.timeframe]
+    [chartRequestConfig.timeframe, isMicroChartInterval]
   );
   const chartEntryTargetTs = useMemo(() => {
     const parsed = new Date(post.createdAt).getTime();
@@ -4934,6 +5391,9 @@ export function PostCard({
     ? "rgba(116,243,122,0.18)"
     : "rgba(255,107,107,0.18)";
   const chartFeedLabel = useMemo(() => {
+    if (isMicroChartInterval) {
+      return "Phew micro";
+    }
     if (isFallbackChartData) {
       return "Phew";
     }
@@ -4945,7 +5405,7 @@ export function PostCard({
       default:
         return "Live";
     }
-  }, [chartCandlesQuery.data?.source, isFallbackChartData]);
+  }, [chartCandlesQuery.data?.source, isFallbackChartData, isMicroChartInterval]);
   const walletConnectDialogClassName =
     "w-[calc(100vw-1rem)] max-w-md overflow-hidden border-slate-900/10 bg-[linear-gradient(180deg,rgba(255,252,247,0.98),rgba(246,239,228,0.98))] p-0 text-slate-900 shadow-[0_36px_120px_-50px_rgba(15,23,42,0.34)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.96),rgba(4,6,10,0.98))] dark:text-white dark:shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]";
   const tradeDialogSurfaceClassName =
@@ -4955,7 +5415,7 @@ export function PostCard({
   const tradeDialogBodyClassName =
     "min-h-0 flex-1 space-y-2.5 overflow-y-auto bg-[linear-gradient(180deg,rgba(255,252,248,0.9),rgba(245,238,226,0.98))] p-2.5 dark:bg-[linear-gradient(180deg,rgba(7,9,14,0.98),rgba(5,7,10,0.98))] sm:space-y-3 sm:p-4";
   const tradeDialogFooterClassName =
-    "relative z-20 flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(7,9,13,0.98))] sm:px-5";
+    "relative z-20 hidden flex-row items-center justify-between gap-2 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(252,247,239,0.98),rgba(246,239,227,0.94))] px-4 py-3 dark:border-white/[0.06] dark:bg-[linear-gradient(180deg,rgba(10,12,18,0.96),rgba(7,9,13,0.98))] sm:flex sm:px-5";
   const chartPanelClassName =
     "relative overflow-hidden rounded-2xl border border-slate-900/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(247,241,230,0.94))] shadow-[0_30px_80px_-52px_rgba(148,163,184,0.74)] ring-1 ring-white/65 dark:border-white/[0.08] dark:bg-[radial-gradient(circle_at_12%_0%,rgba(16,185,129,0.08),transparent_30%),radial-gradient(circle_at_100%_0%,rgba(59,130,246,0.12),transparent_26%),linear-gradient(180deg,rgba(8,11,18,0.99),rgba(3,6,11,0.99))] dark:shadow-[0_34px_96px_-62px_rgba(0,0,0,0.98)] dark:ring-white/6";
   const chartDividerClassName = "border-slate-900/[0.06] dark:border-white/[0.06]";
@@ -5015,13 +5475,20 @@ export function PostCard({
   }, [handleChartMouseUp]);
 
   useEffect(() => {
-    if (!isBuyDialogOpen && !pendingQuickBuyAutoExecute) return;
+    if (!isBuyDialogOpen && !pendingQuickBuyAutoExecute && !pendingProtectionAutoExecute) return;
     if (!canExecuteJupiterBuy) return;
     if (isExecutingBuy) return;
     void buildSwapTransaction().catch(() => {
       // Ignore prebuild errors; execution path will show actionable errors.
     });
-  }, [buildSwapTransaction, canExecuteJupiterBuy, isBuyDialogOpen, isExecutingBuy, pendingQuickBuyAutoExecute]);
+  }, [
+    buildSwapTransaction,
+    canExecuteJupiterBuy,
+    isBuyDialogOpen,
+    isExecutingBuy,
+    pendingProtectionAutoExecute,
+    pendingQuickBuyAutoExecute,
+  ]);
 
   useEffect(() => {
     if (!pendingQuickBuyAutoExecute) return;
@@ -6591,7 +7058,7 @@ export function PostCard({
                       <div className={cn("flex items-center justify-between border-t px-4 py-2 text-[10px] text-slate-500 dark:text-white/25", chartDividerClassName)}>
                         <div className="flex items-center gap-3">
                           {hasProfessionalChartData && (
-                            <span>{chartFeedLabel} {chartRequestConfig.timeframe}/{chartRequestConfig.aggregate}</span>
+                            <span>{chartFeedLabel} {chartInterval}</span>
                           )}
                           {resolvedLiquidityUsd != null && (
                             <span>Liq ${resolvedLiquidityUsd.toLocaleString()}</span>
@@ -6656,6 +7123,16 @@ export function PostCard({
                       onSellPercentClick={(percent) => setSellAmountFromPercent(percent)}
                       autoConfirmEnabled={autoConfirmEnabled}
                       onAutoConfirmChange={handleAutoConfirmChange}
+                      mevProtectionEnabled={mevProtectionEnabled}
+                      onMevProtectionChange={setMevProtectionEnabled}
+                      protectionEnabled={priceProtectionEnabled}
+                      onProtectionEnabledChange={setPriceProtectionEnabled}
+                      stopLossPercent={stopLossPercentInput}
+                      onStopLossPercentChange={setStopLossPercentInput}
+                      takeProfitPercent={takeProfitPercentInput}
+                      onTakeProfitPercentChange={setTakeProfitPercentInput}
+                      protectionStatusLabel={protectionStatus.label}
+                      protectionStatusTone={protectionStatus.tone}
                     />
 
                     {/* Portfolio Panel */}
