@@ -45,6 +45,7 @@ const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
 const TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS = 10_000;
 const TOKEN_LIVE_CHART_VISIBLE_POINTS = 72;
 const TOKEN_LIVE_CHART_FUTURE_SLOTS = 6;
+const FRESH_POST_MCAP_WINDOW_MS = 30 * 60_000;
 const TOKEN_CHART_INTERVAL_OPTIONS = [
   { value: "5", label: "5m" },
   { value: "15", label: "15m" },
@@ -598,6 +599,60 @@ function parseTimestamp(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function finiteMetric(value: number | null | undefined, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function getPostMetricTimestamp(
+  post: Pick<Post, "lastMcapUpdate" | "lastIntelligenceAt" | "createdAt">
+): number {
+  return Math.max(
+    parseTimestamp(post.lastMcapUpdate ?? null),
+    parseTimestamp(post.lastIntelligenceAt ?? null),
+    parseTimestamp(post.createdAt)
+  );
+}
+
+function syncRecentCallViewerState(
+  primary: Post[] | null | undefined,
+  merged: Post[]
+): Post[] {
+  if (!Array.isArray(primary) || primary.length === 0 || merged.length === 0) {
+    return merged;
+  }
+
+  const primaryById = new Map(primary.map((post) => [post.id, post] as const));
+  let didChange = false;
+  const nextMerged = merged.map((post) => {
+    const primaryPost = primaryById.get(post.id);
+    if (!primaryPost) {
+      return post;
+    }
+
+    const nextPost = {
+      ...post,
+      isLiked: primaryPost.isLiked,
+      isReposted: primaryPost.isReposted,
+      isFollowingAuthor: primaryPost.isFollowingAuthor,
+      currentReactionType: primaryPost.currentReactionType,
+    };
+
+    if (
+      nextPost.isLiked !== post.isLiked ||
+      nextPost.isReposted !== post.isReposted ||
+      nextPost.isFollowingAuthor !== post.isFollowingAuthor ||
+      nextPost.currentReactionType !== post.currentReactionType
+    ) {
+      didChange = true;
+      return nextPost;
+    }
+
+    return post;
+  });
+
+  return didChange ? nextMerged : merged;
+}
+
 function pickMergedMetric(
   live: number | null | undefined,
   cached: number | null | undefined,
@@ -617,15 +672,26 @@ function pickMergedMetric(
   return first ?? second ?? null;
 }
 
-function getBestPostCurrentMcap(posts: Post[] | null | undefined): number | null {
-  return (
-    posts?.find(
-      (post) =>
-        typeof post.currentMcap === "number" &&
-        Number.isFinite(post.currentMcap) &&
-        post.currentMcap > 0
-    )?.currentMcap ?? null
-  );
+function getBestPostCurrentMcapSnapshot(
+  posts: Post[] | null | undefined
+): { value: number; timestamp: number } | null {
+  let best: { value: number; timestamp: number } | null = null;
+
+  for (const post of posts ?? []) {
+    if (typeof post.currentMcap !== "number" || !Number.isFinite(post.currentMcap) || post.currentMcap <= 0) {
+      continue;
+    }
+
+    const timestamp = getPostMetricTimestamp(post);
+    if (!best || timestamp >= best.timestamp) {
+      best = {
+        value: post.currentMcap,
+        timestamp,
+      };
+    }
+  }
+
+  return best;
 }
 
 function pickStableMarketCap(
@@ -634,18 +700,117 @@ function pickStableMarketCap(
   posts: Post[] | null | undefined
 ): number | null {
   const merged = pickMergedMetric(live, cached, { positive: true });
-  const postCurrentMcap = getBestPostCurrentMcap(posts);
+  const postCurrentMcap = getBestPostCurrentMcapSnapshot(posts);
 
-  if (typeof postCurrentMcap === "number" && Number.isFinite(postCurrentMcap) && postCurrentMcap > 0) {
-    if (typeof merged === "number" && Number.isFinite(merged) && merged > 0) {
-      const ratio = Math.max(merged, postCurrentMcap) / Math.max(1, Math.min(merged, postCurrentMcap));
-      if (ratio >= 1.35) {
-        return postCurrentMcap;
-      }
+  if (postCurrentMcap) {
+    if (typeof merged !== "number" || !Number.isFinite(merged) || merged <= 0) {
+      return postCurrentMcap.value;
+    }
+
+    const ratio = Math.max(merged, postCurrentMcap.value) / Math.max(1, Math.min(merged, postCurrentMcap.value));
+    const postMetricIsFresh =
+      postCurrentMcap.timestamp > 0 && Date.now() - postCurrentMcap.timestamp <= FRESH_POST_MCAP_WINDOW_MS;
+    if (postMetricIsFresh || ratio >= 1.15) {
+      return postCurrentMcap.value;
     }
   }
 
   return merged;
+}
+
+function deriveTimelineFromCalls(calls: Post[] | null | undefined): TokenTimelineEvent[] {
+  return [...(calls ?? [])]
+    .sort((left, right) => parseTimestamp(right.createdAt) - parseTimestamp(left.createdAt))
+    .slice(0, 12)
+    .map((call) => ({
+      id: `call:${call.id}`,
+      eventType: "alpha_call",
+      timestamp: call.createdAt,
+      marketCap: call.entryMcap,
+      liquidity: call.liquidity ?? null,
+      volume: call.volume24h ?? null,
+      traderId: call.author.id,
+      postId: call.id,
+      metadata: {
+        traderHandle: call.author.username,
+        traderName: call.author.name,
+        timingTier: call.timingTier ?? null,
+        confidenceScore: call.confidenceScore ?? null,
+      },
+    }));
+}
+
+function mergeTimelineEvents(
+  primary: TokenTimelineEvent[] | null | undefined,
+  fallback: TokenTimelineEvent[] | null | undefined
+): TokenTimelineEvent[] {
+  const mergedById = new Map<string, TokenTimelineEvent>();
+
+  for (const event of [...(primary ?? []), ...(fallback ?? [])]) {
+    if (!event?.id || mergedById.has(event.id)) {
+      continue;
+    }
+    mergedById.set(event.id, event);
+  }
+
+  return Array.from(mergedById.values())
+    .sort((left, right) => parseTimestamp(right.timestamp) - parseTimestamp(left.timestamp))
+    .slice(0, 48);
+}
+
+function deriveTopTradersFromCalls(calls: Post[] | null | undefined): TokenTrader[] {
+  const traderMap = new Map<
+    string,
+    TokenTrader & {
+      totalConfidenceScore: number;
+    }
+  >();
+
+  for (const call of calls ?? []) {
+    const existing = traderMap.get(call.author.id) ?? {
+      id: call.author.id,
+      name: call.author.name,
+      username: call.author.username,
+      image: call.author.image,
+      level: call.author.level,
+      xp: call.author.xp,
+      trustScore: call.author.trustScore ?? null,
+      reputationTier: call.author.reputationTier ?? null,
+      winRate30d: call.author.winRate30d ?? null,
+      avgRoi30d: call.author.avgRoi30d ?? null,
+      firstCallCount: call.author.firstCallCount,
+      callsCount: 0,
+      avgConfidenceScore: 0,
+      bestRoiPct: 0,
+      totalConfidenceScore: 0,
+    };
+
+    existing.callsCount += 1;
+    existing.totalConfidenceScore += finiteMetric(call.confidenceScore);
+    existing.bestRoiPct = Math.max(
+      existing.bestRoiPct,
+      Math.max(0, finiteMetric(call.roiPeakPct, finiteMetric(call.roiCurrentPct)))
+    );
+    traderMap.set(call.author.id, existing);
+  }
+
+  return Array.from(traderMap.values())
+    .map(({ totalConfidenceScore, ...trader }) => ({
+      ...trader,
+      avgConfidenceScore:
+        trader.callsCount > 0 ? Math.round((totalConfidenceScore / trader.callsCount) * 10) / 10 : 0,
+      bestRoiPct: Math.round(trader.bestRoiPct * 10) / 10,
+    }))
+    .sort((left, right) => {
+      const callDelta = right.callsCount - left.callsCount;
+      if (callDelta !== 0) return callDelta;
+      const confidenceDelta = finiteMetric(right.avgConfidenceScore) - finiteMetric(left.avgConfidenceScore);
+      if (confidenceDelta !== 0) return confidenceDelta;
+      const trustDelta = finiteMetric(right.trustScore) - finiteMetric(left.trustScore);
+      if (trustDelta !== 0) return trustDelta;
+      return finiteMetric(right.bestRoiPct) - finiteMetric(left.bestRoiPct);
+    })
+    .slice(0, 8);
 }
 
 function getTokenIntelligenceVersion(token: Pick<TokenPageData, "lastIntelligenceAt"> | null | undefined): number {
@@ -1066,7 +1231,10 @@ function mergeTokenPageDataWithCached(
   };
   const shouldKeepCachedBundleState =
     hasResolvedBundleEvidence(cachedBundleState) && isBundlePlaceholderState(liveBundleState);
-  const mergedRecentCalls = mergePreferredPostCollections(live.recentCalls, cached.recentCalls);
+  const mergedRecentCalls = syncRecentCallViewerState(
+    live.recentCalls,
+    mergePreferredPostCollections(live.recentCalls, cached.recentCalls)
+  );
   return {
     ...live,
     marketCap: pickStableMarketCap(live.marketCap, cached.marketCap, mergedRecentCalls),
@@ -1243,7 +1411,10 @@ function mergeTokenPageDataWithCachedPosts(
   current: TokenPageData,
   cachedPosts: Post[] | null | undefined
 ): TokenPageData {
-  const mergedRecentCalls = mergePreferredPostCollections(current.recentCalls, cachedPosts);
+  const mergedRecentCalls = syncRecentCallViewerState(
+    current.recentCalls,
+    mergePreferredPostCollections(current.recentCalls, cachedPosts)
+  );
   const bestPost = pickBestCachedTokenPost(mergedRecentCalls);
 
   if (!bestPost) {
@@ -1637,7 +1808,7 @@ export default function TokenPage() {
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v28:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v29:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
@@ -1937,8 +2108,20 @@ export default function TokenPage() {
   }, [liveChartData]);
 
   const recentCalls = useMemo(
-    () => mergePreferredPostCollections(token?.recentCalls ?? [], cachedPostsForToken),
+    () =>
+      syncRecentCallViewerState(
+        token?.recentCalls ?? [],
+        mergePreferredPostCollections(token?.recentCalls ?? [], cachedPostsForToken)
+      ),
     [cachedPostsForToken, token?.recentCalls]
+  );
+  const displayTimeline = useMemo(
+    () => mergeTimelineEvents(token?.timeline ?? [], deriveTimelineFromCalls(recentCalls)),
+    [recentCalls, token?.timeline]
+  );
+  const displayTopTraders = useMemo(
+    () => (token?.topTraders.length ? token.topTraders : deriveTopTradersFromCalls(recentCalls)),
+    [recentCalls, token?.topTraders]
   );
   const recentCallsCount = Math.max(token?.callsCount ?? 0, recentCalls.length);
   const primaryTradeCall = useMemo(
@@ -2801,13 +2984,13 @@ export default function TokenPage() {
                   <h3 className="text-base font-semibold text-foreground">Alpha timeline</h3>
                 </div>
                 <div className="relative space-y-0">
-                  {token.timeline.length > 0 ? (() => {
+                  {displayTimeline.length > 0 ? (() => {
                     const holderHandleMap = new Map(
                       token.risk.topHolders
                         .filter((h) => h.phewHandle)
                         .map((h) => [h.phewHandle!, h])
                     );
-                    return token.timeline.map((event, idx) => {
+                    return displayTimeline.map((event, idx) => {
                       const timelineCopy = buildTimelineCopy(event);
                       const linkedHolder = event.metadata?.traderHandle
                         ? holderHandleMap.get(event.metadata.traderHandle)
@@ -2818,7 +3001,7 @@ export default function TokenPage() {
                             <div className="z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
                               <div className="h-2 w-2 rounded-full bg-primary" />
                             </div>
-                            {idx < token.timeline.length - 1 ? (
+                            {idx < displayTimeline.length - 1 ? (
                               <div className="mt-1 w-px flex-1 bg-border/50" />
                             ) : null}
                           </div>
@@ -2896,11 +3079,11 @@ export default function TokenPage() {
                     <h3 className="text-base font-semibold text-foreground">Top traders</h3>
                   </div>
                   <div className="space-y-2.5">
-                    {token.topTraders.length > 0 ? (() => {
+                    {displayTopTraders.length > 0 ? (() => {
                       const holderHandleSet = new Map(
                         token.risk.topHolders.filter((h) => h.phewHandle).map((h) => [h.phewHandle!, h])
                       );
-                      return token.topTraders.map((trader, idx) => {
+                      return displayTopTraders.map((trader, idx) => {
                         const linkedHolder = trader.username ? holderHandleSet.get(trader.username) : null;
                         return (
                           <div key={trader.id} className="rounded-[18px] border border-border/60 bg-secondary p-3">

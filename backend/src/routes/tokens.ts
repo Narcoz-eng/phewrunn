@@ -75,7 +75,7 @@ const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_
 const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
-const TOKEN_ROUTE_CACHE_VERSION = 25;
+const TOKEN_ROUTE_CACHE_VERSION = 26;
 const TRUSTED_TRADER_THRESHOLD = 58;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
@@ -1106,50 +1106,50 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   const viewer = c.get("user");
   const isPersonalized = Boolean(viewer?.id);
   const sharedCacheKey = buildTokenRouteCacheKey(tokenAddress, null);
-  const viewerCacheKey = viewer?.id ? buildTokenRouteCacheKey(tokenAddress, viewer.id) : sharedCacheKey;
-  const cachedViewerPayload = viewerCacheKey ? await readBestEffortTokenRouteCache(viewerCacheKey) : null;
-  const cachedSharedPayload =
-    viewerCacheKey !== sharedCacheKey ? await readBestEffortTokenRouteCache(sharedCacheKey) : cachedViewerPayload;
-  const cached = cachedViewerPayload ?? cachedSharedPayload;
-  const staleCachedViewerPayload = viewerCacheKey
-    ? await readBestEffortTokenRouteCache(viewerCacheKey, { allowStale: true })
-    : null;
-  const staleCachedSharedPayload =
-    viewerCacheKey !== sharedCacheKey
-      ? await readBestEffortTokenRouteCache(sharedCacheKey, { allowStale: true })
-      : staleCachedViewerPayload;
-  const staleCached = staleCachedViewerPayload ?? staleCachedSharedPayload;
   if (isPersonalized) {
     c.header("Vary", "Cookie");
+    const overview = await getTokenOverviewByAddress(tokenAddress, viewer!.id);
+    if (!overview) {
+      return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+    }
+
+    const data = overview.token;
+    if (isMeaningfulTokenRoutePayload(data)) {
+      writeBestEffortTokenRouteCache(sharedCacheKey, toSharedTokenRoutePayload(data));
+    }
+
+    return c.json({ data }, 200, buildTokenRouteHeaders(true));
   }
 
-  if (cachedViewerPayload) {
-    return c.json({ data: cachedViewerPayload }, 200, buildTokenRouteHeaders(isPersonalized));
+  const cached = await readBestEffortTokenRouteCache(sharedCacheKey);
+  const staleCached = await readBestEffortTokenRouteCache(sharedCacheKey, { allowStale: true });
+
+  if (cached) {
+    return c.json({ data: cached }, 200, buildTokenRouteHeaders(false));
   }
   if (staleCached) {
-    void getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null)
+    void getTokenOverviewByAddress(tokenAddress, null)
       .then((overview) => {
         if (!overview) return;
         const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : staleCached;
         if (!isMeaningfulTokenRoutePayload(data)) return;
-        writeBestEffortTokenRouteCache(viewerCacheKey, data);
         writeBestEffortTokenRouteCache(sharedCacheKey, toSharedTokenRoutePayload(data));
       })
       .catch(() => undefined);
-    return c.json({ data: staleCached }, 200, buildTokenRouteHeaders(isPersonalized));
+    return c.json({ data: staleCached }, 200, buildTokenRouteHeaders(false));
   }
 
   let overview;
   try {
-    overview = await getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null);
+    overview = await getTokenOverviewByAddress(tokenAddress, null);
   } catch (error) {
     if (cached ?? staleCached) {
       console.warn("[tokens] serving stale cached token overview", {
         tokenAddress,
-        viewerId: viewer?.id ?? null,
+        viewerId: null,
         message: error instanceof Error ? error.message : String(error),
       });
-      return c.json({ data: (cached ?? staleCached)! }, 200, buildTokenRouteHeaders(isPersonalized));
+      return c.json({ data: (cached ?? staleCached)! }, 200, buildTokenRouteHeaders(false));
     }
     throw error;
   }
@@ -1160,11 +1160,10 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
 
   const data = isMeaningfulTokenRoutePayload(overview.token) ? overview.token : staleCached ?? overview.token;
   if (isMeaningfulTokenRoutePayload(data)) {
-    writeBestEffortTokenRouteCache(viewerCacheKey, data);
     writeBestEffortTokenRouteCache(sharedCacheKey, toSharedTokenRoutePayload(data));
   }
 
-  return c.json({ data }, 200, buildTokenRouteHeaders(isPersonalized));
+  return c.json({ data }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.get("/:tokenAddress/chart", zValidator("param", TokenAddressParamSchema), async (c) => {

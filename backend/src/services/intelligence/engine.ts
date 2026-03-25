@@ -45,7 +45,7 @@ const FEED_LIST_SOFT_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
-const TOKEN_OVERVIEW_CACHE_VERSION = 8;
+const TOKEN_OVERVIEW_CACHE_VERSION = 9;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
 const TOKEN_LOOKUP_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
@@ -3700,6 +3700,37 @@ function sortTokenCallsForDisplay(calls: EnrichedCall[]): EnrichedCall[] {
   });
 }
 
+function getFreshestCallMetricTimestamp(
+  call: Pick<EnrichedCall, "lastMcapUpdate" | "lastIntelligenceAt" | "createdAt">
+): number {
+  return Math.max(
+    toDateMs(call.lastMcapUpdate),
+    toDateMs(call.lastIntelligenceAt),
+    toDateMs(call.createdAt)
+  );
+}
+
+function pickFreshestCallCurrentMcap(
+  calls: Array<Pick<EnrichedCall, "currentMcap" | "lastMcapUpdate" | "lastIntelligenceAt" | "createdAt">>
+): number | null {
+  let bestValue: number | null = null;
+  let bestTimestamp = 0;
+
+  for (const call of calls) {
+    if (!hasPositiveMetric(call.currentMcap)) {
+      continue;
+    }
+
+    const timestamp = getFreshestCallMetricTimestamp(call);
+    if (bestValue === null || timestamp >= bestTimestamp) {
+      bestValue = call.currentMcap;
+      bestTimestamp = timestamp;
+    }
+  }
+
+  return bestValue;
+}
+
 export async function getTokenOverviewByAddress(address: string, viewerId: string | null): Promise<TokenOverview | null> {
   const normalizedAddress = address.trim();
   const cacheKey = `token:v${TOKEN_OVERVIEW_CACHE_VERSION}:${viewerId ?? "anonymous"}:${sanitizeCacheKeyPart(normalizedAddress)}`;
@@ -3927,8 +3958,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
       snapshots.length > 0 ? snapshots[snapshots.length - 1]?.marketCap ?? null : null;
     const resolvedMarketCap = roundMetric(
       pickFirstPositiveMetric(
+        pickFreshestCallCurrentMcap(recentCalls),
         marketSnapshotFallback?.mcap,
-        recentCalls[0]?.currentMcap,
         latestSnapshotMarketCap,
         events.find((event) => hasFiniteMetric(event.marketCap))?.marketCap,
         staleToken?.marketCap
