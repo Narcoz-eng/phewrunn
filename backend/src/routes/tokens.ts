@@ -14,7 +14,17 @@ import {
   getTokenOverviewByAddress,
   invalidateViewerSocialCaches,
 } from "../services/intelligence/engine.js";
-import { computeTokenRiskScore, determineBundleRiskLabel } from "../services/intelligence/scoring.js";
+import {
+  computeConfidenceScore,
+  computeEarlyRunnerScore,
+  computeHighConvictionScore,
+  computeHotAlphaScore,
+  computeSentimentScore,
+  computeTokenRiskScore,
+  computeWeightedEngagementPerHour,
+  determineBundleRiskLabel,
+  type ReactionCounts,
+} from "../services/intelligence/scoring.js";
 
 export const tokensRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -66,6 +76,7 @@ const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
 const TOKEN_ROUTE_CACHE_VERSION = 25;
+const TRUSTED_TRADER_THRESHOLD = 58;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
 const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();
@@ -277,6 +288,124 @@ function toTimestampMs(value: Date | string | null | undefined): number {
 function toIsoTimestamp(value: Date | string | null | undefined): string | null {
   const timestamp = toTimestampMs(value);
   return timestamp > 0 ? new Date(timestamp).toISOString() : null;
+}
+
+function finiteMetric(value: number | null | undefined, fallback = 0): number {
+  return isFiniteNumber(value) ? value : fallback;
+}
+
+function growthPct(current: number | null | undefined, previous: number | null | undefined): number {
+  const currentValue = finiteMetric(current);
+  const previousValue = finiteMetric(previous);
+  if (currentValue <= 0 || previousValue <= 0) return 0;
+  return ((currentValue - previousValue) / previousValue) * 100;
+}
+
+function deriveRoiPct(entryMcap: number | null | undefined, targetMcap: number | null | undefined): number | null {
+  const entryValue = finiteMetric(entryMcap);
+  const targetValue = finiteMetric(targetMcap);
+  if (entryValue <= 0 || targetValue <= 0) return null;
+  return ((targetValue - entryValue) / entryValue) * 100;
+}
+
+function averageFiniteMetric(values: Array<number | null | undefined>): number | null {
+  const finiteValues = values.filter((value): value is number => isFiniteNumber(value));
+  if (finiteValues.length === 0) {
+    return null;
+  }
+
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+}
+
+function emptyReactionCounts(): ReactionCounts {
+  return {
+    alpha: 0,
+    based: 0,
+    printed: 0,
+    rug: 0,
+  };
+}
+
+function parseReactionCounts(value: unknown): ReactionCounts {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return emptyReactionCounts();
+  }
+
+  const candidate = value as Partial<Record<keyof ReactionCounts, unknown>>;
+  return {
+    alpha: isFiniteNumber(candidate.alpha as number) && Number(candidate.alpha) > 0 ? Math.round(Number(candidate.alpha)) : 0,
+    based: isFiniteNumber(candidate.based as number) && Number(candidate.based) > 0 ? Math.round(Number(candidate.based)) : 0,
+    printed: isFiniteNumber(candidate.printed as number) && Number(candidate.printed) > 0 ? Math.round(Number(candidate.printed)) : 0,
+    rug: isFiniteNumber(candidate.rug as number) && Number(candidate.rug) > 0 ? Math.round(Number(candidate.rug)) : 0,
+  };
+}
+
+function sumReactionCounts(left: ReactionCounts, right: ReactionCounts): ReactionCounts {
+  return {
+    alpha: left.alpha + right.alpha,
+    based: left.based + right.based,
+    printed: left.printed + right.printed,
+    rug: left.rug + right.rug,
+  };
+}
+
+function getFreshestMetricTimestamp(value: {
+  lastMcapUpdate?: Date | string | null;
+  lastIntelligenceAt?: Date | string | null;
+  createdAt?: Date | string | null;
+}): number {
+  return Math.max(
+    toTimestampMs(value.lastMcapUpdate),
+    toTimestampMs(value.lastIntelligenceAt),
+    toTimestampMs(value.createdAt)
+  );
+}
+
+function pickFreshestPostCurrentMcap(
+  posts: Array<{
+    currentMcap: number | null;
+    lastMcapUpdate?: Date | string | null;
+    lastIntelligenceAt?: Date | string | null;
+    createdAt?: Date | string | null;
+  }>
+): number | null {
+  let bestValue: number | null = null;
+  let bestTimestamp = 0;
+
+  for (const post of posts) {
+    if (!isFiniteNumber(post.currentMcap) || post.currentMcap <= 0) {
+      continue;
+    }
+
+    const timestamp = getFreshestMetricTimestamp(post);
+    if (bestValue === null || timestamp >= bestTimestamp) {
+      bestValue = post.currentMcap;
+      bestTimestamp = timestamp;
+    }
+  }
+
+  return bestValue;
+}
+
+function computeDexSentimentTrendAdjustment(args: {
+  priceChange24hPct: number | null | undefined;
+  buys24h: number | null | undefined;
+  sells24h: number | null | undefined;
+}): number {
+  const priceChangePct = finiteMetric(args.priceChange24hPct);
+  const buys24h = Math.max(0, finiteMetric(args.buys24h));
+  const sells24h = Math.max(0, finiteMetric(args.sells24h));
+  const totalTrades = buys24h + sells24h;
+  const orderFlowImbalancePct = totalTrades > 0 ? ((buys24h - sells24h) / totalTrades) * 100 : 0;
+  const priceAdjustment = Math.max(-14, Math.min(14, priceChangePct / 3));
+  const flowAdjustment = Math.max(-10, Math.min(10, orderFlowImbalancePct / 5));
+  const activityAdjustment = totalTrades >= 40 ? Math.min(4, totalTrades / 50) : 0;
+
+  if (!isFiniteNumber(args.priceChange24hPct) && totalTrades === 0) {
+    return 0;
+  }
+
+  return priceAdjustment + flowAdjustment + activityAdjustment;
 }
 
 function hasResolvedHolderCount(
@@ -532,13 +661,93 @@ tokensRouter.get(
           ? needsFreshSolanaHolderDistributionSnapshot(cachedDistribution)
           : !cachedDistribution && (!token || !hasStoredSolanaDistributionTelemetry(token)));
 
-      const [marketSnapshot, distributionSnapshot] = await Promise.all([
+      const [marketSnapshot, distributionSnapshot, recentSignalCalls, snapshotHistory] = await Promise.all([
         getCachedMarketCapSnapshot(tokenAddress, chainType),
         shouldRunLiveDistributionScan
           ? analyzeSolanaTokenDistribution(tokenAddress, token?.liquidity ?? null, {
               preferFresh: shouldPreferFreshDistribution,
             })
           : Promise.resolve(cachedDistribution),
+        prisma.post.findMany({
+          where: {
+            contractAddress: tokenAddress,
+          },
+          select: {
+            id: true,
+            authorId: true,
+            createdAt: true,
+            entryMcap: true,
+            currentMcap: true,
+            lastMcapUpdate: true,
+            lastIntelligenceAt: true,
+            roiCurrentPct: true,
+            threadCount: true,
+            reactionCounts: true,
+            entryQualityScore: true,
+            author: {
+              select: {
+                id: true,
+                trustScore: true,
+                winRate30d: true,
+                avgRoi30d: true,
+              },
+            },
+            _count: {
+              select: {
+                comments: true,
+              },
+            },
+          },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 24,
+        }).catch(() => [] as Array<{
+          id: string;
+          authorId: string;
+          createdAt: Date;
+          entryMcap: number | null;
+          currentMcap: number | null;
+          lastMcapUpdate: Date | null;
+          lastIntelligenceAt: Date | null;
+          roiCurrentPct: number | null;
+          threadCount: number | null;
+          reactionCounts: unknown;
+          entryQualityScore: number | null;
+          author: {
+            id: string;
+            trustScore: number | null;
+            winRate30d: number | null;
+            avgRoi30d: number | null;
+          };
+          _count: {
+            comments: number;
+          };
+        }>),
+        token?.id
+          ? prisma.tokenMetricSnapshot.findMany({
+              where: { tokenId: token.id },
+              select: {
+                capturedAt: true,
+                marketCap: true,
+                liquidity: true,
+                volume24h: true,
+                holderCount: true,
+              },
+              orderBy: { capturedAt: "desc" },
+              take: 6,
+            }).catch(() => [] as Array<{
+              capturedAt: Date;
+              marketCap: number | null;
+              liquidity: number | null;
+              volume24h: number | null;
+              holderCount: number | null;
+            }>)
+          : Promise.resolve([] as Array<{
+              capturedAt: Date;
+              marketCap: number | null;
+              liquidity: number | null;
+              volume24h: number | null;
+              holderCount: number | null;
+            }>),
       ]);
 
       const liveBundleClusters =
@@ -646,26 +855,168 @@ tokensRouter.get(
           : chainType === "solana"
             ? distributionSnapshot?.bundleRiskLabel ?? token?.bundleRiskLabel ?? null
             : token?.bundleRiskLabel ?? null;
-      const sharedOverviewCacheKey = buildTokenRouteCacheKey(tokenAddress, null);
-      const sharedOverviewToken =
-        (await readBestEffortTokenRouteCache(sharedOverviewCacheKey)) ??
-        (await getTokenOverviewByAddress(tokenAddress, null).then((overview) => overview?.token ?? null).catch(() => null));
-      const sentiment = sharedOverviewToken?.sentiment ?? {
-        score: roundMetric(sharedOverviewToken?.sentimentScore ?? token?.sentimentScore) ?? 0,
-        reactions: {
-          alpha: 0,
-          based: 0,
-          printed: 0,
-          rug: 0,
-        },
-        bullishPct: 0,
-        bearishPct: 0,
-      };
+      const comparisonSnapshot =
+        snapshotHistory.length > 1
+          ? snapshotHistory[snapshotHistory.length - 1] ?? null
+          : snapshotHistory[0] ?? null;
+      const freshestPostCurrentMcap = pickFreshestPostCurrentMcap(recentSignalCalls);
+      const marketCap = roundMetric(
+        pickFirstPositiveMetric(
+          freshestPostCurrentMcap,
+          marketSnapshot.mcap,
+          comparisonSnapshot?.marketCap
+        )
+      );
+      const liquidity = roundMetric(
+        pickFirstPositiveMetric(
+          marketSnapshot.liquidityUsd,
+          token?.liquidity,
+          comparisonSnapshot?.liquidity
+        )
+      );
+      const volume24h = roundMetric(
+        pickFirstPositiveMetric(
+          marketSnapshot.volume24hUsd,
+          token?.volume24h,
+          comparisonSnapshot?.volume24h
+        )
+      );
+      const aggregatedReactions = recentSignalCalls.reduce(
+        (totals, call) => sumReactionCounts(totals, parseReactionCounts(call.reactionCounts)),
+        emptyReactionCounts()
+      );
+      const bullishReactions =
+        aggregatedReactions.alpha + aggregatedReactions.based + aggregatedReactions.printed;
+      const bearishReactions = aggregatedReactions.rug;
+      const totalSentimentReactions = bullishReactions + bearishReactions;
+      const sentimentScore = roundMetric(
+        computeSentimentScore({
+          reactions: aggregatedReactions,
+          sentimentTrendAdjustment: computeDexSentimentTrendAdjustment({
+            priceChange24hPct: marketSnapshot.priceChange24hPct,
+            buys24h: marketSnapshot.buys24h,
+            sells24h: marketSnapshot.sells24h,
+          }),
+        })
+      );
+      const volumeGrowth24hPct = growthPct(volume24h, comparisonSnapshot?.volume24h ?? null);
+      const liquidityGrowth1hPct = growthPct(liquidity, comparisonSnapshot?.liquidity ?? null);
+      const holderGrowth1hPct = growthPct(holderCount, comparisonSnapshot?.holderCount ?? null);
+      const mcapGrowthPct = growthPct(marketCap, comparisonSnapshot?.marketCap ?? null);
+      const momentumPct = finiteMetric(marketSnapshot.priceChange24hPct);
+      const compositeMomentumPct = Math.max(Math.max(0, momentumPct), Math.max(0, mcapGrowthPct));
+      const trustedTraderCount = new Set(
+        recentSignalCalls
+          .filter((call) => finiteMetric(call.author.trustScore) >= TRUSTED_TRADER_THRESHOLD)
+          .map((call) => call.authorId)
+      ).size;
+      const distinctTrustedTradersLast6h = new Set(
+        recentSignalCalls
+          .filter((call) => Date.now() - call.createdAt.getTime() <= 6 * 60 * 60 * 1000)
+          .filter((call) => finiteMetric(call.author.trustScore) >= TRUSTED_TRADER_THRESHOLD)
+          .map((call) => call.authorId)
+      ).size;
+      const traderWinRate30d = averageFiniteMetric(recentSignalCalls.map((call) => call.author.winRate30d));
+      const traderAvgRoi30d = averageFiniteMetric(recentSignalCalls.map((call) => call.author.avgRoi30d));
+      const traderTrustScore = averageFiniteMetric(recentSignalCalls.map((call) => call.author.trustScore));
+      const entryQualityScore = averageFiniteMetric(recentSignalCalls.map((call) => call.entryQualityScore));
+      const weightedEngagementPerHour = averageFiniteMetric(
+        recentSignalCalls.map((call) =>
+          computeWeightedEngagementPerHour({
+            reactions: parseReactionCounts(call.reactionCounts),
+            threadReplies: call.threadCount ?? call._count.comments,
+            ageHours: Math.max(0.2, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000)),
+          })
+        )
+      );
+      const avgCurrentRoiPct = averageFiniteMetric(
+        recentSignalCalls.map((call) => call.roiCurrentPct ?? deriveRoiPct(call.entryMcap, call.currentMcap))
+      );
+      const confidenceScore = roundMetric(
+        computeConfidenceScore({
+          traderWinRate30d,
+          traderAvgRoi30d,
+          traderTrustScore,
+          entryQualityScore,
+          liquidityUsd: liquidity,
+          volumeGrowth24hPct,
+          liquidityGrowth1hPct,
+          holderGrowth1hPct,
+          mcapGrowthPct,
+          momentumPct: compositeMomentumPct,
+          trustedTraderCount,
+          holderCount,
+          largestHolderPct,
+          top10HolderPct,
+          deployerSupplyPct,
+          bundledWalletCount,
+          estimatedBundledSupplyPct,
+          tokenRiskScore,
+          roiCurrentPct: avgCurrentRoiPct,
+          sentimentScore,
+        })
+      );
+      const hotAlphaScore = roundMetric(
+        computeHotAlphaScore({
+          confidenceScore,
+          weightedEngagementPerHour,
+          earlyGainsPct: avgCurrentRoiPct,
+          traderTrustScore,
+          liquidityUsd: liquidity,
+          sentimentScore,
+          momentumPct: compositeMomentumPct,
+          holderCount,
+          largestHolderPct,
+          top10HolderPct,
+          deployerSupplyPct,
+          bundledWalletCount,
+          estimatedBundledSupplyPct,
+          tokenRiskScore,
+        })
+      );
+      const earlyRunnerScore = roundMetric(
+        computeEarlyRunnerScore({
+          distinctTrustedTradersLast6h,
+          liquidityGrowth1hPct,
+          volumeGrowth1hPct: volumeGrowth24hPct,
+          holderGrowth1hPct,
+          momentumPct: compositeMomentumPct,
+          sentimentScore,
+          holderCount,
+          largestHolderPct,
+          top10HolderPct,
+          deployerSupplyPct,
+          bundledWalletCount,
+          estimatedBundledSupplyPct,
+          tokenRiskScore,
+        })
+      );
+      const highConvictionScore = roundMetric(
+        computeHighConvictionScore({
+          confidenceScore,
+          traderTrustScore,
+          entryQualityScore,
+          liquidityUsd: liquidity,
+          sentimentScore,
+          trustedTraderCount,
+          holderCount,
+          largestHolderPct,
+          top10HolderPct,
+          deployerSupplyPct,
+          bundledWalletCount,
+          estimatedBundledSupplyPct,
+          tokenRiskScore,
+        })
+      );
+      const liveLastIntelligenceTimestamp = Math.max(
+        toTimestampMs(token?.lastIntelligenceAt),
+        ...recentSignalCalls.map((call) => toTimestampMs(call.lastIntelligenceAt))
+      );
 
       const payload = {
-        marketCap: roundMetric(pickFirstPositiveMetric(marketSnapshot.mcap)),
-        liquidity: roundMetric(pickFirstPositiveMetric(marketSnapshot.liquidityUsd, token?.liquidity)),
-        volume24h: roundMetric(pickFirstPositiveMetric(marketSnapshot.volume24hUsd, token?.volume24h)),
+        marketCap,
+        liquidity,
+        volume24h,
         holderCount,
         holderCountSource,
         largestHolderPct,
@@ -684,23 +1035,24 @@ tokensRouter.get(
         imageUrl: marketSnapshot.tokenImage ?? token?.imageUrl ?? null,
         symbol: marketSnapshot.tokenSymbol ?? token?.symbol ?? null,
         name: marketSnapshot.tokenName ?? token?.name ?? null,
-        sentimentScore: roundMetric(sharedOverviewToken?.sentimentScore ?? token?.sentimentScore),
-        confidenceScore: roundMetric(sharedOverviewToken?.confidenceScore ?? token?.confidenceScore),
-        hotAlphaScore: roundMetric(sharedOverviewToken?.hotAlphaScore ?? token?.hotAlphaScore),
-        earlyRunnerScore: roundMetric(sharedOverviewToken?.earlyRunnerScore ?? token?.earlyRunnerScore),
-        highConvictionScore: roundMetric(sharedOverviewToken?.highConvictionScore ?? token?.highConvictionScore),
+        sentimentScore,
+        confidenceScore,
+        hotAlphaScore,
+        earlyRunnerScore,
+        highConvictionScore,
         sentiment: {
-          score: roundMetric(sentiment.score) ?? 0,
-          reactions: {
-            alpha: roundCount(sentiment.reactions.alpha) ?? 0,
-            based: roundCount(sentiment.reactions.based) ?? 0,
-            printed: roundCount(sentiment.reactions.printed) ?? 0,
-            rug: roundCount(sentiment.reactions.rug) ?? 0,
-          },
-          bullishPct: roundMetric(sentiment.bullishPct) ?? 0,
-          bearishPct: roundMetric(sentiment.bearishPct) ?? 0,
+          score: sentimentScore ?? 0,
+          reactions: aggregatedReactions,
+          bullishPct:
+            totalSentimentReactions > 0
+              ? roundMetric((bullishReactions / totalSentimentReactions) * 100) ?? 0
+              : sentimentScore ?? 0,
+          bearishPct:
+            totalSentimentReactions > 0
+              ? roundMetric((bearishReactions / totalSentimentReactions) * 100) ?? 0
+              : Math.max(0, 100 - finiteMetric(sentimentScore)),
         },
-        lastIntelligenceAt: toIsoTimestamp(sharedOverviewToken?.lastIntelligenceAt ?? token?.lastIntelligenceAt ?? null),
+        lastIntelligenceAt: liveLastIntelligenceTimestamp > 0 ? new Date(liveLastIntelligenceTimestamp).toISOString() : null,
         priceUsd: roundMetric(marketSnapshot.priceUsd ?? null),
         priceChange24hPct: roundMetric(marketSnapshot.priceChange24hPct ?? null),
         buys24h: roundCount(marketSnapshot.buys24h ?? null),

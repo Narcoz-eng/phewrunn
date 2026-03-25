@@ -639,7 +639,7 @@ function pickStableMarketCap(
   if (typeof postCurrentMcap === "number" && Number.isFinite(postCurrentMcap) && postCurrentMcap > 0) {
     if (typeof merged === "number" && Number.isFinite(merged) && merged > 0) {
       const ratio = Math.max(merged, postCurrentMcap) / Math.max(1, Math.min(merged, postCurrentMcap));
-      if (ratio >= 2.5) {
+      if (ratio >= 1.35) {
         return postCurrentMcap;
       }
     }
@@ -732,17 +732,12 @@ function sanitizeSentimentView(
   bearishPct: number;
 } {
   const score = clampPercentage(sentiment?.score ?? fallbackScore) ?? 0;
-  const split = resolveSentimentSplit({
-    bullishPct: sentiment?.bullishPct,
-    bearishPct: sentiment?.bearishPct,
-    sentimentScore: score,
-  });
 
   return {
     score,
     reactions: sanitizeReactionCounts(sentiment?.reactions),
-    bullishPct: split.bullishPct,
-    bearishPct: split.bearishPct,
+    bullishPct: score,
+    bearishPct: Math.max(0, 100 - score),
   };
 }
 
@@ -1965,14 +1960,14 @@ export default function TokenPage() {
   // post.currentMcap is updated by the background job and reliable even when GeckoTerminal lags.
   const liveRoiPct = (() => {
     const bestCurrentMcap =
-      token?.recentCalls.find(
+      recentCalls.find(
         (c) => typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
       )?.currentMcap ??
       (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap > 0
         ? liveMarketCap
         : null);
     if (!bestCurrentMcap) return null;
-    const bestEntryMcap = token?.recentCalls.find(
+    const bestEntryMcap = recentCalls.find(
       (c) => typeof c.entryMcap === "number" && Number.isFinite(c.entryMcap) && c.entryMcap > 0
     )?.entryMcap;
     if (!bestEntryMcap) return null;
@@ -1992,7 +1987,7 @@ export default function TokenPage() {
   // Use the post's currentMcap when it's significantly lower than what the live endpoint reports.
   // GeckoTerminal/DexScreener can lag badly for dead/low-volume tokens.
   const displayMarketCap = (() => {
-    return pickStableMarketCap(token?.marketCap ?? null, null, recentCalls);
+    return pickStableMarketCap(liveMarketCap ?? token?.marketCap ?? null, token?.marketCap ?? null, recentCalls);
   })();
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
