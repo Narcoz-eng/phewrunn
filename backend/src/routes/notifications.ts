@@ -924,7 +924,7 @@ notificationsRouter.get("/", requireAuth, async (c) => {
     });
     return c.json({ data: staleCachedNotifications });
   }
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     console.warn("[notifications/list] pool pressure active; serving degraded empty state", {
       userId: user.id,
       includeDismissed,
@@ -973,7 +973,7 @@ notificationsRouter.get("/unread-count", requireAuth, async (c) => {
     });
     return c.json({ data: { count: staleUnreadCount } });
   }
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     console.warn("[notifications/unread-count] pool pressure active; serving zero fallback", {
       userId: user.id,
     });

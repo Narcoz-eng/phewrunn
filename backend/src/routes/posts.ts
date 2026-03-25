@@ -1337,7 +1337,7 @@ async function loadPostPricePayload(
     return await existingRequest;
   }
 
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     const stalePayload = await resolveCachedPostPricePayload(postId, { allowStale: true });
     return stalePayload
       ? ({ state: "ok", data: stalePayload } as const)
@@ -4622,6 +4622,18 @@ postsRouter.get("/", async (c) => {
     }
   }
 
+  if (await isPrismaPoolPressureActive()) {
+    const stalePayload = !cursor ? await readStaleFeedPayload() : null;
+    if (stalePayload) {
+      return c.json(stalePayload);
+    }
+    return c.json({
+      data: [],
+      hasMore: false,
+      nextCursor: null,
+    });
+  }
+
   if (feedDegradedMode && !cursor) {
     const stalePayload = await readStaleFeedPayload();
     if (stalePayload) {
@@ -5783,7 +5795,7 @@ postsRouter.get("/trending", async (c) => {
     }
   }
 
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     console.warn("[posts/trending] pool pressure active; serving stale-or-empty payload");
     return c.json({ data: trendingCache?.data ?? [] });
   }
@@ -7129,7 +7141,7 @@ async function attachRealtimeIntelligenceToPostPricePayloads(
     return;
   }
 
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     return;
   }
 
@@ -8703,7 +8715,7 @@ postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c)
     });
   }
 
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     const staleCachedEntries = await Promise.all(
       missingIds.map(async (id) => [id, await resolveCachedPostPricePayload(id, { allowStale: true })] as const)
     );

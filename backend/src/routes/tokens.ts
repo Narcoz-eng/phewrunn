@@ -624,7 +624,7 @@ tokensRouter.get(
   const { tokenAddress } = c.req.valid("param");
   const { fresh } = c.req.valid("query");
   const shouldPreferFreshDistribution = fresh === "1" || fresh === "true";
-  const shouldAvoidFreshDbReads = isPrismaPoolPressureActive();
+  const shouldAvoidFreshDbReads = await isPrismaPoolPressureActive();
   const cacheKey = buildTokenLiveRouteCacheKey(tokenAddress, {
     fresh: shouldPreferFreshDistribution,
   });
@@ -1130,8 +1130,24 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
   const viewer = c.get("user");
   const isPersonalized = Boolean(viewer?.id);
   const sharedCacheKey = buildTokenRouteCacheKey(tokenAddress, null);
+  const sharedCached = await readBestEffortTokenRouteCache(sharedCacheKey);
+  const sharedStaleCached = await readBestEffortTokenRouteCache(sharedCacheKey, { allowStale: true });
   if (isPersonalized) {
     c.header("Vary", "Cookie");
+    if (await isPrismaPoolPressureActive()) {
+      if (sharedCached ?? sharedStaleCached) {
+        return c.json({ data: (sharedCached ?? sharedStaleCached)! }, 200, buildTokenRouteHeaders(true));
+      }
+      return c.json(
+        {
+          error: {
+            message: "Token overview is temporarily unavailable. Please retry shortly.",
+            code: "TOKEN_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
     const overview = await getTokenOverviewByAddress(tokenAddress, viewer!.id);
     if (!overview) {
       return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
@@ -1145,8 +1161,8 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
     return c.json({ data }, 200, buildTokenRouteHeaders(true));
   }
 
-  const cached = await readBestEffortTokenRouteCache(sharedCacheKey);
-  const staleCached = await readBestEffortTokenRouteCache(sharedCacheKey, { allowStale: true });
+  const cached = sharedCached;
+  const staleCached = sharedStaleCached;
 
   if (cached) {
     return c.json({ data: cached }, 200, buildTokenRouteHeaders(false));
@@ -1161,6 +1177,18 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
       })
       .catch(() => undefined);
     return c.json({ data: staleCached }, 200, buildTokenRouteHeaders(false));
+  }
+
+  if (await isPrismaPoolPressureActive()) {
+    return c.json(
+      {
+        error: {
+          message: "Token overview is temporarily unavailable. Please retry shortly.",
+          code: "TOKEN_UNAVAILABLE",
+        },
+      },
+      503
+    );
   }
 
   let overview;

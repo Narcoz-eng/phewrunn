@@ -1,5 +1,5 @@
 import { Prisma, type AlertPreference } from "@prisma/client";
-import { prisma, isPrismaPoolPressureActive, isTransientPrismaError } from "../../prisma.js";
+import { prisma, isPrismaPoolPressureActive, isTransientPrismaError, notePrismaPoolPressure } from "../../prisma.js";
 import {
   applyConfidenceGuardrails,
   buildReactionCounts,
@@ -3365,7 +3365,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
     return freshCached;
   }
   const staleCached = peekCacheValue(feedListCache, cacheKey);
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     if (staleCached) {
       console.warn("[intelligence/feed] serving stale feed cache during prisma pool pressure", {
         kind: args.kind,
@@ -3528,6 +3528,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         viewerId: args.viewerId,
         timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
       });
+      notePrismaPoolPressure(`intelligence/feed_soft_timeout:${args.kind}`);
       return {
         items: [],
         hasMore: false,

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
-import { prisma, isPrismaPoolPressureActive } from "../prisma.js";
+import { prisma, isPrismaPoolPressureActive, isTransientPrismaError, notePrismaPoolPressure } from "../prisma.js";
 import { type AuthVariables } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete, redisGetString, redisIncr, redisSetString } from "../lib/redis.js";
 import {
@@ -261,6 +261,9 @@ function toSafeNumber(value: unknown): number {
 }
 
 function logLeaderboardFallback(kind: string, error: unknown, hasFallback: boolean): void {
+  if (error instanceof LeaderboardQueryTimeoutError || isTransientPrismaError(error)) {
+    notePrismaPoolPressure(`leaderboard:${kind}:${getErrorMessage(error)}`);
+  }
   console.warn(`[leaderboard] ${kind} failed; ${hasFallback ? "serving stale cache" : "no cache fallback available"}`, {
     message: getErrorMessage(error),
   });
@@ -1141,6 +1144,16 @@ leaderboardRouter.get("/daily-gainers", async (c) => {
     };
     return c.json({ data: redisCached });
   }
+  if (await isPrismaPoolPressureActive()) {
+    if (staleCached) {
+      return c.json({ data: staleCached });
+    }
+    dailyGainersCache = {
+      data: [],
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    };
+    return c.json({ data: [] });
+  }
   if (staleCached) {
     if (!dailyGainersInFlight) {
       let trackedRequest: Promise<Array<unknown>>;
@@ -1343,7 +1356,7 @@ leaderboardRouter.get("/weekly-best", async (c) => {
     return c.json({ data: redisCached });
   }
 
-  if (isPrismaPoolPressureActive()) {
+  if (await isPrismaPoolPressureActive()) {
     console.warn("[leaderboard] weekly-best skipped during prisma pool pressure");
     if (staleCached) {
       return c.json({ data: staleCached });
@@ -1412,6 +1425,17 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     return c.json(redisCached);
   }
   const staleCached = cached?.data ?? null;
+  if (await isPrismaPoolPressureActive()) {
+    if (staleCached) {
+      return c.json(staleCached);
+    }
+    const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
+    topUsersCache.set(topUsersCacheKey, {
+      data: fallbackPayload,
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    });
+    return c.json(fallbackPayload);
+  }
   if (staleCached) {
     if (!topUsersInFlight.has(topUsersCacheKey)) {
       const request = withLeaderboardTimeout(
@@ -1502,6 +1526,16 @@ leaderboardRouter.get("/stats", async (c) => {
   if (redisCached) {
     writeLeaderboardStatsLocalCache(redisCached);
     return c.json({ data: redisCached });
+  }
+  if (await isPrismaPoolPressureActive()) {
+    if (staleCached) {
+      return c.json({ data: staleCached });
+    }
+    statsCache = {
+      data: EMPTY_LEADERBOARD_STATS_PAYLOAD,
+      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
+    };
+    return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
   if (staleCached) {
     void queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace).catch((error) => {

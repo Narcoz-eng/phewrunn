@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma } from "@prisma/client";
+import { isRedisFastForHotPath, redisGetString, redisSetString } from "./lib/redis.js";
 
 /**
  * Database Configuration
@@ -771,9 +772,23 @@ const PRISMA_PRESSURE_COOLDOWN_MS =
 const PRISMA_PRESSURE_LOG_COOLDOWN_MS =
   getPositiveIntEnv("PRISMA_PRESSURE_LOG_COOLDOWN_MS") ??
   (isProduction ? 5_000 : 2_000);
+const PRISMA_PRESSURE_SHARED_CACHE_TTL_MS =
+  getPositiveIntEnv("PRISMA_PRESSURE_SHARED_CACHE_TTL_MS") ??
+  (isProduction ? 1_500 : 500);
+const PRISMA_PRESSURE_PUBLISH_COOLDOWN_MS =
+  getPositiveIntEnv("PRISMA_PRESSURE_PUBLISH_COOLDOWN_MS") ??
+  (isProduction ? 1_000 : 300);
+const PRISMA_PRESSURE_REDIS_KEY = "prisma:pool-pressure:v1";
 let prismaPressureUntilMs = 0;
 let prismaPressureLastReason: string | null = null;
 let prismaPressureLastLoggedAt = 0;
+let prismaPressureLastPublishedAt = 0;
+let prismaPressureSharedStateCache:
+  | {
+      active: boolean;
+      expiresAtMs: number;
+    }
+  | null = null;
 
 async function refreshPrismaCompatGuardrails(options?: {
   force?: boolean;
@@ -938,24 +953,19 @@ async function withPrismaRetry<T>(
   throw lastError;
 }
 
-function markPrismaPressure(error: unknown, label?: string): void {
-  if (!isTransientPrismaError(error)) {
-    return;
-  }
-
+function setLocalPrismaPressure(reason: string, untilMs = Date.now() + PRISMA_PRESSURE_COOLDOWN_MS): void {
   const now = Date.now();
-  prismaPressureUntilMs = Math.max(prismaPressureUntilMs, now + PRISMA_PRESSURE_COOLDOWN_MS);
-  prismaPressureLastReason =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : label ?? "transient_prisma_error";
+  prismaPressureUntilMs = Math.max(prismaPressureUntilMs, untilMs);
+  prismaPressureLastReason = reason;
+  prismaPressureSharedStateCache = {
+    active: true,
+    expiresAtMs: Math.min(prismaPressureUntilMs, now + PRISMA_PRESSURE_SHARED_CACHE_TTL_MS),
+  };
 
   if (now - prismaPressureLastLoggedAt >= PRISMA_PRESSURE_LOG_COOLDOWN_MS) {
     prismaPressureLastLoggedAt = now;
     console.warn("[Prisma] Pool-pressure guard active", {
-      label: label ?? null,
+      label: null,
       cooldownMs: PRISMA_PRESSURE_COOLDOWN_MS,
       until: new Date(prismaPressureUntilMs).toISOString(),
       reason: prismaPressureLastReason,
@@ -963,8 +973,106 @@ function markPrismaPressure(error: unknown, label?: string): void {
   }
 }
 
-function isPrismaPoolPressureActive(): boolean {
-  return Date.now() < prismaPressureUntilMs;
+function publishSharedPrismaPressure(reason: string): void {
+  if (!isRedisFastForHotPath()) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - prismaPressureLastPublishedAt < PRISMA_PRESSURE_PUBLISH_COOLDOWN_MS) {
+    return;
+  }
+  prismaPressureLastPublishedAt = now;
+
+  void redisSetString(
+    PRISMA_PRESSURE_REDIS_KEY,
+    JSON.stringify({
+      reason,
+      untilMs: prismaPressureUntilMs,
+    }),
+    Math.max(PRISMA_PRESSURE_COOLDOWN_MS, Math.max(1_000, prismaPressureUntilMs - now))
+  );
+}
+
+function markPrismaPressure(error: unknown, label?: string): void {
+  if (!isTransientPrismaError(error)) {
+    return;
+  }
+
+  const reason =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : label ?? "transient_prisma_error";
+  setLocalPrismaPressure(reason);
+  publishSharedPrismaPressure(reason);
+}
+
+function notePrismaPoolPressure(reason: string): void {
+  setLocalPrismaPressure(reason);
+  publishSharedPrismaPressure(reason);
+}
+
+async function isPrismaPoolPressureActive(): Promise<boolean> {
+  const now = Date.now();
+  if (now < prismaPressureUntilMs) {
+    return true;
+  }
+
+  if (prismaPressureSharedStateCache && prismaPressureSharedStateCache.expiresAtMs > now) {
+    return prismaPressureSharedStateCache.active;
+  }
+
+  if (!isRedisFastForHotPath()) {
+    prismaPressureSharedStateCache = {
+      active: false,
+      expiresAtMs: now + PRISMA_PRESSURE_SHARED_CACHE_TTL_MS,
+    };
+    return false;
+  }
+
+  try {
+    const raw = await redisGetString(PRISMA_PRESSURE_REDIS_KEY);
+    if (!raw) {
+      prismaPressureSharedStateCache = {
+        active: false,
+        expiresAtMs: now + PRISMA_PRESSURE_SHARED_CACHE_TTL_MS,
+      };
+      return false;
+    }
+
+    const parsed = JSON.parse(raw) as {
+      untilMs?: unknown;
+      reason?: unknown;
+    };
+    const untilMs =
+      typeof parsed.untilMs === "number" && Number.isFinite(parsed.untilMs)
+        ? parsed.untilMs
+        : 0;
+    const active = untilMs > now;
+    if (active) {
+      prismaPressureUntilMs = Math.max(prismaPressureUntilMs, untilMs);
+      prismaPressureLastReason =
+        typeof parsed.reason === "string" && parsed.reason.trim()
+          ? parsed.reason
+          : prismaPressureLastReason;
+    }
+
+    prismaPressureSharedStateCache = {
+      active,
+      expiresAtMs: active
+        ? Math.min(untilMs, now + PRISMA_PRESSURE_SHARED_CACHE_TTL_MS)
+        : now + PRISMA_PRESSURE_SHARED_CACHE_TTL_MS,
+    };
+    return active;
+  } catch {
+    prismaPressureSharedStateCache = {
+      active: false,
+      expiresAtMs: now + PRISMA_PRESSURE_SHARED_CACHE_TTL_MS,
+    };
+    return false;
+  }
 }
 
 function isTransientPrismaError(error: unknown): boolean {
@@ -1002,5 +1110,6 @@ export {
   withPrismaRetry,
   isTransientPrismaError,
   isPrismaPoolPressureActive,
+  notePrismaPoolPressure,
   refreshPrismaCompatGuardrails,
 };

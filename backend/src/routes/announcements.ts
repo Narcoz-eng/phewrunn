@@ -136,7 +136,7 @@ announcementsRouter.get("/", async (c) => {
 
   let announcements = await readAnnouncementsCache();
   if (!announcements) {
-    if (isPrismaPoolPressureActive()) {
+    if (await isPrismaPoolPressureActive()) {
       console.warn("[announcements/list] pool pressure active; serving empty state");
       announcements = [];
       writeAnnouncementsDegradedCache(announcements);
@@ -180,7 +180,7 @@ announcementsRouter.get("/", async (c) => {
 
   // If user is authenticated, get their viewed announcements
   let viewedIds: Set<string> = new Set();
-  if (user && announcements.length > 0 && !isPrismaPoolPressureActive()) {
+  if (user && announcements.length > 0 && !(await isPrismaPoolPressureActive())) {
     try {
       const views = await prisma.announcementView.findMany({
         where: {
