@@ -1,0 +1,25 @@
+name: Maintenance Run
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: maintenance-run
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    if: ${{ secrets.MAINTENANCE_RUN_URL != '' && secrets.CRON_SECRET != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger maintenance endpoint
+        env:
+          MAINTENANCE_RUN_URL: ${{ secrets.MAINTENANCE_RUN_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --show-error --silent \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            "${MAINTENANCE_RUN_URL}"
