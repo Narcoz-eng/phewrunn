@@ -4,11 +4,10 @@ import { isRedisFastForRateLimiting, redisIncrementWithWindow } from "../lib/red
 /**
  * Rate Limiting Middleware
  *
- * Implements in-memory rate limiting with configurable windows and limits.
- * For production, consider using Redis for distributed rate limiting.
+ * Implements shared Redis-backed rate limiting for production and allows
+ * in-memory fallback only in non-production environments.
  *
  * TODO: Production Improvements
- * - Use Redis for distributed rate limiting across multiple instances
  * - Implement sliding window algorithm for smoother rate limiting
  * - Add rate limit headers (X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset)
  */
@@ -31,8 +30,7 @@ const SESSION_COOKIE_NAMES = [
   "auth.session_token",
 ] as const;
 
-// In-memory store for rate limits
-// TODO: Replace with Redis for production multi-instance deployment
+// In-memory store for rate limits in development and tests only.
 const rateLimitStore = new Map<string, RateLimitEntry>();
 const RATE_LIMIT_STORE_MAX_ENTRIES = 50_000;
 
@@ -159,6 +157,23 @@ function getClientKey(c: Context): string {
   return `fallback:${host}|${origin.slice(0, 120)}|${userAgent.slice(0, 120)}`;
 }
 
+export function requiresSharedRateLimitBackend(
+  nodeEnv: string | undefined = process.env.NODE_ENV
+): boolean {
+  return nodeEnv === "production";
+}
+
+export function shouldRejectRateLimitFallback(params: {
+  nodeEnv?: string;
+  hasFastBackend: boolean;
+  redisWindowAvailable: boolean;
+}): boolean {
+  return (
+    requiresSharedRateLimitBackend(params.nodeEnv) &&
+    (!params.hasFastBackend || !params.redisWindowAvailable)
+  );
+}
+
 /**
  * Create a rate limiting middleware with the given configuration
  */
@@ -178,10 +193,55 @@ export function rateLimit(config: RateLimitConfig) {
 
     const key = keyGenerator(c);
     const now = Date.now();
+    const hasFastBackend = isRedisFastForRateLimiting();
 
-    if (isRedisFastForRateLimiting()) {
+    if (shouldRejectRateLimitFallback({
+      hasFastBackend,
+      redisWindowAvailable: hasFastBackend,
+    })) {
+      console.error("[RateLimit] Shared backend unavailable in production", {
+        method: c.req.method,
+        path: c.req.path,
+        key,
+      });
+      return c.json(
+        {
+          error: {
+            message: "Rate limiting backend is unavailable",
+            code: "RATE_LIMIT_BACKEND_UNAVAILABLE",
+          },
+        },
+        503
+      );
+    }
+
+    if (hasFastBackend) {
       const redisKey = `ratelimit:${windowMs}:${max}:${key}`;
       const redisEntry = await redisIncrementWithWindow(redisKey, windowMs);
+
+      if (
+        shouldRejectRateLimitFallback({
+          hasFastBackend,
+          redisWindowAvailable: redisEntry !== null,
+        })
+      ) {
+        console.error("[RateLimit] Shared backend request failed in production", {
+          method: c.req.method,
+          path: c.req.path,
+          key,
+          windowMs,
+          max,
+        });
+        return c.json(
+          {
+            error: {
+              message: "Rate limiting backend is unavailable",
+              code: "RATE_LIMIT_BACKEND_UNAVAILABLE",
+            },
+          },
+          503
+        );
+      }
 
       if (redisEntry) {
         const remaining = Math.max(0, max - redisEntry.count);
@@ -217,7 +277,6 @@ export function rateLimit(config: RateLimitConfig) {
 
         return next();
       }
-      // Fall through to in-memory mode if Redis is unavailable.
     }
 
     // Get or create entry for this key

@@ -175,6 +175,26 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
   return warnings;
 }
 
+function getProductionConfigErrors(parsed: z.infer<typeof envSchema>): string[] {
+  const errors: string[] = [];
+
+  if (parsed.NODE_ENV !== "production") {
+    return errors;
+  }
+
+  const hasUpstashFastPath = Boolean(
+    parsed.UPSTASH_REDIS_REST_URL && parsed.UPSTASH_REDIS_REST_TOKEN
+  );
+
+  if (!hasUpstashFastPath) {
+    errors.push(
+      "Upstash Redis REST is required in production for shared rate limiting and hot-path session revocation"
+    );
+  }
+
+  return errors;
+}
+
 /**
  * Get safe configuration for logging (no secrets)
  */
@@ -229,6 +249,7 @@ function validateEnv() {
   try {
     const parsed = envSchema.parse(process.env);
     const warnings = validateProductionConfig(parsed);
+    const errors = getProductionConfigErrors(parsed);
 
     // Log configuration on startup (without secrets)
     console.log("\n=== Environment Configuration ===");
@@ -245,6 +266,15 @@ function validateEnv() {
         console.warn(`  - ${warn}`);
       });
       console.warn("");
+    }
+
+    if (errors.length > 0) {
+      console.error("Environment Errors:");
+      errors.forEach((message) => {
+        console.error(`  - ${message}`);
+      });
+      console.error("");
+      process.exit(1);
     }
 
     if (parsed.NODE_ENV === "production") {
