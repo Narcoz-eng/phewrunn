@@ -1,7 +1,6 @@
 import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod";
-import { refreshPrismaCompatGuardrails } from "../prisma.js";
 import { captureException } from "../lib/sentry.js";
 
 /**
@@ -162,26 +161,6 @@ function isPrismaSchemaDriftFailure(error: unknown): boolean {
   );
 }
 
-async function triggerSchemaCompatRefresh(path: string): Promise<void> {
-  try {
-    await Promise.race([
-      refreshPrismaCompatGuardrails({
-        force: true,
-        reason: `schema_drift:${path}`,
-      }),
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, 2_500);
-      }),
-    ]);
-  } catch (refreshError) {
-    console.warn("[Prisma] Schema drift compat refresh failed", {
-      path,
-      message:
-        refreshError instanceof Error ? refreshError.message : String(refreshError),
-    });
-  }
-}
-
 /**
  * Create the global error handler for Hono
  */
@@ -268,12 +247,18 @@ export function createErrorHandler() {
       }
 
       if (isPrismaSchemaDriftFailure(err)) {
-        await triggerSchemaCompatRefresh(c.req.path);
-        c.header("Retry-After", "2");
+        captureException(err, {
+          path: c.req.path,
+          method: c.req.method,
+          requestId,
+          userId: (c.get("user") as { id?: string } | undefined)?.id,
+          prismaCode: prismaError.code,
+          category: "schema_drift",
+        });
         return c.json(
           {
             error: {
-              message: "Database schema is still preparing. Retry shortly.",
+              message: "Database schema is out of date. Apply the pending migration and retry.",
               code: ERROR_CODES.DATABASE_ERROR,
             },
           } satisfies ErrorResponse,
@@ -351,12 +336,18 @@ export function createErrorHandler() {
       }
 
       if (isPrismaSchemaDriftFailure(err)) {
-        await triggerSchemaCompatRefresh(c.req.path);
-        c.header("Retry-After", "2");
+        captureException(err, {
+          path: c.req.path,
+          method: c.req.method,
+          requestId,
+          userId: (c.get("user") as { id?: string } | undefined)?.id,
+          prismaMessage: prismaUnknown.message,
+          category: "schema_drift",
+        });
         return c.json(
           {
             error: {
-              message: "Database schema is still preparing. Retry shortly.",
+              message: "Database schema is out of date. Apply the pending migration and retry.",
               code: ERROR_CODES.DATABASE_ERROR,
             },
           } satisfies ErrorResponse,

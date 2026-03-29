@@ -1,6 +1,5 @@
 process.env.NODE_ENV ||= "development";
 process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED ||= "false";
-process.env.PRISMA_ENABLE_COMPAT_GUARDRAILS ||= "false";
 process.env.LOAD_SIM_INTERNAL_AUTH_SECRET ||= "load-sim-local";
 process.env.AUTH_DISABLE_SESSION_MAINTENANCE ||= "true";
 process.env.PRIVY_APP_ID ||= "load-sim-privy-app";

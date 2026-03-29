@@ -1,6 +1,6 @@
 # PR-006 Migration Baseline Plan
 
-Status: Active execution planning
+Status: Implemented, pending Tech Lead sign-off
 Last updated: 2026-03-29
 
 ## Objective
@@ -13,10 +13,11 @@ Remove all runtime schema mutation from the backend and replace it with a review
 
 ## Current State
 
-- `backend/src/prisma.ts` still contains `initPostgresCompatColumns(...)` and `refreshPrismaCompatGuardrails(...)`.
-- `backend/src/middleware/errorHandler.ts` still triggers the compat refresh hook on schema-drift failures.
-- `backend/prisma/migrations` is additive, not a full bootstrap chain.
-- Baseline feasibility is confirmed: `npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script` renders the full current schema successfully.
+- `backend/prisma/migrations/20260329_bootstrap_baseline` is now the active bootstrap migration.
+- `backend/prisma/migrations_archive` preserves the previous additive chain for audit/reference only.
+- `backend/src/prisma.ts` no longer performs boot-time runtime DDL.
+- `backend/src/middleware/errorHandler.ts` no longer attempts schema-drift-triggered compat refresh.
+- Direct-DB validation passed on the EC2 executor for both clean bootstrap and baseline adoption.
 
 ## Execution Plan
 

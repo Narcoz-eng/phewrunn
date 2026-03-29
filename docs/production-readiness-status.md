@@ -18,7 +18,7 @@ Last updated: 2026-03-29
 | `PR-003` | Platform Engineer | Security Lead | Implemented, pending sign-off | Production now requires Upstash Redis REST and rate limiting no longer falls back to memory in production |
 | `PR-004` | Platform Engineer | Tech Lead | Implemented, pending sign-off | QStash-backed internal job control plane, signed delivery verification, idempotency, dead-letter callback, and queue health wiring are in place |
 | `PR-005` | Backend Lead | Tech Lead | Implemented, pending sign-off | Post-create fanout, push delivery, maintenance dispatch, settlement dispatch, leaderboard stats refresh, and intelligence refresh now route through the internal job control plane; read-path intelligence refresh was removed and the priority loop now enqueues idempotent jobs |
-| `PR-006` | Data Engineer | Tech Lead | In progress | Runtime schema mutation removal is blocked on formalizing a complete migration baseline and removing boot-time compat refresh paths |
+| `PR-006` | Data Engineer | Tech Lead | Implemented, pending sign-off | Baseline bootstrap migration is active, additive migrations are archived, direct-DB clean bootstrap and adoption validation passed on the EC2 executor, and runtime schema mutation paths were removed |
 
 ## Daily Log
 
@@ -54,4 +54,8 @@ Last updated: 2026-03-29
 - Code-path verification for `PR-005` now reduces `prewarmRecentTokenIntelligence(...)` references to the job executor path only, and `POST /api/posts` no longer calls or schedules intelligence refresh work synchronously.
 - `PR-006` moved from pending to active analysis. Prisma diffing confirmed the current schema can be rendered from scratch, but the checked-in migration history is additive and not yet a full bootstrap chain, so runtime DDL removal still needs a formal baseline migration plan before code deletion.
 - `PR-006` now has an execution plan captured in `docs/pr-006-migration-baseline-plan.md`. The baseline approach is: generate a full bootstrap migration from the current schema, archive the additive-only migration chain out of the active deploy path, verify clean-db bootstrap, verify a staging-clone resolve-and-deploy path, then remove runtime DDL and the schema-drift compat refresh hook.
+- `PR-006` resumed on the IPv6-capable EC2 executor after direct `5432` reachability was verified. Clean bootstrap passed with `migrate deploy` against schema `pr006_clean_20260329_ec2`, and the follow-up `migrate diff --exit-code` returned `No difference detected`.
+- A staging-clone adoption path was validated safely in isolated schema `pr006_stageclone_20260329_ec2`: `db push` created the pre-existing structure, `migrate resolve --applied 20260329_bootstrap_baseline` recorded the baseline, `migrate deploy` applied no extra work, and the final `migrate diff --exit-code` returned `No difference detected`.
+- The verified bootstrap baseline is now the active Prisma migration chain, the previous additive migrations were moved into `backend/prisma/migrations_archive`, and runtime schema mutation plus schema-drift compat refresh hooks were removed from backend code.
+- Final `PR-006` verification passed locally after the migration-chain swap: `rg` found no runtime DDL in `backend/src`, `npm --prefix backend run typecheck` passed, `npm --prefix backend run test` passed with `24/24`, and the backend completed a direct boot check after `prisma generate` + `prisma-migrate-deploy.mjs` + `bun run src/index.ts`.
 - No feature work is authorized until all P0 items are complete and signed off.
