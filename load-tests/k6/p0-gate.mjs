@@ -251,6 +251,15 @@ function pickAuthContext(authPool, sticky = false) {
   return authPool[index] || null;
 }
 
+function pickAuthContextByIndex(authPool, indexSeed) {
+  if (!Array.isArray(authPool) || authPool.length === 0) {
+    return null;
+  }
+
+  const normalizedIndex = Math.abs(indexSeed % authPool.length);
+  return authPool[normalizedIndex] || authPool[0] || null;
+}
+
 function pickTokenAddress(seedState) {
   const tokens = seedState.tokenAddresses || [];
   if (tokens.length === 0) {
@@ -373,7 +382,10 @@ export function leaderboardStats(data) {
 }
 
 export function postCreate(data) {
-  const authContext = pickAuthContext(data.authPool);
+  // Round-robin authenticated writers so mixed-load post traffic stays
+  // distributed across the provided test-user pool instead of clustering on
+  // one account and tripping per-user hourly caps.
+  const authContext = pickAuthContextByIndex(data.authPool, exec.scenario.iterationInTest);
   const tokenAddress = pickTokenAddress(data.seedState);
   const iterationId = `${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
   const response = http.post(
