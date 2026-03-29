@@ -2077,7 +2077,13 @@ export async function refreshTokenIntelligence(
     const signalAlertTask = fanoutTokenSignalAlerts({
       marketCap,
       token: { ...refreshedToken, liquidity },
-      previousToken: existing ? { ...existing, liquidity: existing.liquidity ?? null } : null,
+      previousToken: existing
+        ? {
+            ...existing,
+            liquidity: existing.liquidity ?? null,
+            marketCap: latestSnapshot?.marketCap ?? null,
+          }
+        : null,
       holderStats,
     }).catch(() => undefined);
     if (opts?.awaitSignalAlerts) {
@@ -3285,17 +3291,21 @@ export function buildIntelligenceRefreshJobInput(params?: {
   nowMs?: number;
   intervalMs?: number;
   scope?: string;
+  contractAddress?: string | null;
 }): EnqueueInternalJobInput {
   const nowMs = params?.nowMs ?? Date.now();
   const intervalMs = Math.max(1_000, params?.intervalMs ?? INTELLIGENCE_REFRESH_JOB_BUCKET_MS);
   const bucket = Math.floor(nowMs / intervalMs);
   const scope = params?.scope?.trim() ? params.scope.trim() : "priority-loop";
+  const normalizedContractAddress = params?.contractAddress?.trim().toLowerCase() ?? null;
+  const scopeKey = normalizedContractAddress ? `${scope}:${normalizedContractAddress}` : scope;
 
   return {
     jobName: "intelligence_refresh",
-    idempotencyKey: `intelligence-refresh:${scope}:${bucket}`,
+    idempotencyKey: `intelligence-refresh:${scopeKey}:${bucket}`,
     payload: {
       reason: params?.reason ?? "intelligence_priority_loop",
+      ...(normalizedContractAddress ? { contractAddress: normalizedContractAddress } : {}),
     },
     ...(params?.traceId ? { traceId: params.traceId } : {}),
   };
@@ -3734,6 +3744,23 @@ function sortTokenCallsForDisplay(calls: EnrichedCall[]): EnrichedCall[] {
 
     return left.id.localeCompare(right.id);
   });
+}
+
+export async function refreshTokenIntelligenceByAddress(
+  address: string,
+  opts?: { awaitSignalAlerts?: boolean }
+): Promise<TokenRefreshResult | null> {
+  const normalizedAddress = address.trim();
+  if (!normalizedAddress) {
+    return null;
+  }
+
+  const token = await findTokenByAddress(normalizedAddress);
+  if (!token) {
+    return null;
+  }
+
+  return refreshTokenIntelligence(token.id, opts);
 }
 
 function getFreshestCallMetricTimestamp(

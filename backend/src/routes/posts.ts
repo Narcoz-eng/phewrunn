@@ -56,6 +56,7 @@ import {
   computeRealtimeIntelligenceSnapshots,
   getEnrichedCallById,
   INTELLIGENCE_CALL_SELECT,
+  refreshTokenIntelligenceByAddress,
   type IntelligenceCallRecord,
   type RealtimePostIntelligenceSnapshot,
   prewarmRecentTokenIntelligence,
@@ -2930,6 +2931,46 @@ function queuePostCreateFanout(params: {
   });
 }
 
+function queuePostCreateIntelligenceRefresh(params: {
+  postId: string;
+  contractAddress: string | null;
+}): void {
+  const contractAddress = params.contractAddress?.trim().toLowerCase() ?? null;
+  if (!contractAddress) {
+    return;
+  }
+
+  const runInlineFallback = () => {
+    void runIntelligenceRefreshJob({ contractAddress }).catch((error) => {
+      console.warn("[posts/create] targeted intelligence refresh failed", {
+        message: getErrorMessage(error),
+        postId: params.postId,
+        contractAddress,
+      });
+    });
+  };
+
+  if (!hasQStashPublishConfig()) {
+    runInlineFallback();
+    return;
+  }
+
+  void enqueueInternalJob(
+    buildIntelligenceRefreshJobInput({
+      reason: "post_create",
+      scope: `post-create:${params.postId}`,
+      contractAddress,
+    })
+  ).catch((error) => {
+    console.warn("[posts/create] queue publish failed; falling back to inline intelligence refresh", {
+      message: getErrorMessage(error),
+      postId: params.postId,
+      contractAddress,
+    });
+    runInlineFallback();
+  });
+}
+
 function safeRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -4272,7 +4313,25 @@ export async function runMarketRefreshJob(): Promise<{
   };
 }
 
-export async function runIntelligenceRefreshJob(): Promise<MaintenanceRunResult["intelligenceRefresh"]> {
+export async function runIntelligenceRefreshJob(params?: {
+  contractAddress?: string | null;
+}): Promise<MaintenanceRunResult["intelligenceRefresh"]> {
+  const startedAtMs = Date.now();
+  const contractAddress = params?.contractAddress?.trim();
+  if (contractAddress) {
+    const result = await refreshTokenIntelligenceByAddress(contractAddress, {
+      awaitSignalAlerts: true,
+    });
+
+    return {
+      attempted: 1,
+      refreshed: result?.refreshed ? 1 : 0,
+      skipped: result && !result.refreshed ? 1 : 0,
+      errors: result ? 0 : 1,
+      durationMs: Date.now() - startedAtMs,
+    };
+  }
+
   return prewarmRecentTokenIntelligence({ awaitSignalAlerts: true });
 }
 
@@ -5445,6 +5504,10 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     authorName: authorSnapshot.name,
     authorUsername: authorSnapshot.username,
     postId: post.id,
+  });
+  queuePostCreateIntelligenceRefresh({
+    postId: post.id,
+    contractAddress: createPostData.contractAddress,
   });
 
   invalidatePostReadCaches({ leaderboard: true });

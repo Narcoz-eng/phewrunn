@@ -298,6 +298,7 @@ export async function fanoutTokenSignalAlerts(args: {
   previousToken: {
     bundleRiskLabel: string | null;
     tokenRiskScore: number | null;
+    marketCap?: number | null;
     confidenceScore: number | null;
     hotAlphaScore: number | null;
     earlyRunnerScore: number | null;
@@ -334,35 +335,81 @@ export async function fanoutTokenSignalAlerts(args: {
     return `${Math.floor(safeScore / 5) * 5}`;
   };
 
+  const growthPct = (current: number | null | undefined, previous: number | null | undefined): number | null => {
+    if (
+      current === null ||
+      current === undefined ||
+      previous === null ||
+      previous === undefined ||
+      !Number.isFinite(current) ||
+      !Number.isFinite(previous) ||
+      previous <= 0
+    ) {
+      return null;
+    }
+
+    return ((current - previous) / previous) * 100;
+  };
+  const formatWholePct = (value: number | null | undefined): string | null => {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+      return null;
+    }
+
+    return `${Math.round(value)}%`;
+  };
+
   // Smart signal computations
   const prevLiquidity = args.previousToken?.liquidity ?? null;
   const currLiquidity = args.token.liquidity;
+  const liquidityGrowthPct = growthPct(currLiquidity, prevLiquidity);
   const liquiditySurgePassed =
-    currLiquidity !== null && prevLiquidity !== null && prevLiquidity > 0
-      ? currLiquidity / prevLiquidity >= 1.5
-      : false;
+    liquidityGrowthPct !== null && liquidityGrowthPct >= 50;
 
   const currHolders = args.holderStats?.holderCount ?? null;
   const prevHolders = args.holderStats?.previousHolderCount ?? null;
+  const holderGrowthPct = growthPct(currHolders, prevHolders);
   const holderGrowthPassed =
-    currHolders !== null && prevHolders !== null && prevHolders > 0
-      ? currHolders / prevHolders >= 1.15
-      : false;
+    holderGrowthPct !== null && holderGrowthPct >= 15;
 
-  const prevMcap = args.previousToken ? (args.marketCap ?? 0) * 0.7 : null; // fallback: estimate
+  const prevMcap = args.previousToken?.marketCap ?? null;
+  const marketCapGrowthPct = growthPct(args.marketCap, prevMcap);
+  const marketCapGrowthPassed = marketCapGrowthPct !== null && marketCapGrowthPct >= 25;
+  const confidenceJump = (args.token.confidenceScore ?? 0) - (args.previousToken?.confidenceScore ?? 0);
   const momentumPassed =
     args.marketCap !== null && args.previousToken !== null
-      ? (() => {
-          // Use confidence score jump as a momentum proxy when mcap delta isn't passed
-          const confJump = (args.token.confidenceScore ?? 0) - (args.previousToken?.confidenceScore ?? 0);
-          return confJump >= 15 || thresholdPassed(args.token.hotAlphaScore, args.previousToken?.hotAlphaScore ?? null, 65);
-        })()
+      ? marketCapGrowthPassed ||
+        confidenceJump >= 15 ||
+        thresholdPassed(args.token.hotAlphaScore, args.previousToken?.hotAlphaScore ?? null, 65)
       : false;
 
   const whaleCount = args.holderStats?.whaleAccumulatingCount ?? 0;
   const smartCount = args.holderStats?.smartMoneyCount ?? 0;
   const whaleAccumulatingPassed = whaleCount >= 1;
   const smartMoneyPassed = smartCount >= 1;
+  const previousBundleRiskScore = args.previousToken?.tokenRiskScore ?? null;
+  const currentBundleRiskScore = args.token.tokenRiskScore ?? null;
+  const bundleRiskImproved =
+    previousBundleRiskScore !== null &&
+    currentBundleRiskScore !== null &&
+    currentBundleRiskScore + 5 < previousBundleRiskScore;
+  const bundleRiskWorsened =
+    previousBundleRiskScore !== null &&
+    currentBundleRiskScore !== null &&
+    currentBundleRiskScore > previousBundleRiskScore + 5;
+  const bundleRiskMessage = bundleRiskImproved
+    ? `${symbol} bundle pressure is easing`
+    : bundleRiskWorsened
+      ? `${symbol} bundle risk is rising`
+      : `${symbol} bundle risk changed to ${args.token.bundleRiskLabel ?? "unknown"}`;
+  const holderGrowthMessage = holderGrowthPct !== null
+    ? `${symbol} holders increased ${formatWholePct(holderGrowthPct) ?? "0%"}`
+    : `${symbol} holders are growing fast`;
+  const liquiditySurgeMessage = liquidityGrowthPct !== null
+    ? `${symbol} liquidity increased ${formatWholePct(liquidityGrowthPct) ?? "0%"}`
+    : `${symbol} liquidity surged 50%+`;
+  const momentumMessage = marketCapGrowthPassed
+    ? `${symbol} market cap increased ${formatWholePct(marketCapGrowthPct) ?? "0%"}`
+    : `${symbol} is picking up momentum`;
 
   const alertDefs = [
     {
@@ -402,8 +449,12 @@ export async function fanoutTokenSignalAlerts(args: {
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyBundleChanges,
       passed:
         args.previousToken !== null &&
-        args.previousToken.bundleRiskLabel !== args.token.bundleRiskLabel,
-      message: `${symbol} bundle risk changed to ${args.token.bundleRiskLabel ?? "unknown"}`,
+        (
+          args.previousToken.bundleRiskLabel !== args.token.bundleRiskLabel ||
+          bundleRiskImproved ||
+          bundleRiskWorsened
+        ),
+      message: bundleRiskMessage,
       reasonCode: "bundle_risk_changed",
       type: "bundle_risk_changed",
     },
@@ -424,7 +475,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 6 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifySmartMoney,
       passed: smartMoneyPassed,
-      message: smartCount > 1 ? `${smartCount} smart money wallets are buying ${symbol}` : `Smart money is buying ${symbol}`,
+      message: smartCount > 1 ? `${smartCount} smart wallets are aping ${symbol}` : `Smart wallets are aping ${symbol}`,
       reasonCode: "smart_money_detected",
       type: "token_smart_money",
     },
@@ -434,7 +485,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 6 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyWhaleAccumulating,
       passed: whaleAccumulatingPassed,
-      message: whaleCount > 1 ? `${whaleCount} whales are accumulating ${symbol}` : `A whale is accumulating ${symbol}`,
+      message: whaleCount > 1 ? `${whaleCount} whales are aping ${symbol}` : `A whale is aping ${symbol}`,
       reasonCode: "whale_accumulating",
       type: "token_whale_accumulating",
     },
@@ -444,7 +495,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 4 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyMomentum,
       passed: momentumPassed,
-      message: `${symbol} is picking up momentum`,
+      message: momentumMessage,
       reasonCode: "momentum_detected",
       type: "token_momentum",
     },
@@ -454,7 +505,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 4 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyHolderGrowth,
       passed: holderGrowthPassed,
-      message: `${symbol} holders are growing fast`,
+      message: holderGrowthMessage,
       reasonCode: "holder_growth_detected",
       type: "token_holder_growth",
     },
@@ -464,7 +515,7 @@ export async function fanoutTokenSignalAlerts(args: {
       cooldownMinutes: 4 * 60,
       enabled: (pref: AlertPreferenceSnapshot) => pref.notifyLiquiditySurge,
       passed: liquiditySurgePassed,
-      message: `${symbol} liquidity surged 50%+`,
+      message: liquiditySurgeMessage,
       reasonCode: "liquidity_surge_detected",
       type: "token_liquidity_surge",
     },
@@ -536,18 +587,32 @@ export async function fanoutTokenSignalAlerts(args: {
         } else if (!followsToken && alertDef.key === "bundle_risk") {
           continue;
         } else {
-          const scoreSeed =
-            alertDef.key === "bundle_risk"
-              ? args.token.bundleRiskLabel
-              : String(
-                  Math.round(
-                    alertDef.key === "high_conviction"
-                      ? args.token.highConvictionScore ?? 0
-                      : alertDef.key === "hot_alpha"
-                        ? args.token.hotAlphaScore ?? 0
-                        : args.token.earlyRunnerScore ?? 0
-                  )
-                );
+          const scoreSeed = (() => {
+            switch (alertDef.key) {
+              case "bundle_risk":
+                return args.token.bundleRiskLabel;
+              case "high_conviction":
+                return String(Math.round(args.token.highConvictionScore ?? 0));
+              case "hot_alpha":
+                return String(Math.round(args.token.hotAlphaScore ?? 0));
+              case "early_runner":
+                return String(Math.round(args.token.earlyRunnerScore ?? 0));
+              case "smart_money":
+                return String(smartCount);
+              case "whale_accumulating":
+                return String(whaleCount);
+              case "holder_growth":
+                return formatWholePct(holderGrowthPct);
+              case "liquidity_surge":
+                return formatWholePct(liquidityGrowthPct);
+              case "momentum":
+                return marketCapGrowthPassed
+                  ? `mcap:${formatWholePct(marketCapGrowthPct)}`
+                  : `confidence:${Math.round(confidenceJump)}`;
+              default:
+                return null;
+            }
+          })();
           eligibleAlerts.push({
             key: alertDef.key,
             priority: alertDef.priority,
@@ -560,38 +625,43 @@ export async function fanoutTokenSignalAlerts(args: {
         }
       }
 
-      const strongestAlert = eligibleAlerts.sort((left, right) => right.priority - left.priority)[0];
-      if (!strongestAlert) {
+      if (eligibleAlerts.length === 0) {
         return;
       }
 
-      await createNotification({
-        userId: pref.userId,
-        type: strongestAlert.type,
-        message: strongestAlert.message,
-        entityType: "token",
-        entityId: args.token.id,
-        reasonCode: strongestAlert.reasonCode,
-        payload: {
-          tokenAddress: args.token.address,
-          symbol: args.token.symbol,
-          marketCap: args.marketCap,
-          confidenceScore: args.token.confidenceScore,
-          hotAlphaScore: args.token.hotAlphaScore,
-          earlyRunnerScore: args.token.earlyRunnerScore,
-          highConvictionScore: args.token.highConvictionScore,
-          bundleRiskLabel: args.token.bundleRiskLabel,
-          estimatedBundledSupplyPct: args.token.estimatedBundledSupplyPct,
-        },
-        dedupeKey: buildTokenSignalDedupeKey({
-          alertKey: strongestAlert.key,
-          userId: pref.userId,
-          tokenId: args.token.id,
-          signalAt,
-          cooldownMinutes: strongestAlert.cooldownMinutes,
-          fallbackSeed: strongestAlert.fallbackSeed,
-        }),
-      });
+      await Promise.all(
+        eligibleAlerts
+          .sort((left, right) => right.priority - left.priority)
+          .map((alert) =>
+            createNotification({
+              userId: pref.userId,
+              type: alert.type,
+              message: alert.message,
+              entityType: "token",
+              entityId: args.token.id,
+              reasonCode: alert.reasonCode,
+              payload: {
+                tokenAddress: args.token.address,
+                symbol: args.token.symbol,
+                marketCap: args.marketCap,
+                confidenceScore: args.token.confidenceScore,
+                hotAlphaScore: args.token.hotAlphaScore,
+                earlyRunnerScore: args.token.earlyRunnerScore,
+                highConvictionScore: args.token.highConvictionScore,
+                bundleRiskLabel: args.token.bundleRiskLabel,
+                estimatedBundledSupplyPct: args.token.estimatedBundledSupplyPct,
+              },
+              dedupeKey: buildTokenSignalDedupeKey({
+                alertKey: alert.key,
+                userId: pref.userId,
+                tokenId: args.token.id,
+                signalAt,
+                cooldownMinutes: alert.cooldownMinutes,
+                fallbackSeed: alert.fallbackSeed,
+              }),
+            })
+          )
+      );
     })
   );
 }

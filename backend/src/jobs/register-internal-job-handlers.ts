@@ -39,6 +39,9 @@ const pushDeliveryPayloadSchema = z.object({
 const maintenanceReasonPayloadSchema = z.object({
   reason: z.string().min(1).max(160).optional(),
 });
+const intelligenceRefreshPayloadSchema = maintenanceReasonPayloadSchema.extend({
+  contractAddress: z.string().trim().min(1).optional(),
+});
 
 let handlersRegistered = false;
 
@@ -98,13 +101,16 @@ export function registerInternalJobHandlers(): void {
   });
 
   registerInternalJobHandler("intelligence_refresh", async ({ envelope }) => {
-    maintenanceReasonPayloadSchema.parse(envelope.payload);
-    const result = await runIntelligenceRefreshJob();
+    const payload = intelligenceRefreshPayloadSchema.parse(envelope.payload);
+    const result = await runIntelligenceRefreshJob({
+      contractAddress: payload.contractAddress ?? null,
+    });
     return coerceResult({
       attempted: result.attempted,
       refreshed: result.refreshed,
       skipped: result.skipped,
       errors: result.errors,
+      contractAddress: payload.contractAddress ?? null,
     });
   });
 
