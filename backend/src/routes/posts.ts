@@ -2216,7 +2216,7 @@ const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000
 const CHART_CANDLES_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
 const CHART_CANDLES_FETCH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_200 : 6_000;
 const CHART_TRADES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 600 : 400;
-const CHART_LIVE_STREAM_MAX_DURATION_MS = process.env.NODE_ENV === "production" ? 55_000 : 25_000;
+const CHART_LIVE_STREAM_MAX_DURATION_MS = process.env.NODE_ENV === "production" ? 240_000 : 90_000;
 const CHART_LIVE_STREAM_KEEPALIVE_MS = 15_000;
 const CHART_POOL_ADDRESS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const CHART_PROVIDER_DEFAULT_LATENCY_MS: Record<ChartCandlesSource, number> = {
@@ -8769,7 +8769,7 @@ postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async 
         }
       };
 
-      writeChunk("retry: 2500\n\n");
+      writeChunk("retry: 1000\n\n");
       writeEvent("status", {
         connected: false,
         mode: "stream",

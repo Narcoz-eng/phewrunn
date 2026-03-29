@@ -8,7 +8,7 @@ type TradeTransactionsFeedProps = {
   trades: Array<TradePanelRecentTrade & { walletShort: string | null }>;
   liveMode: "stream" | "fallback" | "unavailable";
   usingFallbackPolling: boolean;
-  lastEventAtMs: number;
+  lastTradeEventAtMs: number;
   className?: string;
 };
 
@@ -38,7 +38,7 @@ export const TradeTransactionsFeed = memo(function TradeTransactionsFeed({
   trades,
   liveMode,
   usingFallbackPolling,
-  lastEventAtMs,
+  lastTradeEventAtMs,
   className,
 }: TradeTransactionsFeedProps) {
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
@@ -52,10 +52,10 @@ export const TradeTransactionsFeed = memo(function TradeTransactionsFeed({
   }, []);
 
   const freshnessLabel = useMemo(() => {
-    if (!lastEventAtMs) {
+    if (!lastTradeEventAtMs) {
       return usingFallbackPolling ? "Waiting for trades" : "Waiting for stream";
     }
-    const ageSeconds = Math.max(0, Math.round((nowMs - lastEventAtMs) / 1000));
+    const ageSeconds = Math.max(0, Math.round((nowMs - lastTradeEventAtMs) / 1000));
     if (ageSeconds <= 1) {
       return "Updated just now";
     }
@@ -63,7 +63,7 @@ export const TradeTransactionsFeed = memo(function TradeTransactionsFeed({
       return `Delayed ${ageSeconds}s`;
     }
     return `${ageSeconds}s ago`;
-  }, [lastEventAtMs, nowMs, usingFallbackPolling]);
+  }, [lastTradeEventAtMs, nowMs, usingFallbackPolling]);
 
   return (
     <div
@@ -83,7 +83,7 @@ export const TradeTransactionsFeed = memo(function TradeTransactionsFeed({
               Recent Trades
             </span>
             <TradePanelLiveBadge
-              lastEventAtMs={lastEventAtMs}
+              lastEventAtMs={lastTradeEventAtMs}
               usingFallbackPolling={usingFallbackPolling}
               mode={liveMode}
             />

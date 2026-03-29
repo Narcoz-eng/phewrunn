@@ -3625,6 +3625,7 @@ export function PostCard({
     usingFallbackPolling: tradePanelUsingFallbackPolling,
     hasConnectedStream: tradePanelHasConnectedStream,
     lastEventAtMs: tradePanelLastEventAtMs,
+    lastTradeEventAtMs: tradePanelLastTradeEventAtMs,
   } = useTradePanelLiveFeed({
     enabled: isBuyDialogOpen && post.chainType === "solana" && !!post.contractAddress,
     tokenAddress: post.contractAddress ?? null,
@@ -7148,7 +7149,7 @@ export function PostCard({
                       trades={tradePanelRecentTrades}
                       liveMode={tradePanelLiveStatus.mode}
                       usingFallbackPolling={tradePanelUsingFallbackPolling}
-                      lastEventAtMs={tradePanelLastEventAtMs}
+                      lastTradeEventAtMs={tradePanelLastTradeEventAtMs}
                     />
 
                   </div>
