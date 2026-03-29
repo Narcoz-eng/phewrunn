@@ -652,6 +652,37 @@ export function buildLeaderboardRefreshJobInput(params: {
   };
 }
 
+function hasMeaningfulTopUsersResponsePayload(
+  payload: TopUsersResponsePayload | null | undefined
+): payload is TopUsersResponsePayload {
+  if (!payload) {
+    return false;
+  }
+  return payload.data.length > 0 || payload.pagination.total > 0;
+}
+
+function hasMeaningfulLeaderboardStatsPayload(
+  payload: LeaderboardStatsPayload | null | undefined
+): payload is LeaderboardStatsPayload {
+  if (!payload) {
+    return false;
+  }
+
+  if (payload.totalUsers > 0 || payload.alphas.total > 0) {
+    return true;
+  }
+
+  if (payload.activeUsers.today > 0 || payload.activeUsers.week > 0) {
+    return true;
+  }
+
+  if (payload.topUsersThisWeek.length > 0) {
+    return true;
+  }
+
+  return payload.levelDistribution.some((entry) => entry.count > 0);
+}
+
 export async function runLeaderboardStatsRefresh(params?: {
   requestId?: string | null;
   source?: string;
@@ -1463,29 +1494,24 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
   const cacheVersion = await getLeaderboardCacheVersion();
   const topUsersCacheKey = `${sortBy}:${page}:${limit}`;
   const cached = topUsersCache.get(topUsersCacheKey);
-  if (cached && cached.expiresAtMs > Date.now()) {
+  if (cached && cached.expiresAtMs > Date.now() && hasMeaningfulTopUsersResponsePayload(cached.data)) {
     return c.json(cached.data);
   }
   const redisKey = buildLeaderboardRedisKey("top-users", cacheVersion, topUsersCacheKey);
   const redisCached = await cacheGetJson<TopUsersResponsePayload>(redisKey);
-  if (redisCached) {
+  if (hasMeaningfulTopUsersResponsePayload(redisCached)) {
     topUsersCache.set(topUsersCacheKey, {
       data: redisCached,
       expiresAtMs: Date.now() + TOP_USERS_CACHE_TTL_MS,
     });
     return c.json(redisCached);
   }
-  const staleCached = cached?.data ?? null;
+  const staleCached = hasMeaningfulTopUsersResponsePayload(cached?.data) ? cached.data : null;
   if (await isPrismaPoolPressureActive()) {
     if (staleCached) {
       return c.json(staleCached);
     }
-    const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
-    topUsersCache.set(topUsersCacheKey, {
-      data: fallbackPayload,
-      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-    });
-    return c.json(fallbackPayload);
+    return c.json(buildEmptyTopUsersResponse(page, limit));
   }
   if (staleCached) {
     if (!topUsersInFlight.has(topUsersCacheKey)) {
@@ -1518,12 +1544,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
       if (staleCached) {
         return c.json(staleCached);
       }
-      const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
-      topUsersCache.set(topUsersCacheKey, {
-        data: fallbackPayload,
-        expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-      });
-      return c.json(fallbackPayload);
+      return c.json(buildEmptyTopUsersResponse(page, limit));
     }
   }
   try {
@@ -1545,12 +1566,7 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
     if (staleCached) {
       return c.json(staleCached);
     }
-    const fallbackPayload = buildEmptyTopUsersResponse(page, limit);
-    topUsersCache.set(topUsersCacheKey, {
-      data: fallbackPayload,
-      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-    });
-    return c.json(fallbackPayload);
+    return c.json(buildEmptyTopUsersResponse(page, limit));
   } finally {
     topUsersInFlight.delete(topUsersCacheKey);
   }
@@ -1568,13 +1584,15 @@ leaderboardRouter.get("/stats", async (c) => {
   };
   const cacheVersion = await getLeaderboardCacheVersion();
   const cached = readCache(statsCache);
-  if (cached) {
+  if (hasMeaningfulLeaderboardStatsPayload(cached)) {
     return c.json({ data: cached });
   }
-  const staleCached = readStaleCache(statsCache);
+  const staleCached = hasMeaningfulLeaderboardStatsPayload(readStaleCache(statsCache))
+    ? readStaleCache(statsCache)
+    : null;
   const redisKey = buildLeaderboardRedisKey("stats", cacheVersion);
   const redisCached = await cacheGetJson<LeaderboardStatsPayload>(redisKey);
-  if (redisCached) {
+  if (hasMeaningfulLeaderboardStatsPayload(redisCached)) {
     writeLeaderboardStatsLocalCache(redisCached);
     return c.json({ data: redisCached });
   }
@@ -1582,10 +1600,6 @@ leaderboardRouter.get("/stats", async (c) => {
     if (staleCached) {
       return c.json({ data: staleCached });
     }
-    statsCache = {
-      data: EMPTY_LEADERBOARD_STATS_PAYLOAD,
-      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-    };
     return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
   if (staleCached) {
@@ -1593,12 +1607,14 @@ leaderboardRouter.get("/stats", async (c) => {
     return c.json({ data: staleCached });
   }
   const snapshotCached = await readLeaderboardStatsSnapshot(cacheVersion);
-  if (snapshotCached.fresh) {
+  if (hasMeaningfulLeaderboardStatsPayload(snapshotCached.fresh)) {
     hydrateLeaderboardStatsCaches(redisKey, snapshotCached.fresh);
     return c.json({ data: snapshotCached.fresh });
   }
 
-  const snapshotFallback = snapshotCached.stale;
+  const snapshotFallback = hasMeaningfulLeaderboardStatsPayload(snapshotCached.stale)
+    ? snapshotCached.stale
+    : null;
   if (snapshotFallback) {
     scheduleLeaderboardStatsRefresh(trace);
     return c.json({ data: snapshotFallback });
@@ -1616,10 +1632,6 @@ leaderboardRouter.get("/stats", async (c) => {
     if (staleCached) {
       return c.json({ data: staleCached });
     }
-    statsCache = {
-      data: EMPTY_LEADERBOARD_STATS_PAYLOAD,
-      expiresAtMs: Date.now() + LEADERBOARD_DEGRADED_CACHE_TTL_MS,
-    };
     return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
 });

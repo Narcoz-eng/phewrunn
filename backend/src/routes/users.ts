@@ -435,6 +435,7 @@ async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawRe
   const rows = await prisma.$queryRaw<Array<{
     id: string;
     image: string | null;
+    bannerImage: string | null;
     username: string | null;
     level: number | null;
     xp: number | null;
@@ -447,6 +448,7 @@ async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawRe
     SELECT
       u.id,
       u.image,
+      u."bannerImage",
       u.username,
       u.level,
       u.xp,
@@ -469,7 +471,7 @@ async function findUserProfileByIdentifierRaw(identifier: string): Promise<RawRe
   return {
     id: row.id,
     image: row.image ?? null,
-    bannerImage: null,
+    bannerImage: row.bannerImage ?? null,
     username: row.username ?? null,
     level: toSafeNumber(row.level),
     xp: toSafeNumber(row.xp),
@@ -617,6 +619,7 @@ async function findUserProfileByIdentifierMinimalRaw(
   const rows = await prisma.$queryRaw<Array<{
     id: string;
     image: string | null;
+    bannerImage: string | null;
     username: string | null;
     level: number | null;
     xp: number | null;
@@ -626,6 +629,7 @@ async function findUserProfileByIdentifierMinimalRaw(
     SELECT
       u.id,
       u.image,
+      u."bannerImage",
       u.username,
       u.level,
       u.xp,
@@ -645,7 +649,7 @@ async function findUserProfileByIdentifierMinimalRaw(
   return {
     id: row.id,
     image: row.image ?? null,
-    bannerImage: null,
+    bannerImage: row.bannerImage ?? null,
     username: row.username ?? null,
     level: toSafeNumber(row.level),
     xp: toSafeNumber(row.xp),

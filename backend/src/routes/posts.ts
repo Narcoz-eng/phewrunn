@@ -5448,6 +5448,19 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
   });
 
   invalidatePostReadCaches({ leaderboard: true });
+  void import("./users.js")
+    .then(({ invalidatePublicUserRouteCachesForUser }) => {
+      invalidatePublicUserRouteCachesForUser({
+        userId: user.id,
+        username: authorSnapshot.username,
+      });
+    })
+    .catch((error) => {
+      console.warn("[posts/create] failed to invalidate public user caches", {
+        userId: user.id,
+        message: getErrorMessage(error),
+      });
+    });
 
   return c.json({
     data: {

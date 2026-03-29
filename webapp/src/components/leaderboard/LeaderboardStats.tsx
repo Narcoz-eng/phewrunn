@@ -36,6 +36,17 @@ interface PlatformStats {
 const PLATFORM_STATS_CACHE_KEY = "phew.leaderboard.stats:v1";
 const PLATFORM_STATS_CACHE_TTL_MS = 15 * 60_000;
 
+function hasMeaningfulPlatformStats(stats: PlatformStats | null | undefined): boolean {
+  if (!stats) return false;
+  return (
+    stats.alphas.total > 0 ||
+    stats.totalUsers > 0 ||
+    stats.activeUsers.today > 0 ||
+    stats.topUsersThisWeek.length > 0 ||
+    stats.levelDistribution.some((entry) => entry.count > 0)
+  );
+}
+
 interface StatItemProps {
   label: string;
   value: string;
@@ -66,10 +77,11 @@ export function LeaderboardStats() {
     queryKey: ["leaderboard", "stats"],
     queryFn: async () => {
       const data = await api.get<PlatformStats>("/api/leaderboard/stats");
-      if (data && (data.totalUsers > 0 || data.alphas.total > 0)) {
-        writeSessionCache(PLATFORM_STATS_CACHE_KEY, data);
+      const resolved = hasMeaningfulPlatformStats(data) ? data : cachedStats ?? data;
+      if (hasMeaningfulPlatformStats(resolved)) {
+        writeSessionCache(PLATFORM_STATS_CACHE_KEY, resolved);
       }
-      return data;
+      return resolved;
     },
     initialData: cachedStats ?? undefined,
     initialDataUpdatedAt: cachedStats ? Date.now() : undefined,
