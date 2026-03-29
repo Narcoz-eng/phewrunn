@@ -944,10 +944,6 @@ function isHolderIntelligencePending(
   }
 
   // If backend completed the scan, trust it — holder intelligence is settled
-  if (token.bundleScanCompletedAt) {
-    return false;
-  }
-
   return (
     token.topHolders.length === 0 ||
     !hasResolvedHolderCount(token.holderCount, token.holderCountSource) ||
@@ -1750,6 +1746,7 @@ function RiskBar({
   danger = 30,
   warn = 15,
   pending = false,
+  formatValue,
 }: {
   label: string;
   value: number | null | undefined;
@@ -1757,6 +1754,7 @@ function RiskBar({
   danger?: number;
   warn?: number;
   pending?: boolean;
+  formatValue?: (value: number) => string;
 }) {
   const pct =
     typeof value === "number" && Number.isFinite(value)
@@ -1782,7 +1780,7 @@ function RiskBar({
           {pending ? (
             <span className="text-primary">Scanning</span>
           ) : realValue !== null ? (
-            `${realValue.toFixed(1)}%`
+            formatValue ? formatValue(realValue) : `${realValue.toFixed(1)}%`
           ) : (
             "—"
           )}
@@ -1948,11 +1946,7 @@ export default function TokenPage() {
     [cachedPostsForToken, tokenBase]
   );
 
-  // If the backend has already run intelligence at least once, don't show scanning states —
-  // whatever data exists is the best available. Only show scanning for truly new/unprocessed tokens.
-  const intelligenceHasRun = Boolean(token?.lastIntelligenceAt || token?.bundleScanCompletedAt);
-
-  const bundleScanPending = !intelligenceHasRun && token
+  const bundleScanPending = token
     ? isBundleScanPending({
         bundleRiskLabel: token.risk.bundleRiskLabel,
         bundleScanCompletedAt: token.bundleScanCompletedAt,
@@ -1975,7 +1969,7 @@ export default function TokenPage() {
         bundleClusters: token.bundleClusters,
       })
     : null;
-  const holderIntelligencePending = !intelligenceHasRun && token
+  const holderIntelligencePending = token
     ? isHolderIntelligencePending({
         chainType: token.chainType,
         topHolders: mergedTopHolders,
@@ -2259,34 +2253,6 @@ export default function TokenPage() {
     (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap < 10_000) ||
     (typeof livePriceChange24h === "number" && Number.isFinite(livePriceChange24h) && livePriceChange24h < -85)
   );
-  // Compute live ROI. Look up currentMcap and entryMcap independently — they may be on different calls.
-  // post.currentMcap is updated by the background job and reliable even when GeckoTerminal lags.
-  const liveRoiPct = (() => {
-    const bestCurrentMcap =
-      recentCalls.find(
-        (c) => typeof c.currentMcap === "number" && Number.isFinite(c.currentMcap) && c.currentMcap > 0
-      )?.currentMcap ??
-      (typeof liveMarketCap === "number" && Number.isFinite(liveMarketCap) && liveMarketCap > 0
-        ? liveMarketCap
-        : null);
-    if (!bestCurrentMcap) return null;
-    const bestEntryMcap = recentCalls.find(
-      (c) => typeof c.entryMcap === "number" && Number.isFinite(c.entryMcap) && c.entryMcap > 0
-    )?.entryMcap;
-    if (!bestEntryMcap) return null;
-    return ((bestCurrentMcap - bestEntryMcap) / bestEntryMcap) * 100;
-  })();
-  // Hard cap on displayed scores based on live ROI — mirrors backend guardrail tiers
-  const liveScoreCap = (() => {
-    if (liveRoiPct === null || liveRoiPct >= 0) return 100;
-    if (liveRoiPct <= -90) return 4;
-    if (liveRoiPct <= -80) return 8;
-    if (liveRoiPct <= -70) return 14;
-    if (liveRoiPct <= -55) return 22;
-    if (liveRoiPct <= -40) return 30;
-    if (liveRoiPct <= -25) return 44;
-    return 100;
-  })();
   // Use the post's currentMcap when it's significantly lower than what the live endpoint reports.
   // GeckoTerminal/DexScreener can lag badly for dead/low-volume tokens.
   const displayMarketCap = (() => {
@@ -2618,7 +2584,7 @@ export default function TokenPage() {
                   { label: "High Conviction", value: token.highConvictionScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Conviction level" },
                 ].map((s) => {
                   const raw = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
-                  const pct = raw !== null ? Math.min(raw, liveScoreCap) : null;
+                  const pct = raw !== null ? Math.max(0, Math.min(raw, 100)) : null;
                   const color = pct !== null && pct >= 75 ? "text-emerald-500" : pct !== null && pct >= 50 ? "text-amber-500" : "text-muted-foreground";
                   return (
                     <div key={s.label} className="relative overflow-hidden rounded-[22px] border p-4 border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(248,248,248,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-[linear-gradient(180deg,rgba(15,20,30,0.96),rgba(8,12,20,0.98))] dark:shadow-none">
@@ -2863,7 +2829,17 @@ export default function TokenPage() {
                     </div>
                   ) : (
                     <>
-                      <RiskBar label="Bundled wallets" value={typeof token.risk.bundledWalletCount === "number" ? Math.min(token.risk.bundledWalletCount, 50) : 0} max={50} danger={20} warn={5} />
+                      <RiskBar
+                        label="Bundled wallets"
+                        value={typeof token.risk.bundledWalletCount === "number" ? Math.min(token.risk.bundledWalletCount, 50) : 0}
+                        max={50}
+                        danger={20}
+                        warn={5}
+                        formatValue={(value) => {
+                          const count = Math.max(0, Math.round(value));
+                          return `${count} wallet${count === 1 ? "" : "s"}`;
+                        }}
+                      />
                       <RiskBar label="Bundled supply" value={resolvedBundledSupplyPct ?? 0} max={100} danger={25} warn={10} />
                     </>
                   )}

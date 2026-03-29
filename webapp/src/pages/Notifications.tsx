@@ -40,6 +40,11 @@ type AlertPreference = {
   notifyHighConviction: boolean;
   notifyBundleChanges: boolean;
   notifyConfidenceCross: boolean;
+  notifyLiquiditySurge: boolean;
+  notifyHolderGrowth: boolean;
+  notifyMomentum: boolean;
+  notifyWhaleAccumulating: boolean;
+  notifySmartMoney: boolean;
 };
 
 function normalizeNotificationMessage(message: string): string {
@@ -75,6 +80,13 @@ function buildNotificationGroupKey(notification: Notification): string {
     case "high_conviction_detected":
     case "bundle_risk_changed":
     case "token_confidence_crossed":
+    case "token_liquidity_surge":
+    case "token_holder_growth":
+    case "token_momentum":
+    case "token_whale_accumulating":
+    case "token_smart_money":
+    case "liquidity_spike":
+    case "volume_spike":
       return `${notification.type}:${tokenKey}`;
     case "win_1h":
     case "loss_1h":
@@ -115,6 +127,20 @@ function buildMergedNotificationMessage(base: Notification, count: number, uniqu
       return `${base.message} (+${count - 1} more risk changes)`;
     case "token_confidence_crossed":
       return `${base.message} (+${count - 1} more confidence alerts)`;
+    case "token_liquidity_surge":
+      return `${base.message} (+${count - 1} more liquidity alerts)`;
+    case "token_holder_growth":
+      return `${base.message} (+${count - 1} more holder alerts)`;
+    case "token_momentum":
+      return `${base.message} (+${count - 1} more momentum alerts)`;
+    case "token_whale_accumulating":
+      return `${base.message} (+${count - 1} more whale alerts)`;
+    case "token_smart_money":
+      return `${base.message} (+${count - 1} more smart money alerts)`;
+    case "liquidity_spike":
+      return `${base.message} (+${count - 1} more liquidity spikes)`;
+    case "volume_spike":
+      return `${base.message} (+${count - 1} more volume spikes)`;
     default:
       return `${base.message} (+${count - 1} more)`;
   }
@@ -856,6 +882,11 @@ export default function Notifications() {
                             ["notifyHighConviction", "High conviction"],
                             ["notifyBundleChanges", "Bundle changes"],
                             ["notifyConfidenceCross", "Confidence cross"],
+                            ["notifyLiquiditySurge", "Liquidity surge"],
+                            ["notifyHolderGrowth", "Holder growth"],
+                            ["notifyMomentum", "Momentum"],
+                            ["notifyWhaleAccumulating", "Whale aping"],
+                            ["notifySmartMoney", "Smart money"],
                           ].map(([key, label]) => (
                             <button
                               key={key}

@@ -45,6 +45,11 @@ const notificationIcons: Record<string, { icon: typeof PhewBellIcon; colorClass:
   high_conviction_detected: { icon: Star, colorClass: "text-violet-500" },
   bundle_risk_changed: { icon: AlertTriangle, colorClass: "text-amber-500" },
   token_confidence_crossed: { icon: Award, colorClass: "text-primary" },
+  token_liquidity_surge: { icon: Droplets, colorClass: "text-cyan-400" },
+  token_holder_growth: { icon: TrendingUp, colorClass: "text-emerald-500" },
+  token_momentum: { icon: TrendingUp, colorClass: "text-primary" },
+  token_whale_accumulating: { icon: TrendingUp, colorClass: "text-amber-500" },
+  token_smart_money: { icon: Star, colorClass: "text-violet-500" },
   liquidity_spike: { icon: Droplets, colorClass: "text-cyan-400" },
   volume_spike: { icon: BarChart2, colorClass: "text-orange-400" },
 };

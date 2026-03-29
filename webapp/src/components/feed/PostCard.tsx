@@ -1933,24 +1933,6 @@ export function PostCard({
   const hotAlphaScore = post.hotAlphaScore ?? null;
   const earlyRunnerScore = post.earlyRunnerScore ?? null;
   const highConvictionScore = post.highConvictionScore ?? null;
-  // Cap scores based on the post's known ROI — prevents stale high scores on collapsed tokens
-  const postLiveRoiPct = (() => {
-    const cur = post.currentMcap;
-    const entry = post.entryMcap;
-    if (typeof cur !== "number" || !Number.isFinite(cur) || cur <= 0) return null;
-    if (typeof entry !== "number" || !Number.isFinite(entry) || entry <= 0) return null;
-    return ((cur - entry) / entry) * 100;
-  })();
-  const postScoreCap = (() => {
-    if (postLiveRoiPct === null || postLiveRoiPct >= 0) return 100;
-    if (postLiveRoiPct <= -90) return 4;
-    if (postLiveRoiPct <= -80) return 8;
-    if (postLiveRoiPct <= -70) return 14;
-    if (postLiveRoiPct <= -55) return 22;
-    if (postLiveRoiPct <= -40) return 30;
-    if (postLiveRoiPct <= -25) return 44;
-    return 100;
-  })();
   const tokenPageHref = post.contractAddress ? `/token/${post.contractAddress}` : null;
   const hasTokenIntelligence =
     confidenceScore !== null ||
@@ -1987,7 +1969,7 @@ export function PostCard({
   const hasResolvedBundleContext = !bundleScanPending;
   const normalizedConfidenceScore =
     hasResolvedConfidenceContext && typeof confidenceScore === "number" && Number.isFinite(confidenceScore)
-      ? Math.max(0, Math.min(postScoreCap, confidenceScore))
+      ? Math.max(0, Math.min(100, confidenceScore))
       : null;
   const normalizedBundleRiskLabel =
     post.bundleRiskLabel ||
