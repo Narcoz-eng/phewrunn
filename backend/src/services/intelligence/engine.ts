@@ -24,6 +24,7 @@ import {
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
 import { getCachedMarketCapSnapshot, type MarketCapResult } from "../marketcap.js";
+import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../../lib/job-queue.js";
 import { isRedisConfigured, cacheGetJson, cacheSetJson } from "../../lib/redis.js";
 
 const TOKEN_INTELLIGENCE_STALE_MS = 15 * 60 * 1000;
@@ -55,9 +56,7 @@ const TRADER_OVERVIEW_CACHE_MAX_ENTRIES = 300;
 const FOLLOWING_SNAPSHOT_CACHE_MAX_ENTRIES = 1_000;
 const RADAR_CACHE_MAX_ENTRIES = 50;
 const LEADERBOARD_CACHE_MAX_ENTRIES = 20;
-const TOKEN_CORE_HYDRATION_RETRY_MS = process.env.NODE_ENV === "production" ? 45_000 : 12_000;
 const TOKEN_HIGH_SIGNAL_REFRESH_STALE_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
-const TOKEN_REFRESH_REQUEST_COOLDOWN_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
 const RADAR_CACHE_TTL_MS = 15_000;
 const TRADER_OVERVIEW_CACHE_TTL_MS = 20_000;
 const LEADERBOARD_CACHE_TTL_MS = 20_000;
@@ -75,15 +74,13 @@ const STORED_POST_INTELLIGENCE_STALE_MS = 10 * 60_000; // recompute confidence e
 const INTELLIGENCE_PREWARM_INTERVAL_MS = 10 * 60_000;
 const INTELLIGENCE_PREWARM_START_DELAY_MS = process.env.NODE_ENV === "production" ? 25_000 : 8_000;
 const INTELLIGENCE_PREWARM_TOKEN_LIMIT = 30;
+const INTELLIGENCE_REFRESH_JOB_BUCKET_MS = INTELLIGENCE_PREWARM_INTERVAL_MS;
 const PRIORITY_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
 const IS_SERVERLESS_RUNTIME =
   !!process.env.VERCEL ||
   !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
   !!process.env.K_SERVICE ||
   !!process.env.FUNCTIONS_WORKER_RUNTIME;
-const READ_PATH_TOKEN_REFRESH_ENABLED =
-  process.env.ENABLE_READ_PATH_TOKEN_REFRESH?.trim().toLowerCase() === "true" ||
-  !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 const FEED_COUNT_SUMMARY_QUERY_ENABLED = (() => {
   const raw = process.env.ENABLE_FEED_COUNT_SUMMARIES?.trim().toLowerCase();
   if (raw === "true") return true;
@@ -1439,24 +1436,6 @@ function hasFreshStoredTokenIntelligence(
   return Date.now() - lastIntelligenceAt.getTime() <= staleAfterMs;
 }
 
-function scheduleTokenIntelligenceRefresh(token: TokenRecord | null): void {
-  if (!READ_PATH_TOKEN_REFRESH_ENABLED || !token || !shouldRefreshToken(token)) {
-    return;
-  }
-
-  const nowMs = Date.now();
-  const minIntervalMs = tokenNeedsCoreHydration(token)
-    ? TOKEN_CORE_HYDRATION_RETRY_MS
-    : TOKEN_REFRESH_REQUEST_COOLDOWN_MS;
-  const lastAttemptAt = tokenRefreshAttemptAt.get(token.id) ?? 0;
-  if (tokenRefreshInFlight.has(token.id) || nowMs - lastAttemptAt < minIntervalMs) {
-    return;
-  }
-
-  tokenRefreshAttemptAt.set(token.id, nowMs);
-  void refreshTokenIntelligence(token.id).catch(() => undefined);
-}
-
 function buildRadarReasons(args: {
   distinctTrustedTraders: number;
   volumeGrowthPct: number;
@@ -2592,10 +2571,6 @@ async function hydrateCalls(
   }
   if (refreshTokens && tokenMap.size > 0) {
     tokenMap = mergeTokenMaps(tokenMap, await refreshTokenIntelligenceForMap(tokenMap));
-  } else if (tokenMap.size > 0 && !preferStoredIntelligence) {
-    for (const token of tokenMap.values()) {
-      scheduleTokenIntelligenceRefresh(token);
-    }
   }
 
   const tokenIds = Array.from(
@@ -3304,6 +3279,45 @@ export async function prewarmRecentTokenIntelligence(
   };
 }
 
+export function buildIntelligenceRefreshJobInput(params?: {
+  reason?: string;
+  traceId?: string | null;
+  nowMs?: number;
+  intervalMs?: number;
+  scope?: string;
+}): EnqueueInternalJobInput {
+  const nowMs = params?.nowMs ?? Date.now();
+  const intervalMs = Math.max(1_000, params?.intervalMs ?? INTELLIGENCE_REFRESH_JOB_BUCKET_MS);
+  const bucket = Math.floor(nowMs / intervalMs);
+  const scope = params?.scope?.trim() ? params.scope.trim() : "priority-loop";
+
+  return {
+    jobName: "intelligence_refresh",
+    idempotencyKey: `intelligence-refresh:${scope}:${bucket}`,
+    payload: {
+      reason: params?.reason ?? "intelligence_priority_loop",
+    },
+    ...(params?.traceId ? { traceId: params.traceId } : {}),
+  };
+}
+
+async function enqueuePriorityIntelligenceRefresh(): Promise<void> {
+  if (!hasQStashPublishConfig()) {
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[intelligence] skipping priority refresh enqueue; queue publish config missing");
+      return;
+    }
+
+    throw new Error("Queue publish config missing for intelligence_refresh");
+  }
+
+  await enqueueInternalJob(
+    buildIntelligenceRefreshJobInput({
+      reason: "intelligence_priority_loop",
+    })
+  );
+}
+
 async function runIntelligencePriorityLoop(): Promise<void> {
   if (intelligencePriorityLoopInFlight) {
     return intelligencePriorityLoopInFlight;
@@ -3311,7 +3325,7 @@ async function runIntelligencePriorityLoop(): Promise<void> {
 
   intelligencePriorityLoopInFlight = (async () => {
     try {
-      await prewarmRecentTokenIntelligence();
+      await enqueuePriorityIntelligenceRefresh();
       // Enforce Map size limits on each cycle to prevent unbounded memory growth
       evictOldestFromMap(feedListCache, FEED_LIST_CACHE_MAX_ENTRIES);
       evictOldestFromMap(tokenOverviewCache, TOKEN_OVERVIEW_CACHE_MAX_ENTRIES);

@@ -52,6 +52,7 @@ import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../lib/job-queue.js";
 import {
+  buildIntelligenceRefreshJobInput,
   computeRealtimeIntelligenceSnapshots,
   getEnrichedCallById,
   INTELLIGENCE_CALL_SELECT,
@@ -240,16 +241,12 @@ let settlementRunInFlight: Promise<JobDispatchRecord> | null = null;
 let lastMaintenanceRunStartedAt = 0;
 let lastSettlementRunStartedAt = 0;
 let lastCronMaintenanceCompletedAt = 0;
-let lastLeaderboardSnapshotWarmAt = 0;
-let leaderboardSnapshotWarmCursor = 0;
 let maintenanceLoopTimer: ReturnType<typeof setInterval> | null = null;
 let maintenanceLoopCanRun: (() => boolean) | null = null;
 const MAINTENANCE_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 30_000 : 5_000;
 const SETTLEMENT_RUN_MIN_INTERVAL_MS = process.env.NODE_ENV === "production" ? 20_000 : 4_000;
 const BACKGROUND_MAINTENANCE_LOOP_START_DELAY_MS = process.env.NODE_ENV === "production" ? 20_000 : 6_000;
 const BACKGROUND_MAINTENANCE_LOOP_INTERVAL_MS = process.env.NODE_ENV === "production" ? 60_000 : 15_000;
-const LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS =
-  process.env.NODE_ENV === "production" ? 5 * 60_000 : 30_000;
 const CRON_MAINTENANCE_HEALTH_WINDOW_MS =
   process.env.NODE_ENV === "production" ? 3 * 60_000 : 20_000;
 const MAINTENANCE_STALE_PROBE_COOLDOWN_MS =
@@ -4236,13 +4233,12 @@ export function buildMaintenanceJobInputs(params: {
         reason: params.reason,
       },
     },
-    {
-      jobName: "intelligence_refresh",
-      idempotencyKey: `intelligence-refresh:${maintenanceBucket}`,
-      payload: {
-        reason: params.reason,
-      },
-    },
+    buildIntelligenceRefreshJobInput({
+      reason: params.reason,
+      nowMs,
+      intervalMs: MAINTENANCE_RUN_MIN_INTERVAL_MS,
+      scope: "maintenance",
+    }),
   ];
 
   if (params.prewarmLeaderboard) {
@@ -4464,152 +4460,6 @@ async function withSettlementRunLock<T>(
       });
     }
   }
-}
-
-async function prewarmLeaderboardSnapshots(): Promise<{
-  attempted: number;
-  succeeded: number;
-  failed: number;
-  durationMs: number;
-  skipped?: boolean;
-  reason?: string;
-}> {
-  const now = Date.now();
-  if (now - lastLeaderboardSnapshotWarmAt < LEADERBOARD_SNAPSHOT_WARM_INTERVAL_MS) {
-    return {
-      attempted: 0,
-      succeeded: 0,
-      failed: 0,
-      durationMs: 0,
-      skipped: true,
-      reason: "cooldown",
-    };
-  }
-
-  const baseUrl = process.env.BACKEND_URL?.trim();
-  if (!baseUrl) {
-    return {
-      attempted: 0,
-      succeeded: 0,
-      failed: 0,
-      durationMs: 0,
-      skipped: true,
-      reason: "missing_backend_url",
-    };
-  }
-
-  const startedAtMs = Date.now();
-  const endpoints = [
-    "/api/leaderboard/daily-gainers",
-    "/api/leaderboard/stats",
-    "/api/leaderboard/top-users?sortBy=level&page=1&limit=20",
-    "/api/leaderboard/top-users?sortBy=activity&page=1&limit=20",
-    "/api/leaderboard/top-users?sortBy=winrate&page=1&limit=20",
-  ];
-
-  let attempted = 0;
-  let succeeded = 0;
-  let failed = 0;
-
-  const fetchWithTimeout = async (path: string) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4_000);
-    try {
-      attempted += 1;
-      const url = new URL(path, baseUrl).toString();
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "x-maintenance-prewarm": "1",
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        failed += 1;
-        console.warn("[Maintenance] Snapshot prewarm request failed", {
-          path,
-          status: response.status,
-        });
-        return;
-      }
-      succeeded += 1;
-    } catch (error) {
-      failed += 1;
-      console.warn("[Maintenance] Snapshot prewarm request error", { path, error });
-    } finally {
-      clearTimeout(timeout);
-    }
-  };
-
-  const endpointToWarm = endpoints[leaderboardSnapshotWarmCursor % endpoints.length];
-  leaderboardSnapshotWarmCursor = (leaderboardSnapshotWarmCursor + 1) % endpoints.length;
-
-  if (endpointToWarm) {
-    await fetchWithTimeout(endpointToWarm);
-  }
-
-  // Advance cooldown after each attempt to prevent repeated warm spikes if an endpoint fails.
-  lastLeaderboardSnapshotWarmAt = now;
-
-  return {
-    attempted,
-    succeeded,
-    failed,
-    durationMs: Date.now() - startedAtMs,
-  };
-}
-
-async function runMaintenanceCycle(options?: { prewarmSnapshots?: boolean }): Promise<MaintenanceRunResult> {
-  const startedAtMs = Date.now();
-  const settlement = await checkAndSettlePosts();
-  const marketRefresh = await refreshTrackedMarketCaps();
-  const intelligenceRefresh = await prewarmRecentTokenIntelligence({ awaitSignalAlerts: true });
-  const marketAlerts = await runMarketAlertScan();
-  const snapshotWarmup = options?.prewarmSnapshots
-    ? await prewarmLeaderboardSnapshots()
-    : {
-        attempted: 0,
-        succeeded: 0,
-        failed: 0,
-        durationMs: 0,
-        skipped: true,
-        reason: "disabled_for_opportunistic_run",
-      };
-
-  const summary: MaintenanceRunResult = {
-    startedAt: new Date(startedAtMs).toISOString(),
-    durationMs: Date.now() - startedAtMs,
-    settlement,
-    marketRefresh,
-    intelligenceRefresh,
-    marketAlerts,
-    snapshotWarmup,
-  };
-
-  if (
-    settlement.settled1h ||
-    settlement.snapshot6h ||
-    settlement.levelChanges6h ||
-    settlement.errors ||
-    marketRefresh.refreshedContracts ||
-    marketRefresh.updatedPosts ||
-    marketRefresh.errors ||
-    intelligenceRefresh.refreshed ||
-    intelligenceRefresh.errors ||
-    marketAlerts.liquiditySpikes ||
-    marketAlerts.volumeSpikes ||
-    marketAlerts.errors ||
-    (snapshotWarmup.succeeded > 0 || snapshotWarmup.failed > 0)
-  ) {
-    console.log("[Maintenance] Run result:", summary);
-  }
-
-  // Trending and feed caches may depend on currentMcap updates.
-  if (marketRefresh.updatedPosts > 0) {
-    trendingCache = null;
-  }
-
-  return summary;
 }
 
 function triggerMaintenanceCycleNonBlocking(reason: string): void {
