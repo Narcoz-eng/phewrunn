@@ -4,6 +4,22 @@ Status: Ready for execution
 Last updated: 2026-03-29
 Scope: `PR-001` through `PR-006` are implemented. Remaining gates are sign-off, staging load validation, staging hold, canary, and final go/no-go.
 
+## Execution Ownership
+
+- Rollout operator: `Narcoz`
+- Staging URL provider: `Narcoz`
+- Auth input provider: `Narcoz`
+- Internal auth-path approval: `Narcoz`
+- Dashboard and log access owner: `Narcoz`
+- Watchers:
+  - API: `Narcoz`
+  - DB: `Narcoz`
+  - queue: `Narcoz`
+  - Redis: `Narcoz`
+  - providers: `Narcoz`
+- `PR-006` sign-off owner for this window: `Narcoz` acting as `Tech Lead`
+- Execution mode: controlled solo rollout. Monitoring and validation are sequential, and no step advances until the current gate is explicitly validated.
+
 ## Dates
 
 - Load validation: `2026-04-02`

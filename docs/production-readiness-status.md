@@ -18,7 +18,7 @@ Last updated: 2026-03-29
 | `PR-003` | Platform Engineer | Security Lead | Implemented, pending sign-off | Production now requires Upstash Redis REST and rate limiting no longer falls back to memory in production |
 | `PR-004` | Platform Engineer | Tech Lead | Implemented, pending sign-off | QStash-backed internal job control plane, signed delivery verification, idempotency, dead-letter callback, and queue health wiring are in place |
 | `PR-005` | Backend Lead | Tech Lead | Implemented, pending sign-off | Post-create fanout, push delivery, maintenance dispatch, settlement dispatch, leaderboard stats refresh, and intelligence refresh now route through the internal job control plane; read-path intelligence refresh was removed and the priority loop now enqueues idempotent jobs |
-| `PR-006` | Data Engineer | Tech Lead | Implemented, pending sign-off | Baseline bootstrap migration is active, additive migrations are archived, direct-DB clean bootstrap and adoption validation passed on the EC2 executor, and runtime schema mutation paths were removed |
+| `PR-006` | Data Engineer | Tech Lead | Implemented, signed off | Baseline bootstrap migration is active, additive migrations are archived, direct-DB clean bootstrap and adoption validation passed on the EC2 executor, runtime schema mutation paths were removed, and Narcoz recorded the acting Tech Lead sign-off |
 
 ## Daily Log
 
@@ -59,4 +59,6 @@ Last updated: 2026-03-29
 - The verified bootstrap baseline is now the active Prisma migration chain, the previous additive migrations were moved into `backend/prisma/migrations_archive`, and runtime schema mutation plus schema-drift compat refresh hooks were removed from backend code.
 - Final `PR-006` verification passed locally after the migration-chain swap: `rg` found no runtime DDL in `backend/src`, `npm --prefix backend run typecheck` passed, `npm --prefix backend run test` passed with `24/24`, and the backend completed a direct boot check after `prisma generate` + `prisma-migrate-deploy.mjs` + `bun run src/index.ts`.
 - Added the checked-in P0 load-validation package for the remaining rollout gates: [load-tests/k6/p0-gate.mjs](/c:/Users/renga/Documents/phewrunn/load-tests/k6/p0-gate.mjs) now covers mixed traffic and authenticated abuse on the exact gated routes, and [docs/p0-rollout-runbook.md](/c:/Users/renga/Documents/phewrunn/docs/p0-rollout-runbook.md) captures the April 2 load run, the 24-hour staging hold, the April 3 canary sequence, and the evidence package required before go/no-go.
+- Execution ownership is now consolidated to Narcoz for the rollout window: staging URL, auth inputs, internal auth-path approval, dashboard/log access, and all live watchers for API, DB, queue, Redis, and providers.
+- `PR-006` is now signed off by Narcoz acting as `Tech Lead`. No further `PR-006` implementation work is authorized unless review finds a concrete defect.
 - No feature work is authorized until all P0 items are complete and signed off.
