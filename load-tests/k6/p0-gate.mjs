@@ -270,6 +270,16 @@ function pickTokenAddress(seedState) {
   return tokens[index] || tokens[0] || null;
 }
 
+function pickTokenAddressForWriter(seedState, writerIndex, writerCycle) {
+  const tokens = seedState.tokenAddresses || [];
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  const index = Math.abs((writerIndex + writerCycle) % tokens.length);
+  return tokens[index] || tokens[0] || null;
+}
+
 export function setup() {
   const baseUrl = trimTrailingSlash((__ENV.BASE_URL || "").trim());
   if (!baseUrl) {
@@ -385,8 +395,14 @@ export function postCreate(data) {
   // Round-robin authenticated writers so mixed-load post traffic stays
   // distributed across the provided test-user pool instead of clustering on
   // one account and tripping per-user hourly caps.
-  const authContext = pickAuthContextByIndex(data.authPool, exec.scenario.iterationInTest);
-  const tokenAddress = pickTokenAddress(data.seedState);
+  const writerIndex = Array.isArray(data.authPool) && data.authPool.length > 0
+    ? Math.abs(exec.scenario.iterationInTest % data.authPool.length)
+    : 0;
+  const writerCycle = Array.isArray(data.authPool) && data.authPool.length > 0
+    ? Math.floor(exec.scenario.iterationInTest / data.authPool.length)
+    : exec.scenario.iterationInTest;
+  const authContext = pickAuthContextByIndex(data.authPool, writerIndex);
+  const tokenAddress = pickTokenAddressForWriter(data.seedState, writerIndex, writerCycle);
   const iterationId = `${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
   const response = http.post(
     `${data.baseUrl}/api/posts`,
