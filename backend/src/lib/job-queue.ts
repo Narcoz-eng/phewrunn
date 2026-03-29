@@ -125,7 +125,7 @@ type CreatePublishRequestOverrides = {
   qstashToken?: string;
 };
 
-type EnqueueInternalJobInput = {
+export type EnqueueInternalJobInput = {
   jobName: InternalJobName;
   idempotencyKey: string;
   payload: Record<string, unknown>;

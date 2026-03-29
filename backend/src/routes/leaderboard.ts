@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma, isPrismaPoolPressureActive, isTransientPrismaError, notePrismaPoolPressure } from "../prisma.js";
 import { type AuthVariables } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete, redisGetString, redisIncr, redisSetString } from "../lib/redis.js";
+import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../lib/job-queue.js";
 import {
   LeaderboardQuerySchema,
   MIN_LEVEL,
@@ -69,6 +70,7 @@ const LEADERBOARD_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 9_0
 const LEADERBOARD_CACHE_VERSION_KEY = "leaderboard:cache-version";
 const LEADERBOARD_ROUTE_CACHE_VERSION = 2;
 const LEADERBOARD_STATS_SNAPSHOT_KEY = "leaderboard:stats";
+const LEADERBOARD_REFRESH_JOB_BUCKET_MS = process.env.NODE_ENV === "production" ? 60_000 : 10_000;
 const ALPHA_SCORE_BUCKET_SECONDS = 6 * 60 * 60;
 const LEADERBOARD_BUCKET_SECONDS_SQL = Prisma.raw(String(ALPHA_SCORE_BUCKET_SECONDS));
 let leaderboardCacheVersionMemory = 1;
@@ -630,17 +632,49 @@ async function computeLeaderboardStatsPayload(
   };
 }
 
-function queueLeaderboardStatsRefresh(
-  cacheVersion: number,
-  redisKey: string,
+function buildLeaderboardRefreshBucket(nowMs: number): string {
+  return String(Math.floor(nowMs / LEADERBOARD_REFRESH_JOB_BUCKET_MS));
+}
+
+export function buildLeaderboardRefreshJobInput(params: {
+  reason: string;
+  requestId?: string | null;
+  nowMs?: number;
+}): EnqueueInternalJobInput {
+  const nowMs = params.nowMs ?? Date.now();
+  return {
+    jobName: "leaderboard_refresh",
+    idempotencyKey: `leaderboard-refresh:${buildLeaderboardRefreshBucket(nowMs)}`,
+    traceId: params.requestId ?? null,
+    payload: {
+      reason: params.reason,
+    },
+  };
+}
+
+export async function runLeaderboardStatsRefresh(params?: {
+  requestId?: string | null;
+  source?: string;
+}): Promise<LeaderboardStatsPayload> {
+  const cacheVersion = await getLeaderboardCacheVersion();
+  const redisKey = buildLeaderboardRedisKey("stats", cacheVersion);
+  const trace = {
+    endpoint: params?.source ?? "/api/internal/jobs/leaderboard_refresh",
+    requestId: params?.requestId ?? null,
+  } satisfies LeaderboardTraceContext;
+  const data = await computeLeaderboardStatsPayload(trace);
+  await persistLeaderboardStats(cacheVersion, redisKey, data);
+  return data;
+}
+
+function ensureLeaderboardStatsRefreshInFlight(
   trace: LeaderboardTraceContext
 ): Promise<LeaderboardStatsPayload> {
   if (!statsInFlight) {
-    const refreshPromise = (async () => {
-      const data = await computeLeaderboardStatsPayload(trace);
-      await persistLeaderboardStats(cacheVersion, redisKey, data);
-      return data;
-    })();
+    const refreshPromise = runLeaderboardStatsRefresh({
+      requestId: trace.requestId,
+      source: trace.endpoint,
+    });
     const trackedPromise = refreshPromise.finally(() => {
       if (statsInFlight === trackedPromise) {
         statsInFlight = null;
@@ -649,6 +683,23 @@ function queueLeaderboardStatsRefresh(
     statsInFlight = trackedPromise;
   }
   return statsInFlight!;
+}
+
+function scheduleLeaderboardStatsRefresh(trace: LeaderboardTraceContext): void {
+  if (hasQStashPublishConfig()) {
+    const jobInput = buildLeaderboardRefreshJobInput({
+      reason: trace.endpoint,
+      requestId: trace.requestId,
+    });
+    void enqueueInternalJob(jobInput).catch((error) => {
+      logLeaderboardFallback("stats/queued-refresh", error, true);
+    });
+    return;
+  }
+
+  void ensureLeaderboardStatsRefreshInFlight(trace).catch((error) => {
+    logLeaderboardFallback("stats/local-refresh", error, true);
+  });
 }
 
 async function getWinLossStatsByAuthorIds(authorIds: string[]) {
@@ -1538,9 +1589,7 @@ leaderboardRouter.get("/stats", async (c) => {
     return c.json({ data: EMPTY_LEADERBOARD_STATS_PAYLOAD });
   }
   if (staleCached) {
-    void queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace).catch((error) => {
-      logLeaderboardFallback("stats/background-refresh", error, true);
-    });
+    scheduleLeaderboardStatsRefresh(trace);
     return c.json({ data: staleCached });
   }
   const snapshotCached = await readLeaderboardStatsSnapshot(cacheVersion);
@@ -1551,14 +1600,12 @@ leaderboardRouter.get("/stats", async (c) => {
 
   const snapshotFallback = snapshotCached.stale;
   if (snapshotFallback) {
-    void queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace).catch((error) => {
-      logLeaderboardFallback("stats/background-refresh", error, true);
-    });
+    scheduleLeaderboardStatsRefresh(trace);
     return c.json({ data: snapshotFallback });
   }
 
   if (!statsInFlight) {
-    queueLeaderboardStatsRefresh(cacheVersion, redisKey, trace);
+    ensureLeaderboardStatsRefreshInFlight(trace);
   }
 
   try {

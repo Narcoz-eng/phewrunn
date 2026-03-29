@@ -17,8 +17,8 @@ Last updated: 2026-03-29
 | `PR-002` | Backend Lead | Security Lead | Implemented, pending sign-off | Browser-readable backend token path removed, legacy auth exports removed, cookie-only session path verified |
 | `PR-003` | Platform Engineer | Security Lead | Implemented, pending sign-off | Production now requires Upstash Redis REST and rate limiting no longer falls back to memory in production |
 | `PR-004` | Platform Engineer | Tech Lead | Implemented, pending sign-off | QStash-backed internal job control plane, signed delivery verification, idempotency, dead-letter callback, and queue health wiring are in place |
-| `PR-005` | Backend Lead | Tech Lead | In progress | Post-create fanout and push delivery now queue through the internal job control plane; maintenance and refresh jobs are still pending |
-| `PR-006` | Data Engineer | Tech Lead | Not started | Runtime schema mutation removal pending |
+| `PR-005` | Backend Lead | Tech Lead | In progress | Post-create fanout, push delivery, maintenance dispatch, settlement dispatch, and leaderboard stats background refresh now queue through the internal job control plane; intelligence priority loop cleanup remains |
+| `PR-006` | Data Engineer | Tech Lead | In progress | Runtime schema mutation removal is blocked on formalizing a complete migration baseline and removing boot-time compat refresh paths |
 
 ## Daily Log
 
@@ -46,4 +46,9 @@ Last updated: 2026-03-29
 - Registered the first internal job handlers for `post_fanout` and `push_delivery`, and updated post creation to enqueue follower/alpha fanout instead of waiting on it inline.
 - Verification passed for the `PR-005` slice: `npm --prefix backend run test` and `npm --prefix backend run typecheck`.
 - `PR-005` remains in progress until settlement, market refresh, leaderboard refresh, and intelligence refresh are migrated.
+- `PR-005` migrated the remaining maintenance dispatch paths to the queue control plane: `/maintenance/run` now enqueues settlement, market refresh, intelligence refresh, and leaderboard refresh; `/settle` now dispatches through the queue; stale leaderboard stats refreshes now schedule `leaderboard_refresh` instead of in-process fire-and-forget work.
+- Registered the remaining internal job handlers for `settlement`, `market_refresh`, `intelligence_refresh`, and `leaderboard_refresh`, and added regression coverage for the new maintenance job builders.
+- Verification passed for the second `PR-005` slice: `npm --prefix backend run test` and `npm --prefix backend run typecheck` with backend tests now at `23` passing cases.
+- `PR-005` still has one cleanup item before closure: the standalone intelligence priority loop in `services/intelligence/engine.ts` still calls the refresh path directly instead of queueing it.
+- `PR-006` moved from pending to active analysis. Prisma diffing confirmed the current schema can be rendered from scratch, but the checked-in migration history is additive and not yet a full bootstrap chain, so runtime DDL removal still needs a formal baseline migration plan before code deletion.
 - No feature work is authorized until all P0 items are complete and signed off.

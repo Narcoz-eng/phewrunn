@@ -43,10 +43,14 @@ import {
   type ParsedSolanaInstruction,
   type ParsedSolanaTransaction,
 } from "../services/helius.js";
-import { invalidateLeaderboardCaches } from "./leaderboard.js";
+import {
+  buildLeaderboardRefreshJobInput,
+  invalidateLeaderboardCaches,
+  runLeaderboardStatsRefresh,
+} from "./leaderboard.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
-import { enqueueInternalJob, hasQStashPublishConfig } from "../lib/job-queue.js";
+import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../lib/job-queue.js";
 import {
   computeRealtimeIntelligenceSnapshots,
   getEnrichedCallById,
@@ -186,6 +190,14 @@ type EndpointConcurrencyLimiter = {
   current: () => number;
 };
 
+type JobDispatchRecord = {
+  jobName: EnqueueInternalJobInput["jobName"];
+  idempotencyKey: string;
+  mode: "queued" | "inline";
+  messageId: string | null;
+  deduplicated: boolean;
+};
+
 function readPositiveIntEnv(name: string): number | null {
   const raw = process.env[name];
   if (!raw) return null;
@@ -223,8 +235,8 @@ function createEndpointConcurrencyLimiter(label: string, configuredLimit: number
   };
 }
 
-let maintenanceRunInFlight: Promise<MaintenanceRunResult> | null = null;
-let settlementRunInFlight: Promise<SettlementRunResult> | null = null;
+let maintenanceRunInFlight: Promise<JobDispatchRecord[]> | null = null;
+let settlementRunInFlight: Promise<JobDispatchRecord> | null = null;
 let lastMaintenanceRunStartedAt = 0;
 let lastSettlementRunStartedAt = 0;
 let lastCronMaintenanceCompletedAt = 0;
@@ -4190,6 +4202,132 @@ function createSkippedSettlementResult(reason: string): SettlementRunResult {
   };
 }
 
+function buildJobWindowId(nowMs: number, intervalMs: number): string {
+  return String(Math.floor(nowMs / Math.max(1_000, intervalMs)));
+}
+
+export function buildSettlementJobInput(params: {
+  reason: string;
+  nowMs?: number;
+}): EnqueueInternalJobInput {
+  const nowMs = params.nowMs ?? Date.now();
+  return {
+    jobName: "settlement",
+    idempotencyKey: `settlement:${buildJobWindowId(nowMs, SETTLEMENT_RUN_MIN_INTERVAL_MS)}`,
+    payload: {
+      reason: params.reason,
+    },
+  };
+}
+
+export function buildMaintenanceJobInputs(params: {
+  reason: string;
+  prewarmLeaderboard?: boolean;
+  nowMs?: number;
+}): EnqueueInternalJobInput[] {
+  const nowMs = params.nowMs ?? Date.now();
+  const maintenanceBucket = buildJobWindowId(nowMs, MAINTENANCE_RUN_MIN_INTERVAL_MS);
+  const inputs: EnqueueInternalJobInput[] = [
+    buildSettlementJobInput({ reason: params.reason, nowMs }),
+    {
+      jobName: "market_refresh",
+      idempotencyKey: `market-refresh:${maintenanceBucket}`,
+      payload: {
+        reason: params.reason,
+      },
+    },
+    {
+      jobName: "intelligence_refresh",
+      idempotencyKey: `intelligence-refresh:${maintenanceBucket}`,
+      payload: {
+        reason: params.reason,
+      },
+    },
+  ];
+
+  if (params.prewarmLeaderboard) {
+    inputs.push(
+      buildLeaderboardRefreshJobInput({
+        reason: params.reason,
+        nowMs,
+      })
+    );
+  }
+
+  return inputs;
+}
+
+export async function runSettlementJob(): Promise<SettlementRunResult> {
+  return checkAndSettlePosts();
+}
+
+export async function runMarketRefreshJob(): Promise<{
+  marketRefresh: MarketRefreshRunResult;
+  marketAlerts: MarketAlertScanResult;
+}> {
+  const marketRefresh = await refreshTrackedMarketCaps();
+  const marketAlerts = await runMarketAlertScan();
+  if (marketRefresh.updatedPosts > 0) {
+    trendingCache = null;
+  }
+  return {
+    marketRefresh,
+    marketAlerts,
+  };
+}
+
+export async function runIntelligenceRefreshJob(): Promise<MaintenanceRunResult["intelligenceRefresh"]> {
+  return prewarmRecentTokenIntelligence({ awaitSignalAlerts: true });
+}
+
+async function dispatchInternalMaintenanceJob(input: EnqueueInternalJobInput): Promise<JobDispatchRecord> {
+  if (hasQStashPublishConfig()) {
+    const queued = await enqueueInternalJob(input);
+    return {
+      jobName: input.jobName,
+      idempotencyKey: input.idempotencyKey,
+      mode: "queued",
+      messageId: queued.messageId,
+      deduplicated: queued.deduplicated,
+    };
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(`Queue publish config missing for ${input.jobName}`);
+  }
+
+  switch (input.jobName) {
+    case "settlement":
+      await runSettlementJob();
+      break;
+    case "market_refresh":
+      await runMarketRefreshJob();
+      break;
+    case "intelligence_refresh":
+      await runIntelligenceRefreshJob();
+      break;
+    case "leaderboard_refresh":
+      await runLeaderboardStatsRefresh({
+        source: "/api/internal/jobs/leaderboard_refresh:inline-fallback",
+      });
+      break;
+    default:
+      throw new Error(`Inline fallback is not supported for ${input.jobName}`);
+  }
+
+  return {
+    jobName: input.jobName,
+    idempotencyKey: input.idempotencyKey,
+    mode: "inline",
+    messageId: null,
+    deduplicated: false,
+  };
+}
+
+async function dispatchMaintenanceJobs(inputs: EnqueueInternalJobInput[]): Promise<JobDispatchRecord[]> {
+  return Promise.all(inputs.map((input) => dispatchInternalMaintenanceJob(input)));
+}
+
 function mergeRealtimeIntelligenceIntoPostPricePayload(
   payload: PostPriceResponsePayload,
   snapshot: RealtimePostIntelligenceSnapshot | null | undefined
@@ -4480,45 +4618,20 @@ function triggerMaintenanceCycleNonBlocking(reason: string): void {
   if (now - lastMaintenanceRunStartedAt < MAINTENANCE_RUN_MIN_INTERVAL_MS) return;
 
   lastMaintenanceRunStartedAt = now;
-  maintenanceRunInFlight = runMaintenanceCycle()
-    .then((result) => {
-      if (
-        result.settlement.settled1h ||
-        result.settlement.snapshot6h ||
-        result.settlement.levelChanges6h ||
-        result.settlement.errors ||
-        result.marketRefresh.updatedPosts ||
-        result.marketRefresh.errors ||
-        result.intelligenceRefresh.refreshed ||
-        result.intelligenceRefresh.errors ||
-        result.marketAlerts.liquiditySpikes ||
-        result.marketAlerts.volumeSpikes ||
-        result.marketAlerts.errors
-      ) {
-        console.log("[Maintenance] Opportunistic trigger completed", { reason, result });
-      }
-      return result;
+  maintenanceRunInFlight = dispatchMaintenanceJobs(
+    buildMaintenanceJobInputs({
+      reason,
+      prewarmLeaderboard: false,
+      nowMs: now,
+    })
+  )
+    .then((jobs) => {
+      console.log("[Maintenance] Opportunistic trigger dispatched", { reason, jobs });
+      return jobs;
     })
     .catch((error) => {
       console.error("[Maintenance] Opportunistic trigger failed", { reason, error });
-      // Do not rethrow from non-awaited background maintenance.
-      // Rethrow here can surface as an unhandled rejection and destabilize the API process.
-      return {
-        startedAt: new Date(now).toISOString(),
-        durationMs: Date.now() - now,
-        settlement: { settled1h: 0, snapshot6h: 0, levelChanges6h: 0, errors: 1 },
-        marketRefresh: { scannedPosts: 0, eligiblePosts: 0, refreshedContracts: 0, updatedPosts: 0, errors: 1 },
-        intelligenceRefresh: { attempted: 0, refreshed: 0, skipped: 0, errors: 1, durationMs: 0 },
-        marketAlerts: { contractsChecked: 0, liquiditySpikes: 0, volumeSpikes: 0, durationMs: 0, errors: 1 },
-        snapshotWarmup: {
-          attempted: 0,
-          succeeded: 0,
-          failed: 1,
-          durationMs: 0,
-          skipped: true,
-          reason: "opportunistic_run_failed",
-        },
-      } satisfies MaintenanceRunResult;
+      return [];
     })
     .finally(() => {
       maintenanceRunInFlight = null;
@@ -4531,16 +4644,25 @@ function triggerSettlementCycleNonBlocking(reason: string): void {
   if (now - lastSettlementRunStartedAt < SETTLEMENT_RUN_MIN_INTERVAL_MS) return;
 
   lastSettlementRunStartedAt = now;
-  settlementRunInFlight = checkAndSettlePosts()
-    .then((result) => {
-      if (result.settled1h || result.snapshot6h || result.levelChanges6h || result.errors) {
-        console.log("[Settlement] Opportunistic trigger completed", { reason, result });
-      }
-      return result;
+  settlementRunInFlight = dispatchInternalMaintenanceJob(
+    buildSettlementJobInput({
+      reason,
+      nowMs: now,
+    })
+  )
+    .then((job) => {
+      console.log("[Settlement] Opportunistic trigger dispatched", { reason, job });
+      return job;
     })
     .catch((error) => {
       console.error("[Settlement] Opportunistic trigger failed", { reason, error });
-      return { settled1h: 0, snapshot6h: 0, levelChanges6h: 0, errors: 1 } satisfies SettlementRunResult;
+      return {
+        jobName: "settlement",
+        idempotencyKey: "settlement:error",
+        mode: "inline",
+        messageId: null,
+        deduplicated: false,
+      } satisfies JobDispatchRecord;
     })
     .finally(() => {
       settlementRunInFlight = null;
@@ -5252,9 +5374,15 @@ postsRouter.get("/maintenance/run", async (c) => {
     }
 
     lastMaintenanceRunStartedAt = now;
-    maintenanceRunInFlight = runMaintenanceCycle({ prewarmSnapshots: true })
+    maintenanceRunInFlight = dispatchMaintenanceJobs(
+      buildMaintenanceJobInputs({
+        reason: "manual_maintenance_endpoint",
+        prewarmLeaderboard: true,
+        nowMs: now,
+      })
+    )
       .catch((error) => {
-        console.error("[Maintenance] Run failed:", error);
+        console.error("[Maintenance] Queue dispatch failed:", error);
         throw error;
       })
       .finally(() => {
@@ -5262,13 +5390,18 @@ postsRouter.get("/maintenance/run", async (c) => {
       });
 
     try {
-      const result = await maintenanceRunInFlight;
+      const jobs = await maintenanceRunInFlight;
       lastCronMaintenanceCompletedAt = Date.now();
-      return c.json({ data: result });
+      return c.json({
+        data: {
+          queued: true,
+          jobs,
+        },
+      }, 202);
     } catch {
       return c.json({
         error: {
-          message: "Maintenance run failed",
+          message: "Maintenance dispatch failed",
           code: "INTERNAL_ERROR",
         },
       }, 500);
@@ -5514,298 +5647,64 @@ postsRouter.post("/settle", async (c) => {
   }
 
   try {
-    return await withSettlementRunLock(
-      "manual_settlement_endpoint",
-      () =>
-        c.json({
-          data: {
-            settled1h: 0,
-            snapshot6h: 0,
-            levelChanges6h: 0,
-            results1h: [],
-            results6h: [],
-            skipped: true,
-            reason: "database_lock_held",
-          },
-        }, 202),
-      async () => {
-        const now = Date.now();
-        const oneHourAgo = new Date(now - SETTLEMENT_1H_MS);
-        const sixHoursAgo = new Date(now - SETTLEMENT_6H_MS);
+    const now = Date.now();
+    if (settlementRunInFlight) {
+      return c.json({
+        data: {
+          skipped: true,
+          reason: "already_running",
+          inFlight: settlementRequestLimiter.current(),
+          limit: settlementRequestLimiter.limit,
+        },
+      }, 202);
+    }
 
-        const results1h: Array<{
-          postId: string;
-          userId: string;
-          isWin: boolean;
-          percentChange: number;
-          oldLevel: number;
-          newLevel: number;
-          oldXp: number;
-          newXp: number;
-          xpChange: number;
-          entryMcap: number;
-          finalMcap: number;
-          recoveryEligible: boolean;
-        }> = [];
+    const cooldownRemainingMs = Math.max(
+      0,
+      SETTLEMENT_RUN_MIN_INTERVAL_MS - (now - lastSettlementRunStartedAt)
+    );
 
-        const results6h: Array<{
-          postId: string;
-          userId: string;
-          isWin6h: boolean;
-          percentChange6h: number;
-          mcap6h: number;
-          oldLevel: number;
-          newLevel: number;
-          xpChange: number;
-          levelChange6h: number;
-          recoveryEligible: boolean;
-          hadLevelChange: boolean;
-        }> = [];
+    if (cooldownRemainingMs > 0) {
+      return c.json({
+        data: {
+          skipped: true,
+          reason: "cooldown",
+          retryAfterMs: cooldownRemainingMs,
+        },
+      }, 202);
+    }
 
-  // ============================================
-  // 1H SETTLEMENT
-  // ============================================
-  const postsToSettle1h = await findPostsToSettle1h(oneHourAgo);
-
-  for (const post of postsToSettle1h) {
-    if (!post.contractAddress || post.entryMcap === null) continue;
-
-    const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
-    const mcap1h = fetchedMcap ?? post.currentMcap;
-    if (mcap1h === null || mcap1h <= 0) continue;
-
-    const percentChange1h = ((mcap1h - post.entryMcap) / post.entryMcap) * 100;
-    const isWin1h = mcap1h > post.entryMcap;
-
-    // Use the new 1H settlement logic
-    const { levelChange, recoveryEligible } = calculate1HSettlement(percentChange1h);
-    const xpChange = calculateXpChange(percentChange1h);
-    const currentUser = await prisma.user.findUnique({
-      where: { id: post.authorId },
-      select: { id: true, level: true, xp: true },
-    });
-    if (!currentUser) continue;
-    const scoreEligible = await isPrimaryAlphaInBucket({
-      postId: post.id,
-      authorId: post.authorId,
-      contractAddress: post.contractAddress,
-      createdAt: post.createdAt,
-    });
-    const effectiveLevelChange = scoreEligible ? levelChange : 0;
-    const effectiveXpChange = scoreEligible ? xpChange : 0;
-    const effectiveRecoveryEligible = scoreEligible ? recoveryEligible : false;
-    const newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange);
-    const newXp = Math.max(0, currentUser.xp + effectiveXpChange);
-    const settledAt = new Date();
+    lastSettlementRunStartedAt = now;
+    settlementRunInFlight = dispatchInternalMaintenanceJob(
+      buildSettlementJobInput({
+        reason: "manual_settlement_endpoint",
+        nowMs: now,
+      })
+    )
+      .catch((error) => {
+        console.error("[Settlement] Queue dispatch failed:", error);
+        throw error;
+      })
+      .finally(() => {
+        settlementRunInFlight = null;
+      });
 
     try {
-      await prisma.$transaction([
-        prisma.post.updateMany({
-          where: { id: post.id },
-          data: {
-            settled: true,
-            settledAt,
-            isWin: isWin1h,
-            isWin1h: isWin1h,
-            mcap1h: mcap1h,
-            percentChange1h: percentChange1h,
-            recoveryEligible: effectiveRecoveryEligible,
-            levelChange1h: effectiveLevelChange,
-            trackingMode: TRACKING_MODE_SETTLED,
-            lastMcapUpdate: settledAt,
-          },
-        }),
-        prisma.user.updateMany({
-          where: { id: post.authorId },
-          data: {
-            level: newLevel,
-            xp: newXp,
-          },
-        }),
-      ]);
-    } catch (error) {
-      if (!isPrismaSchemaDriftError(error)) {
-        throw error;
-      }
-
-      await prisma.$transaction([
-        prisma.post.updateMany({
-          where: { id: post.id },
-          data: {
-            settled: true,
-            settledAt,
-            isWin: isWin1h,
-          },
-        }),
-        prisma.user.updateMany({
-          where: { id: post.authorId },
-          data: {
-            level: newLevel,
-            xp: newXp,
-          },
-        }),
-      ]);
+      const job = await settlementRunInFlight;
+      return c.json({
+        data: {
+          queued: true,
+          job,
+        },
+      }, 202);
+    } catch {
+      return c.json({
+        error: {
+          message: "Settlement dispatch failed",
+          code: "INTERNAL_ERROR",
+        },
+      }, 500);
     }
-
-    if (scoreEligible) {
-      await notifyFollowersOfBigGain({
-        postId: post.id,
-        authorId: post.authorId,
-        authorName: post.author.name,
-        authorUsername: post.author.username,
-        percentChange1h,
-      });
-    }
-
-    results1h.push({
-      postId: post.id,
-      userId: post.authorId,
-      isWin: isWin1h,
-      percentChange: Math.round(percentChange1h * 100) / 100,
-      oldLevel: currentUser.level,
-      newLevel,
-      oldXp: currentUser.xp,
-      newXp,
-      xpChange: effectiveXpChange,
-      entryMcap: post.entryMcap,
-      finalMcap: mcap1h,
-      recoveryEligible: effectiveRecoveryEligible,
-    });
-  }
-
-  // ============================================
-  // 6H MARKET CAP SNAPSHOT - For ALL posts >= 6 hours old
-  // This captures the 6H mcap for every post, regardless of level changes
-  // ============================================
-  const postsToSnapshot6h = await findPostsToSnapshot6h(sixHoursAgo);
-
-  console.log(`[Settle API] Processing 6H snapshot for ${postsToSnapshot6h.length} posts`);
-
-  for (const post of postsToSnapshot6h) {
-    if (!post.contractAddress || post.entryMcap === null) continue;
-
-    const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
-    const mcap6h = fetchedMcap ?? post.currentMcap ?? post.mcap1h;
-    if (mcap6h === null || mcap6h <= 0) continue;
-
-    const percentChange6h = ((mcap6h - post.entryMcap) / post.entryMcap) * 100;
-    const isWin6h = percentChange6h > 0;
-
-    // Use the new 6H settlement logic to check for level changes
-    const isWin1h = post.isWin1h ?? post.isWin ?? false;
-    const recoveryEligible = post.recoveryEligible ?? false;
-    const levelChange6h = calculate6HSettlement(isWin1h, percentChange6h, recoveryEligible);
-    let xpChange = calculate6HXpChange(percentChange6h, levelChange6h);
-    const scoreEligible = await isPrimaryAlphaInBucket({
-      postId: post.id,
-      authorId: post.authorId,
-      contractAddress: post.contractAddress,
-      createdAt: post.createdAt,
-    });
-    const effectiveLevelChange6h = scoreEligible ? levelChange6h : 0;
-    xpChange = scoreEligible ? xpChange : 0;
-    const currentUser = await prisma.user.findUnique({
-      where: { id: post.authorId },
-      select: { level: true, xp: true },
-    });
-    if (!currentUser) continue;
-
-    let oldLevel = currentUser.level;
-    let newLevel = oldLevel;
-
-    const snapshotUpdatedAt = new Date();
-    if (effectiveLevelChange6h !== 0 || xpChange !== 0) {
-      oldLevel = currentUser.level;
-      newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange6h);
-      const newXp = Math.max(0, currentUser.xp + xpChange);
-
-      try {
-        await prisma.$transaction([
-          prisma.post.updateMany({
-            where: { id: post.id },
-            data: {
-              mcap6h: mcap6h,
-              isWin6h: isWin6h,
-              percentChange6h: percentChange6h,
-              settled6h: true,
-              levelChange6h: effectiveLevelChange6h,
-              lastMcapUpdate: snapshotUpdatedAt,
-            },
-          }),
-          prisma.user.updateMany({
-            where: { id: post.authorId },
-            data: {
-              level: newLevel,
-              xp: newXp,
-            },
-          }),
-        ]);
-      } catch (error) {
-        if (!isPrismaSchemaDriftError(error)) {
-          throw error;
-        }
-
-        await prisma.$transaction([
-          prisma.user.updateMany({
-            where: { id: post.authorId },
-            data: {
-              level: newLevel,
-              xp: newXp,
-            },
-          }),
-        ]);
-      }
-    } else {
-      // ALWAYS update post with 6H snapshot data (for ALL posts)
-      try {
-        await prisma.post.updateMany({
-          where: { id: post.id },
-          data: {
-            mcap6h: mcap6h,
-            isWin6h: isWin6h,
-            percentChange6h: percentChange6h,
-            settled6h: true,
-            levelChange6h: effectiveLevelChange6h,
-            lastMcapUpdate: snapshotUpdatedAt,
-          },
-        });
-      } catch (error) {
-        if (!isPrismaSchemaDriftError(error)) {
-          throw error;
-        }
-      }
-    }
-
-    results6h.push({
-      postId: post.id,
-      userId: post.authorId,
-      isWin6h: isWin6h,
-      percentChange6h: Math.round(percentChange6h * 100) / 100,
-      mcap6h: mcap6h,
-      oldLevel,
-      newLevel,
-      xpChange,
-      levelChange6h: effectiveLevelChange6h,
-      recoveryEligible,
-      hadLevelChange: effectiveLevelChange6h !== 0,
-    });
-  }
-
-        if (results1h.length > 0 || results6h.length > 0) {
-          invalidatePostReadCaches({ leaderboard: true });
-        }
-
-        return c.json({
-          data: {
-            settled1h: results1h.length,
-            snapshot6h: results6h.length,
-            levelChanges6h: results6h.filter(r => r.hadLevelChange).length,
-            results1h,
-            results6h,
-          }
-        });
-      }
-    );
   } finally {
     settlementRequestLease.release();
   }
