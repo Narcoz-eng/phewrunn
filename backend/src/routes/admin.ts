@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma.js";
 import type { AuthVariables } from "../auth.js";
+import { requireAdmin } from "./admin-access.js";
 import { invalidateAnnouncementsCache } from "./announcements.js";
 import { invalidatePostReadCaches } from "./posts.js";
 import { invalidatePublicUserRouteCachesForUser } from "./users.js";
@@ -335,36 +335,6 @@ const AdminUpdatePostSchema = z
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field is required",
   });
-
-/**
- * Middleware to check if the current user is an admin
- */
-const requireAdmin = createMiddleware<{ Variables: AuthVariables }>(
-  async (c, next) => {
-    const user = c.get("user");
-
-    if (!user) {
-      return c.json(
-        { error: { message: "Unauthorized", code: "UNAUTHORIZED" } },
-        401
-      );
-    }
-
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { role: true },
-    });
-
-    if (dbUser?.role !== "admin") {
-      return c.json(
-        { error: { message: "Forbidden - Admin access is restricted", code: "FORBIDDEN" } },
-        403
-      );
-    }
-
-    return next();
-  }
-);
 
 // Apply admin middleware to all routes
 adminRouter.use("*", requireAdmin);

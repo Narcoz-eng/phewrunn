@@ -3,11 +3,14 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { prisma } from "../prisma.js";
 import type { AuthVariables } from "../auth.js";
+import { requireAdmin } from "./admin-access.js";
 import {
   GenerateAccessCodesSchema,
 } from "../types.js";
 
 const adminInvitesRouter = new Hono<{ Variables: AuthVariables }>();
+
+adminInvitesRouter.use("*", requireAdmin);
 
 // ---- Helper: generate a unique code string ----
 function generateCodeString(): string {
