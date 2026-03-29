@@ -41,8 +41,8 @@ This control plane adds durable queue plumbing before any concrete business flow
 ## Current Scope Boundary
 
 - PR-004 mounts the queue control plane and delivery handlers.
-- PR-004 does not move existing business work onto the queue yet.
-- PR-005 is responsible for registering real handlers and moving concrete flows to producers/consumers.
+- The first PR-005 slice now registers `post_fanout` and `push_delivery`.
+- Settlement, market refresh, leaderboard refresh, and intelligence refresh still need queue migration before PR-005 is complete.
 
 ## Operational Notes
 

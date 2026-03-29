@@ -46,6 +46,7 @@ import {
 import { invalidateLeaderboardCaches } from "./leaderboard.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { enqueueInternalJob, hasQStashPublishConfig } from "../lib/job-queue.js";
 import {
   computeRealtimeIntelligenceSnapshots,
   getEnrichedCallById,
@@ -2801,73 +2802,123 @@ async function createPostRawFallback(params: {
   });
 }
 
-function triggerNewPostFollowerFanout(params: {
+export async function runNewPostFollowerFanout(params: {
+  authorId: string;
+  authorName: string;
+  authorUsername: string | null;
+  postId: string;
+}): Promise<void> {
+  const followerIds = await listFollowerIdsSafely({
+    followingId: params.authorId,
+    operation: "new_post_follower_lookup",
+  });
+
+  if (followerIds.length === 0) {
+    return;
+  }
+
+  const alertPreferences = await prisma.alertPreference.findMany({
+    where: {
+      userId: { in: followerIds },
+    },
+    select: {
+      userId: true,
+      notifyFollowedTraders: true,
+    },
+  });
+  const disabledFollowerIds = new Set(
+    alertPreferences
+      .filter((pref) => pref.notifyFollowedTraders === false)
+      .map((pref) => pref.userId)
+  );
+  const optedInFollowerIds = followerIds.filter((followerId) => !disabledFollowerIds.has(followerId));
+  if (optedInFollowerIds.length === 0) {
+    return;
+  }
+
+  const displayName = params.authorUsername || params.authorName || "A trader";
+  await createManyNotificationsSafely({
+    operation: "new_post_follower_notification",
+    data: optedInFollowerIds.map((followerId) => ({
+      userId: followerId,
+      type: "new_post",
+      message: `${displayName} just posted a new Alpha!`,
+      dedupeKey: buildNotificationDedupeKey({
+        type: "new_post",
+        scope: "post_create",
+        userId: followerId,
+        fromUserId: params.authorId,
+        postId: params.postId,
+      }),
+      postId: params.postId,
+      fromUserId: params.authorId,
+    })),
+    fallbackData: optedInFollowerIds.map((followerId) => ({
+      userId: followerId,
+      type: "new_post",
+      message: `${displayName} just posted a new Alpha!`,
+      postId: params.postId,
+      fromUserId: params.authorId,
+    })),
+  });
+}
+
+export async function runPostCreateFanout(params: {
+  authorId: string;
+  authorName: string;
+  authorUsername: string | null;
+  postId: string;
+}): Promise<void> {
+  await runNewPostFollowerFanout(params);
+
+  const enrichedCall = await getEnrichedCallById(params.postId, params.authorId);
+  if (!enrichedCall) {
+    return;
+  }
+
+  await fanoutPostedAlphaAlert({
+    postId: enrichedCall.id,
+    authorId: params.authorId,
+    authorLabel: params.authorUsername ? `@${params.authorUsername}` : params.authorName,
+    tokenId: enrichedCall.tokenId,
+    tokenSymbol: enrichedCall.tokenSymbol,
+    confidenceScore: enrichedCall.confidenceScore,
+    liquidity: enrichedCall.liquidity,
+    entryMcap: enrichedCall.entryMcap,
+    estimatedBundledSupplyPct: enrichedCall.estimatedBundledSupplyPct,
+  });
+}
+
+function queuePostCreateFanout(params: {
   authorId: string;
   authorName: string;
   authorUsername: string | null;
   postId: string;
 }): void {
-  setTimeout(() => {
-    void (async () => {
-      const followerIds = await listFollowerIdsSafely({
-        followingId: params.authorId,
-        operation: "new_post_follower_lookup",
-      });
-
-      if (followerIds.length === 0) {
-        return;
-      }
-
-      const alertPreferences = await prisma.alertPreference.findMany({
-        where: {
-          userId: { in: followerIds },
-        },
-        select: {
-          userId: true,
-          notifyFollowedTraders: true,
-        },
-      });
-      const disabledFollowerIds = new Set(
-        alertPreferences
-          .filter((pref) => pref.notifyFollowedTraders === false)
-          .map((pref) => pref.userId)
-      );
-      const optedInFollowerIds = followerIds.filter((followerId) => !disabledFollowerIds.has(followerId));
-      if (optedInFollowerIds.length === 0) {
-        return;
-      }
-
-      const displayName = params.authorUsername || params.authorName || "A trader";
-      await createManyNotificationsSafely({
-        operation: "new_post_follower_notification",
-        data: optedInFollowerIds.map((followerId) => ({
-          userId: followerId,
-          type: "new_post",
-          message: `${displayName} just posted a new Alpha!`,
-          dedupeKey: buildNotificationDedupeKey({
-            type: "new_post",
-            scope: "post_create",
-            userId: followerId,
-            fromUserId: params.authorId,
-            postId: params.postId,
-          }),
-          postId: params.postId,
-          fromUserId: params.authorId,
-        })),
-        fallbackData: optedInFollowerIds.map((followerId) => ({
-          userId: followerId,
-          type: "new_post",
-          message: `${displayName} just posted a new Alpha!`,
-          postId: params.postId,
-          fromUserId: params.authorId,
-        })),
-      });
-    })().catch((error) => {
-      console.warn("[posts/create] follower notification fanout failed", {
+  const runInlineFallback = () => {
+    void runPostCreateFanout(params).catch((error) => {
+      console.warn("[posts/create] post fanout failed", {
         message: getErrorMessage(error),
       });
     });
-  }, 0);
+  };
+
+  if (!hasQStashPublishConfig()) {
+    runInlineFallback();
+    return;
+  }
+
+  void enqueueInternalJob({
+    jobName: "post_fanout",
+    idempotencyKey: `post-fanout:${params.postId}`,
+    payload: params,
+  }).catch((error) => {
+    console.warn("[posts/create] queue publish failed; falling back to inline fanout", {
+      message: getErrorMessage(error),
+      postId: params.postId,
+    });
+    runInlineFallback();
+  });
 }
 
 function safeRecord(value: unknown): Record<string, unknown> | null {
@@ -5406,27 +5457,12 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     });
   }
 
-  triggerNewPostFollowerFanout({
+  queuePostCreateFanout({
     authorId: user.id,
     authorName: authorSnapshot.name,
     authorUsername: authorSnapshot.username,
     postId: post.id,
   });
-
-  const enrichedCall = await getEnrichedCallById(post.id, user.id).catch(() => null);
-  if (enrichedCall) {
-    await fanoutPostedAlphaAlert({
-      postId: enrichedCall.id,
-      authorId: user.id,
-      authorLabel: authorSnapshot.username ? `@${authorSnapshot.username}` : authorSnapshot.name,
-      tokenId: enrichedCall.tokenId,
-      tokenSymbol: enrichedCall.tokenSymbol,
-      confidenceScore: enrichedCall.confidenceScore,
-      liquidity: enrichedCall.liquidity,
-      entryMcap: enrichedCall.entryMcap,
-      estimatedBundledSupplyPct: enrichedCall.estimatedBundledSupplyPct,
-    }).catch(() => undefined);
-  }
 
   invalidatePostReadCaches({ leaderboard: true });
 

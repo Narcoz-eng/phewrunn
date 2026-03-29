@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { prisma } from "../prisma.js";
+import { enqueueInternalJob, hasQStashPublishConfig } from "../lib/job-queue.js";
 
 type WebPushModule = {
   setVapidDetails: (subject: string, publicKey: string, privateKey: string) => void;
@@ -49,11 +51,26 @@ export type PushPayload = {
   tag?: string;
 };
 
+function buildPushDeliveryIdempotencyKey(userIds: string[], payload: PushPayload): string {
+  const normalizedUserIds = [...new Set(userIds.map((userId) => userId.trim()).filter(Boolean))].sort();
+  const digest = createHash("sha256")
+    .update(JSON.stringify({
+      userIds: normalizedUserIds,
+      title: payload.title,
+      body: payload.body,
+      url: payload.url ?? null,
+      tag: payload.tag ?? null,
+    }))
+    .digest("hex")
+    .slice(0, 32);
+  return `push:${digest}`;
+}
+
 export function getVapidPublicKey(): string | null {
   return VAPID_PUBLIC_KEY ?? null;
 }
 
-export async function sendPushToUser(userId: string, payload: PushPayload): Promise<void> {
+export async function sendPushToUserNow(userId: string, payload: PushPayload): Promise<void> {
   if (!vapidConfigured || !resolvedWebPush) return;
 
   let subscriptions: { id: string; endpoint: string; p256dh: string; auth: string }[];
@@ -91,7 +108,7 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
   );
 }
 
-export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
+export async function sendPushToUsersNow(userIds: string[], payload: PushPayload): Promise<void> {
   if (!vapidConfigured || !resolvedWebPush || userIds.length === 0) return;
 
   let subscriptions: { id: string; userId: string; endpoint: string; p256dh: string; auth: string }[];
@@ -125,4 +142,41 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
       }
     })
   );
+}
+
+export async function sendPushToUser(userId: string, payload: PushPayload): Promise<void> {
+  if (!hasQStashPublishConfig()) {
+    await sendPushToUserNow(userId, payload);
+    return;
+  }
+
+  await enqueueInternalJob({
+    jobName: "push_delivery",
+    idempotencyKey: buildPushDeliveryIdempotencyKey([userId], payload),
+    payload: {
+      userIds: [userId],
+      payload,
+    },
+  });
+}
+
+export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
+  const normalizedUserIds = [...new Set(userIds.map((userId) => userId.trim()).filter(Boolean))];
+  if (normalizedUserIds.length === 0) {
+    return;
+  }
+
+  if (!hasQStashPublishConfig()) {
+    await sendPushToUsersNow(normalizedUserIds, payload);
+    return;
+  }
+
+  await enqueueInternalJob({
+    jobName: "push_delivery",
+    idempotencyKey: buildPushDeliveryIdempotencyKey(normalizedUserIds, payload),
+    payload: {
+      userIds: normalizedUserIds,
+      payload,
+    },
+  });
 }
