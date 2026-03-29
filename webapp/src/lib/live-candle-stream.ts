@@ -3,6 +3,7 @@ export type LiveTradeSample = {
   priceUsd: number;
   volume24hUsd?: number | null;
   tradeCount24h?: number | null;
+  tradeVolumeUsd?: number | null;
 };
 
 export type StreamingChartCandle = {
@@ -50,6 +51,7 @@ export function appendLiveTradeSample(
     priceUsd: roundCents(next.priceUsd),
     volume24hUsd: isFiniteNumber(next.volume24hUsd) ? Math.max(0, next.volume24hUsd) : null,
     tradeCount24h: isFiniteNumber(next.tradeCount24h) ? Math.max(0, next.tradeCount24h) : null,
+    tradeVolumeUsd: isFiniteNumber(next.tradeVolumeUsd) ? Math.max(0, next.tradeVolumeUsd) : null,
   };
 
   const previous = samples[samples.length - 1];
@@ -58,7 +60,8 @@ export function appendLiveTradeSample(
     sanitized.timestamp <= previous.timestamp &&
     sanitized.priceUsd === previous.priceUsd &&
     (sanitized.volume24hUsd ?? null) === (previous.volume24hUsd ?? null) &&
-    (sanitized.tradeCount24h ?? null) === (previous.tradeCount24h ?? null)
+    (sanitized.tradeCount24h ?? null) === (previous.tradeCount24h ?? null) &&
+    (sanitized.tradeVolumeUsd ?? null) === (previous.tradeVolumeUsd ?? null)
   ) {
     return samples;
   }
@@ -79,6 +82,9 @@ function computeVolumeDelta(
   current: LiveTradeSample,
   previous: LiveTradeSample | null
 ): number {
+  if (isFiniteNumber(current.tradeVolumeUsd) && current.tradeVolumeUsd > 0) {
+    return current.tradeVolumeUsd;
+  }
   const currentVolume = isFiniteNumber(current.volume24hUsd) ? current.volume24hUsd : null;
   const previousVolume = previous && isFiniteNumber(previous.volume24hUsd) ? previous.volume24hUsd : null;
   if (currentVolume === null || previousVolume === null) {

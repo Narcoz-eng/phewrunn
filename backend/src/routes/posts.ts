@@ -44,6 +44,13 @@ import {
   type ParsedSolanaTransaction,
 } from "../services/helius.js";
 import {
+  fetchBirdeyeRecentTrades,
+  hasBirdeyeTradeFeedConfig,
+  startBirdeyeLiveFeed,
+  type BirdeyeTradeFeedChain,
+  type TradeFeedStatus,
+} from "../services/birdeye-trade-feed.js";
+import {
   buildLeaderboardRefreshJobInput,
   invalidateLeaderboardCaches,
   runLeaderboardStatsRefresh,
@@ -2208,6 +2215,9 @@ const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ?
 const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_000;
 const CHART_CANDLES_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
 const CHART_CANDLES_FETCH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_200 : 6_000;
+const CHART_TRADES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500 : 800;
+const CHART_LIVE_STREAM_MAX_DURATION_MS = process.env.NODE_ENV === "production" ? 55_000 : 25_000;
+const CHART_LIVE_STREAM_KEEPALIVE_MS = 15_000;
 const CHART_POOL_ADDRESS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const CHART_PROVIDER_DEFAULT_LATENCY_MS: Record<ChartCandlesSource, number> = {
   birdeye: 380,
@@ -2264,6 +2274,8 @@ const chartCandlesCache = new Map<
   }
 >();
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
+const chartTradesCache = new Map<string, { trades: Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>; expiresAtMs: number }>();
+const chartTradesInFlight = new Map<string, Promise<Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>>>();
 const chartPoolAddressCache = new Map<string, { poolAddress: string | null; expiresAtMs: number }>();
 const chartPoolAddressInFlight = new Map<string, Promise<string | null>>();
 const chartCandlesSourceHealth = new Map<ChartCandlesSource, ChartCandlesSourceHealth>();
@@ -6928,6 +6940,25 @@ const ChartCandlesProxySchema = z
 
 type ChartCandlesPayload = z.infer<typeof ChartCandlesProxySchema>;
 
+const ChartTradesQuerySchema = z
+  .object({
+    tokenAddress: z.string().min(10).max(128),
+    chainType: z.enum(["solana", "evm", "ethereum"]).optional().default("solana"),
+    limit: z.coerce.number().int().min(5).max(40).optional().default(24),
+  })
+  .strict();
+
+const ChartLiveQuerySchema = z
+  .object({
+    tokenAddress: z.string().min(10).max(128),
+    pairAddress: z.string().min(10).max(128).optional(),
+    chainType: z.enum(["solana", "evm", "ethereum"]).optional().default("solana"),
+  })
+  .strict();
+
+type ChartTradesQuery = z.infer<typeof ChartTradesQuerySchema>;
+type ChartLiveQuery = z.infer<typeof ChartLiveQuerySchema>;
+
 type PriceRoutePostRecord = {
   id: string;
   contractAddress: string | null;
@@ -7804,6 +7835,57 @@ function buildChartCandlesCacheKey(payload: ChartCandlesPayload): string {
   ].join(":");
 }
 
+function toBirdeyeTradeFeedChain(chainType: string | null | undefined): BirdeyeTradeFeedChain {
+  return chainType === "ethereum" || chainType === "evm" ? "ethereum" : "solana";
+}
+
+function buildChartTradesCacheKey(payload: ChartTradesQuery): string {
+  return [
+    toBirdeyeTradeFeedChain(payload.chainType),
+    payload.tokenAddress.toLowerCase(),
+    String(payload.limit),
+  ].join(":");
+}
+
+async function loadChartTrades(payload: ChartTradesQuery) {
+  if (!hasBirdeyeTradeFeedConfig()) {
+    return [];
+  }
+
+  const cacheKey = buildChartTradesCacheKey(payload);
+  const now = Date.now();
+  const cached = chartTradesCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.trades;
+  }
+  if (cached) {
+    chartTradesCache.delete(cacheKey);
+  }
+
+  const inFlight = chartTradesInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = fetchBirdeyeRecentTrades({
+    chainType: toBirdeyeTradeFeedChain(payload.chainType),
+    tokenAddress: payload.tokenAddress,
+    limit: payload.limit,
+  }).finally(() => {
+    if (chartTradesInFlight.get(cacheKey) === request) {
+      chartTradesInFlight.delete(cacheKey);
+    }
+  });
+
+  chartTradesInFlight.set(cacheKey, request);
+  const trades = await request;
+  chartTradesCache.set(cacheKey, {
+    trades,
+    expiresAtMs: Date.now() + CHART_TRADES_CACHE_TTL_MS,
+  });
+  return trades;
+}
+
 function secondsPerCandle(timeframe: "minute" | "hour" | "day", aggregate: number): number {
   if (timeframe === "minute") return Math.max(1, aggregate) * 60;
   if (timeframe === "hour") return Math.max(1, aggregate) * 60 * 60;
@@ -8605,6 +8687,171 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
       chartCandlesInFlight.delete(cacheKey);
     }
   }
+});
+
+postsRouter.get("/chart/trades", zValidator("query", ChartTradesQuerySchema), async (c) => {
+  const payload = c.req.valid("query");
+  try {
+    const trades = await loadChartTrades(payload);
+    return c.json({
+      data: {
+        trades,
+        source: hasBirdeyeTradeFeedConfig() ? "birdeye" : "unavailable",
+        liveSupported: hasBirdeyeTradeFeedConfig(),
+      },
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: {
+          message: getErrorMessage(error),
+          code: "CHART_TRADES_FAILED",
+        },
+      },
+      502
+    );
+  }
+});
+
+postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async (c) => {
+  const payload = c.req.valid("query");
+  if (!hasBirdeyeTradeFeedConfig()) {
+    return c.json(
+      {
+        error: {
+          message: "Live stream is unavailable for this deployment",
+          code: "CHART_LIVE_UNAVAILABLE",
+        },
+      },
+      503
+    );
+  }
+
+  const encoder = new TextEncoder();
+  const chainType = toBirdeyeTradeFeedChain(payload.chainType);
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+      let maxDurationTimeout: ReturnType<typeof setTimeout> | null = null;
+      let detachAbort: (() => void) | null = null;
+      let liveFeedCloser: (() => void) | null = null;
+
+      const writeChunk = (chunk: string) => {
+        if (closed) return;
+        controller.enqueue(encoder.encode(chunk));
+      };
+
+      const writeEvent = (event: string, data: unknown) => {
+        writeChunk(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (keepAliveInterval) {
+          clearInterval(keepAliveInterval);
+          keepAliveInterval = null;
+        }
+        if (maxDurationTimeout) {
+          clearTimeout(maxDurationTimeout);
+          maxDurationTimeout = null;
+        }
+        detachAbort?.();
+        detachAbort = null;
+        liveFeedCloser?.();
+        liveFeedCloser = null;
+        try {
+          controller.close();
+        } catch {
+          // Ignore double-close races during disconnect.
+        }
+      };
+
+      writeChunk("retry: 2500\n\n");
+      writeEvent("status", {
+        connected: false,
+        mode: "stream",
+        reason: "Connecting",
+        timestampMs: Date.now(),
+      } satisfies TradeFeedStatus);
+
+      keepAliveInterval = setInterval(() => {
+        writeChunk(`: keepalive ${Date.now()}\n\n`);
+      }, CHART_LIVE_STREAM_KEEPALIVE_MS);
+      maxDurationTimeout = setTimeout(() => {
+        writeEvent("status", {
+          connected: false,
+          mode: "fallback",
+          reason: "Live stream recycled",
+          timestampMs: Date.now(),
+        } satisfies TradeFeedStatus);
+        cleanup();
+      }, CHART_LIVE_STREAM_MAX_DURATION_MS);
+
+      const abortSignal = c.req.raw.signal;
+      const onAbort = () => cleanup();
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      detachAbort = () => abortSignal.removeEventListener("abort", onAbort);
+
+      void loadChartTrades({
+        tokenAddress: payload.tokenAddress,
+        chainType,
+        limit: 24,
+      })
+        .then((trades) => {
+          if (trades.length > 0) {
+            writeEvent("snapshot", { trades });
+          }
+        })
+        .catch((error) => {
+          writeEvent("status", {
+            connected: false,
+            mode: "fallback",
+            reason: `Trade seed unavailable: ${getErrorMessage(error)}`,
+            timestampMs: Date.now(),
+          } satisfies TradeFeedStatus);
+        });
+
+      const liveFeed = startBirdeyeLiveFeed({
+        chainType,
+        tokenAddress: payload.tokenAddress,
+        pairAddress: payload.pairAddress,
+        onPrice: (update) => {
+          writeEvent("price", update);
+        },
+        onTrade: (trade) => {
+          writeEvent("trade", trade);
+        },
+        onStatus: (status) => {
+          writeEvent("status", status);
+        },
+        onError: (error) => {
+          writeEvent("status", {
+            connected: false,
+            mode: "fallback",
+            reason: getErrorMessage(error),
+            timestampMs: Date.now(),
+          } satisfies TradeFeedStatus);
+        },
+      });
+
+      liveFeedCloser = liveFeed.close;
+    },
+    cancel() {
+      // Request abort cleanup runs through the bound signal listener.
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    },
+  });
 });
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {

@@ -31,11 +31,17 @@ import { SharedAlphaDialog, type SharedAlphaResponse } from "./SharedAlphaDialog
 import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
+import { TradeTransactionsFeed } from "./TradeTransactionsFeed";
 import { BundleScanLoop, isBundleScanPending } from "./BundleScanLoop";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api, ApiError } from "@/lib/api";
-import { appendMicroChartSample, buildMicroChartCandles, type MicroChartSample } from "@/lib/micro-candles";
 import { getPostPriceSnapshotBatched, type BatchedPostPriceSnapshot } from "@/lib/post-price-batch";
+import {
+  getChartBucketMs,
+  mergeLiveSamplesIntoCandles,
+} from "@/lib/live-candle-stream";
+import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
+import { mapTradeExecutionError, type TradeExecutionErrorState } from "@/lib/trade-errors";
 import {
   buildTokenIntelligenceSnapshotFromLivePayload,
   getTokenLiveIntelligence,
@@ -130,7 +136,7 @@ const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfc
 const MAX_CREATOR_ROUTE_FEE_BPS = 50;
 const DEFAULT_TOTAL_ROUTE_FEE_BPS = 100;
 const FAST_TRADE_PRICE_POLL_INTERVAL_MS = 1_250;
-const MICRO_CHART_SAMPLE_LIMIT = 360;
+const TRADE_SOL_BALANCE_BUFFER_SOL = 0.01;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
   { value: "1m", label: "1m" },
@@ -1166,16 +1172,16 @@ export function PostCard({
     return window.localStorage.getItem(TRADE_TAKE_PROFIT_PCT_STORAGE_KEY) || "50";
   });
   const [armedTradeProtection, setArmedTradeProtection] = useState<ArmedTradeProtection | null>(null);
-  const [microChartSamples, setMicroChartSamples] = useState<MicroChartSample[]>([]);
+  const [tradeError, setTradeError] = useState<TradeExecutionErrorState | null>(null);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
   const protectionAutoSellRetryCountRef = useRef(0);
   const protectionAutoArmCooldownUntilRef = useRef(0);
 
   useEffect(() => {
-    setMicroChartSamples([]);
     setPendingProtectionAutoExecute(false);
     setArmedTradeProtection(null);
+    setTradeError(null);
     protectionAutoArmCooldownUntilRef.current = 0;
   }, [post.id]);
 
@@ -3611,6 +3617,20 @@ export function PostCard({
   const resolvedSells24h = dexTokenDataQuery.data?.sells24h ?? null;
   const resolvedDexId = dexTokenDataQuery.data?.dexId ?? null;
   const resolvedPairAddress = dexTokenDataQuery.data?.pairAddress ?? null;
+  const {
+    liveSamples: tradePanelLiveSamples,
+    recentTrades: tradePanelRecentTrades,
+    liveStatus: tradePanelLiveStatus,
+    liveBadgeLabel: tradePanelLiveBadgeLabel,
+    liveIsFresh: tradePanelLiveIsFresh,
+    usingFallbackPolling: tradePanelUsingFallbackPolling,
+    lastEventAtMs: tradePanelLastEventAtMs,
+  } = useTradePanelLiveFeed({
+    enabled: isBuyDialogOpen && post.chainType === "solana" && !!post.contractAddress,
+    tokenAddress: post.contractAddress ?? null,
+    pairAddress: resolvedPairAddress,
+    chainType: post.chainType === "solana" ? "solana" : "ethereum",
+  });
   const solPriceUsd = solSpotPriceQuery.data?.priceUsd ?? null;
   const displayTokenSymbol = resolvedTokenSymbol || resolvedTokenName || "TOKEN";
   const displayTokenLabel = resolvedTokenSymbol || resolvedTokenName || "Token";
@@ -3621,7 +3641,6 @@ export function PostCard({
 
   const chartRequestConfig = useMemo(() => {
     switch (chartInterval) {
-      case "1S":
       case "1m":
         return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
       case "5m":
@@ -3637,9 +3656,7 @@ export function PostCard({
         return { timeframe: "day" as const, aggregate: 1, limit: 260 };
     }
   }, [chartInterval]);
-  const isMicroChartInterval = chartInterval === "1S";
-  const canRequestChartCandles =
-    !isMicroChartInterval && (!!resolvedPairAddress || !!post.contractAddress);
+  const canRequestChartCandles = !!resolvedPairAddress || !!post.contractAddress;
 
   const chartCandlesQuery = useQuery<ChartCandlesResponse>({
     queryKey: [
@@ -3861,6 +3878,11 @@ export function PostCard({
     walletTokenBalance <= 0;
   const sellBlockedByRpcTokenInfo =
     tradeSide === "sell" && !hasRpcTokenDecimals && !sellHasNoTokens;
+  const buyAmountExceedsBalance =
+    tradeSide === "buy" &&
+    walletNativeBalance !== null &&
+    Number.isFinite(parsedBuyAmountSol) &&
+    parsedBuyAmountSol + TRADE_SOL_BALANCE_BUFFER_SOL > walletNativeBalance + 1e-9;
 
   const createJupiterQuotePayload = useCallback(
     (side: TradeSide, amountAtomic: number): JupiterQuoteRequestPayload | null => {
@@ -3928,6 +3950,12 @@ export function PostCard({
       },
     }));
   }, [jupiterQuoteData, tradeSide]);
+
+  useEffect(() => {
+    if (!isBuyDialogOpen || !tradeAmountAtomic) return;
+    if (!jupiterQuoteQuery.error) return;
+    setTradeError(mapTradeExecutionError(jupiterQuoteQuery.error));
+  }, [isBuyDialogOpen, jupiterQuoteQuery.error, tradeAmountAtomic]);
 
   useEffect(() => {
     setLastGoodQuoteBySide({
@@ -4044,20 +4072,18 @@ export function PostCard({
     setSellAmountToken(formatDecimalInputValue(nextValue, Math.max(2, outputTokenDecimals)));
   };
 
-  const appendMicroSample = useCallback((value: number | null | undefined, timestampMs = Date.now()) => {
-    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return;
-    setMicroChartSamples((current) =>
-      appendMicroChartSample(
-        current,
-        {
-          timestamp: timestampMs,
-          value,
-          volume: 0,
-        },
-        MICRO_CHART_SAMPLE_LIMIT
-      )
-    );
-  }, []);
+  useEffect(() => {
+    if (!tradeError) return;
+    setTradeError(null);
+  }, [
+    buyAmountSol,
+    mevProtectionEnabled,
+    sellAmountToken,
+    slippageBps,
+    stopLossPercentInput,
+    takeProfitPercentInput,
+    tradeSide,
+  ]);
 
   const armTradeProtection = useCallback(
     (anchorMcap: number | null | undefined) => {
@@ -4258,16 +4284,27 @@ export function PostCard({
   );
 
   const handleExecuteJupiterBuy = useCallback(async () => {
+    const surfaceTradeError = (error: unknown) => {
+      const mapped = mapTradeExecutionError(error);
+      setTradeError(mapped);
+      toast.error(mapped.message);
+      return mapped;
+    };
+
     if (!isSolanaTradeSupported || !post.contractAddress) {
-      toast.error("Trading is available for Solana posts only");
+      surfaceTradeError(new Error("Trading is available for Solana posts only"));
       return;
     }
     if (!walletPublicKey) {
-      toast.error("Connect a Solana wallet first");
+      surfaceTradeError(new Error("Connect a Solana wallet first"));
       return;
     }
     if (!walletSignTransaction) {
-      toast.error("This wallet does not support transaction signing");
+      surfaceTradeError(new Error("This wallet does not support transaction signing"));
+      return;
+    }
+    if (buyAmountExceedsBalance) {
+      surfaceTradeError(new Error("Insufficient SOL balance for this trade"));
       return;
     }
     const fallbackQuoteCandidate = lastGoodQuoteBySide[tradeSide];
@@ -4290,16 +4327,17 @@ export function PostCard({
       }
     }
     if (!quote) {
-      toast.error("Wait for quote to load");
+      surfaceTradeError(new Error("Quote unavailable"));
       return;
     }
     if (sellAmountExceedsBalance) {
-      toast.error("Sell amount is higher than your current token balance");
+      surfaceTradeError(new Error("Sell amount is higher than your current token balance"));
       return;
     }
 
     setIsExecutingBuy(true);
     setBuyTxSignature(null);
+    setTradeError(null);
     try {
       const swapPayload = await buildSwapTransaction(quote);
       const swapTransaction = swapPayload.swapTransaction;
@@ -4372,20 +4410,21 @@ export function PostCard({
       void refetchJupiterQuote();
     } catch (error) {
       preparedSwapRef.current = null;
-      const message =
-        error instanceof Error
-          ? error.message
-          : `Failed to execute ${tradeSide === "buy" ? "buy" : "sell"}`;
       console.error("[jupiter-trade] Failed to execute trade", error);
-      toast.error(message);
+      const mapped = surfaceTradeError(error);
+      if (mapped.shouldRefetchQuote) {
+        void refetchJupiterQuote();
+      }
     } finally {
       setIsExecutingBuy(false);
     }
   }, [
     buildSwapTransaction,
+    buyAmountExceedsBalance,
     isSolanaTradeSupported,
     jupiterQuoteData,
     lastGoodQuoteBySide,
+    mapTradeExecutionError,
     post.contractAddress,
     refetchJupiterQuote,
     sellAmountExceedsBalance,
@@ -4396,6 +4435,7 @@ export function PostCard({
     tradeSide,
     autoConfirmEnabled,
     armTradeProtection,
+    setTradeError,
     walletPublicKey,
     walletSignTransaction,
     armedTradeProtection?.trigger,
@@ -4530,6 +4570,7 @@ export function PostCard({
     !!wallet.signTransaction &&
     !!jupiterQuote &&
     !!tradeAmountAtomic &&
+    !buyAmountExceedsBalance &&
     !sellBlockedByRpcTokenInfo &&
     !sellAmountExceedsBalance &&
     !isExecutingBuy;
@@ -4589,6 +4630,8 @@ export function PostCard({
       ? isUsingStaleQuote
         ? "Refreshing route..."
         : "Fetching route..."
+      : buyAmountExceedsBalance
+        ? "Insufficient SOL"
       : jupiterNoRouteDetected
         ? "No route available"
         : jupiterQuoteUnavailable
@@ -4596,8 +4639,32 @@ export function PostCard({
         : jupiterQuote
           ? "Route ready"
           : "Awaiting quote";
+  const quoteFreshnessUpdatedAtMs =
+    jupiterQuoteQuery.data
+      ? lastGoodQuoteBySide[tradeSide]?.updatedAtMs ?? Date.now()
+      : staleQuoteForSideCandidate?.updatedAtMs ?? null;
+  const quoteFreshnessLabel =
+    quoteFreshnessUpdatedAtMs === null
+      ? "Waiting for quote"
+      : (() => {
+          const ageSeconds = Math.max(0, Math.round((Date.now() - quoteFreshnessUpdatedAtMs) / 1000));
+          if (ageSeconds <= 1) return isUsingStaleQuote ? "Using cached quote" : "Quote updated just now";
+          return isUsingStaleQuote ? `Cached quote ${ageSeconds}s old` : `Quote ${ageSeconds}s old`;
+        })();
+  const tradeLiveMetaLabel =
+    tradePanelLiveStatus.mode === "unavailable"
+      ? tradePanelLiveStatus.reason ?? "Live stream unavailable"
+      : tradePanelLiveIsFresh
+        ? tradePanelUsingFallbackPolling
+          ? "Trade tape refreshing from fallback polling"
+          : "Trade tape streaming live"
+        : tradePanelUsingFallbackPolling
+          ? "Trade tape polling while live stream reconnects"
+          : "Trade tape reconnecting";
   const jupiterStatusTone = !isSolanaTradeSupported
     ? "border-slate-900/10 bg-slate-900/[0.04] text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-white/70"
+    : buyAmountExceedsBalance
+      ? "border-amber-400/30 bg-amber-400/10 text-amber-700 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-100"
     : jupiterNoRouteDetected
       ? "border-amber-400/30 bg-amber-400/10 text-amber-700 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-100"
       : jupiterQuoteUnavailable
@@ -4671,23 +4738,9 @@ export function PostCard({
     walletTokenBalance,
   ]);
   useEffect(() => {
-    if ((!isBuyDialogOpen || !isMicroChartInterval) && !armedTradeProtection && !pendingProtectionAutoExecute) {
-      return;
-    }
-    appendMicroSample(currentMcap ?? null);
-  }, [
-    appendMicroSample,
-    armedTradeProtection,
-    currentMcap,
-    isBuyDialogOpen,
-    isMicroChartInterval,
-    pendingProtectionAutoExecute,
-  ]);
-
-  useEffect(() => {
     if (!post.contractAddress) return;
     const shouldUseFastPolling =
-      (isBuyDialogOpen && isMicroChartInterval) || Boolean(armedTradeProtection) || pendingProtectionAutoExecute;
+      Boolean(armedTradeProtection) || pendingProtectionAutoExecute;
     if (!shouldUseFastPolling) return;
 
     let cancelled = false;
@@ -4705,7 +4758,6 @@ export function PostCard({
         }
         const nextMcap = resolveSnapshotCurrentMcap(currentMcap, post.entryMcap, latest);
         setCurrentMcap(nextMcap);
-        appendMicroSample(nextMcap);
         if (latest.settled && !localSettled) {
           setLocalSettled(true);
         }
@@ -4727,11 +4779,9 @@ export function PostCard({
       window.clearInterval(intervalId);
     };
   }, [
-    appendMicroSample,
     armedTradeProtection,
     currentMcap,
     isBuyDialogOpen,
-    isMicroChartInterval,
     localMcap1h,
     localMcap6h,
     localSettled,
@@ -4870,14 +4920,24 @@ export function PostCard({
     sellHasNoTokens,
     tradeSide,
   ]);
-  const microChartCandles = useMemo(
-    () => buildMicroChartCandles(microChartSamples, 1_000),
-    [microChartSamples]
-  );
+  const liveMergedChartCandles = useMemo(() => {
+    const candles = chartCandlesQuery.data?.candles ?? [];
+    if (candles.length === 0 || tradePanelLiveSamples.length === 0) {
+      return candles;
+    }
+    return mergeLiveSamplesIntoCandles(
+      candles,
+      tradePanelLiveSamples,
+      getChartBucketMs(chartRequestConfig.timeframe, chartRequestConfig.aggregate)
+    );
+  }, [
+    chartCandlesQuery.data?.candles,
+    chartRequestConfig.aggregate,
+    chartRequestConfig.timeframe,
+    tradePanelLiveSamples,
+  ]);
   const professionalChartData = useMemo(() => {
-    const providerCandles = isMicroChartInterval
-      ? microChartCandles
-      : chartCandlesQuery.data?.candles ?? [];
+    const providerCandles = liveMergedChartCandles;
     const fallbackIntervalMs =
       chartRequestConfig.timeframe === "day"
         ? chartRequestConfig.aggregate * 86_400_000
@@ -4911,11 +4971,7 @@ export function PostCard({
           })
         : [];
 
-    const candles = isMicroChartInterval
-      ? providerCandles
-      : providerCandles.length >= 2
-        ? providerCandles
-        : fallbackCandles;
+    const candles = providerCandles.length >= 2 ? providerCandles : fallbackCandles;
     return candles
       .map((candle) => {
         const open = Number(candle.open);
@@ -4929,12 +4985,7 @@ export function PostCard({
             : candle.timestamp * 1000;
         const date = new Date(normalizedTs);
         const label =
-          isMicroChartInterval
-            ? date.toLocaleTimeString(undefined, {
-                minute: "2-digit",
-                second: "2-digit",
-              })
-            : chartRequestConfig.timeframe === "day"
+          chartRequestConfig.timeframe === "day"
             ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
             : date.toLocaleTimeString(undefined, {
                 hour: "2-digit",
@@ -4945,7 +4996,6 @@ export function PostCard({
           day: "numeric",
           hour: "2-digit",
           minute: "2-digit",
-          ...(isMicroChartInterval ? { second: "2-digit" as const } : {}),
         });
         return {
           ...candle,
@@ -4969,17 +5019,13 @@ export function PostCard({
       )
       .sort((a, b) => a.ts - b.ts);
   }, [
-    chartCandlesQuery.data?.candles,
     chartRequestConfig.aggregate,
     chartRequestConfig.timeframe,
-    isMicroChartInterval,
-    microChartCandles,
+    liveMergedChartCandles,
     post.createdAt,
     tradeChartData,
   ]);
-  const hasProviderChartCandles = isMicroChartInterval
-    ? microChartCandles.length >= 2
-    : (chartCandlesQuery.data?.candles?.length ?? 0) >= 2;
+  const hasProviderChartCandles = liveMergedChartCandles.length >= 2;
   const hasProfessionalChartData = professionalChartData.length >= 2;
   const isFallbackChartData = hasProfessionalChartData && !hasProviderChartCandles;
   const chartTotalPoints = professionalChartData.length;
@@ -5029,16 +5075,13 @@ export function PostCard({
     if (!chartVisibleStartPoint || !chartVisibleEndPoint) return "No chart range";
     const formatTimestamp = (ts: number) => {
       const date = new Date(ts);
-      if (isMicroChartInterval) {
-        return date.toLocaleTimeString(undefined, { minute: "2-digit", second: "2-digit" });
-      }
       if (chartRequestConfig.timeframe === "day") {
         return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       }
       return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     };
     return `${formatTimestamp(chartVisibleStartPoint.ts)} - ${formatTimestamp(chartVisibleEndPoint.ts)}`;
-  }, [chartRequestConfig.timeframe, chartVisibleEndPoint, chartVisibleStartPoint, isMicroChartInterval]);
+  }, [chartRequestConfig.timeframe, chartVisibleEndPoint, chartVisibleStartPoint]);
   const chartRangeDetailLabel = useMemo(() => {
     if (!chartVisibleStartPoint || !chartVisibleEndPoint) return "";
     return `${chartVisibleStartPoint.fullLabel} -> ${chartVisibleEndPoint.fullLabel}`;
@@ -5048,15 +5091,12 @@ export function PostCard({
       const ts = typeof value === "number" ? value : Number(value);
       if (!Number.isFinite(ts)) return "";
       const date = new Date(ts);
-      if (isMicroChartInterval) {
-        return date.toLocaleTimeString(undefined, { minute: "2-digit", second: "2-digit" });
-      }
       if (chartRequestConfig.timeframe === "day") {
         return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       }
       return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     },
-    [chartRequestConfig.timeframe, isMicroChartInterval]
+    [chartRequestConfig.timeframe]
   );
   const chartEntryTargetTs = useMemo(() => {
     const parsed = new Date(post.createdAt).getTime();
@@ -5385,9 +5425,6 @@ export function PostCard({
     ? "rgba(116,243,122,0.18)"
     : "rgba(255,107,107,0.18)";
   const chartFeedLabel = useMemo(() => {
-    if (isMicroChartInterval) {
-      return "Phew micro";
-    }
     if (isFallbackChartData) {
       return "Phew";
     }
@@ -5399,7 +5436,7 @@ export function PostCard({
       default:
         return "Live";
     }
-  }, [chartCandlesQuery.data?.source, isFallbackChartData, isMicroChartInterval]);
+  }, [chartCandlesQuery.data?.source, isFallbackChartData]);
   const walletConnectDialogClassName =
     "w-[calc(100vw-1rem)] max-w-md overflow-hidden border-slate-900/10 bg-[linear-gradient(180deg,rgba(255,252,247,0.98),rgba(246,239,228,0.98))] p-0 text-slate-900 shadow-[0_36px_120px_-50px_rgba(15,23,42,0.34)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(8,10,15,0.96),rgba(4,6,10,0.98))] dark:text-white dark:shadow-[0_36px_120px_-50px_rgba(0,0,0,0.95)]";
   const tradeDialogSurfaceClassName =
@@ -5424,7 +5461,7 @@ export function PostCard({
   const chartControlButtonClassName =
     "text-slate-500 hover:bg-slate-900/[0.05] hover:text-slate-800 dark:text-white/40 dark:hover:bg-white/[0.06] dark:hover:text-white/70 disabled:opacity-30";
   const chartCanvasClassName =
-    "relative h-[220px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[320px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_16%_8%,rgba(59,130,246,0.12),transparent_28%),radial-gradient(circle_at_88%_14%,rgba(16,185,129,0.08),transparent_32%),linear-gradient(180deg,rgba(4,9,18,0.99),rgba(1,4,9,1))]";
+    "relative h-[260px] overscroll-contain bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.85),rgba(245,238,225,0.98))] px-1 pb-2 pt-2 sm:h-[360px] sm:px-2 lg:h-[460px] xl:h-[520px] dark:bg-[radial-gradient(circle_at_16%_8%,rgba(59,130,246,0.12),transparent_28%),radial-gradient(circle_at_88%_14%,rgba(16,185,129,0.08),transparent_32%),linear-gradient(180deg,rgba(4,9,18,0.99),rgba(1,4,9,1))]";
 
   useEffect(() => {
     if (chartTotalPoints <= 0) {
@@ -7071,7 +7108,21 @@ export function PostCard({
                       <div className={cn("flex items-center justify-between border-t px-4 py-2 text-[10px] text-slate-500 dark:text-white/25", chartDividerClassName)}>
                         <div className="flex items-center gap-3">
                           {hasProfessionalChartData && (
-                            <span>{chartFeedLabel} {chartInterval}</span>
+                            <>
+                              <span>{chartFeedLabel} {chartInterval}</span>
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                                  tradePanelLiveIsFresh
+                                    ? "bg-emerald-500/10 text-emerald-500"
+                                    : tradePanelUsingFallbackPolling
+                                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-300"
+                                      : "bg-slate-900/[0.05] text-slate-500 dark:bg-white/[0.06] dark:text-white/40"
+                                )}
+                              >
+                                {tradePanelLiveBadgeLabel}
+                              </span>
+                            </>
                           )}
                           {resolvedLiquidityUsd != null && (
                             <span>Liq ${resolvedLiquidityUsd.toLocaleString()}</span>
@@ -7088,6 +7139,14 @@ export function PostCard({
                         )}
                       </div>
                     </div>
+
+                    <TradeTransactionsFeed
+                      trades={tradePanelRecentTrades}
+                      liveBadgeLabel={tradePanelLiveBadgeLabel}
+                      liveIsFresh={tradePanelLiveIsFresh}
+                      usingFallbackPolling={tradePanelUsingFallbackPolling}
+                      lastEventAtMs={tradePanelLastEventAtMs}
+                    />
 
                   </div>
 
@@ -7146,6 +7205,25 @@ export function PostCard({
                       onTakeProfitPercentChange={setTakeProfitPercentInput}
                       protectionStatusLabel={protectionStatus.label}
                       protectionStatusTone={protectionStatus.tone}
+                      quoteFreshnessLabel={quoteFreshnessLabel}
+                      liveStateLabel={tradeLiveMetaLabel}
+                      tradeError={
+                        tradeError
+                          ? {
+                              title: tradeError.title,
+                              message: tradeError.message,
+                              retryable: tradeError.retryable,
+                            }
+                          : null
+                      }
+                      onClearTradeError={() => setTradeError(null)}
+                      onRetryTradeError={() => {
+                        setTradeError(null);
+                        void refetchJupiterQuote();
+                        if (canExecuteJupiterBuy && !isExecutingBuy) {
+                          void handleExecuteJupiterBuy();
+                        }
+                      }}
                     />
 
                     {/* Portfolio Panel */}

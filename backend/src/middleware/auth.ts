@@ -74,6 +74,8 @@ function shouldSkipAuthResolution(path: string): boolean {
     path === "/api/posts/prices" ||
     path === "/api/posts/jupiter/quote" ||
     path === "/api/posts/chart/candles" ||
+    path === "/api/posts/chart/trades" ||
+    path === "/api/posts/chart/live" ||
     path === "/api/posts/trending" ||
     /^\/api\/posts\/[^/]+\/price$/.test(path)
   );

@@ -287,6 +287,8 @@ app.use("/api/*", async (c, next) => {
     c.req.path === "/api/posts/prices" ||
     c.req.path === "/api/posts/jupiter/quote" ||
     c.req.path === "/api/posts/chart/candles" ||
+    c.req.path === "/api/posts/chart/trades" ||
+    c.req.path === "/api/posts/chart/live" ||
     c.req.path.startsWith("/api/internal/jobs")
   ) {
     return next();
@@ -302,6 +304,8 @@ app.use("/api/auth/*", async (c, next) => {
 app.use("/api/auth/privy-sync", privySyncRateLimit);
 app.use("/api/posts/jupiter/quote", jupiterQuoteRateLimit);
 app.use("/api/posts/chart/candles", chartCandlesRateLimit);
+app.use("/api/posts/chart/trades", chartCandlesRateLimit);
+app.use("/api/posts/chart/live", chartCandlesRateLimit);
 app.use("/api/posts/jupiter/swap", tradeWriteRateLimit);
 app.use("/api/posts/jupiter/fee-confirm", tradeWriteRateLimit);
 app.use("/api/posts/portfolio", tradeWriteRateLimit);

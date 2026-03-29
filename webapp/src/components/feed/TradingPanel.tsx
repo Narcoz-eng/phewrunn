@@ -75,6 +75,15 @@ interface TradingPanelProps {
   onTakeProfitPercentChange: (value: string) => void;
   protectionStatusLabel?: string | null;
   protectionStatusTone?: "idle" | "armed" | "triggered";
+  quoteFreshnessLabel?: string | null;
+  liveStateLabel?: string | null;
+  tradeError?: {
+    title: string;
+    message: string;
+    retryable: boolean;
+  } | null;
+  onClearTradeError?: () => void;
+  onRetryTradeError?: () => void;
 }
 
 const SLIPPAGE_QUICK = [50, 100, 200, 500];
@@ -181,6 +190,11 @@ export function TradingPanel({
   onTakeProfitPercentChange,
   protectionStatusLabel = null,
   protectionStatusTone = "idle",
+  quoteFreshnessLabel = null,
+  liveStateLabel = null,
+  tradeError = null,
+  onClearTradeError,
+  onRetryTradeError,
 }: TradingPanelProps) {
   const isBuy = tradeSide === "buy";
   const [tokenImageError, setTokenImageError] = useState(false);
@@ -438,6 +452,68 @@ export function TradingPanel({
         </div>
 
         {/* MEV Protection */}
+        {(quoteFreshnessLabel || liveStateLabel) ? (
+          <div className={cn("grid gap-2 sm:grid-cols-2", softSectionClassName, "p-3")}>
+            <div>
+              <div className="text-[10px] font-medium uppercase tracking-widest text-slate-400 dark:text-white/35">
+                Route Freshness
+              </div>
+              <div className="mt-1 text-[12px] font-medium text-slate-700 dark:text-white/75">
+                {quoteFreshnessLabel ?? "Waiting for quote"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-medium uppercase tracking-widest text-slate-400 dark:text-white/35">
+                Live Market
+              </div>
+              <div className="mt-1 text-[12px] font-medium text-slate-700 dark:text-white/75">
+                {liveStateLabel ?? "Waiting for stream"}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tradeError ? (
+          <div className="rounded-xl border border-rose-500/18 bg-rose-500/[0.05] px-3 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-widest text-rose-600 dark:text-rose-300">
+                  {tradeError.title}
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-rose-700 dark:text-rose-200/90">
+                  {tradeError.message}
+                </div>
+              </div>
+              {onClearTradeError ? (
+                <button
+                  type="button"
+                  onClick={onClearTradeError}
+                  className="shrink-0 text-[10px] font-medium text-rose-500 transition-colors hover:text-rose-600 dark:text-rose-200/80 dark:hover:text-rose-100"
+                >
+                  Dismiss
+                </button>
+              ) : null}
+            </div>
+            {tradeError.retryable ? (
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div className="text-[11px] text-rose-600/80 dark:text-rose-200/75">
+                  Retry is available as soon as the route refreshes.
+                </div>
+                {onRetryTradeError ? (
+                  <button
+                    type="button"
+                    onClick={onRetryTradeError}
+                    className="rounded-md border border-rose-500/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-600 transition-colors hover:bg-rose-500/8 dark:border-rose-300/20 dark:text-rose-200"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* MEV Protection */}
         <div className={cn(
           "rounded-xl border px-3 py-2.5",
           mevProtectionEnabled
@@ -648,64 +724,66 @@ export function TradingPanel({
           </div>
         ) : null}
 
-        {/* Execute / Connect */}
-        {!walletConnected ? (
-          <Button
-            onClick={onConnectWallet}
-            className={cn(
-              "w-full h-12 text-sm font-semibold rounded-xl transition-all duration-200",
-              "border border-emerald-200/70 bg-gradient-to-r from-emerald-300/95 via-teal-300/90 to-cyan-300/95 text-[#04251f] shadow-[0_20px_44px_-24px_rgba(45,212,191,0.9)] hover:from-emerald-200 hover:via-teal-200 hover:to-cyan-200 dark:border-white/[0.1] dark:bg-gradient-to-r dark:from-white/[0.08] dark:to-white/[0.04] dark:text-white dark:shadow-none dark:hover:from-white/[0.12] dark:hover:to-white/[0.08]"
-            )}
-          >
-            <Wallet className="w-4 h-4 mr-2" />
-            Connect Wallet
-          </Button>
-        ) : (
-          <Button
-            onClick={onExecute}
-            disabled={!canExecute || isExecuting}
-            className={cn(
-              "w-full h-12 text-sm font-bold rounded-xl transition-all duration-200 border-0",
-              isBuy
-                ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-[0_0_20px_-4px_rgba(16,185,129,0.35)] disabled:from-emerald-900/40 disabled:to-emerald-800/30 disabled:text-white/30 disabled:shadow-none"
-                : "bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white shadow-[0_0_20px_-4px_rgba(244,63,94,0.35)] disabled:from-rose-900/40 disabled:to-rose-800/30 disabled:text-white/30 disabled:shadow-none"
-            )}
-          >
-            {isExecuting ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {jupiterStatusLabel || "Processing..."}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5">
-                {isBuy ? "Buy" : "Sell"} {tokenSymbol}
-              </span>
-            )}
-          </Button>
-        )}
-
-        {/* Bottom Controls */}
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-2">
-            <Zap className={cn("w-3 h-3", autoConfirmEnabled ? "text-amber-400" : "text-slate-400 dark:text-white/25")} />
-            <span className="text-[11px] text-slate-500 dark:text-white/40">Instant</span>
-            <Switch
-              checked={autoConfirmEnabled}
-              onCheckedChange={onAutoConfirmChange}
-              className="data-[state=checked]:bg-amber-500/80 scale-[0.7] -ml-1"
-            />
-          </div>
-          {txSignature ? (
-            <a
-              href={chainType === "ethereum" ? `https://etherscan.io/tx/${txSignature}` : `https://solscan.io/tx/${txSignature}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[11px] text-slate-500 transition-colors hover:text-slate-700 dark:text-white/30 dark:hover:text-white/60"
+        <div className="-mx-4 mt-1 sticky bottom-0 z-10 border-t border-slate-900/[0.06] bg-[linear-gradient(180deg,rgba(255,252,248,0.96),rgba(248,242,232,0.98))] px-4 pb-1 pt-3 backdrop-blur sm:static sm:mx-0 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-0 sm:backdrop-blur-none dark:border-white/[0.06] dark:bg-[linear-gradient(180deg,rgba(7,10,16,0.96),rgba(5,8,12,0.98))] sm:dark:bg-transparent">
+          {/* Execute / Connect */}
+          {!walletConnected ? (
+            <Button
+              onClick={onConnectWallet}
+              className={cn(
+                "h-12 w-full rounded-xl border text-sm font-semibold transition-all duration-200",
+                "border-emerald-200/70 bg-gradient-to-r from-emerald-300/95 via-teal-300/90 to-cyan-300/95 text-[#04251f] shadow-[0_20px_44px_-24px_rgba(45,212,191,0.9)] hover:from-emerald-200 hover:via-teal-200 hover:to-cyan-200 dark:border-white/[0.1] dark:bg-gradient-to-r dark:from-white/[0.08] dark:to-white/[0.04] dark:text-white dark:shadow-none dark:hover:from-white/[0.12] dark:hover:to-white/[0.08]"
+              )}
             >
-              View Tx
-              <ExternalLink className="w-2.5 h-2.5" />
-            </a>
-          ) : null}
+              <Wallet className="mr-2 h-4 w-4" />
+              Connect Wallet
+            </Button>
+          ) : (
+            <Button
+              onClick={onExecute}
+              disabled={!canExecute || isExecuting}
+              className={cn(
+                "h-12 w-full rounded-xl border-0 text-sm font-bold transition-all duration-200",
+                isBuy
+                  ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-[0_0_20px_-4px_rgba(16,185,129,0.35)] hover:from-emerald-500 hover:to-emerald-400 disabled:from-emerald-900/40 disabled:to-emerald-800/30 disabled:text-white/30 disabled:shadow-none"
+                  : "bg-gradient-to-r from-rose-600 to-rose-500 text-white shadow-[0_0_20px_-4px_rgba(244,63,94,0.35)] hover:from-rose-500 hover:to-rose-400 disabled:from-rose-900/40 disabled:to-rose-800/30 disabled:text-white/30 disabled:shadow-none"
+              )}
+            >
+              {isExecuting ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {jupiterStatusLabel || "Processing..."}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  {isBuy ? "Buy" : "Sell"} {tokenSymbol}
+                </span>
+              )}
+            </Button>
+          )}
+
+          {/* Bottom Controls */}
+          <div className="flex items-center justify-between pt-3">
+            <div className="flex items-center gap-2">
+              <Zap className={cn("h-3 w-3", autoConfirmEnabled ? "text-amber-400" : "text-slate-400 dark:text-white/25")} />
+              <span className="text-[11px] text-slate-500 dark:text-white/40">Instant</span>
+              <Switch
+                checked={autoConfirmEnabled}
+                onCheckedChange={onAutoConfirmChange}
+                className="-ml-1 scale-[0.7] data-[state=checked]:bg-amber-500/80"
+              />
+            </div>
+            {txSignature ? (
+              <a
+                href={chainType === "ethereum" ? `https://etherscan.io/tx/${txSignature}` : `https://solscan.io/tx/${txSignature}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-[11px] text-slate-500 transition-colors hover:text-slate-700 dark:text-white/30 dark:hover:text-white/60"
+              >
+                View Tx
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
