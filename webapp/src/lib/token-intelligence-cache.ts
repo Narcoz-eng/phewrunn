@@ -40,6 +40,14 @@ export type TokenIntelligenceSnapshot = {
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
   highConvictionScore: number | null;
+  marketHealthScore: number | null;
+  setupQualityScore: number | null;
+  opportunityScore: number | null;
+  dataReliabilityScore: number | null;
+  activityStatus: string | null;
+  activityStatusLabel: string | null;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
   lastIntelligenceAt: string | null;
   bundleClusters: TokenBundleCluster[];
 };
@@ -135,6 +143,18 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
   const nextHotAlphaScore = pickMetric(post.hotAlphaScore, token.hotAlphaScore, preferIncoming);
   const nextEarlyRunnerScore = pickMetric(post.earlyRunnerScore, token.earlyRunnerScore, preferIncoming);
   const nextHighConvictionScore = pickMetric(post.highConvictionScore, token.highConvictionScore, preferIncoming);
+  const nextMarketHealthScore = pickMetric(post.marketHealthScore, token.marketHealthScore, preferIncoming);
+  const nextSetupQualityScore = pickMetric(post.setupQualityScore, token.setupQualityScore, preferIncoming);
+  const nextOpportunityScore = pickMetric(post.opportunityScore, token.opportunityScore, preferIncoming);
+  const nextDataReliabilityScore = pickMetric(post.dataReliabilityScore, token.dataReliabilityScore, preferIncoming);
+  const nextActivityStatus = pickText(post.activityStatus, token.activityStatus, preferIncoming);
+  const nextActivityStatusLabel = pickText(post.activityStatusLabel, token.activityStatusLabel, preferIncoming);
+  const nextIsTradable =
+    preferIncoming || post.isTradable == null ? token.isTradable : post.isTradable;
+  const nextBullishSignalsSuppressed =
+    preferIncoming || post.bullishSignalsSuppressed == null
+      ? token.bullishSignalsSuppressed
+      : post.bullishSignalsSuppressed;
   const nextSentimentScore = pickMetric(post.sentimentScore, token.sentimentScore, preferIncoming);
   const nextTokenRiskScore = pickMetric(post.tokenRiskScore, token.tokenRiskScore, shouldPreferIncomingBundle);
   const nextBundleRiskLabel = pickText(post.bundleRiskLabel, token.bundleRiskLabel, shouldPreferIncomingBundle);
@@ -185,6 +205,14 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     nextHotAlphaScore === post.hotAlphaScore &&
     nextEarlyRunnerScore === post.earlyRunnerScore &&
     nextHighConvictionScore === post.highConvictionScore &&
+    nextMarketHealthScore === post.marketHealthScore &&
+    nextSetupQualityScore === post.setupQualityScore &&
+    nextOpportunityScore === post.opportunityScore &&
+    nextDataReliabilityScore === post.dataReliabilityScore &&
+    nextActivityStatus === (post.activityStatus ?? null) &&
+    nextActivityStatusLabel === (post.activityStatusLabel ?? null) &&
+    nextIsTradable === post.isTradable &&
+    nextBullishSignalsSuppressed === post.bullishSignalsSuppressed &&
     nextSentimentScore === post.sentimentScore &&
     nextTokenRiskScore === post.tokenRiskScore &&
     nextBundleRiskLabel === post.bundleRiskLabel &&
@@ -212,6 +240,14 @@ function mergeTokenIntelligenceIntoPost(post: Post, token: TokenIntelligenceSnap
     hotAlphaScore: nextHotAlphaScore ?? null,
     earlyRunnerScore: nextEarlyRunnerScore ?? null,
     highConvictionScore: nextHighConvictionScore ?? null,
+    marketHealthScore: nextMarketHealthScore ?? null,
+    setupQualityScore: nextSetupQualityScore ?? null,
+    opportunityScore: nextOpportunityScore ?? null,
+    dataReliabilityScore: nextDataReliabilityScore ?? null,
+    activityStatus: nextActivityStatus ?? null,
+    activityStatusLabel: nextActivityStatusLabel ?? null,
+    isTradable: nextIsTradable,
+    bullishSignalsSuppressed: nextBullishSignalsSuppressed,
     sentimentScore: nextSentimentScore ?? null,
     tokenRiskScore: nextTokenRiskScore ?? null,
     bundleRiskLabel: nextBundleRiskLabel ?? null,

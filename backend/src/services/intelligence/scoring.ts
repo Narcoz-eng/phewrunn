@@ -85,12 +85,65 @@ export type HighConvictionInputs = {
   tokenRiskScore: number | null;
 };
 
+export type TokenActivityStatus = "active" | "warming" | "inactive" | "dormant" | "untradable";
+
+export type StateAwareScoreInputs = {
+  baseConfidenceScore: number | null;
+  baseHotAlphaScore: number | null;
+  baseEarlyRunnerScore: number | null;
+  baseHighConvictionScore: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  holderCount: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  deployerSupplyPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
+  tokenRiskScore: number | null;
+  traderTrustScore?: number | null;
+  entryQualityScore?: number | null;
+  trustedTraderCount?: number | null;
+  sentimentScore?: number | null;
+  marketBreadthScore?: number | null;
+  liquidityGrowthPct?: number | null;
+  volumeGrowthPct?: number | null;
+  holderGrowthPct?: number | null;
+  mcapGrowthPct?: number | null;
+  momentumPct?: number | null;
+  tradeCount24h?: number | null;
+  hasTradablePair?: boolean;
+  hasResolvedHolderDistribution?: boolean;
+  recentCallCount?: number | null;
+  signalAgeHours?: number | null;
+};
+
+export type StateAwareScoreResult = {
+  confidenceScore: number;
+  hotAlphaScore: number;
+  earlyRunnerScore: number;
+  highConvictionScore: number;
+  marketHealthScore: number;
+  setupQualityScore: number;
+  opportunityScore: number;
+  dataReliabilityScore: number;
+  scoreDecayMultiplier: number;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
+  activityStatus: TokenActivityStatus;
+  activityStatusLabel: string;
+};
+
 function finite(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function hasFiniteMetric(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function roundMetricOrZero(value: number | null | undefined): number {
+  return hasFiniteMetric(value) ? Math.round(value * 100) / 100 : 0;
 }
 
 export function clampScore(value: number): number {
@@ -519,6 +572,412 @@ export function computeHighConvictionScore(inputs: HighConvictionInputs): number
     0.05 * holderBreadthScore +
     0.07 * onchainStructureHealthScore
   );
+}
+
+export function computeSetupQualityScore(args: {
+  traderTrustScore?: number | null;
+  entryQualityScore?: number | null;
+  trustedTraderCount?: number | null;
+  sentimentScore?: number | null;
+  holderCount?: number | null;
+  largestHolderPct?: number | null;
+  top10HolderPct?: number | null;
+  deployerSupplyPct?: number | null;
+  bundledWalletCount?: number | null;
+  estimatedBundledSupplyPct?: number | null;
+  tokenRiskScore?: number | null;
+}): number {
+  const traderTrustScore = clampScore(finite(args.traderTrustScore, 50));
+  const entryQualityScore = clampScore(finite(args.entryQualityScore, 50));
+  const confirmationScore = pct(args.trustedTraderCount, 5);
+  const sentimentScore = clampScore(finite(args.sentimentScore, 50));
+  const holderBreadthScore = computeHolderBreadthScore({
+    holderCount: args.holderCount,
+    largestHolderPct: args.largestHolderPct,
+    top10HolderPct: args.top10HolderPct,
+  });
+  const onchainStructureHealthScore = computeOnchainStructureHealthScore({
+    largestHolderPct: args.largestHolderPct,
+    top10HolderPct: args.top10HolderPct,
+    deployerSupplyPct: args.deployerSupplyPct,
+    bundledWalletCount: args.bundledWalletCount,
+    estimatedBundledSupplyPct: args.estimatedBundledSupplyPct,
+  });
+  const riskHealth = inversePct(args.tokenRiskScore, 100);
+
+  return clampScore(
+    0.15 * traderTrustScore +
+      0.13 * entryQualityScore +
+      0.08 * confirmationScore +
+      0.06 * sentimentScore +
+      0.24 * holderBreadthScore +
+      0.24 * onchainStructureHealthScore +
+      0.10 * riskHealth
+  );
+}
+
+export function computeMarketHealthScore(args: {
+  liquidityUsd: number | null | undefined;
+  volume24hUsd: number | null | undefined;
+  holderCount: number | null | undefined;
+  holderGrowthPct?: number | null | undefined;
+  liquidityGrowthPct?: number | null | undefined;
+  volumeGrowthPct?: number | null | undefined;
+  mcapGrowthPct?: number | null | undefined;
+  momentumPct?: number | null | undefined;
+  tradeCount24h?: number | null | undefined;
+  tokenRiskScore?: number | null | undefined;
+  marketBreadthScore?: number | null | undefined;
+  hasTradablePair?: boolean | null | undefined;
+}): number {
+  const liquidityScore = logScore(args.liquidityUsd, 180_000);
+  const volumeScore = logScore(args.volume24hUsd, 320_000);
+  const tradeActivityScore = hasFiniteMetric(args.tradeCount24h)
+    ? logScore(args.tradeCount24h, 260)
+    : neutralLogScore(args.volume24hUsd, 320_000, 40);
+  const holderScore = logScore(args.holderCount, 2_500);
+  const holderGrowthScore = pct(Math.max(0, finite(args.holderGrowthPct)), 60);
+  const accelerationScore = computeAccelerationScore({
+    volumeGrowth24hPct: args.volumeGrowthPct,
+    liquidityGrowth1hPct: args.liquidityGrowthPct,
+    holderGrowth1hPct: args.holderGrowthPct,
+    mcapGrowthPct: args.mcapGrowthPct,
+    momentumPct: args.momentumPct,
+  });
+  const marketBreadthScore = clampScore(finite(args.marketBreadthScore, 50));
+  const riskHealth = inversePct(args.tokenRiskScore, 100);
+
+  let penalties = 0;
+  const liquidity = Math.max(0, finite(args.liquidityUsd));
+  const volume = Math.max(0, finite(args.volume24hUsd));
+  const holders = Math.max(0, finite(args.holderCount));
+  const tradeCount = hasFiniteMetric(args.tradeCount24h) ? Math.max(0, args.tradeCount24h) : null;
+  const tradablePairMissing = args.hasTradablePair === false;
+
+  if (liquidity > 0 && liquidity < 5_000) penalties += 38;
+  else if (liquidity > 0 && liquidity < 15_000) penalties += 18;
+
+  if (volume > 0 && volume < 1_500) penalties += 28;
+  else if (volume > 0 && volume < 6_000) penalties += 12;
+
+  if (tradeCount !== null && tradeCount < 4) penalties += 24;
+  else if (tradeCount !== null && tradeCount < 12) penalties += 10;
+
+  if (holders > 0 && holders < 20) penalties += 14;
+  else if (holders > 0 && holders < 60) penalties += 6;
+
+  if (finite(args.tokenRiskScore) >= 90) penalties += 28;
+  else if (finite(args.tokenRiskScore) >= 82) penalties += 14;
+
+  if (tradablePairMissing) penalties += 18;
+
+  return clampScore(
+    0.24 * liquidityScore +
+      0.20 * volumeScore +
+      0.16 * tradeActivityScore +
+      0.12 * holderScore +
+      0.08 * holderGrowthScore +
+      0.12 * accelerationScore +
+      0.04 * marketBreadthScore +
+      0.04 * riskHealth -
+      penalties
+  );
+}
+
+export function computeDataReliabilityScore(args: {
+  liquidityUsd: number | null | undefined;
+  volume24hUsd: number | null | undefined;
+  holderCount: number | null | undefined;
+  tradeCount24h?: number | null | undefined;
+  recentCallCount?: number | null | undefined;
+  signalAgeHours?: number | null | undefined;
+  hasTradablePair?: boolean | null | undefined;
+  hasResolvedHolderDistribution?: boolean | null | undefined;
+  largestHolderPct?: number | null | undefined;
+  top10HolderPct?: number | null | undefined;
+  tokenRiskScore?: number | null | undefined;
+}): number {
+  const liquidityEvidence =
+    hasFiniteMetric(args.liquidityUsd) && args.liquidityUsd > 0 ? 100 : 0;
+  const volumeEvidence =
+    hasFiniteMetric(args.volume24hUsd) && args.volume24hUsd > 0 ? 100 : 0;
+  const holderEvidence =
+    hasFiniteMetric(args.holderCount) && args.holderCount > 0 ? 100 : 0;
+  const tradeEvidence =
+    hasFiniteMetric(args.tradeCount24h) && args.tradeCount24h > 0
+      ? logScore(args.tradeCount24h, 220)
+      : 0;
+  const recentCallEvidence =
+    hasFiniteMetric(args.recentCallCount) && args.recentCallCount > 0
+      ? logScore(args.recentCallCount, 18)
+      : 20;
+  const signalFreshnessScore =
+    !hasFiniteMetric(args.signalAgeHours)
+      ? 32
+      : args.signalAgeHours <= 6
+        ? 100
+        : args.signalAgeHours <= 24
+          ? 80
+          : args.signalAgeHours <= 48
+            ? 56
+            : args.signalAgeHours <= 72
+              ? 40
+              : 22;
+  const distributionEvidence = (() => {
+    if (args.hasResolvedHolderDistribution) return 100;
+    const partialSignals = [
+      hasFiniteMetric(args.largestHolderPct),
+      hasFiniteMetric(args.top10HolderPct),
+      hasFiniteMetric(args.tokenRiskScore),
+    ].filter(Boolean).length;
+    if (partialSignals >= 3) return 74;
+    if (partialSignals >= 2) return 54;
+    if (partialSignals >= 1) return 34;
+    return 0;
+  })();
+  const routeEvidence = args.hasTradablePair === false ? 18 : 100;
+
+  return clampScore(
+    0.16 * liquidityEvidence +
+      0.16 * volumeEvidence +
+      0.14 * holderEvidence +
+      0.12 * tradeEvidence +
+      0.10 * recentCallEvidence +
+      0.12 * signalFreshnessScore +
+      0.12 * distributionEvidence +
+      0.08 * routeEvidence
+  );
+}
+
+export function getTokenActivityStatusLabel(status: TokenActivityStatus): string {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "warming":
+      return "Warming";
+    case "inactive":
+      return "Inactive";
+    case "dormant":
+      return "Dormant";
+    case "untradable":
+      return "Untradable";
+    default:
+      return "Inactive";
+  }
+}
+
+export function computeStateAwareIntelligenceScores(
+  inputs: StateAwareScoreInputs
+): StateAwareScoreResult {
+  const marketHealthScore = computeMarketHealthScore({
+    liquidityUsd: inputs.liquidityUsd,
+    volume24hUsd: inputs.volume24hUsd,
+    holderCount: inputs.holderCount,
+    holderGrowthPct: inputs.holderGrowthPct,
+    liquidityGrowthPct: inputs.liquidityGrowthPct,
+    volumeGrowthPct: inputs.volumeGrowthPct,
+    mcapGrowthPct: inputs.mcapGrowthPct,
+    momentumPct: inputs.momentumPct,
+    tradeCount24h: inputs.tradeCount24h,
+    tokenRiskScore: inputs.tokenRiskScore,
+    marketBreadthScore: inputs.marketBreadthScore,
+    hasTradablePair: inputs.hasTradablePair,
+  });
+  const setupQualityScore = computeSetupQualityScore({
+    traderTrustScore: inputs.traderTrustScore,
+    entryQualityScore: inputs.entryQualityScore,
+    trustedTraderCount: inputs.trustedTraderCount,
+    sentimentScore: inputs.sentimentScore,
+    holderCount: inputs.holderCount,
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+    deployerSupplyPct: inputs.deployerSupplyPct,
+    bundledWalletCount: inputs.bundledWalletCount,
+    estimatedBundledSupplyPct: inputs.estimatedBundledSupplyPct,
+    tokenRiskScore: inputs.tokenRiskScore,
+  });
+  const dataReliabilityScore = computeDataReliabilityScore({
+    liquidityUsd: inputs.liquidityUsd,
+    volume24hUsd: inputs.volume24hUsd,
+    holderCount: inputs.holderCount,
+    tradeCount24h: inputs.tradeCount24h,
+    recentCallCount: inputs.recentCallCount,
+    signalAgeHours: inputs.signalAgeHours,
+    hasTradablePair: inputs.hasTradablePair,
+    hasResolvedHolderDistribution: inputs.hasResolvedHolderDistribution,
+    largestHolderPct: inputs.largestHolderPct,
+    top10HolderPct: inputs.top10HolderPct,
+    tokenRiskScore: inputs.tokenRiskScore,
+  });
+  const accelerationScore = computeAccelerationScore({
+    volumeGrowth24hPct: inputs.volumeGrowthPct,
+    liquidityGrowth1hPct: inputs.liquidityGrowthPct,
+    holderGrowth1hPct: inputs.holderGrowthPct,
+    mcapGrowthPct: inputs.mcapGrowthPct,
+    momentumPct: inputs.momentumPct,
+  });
+  const marketBreadthScore = clampScore(finite(inputs.marketBreadthScore, 50));
+
+  let scoreDecayMultiplier: number;
+  if (!hasFiniteMetric(inputs.signalAgeHours)) {
+    scoreDecayMultiplier = 0.72;
+  } else if (inputs.signalAgeHours <= 2) {
+    scoreDecayMultiplier = 1;
+  } else if (inputs.signalAgeHours <= 6) {
+    scoreDecayMultiplier = 0.94;
+  } else if (inputs.signalAgeHours <= 12) {
+    scoreDecayMultiplier = 0.82;
+  } else if (inputs.signalAgeHours <= 24) {
+    scoreDecayMultiplier = 0.68;
+  } else if (inputs.signalAgeHours <= 48) {
+    scoreDecayMultiplier = 0.48;
+  } else if (inputs.signalAgeHours <= 72) {
+    scoreDecayMultiplier = 0.34;
+  } else {
+    scoreDecayMultiplier = 0.22;
+  }
+
+  const tradeCount = hasFiniteMetric(inputs.tradeCount24h) ? Math.max(0, inputs.tradeCount24h) : null;
+  if (
+    (tradeCount !== null && tradeCount >= 80) ||
+    Math.max(0, finite(inputs.volume24hUsd)) >= 100_000
+  ) {
+    scoreDecayMultiplier = Math.max(scoreDecayMultiplier, 0.92);
+  } else if (
+    (tradeCount !== null && tradeCount >= 30) ||
+    Math.max(0, finite(inputs.volume24hUsd)) >= 25_000
+  ) {
+    scoreDecayMultiplier = Math.max(scoreDecayMultiplier, 0.80);
+  }
+
+  const opportunityBase = clampScore(
+    0.42 * marketHealthScore +
+      0.30 * setupQualityScore +
+      0.18 * accelerationScore +
+      0.10 * marketBreadthScore
+  );
+  const opportunityScore = clampScore(opportunityBase * scoreDecayMultiplier);
+  const severeRisk =
+    finite(inputs.tokenRiskScore) >= 88 ||
+    finite(inputs.estimatedBundledSupplyPct) >= 45;
+  const tradablePairOk = inputs.hasTradablePair !== false;
+  const isTradable =
+    tradablePairOk &&
+    Math.max(0, finite(inputs.liquidityUsd)) >= 7_500 &&
+    Math.max(0, finite(inputs.volume24hUsd)) >= 2_500 &&
+    (tradeCount === null || tradeCount >= 6) &&
+    !severeRisk;
+
+  let activityStatus: TokenActivityStatus;
+  if (!tradablePairOk && Math.max(0, finite(inputs.liquidityUsd)) <= 0 && Math.max(0, finite(inputs.volume24hUsd)) <= 0) {
+    activityStatus = "untradable";
+  } else if (
+    marketHealthScore < 20 ||
+    (!isTradable &&
+      Math.max(0, finite(inputs.liquidityUsd)) < 5_000 &&
+      Math.max(0, finite(inputs.volume24hUsd)) < 1_500)
+  ) {
+    activityStatus = "dormant";
+  } else if (marketHealthScore < 38 || !isTradable) {
+    activityStatus = "inactive";
+  } else if (marketHealthScore < 60) {
+    activityStatus = "warming";
+  } else {
+    activityStatus = "active";
+  }
+
+  const statusCaps = (() => {
+    switch (activityStatus) {
+      case "active":
+        return { confidence: 100, hotAlpha: 100, earlyRunner: 100, highConviction: 100 };
+      case "warming":
+        return { confidence: 68, hotAlpha: 62, earlyRunner: 64, highConviction: 66 };
+      case "inactive":
+        return { confidence: 38, hotAlpha: 30, earlyRunner: 34, highConviction: 36 };
+      case "dormant":
+        return { confidence: 18, hotAlpha: 16, earlyRunner: 18, highConviction: 20 };
+      case "untradable":
+      default:
+        return { confidence: 12, hotAlpha: 12, earlyRunner: 14, highConviction: 16 };
+    }
+  })();
+  const healthMultiplier =
+    activityStatus === "active"
+      ? 1
+      : activityStatus === "warming"
+        ? 0.78
+        : activityStatus === "inactive"
+          ? 0.48
+          : 0.22;
+  const confidenceCap = Math.min(
+    statusCaps.confidence,
+    Math.max(12, dataReliabilityScore + (activityStatus === "active" ? 10 : activityStatus === "warming" ? 4 : 0))
+  );
+  const confidenceRaw = clampScore(
+    0.45 * clampScore(finite(inputs.baseConfidenceScore)) +
+      0.40 * dataReliabilityScore +
+      0.15 * setupQualityScore
+  );
+  const confidenceScore = clampScore(
+    Math.min(confidenceCap, confidenceRaw * (0.70 + 0.30 * healthMultiplier))
+  );
+  const hotAlphaScore = clampScore(
+    Math.min(
+      statusCaps.hotAlpha,
+      clampScore(
+        0.56 *
+          (clampScore(finite(inputs.baseHotAlphaScore)) *
+            scoreDecayMultiplier *
+            (0.30 + 0.70 * healthMultiplier)) +
+          0.44 * opportunityScore
+      )
+    )
+  );
+  const earlyRunnerScore = clampScore(
+    Math.min(
+      statusCaps.earlyRunner,
+      clampScore(
+        0.52 *
+          (clampScore(finite(inputs.baseEarlyRunnerScore)) *
+            scoreDecayMultiplier *
+            (0.28 + 0.72 * healthMultiplier)) +
+          0.48 * opportunityScore
+      )
+    )
+  );
+  const highConvictionAnchor = clampScore(0.72 * setupQualityScore + 0.28 * marketHealthScore);
+  const highConvictionScore = clampScore(
+    Math.min(
+      statusCaps.highConviction,
+      clampScore(
+        0.58 *
+          (clampScore(finite(inputs.baseHighConvictionScore)) *
+            scoreDecayMultiplier *
+            (0.34 + 0.66 * healthMultiplier)) +
+          0.42 * highConvictionAnchor
+      )
+    )
+  );
+  const bullishSignalsSuppressed =
+    activityStatus === "dormant" ||
+    activityStatus === "untradable" ||
+    (activityStatus === "inactive" && opportunityScore < 42);
+
+  return {
+    confidenceScore,
+    hotAlphaScore,
+    earlyRunnerScore,
+    highConvictionScore,
+    marketHealthScore: roundMetricOrZero(marketHealthScore),
+    setupQualityScore: roundMetricOrZero(setupQualityScore),
+    opportunityScore: roundMetricOrZero(opportunityScore),
+    dataReliabilityScore: roundMetricOrZero(dataReliabilityScore),
+    scoreDecayMultiplier,
+    isTradable,
+    bullishSignalsSuppressed,
+    activityStatus,
+    activityStatusLabel: getTokenActivityStatusLabel(activityStatus),
+  };
 }
 
 export function computeTraderTrustScore(args: {

@@ -30,6 +30,14 @@ export type TokenLiveIntelligencePayload = {
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
   highConvictionScore: number | null;
+  marketHealthScore: number | null;
+  setupQualityScore: number | null;
+  opportunityScore: number | null;
+  dataReliabilityScore: number | null;
+  activityStatus: string | null;
+  activityStatusLabel: string | null;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
   sentiment: {
     score: number;
     reactions: ReactionCounts;
@@ -219,6 +227,14 @@ export function buildTokenIntelligenceSnapshotFromLivePayload(
     hotAlphaScore: payload.hotAlphaScore,
     earlyRunnerScore: payload.earlyRunnerScore,
     highConvictionScore: payload.highConvictionScore,
+    marketHealthScore: payload.marketHealthScore,
+    setupQualityScore: payload.setupQualityScore,
+    opportunityScore: payload.opportunityScore,
+    dataReliabilityScore: payload.dataReliabilityScore,
+    activityStatus: payload.activityStatus,
+    activityStatusLabel: payload.activityStatusLabel,
+    isTradable: payload.isTradable,
+    bullishSignalsSuppressed: payload.bullishSignalsSuppressed,
     lastIntelligenceAt: payload.lastIntelligenceAt ?? payload.bundleScanCompletedAt ?? payload.updatedAt ?? null,
     bundleClusters: payload.bundleClusters ?? [],
   };

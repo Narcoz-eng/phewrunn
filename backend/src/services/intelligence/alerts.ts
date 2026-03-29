@@ -293,6 +293,14 @@ export async function fanoutTokenSignalAlerts(args: {
     hotAlphaScore: number | null;
     earlyRunnerScore: number | null;
     highConvictionScore: number | null;
+    marketHealthScore?: number | null;
+    setupQualityScore?: number | null;
+    opportunityScore?: number | null;
+    dataReliabilityScore?: number | null;
+    activityStatus?: string | null;
+    activityStatusLabel?: string | null;
+    isTradable?: boolean;
+    bullishSignalsSuppressed?: boolean;
     lastIntelligenceAt: Date | string | null;
   };
   previousToken: {
@@ -421,6 +429,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: `${symbol} was flagged as an early runner`,
       reasonCode: "early_runner_detected",
       type: "early_runner_detected",
+      bullishOnly: true,
     },
     {
       key: "hot_alpha",
@@ -431,6 +440,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: `${symbol} just entered Hot Alpha`,
       reasonCode: "hot_alpha_detected",
       type: "hot_alpha_detected",
+      bullishOnly: true,
     },
     {
       key: "high_conviction",
@@ -441,6 +451,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: `${symbol} reached high conviction status`,
       reasonCode: "high_conviction_detected",
       type: "high_conviction_detected",
+      bullishOnly: true,
     },
     {
       key: "bundle_risk",
@@ -478,6 +489,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: smartCount > 1 ? `${smartCount} smart wallets are aping ${symbol}` : `Smart wallets are aping ${symbol}`,
       reasonCode: "smart_money_detected",
       type: "token_smart_money",
+      bullishOnly: true,
     },
     {
       key: "whale_accumulating",
@@ -488,6 +500,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: whaleCount > 1 ? `${whaleCount} whales are aping ${symbol}` : `A whale is aping ${symbol}`,
       reasonCode: "whale_accumulating",
       type: "token_whale_accumulating",
+      bullishOnly: true,
     },
     {
       key: "momentum",
@@ -498,6 +511,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: momentumMessage,
       reasonCode: "momentum_detected",
       type: "token_momentum",
+      bullishOnly: true,
     },
     {
       key: "holder_growth",
@@ -508,6 +522,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: holderGrowthMessage,
       reasonCode: "holder_growth_detected",
       type: "token_holder_growth",
+      bullishOnly: true,
     },
     {
       key: "liquidity_surge",
@@ -518,6 +533,7 @@ export async function fanoutTokenSignalAlerts(args: {
       message: liquiditySurgeMessage,
       reasonCode: "liquidity_surge_detected",
       type: "token_liquidity_surge",
+      bullishOnly: true,
     },
   ];
 
@@ -566,6 +582,7 @@ export async function fanoutTokenSignalAlerts(args: {
       for (const alertDef of alertDefs) {
         if (!alertDef.enabled(pref)) continue;
         if (!alertDef.passed) continue;
+        if (args.token.bullishSignalsSuppressed && alertDef.bullishOnly) continue;
 
         if (alertDef.key === "confidence_cross") {
           const minConfidence = pref.minConfidenceScore ?? 65;

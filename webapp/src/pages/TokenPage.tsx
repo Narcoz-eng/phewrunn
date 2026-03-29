@@ -247,6 +247,14 @@ type TokenPageData = {
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
   highConvictionScore: number | null;
+  marketHealthScore: number | null;
+  setupQualityScore: number | null;
+  opportunityScore: number | null;
+  dataReliabilityScore: number | null;
+  activityStatus: string | null;
+  activityStatusLabel: string | null;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
   isEarlyRunner: boolean;
   isFollowing: boolean;
   earlyRunnerReasons?: string[];
@@ -295,6 +303,14 @@ type TokenLiveData = {
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
   highConvictionScore: number | null;
+  marketHealthScore: number | null;
+  setupQualityScore: number | null;
+  opportunityScore: number | null;
+  dataReliabilityScore: number | null;
+  activityStatus: string | null;
+  activityStatusLabel: string | null;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
   sentiment: {
     score: number;
     reactions: ReactionCounts;
@@ -1267,6 +1283,28 @@ function mergeTokenPageDataWithCached(
     highConvictionScore: canReuseCachedIntelligence
       ? pickMergedMetric(live.highConvictionScore, cached.highConvictionScore)
       : live.highConvictionScore ?? null,
+    marketHealthScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.marketHealthScore, cached.marketHealthScore)
+      : live.marketHealthScore ?? null,
+    setupQualityScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.setupQualityScore, cached.setupQualityScore)
+      : live.setupQualityScore ?? null,
+    opportunityScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.opportunityScore, cached.opportunityScore)
+      : live.opportunityScore ?? null,
+    dataReliabilityScore: canReuseCachedIntelligence
+      ? pickMergedMetric(live.dataReliabilityScore, cached.dataReliabilityScore)
+      : live.dataReliabilityScore ?? null,
+    activityStatus: canReuseCachedIntelligence
+      ? live.activityStatus ?? cached.activityStatus ?? null
+      : live.activityStatus ?? null,
+    activityStatusLabel: canReuseCachedIntelligence
+      ? live.activityStatusLabel ?? cached.activityStatusLabel ?? null
+      : live.activityStatusLabel ?? null,
+    isTradable: canReuseCachedIntelligence ? live.isTradable || cached.isTradable : live.isTradable,
+    bullishSignalsSuppressed: canReuseCachedIntelligence
+      ? live.bullishSignalsSuppressed || cached.bullishSignalsSuppressed
+      : live.bullishSignalsSuppressed,
     bundleRiskLabel: shouldKeepCachedBundleState
       ? cached.bundleRiskLabel ?? live.bundleRiskLabel
       : canReuseCachedIntelligence
@@ -1331,6 +1369,10 @@ function getTokenIntelligenceRichnessFromPost(post: Post): number {
     Number(typeof post.hotAlphaScore === "number" && Number.isFinite(post.hotAlphaScore)) +
     Number(typeof post.earlyRunnerScore === "number" && Number.isFinite(post.earlyRunnerScore)) +
     Number(typeof post.highConvictionScore === "number" && Number.isFinite(post.highConvictionScore)) +
+    Number(typeof post.marketHealthScore === "number" && Number.isFinite(post.marketHealthScore)) +
+    Number(typeof post.setupQualityScore === "number" && Number.isFinite(post.setupQualityScore)) +
+    Number(typeof post.opportunityScore === "number" && Number.isFinite(post.opportunityScore)) +
+    Number(typeof post.dataReliabilityScore === "number" && Number.isFinite(post.dataReliabilityScore)) +
     Number(typeof post.sentimentScore === "number" && Number.isFinite(post.sentimentScore)) +
     Number(typeof post.tokenRiskScore === "number" && Number.isFinite(post.tokenRiskScore)) +
     Number(typeof post.liquidity === "number" && Number.isFinite(post.liquidity) && post.liquidity > 0) +
@@ -1549,6 +1591,14 @@ function mergeTokenPageDataWithCachedPosts(
     hotAlphaScore: pickMergedMetric(current.hotAlphaScore, bestPost.hotAlphaScore, preferPostIntelligence),
     earlyRunnerScore: pickMergedMetric(current.earlyRunnerScore, bestPost.earlyRunnerScore, preferPostIntelligence),
     highConvictionScore: pickMergedMetric(current.highConvictionScore, bestPost.highConvictionScore, preferPostIntelligence),
+    marketHealthScore: pickMergedMetric(current.marketHealthScore, bestPost.marketHealthScore, preferPostIntelligence),
+    setupQualityScore: pickMergedMetric(current.setupQualityScore, bestPost.setupQualityScore, preferPostIntelligence),
+    opportunityScore: pickMergedMetric(current.opportunityScore, bestPost.opportunityScore, preferPostIntelligence),
+    dataReliabilityScore: pickMergedMetric(current.dataReliabilityScore, bestPost.dataReliabilityScore, preferPostIntelligence),
+    activityStatus: preferPostIntelligence ? bestPost.activityStatus ?? current.activityStatus ?? null : current.activityStatus ?? bestPost.activityStatus ?? null,
+    activityStatusLabel: preferPostIntelligence ? bestPost.activityStatusLabel ?? current.activityStatusLabel ?? null : current.activityStatusLabel ?? bestPost.activityStatusLabel ?? null,
+    isTradable: preferPostIntelligence ? bestPost.isTradable === true : current.isTradable,
+    bullishSignalsSuppressed: preferPostIntelligence ? bestPost.bullishSignalsSuppressed === true : current.bullishSignalsSuppressed,
     lastIntelligenceAt: nextLastIntelligenceAt,
     bundleClusters: nextBundleClusters,
     risk: {
@@ -1666,6 +1716,24 @@ function mergeTokenPageDataWithLiveSnapshot(
       current.highConvictionScore,
       preferCurrentIntelligence
     ),
+    marketHealthScore: pickMergedMetric(live.marketHealthScore, current.marketHealthScore, preferCurrentIntelligence),
+    setupQualityScore: pickMergedMetric(live.setupQualityScore, current.setupQualityScore, preferCurrentIntelligence),
+    opportunityScore: pickMergedMetric(live.opportunityScore, current.opportunityScore, preferCurrentIntelligence),
+    dataReliabilityScore: pickMergedMetric(
+      live.dataReliabilityScore,
+      current.dataReliabilityScore,
+      preferCurrentIntelligence
+    ),
+    activityStatus: preferCurrentIntelligence
+      ? current.activityStatus ?? live.activityStatus ?? null
+      : live.activityStatus ?? current.activityStatus ?? null,
+    activityStatusLabel: preferCurrentIntelligence
+      ? current.activityStatusLabel ?? live.activityStatusLabel ?? null
+      : live.activityStatusLabel ?? current.activityStatusLabel ?? null,
+    isTradable: preferCurrentIntelligence ? current.isTradable : live.isTradable,
+    bullishSignalsSuppressed: preferCurrentIntelligence
+      ? current.bullishSignalsSuppressed
+      : live.bullishSignalsSuppressed,
     sentiment,
     topHolders,
     devWallet,
@@ -1835,6 +1903,22 @@ function scoreTone(value: number | null | undefined): string {
   if (score >= 75) return "text-gain";
   if (score >= 55) return "text-foreground";
   return "text-muted-foreground";
+}
+
+function activityTone(label: string | null | undefined): string {
+  switch ((label ?? "").toLowerCase()) {
+    case "active":
+      return "border-gain/30 bg-gain/10 text-gain";
+    case "warming":
+      return "border-amber-400/35 bg-amber-400/10 text-amber-700 dark:text-amber-300";
+    case "inactive":
+      return "border-border/70 bg-secondary text-muted-foreground";
+    case "dormant":
+    case "untradable":
+      return "border-loss/30 bg-loss/10 text-loss";
+    default:
+      return "border-border/70 bg-secondary text-muted-foreground";
+  }
 }
 
 function riskTone(label: string | null | undefined): string {
@@ -2576,12 +2660,30 @@ export default function TokenPage() {
 
             {/* ── SECTION 2: SCORE RINGS ── */}
             <motion.section variants={sectionVariants}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">AI state</div>
+                  <p className="text-xs text-muted-foreground">
+                    Market Health checks whether the token is alive now, Setup Quality measures structure, Opportunity Now combines freshness and live activity, and Confidence reflects signal reliability.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn("rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]", activityTone(token.activityStatusLabel))}>
+                    {token.activityStatusLabel ?? "Monitoring"}
+                  </span>
+                  {token.bullishSignalsSuppressed ? (
+                    <span className="rounded-full border border-loss/30 bg-loss/10 px-3 py-1 text-[11px] font-semibold text-loss">
+                      Bullish signals suppressed
+                    </span>
+                  ) : null}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  { label: "Confidence", value: token.confidenceScore, icon: <Target className="h-3.5 w-3.5" />, desc: "Signal quality" },
-                  { label: "Hot Alpha", value: token.hotAlphaScore, icon: <Flame className="h-3.5 w-3.5" />, desc: "Momentum score" },
-                  { label: "Early Runner", value: token.earlyRunnerScore, icon: <Zap className="h-3.5 w-3.5" />, desc: "Entry timing" },
-                  { label: "High Conviction", value: token.highConvictionScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Conviction level" },
+                  { label: "Market Health", value: token.marketHealthScore, icon: <Activity className="h-3.5 w-3.5" />, desc: "Liquidity, volume, trades" },
+                  { label: "Setup Quality", value: token.setupQualityScore, icon: <ShieldCheck className="h-3.5 w-3.5" />, desc: "Structure and holder quality" },
+                  { label: "Opportunity Now", value: token.opportunityScore, icon: <Flame className="h-3.5 w-3.5" />, desc: "Current setup after decay" },
+                  { label: "Confidence", value: token.confidenceScore, icon: <Target className="h-3.5 w-3.5" />, desc: "Signal reliability" },
                 ].map((s) => {
                   const raw = typeof s.value === "number" && Number.isFinite(s.value) ? s.value : null;
                   const pct = raw !== null ? Math.max(0, Math.min(raw, 100)) : null;
@@ -2604,6 +2706,25 @@ export default function TokenPage() {
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {token.bullishSignalsSuppressed ? (
+                  <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">
+                    Hot Alpha / Early Runner / High Conviction stay capped until the token is active and tradable again.
+                  </span>
+                ) : (
+                  <>
+                    {typeof token.hotAlphaScore === "number" && token.hotAlphaScore >= 55 ? (
+                      <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Hot Alpha {token.hotAlphaScore.toFixed(0)}</span>
+                    ) : null}
+                    {typeof token.earlyRunnerScore === "number" && token.earlyRunnerScore >= 55 ? (
+                      <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">Early Runner {token.earlyRunnerScore.toFixed(0)}</span>
+                    ) : null}
+                    {typeof token.highConvictionScore === "number" && token.highConvictionScore >= 55 ? (
+                      <span className="rounded-full border border-border/60 bg-secondary px-3 py-1">High Conviction {token.highConvictionScore.toFixed(0)}</span>
+                    ) : null}
+                  </>
+                )}
               </div>
             </motion.section>
 

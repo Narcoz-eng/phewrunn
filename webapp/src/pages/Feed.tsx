@@ -414,6 +414,14 @@ function mergePostWithCachedRealtimeState(
   let nextHotAlphaScore = post.hotAlphaScore;
   let nextEarlyRunnerScore = post.earlyRunnerScore;
   let nextHighConvictionScore = post.highConvictionScore;
+  let nextMarketHealthScore = post.marketHealthScore;
+  let nextSetupQualityScore = post.setupQualityScore;
+  let nextOpportunityScore = post.opportunityScore;
+  let nextDataReliabilityScore = post.dataReliabilityScore;
+  let nextActivityStatus = post.activityStatus;
+  let nextActivityStatusLabel = post.activityStatusLabel;
+  let nextIsTradable = post.isTradable;
+  let nextBullishSignalsSuppressed = post.bullishSignalsSuppressed;
   let nextTimingTier = post.timingTier;
   let nextFirstCallerRank = post.firstCallerRank;
   let nextRoiPeakPct = post.roiPeakPct;
@@ -545,6 +553,41 @@ function mergePostWithCachedRealtimeState(
       cachedPost.highConvictionScore !== post.highConvictionScore
     ) {
       nextHighConvictionScore = cachedPost.highConvictionScore;
+      didChange = true;
+    }
+    if (cachedPost.marketHealthScore !== null && cachedPost.marketHealthScore !== post.marketHealthScore) {
+      nextMarketHealthScore = cachedPost.marketHealthScore;
+      didChange = true;
+    }
+    if (cachedPost.setupQualityScore !== null && cachedPost.setupQualityScore !== post.setupQualityScore) {
+      nextSetupQualityScore = cachedPost.setupQualityScore;
+      didChange = true;
+    }
+    if (cachedPost.opportunityScore !== null && cachedPost.opportunityScore !== post.opportunityScore) {
+      nextOpportunityScore = cachedPost.opportunityScore;
+      didChange = true;
+    }
+    if (
+      cachedPost.dataReliabilityScore !== null &&
+      cachedPost.dataReliabilityScore !== post.dataReliabilityScore
+    ) {
+      nextDataReliabilityScore = cachedPost.dataReliabilityScore;
+      didChange = true;
+    }
+    if ((cachedPost.activityStatus ?? null) !== (post.activityStatus ?? null)) {
+      nextActivityStatus = cachedPost.activityStatus ?? null;
+      didChange = true;
+    }
+    if ((cachedPost.activityStatusLabel ?? null) !== (post.activityStatusLabel ?? null)) {
+      nextActivityStatusLabel = cachedPost.activityStatusLabel ?? null;
+      didChange = true;
+    }
+    if (cachedPost.isTradable !== post.isTradable) {
+      nextIsTradable = cachedPost.isTradable;
+      didChange = true;
+    }
+    if (cachedPost.bullishSignalsSuppressed !== post.bullishSignalsSuppressed) {
+      nextBullishSignalsSuppressed = cachedPost.bullishSignalsSuppressed;
       didChange = true;
     }
 
@@ -860,6 +903,36 @@ function mergePostWithCachedRealtimeState(
     didChange = true;
   }
 
+  if (post.marketHealthScore == null && cachedPost.marketHealthScore != null) {
+    nextMarketHealthScore = cachedPost.marketHealthScore;
+    didChange = true;
+  }
+
+  if (post.setupQualityScore == null && cachedPost.setupQualityScore != null) {
+    nextSetupQualityScore = cachedPost.setupQualityScore;
+    didChange = true;
+  }
+
+  if (post.opportunityScore == null && cachedPost.opportunityScore != null) {
+    nextOpportunityScore = cachedPost.opportunityScore;
+    didChange = true;
+  }
+
+  if (post.dataReliabilityScore == null && cachedPost.dataReliabilityScore != null) {
+    nextDataReliabilityScore = cachedPost.dataReliabilityScore;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.activityStatus) && !isMissingFeedValue(cachedPost.activityStatus)) {
+    nextActivityStatus = cachedPost.activityStatus;
+    didChange = true;
+  }
+
+  if (isMissingFeedValue(post.activityStatusLabel) && !isMissingFeedValue(cachedPost.activityStatusLabel)) {
+    nextActivityStatusLabel = cachedPost.activityStatusLabel;
+    didChange = true;
+  }
+
   if (isMissingFeedValue(post.bundleClusters) && !isMissingFeedValue(cachedPost.bundleClusters)) {
     nextBundleClusters = cachedPost.bundleClusters;
     didChange = true;
@@ -988,6 +1061,14 @@ function mergePostWithCachedRealtimeState(
     hotAlphaScore: nextHotAlphaScore,
     earlyRunnerScore: nextEarlyRunnerScore,
     highConvictionScore: nextHighConvictionScore,
+    marketHealthScore: nextMarketHealthScore,
+    setupQualityScore: nextSetupQualityScore,
+    opportunityScore: nextOpportunityScore,
+    dataReliabilityScore: nextDataReliabilityScore,
+    activityStatus: nextActivityStatus,
+    activityStatusLabel: nextActivityStatusLabel,
+    isTradable: nextIsTradable,
+    bullishSignalsSuppressed: nextBullishSignalsSuppressed,
     timingTier: nextTimingTier,
     firstCallerRank: nextFirstCallerRank,
     roiPeakPct: nextRoiPeakPct,

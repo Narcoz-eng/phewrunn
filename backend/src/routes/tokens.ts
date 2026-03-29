@@ -15,6 +15,7 @@ import {
   invalidateViewerSocialCaches,
 } from "../services/intelligence/engine.js";
 import {
+  computeStateAwareIntelligenceScores,
   computeConfidenceScore,
   computeEarlyRunnerScore,
   computeHighConvictionScore,
@@ -61,6 +62,14 @@ type TokenLivePayload = {
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
   highConvictionScore: number | null;
+  marketHealthScore: number | null;
+  setupQualityScore: number | null;
+  opportunityScore: number | null;
+  dataReliabilityScore: number | null;
+  activityStatus: string | null;
+  activityStatusLabel: string | null;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
   sentiment: TokenRoutePayload["sentiment"];
   lastIntelligenceAt: string | null;
   priceUsd: number | null;
@@ -956,7 +965,7 @@ tokensRouter.get(
       const avgCurrentRoiPct = averageFiniteMetric(
         recentSignalCalls.map((call) => call.roiCurrentPct ?? deriveRoiPct(call.entryMcap, call.currentMcap))
       );
-      const confidenceScore = roundMetric(
+      const baseConfidenceScore = roundMetric(
         computeConfidenceScore({
           traderWinRate30d,
           traderAvgRoi30d,
@@ -980,9 +989,9 @@ tokensRouter.get(
           sentimentScore,
         })
       );
-      const hotAlphaScore = roundMetric(
+      const baseHotAlphaScore = roundMetric(
         computeHotAlphaScore({
-          confidenceScore,
+          confidenceScore: baseConfidenceScore,
           weightedEngagementPerHour,
           earlyGainsPct: avgCurrentRoiPct,
           traderTrustScore,
@@ -998,7 +1007,7 @@ tokensRouter.get(
           tokenRiskScore,
         })
       );
-      const earlyRunnerScore = roundMetric(
+      const baseEarlyRunnerScore = roundMetric(
         computeEarlyRunnerScore({
           distinctTrustedTradersLast6h,
           liquidityGrowth1hPct,
@@ -1015,9 +1024,9 @@ tokensRouter.get(
           tokenRiskScore,
         })
       );
-      const highConvictionScore = roundMetric(
+      const baseHighConvictionScore = roundMetric(
         computeHighConvictionScore({
-          confidenceScore,
+          confidenceScore: baseConfidenceScore,
           traderTrustScore,
           entryQualityScore,
           liquidityUsd: liquidity,
@@ -1032,6 +1041,49 @@ tokensRouter.get(
           tokenRiskScore,
         })
       );
+      const scoreState = computeStateAwareIntelligenceScores({
+        baseConfidenceScore,
+        baseHotAlphaScore,
+        baseEarlyRunnerScore,
+        baseHighConvictionScore,
+        liquidityUsd: liquidity,
+        volume24hUsd: volume24h,
+        holderCount,
+        largestHolderPct,
+        top10HolderPct,
+        deployerSupplyPct,
+        bundledWalletCount,
+        estimatedBundledSupplyPct,
+        tokenRiskScore,
+        traderTrustScore,
+        entryQualityScore,
+        trustedTraderCount,
+        sentimentScore,
+        marketBreadthScore: 50,
+        liquidityGrowthPct: liquidityGrowth1hPct,
+        volumeGrowthPct: volumeGrowth24hPct,
+        holderGrowthPct: holderGrowth1hPct,
+        mcapGrowthPct,
+        momentumPct: compositeMomentumPct,
+        tradeCount24h:
+          typeof marketSnapshot.buys24h === "number" || typeof marketSnapshot.sells24h === "number"
+            ? finiteMetric(marketSnapshot.buys24h) + finiteMetric(marketSnapshot.sells24h)
+            : null,
+        hasTradablePair: Boolean(marketSnapshot.pairAddress ?? token?.pairAddress ?? marketSnapshot.dexscreenerUrl ?? token?.dexscreenerUrl),
+        hasResolvedHolderDistribution:
+          (distributionSnapshot?.topHolders?.length ?? 0) > 0 ||
+          largestHolderPct !== null ||
+          top10HolderPct !== null,
+        recentCallCount: recentSignalCalls.length,
+        signalAgeHours:
+          recentSignalCalls.length > 0
+            ? Math.max(0.2, (Date.now() - recentSignalCalls[0]!.createdAt.getTime()) / (60 * 60 * 1000))
+            : null,
+      });
+      const confidenceScore = roundMetric(scoreState.confidenceScore);
+      const hotAlphaScore = roundMetric(scoreState.hotAlphaScore);
+      const earlyRunnerScore = roundMetric(scoreState.earlyRunnerScore);
+      const highConvictionScore = roundMetric(scoreState.highConvictionScore);
       const liveLastIntelligenceTimestamp = Math.max(
         toTimestampMs(token?.lastIntelligenceAt),
         ...recentSignalCalls.map((call) => toTimestampMs(call.lastIntelligenceAt))
@@ -1064,6 +1116,14 @@ tokensRouter.get(
         hotAlphaScore,
         earlyRunnerScore,
         highConvictionScore,
+        marketHealthScore: scoreState.marketHealthScore,
+        setupQualityScore: scoreState.setupQualityScore,
+        opportunityScore: scoreState.opportunityScore,
+        dataReliabilityScore: scoreState.dataReliabilityScore,
+        activityStatus: scoreState.activityStatus,
+        activityStatusLabel: scoreState.activityStatusLabel,
+        isTradable: scoreState.isTradable,
+        bullishSignalsSuppressed: scoreState.bullishSignalsSuppressed,
         sentiment: {
           score: sentimentScore ?? 0,
           reactions: aggregatedReactions,

@@ -1933,12 +1933,21 @@ export function PostCard({
   const hotAlphaScore = post.hotAlphaScore ?? null;
   const earlyRunnerScore = post.earlyRunnerScore ?? null;
   const highConvictionScore = post.highConvictionScore ?? null;
+  const marketHealthScore = post.marketHealthScore ?? null;
+  const setupQualityScore = post.setupQualityScore ?? null;
+  const opportunityScore = post.opportunityScore ?? null;
+  const activityStatusLabel = post.activityStatusLabel ?? null;
+  const bullishSignalsSuppressed = post.bullishSignalsSuppressed === true;
   const tokenPageHref = post.contractAddress ? `/token/${post.contractAddress}` : null;
   const hasTokenIntelligence =
     confidenceScore !== null ||
     hotAlphaScore !== null ||
     earlyRunnerScore !== null ||
     highConvictionScore !== null ||
+    marketHealthScore !== null ||
+    setupQualityScore !== null ||
+    opportunityScore !== null ||
+    activityStatusLabel != null ||
     post.bundleRiskLabel != null ||
     post.timingTier != null ||
     post.author.reputationTier != null ||
@@ -1959,6 +1968,10 @@ export function PostCard({
     typeof hotAlphaScore === "number" ||
     typeof earlyRunnerScore === "number" ||
     typeof highConvictionScore === "number" ||
+    typeof marketHealthScore === "number" ||
+    typeof setupQualityScore === "number" ||
+    typeof opportunityScore === "number" ||
+    activityStatusLabel != null ||
     !bundleScanPending ||
     post.timingTier != null ||
     post.liquidity != null ||
@@ -6236,14 +6249,33 @@ export function PostCard({
 
           {/* View Count */}
           <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
-            {hotAlphaScore !== null && hotAlphaScore >= 70 ? (
+            {activityStatusLabel ? (
+              <span className={cn(
+                "rounded-full border px-2.5 py-1",
+                activityStatusLabel === "Active"
+                  ? "border-gain/30 bg-gain/10 text-gain"
+                  : activityStatusLabel === "Warming"
+                    ? "border-amber-400/35 bg-amber-400/10 text-amber-700 dark:text-amber-300"
+                    : activityStatusLabel === "Dormant" || activityStatusLabel === "Untradable"
+                      ? "border-loss/30 bg-loss/10 text-loss"
+                      : "border-border/60 bg-secondary"
+              )}>
+                {activityStatusLabel}
+              </span>
+            ) : null}
+            {!bullishSignalsSuppressed && hotAlphaScore !== null && hotAlphaScore >= 70 ? (
               <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">Hot {hotAlphaScore.toFixed(0)}</span>
             ) : null}
-            {earlyRunnerScore !== null && earlyRunnerScore >= 70 ? (
+            {!bullishSignalsSuppressed && earlyRunnerScore !== null && earlyRunnerScore >= 70 ? (
               <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">Runner {earlyRunnerScore.toFixed(0)}</span>
             ) : null}
-            {highConvictionScore !== null && highConvictionScore >= 75 ? (
+            {!bullishSignalsSuppressed && highConvictionScore !== null && highConvictionScore >= 75 ? (
               <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">Conviction {highConvictionScore.toFixed(0)}</span>
+            ) : null}
+            {bullishSignalsSuppressed ? (
+              <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1">
+                Opportunity capped
+              </span>
             ) : null}
             {post.viewCount > 0 ? <span>{post.viewCount.toLocaleString()} views</span> : null}
           </div>

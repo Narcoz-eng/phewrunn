@@ -114,6 +114,14 @@ export interface Post {
   hotAlphaScore?: number | null;
   earlyRunnerScore?: number | null;
   highConvictionScore?: number | null;
+  marketHealthScore?: number | null;
+  setupQualityScore?: number | null;
+  opportunityScore?: number | null;
+  dataReliabilityScore?: number | null;
+  activityStatus?: string | null;
+  activityStatusLabel?: string | null;
+  isTradable?: boolean;
+  bullishSignalsSuppressed?: boolean;
   timingTier?: string | null;
   firstCallerRank?: number | null;
   roiPeakPct?: number | null;

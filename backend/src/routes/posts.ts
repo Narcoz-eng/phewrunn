@@ -163,6 +163,14 @@ type PostPriceResponsePayload = {
   hotAlphaScore: number | null;
   earlyRunnerScore: number | null;
   highConvictionScore: number | null;
+  marketHealthScore: number | null;
+  setupQualityScore: number | null;
+  opportunityScore: number | null;
+  dataReliabilityScore: number | null;
+  activityStatus: string | null;
+  activityStatusLabel: string | null;
+  isTradable: boolean;
+  bullishSignalsSuppressed: boolean;
   roiCurrentPct: number | null;
   timingTier: string | null;
   bundleRiskLabel: string | null;
@@ -716,6 +724,20 @@ function normalizePostPricePayload(value: unknown): PostPriceResponsePayload | n
     typeof candidate.earlyRunnerScore === "number" ? candidate.earlyRunnerScore : null;
   const highConvictionScore =
     typeof candidate.highConvictionScore === "number" ? candidate.highConvictionScore : null;
+  const marketHealthScore =
+    typeof candidate.marketHealthScore === "number" ? candidate.marketHealthScore : null;
+  const setupQualityScore =
+    typeof candidate.setupQualityScore === "number" ? candidate.setupQualityScore : null;
+  const opportunityScore =
+    typeof candidate.opportunityScore === "number" ? candidate.opportunityScore : null;
+  const dataReliabilityScore =
+    typeof candidate.dataReliabilityScore === "number" ? candidate.dataReliabilityScore : null;
+  const activityStatus =
+    typeof candidate.activityStatus === "string" ? candidate.activityStatus : null;
+  const activityStatusLabel =
+    typeof candidate.activityStatusLabel === "string" ? candidate.activityStatusLabel : null;
+  const isTradable = candidate.isTradable === true;
+  const bullishSignalsSuppressed = candidate.bullishSignalsSuppressed === true;
   const roiCurrentPct =
     typeof candidate.roiCurrentPct === "number" ? candidate.roiCurrentPct : null;
   const timingTier =
@@ -755,6 +777,14 @@ function normalizePostPricePayload(value: unknown): PostPriceResponsePayload | n
     hotAlphaScore,
     earlyRunnerScore,
     highConvictionScore,
+    marketHealthScore,
+    setupQualityScore,
+    opportunityScore,
+    dataReliabilityScore,
+    activityStatus,
+    activityStatusLabel,
+    isTradable,
+    bullishSignalsSuppressed,
     roiCurrentPct,
     timingTier,
     bundleRiskLabel,
@@ -1236,6 +1266,14 @@ function buildPostPricePayloadFromRecord(post: PriceRoutePostRecord): PostPriceR
     hotAlphaScore: post.hotAlphaScore ?? null,
     earlyRunnerScore: post.earlyRunnerScore ?? null,
     highConvictionScore: post.highConvictionScore ?? null,
+    marketHealthScore: post.marketHealthScore ?? null,
+    setupQualityScore: post.setupQualityScore ?? null,
+    opportunityScore: post.opportunityScore ?? null,
+    dataReliabilityScore: post.dataReliabilityScore ?? null,
+    activityStatus: post.activityStatus ?? null,
+    activityStatusLabel: post.activityStatusLabel ?? null,
+    isTradable: post.isTradable === true,
+    bullishSignalsSuppressed: post.bullishSignalsSuppressed === true,
     roiCurrentPct: post.roiCurrentPct ?? null,
     timingTier: post.timingTier ?? null,
     bundleRiskLabel: post.bundleRiskLabel ?? null,
@@ -1286,6 +1324,15 @@ function findCachedFeedPostPriceRecord(postId: string): PriceRoutePostRecord | n
     hotAlphaScore: toNullableNumber(candidate.hotAlphaScore),
     earlyRunnerScore: toNullableNumber(candidate.earlyRunnerScore),
     highConvictionScore: toNullableNumber(candidate.highConvictionScore),
+    marketHealthScore: toNullableNumber(candidate.marketHealthScore),
+    setupQualityScore: toNullableNumber(candidate.setupQualityScore),
+    opportunityScore: toNullableNumber(candidate.opportunityScore),
+    dataReliabilityScore: toNullableNumber(candidate.dataReliabilityScore),
+    activityStatus: typeof candidate.activityStatus === "string" ? candidate.activityStatus : null,
+    activityStatusLabel:
+      typeof candidate.activityStatusLabel === "string" ? candidate.activityStatusLabel : null,
+    isTradable: candidate.isTradable === true,
+    bullishSignalsSuppressed: candidate.bullishSignalsSuppressed === true,
     roiCurrentPct: toNullableNumber(candidate.roiCurrentPct),
     timingTier: typeof candidate.timingTier === "string" ? candidate.timingTier : null,
     bundleRiskLabel:
@@ -4397,6 +4444,14 @@ function mergeRealtimeIntelligenceIntoPostPricePayload(
     hotAlphaScore: snapshot.hotAlphaScore,
     earlyRunnerScore: snapshot.earlyRunnerScore,
     highConvictionScore: snapshot.highConvictionScore,
+    marketHealthScore: snapshot.marketHealthScore,
+    setupQualityScore: snapshot.setupQualityScore,
+    opportunityScore: snapshot.opportunityScore,
+    dataReliabilityScore: snapshot.dataReliabilityScore,
+    activityStatus: snapshot.activityStatus,
+    activityStatusLabel: snapshot.activityStatusLabel,
+    isTradable: snapshot.isTradable,
+    bullishSignalsSuppressed: snapshot.bullishSignalsSuppressed,
     roiCurrentPct: snapshot.roiCurrentPct,
     timingTier: snapshot.timingTier,
     bundleRiskLabel: snapshot.bundleRiskLabel,
@@ -6885,6 +6940,14 @@ type PriceRoutePostRecord = {
   hotAlphaScore?: number | null;
   earlyRunnerScore?: number | null;
   highConvictionScore?: number | null;
+  marketHealthScore?: number | null;
+  setupQualityScore?: number | null;
+  opportunityScore?: number | null;
+  dataReliabilityScore?: number | null;
+  activityStatus?: string | null;
+  activityStatusLabel?: string | null;
+  isTradable?: boolean;
+  bullishSignalsSuppressed?: boolean;
   roiCurrentPct?: number | null;
   timingTier?: string | null;
   bundleRiskLabel?: string | null;
