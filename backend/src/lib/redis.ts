@@ -392,6 +392,26 @@ export async function redisSetString(key: string, value: string, ttlMs?: number)
   return result !== null;
 }
 
+export type RedisSetIfNotExistsResult = "stored" | "exists" | "unavailable";
+
+export async function redisSetIfNotExists(
+  key: string,
+  value: string,
+  ttlMs: number
+): Promise<RedisSetIfNotExistsResult> {
+  const result = await redisCommand<unknown>(["SET", key, value, "PX", Math.floor(ttlMs), "NX"]);
+  if (typeof result === "string" && result.toUpperCase() === "OK") {
+    return "stored";
+  }
+
+  const existing = await redisGetString(key);
+  if (existing !== null) {
+    return "exists";
+  }
+
+  return "unavailable";
+}
+
 export async function redisDelete(key: string): Promise<boolean> {
   const result = await redisCommand<unknown>(["DEL", key]);
   return result !== null;

@@ -94,6 +94,22 @@ const envSchema = z.object({
   UPSTASH_REDIS_REST_TOKEN: z
     .preprocess(normalizeOptionalStringEnv, z.string().min(1, "UPSTASH_REDIS_REST_TOKEN cannot be empty").optional()),
 
+  // Optional: Upstash QStash (durable background job dispatch)
+  QSTASH_URL: z.preprocess(
+    (value) => normalizeOptionalStringEnv(value) ?? "https://qstash.upstash.io",
+    z.string().url("QSTASH_URL must be a valid URL")
+  ),
+  QSTASH_TOKEN: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "QSTASH_TOKEN cannot be empty").optional()),
+  QSTASH_CURRENT_SIGNING_KEY: z.preprocess(
+    normalizeOptionalStringEnv,
+    z.string().min(1, "QSTASH_CURRENT_SIGNING_KEY cannot be empty").optional()
+  ),
+  QSTASH_NEXT_SIGNING_KEY: z.preprocess(
+    normalizeOptionalStringEnv,
+    z.string().min(1, "QSTASH_NEXT_SIGNING_KEY cannot be empty").optional()
+  ),
+
   // Optional: Standard Redis URL (Redis Cloud / Redis Labs, shared rate limiting + cache)
   REDIS_URL: z
     .preprocess(normalizeOptionalStringEnv, z.string().url("REDIS_URL must be a valid URL").optional()),
@@ -153,6 +169,27 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
     if (!hasUpstashFastPath) {
       warnings.push(
         "Upstash Redis REST is not configured; auth/rate-limit hot paths will not have the fast shared cache backend recommended for serverless production"
+      );
+    }
+
+    const hasAnyQStashConfig = Boolean(
+      parsed.QSTASH_TOKEN ||
+      parsed.QSTASH_CURRENT_SIGNING_KEY ||
+      parsed.QSTASH_NEXT_SIGNING_KEY
+    );
+    const hasFullQStashConfig = Boolean(
+      parsed.QSTASH_TOKEN &&
+      parsed.QSTASH_CURRENT_SIGNING_KEY &&
+      parsed.QSTASH_NEXT_SIGNING_KEY
+    );
+    if (hasAnyQStashConfig && !hasFullQStashConfig) {
+      warnings.push(
+        "QStash queue delivery is only partially configured; set QSTASH_TOKEN, QSTASH_CURRENT_SIGNING_KEY, and QSTASH_NEXT_SIGNING_KEY together"
+      );
+    }
+    if (!hasFullQStashConfig) {
+      warnings.push(
+        "QStash queue delivery is not configured; PR-004 queue plumbing is present but background-job cutover remains blocked until QStash credentials are supplied"
       );
     }
 
@@ -234,6 +271,10 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     AUTH_SESSION_REVOCATION_DB_ENABLED: parsed.AUTH_SESSION_REVOCATION_DB_ENABLED,
     UPSTASH_REDIS_REST_URL: parsed.UPSTASH_REDIS_REST_URL ? "configured" : "not set",
     UPSTASH_REDIS_REST_TOKEN: parsed.UPSTASH_REDIS_REST_TOKEN ? "configured" : "not set",
+    QSTASH_URL: parsed.QSTASH_URL,
+    QSTASH_TOKEN: parsed.QSTASH_TOKEN ? "configured" : "not set",
+    QSTASH_CURRENT_SIGNING_KEY: parsed.QSTASH_CURRENT_SIGNING_KEY ? "configured" : "not set",
+    QSTASH_NEXT_SIGNING_KEY: parsed.QSTASH_NEXT_SIGNING_KEY ? "configured" : "not set",
     REDIS_URL: parsed.REDIS_URL ? "configured" : "not set",
     SENTRY_DSN: parsed.SENTRY_DSN ? "configured" : "not set",
     SENTRY_ENVIRONMENT: parsed.SENTRY_ENVIRONMENT ?? parsed.NODE_ENV,

@@ -30,6 +30,7 @@ import { pushRouter } from "./routes/push.js";
 import { leaderboardsRouter } from "./routes/leaderboards.js";
 import { invitesRouter } from "./routes/invites.js";
 import { adminInvitesRouter, getGlobalSettingBool } from "./routes/admin-invites.js";
+import { internalJobsRouter } from "./routes/internal-jobs.js";
 import {
   clearCachedMeResponse,
   type MeResponseUser,
@@ -37,6 +38,7 @@ import {
   writeCachedMeResponse,
 } from "./lib/me-response-cache.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
+import { getInternalJobQueueHealthSummary } from "./lib/job-queue.js";
 import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
 
 // Security middleware imports
@@ -259,7 +261,12 @@ app.use("/api/*", async (c, next) => {
   // Explicitly exempt auth bootstrap and session teardown endpoints.
   // privy-sync/wallet: may be called before a cookie session exists.
   // logout: must always succeed so users can sign out reliably.
-  if (c.req.path === "/api/auth/privy-sync" || c.req.path === "/api/auth/wallet" || c.req.path === "/api/auth/logout") {
+  if (
+    c.req.path === "/api/auth/privy-sync" ||
+    c.req.path === "/api/auth/wallet" ||
+    c.req.path === "/api/auth/logout" ||
+    c.req.path.startsWith("/api/internal/jobs")
+  ) {
     return next();
   }
   return csrfProtection()(c, next);
@@ -278,7 +285,8 @@ app.use("/api/*", async (c, next) => {
     c.req.path === "/api/notifications/unread-count" ||
     c.req.path === "/api/posts/prices" ||
     c.req.path === "/api/posts/jupiter/quote" ||
-    c.req.path === "/api/posts/chart/candles"
+    c.req.path === "/api/posts/chart/candles" ||
+    c.req.path.startsWith("/api/internal/jobs")
   ) {
     return next();
   }
@@ -312,6 +320,7 @@ app.use("/api/leaderboard/*", leaderboardRateLimit);
 app.use("/api/leaderboards/*", leaderboardRateLimit);
 app.use("/api/auth/privy-sync", bodySizeLimit(8 * 1024, "Privy sync payload is too large"));
 app.use("/api/auth/wallet", bodySizeLimit(16 * 1024, "Wallet auth payload is too large"));
+app.use("/api/internal/jobs/*", bodySizeLimit(128 * 1024, "Internal job payload is too large"));
 app.use("/api/posts/jupiter/quote", bodySizeLimit(12 * 1024, "Quote payload is too large"));
 app.use("/api/posts/jupiter/swap", bodySizeLimit(128 * 1024, "Swap payload is too large"));
 app.use("/api/posts/jupiter/fee-confirm", bodySizeLimit(8 * 1024, "Trade confirmation payload is too large"));
@@ -345,6 +354,7 @@ app.get("/health", (c) => {
         : databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://")
           ? "postgres"
           : "unknown";
+  const jobQueue = getInternalJobQueueHealthSummary();
 
   return prisma.$queryRawUnsafe("SELECT 1").then(() =>
     c.json({
@@ -353,6 +363,7 @@ app.get("/health", (c) => {
       environment: process.env.NODE_ENV || "development",
       database,
       dbConnected: true,
+      jobQueue,
       // Don't expose version in production for security
       ...(isProduction ? {} : { version: "1.0.0" }),
     })
@@ -365,6 +376,7 @@ app.get("/health", (c) => {
         environment: process.env.NODE_ENV || "development",
         database,
         dbConnected: false,
+        jobQueue,
       },
       503
     );
@@ -3783,6 +3795,7 @@ app.route("/api/announcements", announcementsRouter);
 app.route("/api/leaderboard", leaderboardRouter);
 app.route("/api/invites", invitesRouter);
 app.route("/api/admin", adminInvitesRouter);
+app.route("/api/internal/jobs", internalJobsRouter);
 
 // =====================================================
 // Static File Serving (Production Only)
