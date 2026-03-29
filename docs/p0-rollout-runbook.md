@@ -29,14 +29,15 @@ Scope: `PR-001` through `PR-006` are implemented. Remaining gates are sign-off, 
 ## Inputs Required Before Load Validation
 
 - Staging base URL in `BASE_URL`
-- A valid Privy ID token in `K6_PRIVY_ID_TOKEN` for `/api/auth/privy-sync`
+- A valid Privy ID token in `P0_PRIVY_ID_TOKEN` for `/api/auth/privy-sync`
 - Either:
-  - `K6_SESSION_COOKIES` with one or more full session-cookie values separated by `||`
-  - or `K6_INTERNAL_AUTH_SECRET` plus `K6_INTERNAL_AUTH_USER_IDS` if the target environment explicitly allows the non-production load-sim auth path
+  - `P0_SESSION_COOKIES` with one or more full session-cookie values separated by `||`
+  - or `P0_INTERNAL_AUTH_SECRET` plus `P0_INTERNAL_AUTH_USER_IDS` if the target environment explicitly allows the non-production load-sim auth path
 - Enough authenticated test accounts to stay below write and session limits during the mixed run
   - `POST /api/posts` limit: `10` posts per user per hour
   - `/api/me` and `/api/notifications` should be spread across multiple sessions to avoid skewing into limiter-only behavior
-- A token address pool in `K6_TOKEN_ADDRESSES` if feed discovery is not enough for post-create traffic
+- A token address pool in `P0_TOKEN_ADDRESSES` if feed discovery is not enough for post-create traffic
+- Use the `P0_` prefix, not `K6_`. `k6` reserves `K6_*` for engine configuration and will wipe the scenario config if those names are exported.
 
 ## Checked-In Load Suite
 
@@ -62,16 +63,16 @@ Use this first. It is the P0 gate run.
 ```bash
 k6 run \
   -e BASE_URL="https://staging.example.com" \
-  -e K6_PRIVY_ID_TOKEN="$K6_PRIVY_ID_TOKEN" \
-  -e K6_SESSION_COOKIES="$K6_SESSION_COOKIES" \
-  -e K6_TOKEN_ADDRESSES="$K6_TOKEN_ADDRESSES" \
-  -e K6_DURATION="15m" \
-  -e K6_FEED_RATE="6" \
-  -e K6_ME_RATE="2" \
-  -e K6_NOTIFICATIONS_RATE="1" \
-  -e K6_LEADERBOARD_RATE="1" \
-  -e K6_AUTH_SYNC_RATE_PER_MIN="1" \
-  -e K6_POST_CREATE_RATE_PER_MIN="6" \
+  -e P0_PRIVY_ID_TOKEN="$P0_PRIVY_ID_TOKEN" \
+  -e P0_SESSION_COOKIES="$P0_SESSION_COOKIES" \
+  -e P0_TOKEN_ADDRESSES="$P0_TOKEN_ADDRESSES" \
+  -e P0_DURATION="15m" \
+  -e P0_FEED_RATE="6" \
+  -e P0_ME_RATE="2" \
+  -e P0_NOTIFICATIONS_RATE="1" \
+  -e P0_LEADERBOARD_RATE="1" \
+  -e P0_AUTH_SYNC_RATE_PER_MIN="1" \
+  -e P0_POST_CREATE_RATE_PER_MIN="6" \
   load-tests/k6/p0-gate.mjs
 ```
 
@@ -88,16 +89,16 @@ Run only after the mixed staging run passes.
 ```bash
 k6 run \
   -e BASE_URL="https://staging.example.com" \
-  -e K6_PRIVY_ID_TOKEN="$K6_PRIVY_ID_TOKEN" \
-  -e K6_SESSION_COOKIES="$K6_SESSION_COOKIES" \
-  -e K6_TOKEN_ADDRESSES="$K6_TOKEN_ADDRESSES" \
-  -e K6_DURATION="5m" \
-  -e K6_FEED_RATE="60" \
-  -e K6_ME_RATE="20" \
-  -e K6_NOTIFICATIONS_RATE="10" \
-  -e K6_LEADERBOARD_RATE="10" \
-  -e K6_AUTH_SYNC_RATE_PER_MIN="10" \
-  -e K6_POST_CREATE_RATE_PER_MIN="60" \
+  -e P0_PRIVY_ID_TOKEN="$P0_PRIVY_ID_TOKEN" \
+  -e P0_SESSION_COOKIES="$P0_SESSION_COOKIES" \
+  -e P0_TOKEN_ADDRESSES="$P0_TOKEN_ADDRESSES" \
+  -e P0_DURATION="5m" \
+  -e P0_FEED_RATE="60" \
+  -e P0_ME_RATE="20" \
+  -e P0_NOTIFICATIONS_RATE="10" \
+  -e P0_LEADERBOARD_RATE="10" \
+  -e P0_AUTH_SYNC_RATE_PER_MIN="10" \
+  -e P0_POST_CREATE_RATE_PER_MIN="60" \
   load-tests/k6/p0-gate.mjs
 ```
 
@@ -113,15 +114,15 @@ This confirms shared rate limiting under concentrated authenticated spam.
 ```bash
 k6 run \
   -e BASE_URL="https://staging.example.com" \
-  -e K6_SESSION_COOKIES="$K6_SESSION_COOKIES" \
-  -e K6_ABUSE_DURATION="10m" \
-  -e K6_FEED_RATE="0" \
-  -e K6_ME_RATE="0" \
-  -e K6_NOTIFICATIONS_RATE="0" \
-  -e K6_LEADERBOARD_RATE="0" \
-  -e K6_AUTH_SYNC_RATE_PER_MIN="0" \
-  -e K6_POST_CREATE_RATE_PER_MIN="0" \
-  -e K6_ABUSE_ME_RATE="30" \
+  -e P0_SESSION_COOKIES="$P0_SESSION_COOKIES" \
+  -e P0_ABUSE_DURATION="10m" \
+  -e P0_FEED_RATE="0" \
+  -e P0_ME_RATE="0" \
+  -e P0_NOTIFICATIONS_RATE="0" \
+  -e P0_LEADERBOARD_RATE="0" \
+  -e P0_AUTH_SYNC_RATE_PER_MIN="0" \
+  -e P0_POST_CREATE_RATE_PER_MIN="0" \
+  -e P0_ABUSE_ME_RATE="30" \
   load-tests/k6/p0-gate.mjs
 ```
 

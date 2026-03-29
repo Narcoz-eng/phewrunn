@@ -41,15 +41,15 @@ function makeScenario(execName, rate, timeUnit, duration) {
   };
 }
 
-const FEED_RATE = readInt("K6_FEED_RATE", 6);
-const ME_RATE = readInt("K6_ME_RATE", 2);
-const NOTIFICATIONS_RATE = readInt("K6_NOTIFICATIONS_RATE", 1);
-const LEADERBOARD_RATE = readInt("K6_LEADERBOARD_RATE", 1);
-const AUTH_SYNC_RATE_PER_MIN = readInt("K6_AUTH_SYNC_RATE_PER_MIN", 1);
-const POST_CREATE_RATE_PER_MIN = readInt("K6_POST_CREATE_RATE_PER_MIN", 6);
-const ABUSE_ME_RATE = readInt("K6_ABUSE_ME_RATE", 0);
-const DURATION = (__ENV.K6_DURATION || "15m").trim() || "15m";
-const ABUSE_DURATION = (__ENV.K6_ABUSE_DURATION || DURATION).trim() || DURATION;
+const FEED_RATE = readInt("P0_FEED_RATE", 6);
+const ME_RATE = readInt("P0_ME_RATE", 2);
+const NOTIFICATIONS_RATE = readInt("P0_NOTIFICATIONS_RATE", 1);
+const LEADERBOARD_RATE = readInt("P0_LEADERBOARD_RATE", 1);
+const AUTH_SYNC_RATE_PER_MIN = readInt("P0_AUTH_SYNC_RATE_PER_MIN", 1);
+const POST_CREATE_RATE_PER_MIN = readInt("P0_POST_CREATE_RATE_PER_MIN", 6);
+const ABUSE_ME_RATE = readInt("P0_ABUSE_ME_RATE", 0);
+const DURATION = (__ENV.P0_DURATION || "15m").trim() || "15m";
+const ABUSE_DURATION = (__ENV.P0_ABUSE_DURATION || DURATION).trim() || DURATION;
 
 const scenarios = {};
 
@@ -146,7 +146,7 @@ function normalizeCookieHeader(cookieHeader) {
 }
 
 function buildAuthPool() {
-  const cookiePool = splitList(__ENV.K6_SESSION_COOKIES, "||").map((cookie) => ({
+  const cookiePool = splitList(__ENV.P0_SESSION_COOKIES, "||").map((cookie) => ({
     mode: "cookie",
     cookie: normalizeCookieHeader(cookie),
   }));
@@ -155,8 +155,8 @@ function buildAuthPool() {
     return cookiePool;
   }
 
-  const secret = (__ENV.K6_INTERNAL_AUTH_SECRET || "").trim();
-  const userIds = splitList(__ENV.K6_INTERNAL_AUTH_USER_IDS, ",");
+  const secret = (__ENV.P0_INTERNAL_AUTH_SECRET || "").trim();
+  const userIds = splitList(__ENV.P0_INTERNAL_AUTH_USER_IDS, ",");
   if (!secret || userIds.length === 0) {
     return [];
   }
@@ -269,16 +269,16 @@ export function setup() {
 
   if (needsAuthPool && authPool.length === 0) {
     throw new Error(
-      "Authenticated scenarios require K6_SESSION_COOKIES or K6_INTERNAL_AUTH_SECRET + K6_INTERNAL_AUTH_USER_IDS"
+      "Authenticated scenarios require P0_SESSION_COOKIES or P0_INTERNAL_AUTH_SECRET + P0_INTERNAL_AUTH_USER_IDS"
     );
   }
 
-  if (AUTH_SYNC_RATE_PER_MIN > 0 && !(__ENV.K6_PRIVY_ID_TOKEN || "").trim()) {
-    throw new Error("K6_PRIVY_ID_TOKEN is required when K6_AUTH_SYNC_RATE_PER_MIN is enabled");
+  if (AUTH_SYNC_RATE_PER_MIN > 0 && !(__ENV.P0_PRIVY_ID_TOKEN || "").trim()) {
+    throw new Error("P0_PRIVY_ID_TOKEN is required when P0_AUTH_SYNC_RATE_PER_MIN is enabled");
   }
 
   const seedState = {
-    tokenAddresses: unique(splitList(__ENV.K6_TOKEN_ADDRESSES, ",")),
+    tokenAddresses: unique(splitList(__ENV.P0_TOKEN_ADDRESSES, ",")),
     postIds: [],
   };
 
@@ -296,7 +296,7 @@ export function setup() {
   seedState.postIds = unique(seedState.postIds);
 
   if (POST_CREATE_RATE_PER_MIN > 0 && seedState.tokenAddresses.length === 0) {
-    throw new Error("POST /api/posts load scenario requires K6_TOKEN_ADDRESSES or discoverable feed token addresses");
+    throw new Error("POST /api/posts load scenario requires P0_TOKEN_ADDRESSES or discoverable feed token addresses");
   }
 
   return {
@@ -309,9 +309,9 @@ export function setup() {
 
 export function authPrivySync(data) {
   const body = JSON.stringify({
-    privyIdToken: (__ENV.K6_PRIVY_ID_TOKEN || "").trim(),
-    ...( (__ENV.K6_PRIVY_NAME || "").trim() ? { name: (__ENV.K6_PRIVY_NAME || "").trim() } : {}),
-    ...( (__ENV.K6_INVITE_CODE || "").trim() ? { code: (__ENV.K6_INVITE_CODE || "").trim() } : {}),
+    privyIdToken: (__ENV.P0_PRIVY_ID_TOKEN || "").trim(),
+    ...( (__ENV.P0_PRIVY_NAME || "").trim() ? { name: (__ENV.P0_PRIVY_NAME || "").trim() } : {}),
+    ...( (__ENV.P0_INVITE_CODE || "").trim() ? { code: (__ENV.P0_INVITE_CODE || "").trim() } : {}),
   });
 
   const response = http.post(`${data.baseUrl}/api/auth/privy-sync`, body, {
