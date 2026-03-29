@@ -4,6 +4,8 @@ export type LiveTradeSample = {
   volume24hUsd?: number | null;
   tradeCount24h?: number | null;
   tradeVolumeUsd?: number | null;
+  source?: "trade" | "price" | "fallback";
+  receivedAtMs?: number | null;
 };
 
 export type StreamingChartCandle = {
@@ -21,6 +23,64 @@ function isFiniteNumber(value: number | null | undefined): value is number {
 
 function roundCents(value: number): number {
   return Math.round(value * 100_000_000) / 100_000_000;
+}
+
+function normalizeSource(
+  value: LiveTradeSample["source"]
+): "trade" | "price" | "fallback" {
+  if (value === "trade" || value === "price") {
+    return value;
+  }
+  return "fallback";
+}
+
+function mergeSampleAtMatchingTimestamp(
+  previous: LiveTradeSample,
+  next: LiveTradeSample
+): LiveTradeSample {
+  const previousPriority = previous.source === "trade" ? 3 : previous.source === "price" ? 2 : 1;
+  const nextPriority = next.source === "trade" ? 3 : next.source === "price" ? 2 : 1;
+  const dominant = nextPriority >= previousPriority ? next : previous;
+
+  return {
+    timestamp: next.timestamp,
+    priceUsd: dominant.priceUsd,
+    volume24hUsd: next.volume24hUsd ?? previous.volume24hUsd ?? null,
+    tradeCount24h: next.tradeCount24h ?? previous.tradeCount24h ?? null,
+    tradeVolumeUsd: next.tradeVolumeUsd ?? previous.tradeVolumeUsd ?? null,
+    source: dominant.source,
+    receivedAtMs: next.receivedAtMs ?? previous.receivedAtMs ?? null,
+  };
+}
+
+function relativeDelta(left: number, right: number): number {
+  const denominator = Math.max(Math.abs(right), 0.00000001);
+  return Math.abs(left - right) / denominator;
+}
+
+function isNoisyLiveSample(
+  sample: LiveTradeSample,
+  referencePrice: number,
+  isClosedBucket: boolean
+): boolean {
+  if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
+    return false;
+  }
+
+  const delta = relativeDelta(sample.priceUsd, referencePrice);
+  if (isClosedBucket) {
+    return delta > 0.2;
+  }
+
+  if (sample.source === "price") {
+    return delta > 0.25;
+  }
+
+  if (sample.source === "fallback") {
+    return delta > 0.35;
+  }
+
+  return delta > 0.75;
 }
 
 export function getChartBucketMs(
@@ -52,7 +112,14 @@ export function appendLiveTradeSample(
     volume24hUsd: isFiniteNumber(next.volume24hUsd) ? Math.max(0, next.volume24hUsd) : null,
     tradeCount24h: isFiniteNumber(next.tradeCount24h) ? Math.max(0, next.tradeCount24h) : null,
     tradeVolumeUsd: isFiniteNumber(next.tradeVolumeUsd) ? Math.max(0, next.tradeVolumeUsd) : null,
+    source: normalizeSource(next.source),
+    receivedAtMs:
+      isFiniteNumber(next.receivedAtMs) && next.receivedAtMs > 0 ? Math.round(next.receivedAtMs) : Date.now(),
   };
+
+  if (sanitized.timestamp > sanitized.receivedAtMs! + 15_000) {
+    return samples;
+  }
 
   const previous = samples[samples.length - 1];
   if (
@@ -61,14 +128,19 @@ export function appendLiveTradeSample(
     sanitized.priceUsd === previous.priceUsd &&
     (sanitized.volume24hUsd ?? null) === (previous.volume24hUsd ?? null) &&
     (sanitized.tradeCount24h ?? null) === (previous.tradeCount24h ?? null) &&
-    (sanitized.tradeVolumeUsd ?? null) === (previous.tradeVolumeUsd ?? null)
+    (sanitized.tradeVolumeUsd ?? null) === (previous.tradeVolumeUsd ?? null) &&
+    sanitized.source === previous.source
   ) {
+    return samples;
+  }
+
+  if (previous && sanitized.timestamp < previous.timestamp - 3_000) {
     return samples;
   }
 
   const merged =
     previous && sanitized.timestamp === previous.timestamp
-      ? [...samples.slice(0, -1), sanitized]
+      ? [...samples.slice(0, -1), mergeSampleAtMatchingTimestamp(previous, sanitized)]
       : [...samples, sanitized];
 
   return merged.length > maxSamples ? merged.slice(merged.length - maxSamples) : merged;
@@ -120,13 +192,34 @@ export function mergeLiveSamplesIntoCandles(
     return normalizedCandles;
   }
 
+  const latestBaseCandle = normalizedCandles[normalizedCandles.length - 1] ?? null;
+  const earliestMergeTimestamp =
+    latestBaseCandle !== null ? latestBaseCandle.timestamp - bucketMs : Number.NEGATIVE_INFINITY;
+  const latestMergeTimestamp =
+    latestBaseCandle !== null ? latestBaseCandle.timestamp + bucketMs : Number.POSITIVE_INFINITY;
+
   const candlesByTimestamp = new Map<number, StreamingChartCandle>();
   for (const candle of normalizedCandles) {
     candlesByTimestamp.set(candle.timestamp, { ...candle });
   }
 
   const orderedSamples = [...samples]
-    .filter((sample) => isFiniteNumber(sample.timestamp) && isFiniteNumber(sample.priceUsd) && sample.priceUsd > 0)
+    .filter((sample) => {
+      if (!isFiniteNumber(sample.timestamp) || !isFiniteNumber(sample.priceUsd) || sample.priceUsd <= 0) {
+        return false;
+      }
+      if (sample.timestamp < earliestMergeTimestamp || sample.timestamp > latestMergeTimestamp) {
+        return false;
+      }
+      if (
+        isFiniteNumber(sample.receivedAtMs) &&
+        sample.receivedAtMs > 0 &&
+        sample.receivedAtMs - sample.timestamp > bucketMs * 2
+      ) {
+        return false;
+      }
+      return true;
+    })
     .sort((left, right) => left.timestamp - right.timestamp);
 
   let previousSample: LiveTradeSample | null = null;
@@ -135,17 +228,31 @@ export function mergeLiveSamplesIntoCandles(
     const existing = candlesByTimestamp.get(bucketTimestamp);
     const previousCandle = normalizedCandles[normalizedCandles.length - 1] ?? null;
     const volumeDelta = computeVolumeDelta(sample, previousSample);
+    const bucketIsClosed = latestBaseCandle !== null && bucketTimestamp < latestBaseCandle.timestamp;
 
     if (existing) {
+      if (sample.source === "price" && bucketIsClosed) {
+        previousSample = sample;
+        continue;
+      }
+      const referencePrice = previousSample?.priceUsd ?? existing.close;
+      if (isNoisyLiveSample(sample, referencePrice, bucketIsClosed)) {
+        previousSample = sample;
+        continue;
+      }
       existing.high = roundCents(Math.max(existing.high, sample.priceUsd));
       existing.low = roundCents(Math.min(existing.low, sample.priceUsd));
       existing.close = roundCents(sample.priceUsd);
       existing.volume = roundCents(existing.volume + volumeDelta);
-    } else {
+    } else if (latestBaseCandle === null || bucketTimestamp === latestBaseCandle.timestamp + bucketMs) {
       const referenceClose =
         normalizedCandles[normalizedCandles.length - 1]?.close ??
         previousSample?.priceUsd ??
         sample.priceUsd;
+      if (isNoisyLiveSample(sample, referenceClose, false)) {
+        previousSample = sample;
+        continue;
+      }
       const created: StreamingChartCandle = {
         timestamp: bucketTimestamp,
         open: roundCents(referenceClose),
@@ -157,6 +264,9 @@ export function mergeLiveSamplesIntoCandles(
       normalizedCandles.push(created);
       normalizedCandles.sort((left, right) => left.timestamp - right.timestamp);
       candlesByTimestamp.set(bucketTimestamp, created);
+    } else {
+      previousSample = sample;
+      continue;
     }
 
     if (

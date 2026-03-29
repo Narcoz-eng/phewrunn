@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export type CandlestickChartPoint = {
@@ -58,7 +58,7 @@ function buildLinePath(
     .join(" ");
 }
 
-export function CandlestickChart({
+export const CandlestickChart = memo(function CandlestickChart({
   data,
   visibleStartIndex,
   visibleEndIndex,
@@ -781,4 +781,4 @@ export function CandlestickChart({
       ) : null}
     </div>
   );
-}
+});

@@ -13,6 +13,7 @@ type TradePanelLiveStatus = {
 export type TradePanelRecentTrade = {
   id: string;
   timestampMs: number;
+  receivedAtMs?: number | null;
   txHash: string | null;
   walletAddress: string | null;
   side: "buy" | "sell" | "unknown";
@@ -50,9 +51,8 @@ type TradePanelLiveHookParams = {
 
 const MAX_RECENT_TRADES = 32;
 const MAX_LIVE_SAMPLES = 720;
-const LIVE_FRESHNESS_WINDOW_MS = 10_000;
-const FALLBACK_TRADES_POLL_MS = 6_000;
-const FALLBACK_PRICE_POLL_MS = 2_500;
+const FALLBACK_TRADES_POLL_MS = 2_500;
+const FALLBACK_PRICE_POLL_MS = 1_500;
 
 function shortenTradeWalletAddress(address: string | null): string | null {
   if (!address) return null;
@@ -67,11 +67,32 @@ function mergeRecentTrades(
 ): TradePanelRecentTrade[] {
   if (incoming.length === 0) return current;
   const byId = new Map<string, TradePanelRecentTrade>();
+  const receivedAtMs = Date.now();
   for (const trade of [...incoming, ...current]) {
-    byId.set(trade.id, trade);
+    const normalized: TradePanelRecentTrade = {
+      ...trade,
+      receivedAtMs:
+        typeof trade.receivedAtMs === "number" && Number.isFinite(trade.receivedAtMs)
+          ? trade.receivedAtMs
+          : receivedAtMs,
+    };
+    byId.set(normalized.id, normalized);
   }
   return [...byId.values()]
-    .sort((left, right) => right.timestampMs - left.timestampMs)
+    .sort((left, right) => {
+      const leftArrival =
+        Date.now() - left.timestampMs <= 15_000
+          ? Math.max(left.timestampMs, left.receivedAtMs ?? left.timestampMs)
+          : left.timestampMs;
+      const rightArrival =
+        Date.now() - right.timestampMs <= 15_000
+          ? Math.max(right.timestampMs, right.receivedAtMs ?? right.timestampMs)
+          : right.timestampMs;
+      if (rightArrival !== leftArrival) {
+        return rightArrival - leftArrival;
+      }
+      return right.timestampMs - left.timestampMs;
+    })
     .slice(0, maxEntries);
 }
 
@@ -87,17 +108,8 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
   const [lastEventAtMs, setLastEventAtMs] = useState(0);
   const [usingFallbackPolling, setUsingFallbackPolling] = useState(false);
   const [hasConnectedStream, setHasConnectedStream] = useState(false);
-  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
   const fallbackPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fallbackTradesRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (!params.enabled) return;
-    const interval = window.setInterval(() => {
-      setClockNowMs(Date.now());
-    }, 1_000);
-    return () => window.clearInterval(interval);
-  }, [params.enabled]);
 
   useEffect(() => {
     if (!params.enabled || !params.tokenAddress) {
@@ -116,6 +128,52 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
     }
 
     let cancelled = false;
+    const primeTrades = async () => {
+      try {
+        const query = new URLSearchParams({
+          tokenAddress: params.tokenAddress!,
+          chainType: params.chainType,
+          limit: String(MAX_RECENT_TRADES),
+        });
+        const payload = await api.get<{
+          trades: TradePanelRecentTrade[];
+        }>(`/api/posts/chart/trades?${query.toString()}`);
+        if (cancelled || !Array.isArray(payload.trades)) {
+          return;
+        }
+        setRecentTrades((current) => mergeRecentTrades(current, payload.trades));
+        if (payload.trades.length > 0) {
+          const latestTrade = [...payload.trades].sort((left, right) => right.timestampMs - left.timestampMs)[0];
+          if (
+            latestTrade &&
+            typeof latestTrade.priceUsd === "number" &&
+            Number.isFinite(latestTrade.priceUsd) &&
+            latestTrade.priceUsd > 0 &&
+            Date.now() - latestTrade.timestampMs <= 30_000
+          ) {
+            setLiveSamples((current) =>
+              appendLiveTradeSample(
+                current,
+                {
+                  timestamp: latestTrade.timestampMs,
+                  priceUsd: latestTrade.priceUsd,
+                  tradeVolumeUsd: latestTrade.volumeUsd,
+                  source: "trade",
+                  receivedAtMs: Date.now(),
+                },
+                MAX_LIVE_SAMPLES
+              )
+            );
+            setLastEventAtMs(Date.now());
+          }
+        }
+      } catch {
+        // Ignore priming failures; stream and fallback polling will continue.
+      }
+    };
+
+    void primeTrades();
+
     const search = new URLSearchParams({
       tokenAddress: params.tokenAddress,
       chainType: params.chainType,
@@ -156,17 +214,6 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
         if (!Number.isFinite(payload.close) || payload.close <= 0) {
           return;
         }
-        setLiveSamples((current) =>
-          appendLiveTradeSample(
-            current,
-            {
-              timestamp: payload.timestampMs,
-              priceUsd: payload.close,
-              tradeVolumeUsd: payload.volumeUsd,
-            },
-            MAX_LIVE_SAMPLES
-          )
-        );
         setLastEventAtMs(Date.now());
       } catch {
         // Ignore malformed live price frames.
@@ -185,6 +232,8 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
                 timestamp: payload.timestampMs,
                 priceUsd: payload.priceUsd,
                 tradeVolumeUsd: payload.volumeUsd,
+                source: "trade",
+                receivedAtMs: Date.now(),
               },
               MAX_LIVE_SAMPLES
             )
@@ -259,18 +308,20 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
         setLiveSamples((current) =>
           appendLiveTradeSample(
             current,
-            {
-              timestamp: Date.now(),
-              priceUsd: live.priceUsd,
-              volume24hUsd: live.volume24h,
-              tradeCount24h:
-                typeof live.buys24h === "number" || typeof live.sells24h === "number"
-                  ? Math.max(0, (live.buys24h ?? 0) + (live.sells24h ?? 0))
-                  : null,
-            },
-            MAX_LIVE_SAMPLES
-          )
-        );
+              {
+                timestamp: Date.now(),
+                priceUsd: live.priceUsd,
+                volume24hUsd: live.volume24h,
+                tradeCount24h:
+                  typeof live.buys24h === "number" || typeof live.sells24h === "number"
+                    ? Math.max(0, (live.buys24h ?? 0) + (live.sells24h ?? 0))
+                    : null,
+                source: "fallback",
+                receivedAtMs: Date.now(),
+              },
+              MAX_LIVE_SAMPLES
+            )
+          );
         setLastEventAtMs(Date.now());
       } catch {
         // Keep last good sample during fallback provider hiccups.
@@ -321,17 +372,6 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
     };
   }, [params.chainType, params.enabled, params.tokenAddress, usingFallbackPolling]);
 
-  const liveIsFresh = lastEventAtMs > 0 && clockNowMs - lastEventAtMs <= LIVE_FRESHNESS_WINDOW_MS;
-  const liveBadgeLabel = !params.enabled || !params.tokenAddress
-    ? "Offline"
-    : status.connected && liveIsFresh
-      ? "Live"
-      : usingFallbackPolling
-        ? "Polling"
-        : hasConnectedStream
-          ? "Reconnecting"
-          : "Connecting";
-
   const recentTradesWithDisplay = useMemo(
     () =>
       recentTrades.map((trade) => ({
@@ -345,9 +385,8 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
     liveSamples,
     recentTrades: recentTradesWithDisplay,
     liveStatus: status,
-    liveBadgeLabel,
-    liveIsFresh,
     usingFallbackPolling,
+    hasConnectedStream,
     lastEventAtMs,
   };
 }

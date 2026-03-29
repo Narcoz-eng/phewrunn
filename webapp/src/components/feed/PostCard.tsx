@@ -32,6 +32,7 @@ import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
 import { CandlestickChart } from "./CandlestickChart";
 import { TradeTransactionsFeed } from "./TradeTransactionsFeed";
+import { TradePanelLiveBadge } from "./TradePanelLiveBadge";
 import { BundleScanLoop, isBundleScanPending } from "./BundleScanLoop";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api, ApiError } from "@/lib/api";
@@ -3621,9 +3622,8 @@ export function PostCard({
     liveSamples: tradePanelLiveSamples,
     recentTrades: tradePanelRecentTrades,
     liveStatus: tradePanelLiveStatus,
-    liveBadgeLabel: tradePanelLiveBadgeLabel,
-    liveIsFresh: tradePanelLiveIsFresh,
     usingFallbackPolling: tradePanelUsingFallbackPolling,
+    hasConnectedStream: tradePanelHasConnectedStream,
     lastEventAtMs: tradePanelLastEventAtMs,
   } = useTradePanelLiveFeed({
     enabled: isBuyDialogOpen && post.chainType === "solana" && !!post.contractAddress,
@@ -4651,6 +4651,8 @@ export function PostCard({
           if (ageSeconds <= 1) return isUsingStaleQuote ? "Using cached quote" : "Quote updated just now";
           return isUsingStaleQuote ? `Cached quote ${ageSeconds}s old` : `Quote ${ageSeconds}s old`;
         })();
+  const tradePanelLiveIsFresh =
+    tradePanelLastEventAtMs > 0 && Date.now() - tradePanelLastEventAtMs <= 10_000;
   const tradeLiveMetaLabel =
     tradePanelLiveStatus.mode === "unavailable"
       ? tradePanelLiveStatus.reason ?? "Live stream unavailable"
@@ -4660,7 +4662,9 @@ export function PostCard({
           : "Trade tape streaming live"
         : tradePanelUsingFallbackPolling
           ? "Trade tape polling while live stream reconnects"
-          : "Trade tape reconnecting";
+          : tradePanelHasConnectedStream
+            ? "Trade tape reconnecting"
+            : "Trade tape connecting";
   const jupiterStatusTone = !isSolanaTradeSupported
     ? "border-slate-900/10 bg-slate-900/[0.04] text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-white/70"
     : buyAmountExceedsBalance
@@ -7035,6 +7039,18 @@ export function PostCard({
                           willChange: hasProfessionalChartData ? "transform" : "auto",
                         }}
                       >
+                        <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-1.5">
+                          <TradePanelLiveBadge
+                            lastEventAtMs={tradePanelLastEventAtMs}
+                            usingFallbackPolling={tradePanelUsingFallbackPolling}
+                            mode={tradePanelLiveStatus.mode}
+                          />
+                          {isUsingStaleQuote ? (
+                            <span className="inline-flex items-center rounded-full bg-slate-900/[0.05] px-1.5 py-0.5 text-[9px] font-medium text-slate-500 dark:bg-white/[0.06] dark:text-white/42">
+                              {quoteFreshnessLabel}
+                            </span>
+                          ) : null}
+                        </div>
                         {hasProfessionalChartData ? (
                           <CandlestickChart
                             data={professionalChartData}
@@ -7110,18 +7126,6 @@ export function PostCard({
                           {hasProfessionalChartData && (
                             <>
                               <span>{chartFeedLabel} {chartInterval}</span>
-                              <span
-                                className={cn(
-                                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                                  tradePanelLiveIsFresh
-                                    ? "bg-emerald-500/10 text-emerald-500"
-                                    : tradePanelUsingFallbackPolling
-                                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-300"
-                                      : "bg-slate-900/[0.05] text-slate-500 dark:bg-white/[0.06] dark:text-white/40"
-                                )}
-                              >
-                                {tradePanelLiveBadgeLabel}
-                              </span>
                             </>
                           )}
                           {resolvedLiquidityUsd != null && (
@@ -7142,8 +7146,7 @@ export function PostCard({
 
                     <TradeTransactionsFeed
                       trades={tradePanelRecentTrades}
-                      liveBadgeLabel={tradePanelLiveBadgeLabel}
-                      liveIsFresh={tradePanelLiveIsFresh}
+                      liveMode={tradePanelLiveStatus.mode}
                       usingFallbackPolling={tradePanelUsingFallbackPolling}
                       lastEventAtMs={tradePanelLastEventAtMs}
                     />

@@ -452,27 +452,6 @@ export function TradingPanel({
         </div>
 
         {/* MEV Protection */}
-        {(quoteFreshnessLabel || liveStateLabel) ? (
-          <div className={cn("grid gap-2 sm:grid-cols-2", softSectionClassName, "p-3")}>
-            <div>
-              <div className="text-[10px] font-medium uppercase tracking-widest text-slate-400 dark:text-white/35">
-                Route Freshness
-              </div>
-              <div className="mt-1 text-[12px] font-medium text-slate-700 dark:text-white/75">
-                {quoteFreshnessLabel ?? "Waiting for quote"}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] font-medium uppercase tracking-widest text-slate-400 dark:text-white/35">
-                Live Market
-              </div>
-              <div className="mt-1 text-[12px] font-medium text-slate-700 dark:text-white/75">
-                {liveStateLabel ?? "Waiting for stream"}
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {tradeError ? (
           <div className="rounded-xl border border-rose-500/18 bg-rose-500/[0.05] px-3 py-3">
             <div className="flex items-start justify-between gap-3">
@@ -720,6 +699,12 @@ export function TradingPanel({
               <DetailRow label="Platform Fee" value={platformFeeDisplay} />
               <DetailRow label="Route" value={chainType === "ethereum" ? "Uniswap v3" : "Jupiter v6"} />
               <DetailRow label="MEV Protection" value={mevProtectionEnabled ? (chainType === "ethereum" ? "Enabled (Flashbots)" : "Enabled (Jito)") : "Disabled"} />
+              {quoteFreshnessLabel && quoteFreshnessLabel !== "Waiting for quote" ? (
+                <DetailRow label="Quote" value={quoteFreshnessLabel} />
+              ) : null}
+              {liveStateLabel && !/streaming live/i.test(liveStateLabel) ? (
+                <DetailRow label="Market" value={liveStateLabel} />
+              ) : null}
             </div>
           </div>
         ) : null}

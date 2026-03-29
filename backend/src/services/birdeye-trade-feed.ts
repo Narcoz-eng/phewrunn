@@ -254,6 +254,7 @@ export function startBirdeyeLiveFeed(params: StartBirdeyeLiveFeedParams): { clos
   const chain = normalizeChainType(params.chainType);
   const address = params.pairAddress?.trim() || params.tokenAddress.trim();
   const priceCurrency = params.pairAddress ? "pair" : "usd";
+  const liveChartType = chain === "solana" ? "1s" : "1m";
   const socketUrl = `${BIRDEYE_SOCKET_BASE_URL}/${chain}?x-api-key=${encodeURIComponent(BIRDEYE_API_KEY)}`;
   const socket = new WebSocket(socketUrl, [BIRDEYE_SOCKET_PROTOCOL], {
     origin: BIRDEYE_ORIGIN,
@@ -291,7 +292,7 @@ export function startBirdeyeLiveFeed(params: StartBirdeyeLiveFeedParams): { clos
         type: "SUBSCRIBE_PRICE",
         data: {
           queryType: "simple",
-          chartType: "1m",
+          chartType: liveChartType,
           address,
           currency: priceCurrency,
         },
