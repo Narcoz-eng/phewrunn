@@ -1017,19 +1017,6 @@ export const auth = {
       return null;
     },
 
-    getSessionByToken: async (
-      token: string | null,
-      trace?: ApiMeAuthTrace | null
-    ): Promise<SessionRecord | null> => {
-      if (!token) return null;
-      const attempt = createAuthTokenAttemptTrace({
-        source: "bearer",
-        token,
-      });
-      trace?.tokenAttempts.push(attempt);
-      return getSessionFromToken(token, trace, attempt);
-    },
-
     signOut: async ({ headers }: { headers: Headers }) => {
       const cookieTokens = getSessionTokensFromHeaders(headers);
       const authHeader = headers.get("authorization");

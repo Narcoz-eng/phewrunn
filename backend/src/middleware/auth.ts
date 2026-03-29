@@ -59,12 +59,6 @@ const SESSION_CACHE_TTL_MS = 8_000;
 const SESSION_CACHE_MAX_ENTRIES = 5_000;
 const sessionLookupCache = new Map<string, { expiresAt: number; session: AuthSession | null }>();
 
-function parseBearerToken(headerValue: string | undefined): string | null {
-  if (!headerValue || !/^bearer\s+/i.test(headerValue)) return null;
-  const token = headerValue.replace(/^bearer\s+/i, "").trim();
-  return token.length > 0 ? token : null;
-}
-
 function hasSessionCookieHeader(cookieHeader: string | undefined): boolean {
   return getAuthCookieEntries(cookieHeader).length > 0;
 }
@@ -85,15 +79,15 @@ function shouldSkipAuthResolution(path: string): boolean {
   );
 }
 
-function logAuthLookupError(kind: "cookie" | "bearer", error: unknown): void {
+function logAuthLookupError(error: unknown): void {
   const now = Date.now();
-  const key = `auth_lookup_${kind}`;
+  const key = "auth_lookup_cookie";
   const lastLoggedAt = authErrorLastLoggedAt.get(key) ?? 0;
   if (now - lastLoggedAt < AUTH_ERROR_LOG_COOLDOWN_MS) {
     return;
   }
   authErrorLastLoggedAt.set(key, now);
-  console.error(`Failed to resolve ${kind} session:`, error);
+  console.error("Failed to resolve cookie session:", error);
 }
 
 function readSessionTokenFromCookie(cookieHeader: string | undefined): string | null {
@@ -128,14 +122,12 @@ function writeCachedSession(cacheKey: string, session: AuthSession | null, ttlMs
 
 export function invalidateResolvedSessionCache(tokens: string[]): void {
   for (const token of tokens) {
-    sessionLookupCache.delete(`bearer:${token}`);
     sessionLookupCache.delete(`cookie:${token}`);
   }
 }
 
 /**
- * Auth middleware that verifies Better Auth sessions
- * Supports both cookie-based sessions and Bearer token auth
+ * Auth middleware that verifies Better Auth sessions from the server-issued cookie
  * Sets user to null if no session or invalid session
  * Does NOT block requests - use requireAuth for protected routes
  */
@@ -147,19 +139,13 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
     const authTrace = shouldTraceApiMe
       ? buildApiMeAuthTrace(c.req.raw.headers, c.get("requestId") ?? null)
       : null;
-    const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-    const bearerToken = parseBearerToken(authHeader);
     const cookieHeader = c.req.header("cookie");
     const hasSessionCookie = hasSessionCookieHeader(cookieHeader);
     const cookieToken = readSessionTokenFromCookie(cookieHeader);
-    const cacheKey = bearerToken
-      ? `bearer:${bearerToken}`
-      : cookieToken
-        ? `cookie:${cookieToken}`
-        : null;
+    const cacheKey = cookieToken ? `cookie:${cookieToken}` : null;
     let cacheHit = false;
 
-    if (shouldSkipAuthResolution(path) || (!hasSessionCookie && !bearerToken)) {
+    if (shouldSkipAuthResolution(path) || !hasSessionCookie) {
       appendAuthDecision(authTrace, "middleware:auth_resolution_skipped_or_no_credentials");
       c.set("user", null);
       c.set("session", null);
@@ -187,22 +173,7 @@ export const betterAuthMiddleware = createMiddleware<{ Variables: AuthVariables 
           });
         } catch (error) {
           appendAuthDecision(authTrace, "middleware:cookie_session_lookup_error");
-          logAuthLookupError("cookie", error);
-        }
-      }
-
-      // If no cookie session, try Bearer token. Keep this separate so cookie lookup
-      // failures do not automatically skip bearer auth.
-      if (!session?.user && bearerToken) {
-        try {
-          appendAuthDecision(authTrace, "middleware:bearer_session_lookup_start");
-          const bearerSession = await auth.api.getSessionByToken(bearerToken, authTrace);
-          if (bearerSession?.user) {
-            session = bearerSession as AuthSession;
-          }
-        } catch (error) {
-          appendAuthDecision(authTrace, "middleware:bearer_session_lookup_error");
-          logAuthLookupError("bearer", error);
+          logAuthLookupError(error);
         }
       }
 

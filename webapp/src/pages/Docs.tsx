@@ -45,8 +45,7 @@ export default function Docs() {
           local application account and issues session credentials used by the platform.
         </p>
         <p>
-          The application supports cookie-based sessions and a bearer-token fallback (stored in
-          local storage) for session continuity and cross-origin compatibility in some deployments.
+          The application uses server-issued HttpOnly session cookies for browser authentication.
           Users are responsible for their own account security and device hygiene.
         </p>
       </LegalSection>

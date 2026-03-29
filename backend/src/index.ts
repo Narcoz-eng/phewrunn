@@ -2819,8 +2819,8 @@ app.post("/api/internal/_legacy-privy-sync", async (c) => {
         isVerified: Boolean(existingSession.user.isVerified),
       });
 
-      // Always re-issue a compact token/cookie so stale bearer-only sessions
-      // are healed during Privy sync across devices and browsers.
+      // Always re-issue a compact session cookie so stale client auth state
+      // is healed during Privy sync across devices and browsers.
       const issuedAt = new Date();
       const sessionToken = createSignedSessionToken({
         userId: sessionBackfillUser.id,
@@ -2844,7 +2844,6 @@ app.post("/api/internal/_legacy-privy-sync", async (c) => {
       primeMeResponseCacheFromAuthUser(sessionBackfillUser);
 
       return c.json({
-        token: sessionToken,
         user: buildClientAuthUser(sessionBackfillUser),
       });
     }
@@ -2896,7 +2895,6 @@ app.post("/api/internal/_legacy-privy-sync", async (c) => {
         primeMeResponseCacheFromAuthUser(cachedPrivyAuthUser);
 
         return c.json({
-          token: sessionToken,
           user: buildClientAuthUser(cachedPrivyAuthUser),
         });
       }
@@ -2973,7 +2971,6 @@ app.post("/api/internal/_legacy-privy-sync", async (c) => {
         primeMeResponseCacheFromAuthUser(reconciledFastPathUser);
 
         return c.json({
-          token: sessionToken,
           user: buildClientAuthUser(reconciledFastPathUser),
         });
       }
@@ -3175,7 +3172,6 @@ app.post("/api/internal/_legacy-privy-sync", async (c) => {
     writeCachedPrivyAuthUser(verifiedPrivyUserId, user);
 
     return c.json({
-      token: sessionToken,
       user: buildClientAuthUser(user),
     });
   } catch (error) {
@@ -3209,7 +3205,6 @@ app.post("/api/internal/_legacy-privy-sync", async (c) => {
         primeMeResponseCacheFromAuthUser(fallbackUser);
 
         return c.json({
-          token: sessionToken,
           user: buildClientAuthUser(fallbackUser),
         });
       }
@@ -3280,22 +3275,16 @@ app.get("/api/me", async (c) => {
   let session = c.get("session");
   const requestId = c.get("requestId") ?? null;
   const authTrace = c.get("authTrace") ?? buildApiMeAuthTrace(c.req.raw.headers, requestId);
-  const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-  const bearerToken =
-    authHeader && /^bearer\s+/i.test(authHeader)
-      ? authHeader.replace(/^bearer\s+/i, "").trim()
-      : "";
   const cookieHeader = c.req.header("cookie") ?? "";
   const cookieToken = readSessionCookieToken(cookieHeader);
   const signedTokenInspection = cookieToken ? inspectSignedSessionToken(cookieToken) : null;
   const hasSessionCookie = /(?:^|;\s*)(?:phew\.session_token|better-auth\.session_token|auth\.session_token|session_token)=/i.test(
     cookieHeader
   );
-  const hasBearerToken = bearerToken.length > 0;
   let finalAuthReason = "middleware_session";
   appendAuthDecision(authTrace, user ? "/api/me:middleware_user_present" : "/api/me:middleware_user_missing");
 
-  if ((!user || !session?.user) && (hasSessionCookie || hasBearerToken)) {
+  if ((!user || !session?.user) && hasSessionCookie) {
     try {
       appendAuthDecision(authTrace, "/api/me:recovery_lookup_start");
       const recoveredSession = hasSessionCookie
@@ -3333,31 +3322,6 @@ app.get("/api/me", async (c) => {
         };
         c.set("session", recoveredSession);
         c.set("user", user);
-      } else if (hasBearerToken) {
-        const bearerSession = await auth.api.getSessionByToken(bearerToken, authTrace);
-        if (bearerSession?.user) {
-          finalAuthReason = "bearer_recovered_session";
-          appendAuthDecision(authTrace, "/api/me:bearer_recovered_session");
-          session = bearerSession;
-          user = {
-            id: bearerSession.user.id,
-            email: bearerSession.user.email || null,
-            walletAddress: bearerSession.user.walletAddress || null,
-            role:
-              typeof bearerSession.user.role === "string" &&
-              bearerSession.user.role.trim().length > 0
-                ? bearerSession.user.role.trim().toLowerCase()
-                : bearerSession.user.isAdmin
-                  ? "admin"
-                  : "user",
-            isAdmin:
-              bearerSession.user.role === "admin" ||
-              bearerSession.user.isAdmin === true,
-            isBanned: bearerSession.user.isBanned === true,
-          };
-          c.set("session", bearerSession);
-          c.set("user", user);
-        }
       }
     } catch (recoverError) {
       finalAuthReason = "session_recovery_exception";
@@ -3376,15 +3340,12 @@ app.get("/api/me", async (c) => {
         (signedTokenInspection?.failureReason
           ? `signed_token_${signedTokenInspection.failureReason}`
           : finalAuthReason)
-      : hasBearerToken
-        ? failedAttempt?.reason ?? "bearer_session_missing"
-        : "no_session_credentials";
+      : "no_session_credentials";
     appendAuthDecision(authTrace, `/api/me:final_401:${exact401Reason}`);
-    if (hasSessionCookie || hasBearerToken) {
+    if (hasSessionCookie) {
       console.warn("[/api/me] Unauthorized request", {
         host: c.req.header("host") ?? null,
         origin: c.req.header("origin") ?? null,
-        hasAuthorizationHeader: hasBearerToken,
         hasSessionCookie,
       });
     }

@@ -1,11 +1,6 @@
 ﻿import { useState, useEffect, useCallback, createContext, useContext, createElement } from "react";
 import type { ReactNode } from "react";
 import { useRef, useLayoutEffect } from "react";
-import {
-  clearStoredBackendSessionToken,
-  getStoredBackendSessionToken,
-  setStoredBackendSessionToken,
-} from "./backend-session-token";
 import { clearSessionCacheByPrefix } from "./session-cache";
 import {
   cancelPrivyIdentityRetryTimers,
@@ -63,7 +58,6 @@ const AUTH_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [120, 220, 380, 650, 900] as c
 const SESSION_FETCH_TIMEOUT_MS = 4500;
 const SIGN_OUT_TIMEOUT_MS = 1500;
 const AUTH_SESSION_RETRY_DELAY_MS = 300;
-const AUTH_SESSION_RETRY_ATTEMPTS_WITH_TOKEN = 4;
 const AUTH_SESSION_RETRY_DELAY_WITH_COOKIE_MS = 450;
 const AUTH_SESSION_RETRY_ATTEMPTS_WITH_COOKIE = 3;
 const PRIVY_SYNC_TIMEOUT_MS = 9_000;
@@ -81,6 +75,7 @@ const SESSION_COOKIE_CANDIDATE_NAMES = [
   "session_token",
 ] as const;
 const LEGACY_AUTH_TOKEN_STORAGE_KEY = "auth-token";
+const LEGACY_BACKEND_SESSION_TOKEN_STORAGE_KEY = "phew.auth.backend-session-token.v1";
 const AUTH_SESSION_SYNC_EVENT = "phew:auth-session-synced";
 const PRIVY_SYNC_FAILURE_STORAGE_KEY = "phew.auth.privy-sync-failure.v1";
 const PRIVY_SYNC_FAILURE_TTL_MS = 5 * 60 * 1000;
@@ -230,20 +225,7 @@ function hasAuthoritativeValidatedAuthSession(referenceTime = Date.now()): boole
   return lastSuccessfulSessionAt > 0;
 }
 
-// Privy-only auth: keep legacy exports as explicit unsupported stubs so callers fail loudly.
-export async function signIn() {
-  throw new Error("Email/password auth has been removed. Use Privy sign-in.");
-}
-
-export async function signUp() {
-  throw new Error("Email/password auth has been removed. Use Privy sign-in.");
-}
-
-export async function signOut(options?: { token?: string | null }) {
-  const bearerToken =
-    typeof options?.token === "string" && options.token.trim().length > 0
-      ? options.token.trim()
-      : getStoredAuthToken();
+export async function signOut() {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -254,7 +236,6 @@ export async function signOut(options?: { token?: string | null }) {
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
       },
     });
   } catch (error) {
@@ -341,28 +322,11 @@ function clearLegacyStoredAuthTokenArtifacts(): void {
   } catch (error) {
     console.warn("[Auth] Failed to clear legacy auth token from localStorage", error);
   }
-}
-
-function getStoredAuthToken(): string | null {
-  clearLegacyStoredAuthTokenArtifacts();
-  return getStoredBackendSessionToken();
-}
-
-function setStoredAuthToken(token: string): void {
-  clearLegacyStoredAuthTokenArtifacts();
-  setStoredBackendSessionToken(token);
-}
-
-function clearStoredAuthToken(): void {
-  clearLegacyStoredAuthTokenArtifacts();
-  clearStoredBackendSessionToken();
-}
-
-export function hasStoredAuthTokenHint(): boolean {
-  if (isExplicitLogoutCoolingDown()) {
-    return false;
+  try {
+    sessionStorage.removeItem(LEGACY_BACKEND_SESSION_TOKEN_STORAGE_KEY);
+  } catch (error) {
+    console.warn("[Auth] Failed to clear legacy backend session token from sessionStorage", error);
   }
-  return Boolean(readCachedAuthUser()) || Boolean(getStoredAuthToken()) || hasSessionCookieHint();
 }
 
 function hasRecoverableBackendSessionHint(referenceTime = Date.now()): boolean {
@@ -2489,7 +2453,6 @@ async function fetchSessionFromServer(
   timeoutMs = SESSION_FETCH_TIMEOUT_MS,
   reason = "confirmation"
 ): Promise<ServerSessionResult> {
-  const storedAuthToken = getStoredAuthToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -2502,7 +2465,6 @@ async function fetchSessionFromServer(
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...(storedAuthToken ? { Authorization: `Bearer ${storedAuthToken}` } : {}),
       },
       signal: controller.signal,
     });
@@ -2665,7 +2627,6 @@ const AuthContext = createContext<AuthContextType | null>(null);
 async function fetchSession(): Promise<AuthUser | null> {
   const now = Date.now();
   const cachedUser = readCachedAuthUser();
-  const storedAuthToken = getStoredAuthToken();
   const pendingBootstrap = readPrivyAuthBootstrapSnapshot();
   const pendingBootstrapBelongsToCurrentTab =
     doesPrivyAuthBootstrapSnapshotBelongToCurrentTab(pendingBootstrap);
@@ -2730,7 +2691,6 @@ async function fetchSession(): Promise<AuthUser | null> {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...(storedAuthToken ? { Authorization: `Bearer ${storedAuthToken}` } : {}),
       },
       signal: controller.signal,
     });
@@ -2802,7 +2762,7 @@ async function fetchSession(): Promise<AuthUser | null> {
           return readRecoverableCachedAuthUser(cachedUser);
         }
 
-        clearStoredAuthToken();
+        clearLegacyStoredAuthTokenArtifacts();
         clearCachedAuthUser();
         lastBootstrappedSessionAt = 0;
         lastSuccessfulSessionAt = 0;
@@ -2838,7 +2798,7 @@ async function fetchSession(): Promise<AuthUser | null> {
           (data as { data?: unknown }).data === null);
 
       if (explicitNoSessionResponse) {
-        clearStoredAuthToken();
+        clearLegacyStoredAuthTokenArtifacts();
         clearCachedAuthUser();
         lastBootstrappedSessionAt = 0;
         lastSuccessfulSessionAt = 0;
@@ -3111,7 +3071,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     cancelPendingPrivyAuthRetryTimers("logout");
     clearPrivyAuthBootstrapState();
-    clearStoredAuthToken();
+    clearLegacyStoredAuthTokenArtifacts();
     clearCachedAuthUser();
     clearPrivySyncFailureSnapshot();
     cancelPrivyIdentityRetryTimers("logout");
@@ -3415,164 +3375,9 @@ export function usePrivyAuth() {
       : null,
     isAuthenticated: auth.isAuthenticated,
     isReady: auth.isReady,
-    login: () => console.warn("login() - use form-based login"),
+    login: () => console.warn("login() - use Privy sign-in"),
     logout: auth.signOut,
   };
-}
-
-// Sign up function - use direct fetch for reliability
-export async function signUpWithEmail(email: string, password: string, name: string) {
-  console.log("[Auth] Attempting sign up for:", email);
-  try {
-    const response = await fetch(`${baseURL}/api/auth/sign-up/email`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ email, password, name }),
-    });
-
-    // Try to parse JSON, but handle empty responses
-    let data: { message?: string; code?: string; token?: string; [key: string]: unknown } | null = null;
-    const text = await response.text();
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.log("[Auth] Response is not JSON:", text);
-      }
-    }
-    console.log("[Auth] Sign up response:", response.status, data);
-
-    if (!response.ok) {
-      return { error: { message: data?.message || data?.code || "Failed to create account" } };
-    }
-
-    // Ignore legacy token fields; browser auth is cookie-backed.
-    if (data?.token) {
-      setStoredAuthToken(data.token);
-    }
-
-    return { data: data || { success: true } };
-  } catch (error) {
-    console.error("[Auth] Sign up error:", error);
-    return { error: { message: error instanceof Error ? error.message : "Sign up failed" } };
-  }
-}
-
-// Sign in function - use direct fetch for reliability
-export async function signInWithEmail(email: string, password: string) {
-  console.log("[Auth] Attempting sign in for:", email);
-  try {
-    const response = await fetch(`${baseURL}/api/auth/sign-in/email`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ email, password }),
-    });
-
-    // Try to parse JSON, but handle empty responses
-    let data: { message?: string; code?: string; token?: string; [key: string]: unknown } | null = null;
-    const text = await response.text();
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.log("[Auth] Response is not JSON:", text);
-      }
-    }
-    console.log("[Auth] Sign in response:", response.status, data);
-
-    if (!response.ok) {
-      return { error: { message: data?.message || data?.code || "Invalid email or password" } };
-    }
-
-    // Ignore legacy token fields; browser auth is cookie-backed.
-    if (data?.token) {
-      setStoredAuthToken(data.token);
-    }
-
-    return { data: data || { success: true } };
-  } catch (error) {
-    console.error("[Auth] Sign in error:", error);
-    return { error: { message: error instanceof Error ? error.message : "Sign in failed" } };
-  }
-}
-
-// Sign in with Google - use direct redirect
-export async function signInWithGoogle() {
-  console.log("[Auth] Redirecting to Google sign in");
-  // Redirect to Google OAuth
-  const callbackURL = encodeURIComponent(window.location.origin);
-  window.location.href = `${baseURL}/api/auth/sign-in/social?provider=google&callbackURL=${callbackURL}`;
-}
-
-// Forgot password - request password reset email
-export async function forgotPassword(email: string) {
-  console.log("[Auth] Requesting password reset for:", email);
-  try {
-    const response = await fetch(`${baseURL}/api/auth/request-password-reset`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        email,
-        redirectTo: "/reset-password",
-      }),
-    });
-
-    let data: { message?: string; code?: string; [key: string]: unknown } | null = null;
-    const text = await response.text();
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.log("[Auth] Response is not JSON:", text);
-      }
-    }
-    console.log("[Auth] Forgot password response:", response.status, data);
-
-    if (!response.ok) {
-      return { error: { message: data?.message || data?.code || "Failed to send reset email" } };
-    }
-
-    return { data: data || { success: true } };
-  } catch (error) {
-    console.error("[Auth] Forgot password error:", error);
-    return { error: { message: error instanceof Error ? error.message : "Failed to send reset email" } };
-  }
-}
-
-// Reset password with token
-export async function resetPassword(newPassword: string, token: string) {
-  console.log("[Auth] Resetting password with token");
-  try {
-    const response = await fetch(`${baseURL}/api/auth/reset-password`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ newPassword, token }),
-    });
-
-    let data: { message?: string; code?: string; [key: string]: unknown } | null = null;
-    const text = await response.text();
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.log("[Auth] Response is not JSON:", text);
-      }
-    }
-    console.log("[Auth] Reset password response:", response.status, data);
-
-    if (!response.ok) {
-      return { error: { message: data?.message || data?.code || "Failed to reset password" } };
-    }
-
-    return { data: data || { success: true } };
-  } catch (error) {
-    console.error("[Auth] Reset password error:", error);
-    return { error: { message: error instanceof Error ? error.message : "Failed to reset password" } };
-  }
 }
 
 // Sync a Privy-authenticated user to our backend using a verified Privy identity token.
@@ -3672,9 +3477,6 @@ export async function syncPrivySession(
         throw new Error(message);
       }
 
-      if (data?.token) {
-        setStoredAuthToken(data.token);
-      }
       const syncedUser = toAuthUser(data.user);
       if (explicitLogoutAt > syncStartedAt) {
         throw new Error("Session sync completed after logout");

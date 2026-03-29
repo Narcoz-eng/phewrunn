@@ -14,7 +14,7 @@ Last updated: 2026-03-29
 | Ticket | Owner | Sign-off owner | Status | Notes |
 | --- | --- | --- | --- | --- |
 | `PR-001` | Backend Lead | Security Lead | Implemented, pending sign-off | Admin invite routes now share the admin guard and backend regression tests pass |
-| `PR-002` | Backend Lead | Security Lead | Not started | Cookie-only auth cleanup pending |
+| `PR-002` | Backend Lead | Security Lead | Implemented, pending sign-off | Browser-readable backend token path removed, legacy auth exports removed, cookie-only session path verified |
 | `PR-003` | Platform Engineer | Security Lead | Not started | Shared rate limiting and revocation pending |
 | `PR-004` | Platform Engineer | Tech Lead | Not started | Queue platform pending |
 | `PR-005` | Backend Lead | Tech Lead | Not started | Flow migration to jobs pending |
@@ -30,4 +30,7 @@ Last updated: 2026-03-29
 - Added regression coverage for anonymous, non-admin, and admin access to the admin-invites surface.
 - Backend verification passed: `npm --prefix backend run test` and `npm --prefix backend run typecheck`.
 - `PR-001` is now pending `Security Lead` sign-off.
+- `PR-002` was implemented by removing the frontend backend-session token store, removing legacy email/password/social/reset exports, removing bearer session lookup from backend auth resolution, and stopping auth responses from returning a browser-consumed session token.
+- Verification passed for `PR-002`: `npm --prefix backend run test`, `npm --prefix backend run typecheck`, and `npm --prefix webapp run build`.
+- `PR-002` is now pending `Security Lead` sign-off.
 - No feature work is authorized until all P0 items are complete and signed off.
