@@ -130,6 +130,7 @@ export type EnqueueInternalJobInput = {
   idempotencyKey: string;
   payload: Record<string, unknown>;
   traceId?: string | null;
+  notBeforeAt?: Date | string | number | null;
 };
 
 type QStashPublishResponse = {
@@ -479,6 +480,30 @@ export function buildInternalJobEnvelope(input: EnqueueInternalJobInput): Intern
   };
 }
 
+function resolveNotBeforeHeaderValue(input: EnqueueInternalJobInput): string | null {
+  const raw = input.notBeforeAt;
+  if (raw == null) {
+    return null;
+  }
+
+  let timestampMs: number | null = null;
+  if (raw instanceof Date) {
+    timestampMs = raw.getTime();
+  } else if (typeof raw === "number" && Number.isFinite(raw)) {
+    timestampMs = raw > 10_000_000_000 ? raw : raw * 1000;
+  } else if (typeof raw === "string") {
+    const parsed = Date.parse(raw);
+    timestampMs = Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (!timestampMs || !Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  const unixSeconds = Math.max(Math.ceil(timestampMs / 1000), Math.floor(Date.now() / 1000));
+  return String(unixSeconds);
+}
+
 export function createQStashPublishRequest(
   input: EnqueueInternalJobInput,
   overrides?: CreatePublishRequestOverrides
@@ -511,6 +536,10 @@ export function createQStashPublishRequest(
     "Upstash-Flow-Control-Value": definition.flowControlValue,
     "Upstash-Failure-Callback": buildInternalJobFailureCallbackUrl(input.jobName, config.backendUrl),
   });
+  const notBeforeHeader = resolveNotBeforeHeaderValue(input);
+  if (notBeforeHeader) {
+    headers.set("Upstash-Not-Before", notBeforeHeader);
+  }
 
   return {
     envelope,

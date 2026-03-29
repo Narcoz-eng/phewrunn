@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildPostAutoSettlementJobInput,
   buildMaintenanceJobInputs,
   buildSettlementJobInput,
 } from "./routes/posts.js";
@@ -18,6 +19,23 @@ describe("maintenance job builders", () => {
     expect(input.payload).toEqual({
       reason: "manual_settlement_endpoint",
     });
+  });
+
+  test("builds a delayed targeted settlement job for post creation", () => {
+    const createdAt = new Date("2026-03-30T10:00:00.000Z");
+    const input = buildPostAutoSettlementJobInput({
+      postId: "post_123",
+      createdAt,
+    });
+
+    expect(input.jobName).toBe("settlement");
+    expect(input.idempotencyKey).toBe("settlement:post:post_123:1h");
+    expect(input.payload).toEqual({
+      reason: "post_create_1h_deadline",
+      postId: "post_123",
+    });
+    expect(input.notBeforeAt).toBeInstanceOf(Date);
+    expect((input.notBeforeAt as Date).toISOString()).toBe("2026-03-30T11:00:00.000Z");
   });
 
   test("builds the full maintenance job set without adding new flow types", () => {

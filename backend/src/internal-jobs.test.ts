@@ -52,12 +52,14 @@ describe("internal job control plane", () => {
   });
 
   test("builds QStash publish requests with retries, dedupe, flow control, and failure callback", () => {
+    const notBeforeAt = "2030-03-30T11:00:00.000Z";
     const request = createQStashPublishRequest(
       {
         jobName: "post_fanout",
         idempotencyKey: "post:abc123",
         payload: { postId: "post_123" },
         traceId: "trace_123",
+        notBeforeAt,
       },
       {
         backendUrl: "https://backend.example.com",
@@ -79,6 +81,9 @@ describe("internal job control plane", () => {
     expect(headers.get("Upstash-Deduplication-Id")).toContain("internal-job:post_fanout:");
     expect(headers.get("Upstash-Flow-Control-Key")).toBe("job:post_fanout");
     expect(headers.get("Upstash-Flow-Control-Value")).toBe("parallelism=6, rate=120, period=1m");
+    expect(headers.get("Upstash-Not-Before")).toBe(
+      String(Math.ceil(new Date(notBeforeAt).getTime() / 1000))
+    );
     expect(headers.get("Upstash-Failure-Callback")).toBe(
       "https://backend.example.com/api/internal/jobs/failures?jobName=post_fanout"
     );

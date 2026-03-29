@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
@@ -7,12 +8,15 @@ const BIRDEYE_REST_BASE_URL = "https://public-api.birdeye.so";
 const BIRDEYE_SOCKET_BASE_URL = "wss://public-api.birdeye.so/socket";
 const BIRDEYE_SOCKET_HANDSHAKE_TIMEOUT_MS = 7_000;
 const BIRDEYE_SOCKET_PING_INTERVAL_MS = 15_000;
+const BIRDEYE_SHARED_FEED_IDLE_TTL_MS = 30_000;
+const BIRDEYE_SHARED_RECENT_TRADES_LIMIT = 40;
 
 export type BirdeyeTradeFeedChain = "solana" | "ethereum";
 
 export type TradeFeedTrade = {
   id: string;
   timestampMs: number;
+  receivedAtMs?: number | null;
   txHash: string | null;
   walletAddress: string | null;
   side: "buy" | "sell" | "unknown";
@@ -47,14 +51,47 @@ export type TradeFeedStatus = {
   timestampMs: number;
 };
 
+export type TradeFeedSnapshot = {
+  recentTrades: TradeFeedTrade[];
+  latestPrice: TradeFeedPriceUpdate | null;
+  status: TradeFeedStatus;
+  lastTradeAtMs: number;
+  lastPriceAtMs: number;
+};
+
 type StartBirdeyeLiveFeedParams = {
   chainType: BirdeyeTradeFeedChain;
   tokenAddress: string;
   pairAddress?: string | null;
+  onSnapshot?: (snapshot: TradeFeedSnapshot) => void;
   onPrice: (update: TradeFeedPriceUpdate) => void;
   onTrade: (trade: TradeFeedTrade) => void;
   onStatus?: (status: TradeFeedStatus) => void;
   onError?: (error: unknown) => void;
+};
+
+type SharedFeedSubscriber = {
+  onSnapshot?: (snapshot: TradeFeedSnapshot) => void;
+  onPrice: (update: TradeFeedPriceUpdate) => void;
+  onTrade: (trade: TradeFeedTrade) => void;
+  onStatus?: (status: TradeFeedStatus) => void;
+  onError?: (error: unknown) => void;
+};
+
+type SharedBirdeyeFeedState = {
+  key: string;
+  chainType: BirdeyeTradeFeedChain;
+  tokenAddress: string;
+  pairAddress: string | null;
+  subscribers: Map<string, SharedFeedSubscriber>;
+  recentTrades: TradeFeedTrade[];
+  latestPrice: TradeFeedPriceUpdate | null;
+  status: TradeFeedStatus;
+  lastTradeAtMs: number;
+  lastPriceAtMs: number;
+  closeTimer: ReturnType<typeof setTimeout> | null;
+  seedPromise: Promise<void> | null;
+  closeTransport: (() => void) | null;
 };
 
 function safeRecord(value: unknown): Record<string, unknown> | null {
@@ -84,6 +121,77 @@ function safeNumber(value: unknown): number | null {
 
 function normalizeChainType(chainType: BirdeyeTradeFeedChain): BirdeyeTradeFeedChain {
   return chainType === "ethereum" ? "ethereum" : "solana";
+}
+
+function buildSharedFeedKey(params: {
+  chainType: BirdeyeTradeFeedChain;
+  tokenAddress: string;
+  pairAddress?: string | null;
+}): string {
+  return [
+    normalizeChainType(params.chainType),
+    params.tokenAddress.trim().toLowerCase(),
+    params.pairAddress?.trim().toLowerCase() ?? "",
+  ].join(":");
+}
+
+function createInitialTradeFeedStatus(): TradeFeedStatus {
+  return {
+    connected: false,
+    mode: "stream",
+    reason: "Connecting",
+    timestampMs: Date.now(),
+  };
+}
+
+function cloneTradeFeedSnapshot(state: SharedBirdeyeFeedState): TradeFeedSnapshot {
+  return {
+    recentTrades: state.recentTrades.map((trade) => ({ ...trade })),
+    latestPrice: state.latestPrice ? { ...state.latestPrice } : null,
+    status: { ...state.status },
+    lastTradeAtMs: state.lastTradeAtMs,
+    lastPriceAtMs: state.lastPriceAtMs,
+  };
+}
+
+function mergeBufferedTrades(
+  current: TradeFeedTrade[],
+  incoming: TradeFeedTrade[],
+  maxEntries = BIRDEYE_SHARED_RECENT_TRADES_LIMIT
+): TradeFeedTrade[] {
+  if (incoming.length === 0) {
+    return current;
+  }
+
+  const byId = new Map<string, TradeFeedTrade>();
+  const nowMs = Date.now();
+  for (const trade of [...incoming, ...current]) {
+    const normalized = {
+      ...trade,
+      receivedAtMs:
+        typeof trade.receivedAtMs === "number" && Number.isFinite(trade.receivedAtMs)
+          ? trade.receivedAtMs
+          : nowMs,
+    };
+    byId.set(normalized.id, normalized);
+  }
+
+  return [...byId.values()]
+    .sort((left, right) => {
+      const leftOrderingTs =
+        nowMs - left.timestampMs <= 30_000
+          ? Math.max(left.timestampMs, left.receivedAtMs ?? left.timestampMs)
+          : left.timestampMs;
+      const rightOrderingTs =
+        nowMs - right.timestampMs <= 30_000
+          ? Math.max(right.timestampMs, right.receivedAtMs ?? right.timestampMs)
+          : right.timestampMs;
+      if (rightOrderingTs !== leftOrderingTs) {
+        return rightOrderingTs - leftOrderingTs;
+      }
+      return right.timestampMs - left.timestampMs;
+    })
+    .slice(0, maxEntries);
 }
 
 function toTimestampMs(value: unknown): number | null {
@@ -136,6 +244,7 @@ function mapBirdeyeTrade(value: unknown): TradeFeedTrade | null {
   return {
     id: txHash ?? `${timestampMs}:${safeString(record.owner) ?? "unknown"}`,
     timestampMs,
+    receivedAtMs: Date.now(),
     txHash,
     walletAddress,
     side: toTradeSide(record.side),
@@ -240,7 +349,78 @@ export async function fetchBirdeyeRecentTrades(params: {
     .slice(0, limit);
 }
 
-export function startBirdeyeLiveFeed(params: StartBirdeyeLiveFeedParams): { close: () => void } {
+const sharedBirdeyeFeeds = new Map<string, SharedBirdeyeFeedState>();
+
+function broadcastSharedFeedStatus(state: SharedBirdeyeFeedState, status: TradeFeedStatus): void {
+  state.status = status;
+  for (const subscriber of state.subscribers.values()) {
+    subscriber.onStatus?.(status);
+  }
+}
+
+function broadcastSharedFeedSnapshot(state: SharedBirdeyeFeedState): void {
+  const snapshot = cloneTradeFeedSnapshot(state);
+  for (const subscriber of state.subscribers.values()) {
+    subscriber.onSnapshot?.(snapshot);
+  }
+}
+
+function scheduleSharedFeedClose(state: SharedBirdeyeFeedState): void {
+  if (state.closeTimer) {
+    clearTimeout(state.closeTimer);
+  }
+  state.closeTimer = setTimeout(() => {
+    if (state.subscribers.size > 0) {
+      return;
+    }
+    try {
+      state.closeTransport?.();
+    } finally {
+      sharedBirdeyeFeeds.delete(state.key);
+    }
+  }, BIRDEYE_SHARED_FEED_IDLE_TTL_MS);
+}
+
+function clearSharedFeedCloseTimer(state: SharedBirdeyeFeedState): void {
+  if (!state.closeTimer) {
+    return;
+  }
+  clearTimeout(state.closeTimer);
+  state.closeTimer = null;
+}
+
+function primeSharedFeedTrades(state: SharedBirdeyeFeedState): void {
+  if (state.seedPromise || !hasBirdeyeTradeFeedConfig()) {
+    return;
+  }
+
+  state.seedPromise = fetchBirdeyeRecentTrades({
+    chainType: state.chainType,
+    tokenAddress: state.tokenAddress,
+    limit: BIRDEYE_SHARED_RECENT_TRADES_LIMIT,
+  })
+    .then((trades) => {
+      if (trades.length === 0) {
+        return;
+      }
+      state.recentTrades = mergeBufferedTrades(state.recentTrades, trades);
+      state.lastTradeAtMs = trades.reduce(
+        (maxTimestamp, trade) => Math.max(maxTimestamp, trade.timestampMs),
+        state.lastTradeAtMs
+      );
+      broadcastSharedFeedSnapshot(state);
+    })
+    .catch((error) => {
+      for (const subscriber of state.subscribers.values()) {
+        subscriber.onError?.(error);
+      }
+    })
+    .finally(() => {
+      state.seedPromise = null;
+    });
+}
+
+function openBirdeyeSocketFeed(params: StartBirdeyeLiveFeedParams): { close: () => void } {
   if (!hasBirdeyeTradeFeedConfig()) {
     params.onStatus?.({
       connected: false,
@@ -380,4 +560,129 @@ export function startBirdeyeLiveFeed(params: StartBirdeyeLiveFeedParams): { clos
   });
 
   return { close };
+}
+
+function getOrCreateSharedBirdeyeFeed(params: StartBirdeyeLiveFeedParams): SharedBirdeyeFeedState {
+  const key = buildSharedFeedKey(params);
+  const existing = sharedBirdeyeFeeds.get(key);
+  if (existing) {
+    clearSharedFeedCloseTimer(existing);
+    if (!existing.seedPromise && existing.recentTrades.length === 0) {
+      primeSharedFeedTrades(existing);
+    }
+    return existing;
+  }
+
+  const state: SharedBirdeyeFeedState = {
+    key,
+    chainType: normalizeChainType(params.chainType),
+    tokenAddress: params.tokenAddress.trim(),
+    pairAddress: params.pairAddress?.trim() ?? null,
+    subscribers: new Map<string, SharedFeedSubscriber>(),
+    recentTrades: [],
+    latestPrice: null,
+    status: createInitialTradeFeedStatus(),
+    lastTradeAtMs: 0,
+    lastPriceAtMs: 0,
+    closeTimer: null,
+    seedPromise: null,
+    closeTransport: null,
+  };
+
+  state.closeTransport = openBirdeyeSocketFeed({
+    chainType: state.chainType,
+    tokenAddress: state.tokenAddress,
+    pairAddress: state.pairAddress,
+    onSnapshot: params.onSnapshot,
+    onPrice: (update) => {
+      state.latestPrice = update;
+      state.lastPriceAtMs = Date.now();
+      for (const subscriber of state.subscribers.values()) {
+        subscriber.onPrice(update);
+      }
+    },
+    onTrade: (trade) => {
+      const normalizedTrade = {
+        ...trade,
+        receivedAtMs:
+          typeof trade.receivedAtMs === "number" && Number.isFinite(trade.receivedAtMs)
+            ? trade.receivedAtMs
+            : Date.now(),
+      };
+      state.recentTrades = mergeBufferedTrades(state.recentTrades, [normalizedTrade]);
+      state.lastTradeAtMs = Math.max(state.lastTradeAtMs, normalizedTrade.timestampMs);
+      for (const subscriber of state.subscribers.values()) {
+        subscriber.onTrade(normalizedTrade);
+      }
+    },
+    onStatus: (status) => {
+      broadcastSharedFeedStatus(state, status);
+    },
+    onError: (error) => {
+      for (const subscriber of state.subscribers.values()) {
+        subscriber.onError?.(error);
+      }
+    },
+  }).close;
+
+  sharedBirdeyeFeeds.set(key, state);
+  primeSharedFeedTrades(state);
+  return state;
+}
+
+export function getBufferedBirdeyeLiveFeedSnapshot(params: {
+  chainType: BirdeyeTradeFeedChain;
+  tokenAddress: string;
+  pairAddress?: string | null;
+}): TradeFeedSnapshot | null {
+  const state = sharedBirdeyeFeeds.get(buildSharedFeedKey(params));
+  if (!state) {
+    return null;
+  }
+  return cloneTradeFeedSnapshot(state);
+}
+
+export function startBirdeyeLiveFeed(params: StartBirdeyeLiveFeedParams): {
+  close: () => void;
+  snapshot: TradeFeedSnapshot;
+} {
+  if (!hasBirdeyeTradeFeedConfig()) {
+    const snapshot: TradeFeedSnapshot = {
+      recentTrades: [],
+      latestPrice: null,
+      status: {
+        connected: false,
+        mode: "unavailable",
+        reason: "Birdeye API key is not configured",
+        timestampMs: Date.now(),
+      },
+      lastTradeAtMs: 0,
+      lastPriceAtMs: 0,
+    };
+    params.onStatus?.(snapshot.status);
+    return {
+      close: () => undefined,
+      snapshot,
+    };
+  }
+
+  const state = getOrCreateSharedBirdeyeFeed(params);
+  const subscriberId = randomUUID();
+  state.subscribers.set(subscriberId, {
+    onSnapshot: params.onSnapshot,
+    onPrice: params.onPrice,
+    onTrade: params.onTrade,
+    onStatus: params.onStatus,
+    onError: params.onError,
+  });
+
+  return {
+    close: () => {
+      state.subscribers.delete(subscriberId);
+      if (state.subscribers.size === 0) {
+        scheduleSharedFeedClose(state);
+      }
+    },
+    snapshot: cloneTradeFeedSnapshot(state),
+  };
 }

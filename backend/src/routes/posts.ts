@@ -45,9 +45,11 @@ import {
 } from "../services/helius.js";
 import {
   fetchBirdeyeRecentTrades,
+  getBufferedBirdeyeLiveFeedSnapshot,
   hasBirdeyeTradeFeedConfig,
   startBirdeyeLiveFeed,
   type BirdeyeTradeFeedChain,
+  type TradeFeedSnapshot,
   type TradeFeedStatus,
 } from "../services/birdeye-trade-feed.js";
 import {
@@ -3030,6 +3032,57 @@ function queuePostCreateIntelligenceRefresh(params: {
   });
 }
 
+export function buildPostAutoSettlementJobInput(params: {
+  postId: string;
+  createdAt: Date;
+}): EnqueueInternalJobInput {
+  return buildSettlementJobInput({
+    reason: "post_create_1h_deadline",
+    postId: params.postId,
+    notBeforeAt: new Date(params.createdAt.getTime() + SETTLEMENT_1H_MS),
+  });
+}
+
+function queuePostCreateSettlement(params: {
+  postId: string;
+  createdAt: Date;
+}): void {
+  const scheduledFor = new Date(params.createdAt.getTime() + SETTLEMENT_1H_MS);
+  const runInlineFallback = () => {
+    if (IS_SERVERLESS_RUNTIME) {
+      console.warn("[posts/create] delayed settlement fallback unavailable on serverless runtime", {
+        postId: params.postId,
+        scheduledFor: scheduledFor.toISOString(),
+      });
+      return;
+    }
+
+    const delayMs = Math.max(0, scheduledFor.getTime() - Date.now());
+    setTimeout(() => {
+      void runSettlementJob({ postId: params.postId }).catch((error) => {
+        console.warn("[posts/create] delayed inline settlement failed", {
+          message: getErrorMessage(error),
+          postId: params.postId,
+        });
+      });
+    }, delayMs);
+  };
+
+  if (!hasQStashPublishConfig()) {
+    runInlineFallback();
+    return;
+  }
+
+  void enqueueInternalJob(buildPostAutoSettlementJobInput(params)).catch((error) => {
+    console.warn("[posts/create] queue publish failed; falling back to delayed inline settlement", {
+      message: getErrorMessage(error),
+      postId: params.postId,
+      scheduledFor: scheduledFor.toISOString(),
+    });
+    runInlineFallback();
+  });
+}
+
 function safeRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -3641,6 +3694,193 @@ async function findPostsToSettle1h(
   }
 }
 
+async function findPostToSettle1hById(postId: string): Promise<OneHourSettlementCandidate | null> {
+  const row = await prisma.post.findUnique({
+    where: { id: postId },
+    select: {
+      id: true,
+      authorId: true,
+      contractAddress: true,
+      chainType: true,
+      createdAt: true,
+      entryMcap: true,
+      currentMcap: true,
+      isWin: true,
+      isWin1h: true,
+      recoveryEligible: true,
+      settled: true,
+      author: {
+        select: {
+          name: true,
+          username: true,
+        },
+      },
+    },
+  });
+
+  if (!row || row.settled || !row.contractAddress || row.entryMcap === null || row.entryMcap <= 0) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    authorId: row.authorId,
+    contractAddress: row.contractAddress,
+    chainType: row.chainType,
+    createdAt: row.createdAt,
+    entryMcap: row.entryMcap,
+    currentMcap: row.currentMcap,
+    isWin: row.isWin,
+    isWin1h: row.isWin1h,
+    recoveryEligible: row.recoveryEligible,
+    author: {
+      name: row.author.name ?? "User",
+      username: row.author.username ?? null,
+    },
+  };
+}
+
+async function settleOneHourPostCandidate(
+  post: OneHourSettlementCandidate
+): Promise<{ settled: boolean; error: boolean }> {
+  if (!post.contractAddress || post.entryMcap === null) {
+    return { settled: false, error: false };
+  }
+
+  try {
+    const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
+    const mcap1h = fetchedMcap ?? post.currentMcap;
+    if (mcap1h === null || mcap1h <= 0) {
+      return { settled: false, error: true };
+    }
+
+    const percentChange1h = ((mcap1h - post.entryMcap) / post.entryMcap) * 100;
+    const isWin1h = mcap1h > post.entryMcap;
+    const { levelChange, recoveryEligible } = calculate1HSettlement(percentChange1h);
+    const xpChange = calculateXpChange(percentChange1h);
+    const currentUser = await prisma.user.findUnique({
+      where: { id: post.authorId },
+      select: { id: true, level: true, xp: true },
+    });
+    if (!currentUser) {
+      return { settled: false, error: true };
+    }
+
+    const scoreEligible = await isPrimaryAlphaInBucket({
+      postId: post.id,
+      authorId: post.authorId,
+      contractAddress: post.contractAddress,
+      createdAt: post.createdAt,
+    });
+    const effectiveLevelChange = scoreEligible ? levelChange : 0;
+    const effectiveXpChange = scoreEligible ? xpChange : 0;
+    const effectiveRecoveryEligible = scoreEligible ? recoveryEligible : false;
+    const newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange);
+    const newXp = Math.max(0, currentUser.xp + effectiveXpChange);
+    const settledAt = new Date();
+
+    try {
+      await prisma.$transaction([
+        prisma.post.updateMany({
+          where: { id: post.id },
+          data: {
+            settled: true,
+            settledAt,
+            isWin: isWin1h,
+            isWin1h,
+            mcap1h,
+            percentChange1h,
+            recoveryEligible: effectiveRecoveryEligible,
+            levelChange1h: effectiveLevelChange,
+            trackingMode: TRACKING_MODE_SETTLED,
+            lastMcapUpdate: settledAt,
+          },
+        }),
+        prisma.user.updateMany({
+          where: { id: post.authorId },
+          data: {
+            level: newLevel,
+            xp: newXp,
+          },
+        }),
+      ]);
+    } catch (error) {
+      if (!isPrismaSchemaDriftError(error)) {
+        throw error;
+      }
+
+      try {
+        await prisma.$executeRaw`
+          UPDATE "Post" SET settled = true, "settledAt" = ${settledAt}, "isWin" = ${isWin1h}
+          WHERE id = ${post.id}
+        `;
+      } catch (rawPostErr) {
+        console.warn("[Settlement 1H] Raw post update failed (continuing with user update):", rawPostErr);
+      }
+      await prisma.$executeRaw`
+        UPDATE "User" SET level = ${newLevel}, xp = ${newXp} WHERE id = ${post.authorId}
+      `;
+    }
+
+    if (scoreEligible) {
+      const levelDiff = newLevel - currentUser.level;
+      const xpDisplay = effectiveXpChange >= 0 ? `+${effectiveXpChange}` : effectiveXpChange;
+      const levelDisplay = levelDiff >= 0 ? `+${levelDiff}` : levelDiff;
+
+      let settlementMsg: string;
+      if (isWin1h) {
+        settlementMsg =
+          levelDiff !== 0
+            ? `1H WIN! +${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`
+            : `1H WIN! +${percentChange1h.toFixed(1)}% | XP ${xpDisplay}`;
+      } else if (effectiveRecoveryEligible) {
+        settlementMsg = `1H: ${percentChange1h.toFixed(1)}% | Recovery chance at 6H!`;
+      } else {
+        settlementMsg = `1H LOSS: ${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
+      }
+
+      await createNotificationSafely({
+        operation: "settlement_1h_author_notification",
+        data: {
+          userId: post.authorId,
+          type: "settlement",
+          message: settlementMsg,
+          dedupeKey: buildNotificationDedupeKey({
+            type: "settlement",
+            scope: "1h",
+            userId: post.authorId,
+            postId: post.id,
+          }),
+          postId: post.id,
+        },
+        fallbackData: {
+          userId: post.authorId,
+          type: "settlement",
+          message: settlementMsg,
+          postId: post.id,
+        },
+      });
+
+      await notifyFollowersOfBigGain({
+        postId: post.id,
+        authorId: post.authorId,
+        authorName: post.author.name,
+        authorUsername: post.author.username,
+        percentChange1h,
+      });
+    }
+
+    console.log(
+      `[Settlement 1H] Post ${post.id}: ${isWin1h ? "WIN" : "LOSS"} (${percentChange1h.toFixed(2)}%), scoreEligible=${scoreEligible}, recoveryEligible=${effectiveRecoveryEligible}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`
+    );
+
+    return { settled: true, error: false };
+  } catch (err) {
+    console.error(`[Settlement 1H] Error settling post ${post.id}:`, err);
+    return { settled: false, error: true };
+  }
+}
+
 async function findPostsToSnapshot6h(
   sixHoursAgo: Date,
   take?: number
@@ -3720,9 +3960,12 @@ async function findPostsToSnapshot6h(
  * are updated when the feed is fetched. For production, consider implementing
  * a proper background job system (see services/marketcap.ts for details).
  */
-async function checkAndSettlePosts(): Promise<SettlementRunResult> {
+async function checkAndSettlePosts(params?: {
+  postId?: string | null;
+}): Promise<SettlementRunResult> {
+  const targetPostId = params?.postId?.trim() ?? null;
   return await withSettlementRunLock(
-    "background_settlement",
+    targetPostId ? `targeted_settlement:${targetPostId}` : "background_settlement",
     () => createSkippedSettlementResult("database_lock_held"),
     async () => {
       const now = Date.now();
@@ -3735,147 +3978,46 @@ async function checkAndSettlePosts(): Promise<SettlementRunResult> {
       let errorCount = 0;
 
       try {
+        if (targetPostId) {
+          const post = await findPostToSettle1hById(targetPostId);
+          if (!post) {
+            return createSkippedSettlementResult("post_not_found_or_already_settled");
+          }
+          if (!isReadyFor1HSettlement(post.createdAt, false)) {
+            return createSkippedSettlementResult("post_not_ready_for_1h_settlement");
+          }
+
+          const result = await settleOneHourPostCandidate(post);
+          return {
+            settled1h: result.settled ? 1 : 0,
+            snapshot6h: 0,
+            levelChanges6h: 0,
+            errors: result.error ? 1 : 0,
+            ...(result.settled
+              ? {}
+              : {
+                  skipped: true,
+                  reason: result.error ? "targeted_settlement_failed" : "targeted_settlement_skipped",
+                }),
+          };
+        }
+
         // ============================================
         // 1H SETTLEMENT - Official settlement for XP/Level
         // ============================================
         const oneHourScanLimit = SETTLEMENT_1H_TARGET_PER_RUN * SETTLEMENT_1H_SCAN_MULTIPLIER;
         const postsToSettle1h = await findPostsToSettle1h(oneHourAgo, oneHourScanLimit);
 
-    for (const post of postsToSettle1h) {
-      if (settled1hCount >= SETTLEMENT_1H_TARGET_PER_RUN) break;
-      if (!post.contractAddress || post.entryMcap === null) continue;
-
-      try {
-        const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
-        const mcap1h = fetchedMcap ?? post.currentMcap;
-        if (mcap1h === null || mcap1h <= 0) {
-          errorCount++;
-          continue;
-        }
-
-        // Calculate percent change at 1H
-        const percentChange1h = ((mcap1h - post.entryMcap) / post.entryMcap) * 100;
-        const isWin1h = mcap1h > post.entryMcap;
-
-        // Use the new 1H settlement logic
-        const { levelChange, recoveryEligible } = calculate1HSettlement(percentChange1h);
-        const xpChange = calculateXpChange(percentChange1h);
-        const currentUser = await prisma.user.findUnique({
-          where: { id: post.authorId },
-          select: { id: true, level: true, xp: true },
-        });
-        if (!currentUser) {
-          errorCount++;
-          continue;
-        }
-        const scoreEligible = await isPrimaryAlphaInBucket({
-          postId: post.id,
-          authorId: post.authorId,
-          contractAddress: post.contractAddress,
-          createdAt: post.createdAt,
-        });
-        const effectiveLevelChange = scoreEligible ? levelChange : 0;
-        const effectiveXpChange = scoreEligible ? xpChange : 0;
-        const effectiveRecoveryEligible = scoreEligible ? recoveryEligible : false;
-        const newLevel = calculateFinalLevel(currentUser.level, effectiveLevelChange);
-        const newXp = Math.max(0, currentUser.xp + effectiveXpChange);
-        const settledAt = new Date();
-
-        // Keep settlement + user rewards/penalties atomic to avoid "settled but no level/xp" failures.
-        try {
-          await prisma.$transaction([
-            prisma.post.updateMany({
-              where: { id: post.id },
-              data: {
-                settled: true,
-                settledAt,
-                isWin: isWin1h,
-                isWin1h: isWin1h,
-                mcap1h: mcap1h,
-                percentChange1h: percentChange1h,
-                recoveryEligible: effectiveRecoveryEligible,
-                levelChange1h: effectiveLevelChange,
-                trackingMode: TRACKING_MODE_SETTLED,
-                lastMcapUpdate: settledAt,
-              },
-            }),
-            prisma.user.updateMany({
-              where: { id: post.authorId },
-              data: {
-                level: newLevel,
-                xp: newXp,
-              },
-            }),
-          ]);
-        } catch (error) {
-          if (!isPrismaSchemaDriftError(error)) {
-            throw error;
+        for (const post of postsToSettle1h) {
+          if (settled1hCount >= SETTLEMENT_1H_TARGET_PER_RUN) break;
+          const result = await settleOneHourPostCandidate(post);
+          if (result.settled) {
+            settled1hCount++;
           }
-
-          // Use raw SQL to update - works regardless of which columns exist
-          try {
-            await prisma.$executeRaw`
-              UPDATE "Post" SET settled = true, "settledAt" = ${settledAt}, "isWin" = ${isWin1h}
-              WHERE id = ${post.id}
-            `;
-          } catch (rawPostErr) {
-            console.warn("[Settlement 1H] Raw post update failed (continuing with user update):", rawPostErr);
+          if (result.error) {
+            errorCount++;
           }
-          await prisma.$executeRaw`
-            UPDATE "User" SET level = ${newLevel}, xp = ${newXp} WHERE id = ${post.authorId}
-          `;
         }
-
-        // Create notification for the author about 1H settlement
-        if (scoreEligible) {
-          const levelDiff = newLevel - currentUser.level;
-          const xpDisplay =
-            effectiveXpChange >= 0 ? `+${effectiveXpChange}` : effectiveXpChange;
-          const levelDisplay = levelDiff >= 0 ? `+${levelDiff}` : levelDiff;
-
-          let settlementMsg: string;
-          if (isWin1h) {
-            settlementMsg =
-              levelDiff !== 0
-                ? `1H WIN! +${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`
-                : `1H WIN! +${percentChange1h.toFixed(1)}% | XP ${xpDisplay}`;
-          } else if (effectiveRecoveryEligible) {
-            settlementMsg = `1H: ${percentChange1h.toFixed(1)}% | Recovery chance at 6H!`;
-          } else {
-            settlementMsg = `1H LOSS: ${percentChange1h.toFixed(1)}% | Level ${levelDisplay} | XP ${xpDisplay}`;
-          }
-
-          await createNotificationSafely({
-            operation: "settlement_1h_author_notification",
-            data: {
-              userId: post.authorId,
-              type: "settlement",
-              message: settlementMsg,
-              dedupeKey: buildNotificationDedupeKey({
-                type: "settlement",
-                scope: "1h",
-                userId: post.authorId,
-                postId: post.id,
-              }),
-              postId: post.id,
-            },
-          });
-          await notifyFollowersOfBigGain({
-            postId: post.id,
-            authorId: post.authorId,
-            authorName: post.author.name,
-            authorUsername: post.author.username,
-            percentChange1h,
-          });
-        }
-
-        settled1hCount++;
-        console.log(`[Settlement 1H] Post ${post.id}: ${isWin1h ? 'WIN' : 'LOSS'} (${percentChange1h.toFixed(2)}%), scoreEligible=${scoreEligible}, recoveryEligible=${effectiveRecoveryEligible}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`);
-      } catch (err) {
-        console.error(`[Settlement 1H] Error settling post ${post.id}:`, err);
-        errorCount++;
-      }
-    }
 
     // ============================================
     // 6H MARKET CAP SNAPSHOT - For ALL posts >= 6 hours old
@@ -4305,15 +4447,22 @@ function buildJobWindowId(nowMs: number, intervalMs: number): string {
 
 export function buildSettlementJobInput(params: {
   reason: string;
+  postId?: string | null;
   nowMs?: number;
+  notBeforeAt?: Date | string | number | null;
 }): EnqueueInternalJobInput {
   const nowMs = params.nowMs ?? Date.now();
   return {
     jobName: "settlement",
-    idempotencyKey: `settlement:${buildJobWindowId(nowMs, SETTLEMENT_RUN_MIN_INTERVAL_MS)}`,
+    idempotencyKey:
+      params.postId?.trim()
+        ? `settlement:post:${params.postId.trim()}:1h`
+        : `settlement:${buildJobWindowId(nowMs, SETTLEMENT_RUN_MIN_INTERVAL_MS)}`,
     payload: {
       reason: params.reason,
+      ...(params.postId?.trim() ? { postId: params.postId.trim() } : {}),
     },
+    ...(params.notBeforeAt ? { notBeforeAt: params.notBeforeAt } : {}),
   };
 }
 
@@ -4353,8 +4502,10 @@ export function buildMaintenanceJobInputs(params: {
   return inputs;
 }
 
-export async function runSettlementJob(): Promise<SettlementRunResult> {
-  return checkAndSettlePosts();
+export async function runSettlementJob(params?: {
+  postId?: string | null;
+}): Promise<SettlementRunResult> {
+  return checkAndSettlePosts(params);
 }
 
 export async function runMarketRefreshJob(): Promise<{
@@ -5571,6 +5722,10 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     authorName: authorSnapshot.name,
     authorUsername: authorSnapshot.username,
     postId: post.id,
+  });
+  queuePostCreateSettlement({
+    postId: post.id,
+    createdAt: alphaCreatedAt,
   });
   queuePostCreateIntelligenceRefresh({
     postId: post.id,
@@ -6943,6 +7098,7 @@ type ChartCandlesPayload = z.infer<typeof ChartCandlesProxySchema>;
 const ChartTradesQuerySchema = z
   .object({
     tokenAddress: z.string().min(10).max(128),
+    pairAddress: z.string().min(10).max(128).optional(),
     chainType: z.enum(["solana", "evm", "ethereum"]).optional().default("solana"),
     limit: z.coerce.number().int().min(5).max(40).optional().default(24),
   })
@@ -7843,6 +7999,7 @@ function buildChartTradesCacheKey(payload: ChartTradesQuery): string {
   return [
     toBirdeyeTradeFeedChain(payload.chainType),
     payload.tokenAddress.toLowerCase(),
+    payload.pairAddress?.toLowerCase() ?? "",
     String(payload.limit),
   ].join(":");
 }
@@ -7850,6 +8007,19 @@ function buildChartTradesCacheKey(payload: ChartTradesQuery): string {
 async function loadChartTrades(payload: ChartTradesQuery) {
   if (!hasBirdeyeTradeFeedConfig()) {
     return [];
+  }
+
+  const bufferedSnapshot = getBufferedBirdeyeLiveFeedSnapshot({
+    chainType: toBirdeyeTradeFeedChain(payload.chainType),
+    tokenAddress: payload.tokenAddress,
+    pairAddress: payload.pairAddress ?? null,
+  });
+  if (
+    bufferedSnapshot &&
+    bufferedSnapshot.recentTrades.length > 0 &&
+    (bufferedSnapshot.status.connected || Date.now() - bufferedSnapshot.lastTradeAtMs <= 30_000)
+  ) {
+    return bufferedSnapshot.recentTrades.slice(0, payload.limit);
   }
 
   const cacheKey = buildChartTradesCacheKey(payload);
@@ -8746,6 +8916,14 @@ postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async 
       const writeEvent = (event: string, data: unknown) => {
         writeChunk(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       };
+      const writeSnapshot = (snapshot: Pick<TradeFeedSnapshot, "recentTrades" | "latestPrice">) => {
+        if (snapshot.recentTrades.length > 0 || snapshot.latestPrice) {
+          writeEvent("snapshot", {
+            trades: snapshot.recentTrades,
+            latestPrice: snapshot.latestPrice,
+          });
+        }
+      };
 
       const cleanup = () => {
         if (closed) return;
@@ -8770,12 +8948,6 @@ postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async 
       };
 
       writeChunk("retry: 1000\n\n");
-      writeEvent("status", {
-        connected: false,
-        mode: "stream",
-        reason: "Connecting",
-        timestampMs: Date.now(),
-      } satisfies TradeFeedStatus);
 
       keepAliveInterval = setInterval(() => {
         writeChunk(`: keepalive ${Date.now()}\n\n`);
@@ -8795,29 +8967,13 @@ postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async 
       abortSignal.addEventListener("abort", onAbort, { once: true });
       detachAbort = () => abortSignal.removeEventListener("abort", onAbort);
 
-      void loadChartTrades({
-        tokenAddress: payload.tokenAddress,
-        chainType,
-        limit: 24,
-      })
-        .then((trades) => {
-          if (trades.length > 0) {
-            writeEvent("snapshot", { trades });
-          }
-        })
-        .catch((error) => {
-          writeEvent("status", {
-            connected: false,
-            mode: "fallback",
-            reason: `Trade seed unavailable: ${getErrorMessage(error)}`,
-            timestampMs: Date.now(),
-          } satisfies TradeFeedStatus);
-        });
-
       const liveFeed = startBirdeyeLiveFeed({
         chainType,
         tokenAddress: payload.tokenAddress,
         pairAddress: payload.pairAddress,
+        onSnapshot: (snapshot) => {
+          writeSnapshot(snapshot);
+        },
         onPrice: (update) => {
           writeEvent("price", update);
         },
@@ -8836,6 +8992,34 @@ postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async 
           } satisfies TradeFeedStatus);
         },
       });
+
+      const initialSnapshot = liveFeed.snapshot;
+      writeSnapshot(initialSnapshot);
+      writeEvent("status", initialSnapshot.status);
+      if (initialSnapshot.recentTrades.length === 0) {
+        void loadChartTrades({
+          tokenAddress: payload.tokenAddress,
+          pairAddress: payload.pairAddress,
+          chainType,
+          limit: 24,
+        })
+          .then((trades) => {
+            if (trades.length > 0) {
+              writeEvent("snapshot", {
+                trades,
+                latestPrice: initialSnapshot.latestPrice,
+              });
+            }
+          })
+          .catch((error) => {
+            writeEvent("status", {
+              connected: false,
+              mode: "fallback",
+              reason: `Trade seed unavailable: ${getErrorMessage(error)}`,
+              timestampMs: Date.now(),
+            } satisfies TradeFeedStatus);
+          });
+      }
 
       liveFeedCloser = liveFeed.close;
     },

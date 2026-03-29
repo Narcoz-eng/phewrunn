@@ -31,6 +31,7 @@ export type TradePanelRecentTrade = {
 
 type TradePanelLiveSeedPayload = {
   trades?: TradePanelRecentTrade[];
+  latestPrice?: TradePanelLivePricePayload | null;
 };
 
 type TradePanelLivePricePayload = {
@@ -53,7 +54,7 @@ const MAX_RECENT_TRADES = 32;
 const MAX_LIVE_SAMPLES = 720;
 const FALLBACK_TRADES_POLL_MS = 2_500;
 const FALLBACK_PRICE_POLL_MS = 1_500;
-const STREAM_ERROR_GRACE_MS = 1_500;
+const STREAM_ERROR_GRACE_MS = 2_500;
 
 function shortenTradeWalletAddress(address: string | null): string | null {
   if (!address) return null;
@@ -146,6 +147,9 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
           chainType: params.chainType,
           limit: String(MAX_RECENT_TRADES),
         });
+        if (params.pairAddress) {
+          query.set("pairAddress", params.pairAddress);
+        }
         const payload = await api.get<{
           trades: TradePanelRecentTrade[];
         }>(`/api/posts/chart/trades?${query.toString()}`);
@@ -212,6 +216,13 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as TradePanelLiveSeedPayload;
         const trades = Array.isArray(payload.trades) ? payload.trades : [];
+        const latestPrice =
+          payload.latestPrice &&
+          typeof payload.latestPrice.close === "number" &&
+          Number.isFinite(payload.latestPrice.close) &&
+          payload.latestPrice.close > 0
+            ? payload.latestPrice
+            : null;
         if (trades.length > 0) {
           const latestTradeTs = trades.reduce((maxTimestamp, trade) => Math.max(maxTimestamp, trade.timestampMs), 0);
           setRecentTrades((current) => mergeRecentTrades(current, trades));
@@ -220,6 +231,46 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
             if (Date.now() - latestTradeTs <= 30_000) {
               setLastEventAtMs(Date.now());
             }
+          }
+        }
+        if (latestPrice) {
+          setLiveSamples((current) =>
+            appendLiveTradeSample(
+              current,
+              {
+                timestamp: latestPrice.timestampMs,
+                priceUsd: latestPrice.close,
+                tradeVolumeUsd: latestPrice.volumeUsd,
+                source: "price",
+                receivedAtMs: Date.now(),
+              },
+              MAX_LIVE_SAMPLES
+            )
+          );
+          setLastEventAtMs(Date.now());
+        } else if (trades.length > 0) {
+          const freshestTrade = trades
+            .filter(
+              (trade) =>
+                typeof trade.priceUsd === "number" &&
+                Number.isFinite(trade.priceUsd) &&
+                trade.priceUsd > 0
+            )
+            .sort((left, right) => right.timestampMs - left.timestampMs)[0];
+          if (freshestTrade) {
+            setLiveSamples((current) =>
+              appendLiveTradeSample(
+                current,
+                {
+                  timestamp: freshestTrade.timestampMs,
+                  priceUsd: freshestTrade.priceUsd!,
+                  tradeVolumeUsd: freshestTrade.volumeUsd,
+                  source: "trade",
+                  receivedAtMs: Date.now(),
+                },
+                MAX_LIVE_SAMPLES
+              )
+            );
           }
         }
       } catch {
@@ -376,6 +427,9 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
           chainType: params.chainType,
           limit: String(MAX_RECENT_TRADES),
         });
+        if (params.pairAddress) {
+          query.set("pairAddress", params.pairAddress);
+        }
         const payload = await api.get<{
           trades: TradePanelRecentTrade[];
         }>(`/api/posts/chart/trades?${query.toString()}`);

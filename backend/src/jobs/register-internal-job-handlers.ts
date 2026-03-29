@@ -39,6 +39,9 @@ const pushDeliveryPayloadSchema = z.object({
 const maintenanceReasonPayloadSchema = z.object({
   reason: z.string().min(1).max(160).optional(),
 });
+const settlementPayloadSchema = maintenanceReasonPayloadSchema.extend({
+  postId: z.string().min(1).max(128).optional(),
+});
 const intelligenceRefreshPayloadSchema = maintenanceReasonPayloadSchema.extend({
   contractAddress: z.string().trim().min(1).optional(),
 });
@@ -78,13 +81,16 @@ export function registerInternalJobHandlers(): void {
   });
 
   registerInternalJobHandler("settlement", async ({ envelope }) => {
-    maintenanceReasonPayloadSchema.parse(envelope.payload);
-    const result = await runSettlementJob();
+    const payload = settlementPayloadSchema.parse(envelope.payload);
+    const result = await runSettlementJob({
+      postId: payload.postId ?? null,
+    });
     return coerceResult({
       settled1h: result.settled1h,
       snapshot6h: result.snapshot6h,
       levelChanges6h: result.levelChanges6h,
       errors: result.errors,
+      postId: payload.postId ?? null,
     });
   });
 
