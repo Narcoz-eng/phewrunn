@@ -81,14 +81,15 @@ export function CandlestickChart({
   const suppressHoverUntilRef = useRef(0);
   const hoverRafRef = useRef<number>(0);
   const latestCandleSignatureRef = useRef<string | null>(null);
+  const latestCandleTimestampRef = useRef<number | null>(null);
   const pulseClearTimeoutRef = useRef<number | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredVisibleIndex, setHoveredVisibleIndex] = useState<number | null>(null);
   const [latestCandlePulseKey, setLatestCandlePulseKey] = useState(0);
   const [latestCandlePulseActive, setLatestCandlePulseActive] = useState(false);
+  const [latestCandlePulseMode, setLatestCandlePulseMode] = useState<"update" | "new-candle" | null>(null);
   const chartInstanceId = useId().replace(/[:]/g, "");
   const lineFillId = `${chartInstanceId}-candlestick-line-fill`;
-  const glowFilterId = `${chartInstanceId}-latest-glow`;
   const sparkleFilterId = `${chartInstanceId}-sparkle-glow`;
 
   useEffect(() => {
@@ -181,6 +182,11 @@ export function CandlestickChart({
     ].join(":");
 
     if (latestCandleSignatureRef.current && latestCandleSignatureRef.current !== nextSignature) {
+      const nextPulseMode =
+        latestCandleTimestampRef.current !== null && latestCandleTimestampRef.current !== latestPoint.ts
+          ? "new-candle"
+          : "update";
+      setLatestCandlePulseMode(nextPulseMode);
       setLatestCandlePulseKey((current) => current + 1);
       setLatestCandlePulseActive(true);
       if (typeof window !== "undefined") {
@@ -189,11 +195,13 @@ export function CandlestickChart({
         }
         pulseClearTimeoutRef.current = window.setTimeout(() => {
           setLatestCandlePulseActive(false);
-        }, 1_050);
+          setLatestCandlePulseMode(null);
+        }, nextPulseMode === "new-candle" ? 820 : 340);
       }
     }
 
     latestCandleSignatureRef.current = nextSignature;
+    latestCandleTimestampRef.current = latestPoint.ts;
 
     return () => {
       if (typeof window !== "undefined" && pulseClearTimeoutRef.current !== null) {
@@ -480,15 +488,8 @@ export function CandlestickChart({
             <stop offset="0%" stopColor={stroke} stopOpacity="0.24" />
             <stop offset="100%" stopColor={fill} stopOpacity="0.04" />
           </linearGradient>
-          <filter id={glowFilterId} x="-120%" y="-120%" width="340%" height="340%">
-            <feGaussianBlur stdDeviation="5.5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-          <filter id={sparkleFilterId} x="-160%" y="-160%" width="420%" height="420%">
-            <feGaussianBlur stdDeviation="2.6" />
+          <filter id={sparkleFilterId} x="-120%" y="-120%" width="340%" height="340%">
+            <feGaussianBlur stdDeviation="1.8" />
           </filter>
         </defs>
 
@@ -548,6 +549,7 @@ export function CandlestickChart({
                   height={Math.max(1, barHeight)}
                   rx="1"
                   fill={point.isBullish ? "rgba(34,197,94,0.28)" : "rgba(239,68,68,0.22)"}
+                  style={{ transition: "all 240ms ease-out" }}
                 />
               );
             })
@@ -565,21 +567,12 @@ export function CandlestickChart({
             const bodyColor = point.isBullish ? "#22c55e" : "#ef4444";
             const isLatestVisiblePoint = latestVisibleIndex === index;
             const shouldPulse = isLatestVisiblePoint && latestCandlePulseActive;
+            const isNewCandlePulse = shouldPulse && latestCandlePulseMode === "new-candle";
+            const isTradeUpdatePulse = shouldPulse && latestCandlePulseMode === "update";
             const centerY = top + bodyHeight / 2;
 
             return (
               <g key={`candle-${point.ts}`}>
-                {isLatestVisiblePoint ? (
-                  <g filter={`url(#${glowFilterId})`} opacity={shouldPulse ? 0.95 : 0.38}>
-                    <circle
-                      cx={x}
-                      cy={centerY}
-                      r={Math.max(8, candleBodyWidth * (shouldPulse ? 2.4 : 1.55))}
-                      fill={bodyColor}
-                      fillOpacity={shouldPulse ? 0.24 : 0.1}
-                    />
-                  </g>
-                ) : null}
                 <line
                   x1={x}
                   x2={x}
@@ -589,6 +582,7 @@ export function CandlestickChart({
                   strokeWidth={isLatestVisiblePoint ? 1.5 : 1.25}
                   strokeLinecap="round"
                   opacity={isLatestVisiblePoint ? 0.98 : 0.88}
+                  style={{ transition: "all 240ms ease-out" }}
                 />
                 <rect
                   x={x - candleBodyWidth / 2}
@@ -598,26 +592,32 @@ export function CandlestickChart({
                   rx="1"
                   fill={bodyColor}
                   fillOpacity={isLatestVisiblePoint ? 0.98 : 0.92}
+                  stroke={isLatestVisiblePoint ? "rgba(255,255,255,0.2)" : "transparent"}
+                  strokeWidth={isLatestVisiblePoint ? 0.8 : 0}
+                  style={{ transition: "all 240ms ease-out" }}
                 />
-                {shouldPulse ? (
+                {isTradeUpdatePulse ? (
+                  <g key={`update-pulse-${latestCandlePulseKey}`} pointerEvents="none">
+                    <circle cx={x} cy={closeY} r={Math.max(4, candleBodyWidth * 0.55)} fill="none" stroke={bodyColor} strokeWidth="1.1">
+                      <animate attributeName="r" values={`${Math.max(4, candleBodyWidth * 0.55)};${Math.max(10, candleBodyWidth * 1.6)}`} dur="0.34s" />
+                      <animate attributeName="opacity" values="0.42;0" dur="0.34s" />
+                    </circle>
+                  </g>
+                ) : null}
+                {isNewCandlePulse ? (
                   <g key={`spark-${latestCandlePulseKey}`} pointerEvents="none">
-                    <circle cx={x} cy={centerY} r={Math.max(8, candleBodyWidth * 1.3)} fill={bodyColor} opacity="0.24" filter={`url(#${sparkleFilterId})`}>
-                      <animate attributeName="r" values={`${Math.max(8, candleBodyWidth * 1.3)};${Math.max(18, candleBodyWidth * 3.5)}`} dur="0.9s" />
-                      <animate attributeName="opacity" values="0.26;0" dur="0.9s" />
+                    <circle cx={x + candleBodyWidth * 0.95} cy={highY - 6} r="1.4" fill="#f8fafc" filter={`url(#${sparkleFilterId})`}>
+                      <animate attributeName="cy" values={`${highY - 6};${highY - 11}`} dur="0.62s" />
+                      <animate attributeName="opacity" values="0;0.95;0" dur="0.62s" />
                     </circle>
-                    <circle cx={x + candleBodyWidth * 1.3} cy={highY - 8} r="1.6" fill="#f8fafc">
-                      <animate attributeName="cy" values={`${highY - 8};${highY - 14}`} dur="0.7s" />
-                      <animate attributeName="opacity" values="0;1;0" dur="0.7s" />
+                    <circle cx={x - candleBodyWidth * 1.05} cy={top + 6} r="1.1" fill={bodyColor} filter={`url(#${sparkleFilterId})`}>
+                      <animate attributeName="cx" values={`${x - candleBodyWidth * 1.05};${x - candleBodyWidth * 1.65}`} dur="0.66s" />
+                      <animate attributeName="cy" values={`${top + 6};${top + 1}`} dur="0.66s" />
+                      <animate attributeName="opacity" values="0;0.9;0" dur="0.66s" />
                     </circle>
-                    <circle cx={x - candleBodyWidth * 1.45} cy={top + 10} r="1.2" fill={bodyColor}>
-                      <animate attributeName="cx" values={`${x - candleBodyWidth * 1.45};${x - candleBodyWidth * 2.2}`} dur="0.72s" />
-                      <animate attributeName="cy" values={`${top + 10};${top + 3}`} dur="0.72s" />
-                      <animate attributeName="opacity" values="0;1;0" dur="0.72s" />
-                    </circle>
-                    <circle cx={x + candleBodyWidth * 0.45} cy={lowY + 6} r="1.25" fill="#fde68a">
-                      <animate attributeName="cx" values={`${x + candleBodyWidth * 0.45};${x + candleBodyWidth * 1.9}`} dur="0.78s" />
-                      <animate attributeName="cy" values={`${lowY + 6};${lowY + 12}`} dur="0.78s" />
-                      <animate attributeName="opacity" values="0;0.95;0" dur="0.78s" />
+                    <circle cx={x} cy={centerY} r={Math.max(3.5, candleBodyWidth * 0.5)} fill="none" stroke={bodyColor} strokeWidth="1">
+                      <animate attributeName="r" values={`${Math.max(3.5, candleBodyWidth * 0.5)};${Math.max(8, candleBodyWidth * 1.1)}`} dur="0.54s" />
+                      <animate attributeName="opacity" values="0.3;0" dur="0.54s" />
                     </circle>
                   </g>
                 ) : null}

@@ -142,7 +142,7 @@ function isPendingLiveDistributionPayload(payload: TokenLiveIntelligencePayload)
 
 export async function getTokenLiveIntelligence(
   address: string,
-  options?: { freshBundle?: boolean; timeoutMs?: number }
+  options?: { freshBundle?: boolean; timeoutMs?: number; cacheTtlMs?: number }
 ): Promise<TokenLiveIntelligencePayload> {
   const freshBundle = Boolean(options?.freshBundle);
   const cacheKey = buildTokenLiveCacheKey(address, freshBundle);
@@ -183,9 +183,19 @@ export async function getTokenLiveIntelligence(
       data: payload.data,
       expiresAtMs:
         Date.now() +
-        (isPendingLiveDistributionPayload(payload.data)
-          ? TOKEN_LIVE_PENDING_CACHE_TTL_MS
-          : TOKEN_LIVE_RESOLVED_CACHE_TTL_MS),
+        (() => {
+          const defaultTtlMs = isPendingLiveDistributionPayload(payload.data)
+            ? TOKEN_LIVE_PENDING_CACHE_TTL_MS
+            : TOKEN_LIVE_RESOLVED_CACHE_TTL_MS;
+          if (
+            typeof options?.cacheTtlMs === "number" &&
+            Number.isFinite(options.cacheTtlMs) &&
+            options.cacheTtlMs > 0
+          ) {
+            return Math.min(defaultTtlMs, Math.round(options.cacheTtlMs));
+          }
+          return defaultTtlMs;
+        })(),
     });
 
     return payload.data;

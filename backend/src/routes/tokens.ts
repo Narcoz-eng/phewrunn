@@ -85,9 +85,13 @@ const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
 const TOKEN_ROUTE_CACHE_VERSION = 26;
+const TOKEN_CHART_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 8_000;
+const TOKEN_CHART_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 3 * 60_000;
+const TOKEN_CHART_ROUTE_MAX_POINTS = process.env.NODE_ENV === "production" ? 720 : 240;
 const TRUSTED_TRADER_THRESHOLD = 58;
 const tokenRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload>>();
 const tokenLiveRouteCache = new Map<string, TokenRouteCacheEntry<TokenLivePayload>>();
+const tokenChartRouteCache = new Map<string, TokenRouteCacheEntry<TokenRoutePayload["chart"]>>();
 const tokenLiveRouteInFlight = new Map<string, Promise<TokenLivePayload>>();
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
@@ -104,6 +108,10 @@ function buildTokenRouteCacheKey(tokenAddress: string, viewerId: string | null):
 
 function buildTokenLiveRouteCacheKey(tokenAddress: string, options?: { fresh?: boolean }): string {
   return `route:token-live:${options?.fresh ? "fresh" : "default"}:${tokenAddress.trim().toLowerCase()}`;
+}
+
+function buildTokenChartRouteCacheKey(tokenAddress: string): string {
+  return `route:token-chart:${tokenAddress.trim().toLowerCase()}`;
 }
 
 function readTokenRouteCache(key: string, opts?: { allowStale?: boolean }): TokenRoutePayload | null {
@@ -130,6 +138,25 @@ function readTokenLiveRouteCache(key: string): TokenLivePayload | null {
     return null;
   }
   return cached.data;
+}
+
+function readTokenChartRouteCache(
+  key: string,
+  opts?: { allowStale?: boolean }
+): TokenRoutePayload["chart"] | null {
+  const cached = tokenChartRouteCache.get(key);
+  if (!cached) return null;
+  const now = Date.now();
+  if (cached.expiresAtMs > now) {
+    return cached.data;
+  }
+  if (opts?.allowStale && cached.staleUntilMs > now) {
+    return cached.data;
+  }
+  if (cached.staleUntilMs <= now) {
+    tokenChartRouteCache.delete(key);
+  }
+  return null;
 }
 
 function hasResolvedLiveTokenPayload(payload: TokenLivePayload): boolean {
@@ -324,6 +351,153 @@ function averageFiniteMetric(values: Array<number | null | undefined>): number |
   }
 
   return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+}
+
+function hasChartPointTelemetry(
+  point: Partial<TokenRoutePayload["chart"][number]> | null | undefined
+): boolean {
+  if (!point) return false;
+  return [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
+    (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+  );
+}
+
+function dedupeAndNormalizeChartPoints(
+  points: TokenRoutePayload["chart"]
+): TokenRoutePayload["chart"] {
+  const pointsByTimestamp = new Map<string, TokenRoutePayload["chart"][number]>();
+  for (const point of points) {
+    if (!point?.timestamp) continue;
+    const existing = pointsByTimestamp.get(point.timestamp);
+    if (!existing) {
+      pointsByTimestamp.set(point.timestamp, point);
+      continue;
+    }
+
+    pointsByTimestamp.set(point.timestamp, {
+      timestamp: point.timestamp,
+      marketCap: pickFirstPositiveMetric(point.marketCap, existing.marketCap),
+      liquidity: pickFirstPositiveMetric(point.liquidity, existing.liquidity),
+      volume24h: pickFirstPositiveMetric(point.volume24h, existing.volume24h),
+      holderCount: pickFirstPositiveMetric(point.holderCount, existing.holderCount),
+      sentimentScore: pickFirstFiniteMetric(point.sentimentScore, existing.sentimentScore),
+      confidenceScore: pickFirstFiniteMetric(point.confidenceScore, existing.confidenceScore),
+    });
+  }
+
+  return Array.from(pointsByTimestamp.values()).sort(
+    (left, right) => toTimestampMs(left.timestamp) - toTimestampMs(right.timestamp)
+  );
+}
+
+function compressChartPoints(
+  points: TokenRoutePayload["chart"],
+  maxPoints: number
+): TokenRoutePayload["chart"] {
+  const normalized = dedupeAndNormalizeChartPoints(points).filter((point) => hasChartPointTelemetry(point));
+  if (normalized.length <= maxPoints) {
+    return normalized;
+  }
+
+  const result: TokenRoutePayload["chart"] = [];
+  const lastIndex = normalized.length - 1;
+  const interiorTargetCount = Math.max(0, maxPoints - 2);
+  result.push(normalized[0]!);
+
+  for (let slot = 1; slot <= interiorTargetCount; slot += 1) {
+    const ratio = slot / (interiorTargetCount + 1);
+    const index = Math.max(1, Math.min(lastIndex - 1, Math.round(ratio * lastIndex)));
+    const point = normalized[index];
+    if (!point) continue;
+    const previous = result[result.length - 1];
+    if (previous?.timestamp === point.timestamp) continue;
+    result.push(point);
+  }
+
+  const lastPoint = normalized[lastIndex];
+  if (lastPoint && result[result.length - 1]?.timestamp !== lastPoint.timestamp) {
+    result.push(lastPoint);
+  }
+
+  return result;
+}
+
+async function loadTokenChartHistory(
+  tokenAddress: string
+): Promise<TokenRoutePayload["chart"] | null> {
+  const cacheKey = buildTokenChartRouteCacheKey(tokenAddress);
+  const cached = readTokenChartRouteCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const staleCached = readTokenChartRouteCache(cacheKey, { allowStale: true });
+
+  const token = await findTokenByAddress(tokenAddress);
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const [snapshots, liveMarketSnapshot] = await Promise.all([
+      prisma.tokenMetricSnapshot.findMany({
+        where: { tokenId: token.id },
+        select: {
+          capturedAt: true,
+          marketCap: true,
+          liquidity: true,
+          volume24h: true,
+          holderCount: true,
+          sentimentScore: true,
+          confidenceScore: true,
+        },
+        orderBy: { capturedAt: "asc" },
+      }),
+      getCachedMarketCapSnapshot(token.address, token.chainType).catch(() => null),
+    ]);
+
+    const historyPoints: TokenRoutePayload["chart"] = snapshots.map((snapshot) => ({
+      timestamp: snapshot.capturedAt.toISOString(),
+      marketCap: roundMetric(snapshot.marketCap),
+      liquidity: roundMetric(snapshot.liquidity),
+      volume24h: roundMetric(snapshot.volume24h),
+      holderCount: roundCount(snapshot.holderCount),
+      sentimentScore: roundMetric(snapshot.sentimentScore),
+      confidenceScore: roundMetric(snapshot.confidenceScore),
+    }));
+
+    const currentTimestamp = toIsoTimestamp(token.lastIntelligenceAt ?? token.updatedAt) ?? new Date().toISOString();
+    const currentPoint: TokenRoutePayload["chart"][number] = {
+      timestamp: currentTimestamp,
+      marketCap: roundMetric(pickFirstPositiveMetric(liveMarketSnapshot?.mcap)),
+      liquidity: roundMetric(pickFirstPositiveMetric(liveMarketSnapshot?.liquidityUsd, token.liquidity)),
+      volume24h: roundMetric(pickFirstPositiveMetric(liveMarketSnapshot?.volume24hUsd, token.volume24h)),
+      holderCount: roundCount(pickFirstPositiveMetric(token.holderCount)),
+      sentimentScore: roundMetric(token.sentimentScore),
+      confidenceScore: roundMetric(token.confidenceScore),
+    };
+
+    const merged = hasChartPointTelemetry(currentPoint)
+      ? [...historyPoints, currentPoint]
+      : historyPoints;
+    const chart = compressChartPoints(merged, TOKEN_CHART_ROUTE_MAX_POINTS);
+
+    tokenChartRouteCache.set(cacheKey, {
+      data: chart,
+      expiresAtMs: Date.now() + TOKEN_CHART_ROUTE_CACHE_TTL_MS,
+      staleUntilMs: Date.now() + TOKEN_CHART_ROUTE_STALE_FALLBACK_MS,
+    });
+
+    return chart;
+  } catch (error) {
+    if (staleCached) {
+      console.warn("[tokens/chart] serving stale chart history", {
+        tokenAddress,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return staleCached;
+    }
+    throw error;
+  }
 }
 
 function emptyReactionCounts(): ReactionCounts {
@@ -1280,14 +1454,13 @@ tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema),
 
 tokensRouter.get("/:tokenAddress/chart", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");
-  const viewer = c.get("user");
-  const overview = await getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null);
+  const chart = await loadTokenChartHistory(tokenAddress);
 
-  if (!overview) {
+  if (!chart) {
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ data: overview.token.chart }, 200, buildTokenRouteHeaders(false));
+  return c.json({ data: chart }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.get("/:tokenAddress/timeline", zValidator("param", TokenAddressParamSchema), async (c) => {

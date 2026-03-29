@@ -133,7 +133,6 @@ const FAST_TRADE_PRICE_POLL_INTERVAL_MS = 1_250;
 const MICRO_CHART_SAMPLE_LIMIT = 360;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
-  { value: "1S", label: "1s" },
   { value: "1m", label: "1m" },
   { value: "5m", label: "5m" },
   { value: "15m", label: "15m" },

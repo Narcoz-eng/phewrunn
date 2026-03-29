@@ -3,7 +3,12 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
-import { appendMicroChartSample, buildMicroChartCandles, type MicroChartSample } from "@/lib/micro-candles";
+import {
+  appendLiveTradeSample,
+  getChartBucketMs,
+  mergeLiveSamplesIntoCandles,
+  type LiveTradeSample,
+} from "@/lib/live-candle-stream";
 import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
@@ -32,7 +37,10 @@ import {
 import {
   Area,
   AreaChart,
+  Brush,
   CartesianGrid,
+  ComposedChart,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -44,12 +52,10 @@ import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
 const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
 const TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS = 10_000;
-const TOKEN_MICRO_CHART_REFRESH_INTERVAL_MS = 1_250;
 const TOKEN_LIVE_CHART_VISIBLE_POINTS = 72;
 const TOKEN_LIVE_CHART_FUTURE_SLOTS = 6;
 const FRESH_POST_MCAP_WINDOW_MS = 30 * 60_000;
 const TOKEN_CHART_INTERVAL_OPTIONS = [
-  { value: "1S", label: "1s" },
   { value: "1m", label: "1m" },
   { value: "5m", label: "5m" },
   { value: "15m", label: "15m" },
@@ -352,6 +358,31 @@ function formatTokenPrice(value: number): string {
   if (Math.abs(value) < 0.01) return `$${value.toFixed(6)}`;
   if (Math.abs(value) < 1) return `$${value.toFixed(4)}`;
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+function formatChartTimelineTick(timestampMs: number, spanMs: number): string {
+  if (!Number.isFinite(timestampMs)) return "";
+  const date = new Date(timestampMs);
+  if (spanMs >= 14 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  if (spanMs >= 2 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit" });
+  }
+  if (spanMs >= 6 * 60 * 60 * 1000) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatChartTimelineTooltip(timestampMs: number): string {
+  if (!Number.isFinite(timestampMs)) return "";
+  return new Date(timestampMs).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatHolderAmount(value: number | null | undefined): string {
@@ -1962,11 +1993,11 @@ export default function TokenPage() {
   const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
   const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("5m");
-  const [microChartSamples, setMicroChartSamples] = useState<MicroChartSample[]>([]);
+  const [liveTradeSamples, setLiveTradeSamples] = useState<LiveTradeSample[]>([]);
   const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
 
   useEffect(() => {
-    setMicroChartSamples([]);
+    setLiveTradeSamples([]);
   }, [tokenAddress]);
 
   const handleCopyTokenAddress = async () => {
@@ -2065,6 +2096,36 @@ export default function TokenPage() {
     : false;
   const shouldForceFreshDistribution = Boolean(token && (bundleScanPending || holderIntelligencePending));
 
+  const chartRequestConfig = useMemo(() => {
+    switch (chartInterval) {
+      case "1m":
+        return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
+      case "5m":
+        return { timeframe: "minute" as const, aggregate: 5, limit: 360 };
+      case "15m":
+        return { timeframe: "minute" as const, aggregate: 15, limit: 360 };
+      case "1h":
+        return { timeframe: "hour" as const, aggregate: 1, limit: 320 };
+      case "4h":
+        return { timeframe: "hour" as const, aggregate: 4, limit: 320 };
+      case "1D":
+      default:
+        return { timeframe: "day" as const, aggregate: 1, limit: 260 };
+    }
+  }, [chartInterval]);
+  const liveStreamRefreshIntervalMs =
+    chartRequestConfig.timeframe === "minute"
+      ? chartRequestConfig.aggregate <= 5
+        ? 3_500
+        : 5_000
+      : chartRequestConfig.timeframe === "hour"
+        ? 6_000
+        : 8_000;
+  const liveStreamCacheTtlMs = Math.max(
+    1_500,
+    chartRequestConfig.timeframe === "minute" && chartRequestConfig.aggregate <= 5 ? 2_750 : 4_000
+  );
+
   const liveTokenQuery = useQuery<TokenLiveData>({
     queryKey: [
       "token-live",
@@ -2079,13 +2140,14 @@ export default function TokenPage() {
     retry: 1,
     refetchIntervalInBackground: false,
     refetchInterval: shouldForceFreshDistribution
-      ? TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS
-      : TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS,
+      ? Math.min(TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS, liveStreamRefreshIntervalMs)
+      : Math.min(TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS, liveStreamRefreshIntervalMs),
     queryFn: async () => {
       if (!tokenAddress) throw new Error("Token address is required");
       return getTokenLiveIntelligence(tokenAddress, {
         freshBundle: shouldForceFreshDistribution,
         timeoutMs: shouldForceFreshDistribution ? 12_000 : 9_000,
+        cacheTtlMs: liveStreamCacheTtlMs,
       }) as Promise<TokenLiveData>;
     },
   });
@@ -2113,25 +2175,21 @@ export default function TokenPage() {
     syncTokenIntelligenceAcrossPostCaches(queryClient, token);
   }, [queryClient, token]);
 
-  const chartRequestConfig = useMemo(() => {
-    switch (chartInterval) {
-      case "1S":
-      case "1m":
-        return { timeframe: "minute" as const, aggregate: 1, limit: 360 };
-      case "5m":
-        return { timeframe: "minute" as const, aggregate: 5, limit: 360 };
-      case "15m":
-        return { timeframe: "minute" as const, aggregate: 15, limit: 360 };
-      case "1h":
-        return { timeframe: "hour" as const, aggregate: 1, limit: 320 };
-      case "4h":
-        return { timeframe: "hour" as const, aggregate: 4, limit: 320 };
-      case "1D":
-      default:
-        return { timeframe: "day" as const, aggregate: 1, limit: 260 };
-    }
-  }, [chartInterval]);
-  const isMicroChartInterval = chartInterval === "1S";
+  const historicalChartQuery = useQuery<TokenChartPoint[]>({
+    queryKey: ["token-chart-history", tokenAddress],
+    enabled: Boolean(tokenAddress),
+    staleTime: 45_000,
+    gcTime: 8 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    queryFn: async () => {
+      if (!tokenAddress) {
+        return [];
+      }
+      return api.get<TokenChartPoint[]>(`/api/tokens/${tokenAddress}/chart`);
+    },
+  });
 
   const liveChartQuery = useQuery<TokenChartCandlesResponse>({
     queryKey: [
@@ -2142,16 +2200,14 @@ export default function TokenPage() {
       chartRequestConfig.aggregate,
       chartRequestConfig.limit,
     ],
-    enabled: Boolean(!isMicroChartInterval && tokenAddress && token && (token.pairAddress || token.address)),
+    enabled: Boolean(tokenAddress && token && (token.pairAddress || token.address)),
     staleTime: 4_000,
     gcTime: 8 * 60_000,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
     retry: 1,
     refetchInterval:
-      isMicroChartInterval
-        ? false
-        : chartRequestConfig.timeframe === "minute"
+      chartRequestConfig.timeframe === "minute"
         ? chartRequestConfig.aggregate <= 5
           ? 5_000
           : 8_000
@@ -2204,18 +2260,110 @@ export default function TokenPage() {
     },
   });
 
+  const liveTradeCount24h =
+    (typeof liveTokenQuery.data?.buys24h === "number" ? liveTokenQuery.data.buys24h : 0) +
+    (typeof liveTokenQuery.data?.sells24h === "number" ? liveTokenQuery.data.sells24h : 0);
+
+  useEffect(() => {
+    const nextPriceUsd = liveTokenQuery.data?.priceUsd;
+    if (typeof nextPriceUsd !== "number" || !Number.isFinite(nextPriceUsd) || nextPriceUsd <= 0) {
+      return;
+    }
+
+    const timestampMs =
+      liveTokenQuery.data?.updatedAt && Number.isFinite(Date.parse(liveTokenQuery.data.updatedAt))
+        ? Date.parse(liveTokenQuery.data.updatedAt)
+        : Date.now();
+
+    setLiveTradeSamples((current) =>
+      appendLiveTradeSample(
+        current,
+        {
+          timestamp: timestampMs,
+          priceUsd: nextPriceUsd,
+          volume24hUsd: liveTokenQuery.data?.volume24h ?? null,
+          tradeCount24h: liveTradeCount24h,
+        },
+        720
+      )
+    );
+  }, [
+    liveChartQuery.data?.source,
+    liveTokenQuery.data?.priceUsd,
+    liveTokenQuery.data?.updatedAt,
+    liveTokenQuery.data?.volume24h,
+    liveTradeCount24h,
+  ]);
+
   const chartData = useMemo(
+    () => {
+      const basePoints = [...(historicalChartQuery.data ?? token?.chart ?? [])]
+        .filter((point) => point?.timestamp)
+        .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+
+      const deduped = new Map<string, TokenChartPoint>();
+      for (const point of basePoints) {
+        deduped.set(point.timestamp, point);
+      }
+
+      const liveTimestamp =
+        liveTokenQuery.data?.updatedAt && Number.isFinite(Date.parse(liveTokenQuery.data.updatedAt))
+          ? new Date(Date.parse(liveTokenQuery.data.updatedAt)).toISOString()
+          : null;
+      if (
+        liveTimestamp &&
+        [
+          liveTokenQuery.data?.marketCap,
+          liveTokenQuery.data?.liquidity,
+          liveTokenQuery.data?.volume24h,
+          liveTokenQuery.data?.holderCount,
+          liveTokenQuery.data?.confidenceScore,
+        ].some((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+      ) {
+        deduped.set(liveTimestamp, {
+          timestamp: liveTimestamp,
+          marketCap: liveTokenQuery.data?.marketCap ?? null,
+          liquidity: liveTokenQuery.data?.liquidity ?? null,
+          volume24h: liveTokenQuery.data?.volume24h ?? null,
+          holderCount: liveTokenQuery.data?.holderCount ?? null,
+          sentimentScore: liveTokenQuery.data?.sentimentScore ?? null,
+          confidenceScore: liveTokenQuery.data?.confidenceScore ?? null,
+        });
+      }
+
+      return Array.from(deduped.values())
+        .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+        .map((point) => ({
+          ...point,
+          ts: Date.parse(point.timestamp),
+        }));
+    },
+    [
+      historicalChartQuery.data,
+      liveTokenQuery.data?.confidenceScore,
+      liveTokenQuery.data?.holderCount,
+      liveTokenQuery.data?.liquidity,
+      liveTokenQuery.data?.marketCap,
+      liveTokenQuery.data?.sentimentScore,
+      liveTokenQuery.data?.updatedAt,
+      liveTokenQuery.data?.volume24h,
+      token?.chart,
+    ]
+  );
+
+  const streamedChartCandles = useMemo(
     () =>
-      (token?.chart ?? []).map((point) => ({
-        ...point,
-        label: new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      })),
-    [token?.chart]
+      mergeLiveSamplesIntoCandles(
+        liveChartQuery.data?.candles ?? [],
+        liveTradeSamples,
+        getChartBucketMs(chartRequestConfig.timeframe, chartRequestConfig.aggregate)
+      ),
+    [chartRequestConfig.aggregate, chartRequestConfig.timeframe, liveChartQuery.data?.candles, liveTradeSamples]
   );
 
   const liveChartData = useMemo(
     () =>
-      (liveChartQuery.data?.candles ?? []).map((candle) => ({
+      streamedChartCandles.map((candle) => ({
         ts: candle.timestamp,
         open: candle.open,
         high: candle.high,
@@ -2231,41 +2379,19 @@ export default function TokenPage() {
           minute: "2-digit",
         }),
       })),
-    [liveChartQuery.data?.candles]
-  );
-  const microChartData = useMemo(
-    () =>
-      buildMicroChartCandles(microChartSamples, 1_000).map((candle) => ({
-        ts: candle.timestamp,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: candle.volume,
-        isBullish: candle.close >= candle.open,
-        label: new Date(candle.timestamp).toLocaleTimeString([], { minute: "2-digit", second: "2-digit" }),
-        fullLabel: new Date(candle.timestamp).toLocaleString([], {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-      })),
-    [microChartSamples]
+    [streamedChartCandles]
   );
 
   const liveChartWindow = useMemo(() => {
-    const sourceData = isMicroChartInterval ? microChartData : liveChartData;
-    if (sourceData.length === 0) {
+    if (liveChartData.length === 0) {
       return { startIndex: 0, endIndex: -1 };
     }
-    const visiblePoints = Math.min(TOKEN_LIVE_CHART_VISIBLE_POINTS, sourceData.length);
+    const visiblePoints = Math.min(TOKEN_LIVE_CHART_VISIBLE_POINTS, liveChartData.length);
     return {
-      startIndex: Math.max(0, sourceData.length - visiblePoints),
-      endIndex: sourceData.length - 1,
+      startIndex: Math.max(0, liveChartData.length - visiblePoints),
+      endIndex: liveChartData.length - 1,
     };
-  }, [isMicroChartInterval, liveChartData, microChartData]);
+  }, [liveChartData]);
 
   const recentCalls = useMemo(
     () =>
@@ -2280,43 +2406,7 @@ export default function TokenPage() {
     [recentCalls]
   );
 
-  useEffect(() => {
-    if (!isMicroChartInterval || !primaryTradeCall?.id) return;
-    let cancelled = false;
-
-    const fetchMicroSnapshot = async () => {
-      try {
-        const payload = await api.get<{ currentMcap?: number | null }>(`/api/posts/${primaryTradeCall.id}/price`, {
-          cache: "no-store",
-        });
-        if (cancelled) return;
-        if (typeof payload.currentMcap === "number" && Number.isFinite(payload.currentMcap) && payload.currentMcap > 0) {
-          setMicroChartSamples((current) =>
-            appendMicroChartSample(
-              current,
-              {
-                timestamp: Date.now(),
-                value: payload.currentMcap,
-                volume: typeof token?.volume24h === "number" ? token.volume24h : 0,
-              },
-              360
-            )
-          );
-        }
-      } catch {
-        // Quiet fallback: token live polling already hydrates market cap snapshots.
-      }
-    };
-
-    void fetchMicroSnapshot();
-    const intervalId = window.setInterval(fetchMicroSnapshot, TOKEN_MICRO_CHART_REFRESH_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [isMicroChartInterval, primaryTradeCall?.id, token?.volume24h]);
-
-  const displayLiveChartData = isMicroChartInterval ? microChartData : liveChartData;
+  const displayLiveChartData = liveChartData;
   const displayTimeline = useMemo(
     () => mergeTimelineEvents(token?.timeline ?? [], deriveTimelineFromCalls(recentCalls)),
     [recentCalls, token?.timeline]
@@ -2342,22 +2432,6 @@ export default function TokenPage() {
   const displayMarketCap = (() => {
     return pickStableMarketCap(liveMarketCap ?? token?.marketCap ?? null, token?.marketCap ?? null, recentCalls);
   })();
-  useEffect(() => {
-    if (typeof displayMarketCap !== "number" || !Number.isFinite(displayMarketCap) || displayMarketCap <= 0) {
-      return;
-    }
-    setMicroChartSamples((current) =>
-      appendMicroChartSample(
-        current,
-        {
-          timestamp: Date.now(),
-          value: displayMarketCap,
-          volume: typeof token?.volume24h === "number" ? token.volume24h : 0,
-        },
-        360
-      )
-    );
-  }, [displayMarketCap, token?.volume24h]);
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
   const hasChartTelemetry = chartData.some(
     (point) =>
@@ -2370,14 +2444,14 @@ export default function TokenPage() {
     displayLiveChartData.length > 1
       ? ((displayLiveChartData[displayLiveChartData.length - 1]!.close - displayLiveChartData[0]!.open) / displayLiveChartData[0]!.open) * 100
       : null;
+  const chartHistorySpanMs =
+    chartData.length > 1 ? Math.max(0, chartData[chartData.length - 1]!.ts - chartData[0]!.ts) : 0;
   const liveChartSourceLabel =
-    isMicroChartInterval
-      ? "Phew micro live"
-      : liveChartQuery.data?.source === "birdeye"
-      ? "Birdeye live"
+    liveChartQuery.data?.source === "birdeye"
+      ? "Birdeye live + token stream"
       : liveChartQuery.data?.source === "geckoterminal"
-        ? "GeckoTerminal live"
-        : "Live chart";
+        ? "GeckoTerminal live + token stream"
+        : "Live chart + token stream";
 
   const followMutation = useMutation({
     mutationFn: async () => {
@@ -2770,7 +2844,7 @@ export default function TokenPage() {
                 <div className="mt-4 space-y-4">
                   <div className="h-[340px] w-full">
                       {hasLiveChartTelemetry ? (
-                        <div className="h-full rounded-[24px] border border-border/60 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.09),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
+                        <div className="h-full rounded-[24px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015))] p-3 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.01))]">
                           <CandlestickChart
                             data={displayLiveChartData}
                             visibleStartIndex={liveChartWindow.startIndex}
@@ -2783,8 +2857,8 @@ export default function TokenPage() {
                             formatPrice={formatTokenPrice}
                             formatTick={(timestampMs) =>
                               new Date(timestampMs).toLocaleTimeString([], {
-                                ...(isMicroChartInterval
-                                  ? ({ minute: "2-digit", second: "2-digit" } as const)
+                                ...(chartRequestConfig.timeframe === "day"
+                                  ? ({ month: "short", day: "numeric" } as const)
                                   : ({ hour: "2-digit", minute: "2-digit" } as const)),
                               })
                             }
@@ -2801,17 +2875,41 @@ export default function TokenPage() {
                               </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
-                            <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={24} />
-                            <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
+                            <XAxis
+                              dataKey="ts"
+                              type="number"
+                              scale="time"
+                              domain={["dataMin", "dataMax"]}
+                              tick={{ fontSize: 11 }}
+                              minTickGap={24}
+                              tickFormatter={(value) => formatChartTimelineTick(Number(value), chartHistorySpanMs)}
+                            />
+                            <YAxis yAxisId="marketCap" tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
+                            <YAxis
+                              yAxisId="confidence"
+                              orientation="right"
+                              domain={[0, 100]}
+                              tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
+                              tick={{ fontSize: 11 }}
+                            />
                             <Tooltip
+                              labelFormatter={(value) => formatChartTimelineTooltip(Number(value))}
                               formatter={(value: number | null, name: string) => {
                                 if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
                                 if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
                                 return [value ?? "N/A", name];
                               }}
                             />
-                            <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
-                            <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
+                            <Area yAxisId="marketCap" type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
+                            <Line
+                              yAxisId="confidence"
+                              type="monotone"
+                              dataKey="confidenceScore"
+                              stroke="hsl(var(--accent))"
+                              strokeWidth={1.6}
+                              dot={false}
+                              isAnimationActive={false}
+                            />
                           </AreaChart>
                         </ResponsiveContainer>
                       ) : (
@@ -2844,7 +2942,7 @@ export default function TokenPage() {
                         </div>
                         <div className="h-[168px]">
                           <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={chartData}>
+                            <ComposedChart data={chartData}>
                               <defs>
                                 <linearGradient id="tokenChartFillSecondary" x1="0" y1="0" x2="0" y2="1">
                                   <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.28} />
@@ -2852,18 +2950,60 @@ export default function TokenPage() {
                                 </linearGradient>
                               </defs>
                               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.26} />
-                              <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} />
-                              <YAxis tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 10 }} />
+                              <XAxis
+                                dataKey="ts"
+                                type="number"
+                                scale="time"
+                                domain={["dataMin", "dataMax"]}
+                                tick={{ fontSize: 10 }}
+                                minTickGap={24}
+                                tickFormatter={(value) => formatChartTimelineTick(Number(value), chartHistorySpanMs)}
+                              />
+                              <YAxis
+                                yAxisId="marketCap"
+                                tickFormatter={(value) => formatMarketCap(Number(value))}
+                                tick={{ fontSize: 10 }}
+                              />
+                              <YAxis
+                                yAxisId="confidence"
+                                orientation="right"
+                                domain={[0, 100]}
+                                tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
+                                tick={{ fontSize: 10 }}
+                              />
                               <Tooltip
+                                labelFormatter={(value) => formatChartTimelineTooltip(Number(value))}
                                 formatter={(value: number | null, name: string) => {
                                   if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
                                   if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
                                   return [value ?? "N/A", name];
                                 }}
                               />
-                              <Area type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFillSecondary)" />
-                              <Area type="monotone" dataKey="confidenceScore" stroke="hsl(var(--accent))" strokeWidth={1.5} fillOpacity={0} />
-                            </AreaChart>
+                              <Area
+                                yAxisId="marketCap"
+                                type="monotone"
+                                dataKey="marketCap"
+                                stroke="hsl(var(--primary))"
+                                strokeWidth={2}
+                                fill="url(#tokenChartFillSecondary)"
+                              />
+                              <Line
+                                yAxisId="confidence"
+                                type="monotone"
+                                dataKey="confidenceScore"
+                                stroke="hsl(var(--accent))"
+                                strokeWidth={1.6}
+                                dot={false}
+                                isAnimationActive={false}
+                              />
+                              <Brush
+                                dataKey="ts"
+                                height={18}
+                                stroke="hsl(var(--primary))"
+                                travellerWidth={10}
+                                tickFormatter={(value) => formatChartTimelineTick(Number(value), chartHistorySpanMs)}
+                              />
+                            </ComposedChart>
                           </ResponsiveContainer>
                         </div>
                       </div>
