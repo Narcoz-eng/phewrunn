@@ -24,6 +24,14 @@ function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
 }
 
+function getOrigin(baseUrl) {
+  const match = baseUrl.match(/^https?:\/\/[^/]+/i);
+  if (!match) {
+    throw new Error(`BASE_URL must include protocol and host: ${baseUrl}`);
+  }
+  return match[0];
+}
+
 function makeScenario(execName, rate, timeUnit, duration) {
   if (rate <= 0) {
     return null;
@@ -259,7 +267,7 @@ export function setup() {
     throw new Error("BASE_URL is required");
   }
 
-  const origin = new URL(baseUrl).origin;
+  const origin = getOrigin(baseUrl);
   const authPool = buildAuthPool();
   const needsAuthPool =
     ME_RATE > 0 ||
