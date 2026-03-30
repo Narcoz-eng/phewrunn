@@ -8,7 +8,7 @@ import {
   usePrivySyncFailureSnapshot,
 } from "@/lib/auth-client";
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
-import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
+import { usePrivyAvailable } from "@/components/PrivyContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { InboxRouteIcon, RouteArrowIcon } from "@/components/login/LoginPageIcons";

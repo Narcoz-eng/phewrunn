@@ -13,7 +13,7 @@ import {
   useAuth,
   readPrivyAuthBootstrapSnapshot,
 } from "@/lib/auth-client";
-import { usePrivyAvailable, usePrivyProviderInstanceId } from "@/components/PrivyWalletProvider";
+import { usePrivyAvailable, usePrivyProviderInstanceId } from "@/components/PrivyContext";
 import type { PrivyUserLike } from "@/lib/privy-user";
 import { clearPrivyLoginIntent } from "@/lib/privy-login-intent";
 

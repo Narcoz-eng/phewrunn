@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from "react";
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -30,9 +30,6 @@ import { RepostersDialog } from "./RepostersDialog";
 import { SharedAlphaDialog, type SharedAlphaResponse } from "./SharedAlphaDialog";
 import { TokenInfoCard } from "./TokenInfoCard";
 import { AlsoCalledBy } from "./AlsoCalledBy";
-import { CandlestickChart } from "./CandlestickChart";
-import { TradeTransactionsFeed } from "./TradeTransactionsFeed";
-import { TradePanelLiveBadge } from "./TradePanelLiveBadge";
 import { BundleScanLoop, isBundleScanPending } from "./BundleScanLoop";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { api, ApiError } from "@/lib/api";
@@ -91,12 +88,11 @@ import {
   resolveEstimatedBundledSupplyPct,
 } from "@/lib/bundle-intelligence";
 import { toast } from "sonner";
-import { TradingPanel } from "./TradingPanel";
-import PortfolioPanel from "./PortfolioPanel";
 import type { PortfolioPosition } from "./PortfolioPanel";
 import { ReportDialog } from "@/components/reporting/ReportDialog";
 import { BrandLogo } from "@/components/BrandLogo";
 import { EXACT_LOGO_IMAGE_SRC } from "@/lib/brand";
+import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import {
   buildWinCardSvg,
   renderSvgToPngBlob,
@@ -106,7 +102,6 @@ import {
   type WinCardSummaryItem,
 } from "./winCardSvg";
 import {
-  PhewChartIcon,
   PhewCommentIcon,
   PhewFollowIcon,
   PhewRepostIcon,
@@ -114,6 +109,15 @@ import {
   PhewShareIcon,
   PhewTradeIcon,
 } from "@/components/icons/PhewIcons";
+
+const loadPostCardTradeDialogModule = () =>
+  importWithRecovery(() => import("./PostCardTradeDialog"), "feed:post-card-trade-dialog");
+
+const PostCardTradeDialog = lazy(() =>
+  loadPostCardTradeDialogModule().then((module) => ({
+    default: module.PostCardTradeDialog,
+  }))
+);
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const TRADE_SLIPPAGE_STORAGE_KEY = "phew.trade.slippage-bps";
@@ -1403,6 +1407,16 @@ export function PostCard({
     const activePostId = document.body?.dataset?.phewActiveTradeDialogPostId?.trim();
     return Boolean(activePostId);
   }, []);
+  const tradeDialogPrefetchAttemptedRef = useRef(false);
+  const primeTradeDialogChunk = useCallback(() => {
+    if (!post.contractAddress || tradeDialogPrefetchAttemptedRef.current) {
+      return;
+    }
+    tradeDialogPrefetchAttemptedRef.current = true;
+    void loadPostCardTradeDialogModule().catch(() => {
+      tradeDialogPrefetchAttemptedRef.current = false;
+    });
+  }, [post.contractAddress]);
   const effectiveRealtimePriceMode: PostCardRealtimePriceMode = enableRealtimePricePolling
     ? realtimePriceMode
     : "off";
@@ -1531,6 +1545,35 @@ export function PostCard({
     });
     return () => window.cancelAnimationFrame(frameId);
   }, [autoOpenTradePanel, autoPrefillBuyAmountSol, isBuyDialogOpen, onTradePanelAutoOpened, post.contractAddress]);
+
+  useEffect(() => {
+    if (!post.contractAddress) return;
+    if (isBuyDialogOpen || autoOpenTradePanel) {
+      primeTradeDialogChunk();
+      return;
+    }
+    if (!isInViewport || typeof window === "undefined") {
+      return;
+    }
+
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(() => {
+        primeTradeDialogChunk();
+      }, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timer = window.setTimeout(() => {
+      primeTradeDialogChunk();
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [
+    autoOpenTradePanel,
+    isBuyDialogOpen,
+    isInViewport,
+    post.contractAddress,
+    primeTradeDialogChunk,
+  ]);
 
   useEffect(() => {
     if (isWalletModalVisible || isWalletConnectDialogOpen || isBuyDialogOpen || isWinCardPreviewOpen) {
@@ -5622,6 +5665,200 @@ export function PostCard({
     handleExecuteJupiterBuy,
   ]);
 
+  const tradeDialogChartPanelProps = {
+    panelClassName: chartPanelClassName,
+    dividerClassName: chartDividerClassName,
+    dividerFillClassName: chartDividerFillClassName,
+    mutedTextClassName: chartMutedTextClassName,
+    mutedSubtleTextClassName: chartMutedSubtleTextClassName,
+    strongTextClassName: chartStrongTextClassName,
+    inactiveButtonClassName: chartInactiveButtonClassName,
+    inactiveToggleButtonClassName: chartInactiveToggleButtonClassName,
+    canvasClassName: chartCanvasClassName,
+    intervalOptions: DEX_CHART_INTERVAL_OPTIONS,
+    selectedInterval: chartInterval,
+    onSelectInterval: (value: string) => setChartInterval(value as DexChartIntervalValue),
+    infoVisible: isChartInfoVisible,
+    onToggleInfo: () => setIsChartInfoVisible((prev) => !prev),
+    tradesVisible: isChartTradesVisible,
+    onToggleTrades: () => setIsChartTradesVisible((prev) => !prev),
+    entryMcapLabel: formatMarketCap(post.entryMcap),
+    currentMcapLabel: resolvedMarketCap != null ? formatMarketCap(resolvedMarketCap) : null,
+    priceLabel:
+      resolvedPriceUsd != null
+        ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}`
+        : "--",
+    deltaLabel:
+      currentTradeDeltaPct == null
+        ? null
+        : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`,
+    deltaToneClassName:
+      currentTradeDeltaPct == null
+        ? "text-slate-400 dark:text-white/40"
+        : currentTradeDeltaPct >= 0
+          ? "text-emerald-400"
+          : "text-rose-400",
+    settlementLabel: !localSettled ? "LIVE" : localIsWin ? "WON" : "LOST",
+    settlementToneClassName: !localSettled
+      ? "bg-blue-500/10 text-blue-400"
+      : localIsWin
+        ? "bg-emerald-500/10 text-emerald-400"
+        : "bg-rose-500/10 text-rose-400",
+    visibleRangeLabel: chartVisibleRangeLabel,
+    rangeDetailLabel: chartRangeDetailLabel,
+    onPanLeft: () => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2),
+    onPanRight: () => panChartWindowBy(CHART_PAN_STEP_POINTS * 2),
+    onZoomIn: () => zoomChartWindow("in"),
+    onZoomOut: () => zoomChartWindow("out"),
+    onReset: resetChartWindow,
+    onCenterEntry: centerChartOnEntry,
+    canPanLeft: canPanChartLeft,
+    canPanRight: canPanChartRight,
+    canZoomIn: canZoomInChart,
+    canZoomOut: canZoomOutChart,
+    canCenterEntry: chartEntryIndex >= 0,
+    isEntryInCurrentView,
+    isLikelyMobileDevice,
+    controlButtonClassName: chartControlButtonClassName,
+    liveBadge: {
+      lastEventAtMs: tradePanelLastEventAtMs,
+      usingFallbackPolling: tradePanelUsingFallbackPolling,
+      mode: tradePanelLiveStatus.mode,
+    },
+    quoteFreshnessLabel,
+    isUsingStaleQuote,
+    content: {
+      interactionRef: chartInteractionRef,
+      isMousePanning: isChartMousePanning,
+      onWheel: handleChartWheel,
+      onTouchStart: handleChartTouchStart,
+      onTouchMove: handleChartTouchMove,
+      onTouchEnd: handleChartTouchEnd,
+      onTouchCancel: handleChartTouchEnd,
+      onMouseDown: handleChartMouseDown,
+      onMouseMove: handleChartMouseMove,
+      onMouseUp: handleChartMouseUp,
+      onMouseLeave: handleChartMouseUp,
+      hasProfessionalChartData,
+      candlestickProps: hasProfessionalChartData
+        ? {
+            data: professionalChartData,
+            visibleStartIndex: chartWindowBounds.startIndex,
+            visibleEndIndex: chartWindowBounds.endIndex,
+            futureSlotCount: CHART_FUTURE_PADDING_SLOTS,
+            showVolume: isChartInfoVisible,
+            showCandles: isChartTradesVisible,
+            stroke: professionalChartStroke,
+            fill: professionalChartFill,
+            entryPrice: chartEntryPrice,
+            entryPoint: chartEntryCandle
+              ? { ts: chartEntryCandle.ts, close: chartEntryCandle.close }
+              : null,
+            onHoverIndexChange: setChartActiveIndex,
+            onOverviewSelect: (index: number) => {
+              const width = chartWindowBounds.visibleCount;
+              let startIndex = index - Math.floor(width / 2);
+              startIndex = Math.max(0, Math.min(startIndex, Math.max(0, chartTotalPoints - width)));
+              setChartWindow({
+                startIndex,
+                endIndex: startIndex + width - 1,
+              });
+              setChartActiveIndex(index);
+            },
+            formatPrice: formatUsdCompact,
+            formatTick: formatChartXAxisTick,
+            resetHoverKey: isBuyDialogOpen ? `${post.id}:${chartInterval}` : null,
+          }
+        : null,
+      isLoading: chartCandlesQuery.isLoading || chartCandlesQuery.isFetching,
+      hasError: Boolean(chartCandlesQuery.error),
+      onRetry: () => {
+        void chartCandlesQuery.refetch();
+      },
+    },
+    footer: {
+      feedLabel: chartFeedLabel,
+      intervalLabel: chartInterval,
+      liquidityUsd: resolvedLiquidityUsd,
+      volume24hUsd: resolvedVolume24hUsd,
+      dexId: resolvedDexId,
+      lastTimestampMs:
+        hasProfessionalChartData && professionalChartLast ? professionalChartLast.ts : null,
+    },
+  };
+
+  const tradeDialogTradingPanelProps = {
+    tradeSide,
+    onTradeSideChange: setTradeSide,
+    buyAmountSol,
+    onBuyAmountChange: setBuyAmountSol,
+    sellAmountToken,
+    onSellAmountChange: setSellAmountToken,
+    tokenSymbol: displayTokenSymbol,
+    tokenName: displayTokenLabel,
+    tokenImage: resolvedTokenImage,
+    slippageBps,
+    onSlippageChange: setSlippageBps,
+    jupiterOutputFormatted: jupiterOutputAmountFormatted,
+    jupiterMinReceiveFormatted: jupiterMinReceiveFormatted,
+    jupiterPriceImpactDisplay,
+    routeFeeDisplay: jupiterRouteFeeDisplay,
+    creatorFeeDisplay,
+    platformFeeDisplay: retainedPlatformFeeDisplay,
+    jupiterStatusLabel,
+    isQuoteLoading: showQuoteLoading,
+    isExecuting: isExecutingBuy,
+    canExecute: canExecuteJupiterBuy,
+    walletConnected: isWalletConnectedForTrade,
+    walletBalance: walletNativeBalance,
+    walletBalanceLoading: walletNativeBalanceLoading,
+    walletBalanceUsd: walletNativeBalanceUsd,
+    walletTokenBalance,
+    walletTokenBalanceFormatted,
+    walletTokenBalanceLoading,
+    payAmountUsd: tradePayUsdEstimate,
+    receiveAmountUsd: tradeReceiveUsdEstimate,
+    slippageInputPercent,
+    onSlippageInputChange: setSlippageInputPercent,
+    onSlippageInputCommit: applySlippagePercentInput,
+    onExecute: handleExecuteJupiterBuy,
+    onConnectWallet: handleOpenTradeWalletConnectDialog,
+    txSignature: buyTxSignature,
+    quickBuyPresets: buyQuickAmounts,
+    sellQuickPercents,
+    onQuickBuyPresetClick: (amount: string) => setBuyAmountSol(amount),
+    onSellPercentClick: (percent: number) => setSellAmountFromPercent(percent),
+    autoConfirmEnabled,
+    onAutoConfirmChange: handleAutoConfirmChange,
+    mevProtectionEnabled,
+    onMevProtectionChange: setMevProtectionEnabled,
+    protectionEnabled: priceProtectionEnabled,
+    onProtectionEnabledChange: setPriceProtectionEnabled,
+    stopLossPercent: stopLossPercentInput,
+    onStopLossPercentChange: setStopLossPercentInput,
+    takeProfitPercent: takeProfitPercentInput,
+    onTakeProfitPercentChange: setTakeProfitPercentInput,
+    protectionStatusLabel: protectionStatus.label,
+    protectionStatusTone: protectionStatus.tone,
+    quoteFreshnessLabel,
+    liveStateLabel: tradeLiveMetaLabel,
+    tradeError: tradeError
+      ? {
+          title: tradeError.title,
+          message: tradeError.message,
+          retryable: tradeError.retryable,
+        }
+      : null,
+    onClearTradeError: () => setTradeError(null),
+    onRetryTradeError: () => {
+      setTradeError(null);
+      void refetchJupiterQuote();
+      if (canExecuteJupiterBuy && !isExecutingBuy) {
+        void handleExecuteJupiterBuy();
+      }
+    },
+  };
+
   return (
     <div
       ref={cardRef}
@@ -5796,6 +6033,9 @@ export function PostCard({
                       <Button
                         type="button"
                         onClick={handleTradeCtaClick}
+                        onMouseEnter={primeTradeDialogChunk}
+                        onFocus={primeTradeDialogChunk}
+                        onTouchStart={primeTradeDialogChunk}
                         className={cn(
                           "group/button relative w-full sm:w-auto min-w-[196px] h-11 px-5 gap-2 rounded-xl border text-[15px] font-extrabold tracking-[0.01em] shadow-[0_14px_36px_-20px_rgba(0,0,0,0.95)]",
                           tradeButtonTone
@@ -5831,6 +6071,9 @@ export function PostCard({
                         key={`feed-quick-buy-${amount}`}
                         type="button"
                         onClick={() => handleQuickBuyPresetClick(amount)}
+                        onMouseEnter={primeTradeDialogChunk}
+                        onFocus={primeTradeDialogChunk}
+                        onTouchStart={primeTradeDialogChunk}
                         disabled={isExecutingBuy}
                         className="h-8 rounded-full border border-emerald-300/35 bg-white/80 px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:border-emerald-400/50 hover:bg-emerald-50 hover:text-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-lime-300/15 dark:bg-lime-300/5 dark:text-lime-50/90 dark:hover:bg-lime-300/10 dark:hover:border-lime-300/25 dark:hover:text-white"
                         title={`Quick buy ${amount} SOL`}
@@ -5845,6 +6088,9 @@ export function PostCard({
                         setShowSlippageSettings(true);
                         handleOpenBuyDialog();
                       }}
+                      onMouseEnter={primeTradeDialogChunk}
+                      onFocus={primeTradeDialogChunk}
+                      onTouchStart={primeTradeDialogChunk}
                       className="h-8 rounded-full border border-border/75 bg-white/80 px-2.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-black/20 dark:text-muted-foreground dark:hover:bg-white/5 dark:hover:text-foreground"
                     >
                       Edit
@@ -6852,506 +7098,72 @@ export function PostCard({
           setIsBuyDialogOpen(true);
         }
       }}>
-        <DialogContent
-          className={tradeDialogSurfaceClassName}
-          onInteractOutside={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
-        >
-          <DialogHeader className={tradeDialogHeaderClassName}>
-            <div className="flex items-center justify-between gap-3">
-              <DialogTitle className="flex items-center gap-2.5 text-sm font-semibold text-slate-900 dark:text-white sm:text-base">
-                {resolvedTokenImage && !tradeDialogTokenImageError ? (
-                  <img src={resolvedTokenImage} alt={displayTokenLabel} className="h-6 w-6 rounded-full ring-1 ring-slate-900/10 dark:ring-white/[0.1]" onError={() => setTradeDialogTokenImageError(true)} />
-                ) : (
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/[0.04] ring-1 ring-slate-900/10 dark:bg-white/[0.06] dark:ring-white/[0.1]">
-                    <Coins className="h-3 w-3 text-slate-500 dark:text-white/40" />
-                  </div>
-                )}
-                <span className="truncate">{displayTokenLabel}</span>
-                {post.chainType && (
-                  <span className="rounded-md bg-slate-900/[0.04] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-slate-500 dark:bg-white/[0.05] dark:text-white/35">
-                    {post.chainType}
+        <Suspense
+          fallback={
+            <DialogContent
+              className={tradeDialogSurfaceClassName}
+              onInteractOutside={(event) => event.preventDefault()}
+              onPointerDownOutside={(event) => event.preventDefault()}
+              onEscapeKeyDown={(event) => event.preventDefault()}
+            >
+              <div className="flex min-h-[32rem] items-center justify-center">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-slate-400 dark:text-white/30" />
+                  <span className="text-[11px] text-slate-500 dark:text-white/35">
+                    Loading trade panel...
                   </span>
-                )}
-              </DialogTitle>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={cn("rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wide", jupiterStatusTone)}>
-                  {jupiterStatusLabel}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleCloseBuyDialog}
-                  className="h-7 w-7 rounded-lg bg-slate-900/[0.04] p-0 text-slate-500 hover:bg-slate-900/[0.08] hover:text-slate-700 dark:bg-white/[0.04] dark:text-white/40 dark:hover:bg-white/[0.08] dark:hover:text-white/60"
-                >
-                  <Plus className="h-3.5 w-3.5 rotate-45" />
-                </Button>
-              </div>
-            </div>
-            <DialogDescription className="sr-only">
-              {isSolanaTradeSupported
-                ? "Trade panel with live chart"
-                : "Chart view - trading available for Solana posts only"}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className={tradeDialogBodyClassName}>
-            {/* Compact token stats bar */}
-            <div className="flex items-center gap-2 flex-wrap px-1">
-              {post.contractAddress && (
-                <span className="max-w-[200px] truncate rounded-md bg-slate-900/[0.04] px-2 py-1 font-mono text-[10px] text-slate-500 dark:bg-white/[0.04] dark:text-white/30">
-                  {post.contractAddress}
-                </span>
-              )}
-              {isBuyDialogOpen && dexTokenDataQuery.isFetching && (
-                <span className="animate-pulse text-[10px] text-slate-400 dark:text-white/25">Refreshing...</span>
-              )}
-            </div>
-
-            {!isSolanaTradeSupported ? (
-              <div className="rounded-xl border border-slate-900/[0.08] bg-white/65 p-3 text-xs text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-white/40 dark:shadow-none">
-                Trading is available for Solana posts only. Chart navigation remains available.
-              </div>
-            ) : null}
-            <div className="grid gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)] lg:items-start">
-                  <div className="space-y-3 lg:min-h-0 lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
-                    <div className={chartPanelClassName}>
-                      {/* Chart Toolbar */}
-                      <div className={cn("flex items-center justify-between gap-2 border-b px-4 py-2.5", chartDividerClassName)}>
-                        <div className="flex items-center gap-1.5">
-                          {DEX_CHART_INTERVAL_OPTIONS.map((preset) => (
-                            <button
-                              key={preset.value}
-                              type="button"
-                              onClick={() => setChartInterval(preset.value)}
-                              className={cn(
-                                "rounded-md px-2 py-1 text-[11px] font-medium transition-all duration-150",
-                                chartInterval === preset.value
-                                  ? "bg-slate-900/[0.06] text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-white/[0.1] dark:text-white"
-                                  : chartInactiveButtonClassName
-                              )}
-                            >
-                              {preset.label}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setIsChartInfoVisible((prev) => !prev)}
-                            className={cn(
-                              "rounded-md px-2 py-1 text-[10px] font-medium transition-all duration-150",
-                              isChartInfoVisible
-                                ? "bg-blue-500/10 text-blue-400"
-                                : chartInactiveToggleButtonClassName
-                            )}
-                          >
-                            Vol
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsChartTradesVisible((prev) => !prev)}
-                            className={cn(
-                              "rounded-md px-2 py-1 text-[10px] font-medium transition-all duration-150",
-                              isChartTradesVisible
-                                ? "bg-emerald-500/10 text-emerald-400"
-                                : chartInactiveToggleButtonClassName
-                            )}
-                          >
-                            OHLC
-                          </button>
-                        </div>
-                      </div>
-                      {/* Compact market stats */}
-                      <div className={cn("flex items-center gap-3 overflow-x-auto border-b px-4 py-2 text-[11px]", chartDividerClassName)}>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className={chartMutedTextClassName}>MCap</span>
-                          <span className={cn("font-medium", chartStrongTextClassName)}>{formatMarketCap(post.entryMcap)}</span>
-                          {resolvedMarketCap != null && (
-                            <>
-                              <span className={chartMutedSubtleTextClassName}>&rarr;</span>
-                              <span className={cn("font-medium", chartStrongTextClassName)}>{formatMarketCap(resolvedMarketCap)}</span>
-                            </>
-                          )}
-                        </div>
-                        <div className={cn("h-3 w-px shrink-0", chartDividerFillClassName)} />
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className={chartMutedTextClassName}>Price</span>
-                          <span className={cn("font-medium", chartStrongTextClassName)}>
-                            {resolvedPriceUsd != null ? `$${resolvedPriceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}` : "--"}
-                          </span>
-                        </div>
-                        <div className={cn("h-3 w-px shrink-0", chartDividerFillClassName)} />
-                        <span className={cn(
-                          "font-semibold shrink-0",
-                          currentTradeDeltaPct == null ? "text-slate-400 dark:text-white/40" : currentTradeDeltaPct >= 0 ? "text-emerald-400" : "text-rose-400"
-                        )}>
-                          {currentTradeDeltaPct == null ? "--" : `${currentTradeDeltaPct >= 0 ? "+" : ""}${currentTradeDeltaPct.toFixed(1)}%`}
-                        </span>
-                        <div className={cn("h-3 w-px shrink-0", chartDividerFillClassName)} />
-                        <span className={cn(
-                          "rounded-md px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-                          !localSettled ? "bg-blue-500/10 text-blue-400" : localIsWin ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
-                        )}>
-                          {!localSettled ? "LIVE" : localIsWin ? "WON" : "LOST"}
-                        </span>
-                      </div>
-
-                      {/* Chart controls */}
-                      <div className={cn("flex items-center justify-between gap-2 border-b px-4 py-2", chartDividerClassName)}>
-                        <div className={cn("min-w-0 truncate text-[10px]", chartMutedTextClassName)}>
-                          {chartVisibleRangeLabel}
-                          {chartRangeDetailLabel ? <span className={cn("ml-1.5", chartMutedSubtleTextClassName)}>{chartRangeDetailLabel}</span> : null}
-                        </div>
-                            <div className="flex items-center gap-0.5">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => panChartWindowBy(-CHART_PAN_STEP_POINTS * 2)}
-                                disabled={!hasProfessionalChartData || !canPanChartLeft}
-                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
-                              >
-                                <ChevronLeft className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => panChartWindowBy(CHART_PAN_STEP_POINTS * 2)}
-                                disabled={!hasProfessionalChartData || !canPanChartRight}
-                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
-                              >
-                                <ChevronRight className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
-                              </Button>
-                              <div className={cn("mx-0.5 h-3 w-px", chartDividerFillClassName)} />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => zoomChartWindow("in")}
-                                disabled={!hasProfessionalChartData || !canZoomInChart}
-                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
-                              >
-                                <Plus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => zoomChartWindow("out")}
-                                disabled={!hasProfessionalChartData || !canZoomOutChart}
-                                className={cn("h-7 w-7 sm:h-6 sm:w-6", chartControlButtonClassName)}
-                              >
-                                <Minus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
-                              </Button>
-                              <div className={cn("mx-0.5 h-3 w-px", chartDividerFillClassName)} />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={resetChartWindow}
-                                disabled={!hasProfessionalChartData}
-                                className={cn("h-7 px-2 text-[10px] sm:h-6 sm:px-1.5", chartControlButtonClassName)}
-                              >
-                                Reset
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={centerChartOnEntry}
-                                disabled={!hasProfessionalChartData || chartEntryIndex < 0}
-                                className={cn(
-                                  "h-7 px-2 text-[10px] sm:h-6 sm:px-1.5 hover:bg-slate-900/[0.05] dark:hover:bg-white/[0.06] disabled:opacity-30",
-                                  isEntryInCurrentView ? "text-blue-400" : "text-slate-500 hover:text-slate-800 dark:text-white/30 dark:hover:text-white/60"
-                                )}
-                              >
-                                Entry
-                              </Button>
-                            </div>
-                          </div>
-                          {isLikelyMobileDevice ? (
-                            <div className="mt-1 text-[10px] text-slate-400 dark:text-white/28">
-                              Pinch to zoom. Drag sideways to pan.
-                            </div>
-                          ) : null}
-
-                      <div
-                        ref={chartInteractionRef}
-                        className={cn(
-                          chartCanvasClassName,
-                          hasProfessionalChartData
-                            ? isChartMousePanning
-                              ? "cursor-grabbing"
-                              : "cursor-grab"
-                            : "cursor-default"
-                        )}
-                        onWheel={handleChartWheel}
-                        onTouchStart={handleChartTouchStart}
-                        onTouchMove={handleChartTouchMove}
-                        onTouchEnd={handleChartTouchEnd}
-                        onTouchCancel={handleChartTouchEnd}
-                        onMouseDown={handleChartMouseDown}
-                        onMouseMove={handleChartMouseMove}
-                        onMouseUp={handleChartMouseUp}
-                        onMouseLeave={handleChartMouseUp}
-                        style={{
-                          touchAction: hasProfessionalChartData ? "none" : "auto",
-                          userSelect: isChartMousePanning ? "none" : "auto",
-                          willChange: hasProfessionalChartData ? "transform" : "auto",
-                        }}
-                      >
-                        <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-1.5">
-                          <TradePanelLiveBadge
-                            lastEventAtMs={tradePanelLastEventAtMs}
-                            usingFallbackPolling={tradePanelUsingFallbackPolling}
-                            mode={tradePanelLiveStatus.mode}
-                          />
-                          {isUsingStaleQuote ? (
-                            <span className="inline-flex items-center rounded-full bg-slate-900/[0.05] px-1.5 py-0.5 text-[9px] font-medium text-slate-500 dark:bg-white/[0.06] dark:text-white/42">
-                              {quoteFreshnessLabel}
-                            </span>
-                          ) : null}
-                        </div>
-                        {hasProfessionalChartData ? (
-                          <CandlestickChart
-                            data={professionalChartData}
-                            visibleStartIndex={chartWindowBounds.startIndex}
-                            visibleEndIndex={chartWindowBounds.endIndex}
-                            futureSlotCount={CHART_FUTURE_PADDING_SLOTS}
-                            showVolume={isChartInfoVisible}
-                            showCandles={isChartTradesVisible}
-                            stroke={professionalChartStroke}
-                            fill={professionalChartFill}
-                            entryPrice={chartEntryPrice}
-                            entryPoint={
-                              chartEntryCandle
-                                ? { ts: chartEntryCandle.ts, close: chartEntryCandle.close }
-                                : null
-                            }
-                            onHoverIndexChange={setChartActiveIndex}
-                            onOverviewSelect={(index) => {
-                              const width = chartWindowBounds.visibleCount;
-                              let startIndex = index - Math.floor(width / 2);
-                              startIndex = Math.max(0, Math.min(startIndex, Math.max(0, chartTotalPoints - width)));
-                              setChartWindow({
-                                startIndex,
-                                endIndex: startIndex + width - 1,
-                              });
-                              setChartActiveIndex(index);
-                            }}
-                            formatPrice={formatUsdCompact}
-                            formatTick={formatChartXAxisTick}
-                            resetHoverKey={isBuyDialogOpen ? `${post.id}:${chartInterval}` : null}
-                          />
-                        ) : chartCandlesQuery.isLoading || chartCandlesQuery.isFetching ? (
-                          <div className="flex h-full items-center justify-center">
-                            <div className="flex flex-col items-center gap-2">
-                              <Loader2 className="h-5 w-5 animate-spin text-slate-400 dark:text-white/20" />
-                              <span className="text-[11px] text-slate-500 dark:text-white/25">Loading chart data...</span>
-                            </div>
-                          </div>
-                        ) : chartCandlesQuery.error ? (
-                          <div className="flex h-full items-center justify-center p-6 text-center">
-                            <div className="space-y-2">
-                              <PhewChartIcon className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
-                              <p className="text-[11px] text-slate-500 dark:text-white/25">
-                                Chart feed unavailable. Try a different interval.
-                              </p>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                  void chartCandlesQuery.refetch();
-                                }}
-                                className="h-7 border-slate-900/10 bg-white/70 px-3 text-[10px] text-slate-700 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:text-white/70 dark:hover:bg-white/[0.06]"
-                              >
-                                Retry
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex h-full items-center justify-center p-6 text-center">
-                            <div className="space-y-2">
-                              <PhewChartIcon className="mx-auto h-6 w-6 text-slate-400 dark:text-white/15" />
-                              <p className="text-[11px] text-slate-500 dark:text-white/25">
-                                Candle data not yet available for this token.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Chart footer */}
-                      <div className={cn("flex items-center justify-between border-t px-4 py-2 text-[10px] text-slate-500 dark:text-white/25", chartDividerClassName)}>
-                        <div className="flex items-center gap-3">
-                          {hasProfessionalChartData && (
-                            <>
-                              <span>{chartFeedLabel} {chartInterval}</span>
-                            </>
-                          )}
-                          {resolvedLiquidityUsd != null && (
-                            <span>Liq ${resolvedLiquidityUsd.toLocaleString()}</span>
-                          )}
-                          {resolvedVolume24hUsd != null && (
-                            <span>24h Vol ${resolvedVolume24hUsd.toLocaleString()}</span>
-                          )}
-                          {resolvedDexId && <span>{resolvedDexId}</span>}
-                        </div>
-                        {hasProfessionalChartData && professionalChartLast && (
-                          <span>
-                            {new Date(professionalChartLast.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <TradeTransactionsFeed
-                      trades={tradePanelRecentTrades}
-                      liveMode={tradePanelLiveStatus.mode}
-                      usingFallbackPolling={tradePanelUsingFallbackPolling}
-                      lastTradeEventAtMs={tradePanelLastTradeEventAtMs}
-                    />
-
-                  </div>
-
-                  <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
-                    {/* New Trading Panel */}
-                    <TradingPanel
-                      tradeSide={tradeSide}
-                      onTradeSideChange={setTradeSide}
-                      buyAmountSol={buyAmountSol}
-                      onBuyAmountChange={setBuyAmountSol}
-                      sellAmountToken={sellAmountToken}
-                      onSellAmountChange={setSellAmountToken}
-                      tokenSymbol={displayTokenSymbol}
-                      tokenName={displayTokenLabel}
-                      tokenImage={resolvedTokenImage}
-                      slippageBps={slippageBps}
-                      onSlippageChange={setSlippageBps}
-                      jupiterOutputFormatted={jupiterOutputAmountFormatted}
-                      jupiterMinReceiveFormatted={jupiterMinReceiveFormatted}
-                      jupiterPriceImpactDisplay={jupiterPriceImpactDisplay}
-                      routeFeeDisplay={jupiterRouteFeeDisplay}
-                      creatorFeeDisplay={creatorFeeDisplay}
-                      platformFeeDisplay={retainedPlatformFeeDisplay}
-                      jupiterStatusLabel={jupiterStatusLabel}
-                      isQuoteLoading={showQuoteLoading}
-                      isExecuting={isExecutingBuy}
-                      canExecute={canExecuteJupiterBuy}
-                      walletConnected={isWalletConnectedForTrade}
-                      walletBalance={walletNativeBalance}
-                      walletBalanceLoading={walletNativeBalanceLoading}
-                      walletBalanceUsd={walletNativeBalanceUsd}
-                      walletTokenBalance={walletTokenBalance}
-                      walletTokenBalanceFormatted={walletTokenBalanceFormatted}
-                      walletTokenBalanceLoading={walletTokenBalanceLoading}
-                      payAmountUsd={tradePayUsdEstimate}
-                      receiveAmountUsd={tradeReceiveUsdEstimate}
-                      slippageInputPercent={slippageInputPercent}
-                      onSlippageInputChange={setSlippageInputPercent}
-                      onSlippageInputCommit={applySlippagePercentInput}
-                      onExecute={handleExecuteJupiterBuy}
-                      onConnectWallet={handleOpenTradeWalletConnectDialog}
-                      txSignature={buyTxSignature}
-                      quickBuyPresets={buyQuickAmounts}
-                      sellQuickPercents={sellQuickPercents}
-                      onQuickBuyPresetClick={(amount) => setBuyAmountSol(amount)}
-                      onSellPercentClick={(percent) => setSellAmountFromPercent(percent)}
-                      autoConfirmEnabled={autoConfirmEnabled}
-                      onAutoConfirmChange={handleAutoConfirmChange}
-                      mevProtectionEnabled={mevProtectionEnabled}
-                      onMevProtectionChange={setMevProtectionEnabled}
-                      protectionEnabled={priceProtectionEnabled}
-                      onProtectionEnabledChange={setPriceProtectionEnabled}
-                      stopLossPercent={stopLossPercentInput}
-                      onStopLossPercentChange={setStopLossPercentInput}
-                      takeProfitPercent={takeProfitPercentInput}
-                      onTakeProfitPercentChange={setTakeProfitPercentInput}
-                      protectionStatusLabel={protectionStatus.label}
-                      protectionStatusTone={protectionStatus.tone}
-                      quoteFreshnessLabel={quoteFreshnessLabel}
-                      liveStateLabel={tradeLiveMetaLabel}
-                      tradeError={
-                        tradeError
-                          ? {
-                              title: tradeError.title,
-                              message: tradeError.message,
-                              retryable: tradeError.retryable,
-                            }
-                          : null
-                      }
-                      onClearTradeError={() => setTradeError(null)}
-                      onRetryTradeError={() => {
-                        setTradeError(null);
-                        void refetchJupiterQuote();
-                        if (canExecuteJupiterBuy && !isExecutingBuy) {
-                          void handleExecuteJupiterBuy();
-                        }
-                      }}
-                    />
-
-                    {/* Portfolio Panel */}
-                    <PortfolioPanel
-                      positions={portfolioPositions}
-                      isLoading={isPortfolioLoading}
-                      totalUnrealizedPnl={portfolioTotalPnl}
-                      onQuickSell={handlePortfolioQuickSell}
-                      walletConnected={isWalletConnectedForTrade}
-                    />
-                  </div>
                 </div>
-          </div>
-
-          <DialogFooter className={tradeDialogFooterClassName}>
-            <div className="flex items-center gap-2">
-              {resolvedDexscreenerUrl && (
-                <a
-                  href={resolvedDexscreenerUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-[10px] text-slate-500 transition-colors hover:text-slate-700 dark:text-white/25 dark:hover:text-white/50"
-                >
-                  DexScreener
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleCloseBuyDialog}
-                className="h-8 px-3 text-[11px] text-slate-500 hover:bg-slate-900/[0.04] hover:text-slate-700 dark:text-white/40 dark:hover:bg-white/[0.04] dark:hover:text-white/60"
-              >
-                Close
-              </Button>
-              <Button
-                type="button"
-                onClick={handleBuyFooterAction}
-                disabled={isBuyFooterDisabled}
-                className={cn(
-                  "h-8 px-4 text-[11px] font-semibold rounded-lg transition-all duration-200",
-                  hasWalletSignerForTrade
-                    ? tradeSide === "buy"
-                      ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-                      : "bg-rose-600 hover:bg-rose-500 text-white"
-                    : "bg-white/[0.08] hover:bg-white/[0.12] text-white"
-                )}
-              >
-                {isExecutingBuy ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
-                ) : hasWalletSignerForTrade ? (
-                  <PhewTradeIcon className="mr-1.5 h-3 w-3" />
-                ) : (
-                  <PhewFollowIcon className="mr-1.5 h-3 w-3" />
-                )}
-                {hasWalletSignerForTrade ? (tradeSide === "buy" ? "Buy" : "Sell") : connectWalletCtaLabel}
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
+              </div>
+            </DialogContent>
+          }
+        >
+          <PostCardTradeDialog
+            surfaceClassName={tradeDialogSurfaceClassName}
+            headerClassName={tradeDialogHeaderClassName}
+            bodyClassName={tradeDialogBodyClassName}
+            footerClassName={tradeDialogFooterClassName}
+            token={{
+              image: resolvedTokenImage,
+              imageError: tradeDialogTokenImageError,
+              onImageError: () => setTradeDialogTokenImageError(true),
+              label: displayTokenLabel,
+              chainType: post.chainType,
+              contractAddress: post.contractAddress,
+            }}
+            status={{
+              label: jupiterStatusLabel,
+              toneClassName: jupiterStatusTone,
+              isRefreshing: isBuyDialogOpen && dexTokenDataQuery.isFetching,
+              isSolanaTradeSupported,
+              onClose: handleCloseBuyDialog,
+            }}
+            chartPanel={tradeDialogChartPanelProps}
+            transactionsProps={{
+              trades: tradePanelRecentTrades,
+              liveMode: tradePanelLiveStatus.mode,
+              usingFallbackPolling: tradePanelUsingFallbackPolling,
+              lastTradeEventAtMs: tradePanelLastTradeEventAtMs,
+            }}
+            tradingPanelProps={tradeDialogTradingPanelProps}
+            portfolioProps={{
+              positions: portfolioPositions,
+              isLoading: isPortfolioLoading,
+              totalUnrealizedPnl: portfolioTotalPnl,
+              onQuickSell: handlePortfolioQuickSell,
+              walletConnected: isWalletConnectedForTrade,
+            }}
+            footer={{
+              dexscreenerUrl: resolvedDexscreenerUrl,
+              onClose: handleCloseBuyDialog,
+              onAction: handleBuyFooterAction,
+              isActionDisabled: isBuyFooterDisabled,
+              isExecuting: isExecutingBuy,
+              hasWalletSigner: hasWalletSignerForTrade,
+              connectWalletCtaLabel,
+              tradeSide,
+            }}
+          />
+        </Suspense>
       </Dialog>
 
       <Dialog open={isWinCardPreviewOpen} onOpenChange={setIsWinCardPreviewOpen}>
@@ -7733,4 +7545,5 @@ export function PostCard({
     </div>
   );
 }
+
 

@@ -12,7 +12,7 @@ import {
   usePrivySyncFailureSnapshot,
   useSession,
 } from "@/lib/auth-client";
-import { usePrivyAvailable } from "@/components/PrivyWalletProvider";
+import { usePrivyAvailable } from "@/components/PrivyContext";
 import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 
 function RouteLoading({ label }: { label: string }) {

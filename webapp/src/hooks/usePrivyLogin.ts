@@ -15,7 +15,7 @@ import {
   usePrivyAuthBootstrapSnapshot,
 } from "@/lib/auth-client";
 import type { PrivyUserLike } from "@/lib/privy-user";
-import { usePrivyProviderInstanceId } from "@/components/PrivyWalletProvider";
+import { usePrivyProviderInstanceId } from "@/components/PrivyContext";
 import {
   clearPrivyLoginIntent,
   writePrivyLoginIntent,

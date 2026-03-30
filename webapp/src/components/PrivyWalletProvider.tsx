@@ -1,5 +1,9 @@
-import { Component, createContext, useContext, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
+import {
+  PrivyAvailableContext,
+  PrivyProviderInstanceContext,
+} from "@/components/PrivyContext";
 
 interface PrivyWalletProviderProps {
   children: ReactNode;
@@ -11,17 +15,17 @@ interface ErrorBoundaryState {
 }
 
 const SHOULD_LOG_PRIVY_PROVIDER = import.meta.env.DEV;
-
-export const PrivyAvailableContext = createContext<boolean>(false);
-export const PrivyProviderInstanceContext = createContext<string | null>(null);
-
-export function usePrivyAvailable() {
-  return useContext(PrivyAvailableContext);
-}
-
-export function usePrivyProviderInstanceId() {
-  return useContext(PrivyProviderInstanceContext);
-}
+const PRIVY_PROVIDER_CONFIG = {
+  appearance: {
+    theme: "dark" as const,
+  },
+  loginMethods: ["email", "twitter"] as const,
+  embeddedWallets: {
+    showWalletUIs: false,
+    ethereum: { createOnLogin: "off" as const },
+    solana: { createOnLogin: "off" as const },
+  },
+};
 
 function createPrivyProviderInstanceId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -96,17 +100,7 @@ function PrivyProviderInner({ children }: PrivyWalletProviderProps) {
       <PrivyProvider
         appId={appId}
         clientId={clientId}
-        config={{
-          appearance: {
-            theme: "dark",
-          },
-          loginMethods: ["email", "twitter"],
-          embeddedWallets: {
-            showWalletUIs: false,
-            ethereum: { createOnLogin: "off" },
-            solana: { createOnLogin: "off" },
-          },
-        }}
+        config={PRIVY_PROVIDER_CONFIG}
       >
         <PrivyAvailableContext.Provider value={true}>
           {children}

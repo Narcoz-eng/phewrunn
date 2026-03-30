@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -16,7 +16,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
 import { TokenScanningState } from "@/components/feed/TokenScanningState";
-import { CandlestickChart } from "@/components/feed/CandlestickChart";
 import {
   hasResolvedBundleEvidence,
   isBundlePlaceholderState,
@@ -34,20 +33,13 @@ import {
   getCachedPostsForToken,
   mergePreferredPostCollections,
 } from "@/lib/post-query-cache";
-import {
-  Area,
-  AreaChart,
-  Brush,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
+import { importWithRecovery } from "@/lib/lazy-with-recovery";
+
+const TokenTelemetryCharts = lazy(() =>
+  importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
+);
 
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
 const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
@@ -2842,173 +2834,57 @@ export default function TokenPage() {
                 </div>
                 {/* Chart area */}
                 <div className="mt-4 space-y-4">
-                  <div className="h-[340px] w-full">
-                      {hasLiveChartTelemetry ? (
-                        <div className="h-full rounded-[24px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015))] p-3 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.01))]">
-                          <CandlestickChart
-                            data={displayLiveChartData}
-                            visibleStartIndex={liveChartWindow.startIndex}
-                            visibleEndIndex={liveChartWindow.endIndex}
-                            futureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
-                            showVolume
-                            showCandles
-                            stroke="hsl(var(--primary))"
-                            fill="hsla(var(--primary), 0.22)"
-                            formatPrice={formatTokenPrice}
-                            formatTick={(timestampMs) =>
-                              new Date(timestampMs).toLocaleTimeString([], {
-                                ...(chartRequestConfig.timeframe === "day"
-                                  ? ({ month: "short", day: "numeric" } as const)
-                                  : ({ hour: "2-digit", minute: "2-digit" } as const)),
-                              })
-                            }
-                            className="h-full"
-                          />
-                        </div>
-                      ) : hasChartTelemetry ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={chartData}>
-                            <defs>
-                              <linearGradient id="tokenChartFill" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
-                                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.02} />
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
-                            <XAxis
-                              dataKey="ts"
-                              type="number"
-                              scale="time"
-                              domain={["dataMin", "dataMax"]}
-                              tick={{ fontSize: 11 }}
-                              minTickGap={24}
-                              tickFormatter={(value) => formatChartTimelineTick(Number(value), chartHistorySpanMs)}
-                            />
-                            <YAxis yAxisId="marketCap" tickFormatter={(value) => formatMarketCap(Number(value))} tick={{ fontSize: 11 }} />
-                            <YAxis
-                              yAxisId="confidence"
-                              orientation="right"
-                              domain={[0, 100]}
-                              tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
-                              tick={{ fontSize: 11 }}
-                            />
-                            <Tooltip
-                              labelFormatter={(value) => formatChartTimelineTooltip(Number(value))}
-                              formatter={(value: number | null, name: string) => {
-                                if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
-                                if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
-                                return [value ?? "N/A", name];
-                              }}
-                            />
-                            <Area yAxisId="marketCap" type="monotone" dataKey="marketCap" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#tokenChartFill)" />
-                            <Line
-                              yAxisId="confidence"
-                              type="monotone"
-                              dataKey="confidenceScore"
-                              stroke="hsl(var(--accent))"
-                              strokeWidth={1.6}
-                              dot={false}
-                              isAnimationActive={false}
-                            />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-primary/25 bg-gradient-to-br from-primary/8 via-transparent to-cyan-400/6 px-6 text-center">
-                          <div className="max-w-md space-y-3">
-                            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
-                              <Loader2 className="h-5 w-5 animate-spin" />
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
-                              <p className="text-sm text-muted-foreground">
-                                We are pulling the live price route, market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
-                              </p>
+                  {hasLiveChartTelemetry || hasChartTelemetry ? (
+                    <Suspense
+                      fallback={
+                        <div className="flex h-[340px] items-center justify-center rounded-[24px] border border-border/60 bg-white/50 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-white/[0.03] dark:shadow-none">
+                          <div className="flex flex-col items-center gap-2 text-center">
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <div className="text-sm font-medium text-foreground">
+                              Loading market charts
                             </div>
                           </div>
                         </div>
-                      )}
-                    </div>
-
-                    {hasChartTelemetry ? (
-                      <div className="rounded-[24px] border border-border/60 bg-white/50 p-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-white/[0.03] dark:shadow-none">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-foreground">Confidence + market cap timeline</div>
-                            <div className="text-xs text-muted-foreground">Snapshot intelligence history for conviction and market structure.</div>
-                          </div>
-                          <div className="rounded-full border border-border/60 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-                            {chartData.length} points
-                          </div>
+                      }
+                    >
+                      <TokenTelemetryCharts
+                        hasLiveChartTelemetry={hasLiveChartTelemetry}
+                        hasChartTelemetry={hasChartTelemetry}
+                        displayLiveChartData={displayLiveChartData}
+                        liveChartWindow={liveChartWindow}
+                        liveChartFutureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
+                        chartData={chartData}
+                        chartDataPointCount={chartData.length}
+                        formatTokenPrice={formatTokenPrice}
+                        formatLiveTick={(timestampMs) =>
+                          new Date(timestampMs).toLocaleTimeString([], {
+                            ...(chartRequestConfig.timeframe === "day"
+                              ? ({ month: "short", day: "numeric" } as const)
+                              : ({ hour: "2-digit", minute: "2-digit" } as const)),
+                          })
+                        }
+                        formatTimelineTick={(timestampMs) =>
+                          formatChartTimelineTick(timestampMs, chartHistorySpanMs)
+                        }
+                        formatTimelineTooltip={formatChartTimelineTooltip}
+                      />
+                    </Suspense>
+                  ) : (
+                    <div className="flex h-[340px] items-center justify-center rounded-[24px] border border-dashed border-primary/25 bg-gradient-to-br from-primary/8 via-transparent to-cyan-400/6 px-6 text-center">
+                      <div className="max-w-md space-y-3">
+                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+                          <Loader2 className="h-5 w-5 animate-spin" />
                         </div>
-                        <div className="h-[168px]">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={chartData}>
-                              <defs>
-                                <linearGradient id="tokenChartFillSecondary" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.28} />
-                                  <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.01} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.26} />
-                              <XAxis
-                                dataKey="ts"
-                                type="number"
-                                scale="time"
-                                domain={["dataMin", "dataMax"]}
-                                tick={{ fontSize: 10 }}
-                                minTickGap={24}
-                                tickFormatter={(value) => formatChartTimelineTick(Number(value), chartHistorySpanMs)}
-                              />
-                              <YAxis
-                                yAxisId="marketCap"
-                                tickFormatter={(value) => formatMarketCap(Number(value))}
-                                tick={{ fontSize: 10 }}
-                              />
-                              <YAxis
-                                yAxisId="confidence"
-                                orientation="right"
-                                domain={[0, 100]}
-                                tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
-                                tick={{ fontSize: 10 }}
-                              />
-                              <Tooltip
-                                labelFormatter={(value) => formatChartTimelineTooltip(Number(value))}
-                                formatter={(value: number | null, name: string) => {
-                                  if (name === "marketCap") return [formatMarketCap(value), "Market Cap"];
-                                  if (name === "confidenceScore") return [`${Number(value ?? 0).toFixed(0)}%`, "Confidence"];
-                                  return [value ?? "N/A", name];
-                                }}
-                              />
-                              <Area
-                                yAxisId="marketCap"
-                                type="monotone"
-                                dataKey="marketCap"
-                                stroke="hsl(var(--primary))"
-                                strokeWidth={2}
-                                fill="url(#tokenChartFillSecondary)"
-                              />
-                              <Line
-                                yAxisId="confidence"
-                                type="monotone"
-                                dataKey="confidenceScore"
-                                stroke="hsl(var(--accent))"
-                                strokeWidth={1.6}
-                                dot={false}
-                                isAnimationActive={false}
-                              />
-                              <Brush
-                                dataKey="ts"
-                                height={18}
-                                stroke="hsl(var(--primary))"
-                                travellerWidth={10}
-                                tickFormatter={(value) => formatChartTimelineTick(Number(value), chartHistorySpanMs)}
-                              />
-                            </ComposedChart>
-                          </ResponsiveContainer>
+                        <div className="space-y-1">
+                          <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
+                          <p className="text-sm text-muted-foreground">
+                            We are pulling the live price route, market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
+                          </p>
                         </div>
                       </div>
-                    ) : null}
-                  </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Quick buy sidebar */}

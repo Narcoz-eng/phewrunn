@@ -10,8 +10,6 @@ import { AuthProvider, useAuth } from "@/lib/auth-client";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
-import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
 import { AuthInitializer } from "@/components/AuthInitializer";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
@@ -37,6 +35,17 @@ const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
 const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
 const AccessCodeEntry = lazyPage(() => import("./pages/AccessCodeEntry"), "route:access-code");
+const PrivyWalletProvider = lazyPage(
+  () =>
+    import("./components/PrivyWalletProvider").then((module) => ({
+      default: module.PrivyWalletProvider,
+    })),
+  "provider:privy-wallet"
+);
+const SolanaRouteProvider = lazyPage(
+  () => import("./components/SolanaRouteProvider"),
+  "provider:solana-route"
+);
 
 // Loading fallback component
 function PageSkeleton() {
@@ -60,6 +69,10 @@ function PublicHandleProfileRoute() {
   }
 
   return <UserProfile />;
+}
+
+function WithSolanaRuntime({ children }: { children: ReactNode }) {
+  return <SolanaRouteProvider>{children}</SolanaRouteProvider>;
 }
 
 function hasCompletedHandle(username: string | null | undefined): boolean {
@@ -134,7 +147,9 @@ function AnimatedRoutes() {
             path="/"
             element={
               <ProtectedRoute>
-                <Feed />
+                <WithSolanaRuntime>
+                  <Feed />
+                </WithSolanaRuntime>
               </ProtectedRoute>
             }
           />
@@ -142,7 +157,9 @@ function AnimatedRoutes() {
             path="/profile"
             element={
               <ProtectedRoute>
-                <Profile />
+                <WithSolanaRuntime>
+                  <Profile />
+                </WithSolanaRuntime>
               </ProtectedRoute>
             }
           />
@@ -154,7 +171,14 @@ function AnimatedRoutes() {
               </ProtectedRoute>
             }
           />
-          <Route path="/profile/:userId" element={<UserProfile />} />
+          <Route
+            path="/profile/:userId"
+            element={
+              <WithSolanaRuntime>
+                <UserProfile />
+              </WithSolanaRuntime>
+            }
+          />
           <Route
             path="/admin"
             element={
@@ -183,7 +207,9 @@ function AnimatedRoutes() {
             path="/post/:postId"
             element={
               <ProtectedRoute>
-                <PostDetail />
+                <WithSolanaRuntime>
+                  <PostDetail />
+                </WithSolanaRuntime>
               </ProtectedRoute>
             }
           />
@@ -191,7 +217,9 @@ function AnimatedRoutes() {
             path="/token/:tokenAddress"
             element={
               <ProtectedRoute>
-                <TokenPage />
+                <WithSolanaRuntime>
+                  <TokenPage />
+                </WithSolanaRuntime>
               </ProtectedRoute>
             }
           />
@@ -207,7 +235,14 @@ function AnimatedRoutes() {
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="/access-code" element={<AccessCodeEntry />} />
-          <Route path="/:userId" element={<PublicHandleProfileRoute />} />
+          <Route
+            path="/:userId"
+            element={
+              <WithSolanaRuntime>
+                <PublicHandleProfileRoute />
+              </WithSolanaRuntime>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </motion.div>
@@ -218,7 +253,7 @@ function AnimatedRoutes() {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <SolanaWalletProvider>
+      <Suspense fallback={<PageSkeleton />}>
         <PrivyWalletProvider>
           <AuthProvider>
             <AuthInitializer>
@@ -236,7 +271,7 @@ const App = () => (
             </AuthInitializer>
           </AuthProvider>
         </PrivyWalletProvider>
-      </SolanaWalletProvider>
+      </Suspense>
     </ThemeProvider>
   </QueryClientProvider>
 );
