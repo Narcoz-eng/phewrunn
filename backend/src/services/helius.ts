@@ -25,6 +25,15 @@ export type HeliusTokenMetadata = {
   creatorAddresses: string[];
 };
 
+export type HeliusTradePanelContext = {
+  source: "helius";
+  walletAddress: string;
+  tokenMint: string;
+  walletNativeBalance: number | null;
+  walletTokenBalance: number | null;
+  tokenDecimals: number | null;
+};
+
 export type WalletPortfolioOverview = {
   source: "helius";
   walletAddress: string;
@@ -54,6 +63,7 @@ export type WalletActivityProfile = {
 
 type HeliusTokenHolding = {
   amount: number;
+  decimals?: number | null;
 };
 
 type TokenTradeAggregate = {
@@ -263,12 +273,16 @@ const dexPriceCache = new Map<string, { priceUsd: number | null; expiresAtMs: nu
 const dexPriceInFlight = new Map<string, Promise<number | null>>();
 const heliusTokenMetadataCache = new Map<string, { value: HeliusTokenMetadata | null; expiresAtMs: number }>();
 const heliusTokenMetadataInFlight = new Map<string, Promise<HeliusTokenMetadata | null>>();
+const heliusTokenDecimalsCache = new Map<string, { value: number | null; expiresAtMs: number }>();
+const heliusTokenDecimalsInFlight = new Map<string, Promise<number | null>>();
 const heliusMintHolderCache = new Map<string, { value: HeliusTokenAccountSummary | null; expiresAtMs: number }>();
 const heliusMintHolderInFlight = new Map<string, Promise<HeliusTokenAccountSummary | null>>();
 const heliusAuthorityAssetSummaryCache = new Map<string, { value: HeliusAuthorityAssetSummary | null; expiresAtMs: number }>();
 const heliusAuthorityAssetSummaryInFlight = new Map<string, Promise<HeliusAuthorityAssetSummary | null>>();
 const heliusMintCreatorCache = new Map<string, { value: MintCreatorResolution | null; expiresAtMs: number }>();
 const heliusMintCreatorInFlight = new Map<string, Promise<MintCreatorResolution | null>>();
+const heliusTradePanelContextCache = new Map<string, { value: HeliusTradePanelContext | null; expiresAtMs: number }>();
+const heliusTradePanelContextInFlight = new Map<string, Promise<HeliusTradePanelContext | null>>();
 const NON_BASE_TOKEN_EXCLUDE_MINTS = new Set<string>([WRAPPED_SOL_MINT, USDC_MINT, USDT_MINT]);
 
 function isLikelySolanaAddress(value: string | null | undefined): value is string {
@@ -653,8 +667,15 @@ async function fetchWalletTokenHoldings(ownerWallet: string): Promise<Map<string
     const mint = normalizeAddress(info?.mint);
     if (!mint) continue;
     const amount = readUiTokenAmount(info?.tokenAmount);
-    const existing = holdings.get(mint)?.amount ?? 0;
-    holdings.set(mint, { amount: existing + amount });
+    const existing = holdings.get(mint);
+    const decimals =
+      typeof info?.tokenAmount?.decimals === "number" && Number.isFinite(info.tokenAmount.decimals)
+        ? info.tokenAmount.decimals
+        : existing?.decimals ?? null;
+    holdings.set(mint, {
+      amount: (existing?.amount ?? 0) + amount,
+      decimals,
+    });
   }
   return holdings;
 }
@@ -667,6 +688,43 @@ async function fetchWalletSolBalance(ownerWallet: string): Promise<number | null
   );
   if (!result || typeof result.value !== "number") return null;
   return result.value / 1_000_000_000;
+}
+
+async function fetchTokenSupplyDecimals(mint: string): Promise<number | null> {
+  if (!isLikelySolanaAddress(mint)) return null;
+
+  const now = Date.now();
+  const cached = heliusTokenDecimalsCache.get(mint);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.value;
+  }
+
+  const inFlight = heliusTokenDecimalsInFlight.get(mint);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async () => {
+    const response = await heliusRpcCall<{ value?: { decimals?: number | null } }>(
+      "getTokenSupply",
+      [mint, { commitment: "confirmed" }],
+      `token-supply-${mint.slice(0, 8)}`
+    );
+    const decimals =
+      typeof response?.value?.decimals === "number" && Number.isFinite(response.value.decimals)
+        ? response.value.decimals
+        : null;
+    heliusTokenDecimalsCache.set(mint, {
+      value: decimals,
+      expiresAtMs: Date.now() + HELIUS_METADATA_CACHE_TTL_MS,
+    });
+    return decimals;
+  })().finally(() => {
+    heliusTokenDecimalsInFlight.delete(mint);
+  });
+
+  heliusTokenDecimalsInFlight.set(mint, request);
+  return request;
 }
 
 async function fetchDexTokenPriceUsd(mint: string): Promise<number | null> {
@@ -1410,6 +1468,66 @@ export async function getHeliusTokenMetadataForMint(params: {
     expiresAtMs: now + HELIUS_METADATA_CACHE_TTL_MS,
   });
   return value;
+}
+
+export async function getHeliusTradePanelContext(params: {
+  walletAddress: string | null | undefined;
+  tokenMint: string | null | undefined;
+}): Promise<HeliusTradePanelContext | null> {
+  const walletAddress = normalizeAddress(params.walletAddress);
+  const tokenMint = normalizeAddress(params.tokenMint);
+  if (!HELIUS_RPC_URL || !isLikelySolanaAddress(walletAddress) || !isLikelySolanaAddress(tokenMint)) {
+    return null;
+  }
+
+  const cacheKey = `${walletAddress}:${tokenMint}`;
+  const now = Date.now();
+  const cached = heliusTradePanelContextCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    return cached.value;
+  }
+
+  const inFlight = heliusTradePanelContextInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async (): Promise<HeliusTradePanelContext | null> => {
+    const [walletNativeBalance, holdingsByMint] = await Promise.all([
+      fetchWalletSolBalance(walletAddress),
+      fetchWalletTokenHoldings(walletAddress),
+    ]);
+    if (!holdingsByMint) {
+      return null;
+    }
+
+    const holding = holdingsByMint.get(tokenMint) ?? holdingsByMint.get(tokenMint.toLowerCase()) ?? null;
+    const tokenDecimals =
+      typeof holding?.decimals === "number" && Number.isFinite(holding.decimals)
+        ? holding.decimals
+        : await fetchTokenSupplyDecimals(tokenMint);
+
+    const context: HeliusTradePanelContext = {
+      source: "helius",
+      walletAddress,
+      tokenMint,
+      walletNativeBalance,
+      walletTokenBalance:
+        typeof holding?.amount === "number" && Number.isFinite(holding.amount) ? holding.amount : 0,
+      tokenDecimals,
+    };
+
+    heliusTradePanelContextCache.set(cacheKey, {
+      value: context,
+      expiresAtMs: Date.now() + (process.env.NODE_ENV === "production" ? 8_000 : 2_500),
+    });
+    return context;
+  })().finally(() => {
+    heliusTradePanelContextInFlight.delete(cacheKey);
+  });
+
+  heliusTradePanelContextInFlight.set(cacheKey, request);
+  return request;
 }
 
 export async function getHeliusTokenAccountsForMint(params: {

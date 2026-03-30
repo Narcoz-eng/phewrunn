@@ -37,6 +37,7 @@ import {
 } from "../services/marketcap.js";
 import {
   getWalletTradeSnapshotsForSolanaTokens,
+  getHeliusTradePanelContext,
   getHeliusTokenMetadataForMint,
   getParsedSolanaTransaction,
   isHeliusConfigured,
@@ -2218,6 +2219,7 @@ const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000
 const CHART_CANDLES_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
 const CHART_CANDLES_FETCH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_200 : 6_000;
 const CHART_TRADES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 600 : 400;
+const TRADE_PANEL_CONTEXT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_500;
 const CHART_LIVE_STREAM_MAX_DURATION_MS = process.env.NODE_ENV === "production" ? 240_000 : 90_000;
 const CHART_LIVE_STREAM_KEEPALIVE_MS = 15_000;
 const CHART_POOL_ADDRESS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
@@ -2278,6 +2280,8 @@ const chartCandlesCache = new Map<
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
 const chartTradesCache = new Map<string, { trades: Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>; expiresAtMs: number }>();
 const chartTradesInFlight = new Map<string, Promise<Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>>>();
+const tradePanelContextCache = new Map<string, { data: Awaited<ReturnType<typeof getHeliusTradePanelContext>>; expiresAtMs: number }>();
+const tradePanelContextInFlight = new Map<string, Promise<Awaited<ReturnType<typeof getHeliusTradePanelContext>>>>();
 const chartPoolAddressCache = new Map<string, { poolAddress: string | null; expiresAtMs: number }>();
 const chartPoolAddressInFlight = new Map<string, Promise<string | null>>();
 const chartCandlesSourceHealth = new Map<ChartCandlesSource, ChartCandlesSourceHealth>();
@@ -7156,6 +7160,13 @@ const ChartLiveQuerySchema = z
   })
   .strict();
 
+const TradePanelContextSchema = z
+  .object({
+    walletAddress: z.string().min(32).max(64),
+    tokenMint: z.string().min(32).max(64),
+  })
+  .strict();
+
 type ChartTradesQuery = z.infer<typeof ChartTradesQuerySchema>;
 type ChartLiveQuery = z.infer<typeof ChartLiveQuerySchema>;
 
@@ -8694,6 +8705,73 @@ async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<Char
 
   throw new Error("No chart provider available");
 }
+
+postsRouter.post(
+  "/trade-context",
+  requireNotBanned,
+  zValidator("json", TradePanelContextSchema),
+  async (c) => {
+    const currentUser = c.get("user");
+    if (!currentUser) {
+      return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+    }
+
+    const { walletAddress, tokenMint } = c.req.valid("json");
+    const linkedWallet = await prisma.user.findUnique({
+      where: { id: currentUser.id },
+      select: { walletAddress: true },
+    });
+    if (!linkedWallet?.walletAddress) {
+      return c.json(
+        { error: { message: "Link a wallet before trading", code: "WALLET_NOT_LINKED" } },
+        403
+      );
+    }
+    if (linkedWallet.walletAddress !== walletAddress) {
+      return c.json(
+        { error: { message: "Trade access is restricted to the linked wallet owner", code: "FORBIDDEN" } },
+        403
+      );
+    }
+
+    const cacheKey = `${walletAddress}:${tokenMint}`;
+    const now = Date.now();
+    const cached = tradePanelContextCache.get(cacheKey);
+    if (cached && cached.expiresAtMs > now) {
+      return c.json({ data: cached.data });
+    }
+
+    let request = tradePanelContextInFlight.get(cacheKey);
+    if (!request) {
+      request = getHeliusTradePanelContext({ walletAddress, tokenMint });
+      tradePanelContextInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const data = await request;
+      tradePanelContextCache.set(cacheKey, {
+        data,
+        expiresAtMs: Date.now() + TRADE_PANEL_CONTEXT_CACHE_TTL_MS,
+      });
+      return c.json({ data });
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: getErrorMessage(error),
+            code: "TRADE_CONTEXT_FAILED",
+          },
+        },
+        502
+      );
+    } finally {
+      const current = tradePanelContextInFlight.get(cacheKey);
+      if (current === request) {
+        tradePanelContextInFlight.delete(cacheKey);
+      }
+    }
+  }
+);
 
 postsRouter.post(
   "/portfolio",

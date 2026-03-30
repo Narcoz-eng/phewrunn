@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -129,8 +129,10 @@ const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
 const PASSIVE_VISIBLE_PRICE_REFRESH_COOLDOWN_MS = 90_000;
 const JUPITER_QUOTE_TIMEOUT_MS = 3_000;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
+const JUPITER_QUOTE_REFRESH_BEFORE_EXECUTE_MS = 8_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 2_600;
 const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
+const TRADE_PANEL_PORTFOLIO_DEFER_MS = 650;
 const VISIBLE_BUNDLE_SCAN_REFRESH_INTERVAL_MS = 5_000;
 const SHARED_ALPHA_QUERY_STALE_TIME_MS = 60_000;
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -455,6 +457,96 @@ async function fetchJupiterQuoteFast(
   return requestPromise;
 }
 
+async function fetchTradePanelContextFast(args: {
+  walletAddress: string;
+  tokenMint: string;
+  tradeReadConnection: Connection;
+  tradeRpcConnections: Connection[];
+}): Promise<TradePanelContextResponse> {
+  try {
+    return await api.post<TradePanelContextResponse>(
+      "/api/posts/trade-context",
+      {
+        walletAddress: args.walletAddress,
+        tokenMint: args.tokenMint,
+      },
+      {
+        cache: "no-store",
+      }
+    );
+  } catch {
+    const walletPublicKey = new PublicKey(args.walletAddress);
+    const mintPublicKey = new PublicKey(args.tokenMint);
+
+    const [tokenDecimals, walletNativeBalance, walletTokenBalance] = await Promise.all([
+      (async () => {
+        try {
+          const supply = await args.tradeReadConnection.getTokenSupply(mintPublicKey);
+          return supply.value.decimals;
+        } catch {
+          return null;
+        }
+      })(),
+      (async () => {
+        for (const rpcConnection of args.tradeRpcConnections) {
+          try {
+            const lamports = await rpcConnection.getBalance(walletPublicKey, "processed");
+            return lamports / LAMPORTS_PER_SOL;
+          } catch {
+            continue;
+          }
+        }
+        return null;
+      })(),
+      (async () => {
+        for (const rpcConnection of args.tradeRpcConnections) {
+          try {
+            const accounts = await rpcConnection.getParsedTokenAccountsByOwner(walletPublicKey, {
+              mint: mintPublicKey,
+            });
+            let totalUiAmount = 0;
+            for (const account of accounts.value) {
+              type ParsedTokenAmountLike = {
+                uiAmount?: number | null;
+                uiAmountString?: string;
+              };
+              type ParsedTokenAccountLike = {
+                parsed?: {
+                  info?: {
+                    tokenAmount?: ParsedTokenAmountLike;
+                  };
+                };
+              };
+              const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
+              const tokenAmount = parsedData.parsed?.info?.tokenAmount;
+              const uiAmount =
+                typeof tokenAmount?.uiAmount === "number"
+                  ? tokenAmount.uiAmount
+                  : Number(tokenAmount?.uiAmountString ?? 0);
+              if (Number.isFinite(uiAmount)) {
+                totalUiAmount += uiAmount;
+              }
+            }
+            return totalUiAmount;
+          } catch {
+            continue;
+          }
+        }
+        return null;
+      })(),
+    ]);
+
+    return {
+      source: "rpc-fallback",
+      walletAddress: args.walletAddress,
+      tokenMint: args.tokenMint,
+      tokenDecimals,
+      walletNativeBalance,
+      walletTokenBalance,
+    };
+  }
+}
+
 type DexscreenerTokenRef = {
   address?: string;
   name?: string;
@@ -533,6 +625,20 @@ type ChartCandlesResponse = {
   candles: ChartCandle[];
   source: ChartCandlesSource;
   network: string | null;
+};
+
+type TradePanelContextResponse = {
+  source: string;
+  walletAddress: string;
+  tokenMint: string;
+  walletNativeBalance: number | null;
+  walletTokenBalance: number | null;
+  tokenDecimals: number | null;
+} | null;
+
+type TradePanelPortfolioResponse = {
+  positions: PortfolioPosition[];
+  totalUnrealizedPnl: number | null;
 };
 
 function normalizeDexAddress(value: string | null | undefined): string | null {
@@ -1200,9 +1306,7 @@ export function PostCard({
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(TRADE_AUTO_CONFIRM_STORAGE_KEY) === "true";
   });
-  const [portfolioPositions, setPortfolioPositions] = useState<PortfolioPosition[]>([]);
-  const [portfolioTotalPnl, setPortfolioTotalPnl] = useState<number | null>(null);
-  const [isPortfolioLoading, setIsPortfolioLoading] = useState(false);
+  const [shouldLoadPortfolioPanel, setShouldLoadPortfolioPanel] = useState(false);
   const [chartInterval, setChartInterval] = useState<DexChartIntervalValue>("5m");
   const [isChartInfoVisible, setIsChartInfoVisible] = useState(true);
   const [isChartTradesVisible, setIsChartTradesVisible] = useState(true);
@@ -1540,31 +1644,21 @@ export function PostCard({
     }
   }, []);
 
-  // Fetch portfolio when buy dialog opens and wallet is connected
   useEffect(() => {
-    if (!isBuyDialogOpen || !tradeWalletPublicKey || !post.contractAddress) return;
-    const walletAddr = tradeWalletPublicKey.toBase58();
-    setIsPortfolioLoading(true);
-    fetch("/api/posts/portfolio", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      credentials: "same-origin",
-      body: JSON.stringify({ walletAddress: walletAddr, tokenMints: [post.contractAddress] }),
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        const data = json?.data;
-        if (data?.positions) {
-          setPortfolioPositions(data.positions);
-          setPortfolioTotalPnl(data.totalUnrealizedPnl ?? null);
-        }
-      })
-      .catch(() => {
-        // Silently fail - portfolio is supplementary
-      })
-      .finally(() => setIsPortfolioLoading(false));
-  }, [isBuyDialogOpen, tradeWalletPublicKey, post.contractAddress]);
+    if (!isBuyDialogOpen || !tradeWalletPublicKey || !post.contractAddress) {
+      setShouldLoadPortfolioPanel(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShouldLoadPortfolioPanel(true);
+    }, TRADE_PANEL_PORTFOLIO_DEFER_MS);
+
+    return () => {
+      clearTimeout(timer);
+      setShouldLoadPortfolioPanel(false);
+    };
+  }, [isBuyDialogOpen, post.contractAddress, tradeWalletPublicKey]);
 
   useEffect(() => {
     passiveVisibleRefreshAtRef.current = 0;
@@ -3583,7 +3677,7 @@ export function PostCard({
     placeholderData: (previousData) => previousData,
     retry: 1,
     refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen ? 20_000 : false,
+    refetchInterval: false,
     queryFn: async () => {
       if (!post.contractAddress) return null;
       return fetchDexscreenerTokenData({
@@ -3595,10 +3689,10 @@ export function PostCard({
   const solSpotPriceQuery = useQuery({
     queryKey: ["dexTokenData", "solana", SOL_MINT, "spot"],
     enabled: isBuyDialogOpen && isSolanaTradeSupported,
-    staleTime: 60_000,
+    staleTime: 2 * 60_000,
     retry: 1,
     refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen ? 60_000 : false,
+    refetchInterval: false,
     queryFn: async () =>
       fetchDexscreenerTokenData({
         contractAddress: SOL_MINT,
@@ -3730,54 +3824,40 @@ export function PostCard({
     },
   });
 
-  const outputTokenDecimalsQuery = useQuery({
-    queryKey: ["jupiterTokenDecimals", post.contractAddress],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported,
-    staleTime: 60 * 60 * 1000,
+  const tradePanelContextQuery = useQuery<TradePanelContextResponse>({
+    queryKey: ["tradePanelContext", tradeWalletAddress, post.contractAddress],
+    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletAddress && !!post.contractAddress,
+    staleTime: 8_000,
+    gcTime: 60_000,
     retry: 1,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    refetchInterval: isBuyDialogOpen ? 20_000 : false,
     queryFn: async () => {
-      if (!post.contractAddress) return 6;
-      try {
-        const supply = await tradeReadConnection.getTokenSupply(new PublicKey(post.contractAddress));
-        return supply.value.decimals;
-      } catch {
+      if (!tradeWalletAddress || !post.contractAddress) {
         return null;
       }
+      return fetchTradePanelContextFast({
+        walletAddress: tradeWalletAddress,
+        tokenMint: post.contractAddress,
+        tradeReadConnection,
+        tradeRpcConnections,
+      });
     },
   });
   const outputTokenDecimals =
-    typeof outputTokenDecimalsQuery.data === "number" ? outputTokenDecimalsQuery.data : 6;
-  const hasRpcTokenDecimals = typeof outputTokenDecimalsQuery.data === "number";
+    typeof tradePanelContextQuery.data?.tokenDecimals === "number" ? tradePanelContextQuery.data.tokenDecimals : 6;
+  const hasResolvedTokenDecimals = typeof tradePanelContextQuery.data?.tokenDecimals === "number";
 
-  const walletNativeBalanceQuery = useQuery({
-    queryKey: ["walletNativeBalance", tradeWalletAddress, tradeRpcConnections.map((rpc) => rpc.rpcEndpoint).join("|")],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
-    staleTime: 8_000,
-    retry: 1,
-    refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen ? 15_000 : false,
-    queryFn: async () => {
-      if (!tradeWalletPublicKey) return null;
-      for (const rpcConnection of tradeRpcConnections) {
-        try {
-          const lamports = await rpcConnection.getBalance(tradeWalletPublicKey, "processed");
-          return lamports / LAMPORTS_PER_SOL;
-        } catch {
-          continue;
-        }
-      }
-      return null;
-    },
-  });
   const walletNativeBalance =
-    typeof walletNativeBalanceQuery.data === "number" &&
-    Number.isFinite(walletNativeBalanceQuery.data)
-      ? walletNativeBalanceQuery.data
+    typeof tradePanelContextQuery.data?.walletNativeBalance === "number" &&
+    Number.isFinite(tradePanelContextQuery.data.walletNativeBalance)
+      ? tradePanelContextQuery.data.walletNativeBalance
       : null;
   const walletNativeBalanceLoading =
-    walletNativeBalanceQuery.isLoading ||
-    (walletNativeBalanceQuery.isFetching && walletNativeBalance === null);
-  const refetchWalletNativeBalance = walletNativeBalanceQuery.refetch;
+    tradePanelContextQuery.isLoading ||
+    (tradePanelContextQuery.isFetching && walletNativeBalance === null);
+  const refetchTradePanelContext = tradePanelContextQuery.refetch;
   const walletNativeBalanceUsd =
     walletNativeBalance !== null && solPriceUsd !== null
       ? walletNativeBalance * solPriceUsd
@@ -3785,90 +3865,65 @@ export function PostCard({
 
   const parsedSellAmountToken = Number(sellAmountToken);
   const sellAmountAtomic =
-    Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0 && hasRpcTokenDecimals
+    Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0 && hasResolvedTokenDecimals
       ? Math.max(1, Math.floor(parsedSellAmountToken * Math.pow(10, outputTokenDecimals)))
       : null;
   const tradeAmountAtomic = tradeSide === "buy" ? buyAmountLamports : sellAmountAtomic;
+  const deferredTradeAmountAtomic = useDeferredValue(tradeAmountAtomic);
+  const quoteAmountAtomic =
+    pendingQuickBuyAutoExecute || pendingProtectionAutoExecute
+      ? tradeAmountAtomic
+      : deferredTradeAmountAtomic;
   const quoteOutputDecimals = tradeSide === "buy" ? outputTokenDecimals : 9;
   const tradeInputTokenLabel = tradeSide === "buy" ? "SOL" : displayTokenSymbol;
   const tradeOutputTokenLabel = tradeSide === "buy" ? displayTokenSymbol : "SOL";
 
-  const walletTokenBalanceQuery = useQuery({
-    queryKey: [
-      "walletTokenBalance",
-      tradeWalletAddress,
-      post.contractAddress,
-      tradeRpcConnections.map((rpc) => rpc.rpcEndpoint).join("|"),
-    ],
-    enabled: isBuyDialogOpen && isSolanaTradeSupported && !!tradeWalletPublicKey,
-    staleTime: 8_000,
-    retry: 1,
-    refetchOnWindowFocus: false,
-    refetchInterval: isBuyDialogOpen ? 15_000 : false,
-    queryFn: async () => {
-      if (!tradeWalletPublicKey || !post.contractAddress) return null;
-      const mint = new PublicKey(post.contractAddress);
-      for (const rpcConnection of tradeRpcConnections) {
-        try {
-          const accounts = await rpcConnection.getParsedTokenAccountsByOwner(tradeWalletPublicKey, { mint });
-          let totalUiAmount = 0;
-          for (const account of accounts.value) {
-            type ParsedTokenAmountLike = {
-              uiAmount?: number | null;
-              uiAmountString?: string;
-            };
-            type ParsedTokenAccountLike = {
-              parsed?: {
-                info?: {
-                  tokenAmount?: ParsedTokenAmountLike;
-                };
-              };
-            };
-            const parsedData = account.account.data as unknown as ParsedTokenAccountLike;
-            const tokenAmount = parsedData.parsed?.info?.tokenAmount;
-            const uiAmount =
-              typeof tokenAmount?.uiAmount === "number"
-                ? tokenAmount.uiAmount
-                : Number(tokenAmount?.uiAmountString ?? 0);
-            if (Number.isFinite(uiAmount)) {
-              totalUiAmount += uiAmount;
-            }
-          }
-          return totalUiAmount;
-        } catch {
-          continue;
-        }
-      }
-      return 0;
-    },
-  });
   const walletTokenBalance =
-    typeof walletTokenBalanceQuery.data === "number" && Number.isFinite(walletTokenBalanceQuery.data)
-      ? walletTokenBalanceQuery.data
+    typeof tradePanelContextQuery.data?.walletTokenBalance === "number" && Number.isFinite(tradePanelContextQuery.data.walletTokenBalance)
+      ? tradePanelContextQuery.data.walletTokenBalance
       : null;
   const walletTokenBalanceLoading =
-    walletTokenBalanceQuery.isLoading ||
-    (walletTokenBalanceQuery.isFetching && walletTokenBalance === null);
-  const refetchWalletTokenBalance = walletTokenBalanceQuery.refetch;
+    tradePanelContextQuery.isLoading ||
+    (tradePanelContextQuery.isFetching && walletTokenBalance === null);
   const walletTokenBalanceFormatted =
     walletTokenBalance === null
       ? "-"
       : walletTokenBalance.toLocaleString(undefined, {
           maximumFractionDigits: Math.min(8, Math.max(2, outputTokenDecimals)),
         });
-  useEffect(() => {
-    if (!isBuyDialogOpen || !isSolanaTradeSupported || !tradeWalletAddress || wallet.connecting) return;
-    void refetchWalletNativeBalance();
-    void refetchWalletTokenBalance();
-  }, [
-    isBuyDialogOpen,
-    isSolanaTradeSupported,
-    tradeWalletAddress,
-    wallet.connecting,
-    wallet.connected,
-    refetchWalletNativeBalance,
-    refetchWalletTokenBalance,
-  ]);
+  const portfolioQuery = useQuery<TradePanelPortfolioResponse>({
+    queryKey: ["tradePanelPortfolio", tradeWalletAddress, post.contractAddress],
+    enabled: shouldLoadPortfolioPanel && isBuyDialogOpen && !!tradeWalletAddress && !!post.contractAddress,
+    staleTime: 30_000,
+    gcTime: 2 * 60_000,
+    retry: 1,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      if (!tradeWalletAddress || !post.contractAddress) {
+        return {
+          positions: [],
+          totalUnrealizedPnl: null,
+        };
+      }
+      try {
+        return await api.post<TradePanelPortfolioResponse>("/api/posts/portfolio", {
+          walletAddress: tradeWalletAddress,
+          tokenMints: [post.contractAddress],
+        });
+      } catch {
+        return {
+          positions: [],
+          totalUnrealizedPnl: null,
+        };
+      }
+    },
+  });
+  const portfolioPositions = portfolioQuery.data?.positions ?? [];
+  const portfolioTotalPnl = portfolioQuery.data?.totalUnrealizedPnl ?? null;
+  const isPortfolioLoading =
+    shouldLoadPortfolioPanel &&
+    (portfolioQuery.isLoading || (portfolioQuery.isFetching && portfolioQuery.data === undefined));
   const sellAmountExceedsBalance =
     tradeSide === "sell" &&
     walletTokenBalance !== null &&
@@ -3880,7 +3935,7 @@ export function PostCard({
     walletTokenBalance !== null &&
     walletTokenBalance <= 0;
   const sellBlockedByRpcTokenInfo =
-    tradeSide === "sell" && !hasRpcTokenDecimals && !sellHasNoTokens;
+    tradeSide === "sell" && !hasResolvedTokenDecimals && !sellHasNoTokens;
   const buyAmountExceedsBalance =
     tradeSide === "buy" &&
     walletNativeBalance !== null &&
@@ -3911,23 +3966,23 @@ export function PostCard({
   );
 
   const jupiterQuoteQuery = useQuery<JupiterQuoteResponse>({
-    queryKey: ["jupiterQuote", post.contractAddress, tradeSide, tradeAmountAtomic, slippageBps],
+    queryKey: ["jupiterQuote", post.contractAddress, tradeSide, quoteAmountAtomic, slippageBps],
     enabled:
       (isBuyDialogOpen || pendingQuickBuyAutoExecute || pendingProtectionAutoExecute) &&
       isSolanaTradeSupported &&
-      !!tradeAmountAtomic,
-    staleTime: 2_500,
-    gcTime: 45_000,
+      !!quoteAmountAtomic,
+    staleTime: 5_000,
+    gcTime: 60_000,
     retry: 1,
     retryDelay: (attempt) => Math.min(350, 120 * (attempt + 1)),
     placeholderData: (previousData) => previousData,
-    refetchInterval: isBuyDialogOpen || pendingProtectionAutoExecute ? (q) => (q.state.data ? 5_000 : 2_200) : false,
+    refetchInterval: pendingProtectionAutoExecute ? 5_000 : false,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
-      if (!tradeAmountAtomic) {
+      if (!quoteAmountAtomic) {
         throw new Error("Missing token or amount");
       }
-      const quotePayload = createJupiterQuotePayload(tradeSide, tradeAmountAtomic);
+      const quotePayload = createJupiterQuotePayload(tradeSide, quoteAmountAtomic);
       if (!quotePayload) {
         throw new Error("Invalid Solana token address");
       }
@@ -4316,8 +4371,15 @@ export function PostCard({
       Date.now() - fallbackQuoteCandidate.updatedAtMs <= JUPITER_QUOTE_STALE_MAX_AGE_MS
         ? fallbackQuoteCandidate.quote
         : null;
+    const freshestKnownQuoteUpdatedAtMs =
+      jupiterQuoteData ? lastGoodQuoteBySide[tradeSide]?.updatedAtMs ?? 0 : fallbackQuoteCandidate?.updatedAtMs ?? 0;
     let quote = jupiterQuoteData ?? fallbackQuote;
-    if (!quote && tradeAmountAtomic) {
+    const shouldRefreshQuoteBeforeExecute =
+      !!tradeAmountAtomic &&
+      (!quote ||
+        freshestKnownQuoteUpdatedAtMs <= 0 ||
+        Date.now() - freshestKnownQuoteUpdatedAtMs > JUPITER_QUOTE_REFRESH_BEFORE_EXECUTE_MS);
+    if (shouldRefreshQuoteBeforeExecute && tradeAmountAtomic) {
       const payload = createJupiterQuotePayload(tradeSide, tradeAmountAtomic);
       if (payload) {
         try {
@@ -4385,8 +4447,7 @@ export function PostCard({
       }
 
       setBuyTxSignature(signature);
-      void refetchWalletNativeBalance();
-      void refetchWalletTokenBalance();
+      void refetchTradePanelContext();
       const latestProtectionAnchor =
         typeof currentMcap === "number" && Number.isFinite(currentMcap) && currentMcap > 0
           ? currentMcap
@@ -4444,8 +4505,7 @@ export function PostCard({
     armedTradeProtection?.trigger,
     post.currentMcap,
     protectionAutoArmCooldownUntilRef,
-    refetchWalletNativeBalance,
-    refetchWalletTokenBalance,
+    refetchTradePanelContext,
   ]);
 
   // Navigate to user profile (prefer username over ID for cleaner URLs)
@@ -4865,14 +4925,14 @@ export function PostCard({
         ? "Stop loss hit. Preparing a full exit."
         : "Take profit hit. Preparing a full exit."
     );
-    void refetchWalletTokenBalance();
+    void refetchTradePanelContext();
     setPendingProtectionAutoExecute(true);
-  }, [armedTradeProtection, currentMcap, refetchWalletTokenBalance]);
+  }, [armedTradeProtection, currentMcap, refetchTradePanelContext]);
 
   useEffect(() => {
     if (!pendingProtectionAutoExecute) return;
     if (walletTokenBalance === null || walletTokenBalance <= 0) {
-      void refetchWalletTokenBalance();
+      void refetchTradePanelContext();
       return;
     }
     setTradeSide("sell");
@@ -4880,7 +4940,7 @@ export function PostCard({
   }, [
     outputTokenDecimals,
     pendingProtectionAutoExecute,
-    refetchWalletTokenBalance,
+    refetchTradePanelContext,
     walletTokenBalance,
   ]);
 
