@@ -3522,23 +3522,59 @@ async function attachWalletTradeSnapshots<T extends {
   });
 }
 
-/**
- * Helper to fetch market cap using the enhanced service
- * Returns just the mcap value for backward compatibility
- */
-async function fetchMarketCap(
-  address: string,
-  chainType?: string | null
-): Promise<number | null> {
-  const result = await getCachedMarketCapSnapshot(address, chainType);
-  return result.mcap;
-}
-
 async function getFeedMarketCapSnapshot(
   address: string,
   chainType?: string | null
 ): Promise<MarketCapResult> {
   return getCachedMarketCapSnapshot(address, chainType);
+}
+
+type ResolvedPostMarketCapSnapshot = {
+  mcap: number | null;
+  source: "live_snapshot" | "persisted_current" | "persisted_1h" | "unavailable";
+  snapshot: MarketCapResult;
+};
+
+function isPositiveMarketCap(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+async function resolveBestAvailablePostMarketCap(params: {
+  contractAddress: string;
+  chainType?: string | null;
+  currentMcap?: number | null;
+  mcap1h?: number | null;
+}): Promise<ResolvedPostMarketCapSnapshot> {
+  const snapshot = await getFeedMarketCapSnapshot(params.contractAddress, params.chainType);
+  if (isPositiveMarketCap(snapshot.mcap)) {
+    return {
+      mcap: snapshot.mcap,
+      source: "live_snapshot",
+      snapshot,
+    };
+  }
+
+  if (isPositiveMarketCap(params.currentMcap)) {
+    return {
+      mcap: params.currentMcap,
+      source: "persisted_current",
+      snapshot,
+    };
+  }
+
+  if (isPositiveMarketCap(params.mcap1h)) {
+    return {
+      mcap: params.mcap1h,
+      source: "persisted_1h",
+      snapshot,
+    };
+  }
+
+  return {
+    mcap: null,
+    source: "unavailable",
+    snapshot,
+  };
 }
 
 async function notifyFollowersOfBigGain(params: {
@@ -3748,8 +3784,12 @@ async function settleOneHourPostCandidate(
   }
 
   try {
-    const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
-    const mcap1h = fetchedMcap ?? post.currentMcap;
+    const marketCap = await resolveBestAvailablePostMarketCap({
+      contractAddress: post.contractAddress,
+      chainType: post.chainType,
+      currentMcap: post.currentMcap,
+    });
+    const mcap1h = marketCap.mcap;
     if (mcap1h === null || mcap1h <= 0) {
       return { settled: false, error: true };
     }
@@ -3871,7 +3911,7 @@ async function settleOneHourPostCandidate(
     }
 
     console.log(
-      `[Settlement 1H] Post ${post.id}: ${isWin1h ? "WIN" : "LOSS"} (${percentChange1h.toFixed(2)}%), scoreEligible=${scoreEligible}, recoveryEligible=${effectiveRecoveryEligible}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`
+      `[Settlement 1H] Post ${post.id}: ${isWin1h ? "WIN" : "LOSS"} (${percentChange1h.toFixed(2)}%), source=${marketCap.source}, scoreEligible=${scoreEligible}, recoveryEligible=${effectiveRecoveryEligible}, User ${post.authorId} level ${currentUser.level} -> ${newLevel}`
     );
 
     return { settled: true, error: false };
@@ -4033,9 +4073,13 @@ async function checkAndSettlePosts(params?: {
       if (!post.contractAddress || post.entryMcap === null) continue;
 
       try {
-        // Fetch current market cap from DexScreener
-        const fetchedMcap = await fetchMarketCap(post.contractAddress, post.chainType);
-        const mcap6h = fetchedMcap ?? post.currentMcap ?? post.mcap1h;
+        const marketCap = await resolveBestAvailablePostMarketCap({
+          contractAddress: post.contractAddress,
+          chainType: post.chainType,
+          currentMcap: post.currentMcap,
+          mcap1h: post.mcap1h,
+        });
+        const mcap6h = marketCap.mcap;
         if (mcap6h === null || mcap6h <= 0) {
           console.warn(`[Snapshot 6H] Could not fetch mcap for post ${post.id} (CA: ${post.contractAddress})`);
           errorCount++;
@@ -4111,7 +4155,7 @@ async function checkAndSettlePosts(params?: {
           }
 
           snapshot6hCount++;
-          console.log(`[Snapshot 6H] Post ${post.id}: mcap6h=${mcap6h}, change=${percentChange6h.toFixed(2)}%, isWin6h=${isWin6h}`);
+          console.log(`[Snapshot 6H] Post ${post.id}: mcap6h=${mcap6h}, source=${marketCap.source}, change=${percentChange6h.toFixed(2)}%, isWin6h=${isWin6h}`);
 
           // Create notification for the user about level change
           const levelDiff = newLevel - currentUser.level;
@@ -4171,7 +4215,7 @@ async function checkAndSettlePosts(params?: {
           }
 
           snapshot6hCount++;
-          console.log(`[Snapshot 6H] Post ${post.id}: mcap6h=${mcap6h}, change=${percentChange6h.toFixed(2)}%, isWin6h=${isWin6h}`);
+          console.log(`[Snapshot 6H] Post ${post.id}: mcap6h=${mcap6h}, source=${marketCap.source}, change=${percentChange6h.toFixed(2)}%, isWin6h=${isWin6h}`);
         }
       } catch (err) {
         console.error(`[Snapshot 6H] Error processing post ${post.id}:`, err);
@@ -7210,7 +7254,12 @@ async function resolvePostPricePayload(post: PriceRoutePostRecord) {
       refreshPromise = (async () => {
         // Price route must stay fast and non-blocking.
         // Persisted writes are handled by maintenance to avoid lock contention from polling.
-        const latest = await getFeedMarketCapSnapshot(post.contractAddress!, post.chainType);
+        const latest = await resolveBestAvailablePostMarketCap({
+          contractAddress: post.contractAddress!,
+          chainType: post.chainType,
+          currentMcap: post.currentMcap,
+          mcap1h: post.mcap1h,
+        });
         return latest.mcap;
       })()
         .catch((error) => {

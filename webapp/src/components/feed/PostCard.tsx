@@ -3676,13 +3676,15 @@ export function PostCard({
     refetchOnWindowFocus: false,
     refetchInterval:
       isBuyDialogOpen
-        ? chartRequestConfig.timeframe === "minute"
-          ? chartRequestConfig.aggregate <= 5
-            ? 5_000
-            : 8_000
-          : chartRequestConfig.timeframe === "hour"
-            ? 15_000
-            : 45_000
+        ? tradePanelHasConnectedStream && !tradePanelUsingFallbackPolling
+          ? false
+          : chartRequestConfig.timeframe === "minute"
+            ? chartRequestConfig.aggregate <= 5
+              ? 5_000
+              : 8_000
+            : chartRequestConfig.timeframe === "hour"
+              ? 15_000
+              : 45_000
         : false,
     queryFn: async () => {
       if (!canRequestChartCandles) {

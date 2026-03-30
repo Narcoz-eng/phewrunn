@@ -55,6 +55,8 @@ const MAX_LIVE_SAMPLES = 720;
 const FALLBACK_TRADES_POLL_MS = 2_500;
 const FALLBACK_PRICE_POLL_MS = 1_500;
 const STREAM_ERROR_GRACE_MS = 2_500;
+const LIVE_PRICE_SNAPSHOT_FRESHNESS_MS = 5_000;
+const LIVE_TRADE_SNAPSHOT_FRESHNESS_MS = 10_000;
 
 function shortenTradeWalletAddress(address: string | null): string | null {
   if (!address) return null;
@@ -234,20 +236,22 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
           }
         }
         if (latestPrice) {
-          setLiveSamples((current) =>
-            appendLiveTradeSample(
-              current,
-              {
-                timestamp: latestPrice.timestampMs,
-                priceUsd: latestPrice.close,
-                tradeVolumeUsd: latestPrice.volumeUsd,
-                source: "price",
-                receivedAtMs: Date.now(),
-              },
-              MAX_LIVE_SAMPLES
-            )
-          );
-          setLastEventAtMs(Date.now());
+          if (Date.now() - latestPrice.timestampMs <= LIVE_PRICE_SNAPSHOT_FRESHNESS_MS) {
+            setLiveSamples((current) =>
+              appendLiveTradeSample(
+                current,
+                {
+                  timestamp: latestPrice.timestampMs,
+                  priceUsd: latestPrice.close,
+                  tradeVolumeUsd: latestPrice.volumeUsd,
+                  source: "price",
+                  receivedAtMs: Date.now(),
+                },
+                MAX_LIVE_SAMPLES
+              )
+            );
+            setLastEventAtMs(Date.now());
+          }
         } else if (trades.length > 0) {
           const freshestTrade = trades
             .filter(
@@ -257,7 +261,7 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
                 trade.priceUsd > 0
             )
             .sort((left, right) => right.timestampMs - left.timestampMs)[0];
-          if (freshestTrade) {
+          if (freshestTrade && Date.now() - freshestTrade.timestampMs <= LIVE_TRADE_SNAPSHOT_FRESHNESS_MS) {
             setLiveSamples((current) =>
               appendLiveTradeSample(
                 current,

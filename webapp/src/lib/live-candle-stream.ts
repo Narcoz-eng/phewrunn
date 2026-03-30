@@ -192,12 +192,6 @@ export function mergeLiveSamplesIntoCandles(
     return normalizedCandles;
   }
 
-  const latestBaseCandle = normalizedCandles[normalizedCandles.length - 1] ?? null;
-  const earliestMergeTimestamp =
-    latestBaseCandle !== null ? latestBaseCandle.timestamp - bucketMs : Number.NEGATIVE_INFINITY;
-  const latestMergeTimestamp =
-    latestBaseCandle !== null ? latestBaseCandle.timestamp + bucketMs : Number.POSITIVE_INFINITY;
-
   const candlesByTimestamp = new Map<number, StreamingChartCandle>();
   for (const candle of normalizedCandles) {
     candlesByTimestamp.set(candle.timestamp, { ...candle });
@@ -206,9 +200,6 @@ export function mergeLiveSamplesIntoCandles(
   const orderedSamples = [...samples]
     .filter((sample) => {
       if (!isFiniteNumber(sample.timestamp) || !isFiniteNumber(sample.priceUsd) || sample.priceUsd <= 0) {
-        return false;
-      }
-      if (sample.timestamp < earliestMergeTimestamp || sample.timestamp > latestMergeTimestamp) {
         return false;
       }
       if (
@@ -222,13 +213,65 @@ export function mergeLiveSamplesIntoCandles(
     })
     .sort((left, right) => left.timestamp - right.timestamp);
 
+  const ensureForwardBucket = (bucketTimestamp: number, sample: LiveTradeSample): StreamingChartCandle | null => {
+    let latestKnownCandle = normalizedCandles[normalizedCandles.length - 1] ?? null;
+    if (!latestKnownCandle) {
+      const created: StreamingChartCandle = {
+        timestamp: bucketTimestamp,
+        open: roundCents(sample.priceUsd),
+        high: roundCents(sample.priceUsd),
+        low: roundCents(sample.priceUsd),
+        close: roundCents(sample.priceUsd),
+        volume: 0,
+      };
+      normalizedCandles.push(created);
+      candlesByTimestamp.set(bucketTimestamp, created);
+      return created;
+    }
+
+    if (bucketTimestamp <= latestKnownCandle.timestamp) {
+      return candlesByTimestamp.get(bucketTimestamp) ?? null;
+    }
+
+    let previousClose = latestKnownCandle.close;
+    for (
+      let nextBucketTimestamp = latestKnownCandle.timestamp + bucketMs;
+      nextBucketTimestamp <= bucketTimestamp;
+      nextBucketTimestamp += bucketMs
+    ) {
+      const existing = candlesByTimestamp.get(nextBucketTimestamp);
+      if (existing) {
+        previousClose = existing.close;
+        latestKnownCandle = existing;
+        continue;
+      }
+
+      const created: StreamingChartCandle = {
+        timestamp: nextBucketTimestamp,
+        open: roundCents(previousClose),
+        high: roundCents(previousClose),
+        low: roundCents(previousClose),
+        close: roundCents(previousClose),
+        volume: 0,
+      };
+      normalizedCandles.push(created);
+      candlesByTimestamp.set(nextBucketTimestamp, created);
+      previousClose = created.close;
+      latestKnownCandle = created;
+    }
+
+    normalizedCandles.sort((left, right) => left.timestamp - right.timestamp);
+    return candlesByTimestamp.get(bucketTimestamp) ?? null;
+  };
+
   let previousSample: LiveTradeSample | null = null;
   for (const sample of orderedSamples) {
     const bucketTimestamp = Math.floor(sample.timestamp / bucketMs) * bucketMs;
-    const existing = candlesByTimestamp.get(bucketTimestamp);
+    const existing = candlesByTimestamp.get(bucketTimestamp) ?? ensureForwardBucket(bucketTimestamp, sample);
     const previousCandle = normalizedCandles[normalizedCandles.length - 1] ?? null;
     const volumeDelta = computeVolumeDelta(sample, previousSample);
-    const bucketIsClosed = latestBaseCandle !== null && bucketTimestamp < latestBaseCandle.timestamp;
+    const latestKnownBucketTimestamp = normalizedCandles[normalizedCandles.length - 1]?.timestamp ?? bucketTimestamp;
+    const bucketIsClosed = bucketTimestamp < latestKnownBucketTimestamp;
 
     if (existing) {
       if (sample.source === "price" && bucketIsClosed) {
@@ -244,7 +287,7 @@ export function mergeLiveSamplesIntoCandles(
       existing.low = roundCents(Math.min(existing.low, sample.priceUsd));
       existing.close = roundCents(sample.priceUsd);
       existing.volume = roundCents(existing.volume + volumeDelta);
-    } else if (latestBaseCandle === null || bucketTimestamp === latestBaseCandle.timestamp + bucketMs) {
+    } else {
       const referenceClose =
         normalizedCandles[normalizedCandles.length - 1]?.close ??
         previousSample?.priceUsd ??
@@ -264,9 +307,6 @@ export function mergeLiveSamplesIntoCandles(
       normalizedCandles.push(created);
       normalizedCandles.sort((left, right) => left.timestamp - right.timestamp);
       candlesByTimestamp.set(bucketTimestamp, created);
-    } else {
-      previousSample = sample;
-      continue;
     }
 
     if (
