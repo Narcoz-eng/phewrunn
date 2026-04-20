@@ -539,6 +539,7 @@ export function TokenCommunitySection({
   const viewerLevel = viewer?.level ?? 0;
   const viewerScope = viewer?.id ?? "anonymous";
   const tokenLabel = buildTokenLabel(tokenSymbol, tokenName);
+  const viewerCanCreateByRole = Boolean(viewer && (viewer.isAdmin || viewerLevel >= 3));
   const [activeTab, setActiveTab] = useState<"board" | "raid">("board");
   const [threadCursor, setThreadCursor] = useState<string | null>(null);
   const [threads, setThreads] = useState<TokenCommunityThread[]>([]);
@@ -570,13 +571,13 @@ export function TokenCommunitySection({
 
   const profileQuery = useQuery({
     queryKey: ["token-community-profile", tokenAddress],
-    enabled: Boolean(viewer?.id),
+    enabled: Boolean(viewer?.id && (roomQuery.data?.exists || editorMode === "edit")),
     queryFn: async () => api.get<TokenCommunityProfile>(`/api/tokens/${tokenAddress}/community/profile`),
   });
 
   const threadsQuery = useQuery({
     queryKey: ["token-community-threads", tokenAddress, threadCursor],
-    enabled: Boolean(viewer?.id),
+    enabled: Boolean(viewer?.id && roomQuery.data?.exists),
     queryFn: async () => {
       const suffix = threadCursor ? `?cursor=${encodeURIComponent(threadCursor)}` : "";
       return api.get<ThreadPage>(`/api/tokens/${tokenAddress}/community/threads${suffix}`);
@@ -585,21 +586,61 @@ export function TokenCommunitySection({
 
   const activeRaidQuery = useQuery({
     queryKey: ["token-community-active-raid", tokenAddress],
-    enabled: Boolean(viewer?.id),
+    enabled: Boolean(viewer?.id && roomQuery.data?.exists),
     queryFn: async () =>
       api.get<TokenActiveRaidResponse>(`/api/tokens/${tokenAddress}/community/raids/active`),
   });
 
-  const room = roomQuery.data;
+  const room =
+    roomQuery.data ??
+    ({
+      exists: false,
+      canCreate: viewerCanCreateByRole,
+      canJoin: false,
+      joined: false,
+      joinedAt: null,
+      memberCount: 0,
+      onlineNowEstimate: 0,
+      activeThreadCount: 0,
+      currentRaidPulse: null,
+      topContributors: [],
+      recentMembers: [],
+      whyLine: null,
+      welcomePrompt: null,
+      suggestedThread: null,
+      activeRaidSummary: null,
+      recentWins: [],
+      headline: null,
+      xCashtag: null,
+      vibeTags: [],
+      mascotName: null,
+      assets: {
+        logo: null,
+        banner: null,
+        mascot: null,
+        referenceMemes: [],
+      },
+      viewer: {
+        joined: false,
+        joinedAt: null,
+        hasPosted: false,
+        hasReplied: false,
+        hasRaided: false,
+        showWelcomeBanner: false,
+        suggestedAction: viewerCanCreateByRole ? "create-community" : "wait-community",
+        currentRaidStreak: 0,
+        bestRaidStreak: 0,
+      },
+    } satisfies TokenCommunityRoom);
   const profile = profileQuery.data;
   const activeRaid = activeRaidQuery.data;
   const canManageCommunity = Boolean(
     viewer && (viewer.isAdmin || viewerLevel >= Math.max(profile?.raidLeadMinLevel ?? 3, 3)),
   );
   const canLeadRaid = canManageCommunity;
-  const canCreateCommunity = Boolean(room?.canCreate || (viewer && (viewer.isAdmin || viewerLevel >= 3)));
-  const canJoinCommunity = Boolean(room?.exists && !room?.joined);
-  const canWriteInRoom = Boolean(room?.exists && room?.joined && viewer?.id && canPerformAuthenticatedWrites);
+  const canCreateCommunity = Boolean(room.canCreate || viewerCanCreateByRole);
+  const canJoinCommunity = Boolean(room.exists && !room.joined);
+  const canWriteInRoom = Boolean(room.exists && room.joined && viewer?.id && canPerformAuthenticatedWrites);
   const campaign: TokenRaidCampaign | null = activeRaid?.campaign ?? null;
   const selectedMeme =
     campaign?.memeOptions.find((option) => option.id === selectedMemeId) ?? null;
@@ -627,6 +668,8 @@ export function TokenCommunitySection({
   );
 
   const activeStepProgress = raidStep === 1 ? 25 : raidStep === 2 ? 50 : raidStep === 3 ? 75 : 100;
+  const roomHydrating = roomQuery.isLoading && !roomQuery.data;
+  const roomLoadError = roomQuery.error instanceof Error ? roomQuery.error : null;
 
   useEffect(() => {
     if (!threadsQuery.data) return;
@@ -1063,17 +1106,6 @@ export function TokenCommunitySection({
     );
   }
 
-  if (roomQuery.isLoading || !room) {
-    return (
-      <section id="token-community-room" className="app-surface p-6">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading community room...
-        </div>
-      </section>
-    );
-  }
-
   const activeRaidLabel =
     room.currentRaidPulse?.label ||
     (room.activeRaidSummary ? `${room.activeRaidSummary.joinedCount} joined raid campaign` : "No live raid yet");
@@ -1084,6 +1116,29 @@ export function TokenCommunitySection({
 
   return (
     <section id="token-community-room" className="space-y-5">
+      {roomHydrating ? (
+        <div className="app-surface p-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading community room...
+          </div>
+        </div>
+      ) : null}
+
+      {roomLoadError ? (
+        <div className="rounded-[24px] border border-amber-300/40 bg-amber-400/10 p-4 text-sm text-amber-800 dark:text-amber-200">
+          <div className="font-semibold">Community room is still warming up</div>
+          <p className="mt-1 leading-6">
+            {roomLoadError.message || "We could not load the full room yet."}
+          </p>
+          <div className="mt-3">
+            <Button variant="outline" className="rounded-full" onClick={() => void roomQuery.refetch()}>
+              Retry room load
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-[30px] border border-border/60 bg-card shadow-[0_24px_70px_-45px_rgba(15,23,42,0.55)]">
         <div
           className="relative overflow-hidden px-5 pb-5 pt-6 sm:px-6"
