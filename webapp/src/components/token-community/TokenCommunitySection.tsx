@@ -150,6 +150,16 @@ function emptyAssetLinks(): AssetLinkDraft {
   };
 }
 
+function getAssetActionErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    if (error.message === "Asset storage is not configured") {
+      return "Brand-kit storage is not configured yet. Only logo, banner, mascot, and 1-5 reference memes are stored. Generated raid memes are never stored.";
+    }
+    return error.message;
+  }
+  return fallback;
+}
+
 function draftAssetIds(assets: DraftAssets): string[] {
   return [
     assets.logo?.id,
@@ -1073,7 +1083,7 @@ export function TokenCommunitySection({
       }));
       toast.success(`${kind[0].toUpperCase()}${kind.slice(1)} uploaded`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Upload failed");
+      toast.error(getAssetActionErrorMessage(error, "Upload failed"));
     } finally {
       setUploadingKind(null);
     }
@@ -1097,7 +1107,7 @@ export function TokenCommunitySection({
       }));
       toast.success(`${uploaded.length} reference meme${uploaded.length === 1 ? "" : "s"} uploaded`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Upload failed");
+      toast.error(getAssetActionErrorMessage(error, "Upload failed"));
     } finally {
       setUploadingKind(null);
     }
@@ -1119,7 +1129,7 @@ export function TokenCommunitySection({
       setAssetLinks((current) => ({ ...current, [kind]: "" }));
       toast.success(`${kind[0].toUpperCase()}${kind.slice(1)} imported`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Import failed");
+      toast.error(getAssetActionErrorMessage(error, "Import failed"));
     } finally {
       setUploadingKind(null);
     }
@@ -1145,7 +1155,7 @@ export function TokenCommunitySection({
       setAssetLinks((current) => ({ ...current, reference_meme: "" }));
       toast.success("Reference meme imported");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Import failed");
+      toast.error(getAssetActionErrorMessage(error, "Import failed"));
     } finally {
       setUploadingKind(null);
     }
@@ -1728,6 +1738,13 @@ export function TokenCommunitySection({
                       </Button>
                     </div>
                   </div>
+                </div>
+
+                <div className="mt-4 rounded-[18px] border border-sky-300/35 bg-sky-500/8 p-4 text-sm leading-6 text-sky-900 dark:text-sky-100">
+                  <div className="font-semibold">Minimal storage model</div>
+                  <p className="mt-1">
+                    Only the community brand kit persists here: logo, banner, mascot, and 1-5 reference memes. Generated raid memes stay client-side only for copy, download, and posting.
+                  </p>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
