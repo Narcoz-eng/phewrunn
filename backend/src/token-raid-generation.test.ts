@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   TokenRaidGenerationResultSchema,
+  type TokenRaidGenerationInput,
   safeGenerateTokenRaidOptions,
 } from "./services/token-raid-generation.js";
 
 describe("token raid generation", () => {
-  const baseInput = {
+  const baseInput: TokenRaidGenerationInput = {
     token: {
       id: "token_1",
       symbol: "PHEW",
@@ -54,7 +55,7 @@ describe("token raid generation", () => {
         ],
       },
     ],
-  } as const;
+  };
 
   test("always returns exactly three meme and copy options with valid schema", () => {
     const result = safeGenerateTokenRaidOptions({

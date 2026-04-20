@@ -158,7 +158,8 @@ const HEAT_LABELS = [
 function clampText(value: string, maxLength: number): string {
   const normalized = normalizeWhitespace(value);
   if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  if (maxLength <= 3) return ".".repeat(Math.max(0, maxLength));
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 function normalizeWhitespace(value: string): string {
@@ -181,6 +182,10 @@ function hashString(value: string): number {
 
 function seedPick<T>(items: readonly T[], seed: number): T {
   return items[Math.abs(seed) % items.length] as T;
+}
+
+function seedVariant<T>(items: readonly T[], seed: number, offset = 0): T {
+  return seedPick(items, hashString(`${seed}:${offset}:${items.length}`));
 }
 
 function sanitizeTemplateIds(input: string[] | null | undefined): TokenRaidTemplateId[] {
@@ -344,74 +349,206 @@ const MEME_BUILDERS: readonly MemeStyleBuilder[] = [
   {
     id: "victory-lap",
     templateId: "chart-rat",
-    build: (ctx) => ({
-      title: "Receipt Rat",
-      angle: "Smug chart-room flex",
-      topText: clampText(`${ctx.cashtag} room when the chart fakes weakness for one candle`, 120),
-      bottomText: clampText(`five minutes later and ${ctx.crowdSize} are posting receipts like court exhibits`, 120),
-      kicker: clampText(ctx.marketMood, 84),
-      footer: clampText(ctx.voiceHint, 72),
-    }),
+    build: (ctx) => {
+      const topText = seedVariant(
+        [
+          `${ctx.cashtag} room when the chart fakes weakness for one candle`,
+          `${ctx.cashtag} holders when the dip tries a cheap jump scare`,
+          `when ${ctx.cashtag} gives the room one red candle and suddenly everyone becomes a forensic analyst`,
+          `${ctx.cashtag} chat watching the chart cosplay as weak for exactly four minutes`,
+        ],
+        ctx.seed,
+        101,
+      );
+      const bottomText = seedVariant(
+        [
+          `five minutes later and ${ctx.crowdSize} are posting receipts like court exhibits`,
+          `next thing you know the doubters are getting ratioed by screenshots and bad timing`,
+          `then the receipt folder opens and the whole timeline starts acting like it was early`,
+          `meanwhile the community is logging evidence like this was always going to end badly for the skeptics`,
+        ],
+        ctx.seed,
+        102,
+      );
+      return {
+        title: "Receipt Rat",
+        angle: "Smug chart-room flex",
+        topText: clampText(topText, 120),
+        bottomText: clampText(bottomText, 120),
+        kicker: clampText(ctx.marketMood, 84),
+        footer: clampText(ctx.voiceHint, 72),
+      };
+    },
   },
   {
     id: "breaking",
     templateId: "breaking-news",
-    build: (ctx) => ({
-      title: "Desk Alert",
-      angle: "Fake newsroom bulletin",
-      topText: clampText(`BREAKING: ${ctx.tokenLabel} just made the boring people nervous`, 118),
-      bottomText: clampText(`analysts cite ${ctx.threadTopic}, bad sleep, and a community with suspicious timing`, 122),
-      kicker: clampText(ctx.shortObjective, 84),
-      footer: clampText(ctx.insideJoke, 88),
-    }),
+    build: (ctx) => {
+      const topText = seedVariant(
+        [
+          `BREAKING: ${ctx.tokenLabel} just made the boring people nervous`,
+          `LATE DESK BULLETIN: ${ctx.cashtag} has officially interrupted normal posting behavior`,
+          `NEWSROOM PANIC: ${ctx.tokenLabel} is back on the timeline with suspicious momentum`,
+          `MARKET UPDATE: ${ctx.cashtag} just forced the serious accounts to start subtweeting`,
+        ],
+        ctx.seed,
+        111,
+      );
+      const bottomText = seedVariant(
+        [
+          `analysts cite ${ctx.threadTopic}, bad sleep, and a community with suspicious timing`,
+          `sources blame ${ctx.secondThreadTopic}, desk coffee, and a chat that refuses to be subtle`,
+          `reporters confirm the move was powered by receipts, insomnia, and unnervingly good timing`,
+          `commentators mention ${ctx.threadTopic}, timeline confusion, and holders behaving far too prepared`,
+        ],
+        ctx.seed,
+        112,
+      );
+      return {
+        title: "Desk Alert",
+        angle: "Fake newsroom bulletin",
+        topText: clampText(topText, 118),
+        bottomText: clampText(bottomText, 122),
+        kicker: clampText(ctx.shortObjective, 84),
+        footer: clampText(ctx.insideJoke, 88),
+      };
+    },
   },
   {
     id: "courtroom",
     templateId: "courtroom",
-    build: (ctx) => ({
-      title: "The People vs Doubt",
-      angle: "Courtroom cross-exam",
-      topText: clampText(`judge: why is ${ctx.cashtag} trending in every group chat at 2am`, 118),
-      bottomText: clampText(`defense: because the chart keeps leaving fingerprints and the community brought receipts`, 126),
-      kicker: clampText(ctx.secondVoiceHint, 84),
-      footer: clampText(ctx.secondInsideJoke, 88),
-    }),
+    build: (ctx) => {
+      const topText = seedVariant(
+        [
+          `judge: why is ${ctx.cashtag} trending in every group chat at 2am`,
+          `court clerk: please explain why ${ctx.cashtag} keeps appearing in every receipt folder`,
+          `judge: who authorized ${ctx.cashtag} to embarrass the doubters before breakfast`,
+          `prosecution: is it true ${ctx.cashtag} turned the timeline into evidence night`,
+        ],
+        ctx.seed,
+        121,
+      );
+      const bottomText = seedVariant(
+        [
+          `defense: because the chart keeps leaving fingerprints and the community brought receipts`,
+          `defense: because the tape looks guilty and the group chat came prepared`,
+          `defense: because ${ctx.threadTopic} was loud, the candles got weird, and the room logged everything`,
+          `defense: because the skeptics keep showing up late to a case that was already documented`,
+        ],
+        ctx.seed,
+        122,
+      );
+      return {
+        title: "The People vs Doubt",
+        angle: "Courtroom cross-exam",
+        topText: clampText(topText, 118),
+        bottomText: clampText(bottomText, 126),
+        kicker: clampText(ctx.secondVoiceHint, 84),
+        footer: clampText(ctx.secondInsideJoke, 88),
+      };
+    },
   },
   {
     id: "group-chat",
     templateId: "group-chat",
-    build: (ctx) => ({
-      title: "Unread Messages",
-      angle: "Private group chat spiral",
-      topText: clampText(`when one ${ctx.cashtag} candle lands and suddenly nobody is typing like a civilian`, 122),
-      bottomText: clampText(`next thing you know the chat is arguing over ${ctx.secondThreadTopic} with main-character confidence`, 126),
-      kicker: clampText(ctx.marketMood, 84),
-      footer: clampText(ctx.voiceHint, 72),
-    }),
+    build: (ctx) => {
+      const topText = seedVariant(
+        [
+          `when one ${ctx.cashtag} candle lands and suddenly nobody is typing like a civilian`,
+          `the ${ctx.cashtag} group chat the second the chart does something disrespectfully bullish`,
+          `one ${ctx.cashtag} move later and the chat has fully abandoned indoor behavior`,
+          `when ${ctx.cashtag} wakes up and the group chat starts posting like it has legal immunity`,
+        ],
+        ctx.seed,
+        131,
+      );
+      const bottomText = seedVariant(
+        [
+          `next thing you know the chat is arguing over ${ctx.secondThreadTopic} with main-character confidence`,
+          `three screenshots later everyone is suddenly a specialist in ${ctx.threadTopic}`,
+          `nobody agrees on tone but everyone agrees the receipts are absurdly good`,
+          `by minute six the room has split into jokers, prophets, and people annotating candles`,
+        ],
+        ctx.seed,
+        132,
+      );
+      return {
+        title: "Unread Messages",
+        angle: "Private group chat spiral",
+        topText: clampText(topText, 122),
+        bottomText: clampText(bottomText, 126),
+        kicker: clampText(ctx.marketMood, 84),
+        footer: clampText(ctx.voiceHint, 72),
+      };
+    },
   },
   {
     id: "night-shift",
     templateId: "night-shift",
-    build: (ctx) => ({
-      title: "Night Desk",
-      angle: "Sleep-deprived trader shift",
-      topText: clampText(`${ctx.cashtag} on the night shift while the rest of the timeline pretends to be responsible`, 124),
-      bottomText: clampText(`coffee is optional, receipts are mandatory, and ${ctx.threadTopic} keeps getting louder`, 122),
-      kicker: clampText(ctx.heatLabel, 72),
-      footer: clampText(ctx.insideJoke, 88),
-    }),
+    build: (ctx) => {
+      const topText = seedVariant(
+        [
+          `${ctx.cashtag} on the night shift while the rest of the timeline pretends to be responsible`,
+          `${ctx.cashtag} at 1:47am when the serious traders are offline and the sickos are still charting`,
+          `night desk update: ${ctx.cashtag} has the late shift acting way too confident`,
+          `the ${ctx.cashtag} overnight crew when the candles start whispering reckless ideas`,
+        ],
+        ctx.seed,
+        141,
+      );
+      const bottomText = seedVariant(
+        [
+          `coffee is optional, receipts are mandatory, and ${ctx.threadTopic} keeps getting louder`,
+          `sleep is cancelled, the evidence pile is growing, and the chart is being weird on purpose`,
+          `${ctx.secondThreadTopic} is back on the desk, the coffee tastes hostile, and the room is still early`,
+          `everyone looks exhausted but the conviction is somehow getting dressed for a second shift`,
+        ],
+        ctx.seed,
+        142,
+      );
+      return {
+        title: "Night Desk",
+        angle: "Sleep-deprived trader shift",
+        topText: clampText(topText, 124),
+        bottomText: clampText(bottomText, 122),
+        kicker: clampText(ctx.heatLabel, 72),
+        footer: clampText(ctx.insideJoke, 88),
+      };
+    },
   },
   {
     id: "brain-rot",
     templateId: "brain-rot-board",
-    build: (ctx) => ({
-      title: "Evidence Board",
-      angle: "Conspiracy wall with receipts",
-      topText: clampText(`me connecting ${ctx.cashtag}, ${ctx.threadTopic}, and one disrespectfully bullish candle`, 120),
-      bottomText: clampText(`the conclusion is still the same: the chart knows the community is awake`, 112),
-      kicker: clampText(ctx.shortObjective, 84),
-      footer: clampText(ctx.secondVoiceHint, 72),
-    }),
+    build: (ctx) => {
+      const topText = seedVariant(
+        [
+          `me connecting ${ctx.cashtag}, ${ctx.threadTopic}, and one disrespectfully bullish candle`,
+          `my evidence board after linking ${ctx.cashtag}, bad sleep, and a very suspicious chart`,
+          `explaining how ${ctx.cashtag}, ${ctx.secondThreadTopic}, and one loud candle are obviously related`,
+          `me drawing red string between ${ctx.cashtag}, the group chat, and a candle with no manners`,
+        ],
+        ctx.seed,
+        151,
+      );
+      const bottomText = seedVariant(
+        [
+          `the conclusion is still the same: the chart knows the community is awake`,
+          `every clue points back to the same thing: the room spotted it before the timeline did`,
+          `I ran the numbers, ignored sleep, and arrived at the usual conclusion: receipts win again`,
+          `the board is messy but the verdict is clean: the chat had the read before the crowd had the cope`,
+        ],
+        ctx.seed,
+        152,
+      );
+      return {
+        title: "Evidence Board",
+        angle: "Conspiracy wall with receipts",
+        topText: clampText(topText, 120),
+        bottomText: clampText(bottomText, 112),
+        kicker: clampText(ctx.shortObjective, 84),
+        footer: clampText(ctx.secondVoiceHint, 72),
+      };
+    },
   },
 ] as const;
 
