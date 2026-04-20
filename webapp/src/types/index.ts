@@ -424,6 +424,11 @@ export interface TokenCommunityAssetPresignResponse {
   upload: TokenCommunityAssetUpload;
 }
 
+export interface TokenCommunityAssetImportRequest {
+  kind: "logo" | "banner" | "mascot" | "reference_meme" | string;
+  sourceUrl: string;
+}
+
 // Level constants
 export const MIN_LEVEL = -5;
 export const MAX_LEVEL = 10;

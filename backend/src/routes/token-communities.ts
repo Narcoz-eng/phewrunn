@@ -13,6 +13,7 @@ import {
   createCommunityAssetUpload,
   deleteCommunityAssetObject,
   fetchCommunityAssetObject,
+  uploadCommunityAssetObject,
   isCommunityAssetStorageConfigured,
   type CommunityAssetKind,
 } from "../services/community-asset-storage.js";
@@ -79,6 +80,13 @@ const CommunityAssetPresignSchema = z
     sizeBytes: z.number().int().min(1).max(8 * 1024 * 1024),
     width: z.number().int().min(1).max(4096).optional(),
     height: z.number().int().min(1).max(4096).optional(),
+  })
+  .strict();
+
+const CommunityAssetImportSchema = z
+  .object({
+    kind: z.enum(COMMUNITY_ASSET_KIND_VALUES),
+    sourceUrl: z.string().trim().url("Provide a valid image URL"),
   })
   .strict();
 
@@ -937,7 +945,41 @@ function mapRouteError(error: unknown) {
       error: { message: "Asset storage is not configured", code: "ASSET_STORAGE_UNAVAILABLE" },
     };
   }
+  if (error.message === "REMOTE_ASSET_FETCH_FAILED") {
+    return {
+      status: 400 as const,
+      error: { message: "Could not fetch the image from that URL", code: "REMOTE_ASSET_FETCH_FAILED" },
+    };
+  }
+  if (error.message === "REMOTE_ASSET_NOT_IMAGE") {
+    return {
+      status: 400 as const,
+      error: { message: "That URL did not return an image", code: "REMOTE_ASSET_NOT_IMAGE" },
+    };
+  }
+  if (error.message === "REMOTE_ASSET_TOO_LARGE") {
+    return {
+      status: 400 as const,
+      error: { message: "Image is too large. Keep it under 8 MB", code: "REMOTE_ASSET_TOO_LARGE" },
+    };
+  }
   return null;
+}
+
+function inferRemoteAssetFilename(sourceUrl: string, fallbackContentType: string): string {
+  try {
+    const url = new URL(sourceUrl);
+    const lastSegment = url.pathname.split("/").filter(Boolean).pop();
+    if (lastSegment && /\.[a-z0-9]{2,10}$/i.test(lastSegment)) {
+      return lastSegment;
+    }
+  } catch {
+    // ignore malformed URLs here; schema validation handles them upstream
+  }
+
+  const extension =
+    fallbackContentType.split("/")[1]?.replace(/[^a-z0-9.+-]/gi, "").toLowerCase() || "png";
+  return `remote-asset.${extension}`;
 }
 
 tokenCommunitiesRouter.get(
@@ -1208,6 +1250,106 @@ tokenCommunitiesRouter.post(
           },
         },
       });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/assets/import",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema),
+  zValidator("json", CommunityAssetImportSchema),
+  async (c) => {
+    try {
+      if (!isCommunityAssetStorageConfigured()) {
+        throw new Error("COMMUNITY_ASSET_STORAGE_NOT_CONFIGURED");
+      }
+      const viewer = c.get("user")!;
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const payload = c.req.valid("json");
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15_000);
+      let upstream: Response;
+      try {
+        upstream = await fetch(payload.sourceUrl, {
+          method: "GET",
+          redirect: "follow",
+          signal: controller.signal,
+        });
+      } catch {
+        throw new Error("REMOTE_ASSET_FETCH_FAILED");
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!upstream.ok) {
+        throw new Error("REMOTE_ASSET_FETCH_FAILED");
+      }
+
+      const contentType = upstream.headers.get("content-type")?.split(";")[0]?.trim() || "";
+      if (!/^image\/[a-z0-9.+-]+$/i.test(contentType)) {
+        throw new Error("REMOTE_ASSET_NOT_IMAGE");
+      }
+
+      const contentLengthHeader = upstream.headers.get("content-length");
+      if (contentLengthHeader) {
+        const declaredSize = Number.parseInt(contentLengthHeader, 10);
+        if (Number.isFinite(declaredSize) && declaredSize > 8 * 1024 * 1024) {
+          throw new Error("REMOTE_ASSET_TOO_LARGE");
+        }
+      }
+
+      const body = new Uint8Array(await upstream.arrayBuffer());
+      if (body.byteLength === 0) {
+        throw new Error("REMOTE_ASSET_FETCH_FAILED");
+      }
+      if (body.byteLength > 8 * 1024 * 1024) {
+        throw new Error("REMOTE_ASSET_TOO_LARGE");
+      }
+
+      const objectKey = buildCommunityAssetObjectKey({
+        tokenAddress: token.address,
+        kind: payload.kind,
+        fileName: inferRemoteAssetFilename(payload.sourceUrl, contentType),
+      });
+      const upload = await uploadCommunityAssetObject({
+        objectKey,
+        contentType,
+        body,
+      });
+
+      const asset = await prisma.tokenCommunityAsset.create({
+        data: {
+          tokenId: token.id,
+          kind: payload.kind,
+          status: "ready",
+          url: upload.publicUrl,
+          objectKey,
+          mimeType: contentType,
+          sizeBytes: body.byteLength,
+          uploadedById: viewer.id,
+        },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          url: true,
+          objectKey: true,
+          mimeType: true,
+          width: true,
+          height: true,
+          sizeBytes: true,
+          sortOrder: true,
+          createdAt: true,
+        },
+      });
+
+      return c.json({ data: serializeCommunityAsset(token.address, asset) });
     } catch (error) {
       const mapped = mapRouteError(error);
       if (mapped) return c.json(mapped.error, mapped.status);

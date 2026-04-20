@@ -183,6 +183,26 @@ export function createCommunityAssetUpload(params: {
   };
 }
 
+export async function uploadCommunityAssetObject(params: {
+  objectKey: string;
+  contentType: string;
+  body: Uint8Array;
+}): Promise<{ publicUrl: string }> {
+  const upload = createCommunityAssetUpload({
+    objectKey: params.objectKey,
+    contentType: params.contentType,
+  });
+  const response = await fetch(upload.uploadUrl, {
+    method: "PUT",
+    headers: upload.headers,
+    body: params.body,
+  });
+  if (!response.ok) {
+    throw new Error(`Community asset upload failed with ${response.status}`);
+  }
+  return { publicUrl: upload.publicUrl };
+}
+
 function buildSignedStorageRequest(params: {
   method: "GET" | "DELETE";
   objectKey: string;

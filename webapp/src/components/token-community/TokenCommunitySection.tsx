@@ -27,6 +27,7 @@ import {
   getAvatarUrl,
   type TokenActiveRaidResponse,
   type TokenCommunityAsset,
+  type TokenCommunityAssetImportRequest,
   type TokenCommunityAssetPresignResponse,
   type TokenCommunityProfile,
   type TokenCommunityReactionSummary,
@@ -83,6 +84,13 @@ type DraftAssets = {
   referenceMemes: TokenCommunityAsset[];
 };
 
+type AssetLinkDraft = {
+  logo: string;
+  banner: string;
+  mascot: string;
+  reference_meme: string;
+};
+
 type EditorMode = "create" | "edit" | null;
 
 type EditorDraft = {
@@ -130,6 +138,15 @@ function emptyAssets(): DraftAssets {
     banner: null,
     mascot: null,
     referenceMemes: [],
+  };
+}
+
+function emptyAssetLinks(): AssetLinkDraft {
+  return {
+    logo: "",
+    banner: "",
+    mascot: "",
+    reference_meme: "",
   };
 }
 
@@ -557,6 +574,7 @@ export function TokenCommunitySection({
   const [editorMode, setEditorMode] = useState<EditorMode>(null);
   const [editorStep, setEditorStep] = useState<1 | 2 | 3>(1);
   const [editorDraft, setEditorDraft] = useState<EditorDraft>(() => buildInitialDraft(tokenSymbol, tokenName));
+  const [assetLinks, setAssetLinks] = useState<AssetLinkDraft>(() => emptyAssetLinks());
   const [uploadingKind, setUploadingKind] = useState<"logo" | "banner" | "mascot" | "reference_meme" | null>(null);
   const entryIntentRef = useRef<number>(0);
   const hasAutoOpenedCreateRef = useRef(false);
@@ -692,6 +710,7 @@ export function TokenCommunitySection({
       setEditorMode("create");
       setEditorStep(1);
       setEditorDraft(buildInitialDraft(tokenSymbol, tokenName, room, profile ?? null));
+      setAssetLinks(emptyAssetLinks());
       entryIntentRef.current = entryIntentToken;
     }
   }, [entryIntent, entryIntentToken, profile, room, tokenName, tokenSymbol]);
@@ -701,6 +720,7 @@ export function TokenCommunitySection({
       setEditorMode("create");
       setEditorStep(1);
       setEditorDraft(buildInitialDraft(tokenSymbol, tokenName, room, profile ?? null));
+      setAssetLinks(emptyAssetLinks());
       hasAutoOpenedCreateRef.current = true;
     }
   }, [canCreateCommunity, editorMode, profile, room, tokenName, tokenSymbol]);
@@ -787,6 +807,7 @@ export function TokenCommunitySection({
     setEditorMode(mode);
     setEditorStep(1);
     setEditorDraft(buildInitialDraft(tokenSymbol, tokenName, room ?? null, profile ?? null));
+    setAssetLinks(emptyAssetLinks());
   };
 
   const joinCommunityMutation = useMutation({
@@ -1024,6 +1045,20 @@ export function TokenCommunitySection({
     return presigned.asset;
   };
 
+  const importCommunityAsset = async (
+    kind: "logo" | "banner" | "mascot" | "reference_meme",
+    sourceUrl: string,
+  ) => {
+    const payload: TokenCommunityAssetImportRequest = {
+      kind,
+      sourceUrl: sourceUrl.trim(),
+    };
+    return api.post<TokenCommunityAsset>(
+      `/api/tokens/${tokenAddress}/community/assets/import`,
+      payload,
+    );
+  };
+
   const handleSingleAssetUpload = async (kind: "logo" | "banner" | "mascot", file: File | null) => {
     if (!file) return;
     try {
@@ -1063,6 +1098,54 @@ export function TokenCommunitySection({
       toast.success(`${uploaded.length} reference meme${uploaded.length === 1 ? "" : "s"} uploaded`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setUploadingKind(null);
+    }
+  };
+
+  const handleSingleAssetImport = async (kind: "logo" | "banner" | "mascot") => {
+    const sourceUrl = assetLinks[kind].trim();
+    if (!sourceUrl) return;
+    try {
+      setUploadingKind(kind);
+      const asset = await importCommunityAsset(kind, sourceUrl);
+      setEditorDraft((current) => ({
+        ...current,
+        assets: {
+          ...current.assets,
+          [kind]: asset,
+        },
+      }));
+      setAssetLinks((current) => ({ ...current, [kind]: "" }));
+      toast.success(`${kind[0].toUpperCase()}${kind.slice(1)} imported`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      setUploadingKind(null);
+    }
+  };
+
+  const handleReferenceImport = async () => {
+    const sourceUrl = assetLinks.reference_meme.trim();
+    if (!sourceUrl) return;
+    if (editorDraft.assets.referenceMemes.length >= 5) {
+      toast.error("You already have 5 reference memes");
+      return;
+    }
+    try {
+      setUploadingKind("reference_meme");
+      const asset = await importCommunityAsset("reference_meme", sourceUrl);
+      setEditorDraft((current) => ({
+        ...current,
+        assets: {
+          ...current.assets,
+          referenceMemes: [...current.assets.referenceMemes, asset].slice(0, 5),
+        },
+      }));
+      setAssetLinks((current) => ({ ...current, reference_meme: "" }));
+      toast.success("Reference meme imported");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Import failed");
     } finally {
       setUploadingKind(null);
     }
@@ -1499,6 +1582,29 @@ export function TokenCommunitySection({
                       onChange={(event) => void handleSingleAssetUpload("logo", event.target.files?.[0] ?? null)}
                     />
                   </label>
+                  <div className="space-y-2">
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <ExternalLink className="h-4 w-4 text-primary" />
+                      Import logo from link
+                    </span>
+                    <div className="flex gap-2">
+                      <Input
+                        value={assetLinks.logo}
+                        onChange={(event) => setAssetLinks((current) => ({ ...current, logo: event.target.value }))}
+                        className="rounded-[16px] border-border/60 bg-background/70"
+                        placeholder="https://..."
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        disabled={!assetLinks.logo.trim() || uploadingKind !== null}
+                        onClick={() => void handleSingleAssetImport("logo")}
+                      >
+                        Import
+                      </Button>
+                    </div>
+                  </div>
                 </div>
                 <div className="space-y-3 rounded-[24px] border border-border/60 bg-secondary/55 p-4">
                   <AssetPreview asset={editorDraft.assets.banner} label="Banner" />
@@ -1514,6 +1620,29 @@ export function TokenCommunitySection({
                       onChange={(event) => void handleSingleAssetUpload("banner", event.target.files?.[0] ?? null)}
                     />
                   </label>
+                  <div className="space-y-2">
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <ExternalLink className="h-4 w-4 text-primary" />
+                      Import banner from link
+                    </span>
+                    <div className="flex gap-2">
+                      <Input
+                        value={assetLinks.banner}
+                        onChange={(event) => setAssetLinks((current) => ({ ...current, banner: event.target.value }))}
+                        className="rounded-[16px] border-border/60 bg-background/70"
+                        placeholder="https://..."
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        disabled={!assetLinks.banner.trim() || uploadingKind !== null}
+                        onClick={() => void handleSingleAssetImport("banner")}
+                      >
+                        Import
+                      </Button>
+                    </div>
+                  </div>
                 </div>
                 <div className="space-y-3 rounded-[24px] border border-border/60 bg-secondary/55 p-4">
                   <AssetPreview asset={editorDraft.assets.mascot} label="Mascot" />
@@ -1529,6 +1658,29 @@ export function TokenCommunitySection({
                       onChange={(event) => void handleSingleAssetUpload("mascot", event.target.files?.[0] ?? null)}
                     />
                   </label>
+                  <div className="space-y-2">
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <ExternalLink className="h-4 w-4 text-primary" />
+                      Import mascot from link
+                    </span>
+                    <div className="flex gap-2">
+                      <Input
+                        value={assetLinks.mascot}
+                        onChange={(event) => setAssetLinks((current) => ({ ...current, mascot: event.target.value }))}
+                        className="rounded-[16px] border-border/60 bg-background/70"
+                        placeholder="https://..."
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        disabled={!assetLinks.mascot.trim() || uploadingKind !== null}
+                        onClick={() => void handleSingleAssetImport("mascot")}
+                      >
+                        Import
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1537,20 +1689,45 @@ export function TokenCommunitySection({
                   <div>
                     <div className="text-sm font-semibold text-foreground">Reference memes</div>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Upload 1-5 memes the room already loves so the raid generator has real community texture to work with.
+                      Upload or import 1-5 memes the room already loves so the raid generator has real community texture to work with.
                     </p>
                   </div>
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border/60 bg-background px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary/30">
-                    <Upload className="h-4 w-4 text-primary" />
-                    Add reference memes
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      className="hidden"
-                      onChange={(event) => void handleReferenceUpload(event.target.files)}
-                    />
-                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border/60 bg-background px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary/30">
+                      <Upload className="h-4 w-4 text-primary" />
+                      Add reference memes
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => void handleReferenceUpload(event.target.files)}
+                      />
+                    </label>
+                    <div className="flex min-w-[280px] flex-1 gap-2">
+                      <Input
+                        value={assetLinks.reference_meme}
+                        onChange={(event) =>
+                          setAssetLinks((current) => ({ ...current, reference_meme: event.target.value }))
+                        }
+                        className="rounded-[16px] border-border/60 bg-background/70"
+                        placeholder="Paste meme image URL"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        disabled={
+                          !assetLinks.reference_meme.trim() ||
+                          uploadingKind !== null ||
+                          editorDraft.assets.referenceMemes.length >= 5
+                        }
+                        onClick={() => void handleReferenceImport()}
+                      >
+                        Import link
+                      </Button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
