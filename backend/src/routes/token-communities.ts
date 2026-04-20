@@ -8,14 +8,31 @@ import { prisma } from "../prisma.js";
 import { findTokenByAddress } from "../services/intelligence/engine.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import {
+  COMMUNITY_ASSET_KIND_VALUES,
+  buildCommunityAssetObjectKey,
+  createCommunityAssetUpload,
+  deleteCommunityAssetObject,
+  fetchCommunityAssetObject,
+  isCommunityAssetStorageConfigured,
+  type CommunityAssetKind,
+} from "../services/community-asset-storage.js";
+import {
   TOKEN_RAID_TEMPLATE_IDS,
   TokenRaidCopyOptionSchema,
   TokenRaidGenerationResultSchema,
   TokenRaidMemeOptionSchema,
   safeGenerateTokenRaidOptions,
 } from "../services/token-raid-generation.js";
+import {
+  loadTokenCommunityRoom,
+  mutateCommunityMemberStats,
+  serializeCommunityAsset,
+  serializeCommunityAuthor,
+} from "../services/token-community-room.js";
 
 export const tokenCommunitiesRouter = new Hono<{ Variables: AuthVariables }>();
+
+const COMMUNITY_ALLOWED_EMOJIS = ["🔥", "👀", "😂", "🫡"] as const;
 
 const TokenAddressParamSchema = z.object({
   tokenAddress: z.string().trim().min(1),
@@ -26,19 +43,42 @@ const ThreadListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(30).optional(),
 });
 
-const CommunityProfilePatchSchema = z
+const CommunityProfileBaseSchema = z.object({
+  headline: z.string().trim().min(8).max(120).nullable().optional(),
+  whyLine: z.string().trim().min(12).max(140).nullable().optional(),
+  welcomePrompt: z.string().trim().min(8).max(120).nullable().optional(),
+  vibeTags: z.array(z.string().trim().min(2).max(24)).max(6).optional(),
+  mascotName: z.string().trim().min(2).max(40).nullable().optional(),
+  xCashtag: z
+    .string()
+    .trim()
+    .regex(/^\$?[A-Za-z0-9_]{1,15}$/, "X cashtag must be 1-15 letters/numbers/underscores")
+    .nullable()
+    .optional(),
+  voiceHints: z.array(z.string().trim().min(3).max(60)).max(6).optional(),
+  insideJokes: z.array(z.string().trim().min(4).max(80)).max(6).optional(),
+  preferredTemplateIds: z.array(z.enum(TOKEN_RAID_TEMPLATE_IDS)).max(9).optional(),
+  raidLeadMinLevel: z.number().int().min(3).max(10).optional(),
+  assetIds: z.array(z.string().trim().min(1)).max(8).optional(),
+});
+
+const CreateCommunitySchema = CommunityProfileBaseSchema.extend({
+  whyLine: z.string().trim().min(12).max(140),
+  welcomePrompt: z.string().trim().min(8).max(120),
+  vibeTags: z.array(z.string().trim().min(2).max(24)).min(1).max(6),
+  assetIds: z.array(z.string().trim().min(1)).min(3).max(8),
+}).strict();
+
+const CommunityProfilePatchSchema = CommunityProfileBaseSchema.strict();
+
+const CommunityAssetPresignSchema = z
   .object({
-    headline: z.string().trim().min(8).max(120).nullable().optional(),
-    xCashtag: z
-      .string()
-      .trim()
-      .regex(/^\$?[A-Za-z0-9_]{1,15}$/, "X cashtag must be 1-15 letters/numbers/underscores")
-      .nullable()
-      .optional(),
-    voiceHints: z.array(z.string().trim().min(3).max(60)).max(6).optional(),
-    insideJokes: z.array(z.string().trim().min(4).max(80)).max(6).optional(),
-    preferredTemplateIds: z.array(z.enum(TOKEN_RAID_TEMPLATE_IDS)).max(6).optional(),
-    raidLeadMinLevel: z.number().int().min(3).max(10).optional(),
+    kind: z.enum(COMMUNITY_ASSET_KIND_VALUES),
+    fileName: z.string().trim().min(1).max(160),
+    contentType: z.string().trim().regex(/^image\/[a-z0-9.+-]+$/i, "Provide an image content type"),
+    sizeBytes: z.number().int().min(1).max(8 * 1024 * 1024),
+    width: z.number().int().min(1).max(4096).optional(),
+    height: z.number().int().min(1).max(4096).optional(),
   })
   .strict();
 
@@ -53,6 +93,12 @@ const CreateReplySchema = z
   .object({
     content: z.string().trim().min(2).max(400),
     parentId: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+const ThreadReactionSchema = z
+  .object({
+    emoji: z.enum(COMMUNITY_ALLOWED_EMOJIS),
   })
   .strict();
 
@@ -79,8 +125,7 @@ const PatchRaidSubmissionSchema = z
       .trim()
       .url()
       .refine(
-        (value) =>
-          /^https:\/\/(www\.)?(x|twitter)\.com\/[^/]+\/status\/\d+/i.test(value),
+        (value) => /^https:\/\/(www\.)?(x|twitter)\.com\/[^/]+\/status\/\d+/i.test(value),
         "Provide a valid X post URL",
       ),
   })
@@ -90,13 +135,13 @@ const COMMUNITY_PROFILE_DEFAULT_VOICE_HINTS = [
   "dry confidence",
   "internet-native and sharp",
   "receipts over slogans",
-];
+] as const;
 
 const COMMUNITY_PROFILE_DEFAULT_JOKES = [
   "the group chat hears the boss music first",
   "the chart keeps trying to act innocent",
   "receipts age better than cope",
-];
+] as const;
 
 function normalizeCashtag(value: string | null | undefined, symbol: string | null | undefined): string | null {
   const raw = (value ?? "").trim() || (symbol ? `$${symbol}` : "");
@@ -104,12 +149,16 @@ function normalizeCashtag(value: string | null | undefined, symbol: string | nul
   return raw.startsWith("$") ? raw.toUpperCase() : `$${raw.toUpperCase()}`;
 }
 
-function normalizeStringList(input: unknown, fallback: string[] = []): string[] {
+function normalizeStringList(input: unknown, fallback: string[] = [], maxItems = 6): string[] {
   if (!Array.isArray(input)) return [...fallback];
   const values = input
     .map((value) => (typeof value === "string" ? value.trim() : ""))
     .filter((value) => value.length > 0);
-  return values.length > 0 ? values.slice(0, 6) : [...fallback];
+  return values.length > 0 ? values.slice(0, maxItems) : [...fallback];
+}
+
+function isCommunityAssetKind(value: string): value is CommunityAssetKind {
+  return COMMUNITY_ASSET_KIND_VALUES.includes(value as CommunityAssetKind);
 }
 
 function buildProfileResponse(
@@ -122,6 +171,11 @@ function buildProfileResponse(
     insideJokes: unknown;
     preferredTemplateIds: unknown;
     raidLeadMinLevel: number;
+    whyLine: string | null;
+    welcomePrompt: string | null;
+    vibeTags: unknown;
+    mascotName: string | null;
+    createdAt: Date;
     updatedAt: Date;
   } | null,
 ) {
@@ -135,8 +189,13 @@ function buildProfileResponse(
     xCashtag: cashtag,
     voiceHints: normalizeStringList(profile?.voiceHints, [...COMMUNITY_PROFILE_DEFAULT_VOICE_HINTS]),
     insideJokes: normalizeStringList(profile?.insideJokes, [...COMMUNITY_PROFILE_DEFAULT_JOKES]),
-    preferredTemplateIds: normalizeStringList(profile?.preferredTemplateIds),
+    preferredTemplateIds: normalizeStringList(profile?.preferredTemplateIds, [], 9),
     raidLeadMinLevel: profile?.raidLeadMinLevel ?? 3,
+    whyLine: profile?.whyLine ?? null,
+    welcomePrompt: profile?.welcomePrompt ?? null,
+    vibeTags: normalizeStringList(profile?.vibeTags, []),
+    mascotName: profile?.mascotName ?? null,
+    createdAt: profile?.createdAt?.toISOString() ?? null,
     updatedAt: profile?.updatedAt?.toISOString() ?? null,
   };
 }
@@ -189,6 +248,45 @@ function assertTrustedMember(viewer: { level: number; isAdmin: boolean }, requir
   }
 }
 
+async function requireExistingCommunity(tokenId: string) {
+  const profile = await prisma.tokenCommunityProfile.findUnique({
+    where: { tokenId },
+    select: {
+      id: true,
+      raidLeadMinLevel: true,
+      headline: true,
+      xCashtag: true,
+      voiceHints: true,
+      insideJokes: true,
+      preferredTemplateIds: true,
+      whyLine: true,
+      welcomePrompt: true,
+      vibeTags: true,
+      mascotName: true,
+    },
+  });
+  if (!profile) {
+    throw new Error("COMMUNITY_NOT_CREATED");
+  }
+  return profile;
+}
+
+async function requireCommunityMembership(tokenId: string, userId: string) {
+  const follow = await prisma.tokenFollow.findUnique({
+    where: {
+      userId_tokenId: {
+        userId,
+        tokenId,
+      },
+    },
+    select: { createdAt: true },
+  });
+  if (!follow) {
+    throw new Error("COMMUNITY_JOIN_REQUIRED");
+  }
+  return follow;
+}
+
 function parseStoredMemeOptions(value: unknown) {
   const parsed = z.array(TokenRaidMemeOptionSchema).safeParse(value);
   if (!parsed.success) throw new Error("INVALID_MEME_OPTIONS");
@@ -201,44 +299,53 @@ function parseStoredCopyOptions(value: unknown) {
   return parsed.data;
 }
 
-function serializeAuthor(author: {
-  id: string;
-  name: string;
-  username: string | null;
-  image: string | null;
-  level: number;
-  isVerified?: boolean | null;
-}) {
-  return {
-    id: author.id,
-    name: author.name,
-    username: author.username,
-    image: author.image,
-    level: author.level,
-    isVerified: author.isVerified ?? false,
-  };
+function serializeReactionSummary(
+  reactions: Array<{ emoji: string; userId: string }>,
+  viewerId: string | null,
+) {
+  const counts = new Map<string, { emoji: string; count: number; reactedByViewer: boolean }>();
+  for (const reaction of reactions) {
+    const existing = counts.get(reaction.emoji) ?? {
+      emoji: reaction.emoji,
+      count: 0,
+      reactedByViewer: false,
+    };
+    existing.count += 1;
+    if (viewerId && reaction.userId === viewerId) {
+      existing.reactedByViewer = true;
+    }
+    counts.set(reaction.emoji, existing);
+  }
+  return COMMUNITY_ALLOWED_EMOJIS.map((emoji) => counts.get(emoji) ?? { emoji, count: 0, reactedByViewer: false });
 }
 
-function serializeThread(thread: {
-  id: string;
-  title: string | null;
-  content: string;
-  kind: string;
-  raidCampaignId: string | null;
-  replyCount: number;
-  isPinned: boolean;
-  lastActivityAt: Date;
-  deletedAt: Date | null;
-  createdAt: Date;
-  author: {
+function serializeThread(
+  viewerId: string | null,
+  thread: {
     id: string;
-    name: string;
-    username: string | null;
-    image: string | null;
-    level: number;
-    isVerified: boolean;
-  };
-}) {
+    title: string | null;
+    content: string;
+    kind: string;
+    raidCampaignId: string | null;
+    replyCount: number;
+    isPinned: boolean;
+    lastActivityAt: Date;
+    deletedAt: Date | null;
+    createdAt: Date;
+    author: {
+      id: string;
+      name: string;
+      username: string | null;
+      image: string | null;
+      level: number;
+      isVerified: boolean;
+    };
+    reactions?: Array<{
+      emoji: string;
+      userId: string;
+    }>;
+  },
+) {
   return {
     id: thread.id,
     title: thread.deletedAt ? null : thread.title,
@@ -250,7 +357,8 @@ function serializeThread(thread: {
     lastActivityAt: thread.lastActivityAt.toISOString(),
     deletedAt: thread.deletedAt?.toISOString() ?? null,
     createdAt: thread.createdAt.toISOString(),
-    author: serializeAuthor(thread.author),
+    author: serializeCommunityAuthor(thread.author),
+    reactionSummary: serializeReactionSummary(thread.reactions ?? [], viewerId),
   };
 }
 
@@ -279,29 +387,52 @@ function serializeReply(reply: {
     depth: reply.depth,
     deletedAt: reply.deletedAt?.toISOString() ?? null,
     createdAt: reply.createdAt.toISOString(),
-    author: serializeAuthor(reply.author),
+    author: serializeCommunityAuthor(reply.author),
   };
 }
 
-function serializeSubmission(submission: {
+function serializeParticipant(participant: {
   id: string;
-  memeOptionId: string;
-  copyOptionId: string;
-  renderPayloadJson: unknown;
-  composerText: string;
-  xPostUrl: string | null;
+  status: string;
+  currentStep: string;
+  joinedAt: Date;
+  launchedAt: Date | null;
   postedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-  user: {
-    id: string;
-    name: string;
-    username: string | null;
-    image: string | null;
-    level: number;
-    isVerified: boolean;
-  };
 }) {
+  return {
+    id: participant.id,
+    status: participant.status,
+    currentStep: participant.currentStep,
+    joinedAt: participant.joinedAt.toISOString(),
+    launchedAt: participant.launchedAt?.toISOString() ?? null,
+    postedAt: participant.postedAt?.toISOString() ?? null,
+  };
+}
+
+function serializeSubmission(
+  viewerId: string | null,
+  submission: {
+    id: string;
+    memeOptionId: string;
+    copyOptionId: string;
+    renderPayloadJson: unknown;
+    composerText: string;
+    xPostUrl: string | null;
+    postedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+    user: {
+      id: string;
+      name: string;
+      username: string | null;
+      image: string | null;
+      level: number;
+      isVerified: boolean;
+    };
+    boosts?: Array<{ userId: string }>;
+  },
+) {
+  const boostCount = submission.boosts?.length ?? 0;
   return {
     id: submission.id,
     memeOptionId: submission.memeOptionId,
@@ -312,7 +443,9 @@ function serializeSubmission(submission: {
     postedAt: submission.postedAt?.toISOString() ?? null,
     createdAt: submission.createdAt.toISOString(),
     updatedAt: submission.updatedAt.toISOString(),
-    user: serializeAuthor(submission.user),
+    boostCount,
+    isBoostedByViewer: Boolean(viewerId && submission.boosts?.some((boost) => boost.userId === viewerId)),
+    user: serializeCommunityAuthor(submission.user),
   };
 }
 
@@ -338,7 +471,7 @@ async function fanoutRaidStartedNotifications(params: {
   const notifications = followers.map((follower) => ({
     userId: follower.userId,
     type: "raid_started",
-    message: `${params.creatorLabel} started a raid for ${tokenLabel}.`,
+    message: `${params.creatorLabel} started a raid campaign for ${tokenLabel}.`,
     dedupeKey: `raid_started:${params.raidId}:${follower.userId}`,
     fromUserId: params.creatorId,
     entityType: "token_raid_campaign",
@@ -381,8 +514,54 @@ async function createCommunityReplyNotification(params: {
   invalidateNotificationsCache(params.recipientUserId);
 }
 
+async function validateSelectedAssetRows(params: {
+  tokenId: string;
+  assetIds: string[];
+}) {
+  const uniqueIds = [...new Set(params.assetIds)];
+  const assets = await prisma.tokenCommunityAsset.findMany({
+    where: {
+      tokenId: params.tokenId,
+      id: { in: uniqueIds },
+    },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      url: true,
+      objectKey: true,
+      mimeType: true,
+      width: true,
+      height: true,
+      sizeBytes: true,
+      sortOrder: true,
+      createdAt: true,
+    },
+  });
+  if (assets.length !== uniqueIds.length) {
+    throw new Error("INVALID_ASSET_SELECTION");
+  }
+
+  const logo = assets.filter((asset) => asset.kind === "logo");
+  const banner = assets.filter((asset) => asset.kind === "banner");
+  const mascot = assets.filter((asset) => asset.kind === "mascot");
+  const referenceMemes = assets.filter((asset) => asset.kind === "reference_meme");
+
+  if (logo.length !== 1 || banner.length !== 1 || referenceMemes.length < 1 || referenceMemes.length > 5 || mascot.length > 1) {
+    throw new Error("INVALID_ASSET_REQUIREMENTS");
+  }
+
+  return {
+    assets,
+    logo: logo[0] ?? null,
+    banner: banner[0] ?? null,
+    mascot: mascot[0] ?? null,
+    referenceMemes,
+  };
+}
+
 async function loadRaidContext(tokenId: string) {
-  const [tokenRecord, profile, recentThreads, recentRaids] = await Promise.all([
+  const [tokenRecord, profile, assets, recentThreads, recentRaids] = await Promise.all([
     prisma.token.findUnique({
       where: { id: tokenId },
       select: {
@@ -406,7 +585,17 @@ async function loadRaidContext(tokenId: string) {
         voiceHints: true,
         insideJokes: true,
         preferredTemplateIds: true,
+        vibeTags: true,
+        mascotName: true,
       },
+    }),
+    prisma.tokenCommunityAsset.findMany({
+      where: { tokenId, status: "ready" },
+      select: {
+        id: true,
+        kind: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     }),
     prisma.tokenCommunityThread.findMany({
       where: {
@@ -433,6 +622,7 @@ async function loadRaidContext(tokenId: string) {
         objective: true,
         memeOptionsJson: true,
         copyOptionsJson: true,
+        generationHistoryJson: true,
       },
       orderBy: { openedAt: "desc" },
       take: 5,
@@ -443,6 +633,28 @@ async function loadRaidContext(tokenId: string) {
     throw new Error("TOKEN_NOT_FOUND");
   }
 
+  const normalizedAssets = assets.filter(
+    (asset): asset is { id: string; kind: CommunityAssetKind } => isCommunityAssetKind(asset.kind),
+  );
+
+  const history = recentRaids.flatMap((raid) => {
+    const items: Array<{ objective?: string | null; memeOptions?: unknown; copyOptions?: unknown }> = [
+      {
+        objective: raid.objective,
+        memeOptions: raid.memeOptionsJson,
+        copyOptions: raid.copyOptionsJson,
+      },
+    ];
+    if (Array.isArray(raid.generationHistoryJson)) {
+      for (const entry of raid.generationHistoryJson.slice(-6)) {
+        if (entry && typeof entry === "object") {
+          items.push(entry as { objective?: string | null; memeOptions?: unknown; copyOptions?: unknown });
+        }
+      }
+    }
+    return items;
+  });
+
   return {
     token: tokenRecord,
     profile: profile
@@ -450,7 +662,10 @@ async function loadRaidContext(tokenId: string) {
           ...profile,
           voiceHints: normalizeStringList(profile.voiceHints),
           insideJokes: normalizeStringList(profile.insideJokes),
-          preferredTemplateIds: normalizeStringList(profile.preferredTemplateIds),
+          preferredTemplateIds: normalizeStringList(profile.preferredTemplateIds, [], 9),
+          vibeTags: normalizeStringList(profile.vibeTags, []),
+          mascotName: profile.mascotName,
+          assets: normalizedAssets,
         }
       : null,
     recentThreads: recentThreads.map((thread) => ({
@@ -460,76 +675,155 @@ async function loadRaidContext(tokenId: string) {
       authorUsername: thread.author.username,
       createdAt: thread.createdAt,
     })),
-    recentRaidHistory: recentRaids.map((raid) => ({
-      objective: raid.objective,
-      memeOptions: raid.memeOptionsJson,
-      copyOptions: raid.copyOptionsJson,
-    })),
+    recentRaidHistory: history,
   };
 }
 
-async function loadActiveRaidView(tokenId: string, viewerId: string | null) {
-  const active = await prisma.tokenRaidCampaign.findFirst({
-    where: {
-      tokenId,
-      status: "active",
-    },
-    select: {
-      id: true,
-      status: true,
-      objective: true,
-      memeOptionsJson: true,
-      copyOptionsJson: true,
-      openedAt: true,
-      closedAt: true,
-      createdAt: true,
-      updatedAt: true,
-      createdBy: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          image: true,
-          level: true,
-          isVerified: true,
-        },
+function buildGenerationHistoryEntry(raid: {
+  objective: string;
+  memeOptionsJson: unknown;
+  copyOptionsJson: unknown;
+}): Prisma.InputJsonObject {
+  return {
+    objective: raid.objective,
+    memeOptions: raid.memeOptionsJson as Prisma.InputJsonValue,
+    copyOptions: raid.copyOptionsJson as Prisma.InputJsonValue,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function buildGenerationHistoryJson(
+  existingHistory: Prisma.JsonValue | null | undefined,
+  raid: {
+    objective: string;
+    memeOptionsJson: unknown;
+    copyOptionsJson: unknown;
+  },
+): Prisma.InputJsonArray {
+  const normalizedHistory = Array.isArray(existingHistory)
+    ? (existingHistory.filter((entry) => entry !== null) as Prisma.InputJsonValue[])
+    : [];
+
+  return [...normalizedHistory, buildGenerationHistoryEntry(raid)].slice(-8) as Prisma.InputJsonArray;
+}
+
+async function loadActiveRaidView(token: { id: string; address: string }, viewerId: string | null) {
+  const [active, assets] = await Promise.all([
+    prisma.tokenRaidCampaign.findFirst({
+      where: {
+        tokenId: token.id,
+        status: "active",
       },
-      thread: {
-        select: {
-          id: true,
-        },
-      },
-      submissions: {
-        select: {
-          id: true,
-          memeOptionId: true,
-          copyOptionId: true,
-          renderPayloadJson: true,
-          composerText: true,
-          xPostUrl: true,
-          postedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              isVerified: true,
-            },
+      select: {
+        id: true,
+        status: true,
+        objective: true,
+        memeOptionsJson: true,
+        copyOptionsJson: true,
+        openedAt: true,
+        closedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            isVerified: true,
           },
         },
-        orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
-        take: 40,
+        thread: {
+          select: {
+            id: true,
+          },
+        },
+        participants: {
+          select: {
+            id: true,
+            userId: true,
+            status: true,
+            currentStep: true,
+            joinedAt: true,
+            launchedAt: true,
+            postedAt: true,
+          },
+          orderBy: [{ joinedAt: "desc" }],
+          take: 120,
+        },
+        submissions: {
+          select: {
+            id: true,
+            memeOptionId: true,
+            copyOptionId: true,
+            renderPayloadJson: true,
+            composerText: true,
+            xPostUrl: true,
+            postedAt: true,
+            createdAt: true,
+            updatedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                isVerified: true,
+              },
+            },
+            boosts: {
+              select: {
+                userId: true,
+              },
+            },
+          },
+          orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
+          take: 60,
+        },
       },
-    },
-    orderBy: { openedAt: "desc" },
-  });
+      orderBy: { openedAt: "desc" },
+    }),
+    prisma.tokenCommunityAsset.findMany({
+      where: { tokenId: token.id, status: "ready" },
+      select: {
+        id: true,
+        kind: true,
+        status: true,
+        url: true,
+        objectKey: true,
+        mimeType: true,
+        width: true,
+        height: true,
+        sizeBytes: true,
+        sortOrder: true,
+        createdAt: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+    }),
+  ]);
+
+  const readyAssets = {
+    logo: assets.find((asset) => asset.kind === "logo") ?? null,
+    banner: assets.find((asset) => asset.kind === "banner") ?? null,
+    mascot: assets.find((asset) => asset.kind === "mascot") ?? null,
+    referenceMemes: assets.filter((asset) => asset.kind === "reference_meme").slice(0, 5),
+  };
 
   if (!active) {
-    return { campaign: null, submissions: [], mySubmission: null };
+    return {
+      campaign: null,
+      submissions: [],
+      mySubmission: null,
+      myParticipant: null,
+      communityAssets: {
+        logo: readyAssets.logo ? serializeCommunityAsset(token.address, readyAssets.logo) : null,
+        banner: readyAssets.banner ? serializeCommunityAsset(token.address, readyAssets.banner) : null,
+        mascot: readyAssets.mascot ? serializeCommunityAsset(token.address, readyAssets.mascot) : null,
+        referenceMemes: readyAssets.referenceMemes.map((asset) => serializeCommunityAsset(token.address, asset)),
+      },
+    };
   }
 
   const memeOptions = parseStoredMemeOptions(active.memeOptionsJson);
@@ -538,6 +832,29 @@ async function loadActiveRaidView(tokenId: string, viewerId: string | null) {
   const mySubmission = viewerId
     ? active.submissions.find((submission) => submission.user.id === viewerId) ?? null
     : null;
+  const myParticipant = viewerId
+    ? active.participants.find((participant) => participant.userId === viewerId) ??
+      (mySubmission
+        ? {
+            id: `legacy-${mySubmission.id}`,
+            userId: viewerId,
+            status: mySubmission.xPostUrl ? "posted" : "launched",
+            currentStep: mySubmission.xPostUrl ? "complete" : "launch",
+            joinedAt: mySubmission.createdAt,
+            launchedAt: mySubmission.updatedAt,
+            postedAt: mySubmission.postedAt,
+          }
+        : null)
+    : null;
+
+  const memeChoiceCounts = active.submissions.reduce<Record<string, number>>((acc, submission) => {
+    acc[submission.memeOptionId] = (acc[submission.memeOptionId] ?? 0) + 1;
+    return acc;
+  }, {});
+  const copyChoiceCounts = active.submissions.reduce<Record<string, number>>((acc, submission) => {
+    acc[submission.copyOptionId] = (acc[submission.copyOptionId] ?? 0) + 1;
+    return acc;
+  }, {});
 
   return {
     campaign: {
@@ -551,15 +868,76 @@ async function loadActiveRaidView(tokenId: string, viewerId: string | null) {
       createdAt: active.createdAt.toISOString(),
       updatedAt: active.updatedAt.toISOString(),
       threadId: active.thread?.id ?? null,
-      createdBy: serializeAuthor(active.createdBy),
+      participantCount: active.participants.length,
+      postedCount: visibleSubmissions.length,
+      memeChoiceCounts,
+      copyChoiceCounts,
+      createdBy: serializeCommunityAuthor(active.createdBy),
     },
     submissions: visibleSubmissions.map((submission) =>
-      serializeSubmission(submission as Parameters<typeof serializeSubmission>[0]),
+      serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]),
     ),
     mySubmission: mySubmission
-      ? serializeSubmission(mySubmission as Parameters<typeof serializeSubmission>[0])
+      ? serializeSubmission(viewerId, mySubmission as Parameters<typeof serializeSubmission>[1])
       : null,
+    myParticipant: myParticipant ? serializeParticipant(myParticipant) : null,
+    communityAssets: {
+      logo: readyAssets.logo ? serializeCommunityAsset(token.address, readyAssets.logo) : null,
+      banner: readyAssets.banner ? serializeCommunityAsset(token.address, readyAssets.banner) : null,
+      mascot: readyAssets.mascot ? serializeCommunityAsset(token.address, readyAssets.mascot) : null,
+      referenceMemes: readyAssets.referenceMemes.map((asset) => serializeCommunityAsset(token.address, asset)),
+    },
   };
+}
+
+function mapRouteError(error: unknown) {
+  if (!(error instanceof Error)) return null;
+  if (error.message === "TOKEN_NOT_FOUND") {
+    return { status: 404 as const, error: { message: "Token not found", code: "NOT_FOUND" } };
+  }
+  if (error.message === "COMMUNITY_NOT_CREATED") {
+    return {
+      status: 409 as const,
+      error: { message: "Community has not been created yet", code: "COMMUNITY_NOT_CREATED" },
+    };
+  }
+  if (error.message === "COMMUNITY_JOIN_REQUIRED") {
+    return {
+      status: 403 as const,
+      error: { message: "Join the community first", code: "COMMUNITY_JOIN_REQUIRED" },
+    };
+  }
+  if (error.message === "INSUFFICIENT_LEVEL") {
+    return { status: 403 as const, error: { message: "Trusted members only", code: "INSUFFICIENT_LEVEL" } };
+  }
+  if (error.message === "INVALID_ASSET_SELECTION") {
+    return {
+      status: 400 as const,
+      error: { message: "Selected asset set is invalid", code: "INVALID_ASSET_SELECTION" },
+    };
+  }
+  if (error.message === "INVALID_ASSET_REQUIREMENTS") {
+    return {
+      status: 400 as const,
+      error: {
+        message: "Community requires exactly one logo, one banner, and 1-5 reference memes",
+        code: "INVALID_ASSET_REQUIREMENTS",
+      },
+    };
+  }
+  if (error.message === "COMMUNITY_ALREADY_EXISTS") {
+    return {
+      status: 409 as const,
+      error: { message: "Community already exists", code: "COMMUNITY_ALREADY_EXISTS" },
+    };
+  }
+  if (error.message === "COMMUNITY_ASSET_STORAGE_NOT_CONFIGURED") {
+    return {
+      status: 503 as const,
+      error: { message: "Asset storage is not configured", code: "ASSET_STORAGE_UNAVAILABLE" },
+    };
+  }
+  return null;
 }
 
 tokenCommunitiesRouter.get(
@@ -579,15 +957,113 @@ tokenCommunitiesRouter.get(
           insideJokes: true,
           preferredTemplateIds: true,
           raidLeadMinLevel: true,
+          whyLine: true,
+          welcomePrompt: true,
+          vibeTags: true,
+          mascotName: true,
+          createdAt: true,
           updatedAt: true,
         },
       });
 
       return c.json({ data: buildProfileResponse(token, profile) });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema),
+  zValidator("json", CreateCommunitySchema),
+  async (c) => {
+    try {
+      const viewer = await resolveViewerState(c.get("user")!.id);
+      assertTrustedMember(viewer, 3);
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const payload = c.req.valid("json");
+      const existing = await prisma.tokenCommunityProfile.findUnique({
+        where: { tokenId: token.id },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new Error("COMMUNITY_ALREADY_EXISTS");
       }
+
+      await validateSelectedAssetRows({ tokenId: token.id, assetIds: payload.assetIds });
+
+      await prisma.$transaction(async (tx) => {
+        await tx.tokenCommunityProfile.create({
+          data: {
+            tokenId: token.id,
+            headline: payload.headline ?? null,
+            xCashtag: normalizeCashtag(payload.xCashtag ?? null, token.symbol),
+            voiceHints: payload.voiceHints ?? [...COMMUNITY_PROFILE_DEFAULT_VOICE_HINTS],
+            insideJokes: payload.insideJokes ?? [...COMMUNITY_PROFILE_DEFAULT_JOKES],
+            preferredTemplateIds: payload.preferredTemplateIds ?? [],
+            raidLeadMinLevel: payload.raidLeadMinLevel ?? 3,
+            whyLine: payload.whyLine,
+            welcomePrompt: payload.welcomePrompt,
+            vibeTags: payload.vibeTags,
+            mascotName: payload.mascotName ?? null,
+            createdById: viewer.id,
+            updatedById: viewer.id,
+          },
+        });
+        await tx.tokenCommunityAsset.updateMany({
+          where: {
+            tokenId: token.id,
+          },
+          data: {
+            status: "pending",
+          },
+        });
+        for (const [index, assetId] of payload.assetIds.entries()) {
+          await tx.tokenCommunityAsset.update({
+            where: { id: assetId },
+            data: {
+              status: "ready",
+              sortOrder: index,
+            },
+          });
+        }
+        await tx.tokenFollow.upsert({
+          where: {
+            userId_tokenId: {
+              userId: viewer.id,
+              tokenId: token.id,
+            },
+          },
+          create: {
+            userId: viewer.id,
+            tokenId: token.id,
+          },
+          update: {},
+        });
+        await mutateCommunityMemberStats({
+          db: tx,
+          tokenId: token.id,
+          userId: viewer.id,
+          joinedAt: new Date(),
+          lastActiveAt: new Date(),
+        });
+      });
+
+      const room = await loadTokenCommunityRoom({
+        tokenId: token.id,
+        tokenAddress: token.address,
+        viewerId: viewer.id,
+        viewerLevel: viewer.level,
+        viewerIsAdmin: viewer.isAdmin,
+      });
+      return c.json({ data: room }, 201);
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -599,66 +1075,276 @@ tokenCommunitiesRouter.patch(
   zValidator("param", TokenAddressParamSchema),
   zValidator("json", CommunityProfilePatchSchema),
   async (c) => {
-    const viewer = await resolveViewerState(c.get("user")!.id);
     try {
+      const viewer = await resolveViewerState(c.get("user")!.id);
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
       const payload = c.req.valid("json");
-      const existing = await prisma.tokenCommunityProfile.findUnique({
-        where: { tokenId: token.id },
-        select: { raidLeadMinLevel: true },
-      });
-      assertTrustedMember(viewer, Math.max(existing?.raidLeadMinLevel ?? 3, 3));
+      const existing = await requireExistingCommunity(token.id);
+      assertTrustedMember(viewer, Math.max(existing.raidLeadMinLevel ?? 3, 3));
 
-      const profile = await prisma.tokenCommunityProfile.upsert({
-        where: { tokenId: token.id },
-        create: {
-          tokenId: token.id,
-          headline: payload.headline ?? null,
-          xCashtag: normalizeCashtag(payload.xCashtag ?? null, token.symbol),
-          voiceHints: payload.voiceHints ?? [...COMMUNITY_PROFILE_DEFAULT_VOICE_HINTS],
-          insideJokes: payload.insideJokes ?? [...COMMUNITY_PROFILE_DEFAULT_JOKES],
-          preferredTemplateIds: payload.preferredTemplateIds ?? [],
-          raidLeadMinLevel: payload.raidLeadMinLevel ?? 3,
-          updatedById: viewer.id,
-        },
-        update: {
-          ...(payload.headline !== undefined ? { headline: payload.headline } : {}),
-          ...(payload.xCashtag !== undefined
-            ? { xCashtag: normalizeCashtag(payload.xCashtag, token.symbol) }
-            : {}),
-          ...(payload.voiceHints !== undefined ? { voiceHints: payload.voiceHints } : {}),
-          ...(payload.insideJokes !== undefined ? { insideJokes: payload.insideJokes } : {}),
-          ...(payload.preferredTemplateIds !== undefined
-            ? { preferredTemplateIds: payload.preferredTemplateIds }
-            : {}),
-          ...(payload.raidLeadMinLevel !== undefined
-            ? { raidLeadMinLevel: payload.raidLeadMinLevel }
-            : {}),
-          updatedById: viewer.id,
-        },
-        select: {
-          id: true,
-          headline: true,
-          xCashtag: true,
-          voiceHints: true,
-          insideJokes: true,
-          preferredTemplateIds: true,
-          raidLeadMinLevel: true,
-          updatedAt: true,
-        },
+      if (payload.assetIds) {
+        await validateSelectedAssetRows({ tokenId: token.id, assetIds: payload.assetIds });
+      }
+
+      const profile = await prisma.$transaction(async (tx) => {
+        if (payload.assetIds) {
+          await tx.tokenCommunityAsset.updateMany({
+            where: { tokenId: token.id },
+            data: { status: "pending" },
+          });
+          for (const [index, assetId] of payload.assetIds.entries()) {
+            await tx.tokenCommunityAsset.update({
+              where: { id: assetId },
+              data: { status: "ready", sortOrder: index },
+            });
+          }
+        }
+
+        return tx.tokenCommunityProfile.update({
+          where: { tokenId: token.id },
+          data: {
+            ...(payload.headline !== undefined ? { headline: payload.headline } : {}),
+            ...(payload.xCashtag !== undefined
+              ? { xCashtag: normalizeCashtag(payload.xCashtag, token.symbol) }
+              : {}),
+            ...(payload.voiceHints !== undefined ? { voiceHints: payload.voiceHints } : {}),
+            ...(payload.insideJokes !== undefined ? { insideJokes: payload.insideJokes } : {}),
+            ...(payload.preferredTemplateIds !== undefined
+              ? { preferredTemplateIds: payload.preferredTemplateIds }
+              : {}),
+            ...(payload.raidLeadMinLevel !== undefined ? { raidLeadMinLevel: payload.raidLeadMinLevel } : {}),
+            ...(payload.whyLine !== undefined ? { whyLine: payload.whyLine } : {}),
+            ...(payload.welcomePrompt !== undefined ? { welcomePrompt: payload.welcomePrompt } : {}),
+            ...(payload.vibeTags !== undefined ? { vibeTags: payload.vibeTags } : {}),
+            ...(payload.mascotName !== undefined ? { mascotName: payload.mascotName } : {}),
+            updatedById: viewer.id,
+          },
+          select: {
+            id: true,
+            headline: true,
+            xCashtag: true,
+            voiceHints: true,
+            insideJokes: true,
+            preferredTemplateIds: true,
+            raidLeadMinLevel: true,
+            whyLine: true,
+            welcomePrompt: true,
+            vibeTags: true,
+            mascotName: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
       });
 
       return c.json({ data: buildProfileResponse(token, profile) });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/assets/presign",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema),
+  zValidator("json", CommunityAssetPresignSchema),
+  async (c) => {
+    try {
+      if (!isCommunityAssetStorageConfigured()) {
+        throw new Error("COMMUNITY_ASSET_STORAGE_NOT_CONFIGURED");
       }
-      if (error instanceof Error && error.message === "INSUFFICIENT_LEVEL") {
-        return c.json(
-          { error: { message: "Trusted members only", code: "INSUFFICIENT_LEVEL" } },
-          403,
-        );
+      const viewer = c.get("user")!;
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const payload = c.req.valid("json");
+      const objectKey = buildCommunityAssetObjectKey({
+        tokenAddress: token.address,
+        kind: payload.kind,
+        fileName: payload.fileName,
+      });
+      const upload = createCommunityAssetUpload({
+        objectKey,
+        contentType: payload.contentType,
+      });
+
+      const asset = await prisma.tokenCommunityAsset.create({
+        data: {
+          tokenId: token.id,
+          kind: payload.kind,
+          status: "pending",
+          url: upload.publicUrl,
+          objectKey,
+          mimeType: payload.contentType,
+          width: payload.width ?? null,
+          height: payload.height ?? null,
+          sizeBytes: payload.sizeBytes,
+          uploadedById: viewer.id,
+        },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          url: true,
+          objectKey: true,
+          mimeType: true,
+          width: true,
+          height: true,
+          sizeBytes: true,
+          sortOrder: true,
+          createdAt: true,
+        },
+      });
+
+      return c.json({
+        data: {
+          asset: serializeCommunityAsset(token.address, asset),
+          upload: {
+            method: "PUT",
+            url: upload.uploadUrl,
+            headers: upload.headers,
+            expiresAt: upload.expiresAt,
+          },
+        },
+      });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.delete(
+  "/:tokenAddress/community/assets/:assetId",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema.extend({ assetId: z.string().trim().min(1) })),
+  async (c) => {
+    try {
+      const viewer = await resolveViewerState(c.get("user")!.id);
+      const { tokenAddress, assetId } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      const asset = await prisma.tokenCommunityAsset.findFirst({
+        where: { id: assetId, tokenId: token.id },
+        select: {
+          id: true,
+          kind: true,
+          objectKey: true,
+          uploadedById: true,
+          status: true,
+        },
+      });
+      if (!asset) {
+        return c.json({ error: { message: "Asset not found", code: "NOT_FOUND" } }, 404);
       }
+
+      const profile = await prisma.tokenCommunityProfile.findUnique({
+        where: { tokenId: token.id },
+        select: { id: true },
+      });
+      if (profile) {
+        assertTrustedMember(viewer, 3);
+        const remaining = await prisma.tokenCommunityAsset.findMany({
+          where: {
+            tokenId: token.id,
+            status: "ready",
+            id: { not: asset.id },
+          },
+          select: { id: true, kind: true },
+        });
+        if (
+          remaining.filter((item) => item.kind === "logo").length < 1 ||
+          remaining.filter((item) => item.kind === "banner").length < 1 ||
+          remaining.filter((item) => item.kind === "reference_meme").length < 1
+        ) {
+          return c.json(
+            {
+              error: {
+                message: "Community must keep one logo, one banner, and at least one reference meme",
+                code: "ASSET_DELETE_BLOCKED",
+              },
+            },
+            409,
+          );
+        }
+      } else if (!viewer.isAdmin && asset.uploadedById !== viewer.id) {
+        return c.json({ error: { message: "Forbidden", code: "FORBIDDEN" } }, 403);
+      }
+
+      await prisma.tokenCommunityAsset.delete({
+        where: { id: asset.id },
+      });
+      await deleteCommunityAssetObject(asset.objectKey).catch(() => undefined);
+
+      return c.json({ data: { deleted: true } });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/assets/:assetId/content",
+  requireAuth,
+  zValidator("param", TokenAddressParamSchema.extend({ assetId: z.string().trim().min(1) })),
+  async (c) => {
+    try {
+      const { tokenAddress, assetId } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      const asset = await prisma.tokenCommunityAsset.findFirst({
+        where: { id: assetId, tokenId: token.id },
+        select: {
+          objectKey: true,
+          mimeType: true,
+        },
+      });
+      if (!asset) {
+        return c.json({ error: { message: "Asset not found", code: "NOT_FOUND" } }, 404);
+      }
+
+      const upstream = await fetchCommunityAssetObject(asset.objectKey);
+      if (!upstream.ok) {
+        return c.json({ error: { message: "Asset unavailable", code: "ASSET_UNAVAILABLE" } }, 502);
+      }
+
+      const headers = new Headers();
+      headers.set("Content-Type", upstream.headers.get("content-type") || asset.mimeType || "image/png");
+      headers.set("Cache-Control", "private, max-age=300");
+      return new Response(upstream.body, {
+        status: 200,
+        headers,
+      });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/room",
+  requireAuth,
+  zValidator("param", TokenAddressParamSchema),
+  async (c) => {
+    try {
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const viewer = c.get("user");
+      const viewerState = viewer ? await resolveViewerState(viewer.id) : null;
+      const room = await loadTokenCommunityRoom({
+        tokenId: token.id,
+        tokenAddress: token.address,
+        viewerId: viewer?.id ?? null,
+        viewerLevel: viewerState?.level ?? 0,
+        viewerIsAdmin: viewerState?.isAdmin ?? false,
+      });
+      return c.json({ data: room });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -675,6 +1361,14 @@ tokenCommunitiesRouter.get(
       const query = c.req.valid("query");
       const cursor = decodeCursor(query.cursor);
       const limit = query.limit ?? 12;
+      const hasCommunity = await prisma.tokenCommunityProfile.findUnique({
+        where: { tokenId: token.id },
+        select: { id: true },
+      });
+      if (!hasCommunity) {
+        return c.json({ data: { items: [], hasMore: false, nextCursor: null } });
+      }
+
       const threads = await prisma.tokenCommunityThread.findMany({
         where: {
           tokenId: token.id,
@@ -708,6 +1402,13 @@ tokenCommunitiesRouter.get(
               isVerified: true,
             },
           },
+          reactions: {
+            select: {
+              emoji: true,
+              userId: true,
+            },
+            take: 60,
+          },
         },
         orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         take: limit + 1,
@@ -722,15 +1423,14 @@ tokenCommunitiesRouter.get(
 
       return c.json({
         data: {
-          items: items.map((thread) => serializeThread(thread)),
+          items: items.map((thread) => serializeThread(c.get("user")?.id ?? null, thread)),
           hasMore,
           nextCursor,
         },
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -743,9 +1443,12 @@ tokenCommunitiesRouter.post(
   zValidator("json", CreateThreadSchema),
   async (c) => {
     try {
-      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
-      const payload = c.req.valid("json");
       const viewer = c.get("user")!;
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      const payload = c.req.valid("json");
+
       const thread = await prisma.tokenCommunityThread.create({
         data: {
           tokenId: token.id,
@@ -776,14 +1479,140 @@ tokenCommunitiesRouter.post(
               isVerified: true,
             },
           },
+          reactions: {
+            select: {
+              emoji: true,
+              userId: true,
+            },
+          },
         },
       });
+      await mutateCommunityMemberStats({
+        tokenId: token.id,
+        userId: viewer.id,
+        threadCount: 1,
+        lastActiveAt: new Date(),
+      });
 
-      return c.json({ data: serializeThread(thread) }, 201);
+      return c.json({ data: serializeThread(viewer.id, thread) }, 201);
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/threads/:threadId/reactions",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema.extend({ threadId: z.string().trim().min(1) })),
+  zValidator("json", ThreadReactionSchema),
+  async (c) => {
+    try {
+      const viewer = c.get("user")!;
+      const { tokenAddress, threadId } = c.req.valid("param");
+      const { emoji } = c.req.valid("json");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      const thread = await prisma.tokenCommunityThread.findFirst({
+        where: { id: threadId, tokenId: token.id },
+        select: { id: true, authorId: true },
+      });
+      if (!thread) {
+        return c.json({ error: { message: "Thread not found", code: "NOT_FOUND" } }, 404);
       }
+
+      const existing = await prisma.tokenCommunityThreadReaction.findUnique({
+        where: {
+          threadId_userId_emoji: {
+            threadId: thread.id,
+            userId: viewer.id,
+            emoji,
+          },
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        await prisma.tokenCommunityThreadReaction.create({
+          data: {
+            threadId: thread.id,
+            userId: viewer.id,
+            emoji,
+          },
+        });
+        if (thread.authorId !== viewer.id) {
+          await mutateCommunityMemberStats({
+            tokenId: token.id,
+            userId: thread.authorId,
+            reactionsReceived: 1,
+            lastActiveAt: new Date(),
+          });
+        }
+        await mutateCommunityMemberStats({
+          tokenId: token.id,
+          userId: viewer.id,
+          lastActiveAt: new Date(),
+        });
+      }
+
+      const reactions = await prisma.tokenCommunityThreadReaction.findMany({
+        where: { threadId: thread.id },
+        select: { emoji: true, userId: true },
+      });
+      return c.json({ data: serializeReactionSummary(reactions, viewer.id) });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.delete(
+  "/:tokenAddress/community/threads/:threadId/reactions/:emoji",
+  requireNotBanned,
+  zValidator(
+    "param",
+    TokenAddressParamSchema.extend({
+      threadId: z.string().trim().min(1),
+      emoji: z.enum(COMMUNITY_ALLOWED_EMOJIS),
+    }),
+  ),
+  async (c) => {
+    try {
+      const viewer = c.get("user")!;
+      const { tokenAddress, threadId, emoji } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      const thread = await prisma.tokenCommunityThread.findFirst({
+        where: { id: threadId, tokenId: token.id },
+        select: { id: true },
+      });
+      if (!thread) {
+        return c.json({ error: { message: "Thread not found", code: "NOT_FOUND" } }, 404);
+      }
+
+      await prisma.tokenCommunityThreadReaction.delete({
+        where: {
+          threadId_userId_emoji: {
+            threadId: thread.id,
+            userId: viewer.id,
+            emoji,
+          },
+        },
+      }).catch(() => undefined);
+
+      const reactions = await prisma.tokenCommunityThreadReaction.findMany({
+        where: { threadId: thread.id },
+        select: { emoji: true, userId: true },
+      });
+      return c.json({ data: serializeReactionSummary(reactions, viewer.id) });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -831,9 +1660,8 @@ tokenCommunitiesRouter.get(
 
       return c.json({ data: replies.map((reply) => serializeReply(reply)) });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -851,6 +1679,8 @@ tokenCommunitiesRouter.post(
       const { tokenAddress, threadId } = c.req.valid("param");
       const payload = c.req.valid("json");
       const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
       const thread = await prisma.tokenCommunityThread.findFirst({
         where: { id: threadId, tokenId: token.id },
         select: {
@@ -918,6 +1748,13 @@ tokenCommunitiesRouter.post(
             lastActivityAt: new Date(),
           },
         });
+        await mutateCommunityMemberStats({
+          db: tx,
+          tokenId: token.id,
+          userId: viewer.id,
+          replyCount: 1,
+          lastActiveAt: new Date(),
+        });
 
         return created;
       });
@@ -931,9 +1768,8 @@ tokenCommunitiesRouter.post(
 
       return c.json({ data: serializeReply(reply) }, 201);
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -969,9 +1805,8 @@ tokenCommunitiesRouter.delete(
 
       return c.json({ data: { deleted: true } });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1007,9 +1842,8 @@ tokenCommunitiesRouter.delete(
 
       return c.json({ data: { deleted: true } });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1022,12 +1856,11 @@ tokenCommunitiesRouter.get(
   async (c) => {
     try {
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
-      const active = await loadActiveRaidView(token.id, c.get("user")?.id ?? null);
+      const active = await loadActiveRaidView(token, c.get("user")?.id ?? null);
       return c.json({ data: active });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1043,30 +1876,35 @@ tokenCommunitiesRouter.post(
       const viewer = await resolveViewerState(c.get("user")!.id);
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
       const payload = c.req.valid("json");
-      const existingProfile = await prisma.tokenCommunityProfile.findUnique({
-        where: { tokenId: token.id },
-        select: { raidLeadMinLevel: true },
-      });
-      assertTrustedMember(viewer, Math.max(existingProfile?.raidLeadMinLevel ?? 3, 3));
+      const profile = await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      assertTrustedMember(viewer, Math.max(profile.raidLeadMinLevel ?? 3, 3));
 
       const [activeExisting, raidContext] = await Promise.all([
         prisma.tokenRaidCampaign.findFirst({
           where: { tokenId: token.id, status: "active" },
-          select: { id: true, thread: { select: { id: true } } },
+          select: {
+            id: true,
+            objective: true,
+            memeOptionsJson: true,
+            copyOptionsJson: true,
+            generationHistoryJson: true,
+            thread: { select: { id: true } },
+          },
         }),
         loadRaidContext(token.id),
       ]);
 
       if (activeExisting && !payload.replaceActive) {
         return c.json(
-          { error: { message: "An active raid already exists", code: "ACTIVE_RAID_EXISTS" } },
+          { error: { message: "An active raid campaign already exists", code: "ACTIVE_RAID_EXISTS" } },
           409,
         );
       }
 
       const objective =
         payload.objective?.trim() ||
-        `Make ${normalizeCashtag(raidContext.profile?.xCashtag ?? null, raidContext.token.symbol) || "$TOKEN"} impossible to ignore without sounding desperate.`;
+        `Make ${normalizeCashtag(profile.xCashtag ?? null, token.symbol) || "$TOKEN"} impossible to ignore without sounding desperate.`;
 
       const generated = TokenRaidGenerationResultSchema.parse(
         safeGenerateTokenRaidOptions({
@@ -1080,7 +1918,15 @@ tokenCommunitiesRouter.post(
         if (activeExisting) {
           await tx.tokenRaidCampaign.update({
             where: { id: activeExisting.id },
-            data: { status: "closed", activeKey: null, closedAt: new Date() },
+            data: {
+              status: "closed",
+              activeKey: null,
+              closedAt: new Date(),
+              generationHistoryJson: buildGenerationHistoryJson(
+                activeExisting.generationHistoryJson,
+                activeExisting,
+              ),
+            },
           });
           if (activeExisting.thread?.id) {
             await tx.tokenCommunityThread.update({
@@ -1098,28 +1944,11 @@ tokenCommunitiesRouter.post(
             objective,
             memeOptionsJson: generated.memeOptions,
             copyOptionsJson: generated.copyOptions,
+            generationHistoryJson: [],
             activeKey: `${token.id}:active`,
           },
           select: {
             id: true,
-            status: true,
-            objective: true,
-            memeOptionsJson: true,
-            copyOptionsJson: true,
-            openedAt: true,
-            closedAt: true,
-            createdAt: true,
-            updatedAt: true,
-            createdBy: {
-              select: {
-                id: true,
-                name: true,
-                username: true,
-                image: true,
-                level: true,
-                isVerified: true,
-              },
-            },
           },
         });
 
@@ -1127,13 +1956,30 @@ tokenCommunitiesRouter.post(
           data: {
             tokenId: token.id,
             authorId: viewer.id,
-            title: `Raid live: ${(token.symbol ? `$${token.symbol}` : token.name || "Token").trim()}`,
-            content: `${objective}\n\nPick a meme. Pick a line. Post the receipt back here.`,
+            title: `Raid campaign live: ${(token.symbol ? `$${token.symbol}` : token.name || "Token").trim()}`,
+            content: `${objective}\n\nJoin the raid campaign, pick a meme, pick a line, and post the receipt back here.`,
             kind: "raid",
             raidCampaignId: raid.id,
             isPinned: true,
             lastActivityAt: new Date(),
           },
+        });
+
+        await tx.tokenRaidParticipant.create({
+          data: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
+            status: "joined",
+            currentStep: "meme",
+          },
+        });
+        await mutateCommunityMemberStats({
+          db: tx,
+          tokenId: token.id,
+          userId: viewer.id,
+          raidsJoined: 1,
+          raidsLaunched: 1,
+          lastActiveAt: new Date(),
         });
 
         return raid;
@@ -1147,32 +1993,88 @@ tokenCommunitiesRouter.post(
         creatorLabel: viewer.username || viewer.name,
       }).catch(() => undefined);
 
-      return c.json({
-        data: {
-          campaign: {
-            id: created.id,
-            status: created.status,
-            objective: created.objective,
-            memeOptions: parseStoredMemeOptions(created.memeOptionsJson),
-            copyOptions: parseStoredCopyOptions(created.copyOptionsJson),
-            openedAt: created.openedAt.toISOString(),
-            closedAt: created.closedAt?.toISOString() ?? null,
-            createdAt: created.createdAt.toISOString(),
-            updatedAt: created.updatedAt.toISOString(),
-            createdBy: serializeAuthor(created.createdBy),
+      const active = await loadActiveRaidView(token, viewer.id);
+      return c.json({ data: active }, 201);
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/raids/:raidId/join",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema.extend({ raidId: z.string().trim().min(1) })),
+  async (c) => {
+    try {
+      const viewer = c.get("user")!;
+      const { tokenAddress, raidId } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      const raid = await prisma.tokenRaidCampaign.findFirst({
+        where: { id: raidId, tokenId: token.id },
+        select: { id: true, status: true },
+      });
+      if (!raid) {
+        return c.json({ error: { message: "Raid not found", code: "NOT_FOUND" } }, 404);
+      }
+      if (raid.status !== "active") {
+        return c.json({ error: { message: "Raid is closed", code: "RAID_CLOSED" } }, 409);
+      }
+
+      const existing = await prisma.tokenRaidParticipant.findUnique({
+        where: {
+          raidCampaignId_userId: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
           },
         },
-      }, 201);
+        select: { id: true },
+      });
+
+      const participant = await prisma.tokenRaidParticipant.upsert({
+        where: {
+          raidCampaignId_userId: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
+          },
+        },
+        create: {
+          raidCampaignId: raid.id,
+          userId: viewer.id,
+          status: "joined",
+          currentStep: "meme",
+        },
+        update: {
+          status: "joined",
+          currentStep: "meme",
+        },
+        select: {
+          id: true,
+          status: true,
+          currentStep: true,
+          joinedAt: true,
+          launchedAt: true,
+          postedAt: true,
+        },
+      });
+
+      if (!existing) {
+        await mutateCommunityMemberStats({
+          tokenId: token.id,
+          userId: viewer.id,
+          raidsJoined: 1,
+          lastActiveAt: new Date(),
+        });
+      }
+
+      return c.json({ data: serializeParticipant(participant) });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
-      if (error instanceof Error && error.message === "INSUFFICIENT_LEVEL") {
-        return c.json(
-          { error: { message: "Trusted members only", code: "INSUFFICIENT_LEVEL" } },
-          403,
-        );
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1187,16 +2089,21 @@ tokenCommunitiesRouter.post(
       const viewer = await resolveViewerState(c.get("user")!.id);
       const { tokenAddress, raidId } = c.req.valid("param");
       const token = await resolveTokenByAddressOrThrow(tokenAddress);
-      const profile = await prisma.tokenCommunityProfile.findUnique({
-        where: { tokenId: token.id },
-        select: { raidLeadMinLevel: true },
-      });
-      assertTrustedMember(viewer, Math.max(profile?.raidLeadMinLevel ?? 3, 3));
+      const profile = await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      assertTrustedMember(viewer, Math.max(profile.raidLeadMinLevel ?? 3, 3));
 
       const [raid, raidContext] = await Promise.all([
         prisma.tokenRaidCampaign.findFirst({
           where: { id: raidId, tokenId: token.id },
-          select: { id: true, objective: true, status: true },
+          select: {
+            id: true,
+            objective: true,
+            status: true,
+            memeOptionsJson: true,
+            copyOptionsJson: true,
+            generationHistoryJson: true,
+          },
         }),
         loadRaidContext(token.id),
       ]);
@@ -1216,61 +2123,20 @@ tokenCommunitiesRouter.post(
         }),
       );
 
-      const updated = await prisma.tokenRaidCampaign.update({
+      await prisma.tokenRaidCampaign.update({
         where: { id: raid.id },
         data: {
           memeOptionsJson: generated.memeOptions,
           copyOptionsJson: generated.copyOptions,
-        },
-        select: {
-          id: true,
-          status: true,
-          objective: true,
-          memeOptionsJson: true,
-          copyOptionsJson: true,
-          openedAt: true,
-          closedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          createdBy: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              isVerified: true,
-            },
-          },
+          generationHistoryJson: buildGenerationHistoryJson(raid.generationHistoryJson, raid),
         },
       });
 
-      return c.json({
-        data: {
-          campaign: {
-            id: updated.id,
-            status: updated.status,
-            objective: updated.objective,
-            memeOptions: parseStoredMemeOptions(updated.memeOptionsJson),
-            copyOptions: parseStoredCopyOptions(updated.copyOptionsJson),
-            openedAt: updated.openedAt.toISOString(),
-            closedAt: updated.closedAt?.toISOString() ?? null,
-            createdAt: updated.createdAt.toISOString(),
-            updatedAt: updated.updatedAt.toISOString(),
-            createdBy: serializeAuthor(updated.createdBy),
-          },
-        },
-      });
+      const active = await loadActiveRaidView(token, viewer.id);
+      return c.json({ data: active });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
-      if (error instanceof Error && error.message === "INSUFFICIENT_LEVEL") {
-        return c.json(
-          { error: { message: "Trusted members only", code: "INSUFFICIENT_LEVEL" } },
-          403,
-        );
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1287,6 +2153,8 @@ tokenCommunitiesRouter.post(
       const { tokenAddress, raidId } = c.req.valid("param");
       const payload = c.req.valid("json");
       const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
       const raid = await prisma.tokenRaidCampaign.findFirst({
         where: { id: raidId, tokenId: token.id },
         select: {
@@ -1304,6 +2172,19 @@ tokenCommunitiesRouter.post(
         return c.json({ error: { message: "Raid is closed", code: "RAID_CLOSED" } }, 409);
       }
 
+      const participant = await prisma.tokenRaidParticipant.findUnique({
+        where: {
+          raidCampaignId_userId: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
+          },
+        },
+        select: { id: true },
+      });
+      if (!participant) {
+        return c.json({ error: { message: "Join the raid campaign first", code: "RAID_JOIN_REQUIRED" } }, 403);
+      }
+
       const memeOptions = parseStoredMemeOptions(raid.memeOptionsJson);
       const copyOptions = parseStoredCopyOptions(raid.copyOptionsJson);
       const selectedMeme = memeOptions.find((option) => option.id === payload.memeOptionId);
@@ -1315,57 +2196,81 @@ tokenCommunitiesRouter.post(
         );
       }
 
-      const submission = await prisma.tokenRaidSubmission.upsert({
-        where: {
-          raidCampaignId_userId: {
-            raidCampaignId: raid.id,
-            userId: viewer.id,
-          },
-        },
-        create: {
-          raidCampaignId: raid.id,
-          userId: viewer.id,
-          memeOptionId: selectedMeme.id,
-          copyOptionId: selectedCopy.id,
-          renderPayloadJson: payload.renderPayloadJson as Prisma.InputJsonValue,
-          composerText: payload.composerText,
-        },
-        update: {
-          memeOptionId: selectedMeme.id,
-          copyOptionId: selectedCopy.id,
-          renderPayloadJson: payload.renderPayloadJson as Prisma.InputJsonValue,
-          composerText: payload.composerText,
-        },
-        select: {
-          id: true,
-          memeOptionId: true,
-          copyOptionId: true,
-          renderPayloadJson: true,
-          composerText: true,
-          xPostUrl: true,
-          postedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              isVerified: true,
+      const submission = await prisma.$transaction(async (tx) => {
+        const next = await tx.tokenRaidSubmission.upsert({
+          where: {
+            raidCampaignId_userId: {
+              raidCampaignId: raid.id,
+              userId: viewer.id,
             },
           },
-        },
+          create: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
+            memeOptionId: selectedMeme.id,
+            copyOptionId: selectedCopy.id,
+            renderPayloadJson: payload.renderPayloadJson as Prisma.InputJsonValue,
+            composerText: payload.composerText,
+          },
+          update: {
+            memeOptionId: selectedMeme.id,
+            copyOptionId: selectedCopy.id,
+            renderPayloadJson: payload.renderPayloadJson as Prisma.InputJsonValue,
+            composerText: payload.composerText,
+          },
+          select: {
+            id: true,
+            memeOptionId: true,
+            copyOptionId: true,
+            renderPayloadJson: true,
+            composerText: true,
+            xPostUrl: true,
+            postedAt: true,
+            createdAt: true,
+            updatedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                isVerified: true,
+              },
+            },
+            boosts: {
+              select: { userId: true },
+            },
+          },
+        });
+        await tx.tokenRaidParticipant.update({
+          where: {
+            raidCampaignId_userId: {
+              raidCampaignId: raid.id,
+              userId: viewer.id,
+            },
+          },
+          data: {
+            status: "launched",
+            currentStep: "launch",
+            launchedAt: new Date(),
+          },
+        });
+        await mutateCommunityMemberStats({
+          db: tx,
+          tokenId: token.id,
+          userId: viewer.id,
+          lastActiveAt: new Date(),
+        });
+        return next;
       });
 
       return c.json({
-        data: serializeSubmission(submission as Parameters<typeof serializeSubmission>[0]),
+        data: serializeSubmission(viewer.id, submission as Parameters<typeof serializeSubmission>[1]),
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1382,6 +2287,8 @@ tokenCommunitiesRouter.patch(
       const { tokenAddress, raidId } = c.req.valid("param");
       const payload = c.req.valid("json");
       const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
       const raid = await prisma.tokenRaidCampaign.findFirst({
         where: { id: raidId, tokenId: token.id },
         select: { id: true },
@@ -1390,47 +2297,97 @@ tokenCommunitiesRouter.patch(
         return c.json({ error: { message: "Raid not found", code: "NOT_FOUND" } }, 404);
       }
 
-      const submission = await prisma.tokenRaidSubmission.update({
+      const existingStats = await prisma.tokenCommunityMemberStats.findUnique({
         where: {
-          raidCampaignId_userId: {
-            raidCampaignId: raid.id,
+          tokenId_userId: {
+            tokenId: token.id,
             userId: viewer.id,
           },
         },
-        data: {
-          xPostUrl: payload.xPostUrl,
-          postedAt: new Date(),
-        },
         select: {
-          id: true,
-          memeOptionId: true,
-          copyOptionId: true,
-          renderPayloadJson: true,
-          composerText: true,
-          xPostUrl: true,
-          postedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              isVerified: true,
+          currentRaidStreak: true,
+          bestRaidStreak: true,
+        },
+      });
+      const nextStreak = (existingStats?.currentRaidStreak ?? 0) + 1;
+      const nextBest = Math.max(existingStats?.bestRaidStreak ?? 0, nextStreak);
+
+      const submission = await prisma.$transaction(async (tx) => {
+        const next = await tx.tokenRaidSubmission.update({
+          where: {
+            raidCampaignId_userId: {
+              raidCampaignId: raid.id,
+              userId: viewer.id,
             },
           },
-        },
+          data: {
+            xPostUrl: payload.xPostUrl,
+            postedAt: new Date(),
+          },
+          select: {
+            id: true,
+            memeOptionId: true,
+            copyOptionId: true,
+            renderPayloadJson: true,
+            composerText: true,
+            xPostUrl: true,
+            postedAt: true,
+            createdAt: true,
+            updatedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                isVerified: true,
+              },
+            },
+            boosts: {
+              select: { userId: true },
+            },
+          },
+        });
+        await tx.tokenRaidParticipant.upsert({
+          where: {
+            raidCampaignId_userId: {
+              raidCampaignId: raid.id,
+              userId: viewer.id,
+            },
+          },
+          create: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
+            status: "posted",
+            currentStep: "complete",
+            launchedAt: new Date(),
+            postedAt: new Date(),
+          },
+          update: {
+            status: "posted",
+            currentStep: "complete",
+            postedAt: new Date(),
+          },
+        });
+        await mutateCommunityMemberStats({
+          db: tx,
+          tokenId: token.id,
+          userId: viewer.id,
+          raidPostsLinked: 1,
+          setCurrentRaidStreak: nextStreak,
+          setBestRaidStreak: nextBest,
+          lastActiveAt: new Date(),
+        });
+        return next;
       });
 
       return c.json({
-        data: serializeSubmission(submission as Parameters<typeof serializeSubmission>[0]),
+        data: serializeSubmission(viewer.id, submission as Parameters<typeof serializeSubmission>[1]),
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1461,12 +2418,92 @@ tokenCommunitiesRouter.delete(
           },
         },
       }).catch(() => undefined);
+      await prisma.tokenRaidParticipant.update({
+        where: {
+          raidCampaignId_userId: {
+            raidCampaignId: raid.id,
+            userId: viewer.id,
+          },
+        },
+        data: {
+          status: "joined",
+          currentStep: "preview",
+          postedAt: null,
+        },
+      }).catch(() => undefined);
 
       return c.json({ data: { deleted: true } });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/raids/:raidId/submissions/:submissionId/boosts",
+  requireNotBanned,
+  zValidator(
+    "param",
+    TokenAddressParamSchema.extend({
+      raidId: z.string().trim().min(1),
+      submissionId: z.string().trim().min(1),
+    }),
+  ),
+  async (c) => {
+    try {
+      const viewer = c.get("user")!;
+      const { tokenAddress, raidId, submissionId } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      await requireExistingCommunity(token.id);
+      await requireCommunityMembership(token.id, viewer.id);
+      const submission = await prisma.tokenRaidSubmission.findFirst({
+        where: {
+          id: submissionId,
+          raidCampaignId: raidId,
+          raidCampaign: { tokenId: token.id },
+          xPostUrl: { not: null },
+        },
+        select: {
+          id: true,
+        },
+      });
+      if (!submission) {
+        return c.json({ error: { message: "Submission not found", code: "NOT_FOUND" } }, 404);
       }
+
+      const existing = await prisma.tokenRaidBoost.findUnique({
+        where: {
+          submissionId_userId: {
+            submissionId: submission.id,
+            userId: viewer.id,
+          },
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        await prisma.tokenRaidBoost.create({
+          data: {
+            submissionId: submission.id,
+            userId: viewer.id,
+          },
+        });
+        await mutateCommunityMemberStats({
+          tokenId: token.id,
+          userId: viewer.id,
+          boostsGiven: 1,
+          lastActiveAt: new Date(),
+        });
+      }
+
+      const count = await prisma.tokenRaidBoost.count({
+        where: { submissionId: submission.id },
+      });
+      return c.json({ data: { boosted: true, boostCount: count } });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },
@@ -1513,6 +2550,9 @@ tokenCommunitiesRouter.get(
               isVerified: true,
             },
           },
+          boosts: {
+            select: { userId: true },
+          },
         },
         orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
         take: 60,
@@ -1520,13 +2560,12 @@ tokenCommunitiesRouter.get(
 
       return c.json({
         data: submissions.map((submission) =>
-          serializeSubmission(submission as Parameters<typeof serializeSubmission>[0]),
+          serializeSubmission(c.get("user")?.id ?? null, submission as Parameters<typeof serializeSubmission>[1]),
         ),
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "TOKEN_NOT_FOUND") {
-        return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
-      }
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
       throw error;
     }
   },

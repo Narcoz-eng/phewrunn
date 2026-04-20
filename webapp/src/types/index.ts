@@ -184,6 +184,11 @@ export interface TokenCommunityProfile {
   insideJokes: string[];
   preferredTemplateIds: string[];
   raidLeadMinLevel: number;
+  whyLine: string | null;
+  welcomePrompt: string | null;
+  vibeTags: string[];
+  mascotName: string | null;
+  createdAt: string | null;
   updatedAt: string | null;
 }
 
@@ -194,6 +199,110 @@ export interface TokenCommunityAuthor {
   image: string | null;
   level: number;
   isVerified?: boolean;
+}
+
+export interface TokenCommunityReactionSummary {
+  emoji: string;
+  count: number;
+  reactedByViewer: boolean;
+}
+
+export interface TokenCommunityAsset {
+  id: string;
+  kind: "logo" | "banner" | "mascot" | "reference_meme" | string;
+  status: string;
+  url: string;
+  renderUrl: string;
+  objectKey: string;
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+  sizeBytes: number | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface TokenCommunityContributor {
+  user: TokenCommunityAuthor;
+  contributionScore: number;
+  currentRaidStreak: number;
+  bestRaidStreak: number;
+  badge: "elite" | "trusted" | "room-regular" | string;
+}
+
+export interface TokenCommunityRecentMember {
+  joinedAt: string;
+  user: TokenCommunityAuthor;
+}
+
+export interface TokenCommunitySuggestedThread {
+  id: string;
+  title: string | null;
+  content: string;
+  createdAt: string;
+  author: TokenCommunityAuthor;
+}
+
+export interface TokenCommunityRecentWin {
+  id: string;
+  xPostUrl: string | null;
+  postedAt: string | null;
+  boostCount: number;
+  user: TokenCommunityAuthor;
+}
+
+export interface TokenCommunityViewerState {
+  joined: boolean;
+  joinedAt: string | null;
+  hasPosted: boolean;
+  hasReplied: boolean;
+  hasRaided: boolean;
+  showWelcomeBanner: boolean;
+  suggestedAction: "create-community" | "wait-community" | "join-community" | "join-raid" | "reply-thread" | "introduce" | string;
+  currentRaidStreak: number;
+  bestRaidStreak: number;
+}
+
+export interface TokenCommunityRoom {
+  exists: boolean;
+  canCreate: boolean;
+  canJoin: boolean;
+  joined: boolean;
+  joinedAt: string | null;
+  memberCount: number;
+  onlineNowEstimate: number;
+  activeThreadCount: number;
+  currentRaidPulse: {
+    label: string;
+    participantCount: number;
+    postedCount: number;
+  } | null;
+  topContributors: TokenCommunityContributor[];
+  recentMembers: TokenCommunityRecentMember[];
+  whyLine: string | null;
+  welcomePrompt: string | null;
+  suggestedThread: TokenCommunitySuggestedThread | null;
+  activeRaidSummary: {
+    id: string;
+    objective: string;
+    openedAt: string;
+    threadId: string | null;
+    joinedCount: number;
+    postedCount: number;
+    createdBy: TokenCommunityAuthor;
+  } | null;
+  recentWins: TokenCommunityRecentWin[];
+  headline: string | null;
+  xCashtag: string | null;
+  vibeTags: string[];
+  mascotName: string | null;
+  assets: {
+    logo: TokenCommunityAsset | null;
+    banner: TokenCommunityAsset | null;
+    mascot: TokenCommunityAsset | null;
+    referenceMemes: TokenCommunityAsset[];
+  };
+  viewer: TokenCommunityViewerState;
 }
 
 export interface TokenCommunityThread {
@@ -208,6 +317,7 @@ export interface TokenCommunityThread {
   deletedAt: string | null;
   createdAt: string;
   author: TokenCommunityAuthor;
+  reactionSummary: TokenCommunityReactionSummary[];
 }
 
 export interface TokenCommunityReply {
@@ -230,6 +340,10 @@ export interface TokenRaidMemeOption {
   bottomText: string;
   kicker?: string | null;
   footer?: string | null;
+  toneLabel: string;
+  bestFor: string;
+  socialTag: string;
+  assetIdsUsed: string[];
 }
 
 export interface TokenRaidCopyOption {
@@ -238,6 +352,18 @@ export interface TokenRaidCopyOption {
   label: string;
   angle: string;
   text: string;
+  voiceLabel: string;
+  bestFor: string;
+  socialTag: string;
+}
+
+export interface TokenRaidParticipant {
+  id: string;
+  status: "joined" | "launched" | "posted" | string;
+  currentStep: "meme" | "copy" | "preview" | "launch" | "complete" | string;
+  joinedAt: string;
+  launchedAt: string | null;
+  postedAt: string | null;
 }
 
 export interface TokenRaidSubmission {
@@ -250,6 +376,8 @@ export interface TokenRaidSubmission {
   postedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  boostCount: number;
+  isBoostedByViewer: boolean;
   user: TokenCommunityAuthor;
 }
 
@@ -264,6 +392,10 @@ export interface TokenRaidCampaign {
   createdAt: string;
   updatedAt: string;
   threadId?: string | null;
+  participantCount: number;
+  postedCount: number;
+  memeChoiceCounts: Record<string, number>;
+  copyChoiceCounts: Record<string, number>;
   createdBy: TokenCommunityAuthor;
 }
 
@@ -271,6 +403,25 @@ export interface TokenActiveRaidResponse {
   campaign: TokenRaidCampaign | null;
   submissions: TokenRaidSubmission[];
   mySubmission: TokenRaidSubmission | null;
+  myParticipant: TokenRaidParticipant | null;
+  communityAssets: {
+    logo: TokenCommunityAsset | null;
+    banner: TokenCommunityAsset | null;
+    mascot: TokenCommunityAsset | null;
+    referenceMemes: TokenCommunityAsset[];
+  };
+}
+
+export interface TokenCommunityAssetUpload {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  expiresAt: string;
+}
+
+export interface TokenCommunityAssetPresignResponse {
+  asset: TokenCommunityAsset;
+  upload: TokenCommunityAssetUpload;
 }
 
 // Level constants

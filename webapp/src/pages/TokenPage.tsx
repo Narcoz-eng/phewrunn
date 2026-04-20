@@ -264,6 +264,8 @@ type TokenPageData = {
   bullishSignalsSuppressed: boolean;
   isEarlyRunner: boolean;
   isFollowing: boolean;
+  communityExists: boolean;
+  communityBannerUrl: string | null;
   earlyRunnerReasons?: string[];
   topHolders: TokenHolder[];
   devWallet: TokenHolder | null;
@@ -1965,13 +1967,15 @@ export default function TokenPage() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data: session, canPerformAuthenticatedWrites } = useSession();
+  const [communityEntryIntent, setCommunityEntryIntent] = useState<"create-community" | null>(null);
+  const [communityEntryIntentToken, setCommunityEntryIntentToken] = useState(0);
   const viewerScope = session?.user?.id ?? "anonymous";
   const tokenQueryKey = useMemo(
     () => ["token-page", viewerScope, tokenAddress] as const,
     [tokenAddress, viewerScope]
   );
   const tokenCacheKey = useMemo(
-    () => (tokenAddress ? `phew.token-page.v29:${viewerScope}:${tokenAddress}` : null),
+    () => (tokenAddress ? `phew.token-page.v31:${viewerScope}:${tokenAddress}` : null),
     [tokenAddress, viewerScope]
   );
   const cachedTokenEntry = useMemo(
@@ -2164,7 +2168,7 @@ export default function TokenPage() {
         buildTokenIntelligenceSnapshotFromLivePayload(tokenAddress, liveTokenQuery.data)
       );
     }
-  }, [liveTokenQuery.data, queryClient, tokenQueryKey]);
+  }, [liveTokenQuery.data, queryClient, tokenAddress, tokenQueryKey]);
 
   useEffect(() => {
     if (!tokenCacheKey || !isTokenPageDataCacheable(token)) return;
@@ -2453,6 +2457,7 @@ export default function TokenPage() {
       : liveChartQuery.data?.source === "geckoterminal"
         ? "GeckoTerminal live + token stream"
         : "Live chart + token stream";
+  const canCreateTokenCommunity = Boolean(session?.user && (session.user.isAdmin || (session.user.level ?? 0) >= 3));
 
   const followMutation = useMutation({
     mutationFn: async () => {
@@ -2480,6 +2485,8 @@ export default function TokenPage() {
         current ? { ...current, isFollowing: response.following } : current
       );
       void queryClient.invalidateQueries({ queryKey: ["posts"] });
+      void queryClient.invalidateQueries({ queryKey: ["token-community-room", tokenAddress] });
+      void queryClient.invalidateQueries({ queryKey: ["token-community-active-raid", tokenAddress] });
       toast.success(response.following ? "Token followed" : "Token unfollowed");
     },
     onError: (_error, _variables, context) => {
@@ -2517,6 +2524,20 @@ export default function TokenPage() {
       behavior: "smooth",
       block: "start",
     });
+  };
+
+  const handleCommunityAction = () => {
+    if (!token) return;
+    if (!token.communityExists) {
+      setCommunityEntryIntent("create-community");
+      setCommunityEntryIntentToken((current) => current + 1);
+      document.getElementById("token-community-room")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      return;
+    }
+    followMutation.mutate();
   };
 
   useEffect(() => {
@@ -2618,6 +2639,26 @@ export default function TokenPage() {
           >
             {/* ── SECTION 1: HERO ── */}
             <motion.section variants={sectionVariants} className="overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(160deg,rgba(255,255,255,0.96),rgba(243,249,245,0.97))] shadow-[0_32px_80px_-40px_hsl(var(--primary)/0.18)] dark:bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.11),transparent_48%),linear-gradient(180deg,rgba(10,16,24,0.98),rgba(5,10,16,0.99))] dark:shadow-none">
+              {token.communityBannerUrl ? (
+                <div className="relative h-28 border-b border-border/60 sm:h-36 lg:h-40">
+                  <div
+                    className="absolute inset-0 bg-cover bg-center"
+                    style={{ backgroundImage: `url("${token.communityBannerUrl}")` }}
+                    aria-hidden="true"
+                  />
+                  <div
+                    className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,7,18,0.14),rgba(3,7,18,0.62)),linear-gradient(135deg,rgba(5,150,105,0.12),rgba(15,23,42,0.2))]"
+                    aria-hidden="true"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.72))]" aria-hidden="true" />
+                  <div className="relative flex h-full items-end px-5 pb-4 sm:px-7">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/35 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/90 backdrop-blur-md">
+                      <Users className="h-3 w-3" />
+                      Community Room
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               {/* Top stripe: identity */}
               <div className="flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-start lg:justify-between">
                 {/* Left: image + name + address */}
@@ -2694,15 +2735,25 @@ export default function TokenPage() {
                   </Button>
                   <Button
                     variant={token.isFollowing ? "outline" : "outline"}
-                    onClick={() => followMutation.mutate()}
-                    disabled={followMutation.isPending}
+                    onClick={handleCommunityAction}
+                    disabled={followMutation.isPending || (!token.communityExists && !canCreateTokenCommunity)}
                     className={cn("h-10 rounded-full px-5 text-sm font-semibold transition-all",
-                      token.isFollowing
+                      token.communityExists && token.isFollowing
                         ? "border-primary/30 bg-primary/8 text-primary hover:bg-primary/12"
-                        : "border-border/60 bg-secondary hover:border-primary/30"
+                        : !token.communityExists
+                          ? "border-amber-300/40 bg-amber-400/10 text-amber-700 hover:border-amber-300/60 dark:text-amber-300"
+                          : "border-border/60 bg-secondary hover:border-primary/30"
                     )}
                   >
-                    {followMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : token.isFollowing ? "Joined" : "Join Community"}
+                    {followMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : !token.communityExists ? (
+                      canCreateTokenCommunity ? "Create Community" : "Community Not Open Yet"
+                    ) : token.isFollowing ? (
+                      "Joined"
+                    ) : (
+                      "Join Community"
+                    )}
                   </Button>
                   <a
                     href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
@@ -3402,6 +3453,8 @@ export default function TokenPage() {
                   tokenName={token.name}
                   viewer={session?.user ?? null}
                   canPerformAuthenticatedWrites={canPerformAuthenticatedWrites}
+                  entryIntent={communityEntryIntent}
+                  entryIntentToken={communityEntryIntentToken}
                 />
               </Suspense>
             </motion.section>

@@ -84,7 +84,7 @@ const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_
 const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
 const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
 const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
-const TOKEN_ROUTE_CACHE_VERSION = 26;
+const TOKEN_ROUTE_CACHE_VERSION = 28;
 const TOKEN_CHART_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 8_000;
 const TOKEN_CHART_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 3 * 60_000;
 const TOKEN_CHART_ROUTE_MAX_POINTS = process.env.NODE_ENV === "production" ? 720 : 240;
@@ -1522,6 +1522,12 @@ tokensRouter.post("/:tokenAddress/follow", requireNotBanned, zValidator("param",
   const overview = await getTokenOverviewByAddress(tokenAddress, user.id);
   if (!overview) {
     return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+  }
+  if (!overview.token.communityExists) {
+    return c.json(
+      { error: { message: "Community has not been created yet", code: "COMMUNITY_NOT_CREATED" } },
+      409
+    );
   }
 
   await prisma.tokenFollow.upsert({

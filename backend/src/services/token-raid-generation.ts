@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { COMMUNITY_ASSET_KIND_VALUES, type CommunityAssetKind } from "./community-asset-storage.js";
 
 export const TOKEN_RAID_TEMPLATE_IDS = [
   "chart-rat",
@@ -8,6 +9,9 @@ export const TOKEN_RAID_TEMPLATE_IDS = [
   "group-chat",
   "night-shift",
   "brain-rot-board",
+  "mascot-poster",
+  "reference-remix",
+  "market-flex",
 ] as const;
 
 const TOKEN_RAID_COPY_STYLE_IDS = [
@@ -24,6 +28,11 @@ const TOKEN_RAID_COPY_STYLE_IDS = [
 type TokenRaidTemplateId = (typeof TOKEN_RAID_TEMPLATE_IDS)[number];
 type TokenRaidCopyStyleId = (typeof TOKEN_RAID_COPY_STYLE_IDS)[number];
 
+const AssetDescriptorSchema = z.object({
+  id: z.string().min(1).max(80),
+  kind: z.enum(COMMUNITY_ASSET_KIND_VALUES),
+});
+
 export const TokenRaidMemeOptionSchema = z.object({
   id: z.string().min(1).max(80),
   templateId: z.enum(TOKEN_RAID_TEMPLATE_IDS),
@@ -33,6 +42,10 @@ export const TokenRaidMemeOptionSchema = z.object({
   bottomText: z.string().min(1).max(140),
   kicker: z.string().max(96).nullable().optional(),
   footer: z.string().max(96).nullable().optional(),
+  toneLabel: z.string().min(1).max(36).optional().default("Fresh angle"),
+  bestFor: z.string().min(1).max(72).optional().default("Room momentum"),
+  socialTag: z.string().min(1).max(28).optional().default("Fresh angle"),
+  assetIdsUsed: z.array(z.string().min(1).max(80)).max(5).optional().default([]),
 });
 
 export const TokenRaidCopyOptionSchema = z.object({
@@ -41,6 +54,9 @@ export const TokenRaidCopyOptionSchema = z.object({
   label: z.string().min(1).max(40),
   angle: z.string().min(1).max(80),
   text: z.string().min(1).max(280),
+  voiceLabel: z.string().min(1).max(36).optional().default("Room signal"),
+  bestFor: z.string().min(1).max(72).optional().default("Fast raid post"),
+  socialTag: z.string().min(1).max(28).optional().default("Fresh angle"),
 });
 
 export const TokenRaidGenerationResultSchema = z.object({
@@ -72,6 +88,9 @@ export type TokenRaidGenerationInput = {
     voiceHints?: string[] | null;
     insideJokes?: string[] | null;
     preferredTemplateIds?: string[] | null;
+    vibeTags?: string[] | null;
+    mascotName?: string | null;
+    assets?: Array<z.infer<typeof AssetDescriptorSchema>> | null;
   } | null;
   recentThreads: Array<{
     title?: string | null;
@@ -89,13 +108,12 @@ export type TokenRaidGenerationInput = {
 };
 
 type RaidGenerationContext = {
+  seed: number;
   tokenLabel: string;
-  tokenName: string;
-  symbol: string;
   cashtag: string;
+  tokenName: string;
   objective: string;
   shortObjective: string;
-  communityHandle: string;
   headline: string;
   insideJoke: string;
   secondInsideJoke: string;
@@ -103,67 +121,59 @@ type RaidGenerationContext = {
   secondVoiceHint: string;
   threadTopic: string;
   secondThreadTopic: string;
-  marketMood: string;
-  crowdSize: string;
   heatLabel: string;
+  crowdLabel: string;
+  vibeTag: string;
+  secondaryVibeTag: string;
+  mascotName: string | null;
+  logoAssetId: string | null;
+  bannerAssetId: string | null;
+  mascotAssetId: string | null;
+  referenceAssetIds: string[];
   recentSignatures: string[];
-  preferredTemplateIds: TokenRaidTemplateId[];
-  seed: number;
 };
-
-type MemeStyleBuilder = {
-  id: string;
-  templateId: TokenRaidTemplateId;
-  build: (ctx: RaidGenerationContext) => Omit<TokenRaidMemeOption, "id" | "templateId">;
-};
-
-type CopyStyleBuilder = {
-  id: TokenRaidCopyStyleId;
-  build: (ctx: RaidGenerationContext) => Omit<TokenRaidCopyOption, "id" | "style">;
-};
-
-const STOP_WORDS = new Set([
-  "about", "after", "again", "alpha", "bag", "bags", "been", "being", "because", "before", "below",
-  "between", "board", "call", "calls", "chart", "charts", "coin", "coins", "could", "community",
-  "contract", "copy", "degen", "even", "feel", "from", "have", "just", "like", "more", "most", "need",
-  "only", "over", "people", "raid", "raids", "really", "said", "same", "some", "still", "that",
-  "their", "there", "these", "they", "this", "thread", "threads", "token", "tokens", "very", "what",
-  "when", "with", "would", "your",
-]);
 
 const DEFAULT_VOICE_HINTS = [
   "dry confidence",
-  "internet gremlin discipline",
-  "group-chat chaos with receipts",
-  "smug but not forced",
-  "fast, punchy, and a little sleep-deprived",
+  "internet-native and sharp",
+  "chaotic but annoyingly documented",
+  "desk-bantery with receipts",
+  "fast, funny, and a little sleep-deprived",
 ] as const;
 
 const DEFAULT_INSIDE_JOKES = [
-  "the chart only respects stubborn people",
-  "every dip gets treated like an internship",
-  "someone always calls the bottom one candle early",
-  "the group chat hears boss music before everyone else",
-  "receipts first, victory laps second",
+  "receipts age better than cope",
+  "the chart keeps leaving fingerprints",
+  "someone always hears the boss music first",
+  "the room does not outsource timing",
+  "group chat confidence with actual timestamps",
 ] as const;
 
-const HEAT_LABELS = [
-  "quietly radioactive",
-  "group-chat combustible",
-  "midnight desk-lamp bullish",
-  "receipt-printer adjacent",
-  "alarm-clock unfriendly",
+const DEFAULT_VIBE_TAGS = [
+  "late-night desk",
+  "receipt room",
+  "cult of timing",
+  "chaos but organized",
+  "internet courtroom",
 ] as const;
+
+const STOP_WORDS = new Set([
+  "about", "after", "again", "alpha", "because", "before", "being", "board", "calls",
+  "chart", "charts", "community", "contract", "copy", "could", "feels", "have", "into",
+  "just", "like", "made", "make", "more", "need", "only", "people", "raid", "room",
+  "same", "some", "still", "that", "their", "there", "these", "they", "this", "those",
+  "thread", "threads", "token", "tokens", "what", "when", "with", "would", "your",
+]);
+
+function normalizeWhitespace(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
 
 function clampText(value: string, maxLength: number): string {
   const normalized = normalizeWhitespace(value);
   if (normalized.length <= maxLength) return normalized;
   if (maxLength <= 3) return ".".repeat(Math.max(0, maxLength));
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
-}
-
-function normalizeWhitespace(value: string): string {
-  return value.trim().replace(/\s+/g, " ");
 }
 
 function normalizeSignature(value: string): string {
@@ -180,73 +190,33 @@ function hashString(value: string): number {
   return Number.parseInt(digest.slice(0, 8), 16);
 }
 
-function seedPick<T>(items: readonly T[], seed: number): T {
-  return items[Math.abs(seed) % items.length] as T;
-}
-
-function seedVariant<T>(items: readonly T[], seed: number, offset = 0): T {
-  return seedPick(items, hashString(`${seed}:${offset}:${items.length}`));
-}
-
-function sanitizeTemplateIds(input: string[] | null | undefined): TokenRaidTemplateId[] {
-  const valid = new Set<TokenRaidTemplateId>();
-  for (const candidate of input ?? []) {
-    if ((TOKEN_RAID_TEMPLATE_IDS as readonly string[]).includes(candidate)) {
-      valid.add(candidate as TokenRaidTemplateId);
-    }
-  }
-  return [...valid];
-}
-
 function splitHints(input: string[] | null | undefined, defaults: readonly string[]): string[] {
   const normalized = (input ?? [])
     .map((value) => normalizeWhitespace(value))
     .filter((value) => value.length > 0);
-  if (normalized.length > 0) {
-    return normalized.slice(0, 8);
-  }
-  return [...defaults];
+  return normalized.length > 0 ? normalized.slice(0, 8) : [...defaults];
 }
 
-function extractTopics(texts: string[]): string[] {
-  const counts = new Map<string, number>();
-  for (const text of texts) {
-    const words = normalizeSignature(text)
-      .split(" ")
-      .filter((word) => word.length >= 4 && !STOP_WORDS.has(word));
-    for (const word of words) {
-      counts.set(word, (counts.get(word) ?? 0) + 1);
-    }
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([word]) => word)
-    .slice(0, 10);
+function pickSeeded<T>(items: readonly T[], seed: number, offset = 0): T {
+  return items[Math.abs(hashString(`${seed}:${offset}:${items.length}`)) % items.length] as T;
 }
 
-function toCrowdSize(holderCount: number | null | undefined): string {
-  if (typeof holderCount !== "number" || !Number.isFinite(holderCount) || holderCount <= 0) {
-    return "the whole back row";
+function tokenSimilarity(left: string, right: string): number {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const leftTokens = new Set(left.split(" ").filter(Boolean));
+  const rightTokens = new Set(right.split(" ").filter(Boolean));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) shared += 1;
   }
-  if (holderCount >= 20_000) return "half the timeline";
-  if (holderCount >= 5_000) return "the loud side of crypto Twitter";
-  if (holderCount >= 1_000) return "the main group chat";
-  if (holderCount >= 250) return "the committed sickos";
-  return "the early table";
+  return shared / Math.max(leftTokens.size, rightTokens.size);
 }
 
-function toMarketMood(input: TokenRaidGenerationInput["token"]): string {
-  const highestSignal = Math.max(
-    input.sentimentScore ?? 0,
-    input.confidenceScore ?? 0,
-    input.hotAlphaScore ?? 0,
-    input.earlyRunnerScore ?? 0,
-    input.highConvictionScore ?? 0,
-  );
-  if (highestSignal >= 82) return "the chart is acting like it knows a secret";
-  if (highestSignal >= 68) return "the tape looks suspiciously alive";
-  if (highestSignal >= 54) return "the candles keep refusing to be normal";
-  return "the room smells an opportunity and bad sleep";
+function isTooSimilar(candidate: string, recent: string[]): boolean {
+  const normalized = normalizeSignature(candidate);
+  return recent.some((entry) => tokenSimilarity(normalized, entry) >= 0.74);
 }
 
 function buildRecentSignatures(history: TokenRaidGenerationInput["recentRaidHistory"]): string[] {
@@ -272,20 +242,42 @@ function buildRecentSignatures(history: TokenRaidGenerationInput["recentRaidHist
   return [...signatures];
 }
 
+function extractTopics(texts: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const text of texts) {
+    const words = normalizeSignature(text)
+      .split(" ")
+      .filter((word) => word.length >= 4 && !STOP_WORDS.has(word));
+    for (const word of words) {
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([word]) => word)
+    .slice(0, 10);
+}
+
 function buildContext(input: TokenRaidGenerationInput): RaidGenerationContext {
   const profile = input.profile ?? null;
   const voiceHints = splitHints(profile?.voiceHints, DEFAULT_VOICE_HINTS);
   const insideJokes = splitHints(profile?.insideJokes, DEFAULT_INSIDE_JOKES);
+  const vibeTags = splitHints(profile?.vibeTags, DEFAULT_VIBE_TAGS);
   const threadTopics = extractTopics(
     input.recentThreads.flatMap((thread) => [thread.title ?? "", thread.content]),
   );
+  const parsedAssets = z.array(AssetDescriptorSchema).safeParse(profile?.assets ?? []);
+  const assets = parsedAssets.success ? parsedAssets.data : [];
+  const logoAssetId = assets.find((asset) => asset.kind === "logo")?.id ?? null;
+  const bannerAssetId = assets.find((asset) => asset.kind === "banner")?.id ?? null;
+  const mascotAssetId = assets.find((asset) => asset.kind === "mascot")?.id ?? null;
+  const referenceAssetIds = assets.filter((asset) => asset.kind === "reference_meme").map((asset) => asset.id).slice(0, 5);
+
   const symbol = normalizeWhitespace(input.token.symbol || "").toUpperCase() || "TOKEN";
   const tokenName = normalizeWhitespace(input.token.name || "") || symbol;
   const cashtagSource = normalizeWhitespace(profile?.xCashtag || "");
   const cashtag = cashtagSource
-    ? cashtagSource.startsWith("$")
-      ? cashtagSource.toUpperCase()
-      : `$${cashtagSource.toUpperCase()}`
+    ? (cashtagSource.startsWith("$") ? cashtagSource.toUpperCase() : `$${cashtagSource.toUpperCase()}`)
     : `$${symbol}`;
   const tokenLabel = tokenName === symbol ? cashtag : `${tokenName} ${cashtag}`;
   const seed = hashString(
@@ -293,6 +285,7 @@ function buildContext(input: TokenRaidGenerationInput): RaidGenerationContext {
       tokenId: input.token.id,
       objective: input.objective,
       salt: input.generationSalt ?? "",
+      assets: assets.map((asset) => asset.id),
       topics: threadTopics.slice(0, 4),
       jokes: insideJokes.slice(0, 3),
       hints: voiceHints.slice(0, 3),
@@ -300,26 +293,42 @@ function buildContext(input: TokenRaidGenerationInput): RaidGenerationContext {
   );
 
   return {
-    tokenLabel,
-    tokenName,
-    symbol,
-    cashtag,
-    objective: normalizeWhitespace(input.objective),
-    shortObjective: clampText(input.objective, 72),
-    communityHandle: profile?.xCashtag ? cashtag : cashtag,
-    headline: clampText(profile?.headline || `${cashtag} has a community with receipts and no indoor voice.`, 96),
-    insideJoke: seedPick(insideJokes, seed + 11),
-    secondInsideJoke: seedPick(insideJokes, seed + 17),
-    voiceHint: seedPick(voiceHints, seed + 23),
-    secondVoiceHint: seedPick(voiceHints, seed + 29),
-    threadTopic: threadTopics[0] ?? "liquidity",
-    secondThreadTopic: threadTopics[1] ?? "conviction",
-    marketMood: toMarketMood(input.token),
-    crowdSize: toCrowdSize(input.token.holderCount),
-    heatLabel: seedPick(HEAT_LABELS, seed + 31),
-    recentSignatures: buildRecentSignatures(input.recentRaidHistory),
-    preferredTemplateIds: sanitizeTemplateIds(profile?.preferredTemplateIds),
     seed,
+    tokenLabel,
+    cashtag,
+    tokenName,
+    objective: normalizeWhitespace(input.objective),
+    shortObjective: clampText(input.objective, 82),
+    headline: clampText(profile?.headline || `${cashtag} is the room with receipts, timing, and no indoor voice.`, 110),
+    insideJoke: pickSeeded(insideJokes, seed, 11),
+    secondInsideJoke: pickSeeded(insideJokes, seed, 12),
+    voiceHint: pickSeeded(voiceHints, seed, 13),
+    secondVoiceHint: pickSeeded(voiceHints, seed, 14),
+    threadTopic: threadTopics[0] ?? "timing",
+    secondThreadTopic: threadTopics[1] ?? "conviction",
+    heatLabel: pickSeeded(
+      [
+        "Most picked by raiders",
+        "Fresh angle",
+        "Chaos mode",
+        "Cleaner flex",
+      ],
+      seed,
+      15,
+    ),
+    crowdLabel: typeof input.token.holderCount === "number" && input.token.holderCount >= 5000
+      ? "half the timeline"
+      : typeof input.token.holderCount === "number" && input.token.holderCount >= 1000
+        ? "the loud side of the feed"
+        : "the early table",
+    vibeTag: pickSeeded(vibeTags, seed, 16),
+    secondaryVibeTag: pickSeeded(vibeTags, seed, 17),
+    mascotName: normalizeWhitespace(profile?.mascotName || "") || null,
+    logoAssetId,
+    bannerAssetId,
+    mascotAssetId,
+    referenceAssetIds,
+    recentSignatures: buildRecentSignatures(input.recentRaidHistory),
   };
 }
 
@@ -327,300 +336,189 @@ function buildOptionId(prefix: string, seed: number, variant: string): string {
   return `${prefix}-${variant}-${Math.abs(seed % 100_000)}`;
 }
 
-function tokenSimilarity(a: string, b: string): number {
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  const aTokens = new Set(a.split(" ").filter(Boolean));
-  const bTokens = new Set(b.split(" ").filter(Boolean));
-  if (aTokens.size === 0 || bTokens.size === 0) return 0;
-  let shared = 0;
-  for (const token of aTokens) {
-    if (bTokens.has(token)) shared += 1;
-  }
-  return shared / Math.max(aTokens.size, bTokens.size);
+function buildBrandMeme(ctx: RaidGenerationContext): TokenRaidMemeOption {
+  const assetIdsUsed = [ctx.mascotAssetId, ctx.logoAssetId, ctx.bannerAssetId].filter(Boolean) as string[];
+  const mascotLabel = ctx.mascotName || `${ctx.tokenName} mascot`;
+  const topText = pickSeeded(
+    [
+      `${mascotLabel} watching ${ctx.cashtag} turn one candle into a full-room signal`,
+      `the ${ctx.cashtag} room mascot the second the tape starts acting guilty`,
+      `${ctx.cashtag} when the room sees the setup before the excuses arrive`,
+    ],
+    ctx.seed,
+    101,
+  );
+  const bottomText = pickSeeded(
+    [
+      `${ctx.crowdLabel} is already passing around receipts and nobody in the room is pretending to be subtle`,
+      `everybody suddenly remembers the thesis, the screenshots, and the exact minute the chart slipped`,
+      `the room is loud, the banner looks dangerous, and the doubters are once again late to the evidence`,
+    ],
+    ctx.seed,
+    102,
+  );
+
+  return {
+    id: buildOptionId("meme", ctx.seed + 1, "brand"),
+    templateId: assetIdsUsed.length > 0 ? "mascot-poster" : "courtroom",
+    title: "Room Mascot",
+    angle: "Brand-first room energy",
+    topText: clampText(topText, 132),
+    bottomText: clampText(bottomText, 132),
+    kicker: clampText(ctx.headline, 84),
+    footer: clampText(ctx.voiceHint, 76),
+    toneLabel: "Most picked by raiders",
+    bestFor: "Making the community feel like a real crew",
+    socialTag: "Most picked by raiders",
+    assetIdsUsed,
+  };
 }
 
-function isTooSimilar(candidate: string, existing: string[]): boolean {
-  const normalized = normalizeSignature(candidate);
-  return existing.some((entry) => tokenSimilarity(normalized, entry) >= 0.74);
+function buildReferenceMeme(ctx: RaidGenerationContext): TokenRaidMemeOption {
+  const referenceId = ctx.referenceAssetIds[0] ?? ctx.logoAssetId;
+  const assetIdsUsed = [referenceId, ctx.logoAssetId].filter(Boolean) as string[];
+  const topText = pickSeeded(
+    [
+      `me remixing one ${ctx.cashtag} screenshot, two room jokes, and a suspiciously strong candle`,
+      `the community reference folder the second ${ctx.cashtag} gives us a fresh excuse to be annoying`,
+      `me turning one room joke and one old meme into a new ${ctx.cashtag} receipt`,
+    ],
+    ctx.seed,
+    201,
+  );
+  const bottomText = pickSeeded(
+    [
+      `same community DNA, different punchline, and somehow the chart still walks into the trap every time`,
+      `the remix lands because the room already knows the bit, the timing, and the exact face the doubters will make`,
+      `every reference still points to the same ending: the room got there before the timeline found the tone`,
+    ],
+    ctx.seed,
+    202,
+  );
+
+  return {
+    id: buildOptionId("meme", ctx.seed + 2, "reference"),
+    templateId: referenceId ? "reference-remix" : "group-chat",
+    title: "Reference Remix",
+    angle: "Callback meme with room DNA",
+    topText: clampText(topText, 132),
+    bottomText: clampText(bottomText, 132),
+    kicker: clampText(ctx.insideJoke, 84),
+    footer: clampText(ctx.secondaryVibeTag, 76),
+    toneLabel: "Fresh angle",
+    bestFor: "Room jokes that feel native, not generated",
+    socialTag: "Fresh angle",
+    assetIdsUsed,
+  };
 }
 
-const MEME_BUILDERS: readonly MemeStyleBuilder[] = [
-  {
-    id: "victory-lap",
-    templateId: "chart-rat",
-    build: (ctx) => {
-      const topText = seedVariant(
-        [
-          `${ctx.cashtag} room when the chart fakes weakness for one candle`,
-          `${ctx.cashtag} holders when the dip tries a cheap jump scare`,
-          `when ${ctx.cashtag} gives the room one red candle and suddenly everyone becomes a forensic analyst`,
-          `${ctx.cashtag} chat watching the chart cosplay as weak for exactly four minutes`,
-        ],
-        ctx.seed,
-        101,
-      );
-      const bottomText = seedVariant(
-        [
-          `five minutes later and ${ctx.crowdSize} are posting receipts like court exhibits`,
-          `next thing you know the doubters are getting ratioed by screenshots and bad timing`,
-          `then the receipt folder opens and the whole timeline starts acting like it was early`,
-          `meanwhile the community is logging evidence like this was always going to end badly for the skeptics`,
-        ],
-        ctx.seed,
-        102,
-      );
-      return {
-        title: "Receipt Rat",
-        angle: "Smug chart-room flex",
-        topText: clampText(topText, 120),
-        bottomText: clampText(bottomText, 120),
-        kicker: clampText(ctx.marketMood, 84),
-        footer: clampText(ctx.voiceHint, 72),
-      };
-    },
-  },
-  {
-    id: "breaking",
-    templateId: "breaking-news",
-    build: (ctx) => {
-      const topText = seedVariant(
-        [
-          `BREAKING: ${ctx.tokenLabel} just made the boring people nervous`,
-          `LATE DESK BULLETIN: ${ctx.cashtag} has officially interrupted normal posting behavior`,
-          `NEWSROOM PANIC: ${ctx.tokenLabel} is back on the timeline with suspicious momentum`,
-          `MARKET UPDATE: ${ctx.cashtag} just forced the serious accounts to start subtweeting`,
-        ],
-        ctx.seed,
-        111,
-      );
-      const bottomText = seedVariant(
-        [
-          `analysts cite ${ctx.threadTopic}, bad sleep, and a community with suspicious timing`,
-          `sources blame ${ctx.secondThreadTopic}, desk coffee, and a chat that refuses to be subtle`,
-          `reporters confirm the move was powered by receipts, insomnia, and unnervingly good timing`,
-          `commentators mention ${ctx.threadTopic}, timeline confusion, and holders behaving far too prepared`,
-        ],
-        ctx.seed,
-        112,
-      );
-      return {
-        title: "Desk Alert",
-        angle: "Fake newsroom bulletin",
-        topText: clampText(topText, 118),
-        bottomText: clampText(bottomText, 122),
-        kicker: clampText(ctx.shortObjective, 84),
-        footer: clampText(ctx.insideJoke, 88),
-      };
-    },
-  },
-  {
-    id: "courtroom",
-    templateId: "courtroom",
-    build: (ctx) => {
-      const topText = seedVariant(
-        [
-          `judge: why is ${ctx.cashtag} trending in every group chat at 2am`,
-          `court clerk: please explain why ${ctx.cashtag} keeps appearing in every receipt folder`,
-          `judge: who authorized ${ctx.cashtag} to embarrass the doubters before breakfast`,
-          `prosecution: is it true ${ctx.cashtag} turned the timeline into evidence night`,
-        ],
-        ctx.seed,
-        121,
-      );
-      const bottomText = seedVariant(
-        [
-          `defense: because the chart keeps leaving fingerprints and the community brought receipts`,
-          `defense: because the tape looks guilty and the group chat came prepared`,
-          `defense: because ${ctx.threadTopic} was loud, the candles got weird, and the room logged everything`,
-          `defense: because the skeptics keep showing up late to a case that was already documented`,
-        ],
-        ctx.seed,
-        122,
-      );
-      return {
-        title: "The People vs Doubt",
-        angle: "Courtroom cross-exam",
-        topText: clampText(topText, 118),
-        bottomText: clampText(bottomText, 126),
-        kicker: clampText(ctx.secondVoiceHint, 84),
-        footer: clampText(ctx.secondInsideJoke, 88),
-      };
-    },
-  },
-  {
-    id: "group-chat",
-    templateId: "group-chat",
-    build: (ctx) => {
-      const topText = seedVariant(
-        [
-          `when one ${ctx.cashtag} candle lands and suddenly nobody is typing like a civilian`,
-          `the ${ctx.cashtag} group chat the second the chart does something disrespectfully bullish`,
-          `one ${ctx.cashtag} move later and the chat has fully abandoned indoor behavior`,
-          `when ${ctx.cashtag} wakes up and the group chat starts posting like it has legal immunity`,
-        ],
-        ctx.seed,
-        131,
-      );
-      const bottomText = seedVariant(
-        [
-          `next thing you know the chat is arguing over ${ctx.secondThreadTopic} with main-character confidence`,
-          `three screenshots later everyone is suddenly a specialist in ${ctx.threadTopic}`,
-          `nobody agrees on tone but everyone agrees the receipts are absurdly good`,
-          `by minute six the room has split into jokers, prophets, and people annotating candles`,
-        ],
-        ctx.seed,
-        132,
-      );
-      return {
-        title: "Unread Messages",
-        angle: "Private group chat spiral",
-        topText: clampText(topText, 122),
-        bottomText: clampText(bottomText, 126),
-        kicker: clampText(ctx.marketMood, 84),
-        footer: clampText(ctx.voiceHint, 72),
-      };
-    },
-  },
-  {
-    id: "night-shift",
-    templateId: "night-shift",
-    build: (ctx) => {
-      const topText = seedVariant(
-        [
-          `${ctx.cashtag} on the night shift while the rest of the timeline pretends to be responsible`,
-          `${ctx.cashtag} at 1:47am when the serious traders are offline and the sickos are still charting`,
-          `night desk update: ${ctx.cashtag} has the late shift acting way too confident`,
-          `the ${ctx.cashtag} overnight crew when the candles start whispering reckless ideas`,
-        ],
-        ctx.seed,
-        141,
-      );
-      const bottomText = seedVariant(
-        [
-          `coffee is optional, receipts are mandatory, and ${ctx.threadTopic} keeps getting louder`,
-          `sleep is cancelled, the evidence pile is growing, and the chart is being weird on purpose`,
-          `${ctx.secondThreadTopic} is back on the desk, the coffee tastes hostile, and the room is still early`,
-          `everyone looks exhausted but the conviction is somehow getting dressed for a second shift`,
-        ],
-        ctx.seed,
-        142,
-      );
-      return {
-        title: "Night Desk",
-        angle: "Sleep-deprived trader shift",
-        topText: clampText(topText, 124),
-        bottomText: clampText(bottomText, 122),
-        kicker: clampText(ctx.heatLabel, 72),
-        footer: clampText(ctx.insideJoke, 88),
-      };
-    },
-  },
-  {
-    id: "brain-rot",
-    templateId: "brain-rot-board",
-    build: (ctx) => {
-      const topText = seedVariant(
-        [
-          `me connecting ${ctx.cashtag}, ${ctx.threadTopic}, and one disrespectfully bullish candle`,
-          `my evidence board after linking ${ctx.cashtag}, bad sleep, and a very suspicious chart`,
-          `explaining how ${ctx.cashtag}, ${ctx.secondThreadTopic}, and one loud candle are obviously related`,
-          `me drawing red string between ${ctx.cashtag}, the group chat, and a candle with no manners`,
-        ],
-        ctx.seed,
-        151,
-      );
-      const bottomText = seedVariant(
-        [
-          `the conclusion is still the same: the chart knows the community is awake`,
-          `every clue points back to the same thing: the room spotted it before the timeline did`,
-          `I ran the numbers, ignored sleep, and arrived at the usual conclusion: receipts win again`,
-          `the board is messy but the verdict is clean: the chat had the read before the crowd had the cope`,
-        ],
-        ctx.seed,
-        152,
-      );
-      return {
-        title: "Evidence Board",
-        angle: "Conspiracy wall with receipts",
-        topText: clampText(topText, 120),
-        bottomText: clampText(bottomText, 112),
-        kicker: clampText(ctx.shortObjective, 84),
-        footer: clampText(ctx.secondVoiceHint, 72),
-      };
-    },
-  },
-] as const;
+function buildFlexMeme(ctx: RaidGenerationContext): TokenRaidMemeOption {
+  const assetIdsUsed = [ctx.bannerAssetId, ctx.logoAssetId].filter(Boolean) as string[];
+  const topText = pickSeeded(
+    [
+      `${ctx.cashtag} room when the chart tries to act casual after leaving that many fingerprints`,
+      `the ${ctx.cashtag} room watching the move get cleaner while the timeline gets louder`,
+      `${ctx.cashtag} when the room already had the posture and the chart finally caught up`,
+    ],
+    ctx.seed,
+    301,
+  );
+  const bottomText = pickSeeded(
+    [
+      `this is the cleaner flex version: less panic, more timing, and enough receipts to make the cope look understaffed`,
+      `the whole post reads calmer than it should because the room already did the shouting in private`,
+      `no screaming required when the room has the banner, the read, and the screenshots already lined up`,
+    ],
+    ctx.seed,
+    302,
+  );
 
-const COPY_BUILDERS: readonly CopyStyleBuilder[] = [
-  {
-    id: "deadpan-flex",
-    build: (ctx) => ({
-      label: "Deadpan flex",
-      angle: "Calm, smug, and clipped",
-      text: clampText(
-        `${ctx.cashtag} is doing that thing again where the chart acts innocent while ${ctx.crowdSize} quietly stack receipts. ${ctx.shortObjective}.`,
-        278,
-      ),
-    }),
-  },
+  return {
+    id: buildOptionId("meme", ctx.seed + 3, "flex"),
+    templateId: assetIdsUsed.length > 0 ? "market-flex" : "breaking-news",
+    title: "Cleaner Flex",
+    angle: "Polished market-room flex",
+    topText: clampText(topText, 132),
+    bottomText: clampText(bottomText, 132),
+    kicker: clampText(ctx.shortObjective, 84),
+    footer: clampText(ctx.secondVoiceHint, 76),
+    toneLabel: "Cleaner flex",
+    bestFor: "A sharper public-facing flex",
+    socialTag: "Cleaner flex",
+    assetIdsUsed,
+  };
+}
+
+type CopyBuilder = {
+  id: TokenRaidCopyStyleId;
+  voiceLabel: string;
+  bestFor: string;
+  socialTag: string;
+  build: (ctx: RaidGenerationContext) => Omit<TokenRaidCopyOption, "id" | "style" | "voiceLabel" | "bestFor" | "socialTag">;
+};
+
+const COPY_BUILDERS: readonly CopyBuilder[] = [
   {
     id: "chaos-wire",
+    voiceLabel: "Bulletin",
+    bestFor: "Fast-moving raid pushes",
+    socialTag: "Chaos mode",
     build: (ctx) => ({
       label: "Chaos wire",
       angle: "Fast bulletin energy",
       text: clampText(
-        `Desk update: ${ctx.tokenLabel} just turned the room into a siren factory. ${ctx.marketMood}. ${ctx.shortObjective}.`,
+        `Desk update: ${ctx.tokenLabel} just turned the room into a siren factory. ${ctx.shortObjective}. Receipts are already circulating faster than excuses.`,
         278,
       ),
     }),
   },
   {
     id: "receipt-thread",
+    voiceLabel: "Receipt stack",
+    bestFor: "A cleaner thread opener",
+    socialTag: "Most picked by raiders",
     build: (ctx) => ({
       label: "Receipt thread",
       angle: "Receipts-first swagger",
       text: clampText(
-        `${ctx.cashtag} community does not do vague optimism. We do receipts, stubborn timing, and jokes that age well on the next candle. ${ctx.shortObjective}.`,
-        278,
-      ),
-    }),
-  },
-  {
-    id: "conspiracy-desk",
-    build: (ctx) => ({
-      label: "Conspiracy desk",
-      angle: "Internet detective bit",
-      text: clampText(
-        `I have connected the dots between ${ctx.threadTopic}, a suspiciously alive tape, and a chat full of people who clearly enjoy being right at inconvenient hours. ${ctx.shortObjective}.`,
-        278,
-      ),
-    }),
-  },
-  {
-    id: "stadium-call",
-    build: (ctx) => ({
-      label: "Stadium call",
-      angle: "Big-energy announcer voice",
-      text: clampText(
-        `${ctx.cashtag} just stepped onto the field like it owns the noise. Crowd is up, excuses are down, and the timeline is about to get very familiar with these receipts. ${ctx.shortObjective}.`,
+        `${ctx.cashtag} community does not do vague optimism. We do timestamps, screenshots, and jokes that still look good one candle later. ${ctx.shortObjective}.`,
         278,
       ),
     }),
   },
   {
     id: "floor-trader",
+    voiceLabel: "Desk banter",
+    bestFor: "Shorter punchier raid posts",
+    socialTag: "Cleaner flex",
     build: (ctx) => ({
       label: "Floor trader",
       angle: "Fast, sharp, market-floor banter",
       text: clampText(
-        `${ctx.cashtag} looks like pure desk-confusion for people who missed the tell. ${ctx.marketMood}. The community is early, loud, and annoyingly documented. ${ctx.shortObjective}.`,
+        `${ctx.cashtag} looks like pure desk-confusion for people who missed the tell. The room is early, loud, and annoyingly documented. ${ctx.shortObjective}.`,
+        278,
+      ),
+    }),
+  },
+  {
+    id: "deadpan-flex",
+    voiceLabel: "Deadpan",
+    bestFor: "Smug calm flex",
+    socialTag: "Fresh angle",
+    build: (ctx) => ({
+      label: "Deadpan flex",
+      angle: "Calm, smug, and clipped",
+      text: clampText(
+        `${ctx.cashtag} is doing that thing again where the chart acts innocent while the room quietly collects evidence. ${ctx.shortObjective}.`,
         278,
       ),
     }),
   },
   {
     id: "group-chat-spiral",
+    voiceLabel: "Leak from the chat",
+    bestFor: "Funniest public-facing option",
+    socialTag: "Chaos mode",
     build: (ctx) => ({
       label: "Group chat spiral",
       angle: "Private-chat chaos leaking into public",
@@ -631,7 +529,38 @@ const COPY_BUILDERS: readonly CopyStyleBuilder[] = [
     }),
   },
   {
+    id: "conspiracy-desk",
+    voiceLabel: "Evidence wall",
+    bestFor: "More internet-native humor",
+    socialTag: "Fresh angle",
+    build: (ctx) => ({
+      label: "Conspiracy desk",
+      angle: "Internet detective bit",
+      text: clampText(
+        `I have connected the dots between ${ctx.threadTopic}, one suspiciously alive tape, and a room full of people who enjoy being right at inconvenient hours. ${ctx.shortObjective}.`,
+        278,
+      ),
+    }),
+  },
+  {
+    id: "stadium-call",
+    voiceLabel: "Announcer",
+    bestFor: "Higher-energy timeline pushes",
+    socialTag: "Most picked by raiders",
+    build: (ctx) => ({
+      label: "Stadium call",
+      angle: "Big-energy announcer voice",
+      text: clampText(
+        `${ctx.cashtag} just stepped onto the field like it owns the noise. Crowd is up, excuses are down, and the room already has the receipts ready. ${ctx.shortObjective}.`,
+        278,
+      ),
+    }),
+  },
+  {
     id: "victory-liturgy",
+    voiceLabel: "Victory lap",
+    bestFor: "A slightly more theatrical flex",
+    socialTag: "Cleaner flex",
     build: (ctx) => ({
       label: "Victory liturgy",
       angle: "Half sermon, half victory lap",
@@ -643,38 +572,22 @@ const COPY_BUILDERS: readonly CopyStyleBuilder[] = [
   },
 ] as const;
 
-function orderedMemeBuilders(ctx: RaidGenerationContext): MemeStyleBuilder[] {
-  const templatePriority = new Map<TokenRaidTemplateId, number>();
-  ctx.preferredTemplateIds.forEach((id, index) => templatePriority.set(id, index));
-  return [...MEME_BUILDERS].sort((a, b) => {
-    const aPreferred = templatePriority.has(a.templateId) ? 0 : 1;
-    const bPreferred = templatePriority.has(b.templateId) ? 0 : 1;
-    if (aPreferred !== bPreferred) return aPreferred - bPreferred;
-    const aRank = templatePriority.get(a.templateId) ?? Number.MAX_SAFE_INTEGER;
-    const bRank = templatePriority.get(b.templateId) ?? Number.MAX_SAFE_INTEGER;
-    if (aRank !== bRank) return aRank - bRank;
-    return (hashString(`${ctx.seed}:${a.id}`) % 1000) - (hashString(`${ctx.seed}:${b.id}`) % 1000);
-  });
-}
-
-function orderedCopyBuilders(ctx: RaidGenerationContext): CopyStyleBuilder[] {
-  return [...COPY_BUILDERS].sort(
-    (a, b) => (hashString(`${ctx.seed}:${a.id}`) % 1000) - (hashString(`${ctx.seed}:${b.id}`) % 1000),
-  );
-}
-
 function buildFallbackMemeOption(ctx: RaidGenerationContext, index: number): TokenRaidMemeOption {
   const templateId =
-    TOKEN_RAID_TEMPLATE_IDS[index % TOKEN_RAID_TEMPLATE_IDS.length] ?? TOKEN_RAID_TEMPLATE_IDS[0];
+    ["mascot-poster", "reference-remix", "market-flex"][index] as TokenRaidTemplateId | undefined;
   return {
-    id: buildOptionId("meme", ctx.seed + index * 13, `fallback-${index}`),
-    templateId,
-    title: ["Receipt Season", "Desk Noise", "Community Alarm"][index] ?? "Desk Noise",
-    angle: ["Crisp smugness", "Fast bulletin", "Sleepless confidence"][index] ?? "Sleepless confidence",
-    topText: clampText(`${ctx.cashtag} when the room realizes the jokes came with receipts`, 120),
-    bottomText: clampText(`${ctx.shortObjective}. ${ctx.marketMood}.`, 120),
-    kicker: clampText(ctx.insideJoke, 84),
-    footer: clampText(ctx.voiceHint, 72),
+    id: buildOptionId("meme", ctx.seed + 80 + index, `fallback-${index}`),
+    templateId: templateId ?? "courtroom",
+    title: ["Room Mascot", "Reference Remix", "Cleaner Flex"][index] ?? "Room Signal",
+    angle: ["Brand-first room energy", "Callback meme with room DNA", "Polished market-room flex"][index] ?? "Room signal",
+    topText: clampText(`${ctx.cashtag} room when the chart leaves fingerprints and the receipts are already loaded`, 132),
+    bottomText: clampText(`${ctx.shortObjective}. The room is loud, documented, and very uninterested in vague optimism.`, 132),
+    kicker: clampText(ctx.headline, 84),
+    footer: clampText(ctx.voiceHint, 76),
+    toneLabel: ["Most picked by raiders", "Fresh angle", "Cleaner flex"][index] ?? "Fresh angle",
+    bestFor: "Safe fallback that still feels like the room",
+    socialTag: ["Most picked by raiders", "Fresh angle", "Cleaner flex"][index] ?? "Fresh angle",
+    assetIdsUsed: [],
   };
 }
 
@@ -687,18 +600,18 @@ function buildFallbackCopyOption(ctx: RaidGenerationContext, index: number): Tok
     `${ctx.cashtag} is the kind of chart that makes doubters type slower. ${ctx.shortObjective}.`,
   ];
   return {
-    id: buildOptionId("copy", ctx.seed + index * 19, `fallback-${index}`),
+    id: buildOptionId("copy", ctx.seed + 90 + index, `fallback-${index}`),
     style,
     label: ["Receipt mode", "Desk whisper", "Clean flex"][index] ?? "Clean flex",
-    angle: ["Receipt-first", "Quietly loud", "Smug timing"][index] ?? "Smug timing",
+    angle: ["Receipts-first", "Quietly loud", "Smug timing"][index] ?? "Smug timing",
     text: clampText(lines[index] ?? lines[0] ?? `${ctx.cashtag} has receipts. ${ctx.shortObjective}.`, 278),
+    voiceLabel: ["Receipt stack", "Bulletin", "Deadpan"][index] ?? "Room signal",
+    bestFor: "Fallback copy that still reads native",
+    socialTag: ["Most picked by raiders", "Chaos mode", "Cleaner flex"][index] ?? "Fresh angle",
   };
 }
 
-function finalizeGeneration(
-  memes: TokenRaidMemeOption[],
-  copies: TokenRaidCopyOption[],
-): TokenRaidGenerationResult {
+function finalizeGeneration(memes: TokenRaidMemeOption[], copies: TokenRaidCopyOption[]): TokenRaidGenerationResult {
   const result = TokenRaidGenerationResultSchema.safeParse({
     memeOptions: memes.slice(0, 3),
     copyOptions: copies.slice(0, 3),
@@ -711,68 +624,62 @@ function finalizeGeneration(
 
 export function generateTokenRaidOptions(input: TokenRaidGenerationInput): TokenRaidGenerationResult {
   const ctx = buildContext(input);
-  const memeOptions: TokenRaidMemeOption[] = [];
-  const copyOptions: TokenRaidCopyOption[] = [];
-  const seenMeme = [...ctx.recentSignatures];
-  const seenCopy = [...ctx.recentSignatures];
-  const usedTemplates = new Set<TokenRaidTemplateId>();
-
-  for (const builder of orderedMemeBuilders(ctx)) {
-    const built = builder.build(ctx);
-    const signature = normalizeSignature(`${built.title} ${built.angle} ${built.topText} ${built.bottomText}`);
-    if (usedTemplates.has(builder.templateId)) continue;
-    if (isTooSimilar(signature, seenMeme)) continue;
-    const option: TokenRaidMemeOption = {
-      id: buildOptionId("meme", ctx.seed + memeOptions.length * 7, builder.id),
-      templateId: builder.templateId,
-      ...built,
-    };
-    memeOptions.push(TokenRaidMemeOptionSchema.parse(option));
-    usedTemplates.add(builder.templateId);
-    seenMeme.push(signature);
-    if (memeOptions.length === 3) break;
+  const memes = [buildBrandMeme(ctx), buildReferenceMeme(ctx), buildFlexMeme(ctx)];
+  const recentMemeSignatures = [...ctx.recentSignatures];
+  const finalMemes: TokenRaidMemeOption[] = [];
+  for (const meme of memes) {
+    const signature = normalizeSignature(`${meme.title} ${meme.angle} ${meme.topText} ${meme.bottomText}`);
+    if (isTooSimilar(signature, recentMemeSignatures)) continue;
+    finalMemes.push(TokenRaidMemeOptionSchema.parse(meme));
+    recentMemeSignatures.push(signature);
   }
-
-  for (let index = memeOptions.length; index < 3; index += 1) {
+  for (let index = finalMemes.length; index < 3; index += 1) {
     const fallback = TokenRaidMemeOptionSchema.parse(buildFallbackMemeOption(ctx, index));
     const signature = normalizeSignature(`${fallback.title} ${fallback.angle} ${fallback.topText} ${fallback.bottomText}`);
-    if (!isTooSimilar(signature, seenMeme)) {
-      memeOptions.push(fallback);
-      seenMeme.push(signature);
+    if (!isTooSimilar(signature, recentMemeSignatures)) {
+      finalMemes.push(fallback);
+      recentMemeSignatures.push(signature);
     }
   }
 
-  for (const builder of orderedCopyBuilders(ctx)) {
+  const copyBuilders = [...COPY_BUILDERS].sort(
+    (a, b) => (hashString(`${ctx.seed}:${a.id}`) % 1000) - (hashString(`${ctx.seed}:${b.id}`) % 1000),
+  );
+  const recentCopySignatures = [...ctx.recentSignatures];
+  const finalCopies: TokenRaidCopyOption[] = [];
+  for (const builder of copyBuilders) {
     const built = builder.build(ctx);
-    const signature = normalizeSignature(`${built.label} ${built.angle} ${built.text}`);
-    if (isTooSimilar(signature, seenCopy)) continue;
     const option: TokenRaidCopyOption = {
-      id: buildOptionId("copy", ctx.seed + copyOptions.length * 11, builder.id),
+      id: buildOptionId("copy", ctx.seed + finalCopies.length * 11, builder.id),
       style: builder.id,
+      voiceLabel: builder.voiceLabel,
+      bestFor: builder.bestFor,
+      socialTag: builder.socialTag,
       ...built,
     };
-    copyOptions.push(TokenRaidCopyOptionSchema.parse(option));
-    seenCopy.push(signature);
-    if (copyOptions.length === 3) break;
+    const signature = normalizeSignature(`${option.label} ${option.angle} ${option.text}`);
+    if (isTooSimilar(signature, recentCopySignatures)) continue;
+    finalCopies.push(TokenRaidCopyOptionSchema.parse(option));
+    recentCopySignatures.push(signature);
+    if (finalCopies.length === 3) break;
   }
-
-  for (let index = copyOptions.length; index < 3; index += 1) {
+  for (let index = finalCopies.length; index < 3; index += 1) {
     const fallback = TokenRaidCopyOptionSchema.parse(buildFallbackCopyOption(ctx, index));
     const signature = normalizeSignature(`${fallback.label} ${fallback.angle} ${fallback.text}`);
-    if (!isTooSimilar(signature, seenCopy)) {
-      copyOptions.push(fallback);
-      seenCopy.push(signature);
+    if (!isTooSimilar(signature, recentCopySignatures)) {
+      finalCopies.push(fallback);
+      recentCopySignatures.push(signature);
     }
   }
 
-  while (memeOptions.length < 3) {
-    memeOptions.push(TokenRaidMemeOptionSchema.parse(buildFallbackMemeOption(ctx, memeOptions.length + 1)));
+  while (finalMemes.length < 3) {
+    finalMemes.push(TokenRaidMemeOptionSchema.parse(buildFallbackMemeOption(ctx, finalMemes.length)));
   }
-  while (copyOptions.length < 3) {
-    copyOptions.push(TokenRaidCopyOptionSchema.parse(buildFallbackCopyOption(ctx, copyOptions.length + 1)));
+  while (finalCopies.length < 3) {
+    finalCopies.push(TokenRaidCopyOptionSchema.parse(buildFallbackCopyOption(ctx, finalCopies.length)));
   }
 
-  return finalizeGeneration(memeOptions, copyOptions);
+  return finalizeGeneration(finalMemes, finalCopies);
 }
 
 export function safeGenerateTokenRaidOptions(input: TokenRaidGenerationInput): TokenRaidGenerationResult {

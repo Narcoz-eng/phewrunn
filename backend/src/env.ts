@@ -126,6 +126,25 @@ const envSchema = z.object({
       normalizeOptionalStringEnv,
       z.string().regex(/^(\d+(\.\d+)?|0?\.\d+)$/, "SENTRY_TRACES_SAMPLE_RATE must be a numeric string").optional()
     ),
+
+  // Optional: community asset object storage
+  COMMUNITY_ASSET_STORAGE_ENDPOINT: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("COMMUNITY_ASSET_STORAGE_ENDPOINT must be a valid URL").optional()),
+  COMMUNITY_ASSET_STORAGE_REGION: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "COMMUNITY_ASSET_STORAGE_REGION cannot be empty").optional()),
+  COMMUNITY_ASSET_STORAGE_BUCKET: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "COMMUNITY_ASSET_STORAGE_BUCKET cannot be empty").optional()),
+  COMMUNITY_ASSET_ACCESS_KEY_ID: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "COMMUNITY_ASSET_ACCESS_KEY_ID cannot be empty").optional()),
+  COMMUNITY_ASSET_SECRET_ACCESS_KEY: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "COMMUNITY_ASSET_SECRET_ACCESS_KEY cannot be empty").optional()),
+  COMMUNITY_ASSET_PUBLIC_BASE_URL: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("COMMUNITY_ASSET_PUBLIC_BASE_URL must be a valid URL").optional()),
+  COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS: z
+    .preprocess(
+      normalizeOptionalStringEnv,
+      z.string().regex(/^\d+$/, "COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS must be an integer string").optional()
+    ),
 });
 
 /**
@@ -280,6 +299,13 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     SENTRY_ENVIRONMENT: parsed.SENTRY_ENVIRONMENT ?? parsed.NODE_ENV,
     SENTRY_RELEASE: parsed.SENTRY_RELEASE ?? "not set",
     SENTRY_TRACES_SAMPLE_RATE: parsed.SENTRY_TRACES_SAMPLE_RATE ?? "0",
+    COMMUNITY_ASSET_STORAGE_ENDPOINT: parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT ? "configured" : "not set",
+    COMMUNITY_ASSET_STORAGE_REGION: parsed.COMMUNITY_ASSET_STORAGE_REGION ?? "auto",
+    COMMUNITY_ASSET_STORAGE_BUCKET: parsed.COMMUNITY_ASSET_STORAGE_BUCKET ? "configured" : "not set",
+    COMMUNITY_ASSET_ACCESS_KEY_ID: parsed.COMMUNITY_ASSET_ACCESS_KEY_ID ? "configured" : "not set",
+    COMMUNITY_ASSET_SECRET_ACCESS_KEY: parsed.COMMUNITY_ASSET_SECRET_ACCESS_KEY ? "configured" : "not set",
+    COMMUNITY_ASSET_PUBLIC_BASE_URL: parsed.COMMUNITY_ASSET_PUBLIC_BASE_URL ? "configured" : "not set",
+    COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS: parsed.COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS ?? "600",
   };
 }
 

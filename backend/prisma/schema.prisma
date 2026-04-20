@@ -75,11 +75,17 @@ model User {
   reportReviews      Report[] @relation("ReportReviews")
   tokenEvents        TokenEvent[]
   tokenFollows       TokenFollow[]
+  communityProfilesCreated TokenCommunityProfile[] @relation("TokenCommunityProfileCreatedBy")
   communityProfilesUpdated TokenCommunityProfile[] @relation("TokenCommunityProfileUpdatedBy")
+  communityAssetsUploaded  TokenCommunityAsset[]   @relation("TokenCommunityAssetUploadedBy")
+  communityMemberStats     TokenCommunityMemberStats[] @relation("TokenCommunityMemberStatsUser")
   communityThreads   TokenCommunityThread[] @relation("TokenCommunityThreadAuthor")
   communityReplies   TokenCommunityReply[] @relation("TokenCommunityReplyAuthor")
+  communityThreadReactions TokenCommunityThreadReaction[] @relation("TokenCommunityThreadReactionUser")
   raidsCreated       TokenRaidCampaign[] @relation("TokenRaidCampaignCreator")
+  raidParticipants   TokenRaidParticipant[] @relation("TokenRaidParticipantUser")
   raidSubmissions    TokenRaidSubmission[] @relation("TokenRaidSubmissionUser")
+  raidBoosts         TokenRaidBoost[] @relation("TokenRaidBoostUser")
   traderMetricDays   TraderMetricDaily[]
   alertPreference    AlertPreference?
 
@@ -475,6 +481,8 @@ model Token {
   snapshots TokenMetricSnapshot[]
   followers TokenFollow[]
   communityProfile TokenCommunityProfile?
+  communityAssets   TokenCommunityAsset[]
+  communityMemberStats TokenCommunityMemberStats[]
   communityThreads TokenCommunityThread[]
   raidCampaigns    TokenRaidCampaign[]
 
@@ -583,14 +591,72 @@ model TokenCommunityProfile {
   insideJokes         Json?
   preferredTemplateIds Json?
   raidLeadMinLevel    Int      @default(3)
+  whyLine             String?
+  welcomePrompt       String?
+  vibeTags            Json?
+  mascotName          String?
+  createdById         String?
   updatedById         String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   token     Token  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("TokenCommunityProfileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User?  @relation("TokenCommunityProfileUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
+  @@index([createdById, createdAt])
   @@index([updatedById, updatedAt])
+}
+
+model TokenCommunityAsset {
+  id           String   @id @default(cuid())
+  tokenId       String
+  kind          String
+  status        String   @default("pending")
+  url           String
+  objectKey     String   @unique
+  mimeType      String
+  width         Int?
+  height        Int?
+  sizeBytes     Int?
+  sortOrder     Int      @default(0)
+  uploadedById  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  token      Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  uploadedBy User  @relation("TokenCommunityAssetUploadedBy", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([tokenId, kind, sortOrder])
+  @@index([uploadedById, createdAt])
+}
+
+model TokenCommunityMemberStats {
+  id                    String   @id @default(cuid())
+  tokenId                String
+  userId                 String
+  joinedAt               DateTime @default(now())
+  lastActiveAt           DateTime @default(now())
+  threadCount            Int      @default(0)
+  replyCount             Int      @default(0)
+  reactionsReceived      Int      @default(0)
+  raidsJoined            Int      @default(0)
+  raidsLaunched          Int      @default(0)
+  raidPostsLinked        Int      @default(0)
+  boostsGiven            Int      @default(0)
+  contributionScore      Int      @default(0)
+  currentRaidStreak      Int      @default(0)
+  bestRaidStreak         Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  user  User  @relation("TokenCommunityMemberStatsUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, userId])
+  @@index([tokenId, contributionScore])
+  @@index([tokenId, lastActiveAt])
+  @@index([userId, updatedAt])
 }
 
 model TokenCommunityThread {
@@ -612,6 +678,7 @@ model TokenCommunityThread {
   author       User              @relation("TokenCommunityThreadAuthor", fields: [authorId], references: [id], onDelete: Cascade)
   raidCampaign TokenRaidCampaign? @relation(fields: [raidCampaignId], references: [id], onDelete: SetNull)
   replies      TokenCommunityReply[]
+  reactions    TokenCommunityThreadReaction[]
 
   @@index([tokenId, isPinned, lastActivityAt])
   @@index([tokenId, createdAt])
@@ -643,6 +710,21 @@ model TokenCommunityReply {
   @@index([rootId, createdAt])
 }
 
+model TokenCommunityThreadReaction {
+  id        String   @id @default(cuid())
+  threadId   String
+  userId     String
+  emoji      String
+  createdAt  DateTime @default(now())
+
+  thread TokenCommunityThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user   User                 @relation("TokenCommunityThreadReactionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, userId, emoji])
+  @@index([threadId, createdAt])
+  @@index([userId, createdAt])
+}
+
 model TokenRaidCampaign {
   id             String   @id @default(cuid())
   tokenId         String
@@ -651,6 +733,7 @@ model TokenRaidCampaign {
   objective       String
   memeOptionsJson Json
   copyOptionsJson Json
+  generationHistoryJson Json?
   activeKey       String?  @unique
   openedAt        DateTime @default(now())
   closedAt        DateTime?
@@ -660,6 +743,7 @@ model TokenRaidCampaign {
   token       Token                  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
   createdBy   User                   @relation("TokenRaidCampaignCreator", fields: [createdById], references: [id], onDelete: Cascade)
   thread      TokenCommunityThread?
+  participants TokenRaidParticipant[]
   submissions TokenRaidSubmission[]
 
   @@index([tokenId, status, openedAt])
@@ -681,9 +765,44 @@ model TokenRaidSubmission {
 
   raidCampaign TokenRaidCampaign @relation(fields: [raidCampaignId], references: [id], onDelete: Cascade)
   user         User              @relation("TokenRaidSubmissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  boosts       TokenRaidBoost[]
 
   @@unique([raidCampaignId, userId])
   @@index([raidCampaignId, postedAt])
+  @@index([userId, createdAt])
+}
+
+model TokenRaidParticipant {
+  id            String   @id @default(cuid())
+  raidCampaignId String
+  userId        String
+  status        String   @default("joined")
+  currentStep   String   @default("meme")
+  joinedAt      DateTime @default(now())
+  launchedAt    DateTime?
+  postedAt      DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  raidCampaign TokenRaidCampaign @relation(fields: [raidCampaignId], references: [id], onDelete: Cascade)
+  user         User              @relation("TokenRaidParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([raidCampaignId, userId])
+  @@index([raidCampaignId, joinedAt])
+  @@index([userId, updatedAt])
+}
+
+model TokenRaidBoost {
+  id           String   @id @default(cuid())
+  submissionId String
+  userId       String
+  createdAt    DateTime @default(now())
+
+  submission TokenRaidSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  user       User                @relation("TokenRaidBoostUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, userId])
+  @@index([submissionId, createdAt])
   @@index([userId, createdAt])
 }
 

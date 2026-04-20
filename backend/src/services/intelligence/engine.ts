@@ -47,7 +47,7 @@ const FEED_LIST_SOFT_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
-const TOKEN_OVERVIEW_CACHE_VERSION = 9;
+const TOKEN_OVERVIEW_CACHE_VERSION = 11;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
 const TOKEN_LOOKUP_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
@@ -402,6 +402,8 @@ export type TokenOverview = {
   token: TokenRecord & {
     marketCap: number | null;
     isFollowing: boolean;
+    communityExists: boolean;
+    communityBannerUrl: string | null;
     holderCountSource: "stored" | "helius" | "rpc_scan" | "birdeye" | "largest_accounts" | null;
     topHolders: TokenHolderSnapshot[];
     devWallet: TokenHolderSnapshot | null;
@@ -4045,7 +4047,17 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
           staleTopHolders.length === 0 ||
           !hasResolvedHolderRoleIntelligence(staleTopHolders, staleToken?.devWallet ?? null)));
 
-    const [callsRaw, clusters, snapshots, events, tokenFollow, marketSnapshotFallback, distributionFallback] = await Promise.all([
+    const [
+      callsRaw,
+      clusters,
+      snapshots,
+      events,
+      tokenFollow,
+      marketSnapshotFallback,
+      distributionFallback,
+      communityProfile,
+      communityBannerAsset,
+    ] = await Promise.all([
       resolveTokenOverviewSection(
         "related_calls_query",
         () => listTokenRelatedCallRecords(currentToken, normalizedAddress, 80),
@@ -4162,6 +4174,31 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
             { timeoutMs: TOKEN_OVERVIEW_DISTRIBUTION_SECTION_TIMEOUT_MS }
           )
         : Promise.resolve(null),
+      resolveTokenOverviewSection(
+        "community_profile_query",
+        () =>
+          prisma.tokenCommunityProfile.findUnique({
+            where: { tokenId: currentToken.id },
+            select: { id: true },
+          }),
+        staleToken?.communityExists ? ({ id: "__stale__" } as { id: string }) : null
+      ),
+      resolveTokenOverviewSection(
+        "community_banner_query",
+        () =>
+          prisma.tokenCommunityAsset.findFirst({
+            where: {
+              tokenId: currentToken.id,
+              kind: "banner",
+              status: "ready",
+            },
+            select: {
+              url: true,
+            },
+            orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+          }),
+        staleToken?.communityBannerUrl ? ({ url: staleToken.communityBannerUrl } as { url: string }) : null
+      ),
     ]);
 
     const hydratedCalls =
@@ -4672,6 +4709,8 @@ export async function getTokenOverviewByAddress(address: string, viewerId: strin
         isTradable: overviewScoreState.isTradable,
         bullishSignalsSuppressed: overviewScoreState.bullishSignalsSuppressed,
         isFollowing: viewerId ? Boolean(tokenFollow) : false,
+        communityExists: Boolean(communityProfile),
+        communityBannerUrl: communityBannerAsset?.url ?? staleToken?.communityBannerUrl ?? null,
         bundleClusters,
         chart,
         callsCount: recentCalls.length > 0 ? recentCalls.length : staleToken?.callsCount ?? 0,
