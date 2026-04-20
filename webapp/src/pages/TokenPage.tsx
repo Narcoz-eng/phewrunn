@@ -40,6 +40,15 @@ import { importWithRecovery } from "@/lib/lazy-with-recovery";
 const TokenTelemetryCharts = lazy(() =>
   importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
 );
+const TokenCommunitySection = lazy(() =>
+  importWithRecovery(
+    () =>
+      import("@/components/token-community/TokenCommunitySection").then((module) => ({
+        default: module.TokenCommunitySection,
+      })),
+    "token-page:community-section"
+  )
+);
 
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
 const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
@@ -2693,7 +2702,7 @@ export default function TokenPage() {
                         : "border-border/60 bg-secondary hover:border-primary/30"
                     )}
                   >
-                    {followMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : token.isFollowing ? "✓ Following" : "Follow"}
+                    {followMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : token.isFollowing ? "Joined" : "Join Community"}
                   </Button>
                   <a
                     href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
@@ -3374,6 +3383,27 @@ export default function TokenPage() {
                   </div>
                 </div>
               </div>
+            </motion.section>
+
+            <motion.section variants={sectionVariants}>
+              <Suspense
+                fallback={
+                  <div className="app-surface p-5">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading community...
+                    </div>
+                  </div>
+                }
+              >
+                <TokenCommunitySection
+                  tokenAddress={token.address}
+                  tokenSymbol={token.symbol}
+                  tokenName={token.name}
+                  viewer={session?.user ?? null}
+                  canPerformAuthenticatedWrites={canPerformAuthenticatedWrites}
+                />
+              </Suspense>
             </motion.section>
 
             {/* ── SECTION 6: RECENT CALLS ── */}

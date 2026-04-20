@@ -75,6 +75,11 @@ model User {
   reportReviews      Report[] @relation("ReportReviews")
   tokenEvents        TokenEvent[]
   tokenFollows       TokenFollow[]
+  communityProfilesUpdated TokenCommunityProfile[] @relation("TokenCommunityProfileUpdatedBy")
+  communityThreads   TokenCommunityThread[] @relation("TokenCommunityThreadAuthor")
+  communityReplies   TokenCommunityReply[] @relation("TokenCommunityReplyAuthor")
+  raidsCreated       TokenRaidCampaign[] @relation("TokenRaidCampaignCreator")
+  raidSubmissions    TokenRaidSubmission[] @relation("TokenRaidSubmissionUser")
   traderMetricDays   TraderMetricDaily[]
   alertPreference    AlertPreference?
 
@@ -469,6 +474,9 @@ model Token {
   events    TokenEvent[]
   snapshots TokenMetricSnapshot[]
   followers TokenFollow[]
+  communityProfile TokenCommunityProfile?
+  communityThreads TokenCommunityThread[]
+  raidCampaigns    TokenRaidCampaign[]
 
   @@unique([chainType, address])
   @@index([hotAlphaScore, updatedAt])
@@ -564,6 +572,119 @@ model TokenFollow {
 
   @@unique([userId, tokenId])
   @@index([tokenId, createdAt])
+}
+
+model TokenCommunityProfile {
+  id                  String   @id @default(cuid())
+  tokenId             String   @unique
+  headline            String?
+  xCashtag            String?
+  voiceHints          Json?
+  insideJokes         Json?
+  preferredTemplateIds Json?
+  raidLeadMinLevel    Int      @default(3)
+  updatedById         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  token     Token  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  updatedBy User?  @relation("TokenCommunityProfileUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedById, updatedAt])
+}
+
+model TokenCommunityThread {
+  id            String   @id @default(cuid())
+  tokenId        String
+  authorId       String
+  title          String?
+  content        String
+  kind           String   @default("general")
+  raidCampaignId String?  @unique
+  replyCount     Int      @default(0)
+  isPinned       Boolean  @default(false)
+  lastActivityAt DateTime @default(now())
+  deletedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  token        Token             @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  author       User              @relation("TokenCommunityThreadAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  raidCampaign TokenRaidCampaign? @relation(fields: [raidCampaignId], references: [id], onDelete: SetNull)
+  replies      TokenCommunityReply[]
+
+  @@index([tokenId, isPinned, lastActivityAt])
+  @@index([tokenId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model TokenCommunityReply {
+  id        String   @id @default(cuid())
+  threadId   String
+  authorId   String
+  content    String
+  parentId   String?
+  rootId     String?
+  depth      Int      @default(0)
+  deletedAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  thread       TokenCommunityThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author       User                 @relation("TokenCommunityReplyAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  parent       TokenCommunityReply? @relation("TokenCommunityReplyReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies      TokenCommunityReply[] @relation("TokenCommunityReplyReplies")
+  root         TokenCommunityReply? @relation("TokenCommunityReplyRoot", fields: [rootId], references: [id], onDelete: SetNull)
+  threadReplies TokenCommunityReply[] @relation("TokenCommunityReplyRoot")
+
+  @@index([threadId, createdAt])
+  @@index([authorId, createdAt])
+  @@index([parentId, createdAt])
+  @@index([rootId, createdAt])
+}
+
+model TokenRaidCampaign {
+  id             String   @id @default(cuid())
+  tokenId         String
+  createdById     String
+  status          String   @default("active")
+  objective       String
+  memeOptionsJson Json
+  copyOptionsJson Json
+  activeKey       String?  @unique
+  openedAt        DateTime @default(now())
+  closedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  token       Token                  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  createdBy   User                   @relation("TokenRaidCampaignCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  thread      TokenCommunityThread?
+  submissions TokenRaidSubmission[]
+
+  @@index([tokenId, status, openedAt])
+  @@index([createdById, createdAt])
+}
+
+model TokenRaidSubmission {
+  id               String   @id @default(cuid())
+  raidCampaignId   String
+  userId           String
+  memeOptionId     String
+  copyOptionId     String
+  renderPayloadJson Json
+  composerText     String
+  xPostUrl         String?
+  postedAt         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  raidCampaign TokenRaidCampaign @relation(fields: [raidCampaignId], references: [id], onDelete: Cascade)
+  user         User              @relation("TokenRaidSubmissionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([raidCampaignId, userId])
+  @@index([raidCampaignId, postedAt])
+  @@index([userId, createdAt])
 }
 
 model AlertPreference {

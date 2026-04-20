@@ -176,6 +176,103 @@ export interface SharedAlphaUser {
   postedAt: string;
 }
 
+export interface TokenCommunityProfile {
+  id: string | null;
+  headline: string;
+  xCashtag: string | null;
+  voiceHints: string[];
+  insideJokes: string[];
+  preferredTemplateIds: string[];
+  raidLeadMinLevel: number;
+  updatedAt: string | null;
+}
+
+export interface TokenCommunityAuthor {
+  id: string;
+  name: string;
+  username: string | null;
+  image: string | null;
+  level: number;
+  isVerified?: boolean;
+}
+
+export interface TokenCommunityThread {
+  id: string;
+  title: string | null;
+  content: string;
+  kind: "general" | "raid" | string;
+  raidCampaignId: string | null;
+  replyCount: number;
+  isPinned: boolean;
+  lastActivityAt: string;
+  deletedAt: string | null;
+  createdAt: string;
+  author: TokenCommunityAuthor;
+}
+
+export interface TokenCommunityReply {
+  id: string;
+  content: string;
+  parentId: string | null;
+  rootId: string | null;
+  depth: number;
+  deletedAt: string | null;
+  createdAt: string;
+  author: TokenCommunityAuthor;
+}
+
+export interface TokenRaidMemeOption {
+  id: string;
+  templateId: string;
+  title: string;
+  angle: string;
+  topText: string;
+  bottomText: string;
+  kicker?: string | null;
+  footer?: string | null;
+}
+
+export interface TokenRaidCopyOption {
+  id: string;
+  style: string;
+  label: string;
+  angle: string;
+  text: string;
+}
+
+export interface TokenRaidSubmission {
+  id: string;
+  memeOptionId: string;
+  copyOptionId: string;
+  renderPayloadJson: Record<string, unknown>;
+  composerText: string;
+  xPostUrl: string | null;
+  postedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: TokenCommunityAuthor;
+}
+
+export interface TokenRaidCampaign {
+  id: string;
+  status: "active" | "closed" | string;
+  objective: string;
+  memeOptions: TokenRaidMemeOption[];
+  copyOptions: TokenRaidCopyOption[];
+  openedAt: string;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  threadId?: string | null;
+  createdBy: TokenCommunityAuthor;
+}
+
+export interface TokenActiveRaidResponse {
+  campaign: TokenRaidCampaign | null;
+  submissions: TokenRaidSubmission[];
+  mySubmission: TokenRaidSubmission | null;
+}
+
 // Level constants
 export const MIN_LEVEL = -5;
 export const MAX_LEVEL = 10;
