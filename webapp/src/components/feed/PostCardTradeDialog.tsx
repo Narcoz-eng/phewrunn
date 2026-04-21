@@ -19,6 +19,7 @@ import { TradeTransactionsFeed } from "./TradeTransactionsFeed";
 import { TradePanelLiveBadge } from "./TradePanelLiveBadge";
 import { TradingPanel } from "./TradingPanel";
 import PortfolioPanel from "./PortfolioPanel";
+import { TradeTerminalLayout } from "./TradeTerminalLayout";
 import { Coins, ExternalLink, Loader2, Minus, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { PhewChartIcon, PhewFollowIcon, PhewTradeIcon } from "@/components/icons/PhewIcons";
 
@@ -235,8 +236,9 @@ export function PostCardTradeDialog({
           </div>
         ) : null}
 
-        <div className="grid gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)] lg:items-start">
-          <div className="space-y-3 lg:min-h-0 lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
+        <TradeTerminalLayout
+          left={
+            <>
             <div className={chartPanel.panelClassName}>
               <div className={cn("flex items-center justify-between gap-2 border-b px-4 py-2.5", chartPanel.dividerClassName)}>
                 <div className="flex items-center gap-1.5">
@@ -497,13 +499,15 @@ export function PostCardTradeDialog({
             </div>
 
             <TradeTransactionsFeed {...transactionsProps} />
-          </div>
-
-          <div className="relative z-10 flex min-h-0 flex-col gap-3 self-start lg:max-h-[min(74vh,58rem)] lg:overflow-y-auto lg:pr-1">
-            <TradingPanel {...tradingPanelProps} />
-            <PortfolioPanel {...portfolioProps} />
-          </div>
-        </div>
+            </>
+          }
+          right={
+            <>
+              <TradingPanel {...tradingPanelProps} />
+              <PortfolioPanel {...portfolioProps} />
+            </>
+          }
+        />
       </div>
 
       <DialogFooter className={footerClassName}>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -40,6 +40,7 @@ import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { DirectTokenTradePanel } from "@/components/token/DirectTokenTradePanel";
 import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
 import { TradeTransactionsFeed } from "@/components/feed/TradeTransactionsFeed";
+import { TradeTerminalLayout } from "@/components/feed/TradeTerminalLayout";
 
 const TokenTelemetryCharts = lazy(() =>
   importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
@@ -411,6 +412,114 @@ function XPostVisualCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function buildChainExplorerUrl(
+  chainType: "solana" | "ethereum",
+  kind: "address" | "tx",
+  value: string | null | undefined
+): string | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  const baseUrl = chainType === "ethereum" ? "https://etherscan.io" : "https://solscan.io";
+  return `${baseUrl}/${kind}/${normalized}`;
+}
+
+function TokenTerminalMetricCard({
+  label,
+  value,
+  detail,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+  tone?: "default" | "primary" | "gain" | "loss";
+}) {
+  return (
+    <div className="terminal-soft-card rounded-[22px] px-4 py-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">{label}</div>
+      <div
+        className={cn(
+          "mt-2 text-[1.35rem] font-semibold leading-none",
+          tone === "primary" && "text-primary",
+          tone === "gain" && "text-gain",
+          tone === "loss" && "text-loss",
+          tone === "default" && "text-white"
+        )}
+      >
+        {value}
+      </div>
+      {detail ? <div className="mt-1 text-[11px] text-white/30">{detail}</div> : null}
+    </div>
+  );
+}
+
+function TokenTerminalListRow({
+  imageUrl,
+  fallback,
+  title,
+  metadata,
+  value,
+  change,
+  changeTone = "neutral",
+  href,
+  badge,
+}: {
+  imageUrl?: string | null;
+  fallback: string;
+  title: string;
+  metadata: string;
+  value: string;
+  change?: string | null;
+  changeTone?: "gain" | "loss" | "neutral";
+  href?: string | null;
+  badge?: ReactNode;
+}) {
+  const rowContent = (
+    <div className="terminal-list-row flex items-center justify-between gap-4 rounded-[24px] px-3 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar className="h-11 w-11 border border-white/10">
+          <AvatarImage src={imageUrl ?? undefined} />
+          <AvatarFallback className="bg-white/5 text-sm font-semibold text-white">
+            {fallback}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="truncate text-sm font-semibold text-white">{title}</div>
+            {badge}
+          </div>
+          <div className="mt-1 truncate text-[11px] text-white/34">{metadata}</div>
+        </div>
+      </div>
+      <div className="shrink-0 text-right">
+        <div className="text-sm font-semibold text-white">{value}</div>
+        {change ? (
+          <div
+            className={cn(
+              "mt-1 text-[11px] font-medium",
+              changeTone === "gain" && "text-gain",
+              changeTone === "loss" && "text-loss",
+              changeTone === "neutral" && "text-white/42"
+            )}
+          >
+            {change}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  if (!href) {
+    return rowContent;
+  }
+
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="block">
+      {rowContent}
+    </a>
   );
 }
 
@@ -2987,169 +3096,294 @@ export default function TokenPage() {
 
             {/* ── SECTION 3: CHART + QUICK BUY ── */}
             {activeTokenTab === "trade" ? (
-            <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.92fr)]">
-              <div className="app-surface p-5 sm:p-6">
-                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4 text-primary" />
-                      <h3 className="text-base font-semibold text-foreground">Live price chart</h3>
-                      {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct) ? (
-                        <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-bold",
-                          liveChartPriceChangePct >= 0 ? "border-gain/25 bg-gain/10 text-gain" : "border-loss/25 bg-loss/10 text-loss"
-                        )}>
-                          {liveChartPriceChangePct >= 0 ? "+" : ""}{liveChartPriceChangePct.toFixed(2)}%
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {hasLiveChartTelemetry ? liveChartSourceLabel : hasChartTelemetry ? `${chartData.length} snapshot points` : "Awaiting market data"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                  {TOKEN_CHART_INTERVAL_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setChartInterval(option.value)}
-                      className={cn(
-                        "h-7 rounded-lg px-3 text-[11px] font-semibold transition-all",
-                        chartInterval === option.value
-                          ? "bg-primary text-slate-950 shadow-[0_4px_14px_-4px_hsl(var(--primary)/0.5)]"
-                          : "border border-border/60 bg-secondary text-muted-foreground hover:text-foreground"
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                </div>
-                {/* Chart area */}
-                <div className="mt-4 space-y-4">
-                  {hasLiveChartTelemetry || hasChartTelemetry ? (
-                    <Suspense
-                      fallback={
-                        <div className="flex h-[340px] items-center justify-center rounded-[24px] border border-border/60 bg-white/50 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.68)] dark:bg-white/[0.03] dark:shadow-none">
-                          <div className="flex flex-col items-center gap-2 text-center">
-                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                            <div className="text-sm font-medium text-foreground">
-                              Loading market charts
-                            </div>
-                          </div>
+              <motion.section variants={sectionVariants} className="terminal-card overflow-hidden">
+                <div className="border-b border-white/6 px-5 py-4 sm:px-6">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.24em] text-white/36">Trading terminal</div>
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <div className="text-[2.5rem] font-semibold leading-none tracking-tight text-white">
+                          {formatMarketMetric(displayMarketCap)}
                         </div>
-                      }
-                    >
-                      <TokenTelemetryCharts
-                        hasLiveChartTelemetry={hasLiveChartTelemetry}
-                        hasChartTelemetry={hasChartTelemetry}
-                        displayLiveChartData={displayLiveChartData}
-                        liveChartWindow={liveChartWindow}
-                        liveChartFutureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
-                        chartData={chartData}
-                        chartDataPointCount={chartData.length}
-                        formatTokenPrice={formatTokenPrice}
-                        formatLiveTick={(timestampMs) =>
-                          new Date(timestampMs).toLocaleTimeString([], {
-                            ...(chartRequestConfig.timeframe === "day"
-                              ? ({ month: "short", day: "numeric" } as const)
-                              : ({ hour: "2-digit", minute: "2-digit" } as const)),
-                          })
-                        }
-                        formatTimelineTick={(timestampMs) =>
-                          formatChartTimelineTick(timestampMs, chartHistorySpanMs)
-                        }
-                        formatTimelineTooltip={formatChartTimelineTooltip}
-                      />
-                    </Suspense>
-                  ) : (
-                    <div className="flex h-[340px] items-center justify-center rounded-[24px] border border-dashed border-primary/25 bg-gradient-to-br from-primary/8 via-transparent to-cyan-400/6 px-6 text-center">
-                      <div className="max-w-md space-y-3">
-                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
-                          <Loader2 className="h-5 w-5 animate-spin" />
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-base font-semibold text-foreground">Scanning token telemetry</div>
-                          <p className="text-sm text-muted-foreground">
-                            We are pulling the live price route, market cap snapshots, liquidity flow, holder distribution, and sentiment inputs for this token.
-                          </p>
-                        </div>
+                        {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct) ? (
+                          <span
+                            className={cn(
+                              "rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
+                              liveChartPriceChangePct >= 0 ? "bg-emerald-500/12 text-emerald-300" : "bg-rose-500/12 text-rose-300"
+                            )}
+                          >
+                            {liveChartPriceChangePct >= 0 ? "+" : ""}
+                            {liveChartPriceChangePct.toFixed(2)}%
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 text-sm text-white/42">
+                        {tradePanelHasConnectedStream
+                          ? `${liveChartSourceLabel} is driving chart and recent trade updates.`
+                          : tradePanelUsingFallbackPolling
+                            ? "Realtime transport is in fallback mode while the stream recovers."
+                            : "Realtime transport is initializing for this token."}
                       </div>
                     </div>
-                  )}
+                    <div className="flex flex-wrap gap-2">
+                      {TOKEN_CHART_INTERVAL_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setChartInterval(option.value)}
+                          className={cn("terminal-chip", chartInterval === option.value && "terminal-chip-active")}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-4">
-                  <TradeTransactionsFeed
-                    trades={tradePanelRecentTrades}
-                    liveMode={tradePanelLiveStatus.mode}
-                    usingFallbackPolling={tradePanelUsingFallbackPolling}
-                    lastTradeEventAtMs={tradePanelLastTradeEventAtMs}
+
+                <div className="space-y-5 px-5 py-5 sm:px-6">
+                  <div className="grid gap-3 lg:grid-cols-4">
+                    <TokenTerminalMetricCard label="Liquidity" value={formatMarketMetric(token.liquidity)} detail="Current onchain depth" />
+                    <TokenTerminalMetricCard label="24h volume" value={formatMarketMetric(token.volume24h)} detail="Rolling execution flow" />
+                    <TokenTerminalMetricCard
+                      label="Holders"
+                      value={token.holderCount?.toLocaleString() ?? "N/A"}
+                      detail={token.holderCountSource ? `Source: ${token.holderCountSource}` : "Latest indexed count"}
+                    />
+                    <TokenTerminalMetricCard
+                      label="Confidence"
+                      value={typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)}%` : "N/A"}
+                      detail={tradePanelHasConnectedStream ? "Realtime route online" : tradePanelUsingFallbackPolling ? "Fallback transport active" : "Realtime booting"}
+                      tone={
+                        typeof token.confidenceScore === "number" && token.confidenceScore >= 70
+                          ? "gain"
+                          : typeof token.confidenceScore === "number" && token.confidenceScore < 40
+                            ? "loss"
+                            : "default"
+                      }
+                    />
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Live conviction</div>
+                          <div className="mt-1 text-sm text-white/54">Wallets calling this token right now</div>
+                        </div>
+                        <div className="text-xs text-white/30">{displayTopTraders.slice(0, 4).length} tracked</div>
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {displayTopTraders.slice(0, 4).map((trader) => (
+                          <TokenTerminalListRow
+                            key={trader.id}
+                            imageUrl={getAvatarUrl(trader.image)}
+                            fallback={(trader.name ?? trader.handle ?? "?").charAt(0).toUpperCase()}
+                            title={trader.name ?? trader.handle ?? "Trader"}
+                            metadata={[
+                              trader.handle ? `@${trader.handle}` : null,
+                              `${trader.callsCount} calls`,
+                              `avg confidence ${trader.avgConfidenceScore.toFixed(0)}%`,
+                            ].filter(Boolean).join(" | ")}
+                            value={trader.bestRoiPct > 0 ? `+${trader.bestRoiPct.toFixed(0)}%` : `${trader.bestRoiPct.toFixed(0)}%`}
+                            change="Best recorded ROI"
+                            changeTone={trader.bestRoiPct >= 0 ? "gain" : "loss"}
+                            href={trader.handle ? `/${trader.handle}` : `/profile/${trader.id}`}
+                          />
+                        ))}
+                        {!displayTopTraders.length ? (
+                          <div className="rounded-[22px] border border-white/6 bg-white/[0.02] px-4 py-4 text-sm text-white/42">
+                            Live trader conviction will populate as calls and verified activity arrive.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Top holders</div>
+                          <div className="mt-1 text-sm text-white/54">{topHolderSectionCopy}</div>
+                        </div>
+                        <div className="text-xs text-white/30">{topHolderRows.length} visible</div>
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {topHolderRows.slice(0, 4).map((holder, index) => {
+                          const primaryBadge = getPrimaryHolderBadge(holder);
+                          return (
+                            <TokenTerminalListRow
+                              key={`${holder.address}:${index}`}
+                              fallback={String(index + 1)}
+                              title={holder.phewHandle ? `@${holder.phewHandle}` : formatHolderAddress(holder.ownerAddress ?? holder.address)}
+                              metadata={[
+                                holder.label,
+                                buildHolderScanSummary(holder),
+                                getHolderBehavior(holder.tradeSnapshot) !== "unknown" ? getHolderBehavior(holder.tradeSnapshot) : null,
+                              ].filter(Boolean).join(" | ")}
+                              value={formatPct(holder.supplyPct)}
+                              change={holder.valueUsd ? formatMarketCap(holder.valueUsd) : "Value unavailable"}
+                              changeTone="neutral"
+                              href={buildChainExplorerUrl(token.chainType === "solana" ? "solana" : "ethereum", "address", holder.ownerAddress ?? holder.address)}
+                              badge={
+                                primaryBadge ? (
+                                  <span className={cn("rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em]", getHolderBadgeMeta(primaryBadge).className)}>
+                                    {formatHolderBadge(primaryBadge)}
+                                  </span>
+                                ) : null
+                              }
+                            />
+                          );
+                        })}
+                        {!topHolderRows.length ? (
+                          <div className="rounded-[22px] border border-white/6 bg-white/[0.02] px-4 py-4 text-sm text-white/42">
+                            Holder distribution is still resolving for this token.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <TradeTerminalLayout
+                    left={
+                      <>
+                        <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <BarChart3 className="h-4 w-4 text-primary" />
+                                <h3 className="text-base font-semibold text-white">Market flow</h3>
+                              </div>
+                              <p className="mt-1 text-xs text-white/34">
+                                {hasLiveChartTelemetry
+                                  ? liveChartSourceLabel
+                                  : hasChartTelemetry
+                                    ? `${chartData.length} historical points loaded`
+                                    : "Awaiting price history"}
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 sm:flex">
+                              <TokenTerminalMetricCard label="Price" value={formatTokenPrice(liveTokenQuery.data?.priceUsd ?? null)} detail="Last routed print" tone="primary" />
+                              <TokenTerminalMetricCard
+                                label="Stream"
+                                value={tradePanelHasConnectedStream ? "Live" : tradePanelUsingFallbackPolling ? "Fallback" : "Booting"}
+                                detail={tradePanelLiveStatus.reason ?? "Transport state"}
+                                tone={tradePanelHasConnectedStream ? "gain" : tradePanelUsingFallbackPolling ? "default" : "loss"}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-4">
+                            {hasLiveChartTelemetry || hasChartTelemetry ? (
+                              <Suspense
+                                fallback={
+                                  <div className="flex h-[360px] items-center justify-center rounded-[24px] border border-white/6 bg-white/[0.03]">
+                                    <div className="flex flex-col items-center gap-2 text-center">
+                                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                      <div className="text-sm font-medium text-white/72">Loading market charts</div>
+                                    </div>
+                                  </div>
+                                }
+                              >
+                                <TokenTelemetryCharts
+                                  hasLiveChartTelemetry={hasLiveChartTelemetry}
+                                  hasChartTelemetry={hasChartTelemetry}
+                                  displayLiveChartData={displayLiveChartData}
+                                  liveChartWindow={liveChartWindow}
+                                  liveChartFutureSlotCount={TOKEN_LIVE_CHART_FUTURE_SLOTS}
+                                  chartData={chartData}
+                                  chartDataPointCount={chartData.length}
+                                  formatTokenPrice={formatTokenPrice}
+                                  formatLiveTick={(timestampMs) =>
+                                    new Date(timestampMs).toLocaleTimeString([], {
+                                      ...(chartRequestConfig.timeframe === "day"
+                                        ? ({ month: "short", day: "numeric" } as const)
+                                        : ({ hour: "2-digit", minute: "2-digit" } as const)),
+                                    })
+                                  }
+                                  formatTimelineTick={(timestampMs) =>
+                                    formatChartTimelineTick(timestampMs, chartHistorySpanMs)
+                                  }
+                                  formatTimelineTooltip={formatChartTimelineTooltip}
+                                />
+                              </Suspense>
+                            ) : (
+                              <div className="flex h-[360px] items-center justify-center rounded-[24px] border border-dashed border-primary/20 bg-white/[0.02] px-6 text-center">
+                                <div className="max-w-md space-y-3">
+                                  <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <div className="text-base font-semibold text-white">Scanning token telemetry</div>
+                                    <p className="text-sm text-white/34">
+                                      Pulling price history, live prints, liquidity flow, and holder concentration for this token.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <TradeTransactionsFeed
+                          trades={tradePanelRecentTrades}
+                          liveMode={tradePanelLiveStatus.mode}
+                          usingFallbackPolling={tradePanelUsingFallbackPolling}
+                          lastTradeEventAtMs={tradePanelLastTradeEventAtMs}
+                          chainType={token.chainType === "solana" ? "solana" : "ethereum"}
+                        />
+                      </>
+                    }
+                    right={
+                      <>
+                        <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Execution layer</div>
+                              <div className="mt-1 text-sm text-white/58">
+                                {isSolanaTradeSupported ? "Spot routing is live on this terminal." : "This asset is not tradable from the terminal yet."}
+                              </div>
+                            </div>
+                            <span className="rounded-full bg-white/6 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/54">
+                              {isSolanaTradeSupported ? "Spot only" : "Unavailable"}
+                            </span>
+                          </div>
+                          <div className="mt-4 grid gap-3">
+                            <TokenTerminalMetricCard
+                              label="Spot route"
+                              value={isSolanaTradeSupported ? "Jupiter" : "Unavailable"}
+                              detail={isSolanaTradeSupported ? "Unified swap routing" : "Routing disabled for this chain"}
+                              tone={isSolanaTradeSupported ? "gain" : "loss"}
+                            />
+                            <TokenTerminalMetricCard
+                              label="Advanced route"
+                              value="DefiTuna"
+                              detail="Reserved for trigger orders and advanced execution when asset support is enabled."
+                            />
+                          </div>
+                        </div>
+
+                        {isSolanaTradeSupported ? (
+                          <DirectTokenTradePanel
+                            tokenAddress={token.address}
+                            chainType="solana"
+                            tokenSymbol={token.symbol || "TOKEN"}
+                            tokenName={token.name || token.symbol || "Token"}
+                            tokenImage={token.imageUrl}
+                            tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
+                            liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
+                          />
+                        ) : (
+                          <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                            <div className="text-sm font-semibold text-white">Direct swaps unavailable</div>
+                            <div className="mt-2 text-xs leading-6 text-white/38">
+                              Ethereum execution is intentionally blocked here until routing, approvals, and confirmation handling are finished in the unified engine.
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    }
                   />
                 </div>
-              </div>
-
-              {/* Direct trade sidebar */}
-              <div className="space-y-4">
-                {isSolanaTradeSupported ? (
-                  <DirectTokenTradePanel
-                    tokenAddress={token.address}
-                    chainType="solana"
-                    tokenSymbol={token.symbol || "TOKEN"}
-                    tokenName={token.name || token.symbol || "Token"}
-                    tokenImage={token.imageUrl}
-                    tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
-                    liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
-                  />
-                ) : (
-                  <div className="app-surface p-5">
-                    <div className="text-sm font-semibold text-foreground">Direct swaps unavailable</div>
-                    <div className="mt-1 text-xs leading-6 text-muted-foreground">
-                      Ethereum execution is intentionally disabled on this page until wallet, routing, approvals, and confirmation handling are fully production-ready.
-                    </div>
-                  </div>
-                )}
-
-                <div className="app-surface p-5">
-                  <div className="text-sm font-semibold text-foreground">Live route</div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {tradePanelHasConnectedStream
-                      ? `${liveChartSourceLabel} is updating this panel from the live trade stream.`
-                      : tradePanelUsingFallbackPolling
-                        ? "Streaming is unavailable right now, so the panel is using fast fallback refreshes."
-                        : "Live candles will appear here as soon as market route data is available."}
-                  </div>
-                  <div className="mt-4 space-y-2 text-xs text-muted-foreground">
-                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                      <span>Current MCAP</span>
-                      <span className="font-semibold text-foreground">{formatMarketMetric(displayMarketCap)}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                      <span>Current liquidity</span>
-                      <span className="font-semibold text-foreground">{formatMarketMetric(token.liquidity)}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                      <span>24h volume</span>
-                      <span className="font-semibold text-foreground">{formatMarketMetric(token.volume24h)}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                      <span>Confidence</span>
-                      <span className={cn("font-semibold", scoreTone(token.confidenceScore))}>
-                        {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)}%` : "N/A"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
-                      <span>Trade stream</span>
-                      <span className="font-semibold text-foreground">
-                        {tradePanelHasConnectedStream
-                          ? "Live"
-                          : tradePanelUsingFallbackPolling
-                            ? "Fallback"
-                            : "Starting"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.section>
+              </motion.section>
             ) : null}
 
             {/* ── SECTION 4: RISK + HOLDERS ── */}
