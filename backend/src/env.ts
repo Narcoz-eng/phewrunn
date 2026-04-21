@@ -180,12 +180,17 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
       parsed.SOCIAL_SIGNALS_BASE_URL ||
       parsed.SOCIAL_SIGNALS_API_KEY
   );
+  const socialSignalsProviderName = parsed.SOCIAL_SIGNALS_PROVIDER?.toLowerCase() ?? null;
+  const socialSignalsLooksLikeSocialData =
+    socialSignalsProviderName === "socialdata" ||
+    (!socialSignalsProviderName &&
+      !parsed.SOCIAL_SIGNALS_BASE_URL &&
+      Boolean(parsed.SOCIAL_SIGNALS_API_KEY)) ||
+    parsed.SOCIAL_SIGNALS_BASE_URL?.includes("socialdata.tools");
   const hasFullSocialSignalsConfig = Boolean(
-    parsed.SOCIAL_SIGNALS_PROVIDER &&
-      (
-        parsed.SOCIAL_SIGNALS_BASE_URL ||
-        (parsed.SOCIAL_SIGNALS_PROVIDER.toLowerCase() === "socialdata" && parsed.SOCIAL_SIGNALS_API_KEY)
-      )
+    socialSignalsLooksLikeSocialData
+      ? parsed.SOCIAL_SIGNALS_API_KEY
+      : parsed.SOCIAL_SIGNALS_PROVIDER && parsed.SOCIAL_SIGNALS_BASE_URL
   );
   const storageEndpointHost = parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT
     ? new URL(parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT).host

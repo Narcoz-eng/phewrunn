@@ -229,6 +229,7 @@ function aggregateKols(posts: TokenSocialSignalPost[]): TokenSocialSignalKol[] {
 
 function isSocialDataProvider(provider: string | null, baseUrl: string | null): boolean {
   if (provider?.toLowerCase() === "socialdata") return true;
+  if (!provider && safeString(process.env.SOCIAL_SIGNALS_API_KEY) && !baseUrl) return true;
   if (!baseUrl) return false;
   try {
     return new URL(baseUrl).host.includes("socialdata.tools");
@@ -385,7 +386,9 @@ export async function loadTokenSocialSignals(params: {
     });
   }
 
-  const provider = safeString(process.env.SOCIAL_SIGNALS_PROVIDER) ?? "generic";
+  const provider =
+    safeString(process.env.SOCIAL_SIGNALS_PROVIDER) ??
+    (isSocialDataProvider(null, safeString(process.env.SOCIAL_SIGNALS_BASE_URL)) ? "socialdata" : "generic");
   const baseUrl = safeString(process.env.SOCIAL_SIGNALS_BASE_URL)!;
   if (isSocialDataProvider(provider, baseUrl)) {
     try {

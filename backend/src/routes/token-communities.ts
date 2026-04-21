@@ -947,6 +947,42 @@ function mapRouteError(error: unknown) {
       error: { message: "Asset storage is not configured", code: "ASSET_STORAGE_UNAVAILABLE" },
     };
   }
+  if (error.message === "COMMUNITY_ASSET_STORAGE_PERMISSION_DENIED") {
+    return {
+      status: 503 as const,
+      error: {
+        message: "Asset storage rejected the upload. Check the R2 bucket name, access key, secret, and write permissions.",
+        code: "ASSET_STORAGE_PERMISSION_DENIED",
+      },
+    };
+  }
+  if (error.message === "COMMUNITY_ASSET_STORAGE_BUCKET_NOT_FOUND") {
+    return {
+      status: 503 as const,
+      error: {
+        message: "Asset storage bucket was not found. Check COMMUNITY_ASSET_STORAGE_BUCKET and endpoint settings.",
+        code: "ASSET_STORAGE_BUCKET_NOT_FOUND",
+      },
+    };
+  }
+  if (error.message === "COMMUNITY_ASSET_STORAGE_UPSTREAM_UNAVAILABLE") {
+    return {
+      status: 503 as const,
+      error: {
+        message: "Asset storage is temporarily unavailable. Retry in a few seconds.",
+        code: "ASSET_STORAGE_UPSTREAM_UNAVAILABLE",
+      },
+    };
+  }
+  if (error.message.startsWith("COMMUNITY_ASSET_STORAGE_UPLOAD_FAILED:")) {
+    return {
+      status: 503 as const,
+      error: {
+        message: "Asset storage rejected the upload request. Check the R2 endpoint, bucket, and credentials.",
+        code: "ASSET_STORAGE_UPLOAD_FAILED",
+      },
+    };
+  }
   if (error.message === "INVALID_ASSET_UPLOAD") {
     return {
       status: 400 as const,
@@ -1324,6 +1360,10 @@ tokenCommunitiesRouter.post(
 
       return c.json({ data: serializeCommunityAsset(token.address, asset) });
     } catch (error) {
+      console.warn("[community-assets/upload] failed", {
+        tokenAddress: c.req.valid("param").tokenAddress,
+        message: error instanceof Error ? error.message : String(error),
+      });
       const mapped = mapRouteError(error);
       if (mapped) return c.json(mapped.error, mapped.status);
       throw error;

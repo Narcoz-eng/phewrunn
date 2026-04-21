@@ -292,7 +292,19 @@ export async function uploadCommunityAssetObject(params: {
     body: params.body,
   });
   if (!response.ok) {
-    throw new Error(`Community asset upload failed with ${response.status}`);
+    const bodyText = await response.text().catch(() => "");
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("COMMUNITY_ASSET_STORAGE_PERMISSION_DENIED");
+    }
+    if (response.status === 404) {
+      throw new Error("COMMUNITY_ASSET_STORAGE_BUCKET_NOT_FOUND");
+    }
+    if (response.status >= 500) {
+      throw new Error("COMMUNITY_ASSET_STORAGE_UPSTREAM_UNAVAILABLE");
+    }
+    throw new Error(
+      `COMMUNITY_ASSET_STORAGE_UPLOAD_FAILED:${response.status}:${bodyText.slice(0, 180)}`,
+    );
   }
   return { publicUrl: upload.publicUrl };
 }
