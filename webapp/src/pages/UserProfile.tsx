@@ -861,6 +861,47 @@ export default function UserProfile() {
               </div>
             )}
 
+            {performanceVm ? (
+              <TraderPerformanceView
+                vm={performanceVm}
+                headerActions={[
+                  {
+                    key: "share",
+                    label: <Share2 className="h-4 w-4" />,
+                    onClick: () => setShowShareCard(true),
+                    variant: "ghost",
+                  },
+                  ...(!isOwnProfile
+                    ? [
+                        {
+                          key: "follow",
+                          label: followMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : user.isFollowing ? (
+                            "Following"
+                          ) : (
+                            <>
+                              <PhewFollowIcon className="h-4 w-4" />
+                              Follow
+                            </>
+                          ),
+                          onClick: () => followMutation.mutate(),
+                          variant: user.isFollowing ? ("ghost" as const) : ("primary" as const),
+                        },
+                      ]
+                    : []),
+                ]}
+                heroTabs={[
+                  { key: "24h", label: "24h", active: true },
+                  { key: "7d", label: "7d", active: false, disabled: true },
+                  { key: "30d", label: "30d", active: false, disabled: true },
+                  { key: "all", label: "All", active: false, disabled: true },
+                ]}
+              />
+            ) : null}
+
+            {false ? (
+              <>
             {/* Profile Header */}
             <div className="-mx-4">
               {/* Banner */}
@@ -937,6 +978,8 @@ export default function UserProfile() {
                 <span className="text-muted-foreground">Following</span>
               </div>
             </div>
+              </>
+            ) : null}
 
             {/* User Posts Section */}
             <div className="space-y-4">
