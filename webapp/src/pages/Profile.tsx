@@ -72,6 +72,7 @@ import { TraderPerformanceView } from "@/components/experience/TraderPerformance
 import {
   buildTraderPerformanceVm,
   buildTraderPerformanceVmFromSnapshot,
+  type PerformancePeriod,
   type UserPerformanceSnapshot,
 } from "@/viewmodels/trader-performance";
 
@@ -256,6 +257,7 @@ export default function Profile() {
   const [isEditing, setIsEditing] = useState(false);
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
+  const [performancePeriod, setPerformancePeriod] = useState<PerformancePeriod>("30d");
   const [enableWalletOverviewQuery, setEnableWalletOverviewQuery] = useState(false);
   const [enableFeeEarningsQuery, setEnableFeeEarningsQuery] = useState(false);
   const profileViewTab: ProfileViewTab = searchParams.get("tab") === "settings" ? "settings" : "profile";
@@ -1096,6 +1098,7 @@ export default function Profile() {
                 : null),
           },
           avatarUrl: getAvatarUrl(canonicalProfileUser.id, canonicalProfileUser.image),
+          selectedPeriod: performancePeriod,
           postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
         });
       }
@@ -1125,6 +1128,7 @@ export default function Profile() {
       displayWalletAddress,
       followersCount,
       followingCount,
+      performancePeriod,
       performanceSnapshot,
       recentTrades,
       walletOverview,
@@ -1452,19 +1456,13 @@ export default function Profile() {
                       },
                     ]}
                     heroTabs={[
-                      { key: "24h", label: "24h", active: true },
-                      { key: "7d", label: "7d", active: false, disabled: true },
-                      { key: "30d", label: "30d", active: false, disabled: true },
-                      { key: "all", label: "All", active: false, disabled: true },
+                      { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
+                      { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
+                      { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
+                      { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
                     ]}
                   />
                 ) : null}
-
-                <TraderIntelligenceCard
-                  handle={user.username ?? user.id}
-                  enabled={isPostsFetched}
-                  deferMs={1800}
-                />
 
             <LivePortfolioDialog
               open={isPortfolioOpen}
@@ -1506,11 +1504,6 @@ export default function Profile() {
               />
             )}
 
-            {/* Wallet Connection Section */}
-            <WalletConnection deferMs={2600} />
-
-            {/* My Invites Section */}
-            <MyInvitesSection />
             {/* User Posts Section */}
             <div className="space-y-4">
               {/* Main Tabs: Posts | Reposts */}

@@ -1,5 +1,7 @@
 import type { RecentTrade, WalletData, WalletTokenPosition } from "@/components/profile/ProfileDashboard";
 
+export type PerformancePeriod = "24h" | "7d" | "30d" | "all";
+
 export type PerformancePositionVM = {
   id: string;
   tokenLabel: string;
@@ -11,25 +13,30 @@ export type PerformancePositionVM = {
   href: string | null;
 };
 
+export type PerformanceStatVM = {
+  label: string;
+  value: string;
+};
+
 export type TraderPerformanceVM = {
   displayName: string;
   handle: string | null;
   avatarUrl: string | null;
   avatarFallback: string;
   bio: string | null;
-  followersLabel: string;
-  followingLabel: string;
-  avgHoldLabel: string;
-  tradeCountLabel: string;
-  joinedLabel: string;
+  surfaceLabel: string;
+  stats: PerformanceStatVM[];
+  heroLabel: string;
   heroValueLabel: string;
   heroSubValueLabel: string | null;
   heroSubCaption: string | null;
   heroSubTone: "gain" | "loss" | "neutral";
+  chartLabel: string;
   chartPoints: number[];
   cashBalanceLabel: string | null;
   positionsHeading: string;
   positionsCountLabel: string | null;
+  positionsCaption: string | null;
   positions: PerformancePositionVM[];
 };
 
@@ -73,11 +80,16 @@ type TraderPerformanceInput = {
   recentTrades?: RecentTrade[];
   postsFallbackHrefBuilder?: (address: string | null) => string | null;
   chartPointsOverride?: number[] | null;
+  heroLabelOverride?: string | null;
   heroValueLabelOverride?: string | null;
   heroSubValueLabelOverride?: string | null;
   heroSubCaptionOverride?: string | null;
   heroSubToneOverride?: "gain" | "loss" | "neutral";
   positionsHeadingOverride?: string | null;
+  positionsCaptionOverride?: string | null;
+  surfaceLabelOverride?: string | null;
+  chartLabelOverride?: string | null;
+  statsOverride?: PerformanceStatVM[] | null;
 };
 
 type LeaderboardPerformanceEntry = {
@@ -94,6 +106,7 @@ type LeaderboardPerformanceEntry = {
     winRate: number | null;
     trustScore: number | null;
     callsCount: number;
+    settledCount?: number;
     firstCallCount: number;
   };
   recentTokens: Array<{
@@ -127,6 +140,16 @@ export type UserPerformanceSnapshot = {
     firstCallCount: number;
     firstCallAvgRoi: number | null;
   };
+  periodMetrics: Record<
+    PerformancePeriod,
+    {
+      callsCount: number;
+      settledCount: number;
+      avgRoi: number | null;
+      winRate: number | null;
+      trustScore: number | null;
+    }
+  >;
   walletOverview: WalletData | null;
   chartPoints: number[];
   recentCalls: Array<{
@@ -177,10 +200,10 @@ function formatJoinDate(dateString: string | null | undefined): string {
   if (!dateString) return "Joined recently";
   const date = new Date(dateString);
   if (Number.isNaN(date.getTime())) return "Joined recently";
-  return `Joined ${date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString("en-US", {
     month: "short",
     year: "numeric",
-  })}`;
+  });
 }
 
 function formatAverageHoldLabel(trades: RecentTrade[]): string {
@@ -201,14 +224,14 @@ function formatAverageHoldLabel(trades: RecentTrade[]): string {
   const totalHours = averageMs / (1000 * 60 * 60);
 
   if (totalHours < 1) {
-    return `${Math.max(1, Math.round(totalHours * 60))}m avg hold`;
+    return `${Math.max(1, Math.round(totalHours * 60))}m`;
   }
   if (totalHours < 24) {
-    return `${totalHours.toFixed(totalHours >= 10 ? 0 : 1)}h avg hold`;
+    return `${totalHours.toFixed(totalHours >= 10 ? 0 : 1)}h`;
   }
 
   const days = totalHours / 24;
-  return `${days.toFixed(days >= 10 ? 0 : 1)}d avg hold`;
+  return `${days.toFixed(days >= 10 ? 0 : 1)}d`;
 }
 
 function buildSparklinePoints(walletData: WalletData | null | undefined, recentTrades: RecentTrade[]): number[] {
@@ -238,7 +261,7 @@ function buildSparklinePoints(walletData: WalletData | null | undefined, recentT
     return cumulativeSeries(tradeSeries);
   }
 
-  return [4, 5, 5, 6, 8, 9, 11, 12, 14, 18, 17, 23];
+  return [2, 4, 6, 8, 7, 10, 12, 16, 14, 18, 24, 27];
 }
 
 function cumulativeSeries(values: number[]): number[] {
@@ -280,13 +303,12 @@ function buildRecentTradePositionVm(
       : null;
   return {
     id: trade.id,
-    tokenLabel: trade.content || "Recent trade",
-    tokenSubLabel: trade.chainType ? `${trade.chainType.toUpperCase()} call` : "Settled call",
+    tokenLabel: trade.content || "Recent call",
+    tokenSubLabel: trade.chainType ? `${trade.chainType.toUpperCase()} signal` : "Settled call",
     imageUrl: null,
-    valueLabel: trade.currentMcap ? formatUsd(trade.currentMcap) : "Open in terminal",
+    valueLabel: trade.currentMcap ? formatUsd(trade.currentMcap) : "Open terminal",
     changeLabel: formatPercent(percentChange),
-    changeTone:
-      percentChange === null ? "neutral" : percentChange >= 0 ? "gain" : "loss",
+    changeTone: percentChange === null ? "neutral" : percentChange >= 0 ? "gain" : "loss",
     href: buildHref?.(trade.contractAddress) ?? null,
   };
 }
@@ -313,46 +335,50 @@ export function buildTraderPerformanceVm(input: TraderPerformanceInput): TraderP
     avatarUrl: input.avatarUrl ?? null,
     avatarFallback: input.displayName.charAt(0).toUpperCase() || "?",
     bio: input.bio ?? null,
-    followersLabel: `${formatCompactNumber(input.followersCount)} Followers`,
-    followingLabel: `${formatCompactNumber(input.followingCount)} Following`,
-    avgHoldLabel: formatAverageHoldLabel(recentTrades),
-    tradeCountLabel: `${formatCompactNumber(recentTradeCount)} trades`,
-    joinedLabel: formatJoinDate(input.joinedAt),
+    surfaceLabel: input.surfaceLabelOverride ?? (tokenPositions.length > 0 ? "Wallet performance" : "Call performance"),
+    stats:
+      input.statsOverride ??
+      [
+        { label: "Followers", value: formatCompactNumber(input.followersCount) },
+        { label: "Following", value: formatCompactNumber(input.followingCount) },
+        { label: "Avg hold", value: formatAverageHoldLabel(recentTrades) },
+        { label: "Joined", value: formatJoinDate(input.joinedAt) },
+      ],
+    heroLabel: input.heroLabelOverride ?? (tokenPositions.length > 0 ? "Net portfolio PnL" : "Call performance"),
     heroValueLabel:
       input.heroValueLabelOverride ??
-      (totalPnlUsd !== null ? formatUsd(totalPnlUsd) : `${formatCompactNumber(recentTradeCount)} trades`),
+      (totalPnlUsd !== null ? formatUsd(totalPnlUsd) : `${formatCompactNumber(recentTradeCount)} calls`),
     heroSubValueLabel:
       input.heroSubValueLabelOverride !== undefined
         ? input.heroSubValueLabelOverride
-        : totalPnlUsd !== null
-          ? recent24hCount > 0
-            ? `${recent24hCount} closed trades`
-            : "No closed trades"
-          : recent24hCount > 0
-            ? `${recent24hCount} closed trades`
-            : null,
+        : recent24hCount > 0
+          ? `${recent24hCount} closed`
+          : null,
     heroSubCaption:
       input.heroSubCaptionOverride !== undefined
         ? input.heroSubCaptionOverride
         : recent24hCount > 0
-          ? "24h activity"
-          : totalPnlUsd !== null
-            ? "24h activity"
-            : null,
+          ? "last 24h"
+          : null,
     heroSubTone:
       input.heroSubToneOverride ??
       (totalPnlUsd !== null && totalPnlUsd >= 0 ? "gain" : totalPnlUsd !== null ? "loss" : "neutral"),
-    chartPoints: input.chartPointsOverride && input.chartPointsOverride.length > 0
-      ? input.chartPointsOverride
-      : buildSparklinePoints(walletData, recentTrades),
+    chartLabel: input.chartLabelOverride ?? "Performance curve",
+    chartPoints:
+      input.chartPointsOverride && input.chartPointsOverride.length > 0
+        ? input.chartPointsOverride
+        : buildSparklinePoints(walletData, recentTrades),
     cashBalanceLabel:
       walletData?.balanceUsd != null
         ? formatUsd(walletData.balanceUsd)
         : walletData?.balanceUsdc != null
           ? formatUsd(walletData.balanceUsdc)
           : null,
-    positionsHeading: input.positionsHeadingOverride ?? (tokenPositions.length > 0 ? "Open positions" : "Recent calls"),
+    positionsHeading: input.positionsHeadingOverride ?? (tokenPositions.length > 0 ? "Live positions" : "Recent calls"),
     positionsCountLabel: positions.length > 0 ? `${positions.length}` : null,
+    positionsCaption:
+      input.positionsCaptionOverride ??
+      (tokenPositions.length > 0 ? "Wallet-synced holdings" : "Latest settled calls"),
     positions,
   };
 }
@@ -360,9 +386,10 @@ export function buildTraderPerformanceVm(input: TraderPerformanceInput): TraderP
 export function buildTraderPerformanceVmFromSnapshot(params: {
   snapshot: UserPerformanceSnapshot;
   avatarUrl: string | null;
+  selectedPeriod: PerformancePeriod;
   postsFallbackHrefBuilder?: (address: string | null) => string | null;
 }): TraderPerformanceVM {
-  const { snapshot } = params;
+  const { snapshot, selectedPeriod } = params;
   const recentTrades: RecentTrade[] = snapshot.recentCalls.map((call) => ({
     id: call.id,
     content: call.content || call.tokenName || call.tokenSymbol || "Recent call",
@@ -375,7 +402,8 @@ export function buildTraderPerformanceVmFromSnapshot(params: {
     isWin: call.isWin,
     createdAt: call.createdAt,
   }));
-  const primaryAvgRoi = snapshot.callMetrics.avgRoi30d ?? snapshot.callMetrics.avgRoi7d;
+  const periodMetrics = snapshot.periodMetrics[selectedPeriod];
+  const periodLabel = selectedPeriod === "all" ? "All time" : selectedPeriod;
 
   return buildTraderPerformanceVm({
     displayName: snapshot.user.name || snapshot.user.username || "Trader",
@@ -389,31 +417,49 @@ export function buildTraderPerformanceVmFromSnapshot(params: {
     recentTrades,
     postsFallbackHrefBuilder: params.postsFallbackHrefBuilder,
     chartPointsOverride: snapshot.chartPoints,
+    heroLabelOverride: snapshot.source === "wallet" ? "Net portfolio PnL" : `${periodLabel} call return`,
     heroValueLabelOverride:
       snapshot.source === "wallet"
         ? undefined
-        : formatPercent(primaryAvgRoi, 1) ?? `${formatCompactNumber(snapshot.callMetrics.callsCount)} calls`,
+        : formatPercent(periodMetrics.avgRoi, 1) ?? `${formatCompactNumber(periodMetrics.callsCount)} calls`,
     heroSubValueLabelOverride:
-      snapshot.callMetrics.winRate30d !== null && Number.isFinite(snapshot.callMetrics.winRate30d)
-        ? `${snapshot.callMetrics.winRate30d.toFixed(0)}% win rate`
-        : snapshot.callMetrics.trustScore !== null && Number.isFinite(snapshot.callMetrics.trustScore)
-          ? `${snapshot.callMetrics.trustScore.toFixed(0)} trust`
-          : null,
+      snapshot.source === "wallet"
+        ? undefined
+        : periodMetrics.winRate !== null && Number.isFinite(periodMetrics.winRate)
+          ? `${periodMetrics.winRate.toFixed(0)}% win rate`
+          : periodMetrics.trustScore !== null && Number.isFinite(periodMetrics.trustScore)
+            ? `${periodMetrics.trustScore.toFixed(0)} trust`
+            : null,
     heroSubCaptionOverride:
-      snapshot.callMetrics.winRate30d !== null && Number.isFinite(snapshot.callMetrics.winRate30d)
-        ? "30d call record"
-        : snapshot.callMetrics.trustScore !== null && Number.isFinite(snapshot.callMetrics.trustScore)
-          ? "Trader trust"
-          : null,
+      snapshot.source === "wallet"
+        ? undefined
+        : `${periodMetrics.settledCount} settled | ${periodMetrics.callsCount} calls`,
     heroSubToneOverride:
       snapshot.source === "wallet"
         ? "neutral"
-        : primaryAvgRoi !== null && Number.isFinite(primaryAvgRoi)
-          ? primaryAvgRoi >= 0
+        : periodMetrics.avgRoi !== null && Number.isFinite(periodMetrics.avgRoi)
+          ? periodMetrics.avgRoi >= 0
             ? "gain"
             : "loss"
           : "neutral",
-    positionsHeadingOverride: snapshot.source === "wallet" ? "Open positions" : "Recent calls",
+    positionsHeadingOverride: snapshot.source === "wallet" ? "Live positions" : "Recent calls",
+    positionsCaptionOverride:
+      snapshot.source === "wallet"
+        ? "Wallet-synced holdings"
+        : `Calls settled from ${periodLabel.toLowerCase()}`,
+    surfaceLabelOverride: snapshot.source === "wallet" ? "Wallet performance" : "Calls performance",
+    chartLabelOverride:
+      snapshot.source === "wallet"
+        ? "Wallet PnL curve"
+        : `${periodLabel} call-performance curve`,
+    statsOverride: [
+      { label: "Followers", value: formatCompactNumber(snapshot.user.followersCount) },
+      { label: "Following", value: formatCompactNumber(snapshot.user.followingCount) },
+      { label: "Calls", value: formatCompactNumber(periodMetrics.callsCount) },
+      { label: "Settled", value: formatCompactNumber(periodMetrics.settledCount) },
+      { label: "Avg hold", value: formatAverageHoldLabel(recentTrades) },
+      { label: "Joined", value: formatJoinDate(snapshot.user.createdAt) },
+    ],
   });
 }
 
@@ -424,6 +470,7 @@ export function buildLeaderboardRowsVm(
     const avgRoi = item.performance.avgRoi;
     const winRate = item.performance.winRate;
     const trustScore = item.performance.trustScore;
+    const settledCount = item.performance.settledCount ?? 0;
 
     return {
       id: item.user.id,
@@ -432,7 +479,7 @@ export function buildLeaderboardRowsVm(
       handle: item.user.username ? `@${item.user.username}` : null,
       avatarUrl: item.user.image ?? null,
       avatarFallback: (item.user.name || item.user.username || "?").charAt(0).toUpperCase(),
-      metadataLabel: `${item.performance.callsCount} calls • ${item.performance.firstCallCount} first`,
+      metadataLabel: `${item.performance.callsCount} calls • ${settledCount} settled`,
       valueLabel: formatPercent(avgRoi, 1) ?? "0.0%",
       valueTone: avgRoi === null ? "neutral" : avgRoi >= 0 ? "gain" : "loss",
       changeLabel:
@@ -455,24 +502,22 @@ export function buildLeaderboardRowsVm(
 }
 
 export function buildPinnedRankVm(
-  users: LeaderboardPerformanceEntry[],
+  entry: LeaderboardPerformanceEntry | null | undefined,
   currentUserId: string | null
 ): LeaderboardPinnedRankVM | null {
-  if (!currentUserId) return null;
-  const row = users.find((item) => item.user.id === currentUserId);
-  if (!row) return null;
+  if (!currentUserId || !entry) return null;
 
   return {
     title: "Your rank",
-    rankLabel: `#${row.rank}`,
-    valueLabel: formatPercent(row.performance.avgRoi, 1) ?? "0.0%",
+    rankLabel: `#${entry.rank}`,
+    valueLabel: formatPercent(entry.performance.avgRoi, 1) ?? "0.0%",
     valueTone:
-      typeof row.performance.avgRoi === "number" && Number.isFinite(row.performance.avgRoi)
-        ? row.performance.avgRoi >= 0
+      typeof entry.performance.avgRoi === "number" && Number.isFinite(entry.performance.avgRoi)
+        ? entry.performance.avgRoi >= 0
           ? "gain"
           : "loss"
         : "neutral",
-    avatarUrl: row.user.image ?? null,
-    avatarFallback: (row.user.name || row.user.username || "?").charAt(0).toUpperCase(),
+    avatarUrl: entry.user.image ?? null,
+    avatarFallback: (entry.user.name || entry.user.username || "?").charAt(0).toUpperCase(),
   };
 }

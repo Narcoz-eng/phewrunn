@@ -1229,10 +1229,101 @@ type UserPerformancePayload = {
     firstCallCount: number;
     firstCallAvgRoi: number | null;
   };
+  periodMetrics: {
+    "24h": {
+      callsCount: number;
+      settledCount: number;
+      avgRoi: number | null;
+      winRate: number | null;
+      trustScore: number | null;
+    };
+    "7d": {
+      callsCount: number;
+      settledCount: number;
+      avgRoi: number | null;
+      winRate: number | null;
+      trustScore: number | null;
+    };
+    "30d": {
+      callsCount: number;
+      settledCount: number;
+      avgRoi: number | null;
+      winRate: number | null;
+      trustScore: number | null;
+    };
+    all: {
+      callsCount: number;
+      settledCount: number;
+      avgRoi: number | null;
+      winRate: number | null;
+      trustScore: number | null;
+    };
+  };
   walletOverview: WalletOverviewPayload | null;
   chartPoints: number[];
   recentCalls: UserPerformanceRecentCallPayload[];
 };
+
+type PerformanceMetricRow = {
+  bucketDate: Date;
+  callsCount: number;
+  settledCount: number;
+  winRate: number;
+  avgRoi: number;
+  firstCalls: number;
+  trustScore: number | null;
+};
+
+function aggregatePerformanceMetricWindow(
+  rows: PerformanceMetricRow[],
+  params: { sinceMs?: number }
+) {
+  const filtered = typeof params.sinceMs === "number"
+    ? rows.filter((row) => row.bucketDate.getTime() >= params.sinceMs!)
+    : rows;
+
+  let callsCount = 0;
+  let settledCount = 0;
+  let roiWeightedTotal = 0;
+  let roiWeight = 0;
+  let winWeightedTotal = 0;
+  let winWeight = 0;
+  let trustScore: number | null = null;
+  let latestBucketMs = -Infinity;
+
+  for (const row of filtered) {
+    callsCount += row.callsCount;
+    settledCount += row.settledCount;
+
+    const roiWeightForRow = Math.max(row.settledCount, row.callsCount, 1);
+    if (Number.isFinite(row.avgRoi)) {
+      roiWeightedTotal += row.avgRoi * roiWeightForRow;
+      roiWeight += roiWeightForRow;
+    }
+
+    const winWeightForRow = Math.max(row.settledCount, 1);
+    if (Number.isFinite(row.winRate)) {
+      winWeightedTotal += row.winRate * winWeightForRow;
+      winWeight += winWeightForRow;
+    }
+
+    if (typeof row.trustScore === "number" && Number.isFinite(row.trustScore)) {
+      const bucketMs = row.bucketDate.getTime();
+      if (bucketMs >= latestBucketMs) {
+        latestBucketMs = bucketMs;
+        trustScore = row.trustScore;
+      }
+    }
+  }
+
+  return {
+    callsCount,
+    settledCount,
+    avgRoi: roiWeight > 0 ? Math.round((roiWeightedTotal / roiWeight) * 100) / 100 : null,
+    winRate: winWeight > 0 ? Math.round((winWeightedTotal / winWeight) * 100) / 100 : null,
+    trustScore,
+  };
+}
 
 function buildWalletStatusPayload(params: {
   walletAddress: string | null | undefined;
@@ -2408,13 +2499,33 @@ usersRouter.get("/:identifier/performance", async (c) => {
       prisma.traderMetricDaily.findMany({
         where: { traderId: user.id },
         orderBy: { bucketDate: "desc" },
-        take: 30,
+        take: 90,
         select: {
+          bucketDate: true,
+          callsCount: true,
+          settledCount: true,
+          winRate: true,
           avgRoi: true,
+          firstCalls: true,
+          trustScore: true,
         },
       }),
     { label: "users:performance:chart" }
   ).catch(() => []);
+
+  const nowMs = Date.now();
+  const periodMetrics = {
+    "24h": aggregatePerformanceMetricWindow(traderMetricRows, {
+      sinceMs: nowMs - 24 * 60 * 60 * 1000,
+    }),
+    "7d": aggregatePerformanceMetricWindow(traderMetricRows, {
+      sinceMs: nowMs - 7 * 24 * 60 * 60 * 1000,
+    }),
+    "30d": aggregatePerformanceMetricWindow(traderMetricRows, {
+      sinceMs: nowMs - 30 * 24 * 60 * 60 * 1000,
+    }),
+    all: aggregatePerformanceMetricWindow(traderMetricRows, {}),
+  };
 
   const fallbackChartPoints = settledCalls
     .slice()
@@ -2471,6 +2582,7 @@ usersRouter.get("/:identifier/performance", async (c) => {
       firstCallCount: user.firstCallCount,
       firstCallAvgRoi: user.firstCallAvgRoi,
     },
+    periodMetrics,
     walletOverview,
     chartPoints,
     recentCalls: settledCalls.slice(0, 6).map((call) => ({

@@ -56,6 +56,7 @@ import { TraderPerformanceView } from "@/components/experience/TraderPerformance
 import {
   buildTraderPerformanceVm,
   buildTraderPerformanceVmFromSnapshot,
+  type PerformancePeriod,
   type UserPerformanceSnapshot,
 } from "@/viewmodels/trader-performance";
 
@@ -187,6 +188,7 @@ export default function UserProfile() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
+  const [performancePeriod, setPerformancePeriod] = useState<PerformancePeriod>("30d");
   const [showShareCard, setShowShareCard] = useState<boolean>(false);
   const viewerCacheScope = session?.user?.id ?? "anonymous";
   const userProfileQueryKey = useMemo(
@@ -799,6 +801,7 @@ export default function UserProfile() {
             performanceSnapshot.user.id ?? profileAvatarSeed,
             performanceSnapshot.user.image
           ),
+          selectedPeriod: performancePeriod,
           postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
         });
       }
@@ -817,7 +820,7 @@ export default function UserProfile() {
           })
         : null;
     },
-    [performanceSnapshot, profileAvatarSeed, recentTrades, user]
+    [performancePeriod, performanceSnapshot, profileAvatarSeed, recentTrades, user]
   );
 
   const formatJoinDate = (dateString: string) => {
@@ -926,10 +929,10 @@ export default function UserProfile() {
                     : []),
                 ]}
                 heroTabs={[
-                  { key: "24h", label: "24h", active: true },
-                  { key: "7d", label: "7d", active: false, disabled: true },
-                  { key: "30d", label: "30d", active: false, disabled: true },
-                  { key: "all", label: "All", active: false, disabled: true },
+                  { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
+                  { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
+                  { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
+                  { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
                 ]}
               />
             ) : null}

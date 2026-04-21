@@ -11,6 +11,7 @@ import { DenseLeaderboardView } from "@/components/experience/TraderPerformanceV
 import {
   buildLeaderboardRowsVm,
   buildPinnedRankVm,
+  type PerformancePeriod,
   type LeaderboardPinnedRankVM,
 } from "@/viewmodels/trader-performance";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,6 @@ import { ArrowLeft, House, Trophy, UserRound } from "lucide-react";
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 const TOP_USERS_CACHE_TTL_MS = 10 * 60_000;
-type PerformancePeriod = "7d" | "30d" | "all";
 
 type PerformanceLeaderboardEntry = {
   rank: number;
@@ -35,6 +35,7 @@ type PerformanceLeaderboardEntry = {
     winRate: number | null;
     trustScore: number | null;
     callsCount: number;
+    settledCount: number;
     firstCallCount: number;
   };
   recentTokens: Array<{
@@ -46,6 +47,9 @@ type PerformanceLeaderboardEntry = {
 
 type TopUsersResponse = {
   data: PerformanceLeaderboardEntry[];
+  meta?: {
+    currentUser?: PerformanceLeaderboardEntry | null;
+  } | null;
 };
 
 function buildTopUsersCacheKey(period: PerformancePeriod): string {
@@ -118,18 +122,18 @@ export default function Leaderboard() {
   );
 
   const pinnedRank = useMemo<LeaderboardPinnedRankVM | null>(() => {
-    const exact = buildPinnedRankVm(data?.data ?? [], currentUser?.id ?? null);
+    const exact = buildPinnedRankVm(data?.meta?.currentUser ?? null, currentUser?.id ?? null);
     if (exact) return exact;
     if (!currentUser) return null;
     return {
       title: "Your rank",
-      rankLabel: "Top 100?",
-      valueLabel: "Building record",
+      rankLabel: "Unranked",
+      valueLabel: "No settled record",
       valueTone: "neutral",
       avatarUrl: getAvatarUrl(currentUser.id, currentUser.image),
       avatarFallback: (currentUser.name || currentUser.username || "?").charAt(0).toUpperCase(),
     };
-  }, [currentUser, data?.data]);
+  }, [currentUser, data?.meta?.currentUser]);
 
   const unreadCacheKey = session?.user?.id
     ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
@@ -174,11 +178,17 @@ export default function Leaderboard() {
         ) : (
           <div className={cn("transition-opacity", isFetching && "opacity-80")}>
             <DenseLeaderboardView
-              eyebrow="Performance board"
-              title="Trader Rankings"
-              subtitle="Backend-ranked call performance with live-linked trader profiles."
+              eyebrow="Calls leaderboard"
+              title="Signal Performance Board"
+              subtitle="Ranked from backend performance buckets, not UI-derived metrics. Rows stay on real call results until the trade-PnL board ships."
               pinnedRank={pinnedRank}
               timeframeTabs={[
+                {
+                  key: "24h",
+                  label: "24h",
+                  active: period === "24h",
+                  onSelect: () => setPeriod("24h"),
+                },
                 {
                   key: "7d",
                   label: "7d",

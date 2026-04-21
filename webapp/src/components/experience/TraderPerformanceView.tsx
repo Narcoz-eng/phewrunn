@@ -69,6 +69,15 @@ function ValueTone({ tone, children }: { tone: "gain" | "loss" | "neutral"; chil
   );
 }
 
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[22px] border border-white/7 bg-white/[0.035] px-3 py-3">
+      <div className="text-[10px] uppercase tracking-[0.22em] text-white/36">{label}</div>
+      <div className="mt-2 text-sm font-medium text-white/88">{value}</div>
+    </div>
+  );
+}
+
 export function TerminalChipTabs({ options }: { options: ChipOption[] }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -79,8 +88,10 @@ export function TerminalChipTabs({ options }: { options: ChipOption[] }) {
           onClick={option.onSelect}
           disabled={option.disabled}
           className={cn(
-            "terminal-chip",
-            option.active && "terminal-chip-active",
+            "rounded-full border px-3 py-1.5 text-xs font-medium tracking-wide transition-colors",
+            option.active
+              ? "border-[#7cf2c7]/25 bg-[#7cf2c7]/12 text-[#a7f7dd]"
+              : "border-white/8 bg-white/4 text-white/56 hover:bg-white/8 hover:text-white/82",
             option.disabled && "cursor-not-allowed opacity-45"
           )}
         >
@@ -103,39 +114,35 @@ export function TraderPerformanceView({
   const sparklinePath = buildSparklinePath(vm.chartPoints, 100, 42);
 
   return (
-    <section className="terminal-card overflow-hidden">
-      <div className="border-b border-white/6 px-5 pb-5 pt-5 sm:px-6">
-        <div className="flex items-start justify-between gap-4">
+    <section className="overflow-hidden rounded-[32px] border border-white/7 bg-[#090b15] shadow-[0_24px_80px_rgba(0,0,0,0.34)]">
+      <div className="bg-[radial-gradient(circle_at_top_left,rgba(86,214,180,0.12),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0))] px-5 pb-5 pt-5 sm:px-6">
+        <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-5">
           <div className="flex min-w-0 items-start gap-4">
-            <div className="relative">
-              <Avatar className="h-20 w-20 border border-white/10">
-                <AvatarImage src={vm.avatarUrl ?? undefined} />
-                <AvatarFallback className="bg-white/5 text-xl font-semibold text-white">
-                  {vm.avatarFallback}
-                </AvatarFallback>
-              </Avatar>
-            </div>
+            <Avatar className="h-20 w-20 border border-white/10 shadow-[0_0_0_8px_rgba(255,255,255,0.02)]">
+              <AvatarImage src={vm.avatarUrl ?? undefined} />
+              <AvatarFallback className="bg-white/5 text-xl font-semibold text-white">
+                {vm.avatarFallback}
+              </AvatarFallback>
+            </Avatar>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="rounded-full border border-white/8 bg-white/4 px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-white/42">
-                  Performance
+                <div className="rounded-full border border-[#7cf2c7]/14 bg-[#7cf2c7]/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-[#9cf5d7]">
+                  {vm.surfaceLabel}
                 </div>
-                <h1 className="truncate text-[1.8rem] font-semibold leading-none text-white sm:text-[2.15rem]">
+                <h1 className="truncate text-[1.8rem] font-semibold leading-none text-white sm:text-[2.05rem]">
                   {vm.displayName}
                 </h1>
                 {vm.handle ? (
-                  <span className="rounded-xl bg-white/6 px-2 py-1 text-sm text-white/62">{vm.handle}</span>
+                  <span className="rounded-xl border border-white/7 bg-white/[0.04] px-2.5 py-1 text-sm text-white/62">
+                    {vm.handle}
+                  </span>
                 ) : null}
               </div>
-              {vm.bio ? (
-                <p className="mt-3 max-w-xl text-base text-white/74">{vm.bio}</p>
-              ) : null}
-              <div className="mt-5 grid gap-2 text-sm text-white/68 sm:grid-cols-2 xl:grid-cols-5">
-                <span><strong className="text-white">{vm.followingLabel.split(" ")[0]}</strong> Following</span>
-                <span><strong className="text-white">{vm.followersLabel.split(" ")[0]}</strong> Followers</span>
-                <span>{vm.avgHoldLabel}</span>
-                <span>{vm.tradeCountLabel}</span>
-                <span>{vm.joinedLabel}</span>
+              {vm.bio ? <p className="mt-3 max-w-xl text-sm leading-6 text-white/72">{vm.bio}</p> : null}
+              <div className="mt-5 grid grid-cols-2 gap-2 lg:grid-cols-3 xl:grid-cols-6">
+                {vm.stats.map((stat) => (
+                  <MetricTile key={`${stat.label}:${stat.value}`} label={stat.label} value={stat.value} />
+                ))}
               </div>
             </div>
           </div>
@@ -162,85 +169,100 @@ export function TraderPerformanceView({
         </div>
       </div>
 
-      <div className="terminal-dot-grid px-5 pb-5 pt-5 sm:px-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.24em] text-white/38">Primary performance</div>
-            <div className="mt-2 text-[3rem] font-semibold leading-none tracking-tight text-white sm:text-[4rem]">
-              {vm.heroValueLabel}
-            </div>
-            {vm.heroSubValueLabel ? (
-              <div className="mt-3 flex items-center gap-2 text-lg">
-                <ValueTone tone={vm.heroSubTone}>{vm.heroSubValueLabel}</ValueTone>
-                {vm.heroSubCaption ? <span className="text-white/56">{vm.heroSubCaption}</span> : null}
+      <div className="px-5 pb-5 pt-5 sm:px-6">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_340px]">
+          <div className="rounded-[28px] border border-white/6 bg-[#060811] p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.24em] text-white/38">{vm.heroLabel}</div>
+                <div className="mt-2 text-[3rem] font-semibold leading-none tracking-tight text-white sm:text-[3.6rem]">
+                  {vm.heroValueLabel}
+                </div>
+                {vm.heroSubValueLabel ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-base">
+                    <ValueTone tone={vm.heroSubTone}>{vm.heroSubValueLabel}</ValueTone>
+                    {vm.heroSubCaption ? <span className="text-white/52">{vm.heroSubCaption}</span> : null}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+              {heroTabs?.length ? <TerminalChipTabs options={heroTabs} /> : null}
+            </div>
+
+            <div className="mt-5 overflow-hidden rounded-[24px] border border-white/6 bg-[linear-gradient(180deg,rgba(14,18,34,0.98),rgba(8,10,18,0.98))] px-2 pb-2 pt-5">
+              <div className="px-4 text-[10px] uppercase tracking-[0.22em] text-white/34">{vm.chartLabel}</div>
+              <svg viewBox="0 0 100 42" className="mt-3 h-[180px] w-full sm:h-[220px]" preserveAspectRatio="none">
+                <path d={`${sparklinePath} L100 42 L0 42 Z`} fill="url(#terminal-area-fill)" opacity="0.16" />
+                <path d={sparklinePath} fill="none" stroke="url(#terminal-line)" strokeWidth="1.8" strokeLinecap="round" />
+                <defs>
+                  <linearGradient id="terminal-line" x1="0%" x2="100%">
+                    <stop offset="0%" stopColor="rgba(124, 242, 199, 0.74)" />
+                    <stop offset="100%" stopColor="rgba(26, 215, 132, 0.98)" />
+                  </linearGradient>
+                  <linearGradient id="terminal-area-fill" x1="0%" x2="0%" y1="0%" y2="100%">
+                    <stop offset="0%" stopColor="rgba(26, 215, 132, 0.78)" />
+                    <stop offset="100%" stopColor="rgba(26, 215, 132, 0)" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
           </div>
-          {heroTabs?.length ? <TerminalChipTabs options={heroTabs} /> : null}
-        </div>
 
-        <div className="mt-8 overflow-hidden rounded-[28px] bg-[#07060d] px-1 pb-1 pt-6">
-          <svg viewBox="0 0 100 42" className="h-[180px] w-full sm:h-[220px]" preserveAspectRatio="none">
-            <path d={`${sparklinePath} L100 42 L0 42 Z`} fill="url(#terminal-area-fill)" opacity="0.12" />
-            <path d={sparklinePath} fill="none" stroke="url(#terminal-line)" strokeWidth="1.65" strokeLinecap="round" />
-            <defs>
-              <linearGradient id="terminal-line" x1="0%" x2="100%">
-                <stop offset="0%" stopColor="rgba(67, 229, 112, 0.78)" />
-                <stop offset="100%" stopColor="rgba(34, 197, 94, 0.98)" />
-              </linearGradient>
-              <linearGradient id="terminal-area-fill" x1="0%" x2="0%" y1="0%" y2="100%">
-                <stop offset="0%" stopColor="rgba(34, 197, 94, 0.7)" />
-                <stop offset="100%" stopColor="rgba(34, 197, 94, 0)" />
-              </linearGradient>
-            </defs>
-          </svg>
-        </div>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-          <div className="terminal-soft-card flex items-center gap-4 px-4 py-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5 text-2xl text-white/88">$</div>
-            <div>
-              <div className="text-sm text-white/56">Cash balance</div>
-              <div className="mt-1 text-[2rem] font-semibold leading-none text-white">
+          <div className="grid gap-4">
+            <div className="rounded-[28px] border border-white/6 bg-white/[0.03] p-5">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-white/34">Available cash</div>
+              <div className="mt-3 text-[2.4rem] font-semibold leading-none text-white">
                 {vm.cashBalanceLabel ?? "Unavailable"}
               </div>
+              <div className="mt-3 text-sm text-white/52">
+                Balance is shown from the connected wallet snapshot when available.
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-white/6 bg-white/[0.03] p-5">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-white/34">Position stream</div>
+              <h2 className="mt-2 text-[1.45rem] font-semibold text-white">{vm.positionsHeading}</h2>
+              {vm.positionsCaption ? <p className="mt-2 text-sm text-white/48">{vm.positionsCaption}</p> : null}
+              {vm.positionsCountLabel ? (
+                <div className="mt-4 inline-flex rounded-full border border-white/8 bg-white/5 px-3 py-1 text-sm text-white/72">
+                  {vm.positionsCountLabel} visible
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
 
-        <div className="mt-8">
+        <div className="mt-5 rounded-[28px] border border-white/6 bg-white/[0.02] p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-[1.65rem] font-semibold text-white">{vm.positionsHeading}</h2>
-              {vm.positionsCountLabel ? <span className="text-sm text-white/44">| {vm.positionsCountLabel}</span> : null}
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.22em] text-white/34">Rows</div>
+              <h2 className="mt-2 text-[1.35rem] font-semibold text-white">{vm.positionsHeading}</h2>
             </div>
+            {vm.positionsCountLabel ? <span className="text-sm text-white/42">{vm.positionsCountLabel} visible</span> : null}
           </div>
 
-          <div className="mt-5 space-y-4">
+          <div className="mt-4 space-y-3">
             {vm.positions.map((position) => {
               const rowContent = (
-                <div className="terminal-list-row flex items-center justify-between gap-4 rounded-[26px] px-3 py-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-[22px] border border-white/6 bg-[#0c0f1b] px-3 py-3 transition-colors hover:bg-[#101425]">
                   <div className="flex min-w-0 items-center gap-3">
-                    <Avatar className="h-14 w-14 border border-white/8">
+                    <Avatar className="h-12 w-12 border border-white/8">
                       <AvatarImage src={position.imageUrl ?? undefined} />
-                      <AvatarFallback className="bg-white/5 text-lg text-white">
+                      <AvatarFallback className="bg-white/5 text-base text-white">
                         {position.tokenLabel.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
-                      <div className="truncate text-[1.05rem] font-semibold text-white sm:text-[1.15rem]">
-                        {position.tokenLabel}
-                      </div>
-                      <div className="mt-1 truncate text-sm text-white/48">{position.tokenSubLabel}</div>
+                      <div className="truncate text-[1rem] font-semibold text-white">{position.tokenLabel}</div>
+                      <div className="mt-1 truncate text-sm text-white/46">{position.tokenSubLabel}</div>
                     </div>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className="text-[1.1rem] font-semibold text-white">{position.valueLabel}</div>
+                  <div className="text-right text-[1rem] font-semibold text-white">{position.valueLabel}</div>
+                  <div className="text-right text-sm font-medium">
                     {position.changeLabel ? (
-                      <div className="mt-1 text-sm font-medium">
-                        <ValueTone tone={position.changeTone}>{position.changeLabel}</ValueTone>
-                      </div>
-                    ) : null}
+                      <ValueTone tone={position.changeTone}>{position.changeLabel}</ValueTone>
+                    ) : (
+                      <span className="text-white/34">-</span>
+                    )}
                   </div>
                 </div>
               );
@@ -282,17 +304,17 @@ export function DenseLeaderboardView({
   onSelectRow: (row: LeaderboardRowVM) => void;
 }) {
   return (
-    <section className="terminal-card px-5 pb-5 pt-5 sm:px-6">
+    <section className="overflow-hidden rounded-[32px] border border-white/7 bg-[#090b15] px-5 pb-5 pt-5 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:px-6">
       <div className="flex items-end justify-between gap-4 border-b border-white/6 pb-4">
         <div>
-          {eyebrow ? <div className="text-sm text-white/38">{eyebrow}</div> : null}
-          <h1 className="mt-1 text-[1.8rem] font-semibold text-white">{title}</h1>
-          {subtitle ? <p className="mt-1 text-sm text-white/50">{subtitle}</p> : null}
+          {eyebrow ? <div className="text-[11px] uppercase tracking-[0.24em] text-white/36">{eyebrow}</div> : null}
+          <h1 className="mt-2 text-[1.9rem] font-semibold text-white">{title}</h1>
+          {subtitle ? <p className="mt-1 max-w-2xl text-sm leading-6 text-white/52">{subtitle}</p> : null}
         </div>
       </div>
 
       {pinnedRank ? (
-        <div className="mt-5 terminal-soft-card flex items-center justify-between gap-4 rounded-[28px] px-4 py-4">
+        <div className="mt-5 flex items-center justify-between gap-4 rounded-[28px] border border-white/6 bg-[linear-gradient(135deg,rgba(124,242,199,0.09),rgba(255,255,255,0.03))] px-4 py-4">
           <div className="flex items-center gap-3">
             <Avatar className="h-14 w-14 border border-white/10">
               <AvatarImage src={pinnedRank.avatarUrl ?? undefined} />
@@ -300,7 +322,7 @@ export function DenseLeaderboardView({
             </Avatar>
             <div>
               <div className="text-sm text-white/56">{pinnedRank.title}</div>
-              <div className="mt-1 text-[2rem] font-semibold leading-none text-[#6d76ff]">{pinnedRank.rankLabel}</div>
+              <div className="mt-1 text-[2rem] font-semibold leading-none text-[#9cf5d7]">{pinnedRank.rankLabel}</div>
             </div>
           </div>
           <div className="text-right text-[2rem] font-semibold leading-none">
@@ -309,9 +331,15 @@ export function DenseLeaderboardView({
         </div>
       ) : null}
 
-      <div className="mt-6 flex items-center justify-between gap-3">
-        <h2 className="text-[1.75rem] font-semibold text-white">Top traders</h2>
-        <TerminalChipTabs options={timeframeTabs} />
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-white/34">Ranking rows</div>
+          <h2 className="mt-2 text-[1.55rem] font-semibold text-white">Top performers</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {modeTabs.length ? <TerminalChipTabs options={modeTabs} /> : null}
+          <TerminalChipTabs options={timeframeTabs} />
+        </div>
       </div>
 
       <div className="mt-5 space-y-3">
@@ -320,13 +348,13 @@ export function DenseLeaderboardView({
             key={row.id}
             type="button"
             onClick={() => onSelectRow(row)}
-            className="flex w-full items-center gap-3 rounded-[24px] px-2 py-2 text-left transition-colors hover:bg-white/[0.03]"
+            className="grid w-full grid-cols-[40px_56px_minmax(0,1fr)_auto_auto] items-center gap-3 rounded-[24px] border border-white/6 bg-[#0c0f1b] px-3 py-3 text-left transition-colors hover:bg-[#101425]"
           >
             <div className="w-9 shrink-0">
               {row.rank <= 3 ? (
                 <RankBadge rank={row.rank} />
               ) : (
-                <div className="pl-1 text-[1.55rem] leading-none text-white/72">{row.rank}.</div>
+                <div className="pl-1 text-[1.45rem] leading-none text-white/72">{row.rank}.</div>
               )}
             </div>
             <Avatar className="h-14 w-14 border border-white/10">
@@ -334,13 +362,13 @@ export function DenseLeaderboardView({
               <AvatarFallback className="bg-white/5 text-white">{row.avatarFallback}</AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[1.15rem] font-semibold text-white sm:text-[1.3rem]">{row.displayName}</div>
+              <div className="truncate text-[1.1rem] font-semibold text-white sm:text-[1.2rem]">{row.displayName}</div>
               <div className="mt-1 truncate text-sm text-white/48">
-                {[row.handle, row.metadataLabel].filter(Boolean).join(" | ")}
+                {[row.handle, row.metadataLabel].filter(Boolean).join(" • ")}
               </div>
             </div>
             <div className="shrink-0 text-right">
-              <div className="text-[1.35rem] font-semibold leading-none">
+              <div className="text-[1.25rem] font-semibold leading-none">
                 <ValueTone tone={row.valueTone}>{row.valueLabel}</ValueTone>
               </div>
               {row.changeLabel ? (
@@ -348,8 +376,10 @@ export function DenseLeaderboardView({
                   <ValueTone tone={row.changeTone}>{row.changeLabel}</ValueTone>
                 </div>
               ) : null}
+            </div>
+            <div className="shrink-0">
               {row.recentTokens.length ? (
-                <div className="mt-2 flex justify-end gap-1.5">
+                <div className="flex justify-end gap-1.5">
                   {row.recentTokens.slice(0, 3).map((token) => (
                     <Avatar key={`${row.id}:${token.address}`} className="h-7 w-7 border border-white/8">
                       <AvatarImage src={token.image ?? undefined} />
@@ -359,7 +389,9 @@ export function DenseLeaderboardView({
                     </Avatar>
                   ))}
                 </div>
-              ) : null}
+              ) : (
+                <span className="text-xs text-white/28">No recent tokens</span>
+              )}
             </div>
           </button>
         ))}

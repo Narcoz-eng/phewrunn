@@ -63,7 +63,7 @@ type LeaderboardStatsPayload = {
 };
 
 const LeaderboardPerformanceQuerySchema = z.object({
-  period: z.enum(["7d", "30d", "all"]).default("30d"),
+  period: z.enum(["24h", "7d", "30d", "all"]).default("30d"),
   limit: z.coerce.number().int().min(1).max(100).default(100),
 });
 
@@ -1582,63 +1582,137 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
   c.header("Cache-Control", buildLeaderboardRouteHeaders()["Cache-Control"]);
   const { period, limit } = c.req.valid("query");
 
-  const orderBy =
-    period === "7d"
-      ? [{ avgRoi7d: "desc" as const }, { winRate7d: "desc" as const }, { trustScore: "desc" as const }]
-      : period === "30d"
-        ? [{ avgRoi30d: "desc" as const }, { winRate30d: "desc" as const }, { trustScore: "desc" as const }]
-        : [{ trustScore: "desc" as const }, { avgRoi30d: "desc" as const }, { firstCallCount: "desc" as const }];
-
-  const users = await prisma.user.findMany({
-    where:
-      period === "7d"
-        ? {
-            OR: [
-              { avgRoi7d: { not: null } },
-              { winRate7d: { not: null } },
-              { firstCallCount: { gt: 0 } },
-            ],
-          }
+  const nowMs = Date.now();
+  const sinceMs =
+    period === "24h"
+      ? nowMs - 24 * 60 * 60 * 1000
+      : period === "7d"
+        ? nowMs - 7 * 24 * 60 * 60 * 1000
         : period === "30d"
-          ? {
-              OR: [
-                { avgRoi30d: { not: null } },
-                { winRate30d: { not: null } },
-                { firstCallCount: { gt: 0 } },
-              ],
-            }
-          : {
-              OR: [
-                { trustScore: { not: null } },
-                { firstCallCount: { gt: 0 } },
-              ],
-            },
-    orderBy,
-    take: limit,
+          ? nowMs - 30 * 24 * 60 * 60 * 1000
+          : null;
+
+  const metricRows = await prisma.traderMetricDaily.findMany({
+    where: sinceMs ? { bucketDate: { gte: new Date(sinceMs) } } : undefined,
+    orderBy: [{ bucketDate: "desc" }, { traderId: "asc" }],
     select: {
-      id: true,
-      name: true,
-      username: true,
-      image: true,
-      isVerified: true,
-      avgRoi7d: true,
-      avgRoi30d: true,
-      winRate7d: true,
-      winRate30d: true,
+      traderId: true,
+      bucketDate: true,
+      callsCount: true,
+      settledCount: true,
+      avgRoi: true,
+      winRate: true,
       trustScore: true,
-      firstCallCount: true,
-      _count: {
-        select: {
-          posts: true,
-        },
-      },
+      firstCalls: true,
     },
   });
 
-  const recentCalls = users.length
+  const aggregatedByTrader = new Map<
+    string,
+    {
+      traderId: string;
+      callsCount: number;
+      settledCount: number;
+      firstCallCount: number;
+      avgRoiWeightedTotal: number;
+      avgRoiWeight: number;
+      winRateWeightedTotal: number;
+      winRateWeight: number;
+      trustScore: number | null;
+      latestBucketMs: number;
+    }
+  >();
+
+  for (const row of metricRows) {
+    const current =
+      aggregatedByTrader.get(row.traderId) ??
+      {
+        traderId: row.traderId,
+        callsCount: 0,
+        settledCount: 0,
+        firstCallCount: 0,
+        avgRoiWeightedTotal: 0,
+        avgRoiWeight: 0,
+        winRateWeightedTotal: 0,
+        winRateWeight: 0,
+        trustScore: null,
+        latestBucketMs: -Infinity,
+      };
+
+    current.callsCount += row.callsCount;
+    current.settledCount += row.settledCount;
+    current.firstCallCount += row.firstCalls;
+
+    const roiWeight = Math.max(row.settledCount, row.callsCount, 1);
+    if (Number.isFinite(row.avgRoi)) {
+      current.avgRoiWeightedTotal += row.avgRoi * roiWeight;
+      current.avgRoiWeight += roiWeight;
+    }
+
+    const winWeight = Math.max(row.settledCount, 1);
+    if (Number.isFinite(row.winRate)) {
+      current.winRateWeightedTotal += row.winRate * winWeight;
+      current.winRateWeight += winWeight;
+    }
+
+    if (typeof row.trustScore === "number" && Number.isFinite(row.trustScore)) {
+      const bucketMs = row.bucketDate.getTime();
+      if (bucketMs >= current.latestBucketMs) {
+        current.latestBucketMs = bucketMs;
+        current.trustScore = row.trustScore;
+      }
+    }
+
+    aggregatedByTrader.set(row.traderId, current);
+  }
+
+  const rankedMetrics = Array.from(aggregatedByTrader.values())
+    .map((entry) => ({
+      traderId: entry.traderId,
+      callsCount: entry.callsCount,
+      settledCount: entry.settledCount,
+      firstCallCount: entry.firstCallCount,
+      avgRoi:
+        entry.avgRoiWeight > 0
+          ? Math.round((entry.avgRoiWeightedTotal / entry.avgRoiWeight) * 100) / 100
+          : null,
+      winRate:
+        entry.winRateWeight > 0
+          ? Math.round((entry.winRateWeightedTotal / entry.winRateWeight) * 100) / 100
+          : null,
+      trustScore: entry.trustScore,
+    }))
+    .filter((entry) => entry.callsCount > 0 || entry.settledCount > 0 || entry.firstCallCount > 0)
+    .sort((left, right) => {
+      const avgRoiDiff = (right.avgRoi ?? -Infinity) - (left.avgRoi ?? -Infinity);
+      if (avgRoiDiff !== 0) return avgRoiDiff;
+      const winRateDiff = (right.winRate ?? -Infinity) - (left.winRate ?? -Infinity);
+      if (winRateDiff !== 0) return winRateDiff;
+      const settledDiff = right.settledCount - left.settledCount;
+      if (settledDiff !== 0) return settledDiff;
+      return (right.trustScore ?? -Infinity) - (left.trustScore ?? -Infinity);
+    });
+
+  const topRankedMetrics = rankedMetrics.slice(0, limit);
+  const rankedTraderIds = topRankedMetrics.map((entry) => entry.traderId);
+  const users = rankedTraderIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: rankedTraderIds } },
+        select: {
+          id: true,
+          name: true,
+          username: true,
+          image: true,
+          isVerified: true,
+        },
+      })
+    : [];
+
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const recentCalls = rankedTraderIds.length
     ? await prisma.post.findMany({
         where: {
-          authorId: { in: users.map((user) => user.id) },
+          authorId: { in: rankedTraderIds },
           contractAddress: { not: null },
         },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -1667,35 +1741,80 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
     recentTokensByUser.set(call.authorId, existing);
   }
 
+  const currentUser = c.get("user");
+  const currentUserRank =
+    currentUser?.id
+      ? rankedMetrics.findIndex((entry) => entry.traderId === currentUser.id) + 1
+      : 0;
+  const currentUserRankedEntry =
+    currentUserRank > 0 ? rankedMetrics[currentUserRank - 1] ?? null : null;
+  const currentUserRankedUser =
+    currentUserRankedEntry && currentUser?.id
+      ? usersById.get(currentUser.id) ??
+        (await prisma.user.findUnique({
+          where: { id: currentUser.id },
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            isVerified: true,
+          },
+        }))
+      : null;
+
   return c.json({
-    data: users.map((user, index) => ({
-      rank: index + 1,
-      user: {
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        image: user.image,
-        isVerified: user.isVerified,
-      },
-      performance: {
-        avgRoi:
-          period === "7d"
-            ? user.avgRoi7d
-            : period === "30d"
-              ? user.avgRoi30d
-              : user.avgRoi30d,
-        winRate:
-          period === "7d"
-            ? user.winRate7d
-            : period === "30d"
-              ? user.winRate30d
-              : user.winRate30d,
-        trustScore: user.trustScore,
-        callsCount: user._count.posts,
-        firstCallCount: user.firstCallCount,
-      },
-      recentTokens: (recentTokensByUser.get(user.id) ?? []).slice(0, 3),
-    })),
+    data: topRankedMetrics
+      .map((entry, index) => {
+        const user = usersById.get(entry.traderId);
+        if (!user) {
+          return null;
+        }
+        return {
+          rank: index + 1,
+          user: {
+            id: user.id,
+            name: user.name,
+            username: user.username,
+            image: user.image,
+            isVerified: user.isVerified,
+          },
+          performance: {
+            avgRoi: entry.avgRoi,
+            winRate: entry.winRate,
+            trustScore: entry.trustScore,
+            callsCount: entry.callsCount,
+            settledCount: entry.settledCount,
+            firstCallCount: entry.firstCallCount,
+          },
+          recentTokens: (recentTokensByUser.get(user.id) ?? []).slice(0, 3),
+        };
+      })
+      .filter(Boolean),
+    meta:
+      currentUserRankedEntry && currentUserRankedUser
+        ? {
+            currentUser: {
+              rank: currentUserRank,
+              user: {
+                id: currentUserRankedUser.id,
+                name: currentUserRankedUser.name,
+                username: currentUserRankedUser.username,
+                image: currentUserRankedUser.image,
+                isVerified: currentUserRankedUser.isVerified,
+              },
+              performance: {
+                avgRoi: currentUserRankedEntry.avgRoi,
+                winRate: currentUserRankedEntry.winRate,
+                trustScore: currentUserRankedEntry.trustScore,
+                callsCount: currentUserRankedEntry.callsCount,
+                settledCount: currentUserRankedEntry.settledCount,
+                firstCallCount: currentUserRankedEntry.firstCallCount,
+              },
+              recentTokens: (recentTokensByUser.get(currentUserRankedUser.id) ?? []).slice(0, 3),
+            },
+          }
+        : null,
   });
 });
 
