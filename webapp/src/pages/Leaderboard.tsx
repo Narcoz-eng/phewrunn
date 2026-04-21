@@ -1,55 +1,69 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { TopUsersTable } from "@/components/leaderboard/TopUsersTable";
-import { LeaderboardStats } from "@/components/leaderboard/LeaderboardStats";
-import { IntelligenceLeaderboards } from "@/components/leaderboard/IntelligenceLeaderboards";
-import { DailyGainersTable } from "@/components/leaderboard/DailyGainersTable";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api } from "@/lib/api";
-import { User } from "@/types";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { LevelBadge } from "@/components/feed/LevelBar";
-import { getAvatarUrl } from "@/types";
+import { getAvatarUrl, type User } from "@/types";
+import { buildProfilePath } from "@/lib/profile-path";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
-import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
-import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
+import { DenseLeaderboardView } from "@/components/experience/TraderPerformanceView";
 import {
-  ArrowLeft,
-  Bell,
-  LogOut,
-  Settings,
-  User as UserIcon,
-  Wallet,
-} from "lucide-react";
+  buildLeaderboardRowsVm,
+  buildPinnedRankVm,
+  type LeaderboardPinnedRankVM,
+} from "@/viewmodels/trader-performance";
+import { cn } from "@/lib/utils";
+import { ArrowLeft, House, Trophy, UserRound } from "lucide-react";
 
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
+const TOP_USERS_CACHE_TTL_MS = 10 * 60_000;
 
-type Period = 'day' | 'week';
+type Period = "day" | "week";
+type SortMode = "level" | "activity" | "winrate";
+
+type TopUser = {
+  rank: number;
+  user: {
+    id: string;
+    username: string | null;
+    name: string;
+    image: string | null;
+    level: number;
+    xp: number;
+    isVerified?: boolean;
+  };
+  stats: {
+    totalAlphas: number;
+    recentAlphas?: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+  };
+};
+
+type TopUsersResponse = {
+  data: TopUser[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+function buildTopUsersCacheKey(sortBy: SortMode, period: Period): string {
+  return `phew.leaderboard.terminal:v1:${sortBy}:${period}`;
+}
 
 export default function Leaderboard() {
   const navigate = useNavigate();
-  const [period, setPeriod] = useState<Period>('week');
-  const [isPortfolioOpen, setIsPortfolioOpen] = useState<boolean>(false);
   const { data: session } = useSession();
-  const { signOut, hasLiveSession } = useAuth();
-  const unreadCacheKey = session?.user?.id
-    ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
-    : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
-  const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
-  const unreadQueryKey = ["notifications", "unread-count", session?.user?.id ?? "anonymous"] as const;
+  const { hasLiveSession } = useAuth();
+  const [period, setPeriod] = useState<Period>("day");
+  const [sortMode, setSortMode] = useState<SortMode>("activity");
+
   const sessionBackedUser = session?.user
     ? {
         id: session.user.id,
@@ -67,215 +81,198 @@ export default function Leaderboard() {
       }
     : null;
 
-  // Fetch current user
-  const { data: user } = useQuery({
+  const { data: currentUser } = useQuery({
     queryKey: ["currentUser", session?.user?.id ?? "anonymous"],
-    queryFn: async () => {
-      const data = await api.get<User>("/api/me");
-      return data;
-    },
+    queryFn: async () => await api.get<User>("/api/me"),
     initialData: sessionBackedUser ?? undefined,
     enabled: !!session?.user && hasLiveSession,
-    gcTime: 15 * 60 * 1000,
     staleTime: 5 * 60 * 1000,
-    refetchOnMount: sessionBackedUser ? false : "always",
+    gcTime: 15 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: false,
   });
 
-  // Fetch unread notification count
-  const { data: unreadData } = useQuery({
-    queryKey: unreadQueryKey,
+  const topUsersCacheKey = buildTopUsersCacheKey(sortMode, period);
+  const cachedTopUsers = readSessionCache<TopUsersResponse>(topUsersCacheKey, TOP_USERS_CACHE_TTL_MS);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ["leaderboard", "terminal-top-users", sortMode, period],
+    queryFn: async () => {
+      const response = await api.raw(`/api/leaderboard/top-users?page=1&limit=100&sortBy=${sortMode}&period=${period}`);
+      if (!response.ok) {
+        throw new Error(`Failed to load leaderboard: ${response.status}`);
+      }
+      const payload = (await response.json()) as TopUsersResponse;
+      if (payload.data.length > 0) {
+        writeSessionCache(topUsersCacheKey, payload);
+      }
+      return payload;
+    },
+    initialData: cachedTopUsers ?? undefined,
+    placeholderData: (previous) => previous ?? cachedTopUsers ?? undefined,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+
+  const rows = useMemo(
+    () => buildLeaderboardRowsVm(data?.data ?? [], sortMode),
+    [data?.data, sortMode]
+  );
+
+  const pinnedRank = useMemo<LeaderboardPinnedRankVM | null>(() => {
+    const exact = buildPinnedRankVm(data?.data ?? [], currentUser?.id ?? null, sortMode);
+    if (exact) return exact;
+    if (!currentUser) return null;
+    return {
+      title: "Your rank",
+      rankLabel: "Top 100?",
+      valueLabel:
+        sortMode === "activity"
+          ? `${currentUser.level} level`
+          : sortMode === "winrate"
+            ? "Building record"
+            : `${currentUser.xp?.toLocaleString?.() ?? 0} XP`,
+      valueTone: "neutral",
+      avatarUrl: getAvatarUrl(currentUser.id, currentUser.image),
+      avatarFallback: (currentUser.name || currentUser.username || "?").charAt(0).toUpperCase(),
+    };
+  }, [currentUser, data?.data, sortMode]);
+
+  const unreadCacheKey = session?.user?.id
+    ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
+    : NOTIFICATIONS_UNREAD_CACHE_PREFIX;
+  const cachedUnreadCount = readSessionCache<number>(unreadCacheKey, NOTIFICATIONS_UNREAD_CACHE_TTL_MS);
+  useQuery({
+    queryKey: ["notifications", "unread-count", session?.user?.id ?? "anonymous"],
     queryFn: async () => {
       const response = await api.get<{ count: number }>("/api/notifications/unread-count");
       writeSessionCache(unreadCacheKey, response.count);
       return response;
     },
     initialData: cachedUnreadCount !== null ? { count: cachedUnreadCount } : undefined,
-    enabled: !!user && hasLiveSession,
+    enabled: !!currentUser && hasLiveSession,
     refetchOnWindowFocus: false,
-    refetchInterval: () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-        return false;
-      }
-      return 90_000;
-    },
     staleTime: 45_000,
     retry: 0,
   });
 
-  const unreadCount = hasLiveSession ? (unreadData?.count ?? 0) : 0;
-
-  const handleLogout = async () => {
-    await signOut();
-    navigate("/login");
-  };
-
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border">
-        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-          {/* Left - Back and Title */}
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => navigate("/")}
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <span className="font-semibold text-base">Leaderboard</span>
-          </div>
-
-          {/* Right - Actions */}
-          <div className="flex items-center gap-2">
-            <ThemeToggle size="icon" className="h-8 w-8" />
-
-            {user ? (
-              <>
-                {/* Notification Bell */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 relative"
-                  onClick={() => navigate("/notifications")}
-                >
-                  <Bell className="h-4 w-4" />
-                  {unreadCount > 0 ? (
-                    <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[16px] h-4 px-1 text-[10px] font-bold text-primary-foreground bg-primary rounded-full">
-                      {unreadCount > 99 ? "99+" : unreadCount}
-                    </span>
-                  ) : null}
-                </Button>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className="h-8 w-8 rounded-full p-0 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                      <Avatar className="h-8 w-8 border border-border hover:border-primary/50 transition-colors">
-                        <AvatarImage src={getAvatarUrl(user.id, user.image)} />
-                        <AvatarFallback className="bg-muted text-muted-foreground text-xs">
-                          {user.name?.charAt(0) || "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel className="font-normal">
-                      <div className="flex flex-col space-y-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium leading-none">
-                            {user.username || user.name}
-                          </p>
-                          <LevelBadge level={user.level} className="text-[10px] px-1.5 py-0" />
-                        </div>
-                        <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                      </div>
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => navigate("/profile")}
-                      className="cursor-pointer"
-                    >
-                      <UserIcon className="mr-2 h-4 w-4" />
-                      <span>Profile</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        setIsPortfolioOpen(true);
-                      }}
-                      className="cursor-pointer"
-                    >
-                      <Wallet className="mr-2 h-4 w-4" />
-                      <span>Portfolio</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => navigate("/profile?tab=settings")}
-                      className="cursor-pointer"
-                    >
-                      <Settings className="mr-2 h-4 w-4" />
-                      <span>Settings</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={handleLogout}
-                      className="cursor-pointer text-destructive focus:text-destructive"
-                    >
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>Log out</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <LivePortfolioDialog
-                  open={isPortfolioOpen}
-                  onOpenChange={setIsPortfolioOpen}
-                  walletAddress={user.walletAddress ?? null}
-                />
-              </>
-            ) : null}
+    <div className="terminal-screen min-h-screen text-white">
+      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 pt-6 sm:px-6">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 rounded-2xl border border-white/8 bg-white/5 text-white hover:bg-white/10"
+            onClick={() => navigate("/")}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-[0.22em] text-white/38">Terminal ranking</div>
+            <div className="text-lg font-semibold text-white">Leaderboard</div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-        {/* Page header */}
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Leaderboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Daily alpha races, best calls of the day, and trader rankings
-          </p>
-        </div>
-
-        <QueryErrorBoundary sectionName="Alpha Race">
-          <IntelligenceLeaderboards />
-        </QueryErrorBoundary>
-
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">Daily Top Gainers</h2>
-            <p className="text-sm text-muted-foreground">
-              Strongest settled calls across the 1H and 6H snapshot windows.
-            </p>
+      <main className="mx-auto max-w-5xl px-4 pb-32 pt-6 sm:px-6">
+        {isLoading ? (
+          <div className="terminal-card px-6 py-10 text-white/56">Loading leaderboard...</div>
+        ) : (
+          <div className={cn("transition-opacity", isFetching && "opacity-80")}>
+            <DenseLeaderboardView
+              eyebrow="Competitive ranking"
+              title="Leaderboard"
+              subtitle="Scan the strongest traders without leaving the screen."
+              pinnedRank={pinnedRank}
+              timeframeTabs={[
+                {
+                  key: "day",
+                  label: "24h",
+                  active: period === "day",
+                  onSelect: () => setPeriod("day"),
+                },
+                {
+                  key: "week",
+                  label: "7d",
+                  active: period === "week",
+                  onSelect: () => setPeriod("week"),
+                },
+                {
+                  key: "month",
+                  label: "30d",
+                  active: false,
+                  disabled: true,
+                },
+                {
+                  key: "all",
+                  label: "All",
+                  active: false,
+                  disabled: true,
+                },
+              ]}
+              modeTabs={[
+                {
+                  key: "activity",
+                  label: "Activity",
+                  active: sortMode === "activity",
+                  onSelect: () => setSortMode("activity"),
+                },
+                {
+                  key: "winrate",
+                  label: "Win Rate",
+                  active: sortMode === "winrate",
+                  onSelect: () => setSortMode("winrate"),
+                },
+                {
+                  key: "level",
+                  label: "Level",
+                  active: sortMode === "level",
+                  onSelect: () => setSortMode("level"),
+                },
+              ]}
+              rows={rows}
+              onSelectRow={(row) => {
+                const source = data?.data.find((item) => item.user.id === row.id);
+                navigate(buildProfilePath(row.id, source?.user.username ?? null));
+              }}
+            />
           </div>
-          <QueryErrorBoundary sectionName="Daily Gainers">
-            <DailyGainersTable />
-          </QueryErrorBoundary>
-        </section>
-
-        {/* Day / Week toggle */}
-        <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
-          <TabsList className="h-9 p-1">
-            <TabsTrigger value="day" className="px-5 text-sm">
-              Day
-            </TabsTrigger>
-            <TabsTrigger value="week" className="px-5 text-sm">
-              Week
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {/* Unified leaderboard */}
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">Top Traders</h2>
-            <p className="text-sm text-muted-foreground">
-              Ranked by level, activity, and win rate across the platform.
-            </p>
-          </div>
-          <QueryErrorBoundary sectionName="Leaderboard">
-            <TopUsersTable enabled period={period} />
-          </QueryErrorBoundary>
-        </section>
-
-        {/* Bottom stats bar */}
-        <LeaderboardStats />
+        )}
       </main>
+
+      <div className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex justify-center px-4">
+        <div className="terminal-nav-pill pointer-events-auto flex items-center gap-2 px-2 py-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => navigate("/")}
+            className="h-14 min-w-[72px] rounded-[26px] text-white/58 hover:bg-white/6 hover:text-white"
+          >
+            <House className="h-5 w-5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => navigate("/leaderboard")}
+            className="h-14 min-w-[88px] rounded-[26px] bg-white/10 text-white hover:bg-white/10"
+          >
+            <Trophy className="h-5 w-5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => navigate("/profile")}
+            className="h-14 min-w-[72px] rounded-[26px] text-white/58 hover:bg-white/6 hover:text-white"
+          >
+            <UserRound className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

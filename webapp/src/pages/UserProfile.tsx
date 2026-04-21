@@ -12,7 +12,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
-import { ProfileDashboard, UserStats, RecentTrade } from "@/components/profile/ProfileDashboard";
+import { ProfileDashboard, type UserStats, type RecentTrade } from "@/components/profile/ProfileDashboard";
 import { TraderIntelligenceCard } from "@/components/profile/TraderIntelligenceCard";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -31,6 +31,7 @@ import {
   Repeat2,
   AlertTriangle,
   Skull,
+  Flag,
 } from "lucide-react";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { ReportDialog } from "@/components/reporting/ReportDialog";
@@ -51,6 +52,8 @@ import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
 import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2 } from "lucide-react";
+import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
+import { buildTraderPerformanceVm } from "@/viewmodels/trader-performance";
 
 interface UserProfileData {
   id?: string | null;
@@ -754,15 +757,6 @@ export default function UserProfile() {
       }));
   }, [posts]);
 
-  // Format join date
-  const formatJoinDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric",
-    });
-  };
-
   // Check if this is current user's profile
   const normalizedProfileIdentifier = userId?.trim().toLowerCase() ?? "";
   const isOwnProfile =
@@ -774,126 +768,70 @@ export default function UserProfile() {
     user?.username?.trim() || user?.name?.trim() || normalizedProfileIdentifier || "Trader";
   const profileAvatarSeed =
     user?.id ?? user?.username ?? (normalizedProfileIdentifier || "trader");
+  const performanceVm = useMemo(
+    () =>
+      user
+        ? buildTraderPerformanceVm({
+            displayName: user.name ?? user.username ?? "Trader",
+            handle: user.username ? `@${user.username}` : null,
+            avatarUrl: getAvatarUrl(profileAvatarSeed, user.image),
+            bio: null,
+            followersCount: user.stats.followers,
+            followingCount: user.stats.following,
+            joinedAt: user.createdAt,
+            recentTrades,
+            postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
+          })
+        : null,
+    [profileAvatarSeed, recentTrades, user]
+  );
+
+  const formatJoinDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+  };
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="app-topbar">
-        <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate(-1)}
-              className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <h1 className="font-heading font-semibold text-lg">
-              {profileDisplayName || "Profile"}
-            </h1>
+    <div className="terminal-screen min-h-screen text-white">
+      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 pt-6 sm:px-6">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate(-1)}
+            className="h-10 w-10 rounded-2xl border border-white/8 bg-white/5 text-white hover:bg-white/10"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-[0.22em] text-white/38">Trader performance</div>
+            <h1 className="text-lg font-semibold text-white">{profileDisplayName || "Profile"}</h1>
           </div>
-
-          {!isOwnProfile && user && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowShareCard(true)}
-                className="h-8 px-3 gap-1.5"
-              >
-                <Share2 className="h-3.5 w-3.5" />
-                Share
-              </Button>
-              {canPerformAuthenticatedWrites ? (
-                <ReportDialog
-                  targetType="user"
-                  targetId={user.username ?? userId ?? ""}
-                  targetLabel={user.username ? `@${user.username}` : "this user"}
-                  buttonVariant="outline"
-                  buttonSize="sm"
-                  buttonClassName="h-8 px-3 gap-1.5"
-                />
-              ) : null}
-              <Button
-                variant={user.isFollowing ? "outline" : "default"}
-                size="sm"
-                onClick={() => {
-                  if (!session?.user) {
-                    toast.info("Sign in to follow users.");
-                    return;
-                  }
-                  if (!canPerformAuthenticatedWrites) {
-                    toast.info("Signing you in...");
-                    return;
-                  }
-                  followMutation.mutate();
-                }}
-                disabled={followMutation.isPending || !session?.user || !canPerformAuthenticatedWrites}
-                className="h-9 gap-1.5 rounded-full px-3"
-              >
-                {followMutation.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : user.isFollowing ? (
-                  <>
-                    <UserMinus className="h-3.5 w-3.5" />
-                    Unfollow
-                  </>
-                ) : (
-                  <>
-                    <PhewFollowIcon className="h-3.5 w-3.5" />
-                    Follow
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
-
-          {isOwnProfile && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/profile")}
-                disabled={!hasLiveSession}
-                className="h-8 px-3"
-              >
-                Edit Profile
-              </Button>
-              {user && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowShareCard(true)}
-                  className="h-8 px-3 gap-1.5"
-                >
-                  <Share2 className="h-3.5 w-3.5" />
-                  Share
-                </Button>
-              )}
-            </div>
-          )}
         </div>
       </header>
 
-      <main className="app-page-shell">
+      <main className="mx-auto max-w-5xl px-4 pb-24 pt-6 sm:px-6">
         {isLoadingUser ? (
-          <div className="space-y-6">
-            <div className="flex flex-col items-center gap-4">
-              <Skeleton className="h-28 w-28 rounded-full" />
-              <Skeleton className="h-6 w-40" />
-              <Skeleton className="h-4 w-32" />
-            </div>
-            <Skeleton className="h-24 w-full rounded-xl" />
-            <Skeleton className="h-32 w-full rounded-xl" />
+          <div className="space-y-4">
+            <Skeleton className="h-[180px] w-full rounded-[32px] bg-white/8" />
+            <Skeleton className="h-[420px] w-full rounded-[32px] bg-white/8" />
+            <Skeleton className="h-[320px] w-full rounded-[32px] bg-white/8" />
           </div>
         ) : userError && !user ? (
-          <div className="app-empty-state">
-            <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
+          <div className="terminal-card flex flex-col items-center gap-4 px-6 py-14 text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10">
               <AlertCircle className="h-8 w-8 text-destructive" />
             </div>
-            <p className="text-muted-foreground">{userErrorMessage}</p>
-            <Button onClick={() => navigate(-1)}>Go Back</Button>
+            <p className="text-white/62">{userErrorMessage}</p>
+            <Button
+              onClick={() => navigate(-1)}
+              className="rounded-2xl bg-white/8 text-white hover:bg-white/12"
+            >
+              Go Back
+            </Button>
           </div>
         ) : user ? (
           <div className="space-y-6 animate-fade-in">

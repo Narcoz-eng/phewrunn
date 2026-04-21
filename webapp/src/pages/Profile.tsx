@@ -68,6 +68,8 @@ import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { BannerPicker } from "@/components/profile/BannerPicker";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2, ImageIcon } from "lucide-react";
+import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
+import { buildTraderPerformanceVm } from "@/viewmodels/trader-performance";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -1060,6 +1062,37 @@ export default function Profile() {
       }));
   }, [posts]);
 
+  const performanceVm = useMemo(
+    () =>
+      canonicalProfileUser
+        ? buildTraderPerformanceVm({
+            displayName: canonicalProfileUser.name || canonicalProfileUser.username || "Trader",
+            handle: canonicalProfileUser.username ? `@${canonicalProfileUser.username}` : null,
+            avatarUrl: getAvatarUrl(canonicalProfileUser.id, canonicalProfileUser.image),
+            bio: canonicalProfileUser.bio ?? null,
+            followersCount,
+            followingCount,
+            joinedAt: canonicalProfileUser.createdAt,
+            walletData:
+              walletOverview
+                ? { ...walletOverview, address: displayWalletAddress ?? walletOverview.address }
+                : displayWalletAddress
+                  ? { connected: true, address: displayWalletAddress }
+                  : undefined,
+            recentTrades,
+            postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
+          })
+        : null,
+    [
+      canonicalProfileUser,
+      displayWalletAddress,
+      followersCount,
+      followingCount,
+      recentTrades,
+      walletOverview,
+    ]
+  );
+
   // Handle like
   const handleLike = async (postId: string) => {
     likeMutation.mutate(postId);
@@ -1159,11 +1192,11 @@ export default function Profile() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setIsEditing(true)}
+                  onClick={() => setProfileView("settings")}
                   className="h-9 gap-1.5 rounded-full px-3"
                 >
                   <PhewEditIcon className="h-3.5 w-3.5" />
-                  Edit
+                  Settings
                 </Button>
               </div>
             ) : (
@@ -1363,175 +1396,37 @@ export default function Profile() {
                     </div>
                   </div>
                 )}
-
-            {/* Profile Banner + Avatar overlap block */}
-            <div className="-mx-4">
-              {/* Banner */}
-              <div className="relative">
-                <ProfileBanner bannerImage={editBannerImage ?? user.bannerImage} />
-                {isEditing && (
-                  <button
-                    onClick={() => setIsBannerPickerOpen(true)}
-                    className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
-                  >
-                    <div className="flex items-center gap-2 bg-black/60 text-white text-sm px-3 py-1.5 rounded-full">
-                      <ImageIcon className="h-3.5 w-3.5" />
-                      Change Banner
-                    </div>
-                  </button>
-                )}
-              </div>
-
-              {/* Profile Header - inside the banner block, pulled up with negative margin */}
-              <div className="px-4 -mt-14 flex flex-col items-center text-center pb-2">
-              {/* Avatar */}
-              <div className="relative group">
-                <Avatar
-                  className={cn(
-                    "h-28 w-28 border-4 border-background ring-4 ring-primary/20",
-                    isEditing && "cursor-pointer"
-                  )}
-                  onClick={handleImageClick}
-                >
-                  <AvatarImage
-                    src={previewImage || getAvatarUrl(user.id, user.image)}
+                {performanceVm ? (
+                  <TraderPerformanceView
+                    vm={performanceVm}
+                    headerActions={[
+                      {
+                        key: "share",
+                        label: <Share2 className="h-4 w-4" />,
+                        onClick: () => setIsShareCardOpen(true),
+                        variant: "ghost",
+                      },
+                      {
+                        key: "portfolio",
+                        label: "Portfolio",
+                        onClick: () => setIsPortfolioOpen(true),
+                        variant: "ghost",
+                      },
+                    ]}
+                    heroTabs={[
+                      { key: "24h", label: "24h", active: true },
+                      { key: "7d", label: "7d", active: false, disabled: true },
+                      { key: "30d", label: "30d", active: false, disabled: true },
+                      { key: "all", label: "All", active: false, disabled: true },
+                    ]}
                   />
-                  <AvatarFallback className="bg-muted text-muted-foreground text-3xl">
-                    {user.name?.charAt(0) || "?"}
-                  </AvatarFallback>
-                </Avatar>
+                ) : null}
 
-                {isEditing && (
-                  <div
-                    onClick={handleImageClick}
-                    className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <Camera className="h-8 w-8 text-white" />
-                  </div>
-                )}
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileChange}
-                  className="hidden"
+                <TraderIntelligenceCard
+                  handle={user.username ?? user.id}
+                  enabled={isPostsFetched}
+                  deferMs={1800}
                 />
-
-                {/* Level badge overlay */}
-                <div className="absolute -bottom-2 -right-2">
-                  <LevelBadge level={user.level} size="lg" showLabel />
-                </div>
-              </div>
-
-              {/* Username */}
-              {isEditing ? (
-                <Input
-                  value={editUsername}
-                  onChange={(e) => setEditUsername(normalizeProfileHandleInput(e.target.value))}
-                  placeholder="your_handle"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  className="mt-4 max-w-xs text-center font-semibold text-lg"
-                />
-              ) : (
-                <>
-                  <h2 className="mt-4 font-heading font-bold text-2xl flex items-center gap-1.5">
-                    {user.username || user.name}
-                    {user.isVerified ? <VerifiedBadge size="md" /> : null}
-                  </h2>
-                  {/* Level label under username */}
-                  <span className={cn(
-                    "text-xs font-medium uppercase tracking-wider mt-1",
-                    user.level >= 8 && "text-amber-400",
-                    user.level >= 4 && user.level < 8 && "text-slate-300",
-                    user.level >= 1 && user.level < 4 && "text-orange-500",
-                    user.level >= -2 && user.level < 1 && "text-red-300",
-                    user.level < -2 && "text-red-500"
-                  )}>
-                    {getLevelLabel(user.level)} Trader
-                  </span>
-                </>
-              )}
-
-              {/* Bio */}
-              {isEditing ? (
-                <div className="mt-2 space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    Profile URL: {user ? buildProfilePath(user.id, editUsername) : `/profile/${session?.user?.id ?? ""}`}
-                  </p>
-                  <Textarea
-                    value={editBio}
-                    onChange={(e) => setEditBio(e.target.value)}
-                    placeholder="Write a short bio..."
-                    className="max-w-sm text-center resize-none"
-                    rows={2}
-                  />
-                </div>
-              ) : user.bio ? (
-                <p className="mt-2 text-muted-foreground max-w-sm">{user.bio}</p>
-              ) : null}
-
-              {/* Info badges */}
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                {displayWalletAddress && (
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary rounded-full text-xs text-muted-foreground">
-                    <Wallet className="h-3.5 w-3.5" />
-                    <span className="font-mono">
-                      {truncateAddress(displayWalletAddress)}
-                    </span>
-                  </div>
-                )}
-
-                {user.email && (
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary rounded-full text-xs text-muted-foreground">
-                    <Mail className="h-3.5 w-3.5" />
-                    <span>{user.email}</span>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary rounded-full text-xs text-muted-foreground">
-                  <Calendar className="h-3.5 w-3.5" />
-                  <span>Joined {formatJoinDate(user.createdAt)}</span>
-                </div>
-              </div>
-            </div>
-            </div>{/* end banner+header block */}
-
-            {/* Profile Dashboard - XP, Stats, Recent Trades */}
-            <ProfileDashboard
-              level={user.level}
-              xp={user.xp ?? 0}
-              stats={userStats}
-              recentTrades={recentTrades}
-              walletData={
-                walletOverview
-                  ? { ...walletOverview, address: displayWalletAddress ?? walletOverview.address }
-                  : displayWalletAddress
-                    ? { connected: true, address: displayWalletAddress }
-                    : undefined
-              }
-              isLoading={isLoadingUser}
-            />
-
-            <div className="flex justify-center">
-              <Button
-                type="button"
-                variant="outline"
-                className="rounded-2xl"
-                onClick={() => setIsPortfolioOpen(true)}
-              >
-                <Wallet className="mr-2 h-4 w-4" />
-                Open live portfolio
-              </Button>
-            </div>
-
-            <TraderIntelligenceCard
-              handle={user.username ?? user.id}
-              enabled={isPostsFetched}
-              deferMs={1800}
-            />
 
             <LivePortfolioDialog
               open={isPortfolioOpen}
@@ -1578,20 +1473,6 @@ export default function Profile() {
 
             {/* My Invites Section */}
             <MyInvitesSection />
-
-            {/* Followers/Following */}
-            <div className="flex items-center justify-center gap-6 py-3">
-              <button className="flex items-center gap-2 hover:text-primary transition-colors">
-                <span className="font-bold">{followersCount}</span>
-                <span className="text-muted-foreground">Followers</span>
-              </button>
-              <div className="h-4 w-px bg-border" />
-              <button className="flex items-center gap-2 hover:text-primary transition-colors">
-                <span className="font-bold">{followingCount}</span>
-                <span className="text-muted-foreground">Following</span>
-              </button>
-            </div>
-
             {/* User Posts Section */}
             <div className="space-y-4">
               {/* Main Tabs: Posts | Reposts */}
