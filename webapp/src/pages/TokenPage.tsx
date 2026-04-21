@@ -3478,7 +3478,7 @@ export default function TokenPage() {
                         )}
                       </div>
                       <div className="space-y-3">
-                        <div className="text-sm font-semibold text-foreground">Latest X activity</div>
+                        <div className="text-sm font-semibold text-foreground">Top X posts</div>
                         {socialSignals.latestPosts.length > 0 ? socialSignals.latestPosts.map((post) => (
                           <a
                             key={post.id}
@@ -3514,7 +3514,7 @@ export default function TokenPage() {
                           </a>
                         )) : (
                           <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
-                            <div>No recent X posts matched this token yet.</div>
+                            <div>No top X posts matched this token yet.</div>
                             {socialSignalQueries.length > 0 ? (
                               <div className="mt-3 flex flex-wrap gap-2">
                                 {socialSignalQueries.map((query) => (

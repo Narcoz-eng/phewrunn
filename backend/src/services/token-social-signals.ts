@@ -203,7 +203,7 @@ function aggregateKols(posts: TokenSocialSignalPost[]): TokenSocialSignalKol[] {
   for (const post of posts) {
     const key = post.authorHandle.toLowerCase();
     const current = byHandle.get(key);
-    const engagement = post.likeCount + post.repostCount * 2 + post.replyCount * 1.5;
+    const engagement = getPostEngagementScore(post);
     if (current) {
       current.matchedPostCount += 1;
       current.engagementScore += engagement;
@@ -225,6 +225,19 @@ function aggregateKols(posts: TokenSocialSignalPost[]): TokenSocialSignalKol[] {
   return [...byHandle.values()]
     .sort((left, right) => right.engagementScore - left.engagementScore || right.matchedPostCount - left.matchedPostCount)
     .slice(0, 6);
+}
+
+function getPostEngagementScore(post: TokenSocialSignalPost): number {
+  return post.likeCount + post.repostCount * 2 + post.replyCount * 1.5 + (post.isCall ? 8 : 0);
+}
+
+function rankTopPosts(posts: TokenSocialSignalPost[]): TokenSocialSignalPost[] {
+  return [...posts]
+    .sort((left, right) =>
+      getPostEngagementScore(right) - getPostEngagementScore(left) ||
+      Date.parse(right.createdAt) - Date.parse(left.createdAt),
+    )
+    .slice(0, 12);
 }
 
 function isSocialDataProvider(provider: string | null, baseUrl: string | null): boolean {
@@ -263,7 +276,7 @@ async function fetchSocialDataSignals(params: {
     try {
       const url = new URL(baseUrl.toString());
       url.searchParams.set("query", query);
-      url.searchParams.set("type", "Latest");
+      url.searchParams.set("type", "Top");
       const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -317,9 +330,7 @@ async function fetchSocialDataSignals(params: {
     }
   }
 
-  const posts = [...collected.values()]
-    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
-    .slice(0, 12);
+  const posts = rankTopPosts([...collected.values()]);
   const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
   const posts24h = posts.filter((post) => {
     const timestamp = Date.parse(post.createdAt);
@@ -479,9 +490,7 @@ export async function loadTokenSocialSignals(params: {
       topKols: topKols
         .sort((left, right) => right.engagementScore - left.engagementScore || right.matchedPostCount - left.matchedPostCount)
         .slice(0, 6),
-      latestPosts: posts
-        .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
-        .slice(0, 12),
+      latestPosts: rankTopPosts(posts),
       callCount24h: posts24h.filter((post) => post.isCall).length,
       uniqueAuthors24h: new Set(posts24h.map((post) => post.authorHandle.toLowerCase())).size,
       fetchedAt: new Date().toISOString(),
