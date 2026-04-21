@@ -7499,8 +7499,8 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
       {
         method: "GET",
         headers: { accept: "application/json" },
-        timeoutMs: 3_200,
-        hedgeDelayMs: 40,
+        timeoutMs: 5_200,
+        hedgeDelayMs: 60,
       }
     );
     jupiterQuoteInFlight.set(cacheKey, request);
@@ -7512,6 +7512,17 @@ postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), 
       jupiterQuoteInFlight.delete(cacheKey);
     }
   });
+
+  if (result.status >= 500) {
+    console.warn("[jupiter/quote] upstream route slow or failed", {
+      inputMint: payload.inputMint,
+      outputMint: payload.outputMint,
+      amount: payload.amount,
+      slippageBps: payload.slippageBps,
+      status: result.status,
+      body: result.bodyText.slice(0, 240),
+    });
+  }
 
   const ttlMs =
     result.status >= 400 ? JUPITER_QUOTE_ERROR_CACHE_TTL_MS : JUPITER_QUOTE_CACHE_TTL_MS;
@@ -8074,6 +8085,7 @@ async function loadChartTrades(payload: ChartTradesQuery) {
     tokenAddress: payload.tokenAddress,
     pairAddress: payload.pairAddress ?? null,
   });
+
   if (
     bufferedSnapshot &&
     bufferedSnapshot.recentTrades.length > 0 &&

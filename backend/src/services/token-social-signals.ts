@@ -42,6 +42,10 @@ type SocialSignalsProviderResponse = {
   matchedQueries?: unknown;
   topKols?: unknown;
   latestPosts?: unknown;
+  tweets?: unknown;
+  next_cursor?: unknown;
+  message?: unknown;
+  status?: unknown;
 };
 
 const SOCIAL_SIGNALS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
@@ -119,10 +123,26 @@ function normalizeKol(value: unknown): TokenSocialSignalKol | null {
 function normalizePost(value: unknown): TokenSocialSignalPost | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
-  const id = safeString(row.id) ?? safeString(row.postId) ?? safeString(row.url);
-  const authorHandle = safeString(row.authorHandle) ?? safeString(row.handle) ?? safeString(row.username);
-  const text = safeString(row.text) ?? safeString(row.content);
-  const createdAt = safeString(row.createdAt);
+  const user = (row.user && typeof row.user === "object" && !Array.isArray(row.user))
+    ? (row.user as Record<string, unknown>)
+    : null;
+  const id =
+    safeString(row.id) ??
+    safeString(row.id_str) ??
+    safeString(row.postId) ??
+    safeString(row.url);
+  const authorHandle =
+    safeString(row.authorHandle) ??
+    safeString(row.handle) ??
+    safeString(row.username) ??
+    safeString(user?.screen_name);
+  const text =
+    safeString(row.text) ??
+    safeString(row.full_text) ??
+    safeString(row.content);
+  const createdAt =
+    safeString(row.createdAt) ??
+    safeString(row.tweet_created_at);
   if (!id || !authorHandle || !text || !createdAt) return null;
 
   return {
@@ -130,15 +150,198 @@ function normalizePost(value: unknown): TokenSocialSignalPost | null {
     url: safeString(row.url),
     text,
     authorHandle: authorHandle.replace(/^@/, ""),
-    authorDisplayName: safeString(row.authorDisplayName) ?? safeString(row.authorName) ?? safeString(row.name),
-    authorAvatarUrl: safeString(row.authorAvatarUrl) ?? safeString(row.authorImage),
-    createdAt,
-    likeCount: Math.max(0, Math.round(safeNumber(row.likeCount) ?? 0)),
-    repostCount: Math.max(0, Math.round(safeNumber(row.repostCount) ?? safeNumber(row.retweetCount) ?? 0)),
-    replyCount: Math.max(0, Math.round(safeNumber(row.replyCount) ?? 0)),
+    authorDisplayName:
+      safeString(row.authorDisplayName) ??
+      safeString(row.authorName) ??
+      safeString(row.name) ??
+      safeString(user?.name),
+    authorAvatarUrl:
+      safeString(row.authorAvatarUrl) ??
+      safeString(row.authorImage) ??
+      safeString(user?.profile_image_url_https),
+    createdAt: new Date(createdAt).toISOString(),
+    likeCount: Math.max(0, Math.round(safeNumber(row.likeCount) ?? safeNumber(row.favorite_count) ?? 0)),
+    repostCount: Math.max(0, Math.round(safeNumber(row.repostCount) ?? safeNumber(row.retweetCount) ?? safeNumber(row.retweet_count) ?? 0)),
+    replyCount: Math.max(0, Math.round(safeNumber(row.replyCount) ?? safeNumber(row.reply_count) ?? 0)),
     matchedBy: normalizeMatchedBy(row.matchedBy),
     isCall: safeBoolean(row.isCall),
   };
+}
+
+function classifyMatchedBy(query: string, tokenAddress: string, symbol: string | null): "ca" | "symbol" | "name" {
+  const normalized = query.trim().toLowerCase();
+  if (normalized === tokenAddress.trim().toLowerCase()) return "ca";
+  if (symbol && normalized === `$${symbol.trim().replace(/^\$/, "").toLowerCase()}`) return "symbol";
+  return "name";
+}
+
+function looksLikeCall(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return [
+    "ca:",
+    "contract:",
+    "entry",
+    "ape",
+    "send",
+    "moon",
+    "runner",
+    "breakout",
+    "bid",
+    "buy",
+  ].some((needle) => normalized.includes(needle));
+}
+
+function derivePostUrl(row: Record<string, unknown>, authorHandle: string): string | null {
+  const direct = safeString(row.url);
+  if (direct) return direct;
+  const id = safeString(row.id) ?? safeString(row.id_str) ?? safeString(row.postId);
+  return id ? `https://x.com/${authorHandle.replace(/^@/, "")}/status/${id}` : null;
+}
+
+function aggregateKols(posts: TokenSocialSignalPost[]): TokenSocialSignalKol[] {
+  const byHandle = new Map<string, TokenSocialSignalKol>();
+  for (const post of posts) {
+    const key = post.authorHandle.toLowerCase();
+    const current = byHandle.get(key);
+    const engagement = post.likeCount + post.repostCount * 2 + post.replyCount * 1.5;
+    if (current) {
+      current.matchedPostCount += 1;
+      current.engagementScore += engagement;
+      if (!current.displayName && post.authorDisplayName) current.displayName = post.authorDisplayName;
+      if (!current.avatarUrl && post.authorAvatarUrl) current.avatarUrl = post.authorAvatarUrl;
+      if (!current.url && post.url) current.url = `https://x.com/${post.authorHandle}`;
+      continue;
+    }
+    byHandle.set(key, {
+      handle: post.authorHandle,
+      displayName: post.authorDisplayName,
+      avatarUrl: post.authorAvatarUrl,
+      followerCountEstimate: null,
+      matchedPostCount: 1,
+      engagementScore: engagement,
+      url: `https://x.com/${post.authorHandle}`,
+    });
+  }
+  return [...byHandle.values()]
+    .sort((left, right) => right.engagementScore - left.engagementScore || right.matchedPostCount - left.matchedPostCount)
+    .slice(0, 6);
+}
+
+function isSocialDataProvider(provider: string | null, baseUrl: string | null): boolean {
+  if (provider?.toLowerCase() === "socialdata") return true;
+  if (!baseUrl) return false;
+  try {
+    return new URL(baseUrl).host.includes("socialdata.tools");
+  } catch {
+    return false;
+  }
+}
+
+async function fetchSocialDataSignals(params: {
+  tokenAddress: string;
+  symbol: string | null;
+  name: string | null;
+  matchedQueries: string[];
+}): Promise<TokenSocialSignalsPayload> {
+  const apiKey = safeString(process.env.SOCIAL_SIGNALS_API_KEY);
+  if (!apiKey) {
+    return emptySignals({
+      configured: false,
+      matchedQueries: params.matchedQueries,
+      message: "SocialData is selected, but SOCIAL_SIGNALS_API_KEY is missing.",
+    });
+  }
+
+  const configuredBaseUrl =
+    safeString(process.env.SOCIAL_SIGNALS_BASE_URL) ??
+    "https://api.socialdata.tools/twitter/search";
+  const baseUrl = new URL(configuredBaseUrl);
+  const requests = params.matchedQueries.slice(0, 3).map(async (query) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.max(3_500, SOCIAL_SIGNALS_REQUEST_TIMEOUT_MS));
+    try {
+      const url = new URL(baseUrl.toString());
+      url.searchParams.set("query", query);
+      url.searchParams.set("type", "Latest");
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => "");
+        throw new Error(bodyText || `SocialData request failed (${response.status})`);
+      }
+      const raw = (await response.json()) as SocialSignalsProviderResponse;
+      const tweets = Array.isArray(raw.tweets) ? raw.tweets : [];
+      const matchedBy = classifyMatchedBy(query, params.tokenAddress, params.symbol);
+      return tweets
+        .map((tweet) => normalizePost({
+          ...((tweet && typeof tweet === "object" && !Array.isArray(tweet)) ? tweet as Record<string, unknown> : {}),
+          matchedBy,
+          isCall:
+            safeBoolean((tweet as Record<string, unknown> | undefined)?.isCall) ||
+            looksLikeCall(
+              safeString((tweet as Record<string, unknown> | undefined)?.full_text) ??
+              safeString((tweet as Record<string, unknown> | undefined)?.text) ??
+              "",
+            ),
+          url: derivePostUrl(
+            ((tweet && typeof tweet === "object" && !Array.isArray(tweet)) ? tweet as Record<string, unknown> : {}),
+            safeString(((tweet as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined)?.screen_name) ?? "",
+          ),
+        }))
+        .filter((item): item is TokenSocialSignalPost => Boolean(item));
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
+  const settled = await Promise.allSettled(requests);
+  const collected = new Map<string, TokenSocialSignalPost>();
+  const errors = settled
+    .filter((item): item is PromiseRejectedResult => item.status === "rejected")
+    .map((item) => item.reason instanceof Error ? item.reason.message : String(item.reason));
+
+  for (const result of settled) {
+    if (result.status !== "fulfilled") continue;
+    for (const post of result.value) {
+      const existing = collected.get(post.id);
+      if (!existing || Date.parse(post.createdAt) > Date.parse(existing.createdAt)) {
+        collected.set(post.id, post);
+      }
+    }
+  }
+
+  const posts = [...collected.values()]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 12);
+  const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+  const posts24h = posts.filter((post) => {
+    const timestamp = Date.parse(post.createdAt);
+    return Number.isFinite(timestamp) && timestamp >= cutoffMs;
+  });
+
+  if (posts.length === 0 && errors.length > 0) {
+    throw new Error(errors[0]!);
+  }
+
+  return emptySignals({
+    configured: true,
+    available: true,
+    stale: false,
+    source: "socialdata",
+    matchedQueries: params.matchedQueries,
+    topKols: aggregateKols(posts),
+    latestPosts: posts,
+    callCount24h: posts24h.filter((post) => post.isCall).length,
+    uniqueAuthors24h: new Set(posts24h.map((post) => post.authorHandle.toLowerCase())).size,
+    fetchedAt: new Date().toISOString(),
+    message: posts.length > 0 ? null : "No recent X posts matched this token yet.",
+  });
 }
 
 function buildCacheKey(tokenAddress: string): string {
@@ -153,9 +356,14 @@ function buildMatchedQueries(tokenAddress: string, symbol: string | null, name: 
 }
 
 function isProviderConfigured(): boolean {
+  const provider = safeString(process.env.SOCIAL_SIGNALS_PROVIDER);
+  const baseUrl = safeString(process.env.SOCIAL_SIGNALS_BASE_URL);
+  if (isSocialDataProvider(provider, baseUrl)) {
+    return Boolean(safeString(process.env.SOCIAL_SIGNALS_API_KEY));
+  }
   return Boolean(
-    safeString(process.env.SOCIAL_SIGNALS_PROVIDER) &&
-      safeString(process.env.SOCIAL_SIGNALS_BASE_URL),
+    provider &&
+      baseUrl,
   );
 }
 
@@ -179,6 +387,39 @@ export async function loadTokenSocialSignals(params: {
 
   const provider = safeString(process.env.SOCIAL_SIGNALS_PROVIDER) ?? "generic";
   const baseUrl = safeString(process.env.SOCIAL_SIGNALS_BASE_URL)!;
+  if (isSocialDataProvider(provider, baseUrl)) {
+    try {
+      const payload = await fetchSocialDataSignals({
+        tokenAddress: params.tokenAddress,
+        symbol: params.symbol,
+        name: params.name,
+        matchedQueries,
+      });
+      socialSignalsCache.set(cacheKey, {
+        expiresAtMs: Date.now() + SOCIAL_SIGNALS_CACHE_TTL_MS,
+        payload,
+      });
+      return payload;
+    } catch (error) {
+      console.warn("[token-social-signals] socialdata request failed", {
+        tokenAddress: params.tokenAddress,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      const payload = emptySignals({
+        configured: true,
+        available: false,
+        stale: false,
+        source: "socialdata",
+        matchedQueries,
+        message: "SocialData could not return X results right now.",
+      });
+      socialSignalsCache.set(cacheKey, {
+        expiresAtMs: Date.now() + Math.min(SOCIAL_SIGNALS_CACHE_TTL_MS, 15_000),
+        payload,
+      });
+      return payload;
+    }
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SOCIAL_SIGNALS_REQUEST_TIMEOUT_MS);
 

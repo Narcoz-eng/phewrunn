@@ -182,7 +182,10 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
   );
   const hasFullSocialSignalsConfig = Boolean(
     parsed.SOCIAL_SIGNALS_PROVIDER &&
-      parsed.SOCIAL_SIGNALS_BASE_URL
+      (
+        parsed.SOCIAL_SIGNALS_BASE_URL ||
+        (parsed.SOCIAL_SIGNALS_PROVIDER.toLowerCase() === "socialdata" && parsed.SOCIAL_SIGNALS_API_KEY)
+      )
   );
   const storageEndpointHost = parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT
     ? new URL(parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT).host
@@ -216,7 +219,7 @@ function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
 
   if (hasAnySocialSignalsConfig && !hasFullSocialSignalsConfig) {
     warnings.push(
-      "External social signals are only partially configured; set SOCIAL_SIGNALS_PROVIDER and SOCIAL_SIGNALS_BASE_URL together"
+      "External social signals are only partially configured; set SOCIAL_SIGNALS_PROVIDER plus SOCIAL_SIGNALS_BASE_URL, or use SOCIAL_SIGNALS_PROVIDER=socialdata with SOCIAL_SIGNALS_API_KEY"
     );
   }
 
