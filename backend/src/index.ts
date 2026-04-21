@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import type { Server } from "bun";
 import { cors } from "hono/cors";
 import { compress } from "hono/compress";
 import { Prisma } from "@prisma/client";
@@ -42,6 +43,7 @@ import {
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
 import { getInternalJobQueueHealthSummary } from "./lib/job-queue.js";
 import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
+import { handleRealtimeUpgrade, realtimeWebSocketHandlers } from "./lib/realtime.js";
 
 // Security middleware imports
 import {
@@ -3880,7 +3882,14 @@ export default isBunRuntime
       // Bun defaults to a 10s idle timeout, which can abort long DB/network operations
       // mid-flight and leave transaction state unhealthy under load.
       idleTimeout: 60,
-      fetch: app.fetch,
+      fetch(request: Request, server?: Server<unknown>) {
+        const realtimeResponse = handleRealtimeUpgrade(request, server);
+        if (realtimeResponse) {
+          return realtimeResponse;
+        }
+        return app.fetch(request);
+      },
+      websocket: realtimeWebSocketHandlers,
     }
   : app;
 

@@ -1,5 +1,6 @@
-import { API_BASE_URL, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { appendLiveTradeSample, type LiveTradeSample } from "@/lib/live-candle-stream";
+import { subscribeToTokenRealtime } from "@/lib/realtime/app-realtime-client";
 import { getTokenLiveIntelligence } from "@/lib/token-live-intelligence";
 
 export type TradePanelLiveStatus = {
@@ -66,7 +67,7 @@ type SharedTokenLiveStream = {
   params: Omit<TokenLiveStreamParams, "enabled">;
   subscribers: Map<string, TokenLiveStreamSubscriber>;
   snapshot: TokenLiveStreamSnapshot;
-  source: EventSource | null;
+  liveTransportCloser: (() => void) | null;
   fallbackPriceTimer: ReturnType<typeof setInterval> | null;
   fallbackTradesTimer: ReturnType<typeof setInterval> | null;
   streamErrorTimer: ReturnType<typeof setTimeout> | null;
@@ -394,33 +395,8 @@ function handleLiveSnapshot(stream: SharedTokenLiveStream, payload: TradePanelLi
   });
 }
 
-function createEventSourceUrl(stream: SharedTokenLiveStream): string {
-  const query = new URLSearchParams({
-    tokenAddress: stream.params.tokenAddress!,
-    chainType: stream.params.chainType,
-  });
-  if (stream.params.pairAddress) {
-    query.set("pairAddress", stream.params.pairAddress);
-  }
-
-  const relativePath = `/api/posts/chart/live?${query.toString()}`;
-  if (typeof window === "undefined") {
-    return relativePath;
-  }
-
-  try {
-    const apiOrigin = new URL(API_BASE_URL, window.location.origin).origin;
-    if (apiOrigin === window.location.origin) {
-      return relativePath;
-    }
-    return new URL(relativePath, API_BASE_URL).toString();
-  } catch {
-    return relativePath;
-  }
-}
-
 function startLiveTransport(stream: SharedTokenLiveStream): void {
-  if (typeof window === "undefined" || !stream.params.tokenAddress || stream.source) {
+  if (typeof window === "undefined" || !stream.params.tokenAddress || stream.liveTransportCloser) {
     return;
   }
 
@@ -430,128 +406,118 @@ function startLiveTransport(stream: SharedTokenLiveStream): void {
     });
   }
 
-  const source = new EventSource(createEventSourceUrl(stream), { withCredentials: true });
-  stream.source = source;
-
-  source.onopen = () => {
-    clearStreamErrorTimer(stream);
-    clearFallbackTimers(stream);
-    patchSnapshot(stream, (current) => ({
-      ...current,
-      hasConnectedStream: true,
-      usingFallbackPolling: false,
-      status: {
-        connected: true,
-        mode: "stream",
-        reason: current.status.reason,
-        timestampMs: Date.now(),
-      },
-    }));
-
-    if (stream.snapshot.recentTrades.length === 0) {
-      void refreshFallbackTrades(stream);
-    }
-  };
-
-  source.addEventListener("snapshot", (event) => {
-    try {
-      handleLiveSnapshot(stream, JSON.parse((event as MessageEvent<string>).data) as TradePanelLiveSeedPayload);
-    } catch {
-      // Ignore malformed seed payloads.
-    }
-  });
-
-  source.addEventListener("price", (event) => {
-    try {
-      const payload = JSON.parse((event as MessageEvent<string>).data) as TradePanelLivePricePayload;
-      if (!Number.isFinite(payload.close) || payload.close <= 0) {
-        return;
-      }
-      patchSnapshot(stream, (current) => ({
-        ...current,
-        liveSamples: appendLiveTradeSample(
-          current.liveSamples,
-          {
-            timestamp: payload.timestampMs,
-            priceUsd: payload.close,
-            tradeVolumeUsd: payload.volumeUsd,
-            source: "price",
-            receivedAtMs: Date.now(),
-          },
-          MAX_LIVE_SAMPLES
-        ),
-        lastEventAtMs: Date.now(),
-      }));
-    } catch {
-      // Ignore malformed price frames.
-    }
-  });
-
-  source.addEventListener("trade", (event) => {
-    try {
-      const payload = JSON.parse((event as MessageEvent<string>).data) as TradePanelRecentTrade;
-      patchSnapshot(stream, (current) => ({
-        ...current,
-        recentTrades: mergeRecentTrades(current.recentTrades, [payload]),
-        liveSamples:
-          typeof payload.priceUsd === "number" && Number.isFinite(payload.priceUsd) && payload.priceUsd > 0
-            ? appendLiveTradeSample(
-                current.liveSamples,
-                {
-                  timestamp: payload.timestampMs,
-                  priceUsd: payload.priceUsd,
-                  tradeVolumeUsd: payload.volumeUsd,
-                  source: "trade",
-                  receivedAtMs: Date.now(),
-                },
-                MAX_LIVE_SAMPLES
-              )
-            : current.liveSamples,
-        lastEventAtMs: Date.now(),
-        lastTradeEventAtMs: payload.timestampMs,
-      }));
-    } catch {
-      // Ignore malformed trade frames.
-    }
-  });
-
-  source.addEventListener("status", (event) => {
-    try {
-      const payload = JSON.parse((event as MessageEvent<string>).data) as TradePanelLiveStatus;
-      patchSnapshot(stream, (current) => ({
-        ...current,
-        status: payload,
-        hasConnectedStream: payload.connected ? true : current.hasConnectedStream,
-        usingFallbackPolling: payload.connected ? false : payload.mode !== "stream",
-      }));
-      if (payload.connected) {
+  stream.liveTransportCloser = subscribeToTokenRealtime(
+    {
+      tokenAddress: stream.params.tokenAddress,
+      pairAddress: stream.params.pairAddress,
+      chainType: stream.params.chainType,
+    },
+    {
+      onOpen: () => {
         clearStreamErrorTimer(stream);
         clearFallbackTimers(stream);
-      } else if (payload.mode !== "stream") {
-        startFallbackPolling(stream);
-      }
-    } catch {
-      // Ignore malformed status frames.
-    }
-  });
+        patchSnapshot(stream, (current) => ({
+          ...current,
+          hasConnectedStream: true,
+          usingFallbackPolling: false,
+          status: {
+            connected: true,
+            mode: "stream",
+            reason: current.status.reason,
+            timestampMs: Date.now(),
+          },
+        }));
 
-  source.onerror = () => {
-    if (stream.streamErrorTimer) {
-      return;
+        if (stream.snapshot.recentTrades.length === 0) {
+          void refreshFallbackTrades(stream);
+        }
+      },
+      onSnapshot: (payload) => {
+        handleLiveSnapshot(stream, payload as TradePanelLiveSeedPayload);
+        if (payload.status) {
+          patchSnapshot(stream, (current) => ({
+            ...current,
+            status: payload.status!,
+            hasConnectedStream: payload.status!.connected ? true : current.hasConnectedStream,
+            usingFallbackPolling: payload.status!.connected ? false : payload.status!.mode !== "stream",
+          }));
+        }
+      },
+      onPrice: (payload) => {
+        if (!Number.isFinite(payload.close) || payload.close <= 0) {
+          return;
+        }
+        patchSnapshot(stream, (current) => ({
+          ...current,
+          liveSamples: appendLiveTradeSample(
+            current.liveSamples,
+            {
+              timestamp: payload.timestampMs,
+              priceUsd: payload.close,
+              tradeVolumeUsd: payload.volumeUsd,
+              source: "price",
+              receivedAtMs: Date.now(),
+            },
+            MAX_LIVE_SAMPLES
+          ),
+          lastEventAtMs: Date.now(),
+        }));
+      },
+      onTrade: (payload) => {
+        patchSnapshot(stream, (current) => ({
+          ...current,
+          recentTrades: mergeRecentTrades(current.recentTrades, [payload]),
+          liveSamples:
+            typeof payload.priceUsd === "number" && Number.isFinite(payload.priceUsd) && payload.priceUsd > 0
+              ? appendLiveTradeSample(
+                  current.liveSamples,
+                  {
+                    timestamp: payload.timestampMs,
+                    priceUsd: payload.priceUsd,
+                    tradeVolumeUsd: payload.volumeUsd,
+                    source: "trade",
+                    receivedAtMs: Date.now(),
+                  },
+                  MAX_LIVE_SAMPLES
+                )
+              : current.liveSamples,
+          lastEventAtMs: Date.now(),
+          lastTradeEventAtMs: payload.timestampMs,
+        }));
+      },
+      onStatus: (payload) => {
+        patchSnapshot(stream, (current) => ({
+          ...current,
+          status: payload,
+          hasConnectedStream: payload.connected ? true : current.hasConnectedStream,
+          usingFallbackPolling: payload.connected ? false : payload.mode !== "stream",
+        }));
+        if (payload.connected) {
+          clearStreamErrorTimer(stream);
+          clearFallbackTimers(stream);
+        } else if (payload.mode !== "stream") {
+          startFallbackPolling(stream);
+        }
+      },
+      onError: () => {
+        if (stream.streamErrorTimer) {
+          return;
+        }
+        stream.streamErrorTimer = window.setTimeout(() => {
+          stream.streamErrorTimer = null;
+          applyFallbackMode(stream, null);
+          startFallbackPolling(stream);
+        }, STREAM_ERROR_GRACE_MS);
+      },
     }
-    stream.streamErrorTimer = window.setTimeout(() => {
-      stream.streamErrorTimer = null;
-      applyFallbackMode(stream, null);
-      startFallbackPolling(stream);
-    }, STREAM_ERROR_GRACE_MS);
-  };
+  );
 }
 
 function stopLiveTransport(stream: SharedTokenLiveStream): void {
   clearStreamErrorTimer(stream);
   clearFallbackTimers(stream);
-  stream.source?.close();
-  stream.source = null;
+  stream.liveTransportCloser?.();
+  stream.liveTransportCloser = null;
 }
 
 function createSharedStream(params: Omit<TokenLiveStreamParams, "enabled">): SharedTokenLiveStream {
@@ -560,7 +526,7 @@ function createSharedStream(params: Omit<TokenLiveStreamParams, "enabled">): Sha
     params,
     subscribers: new Map(),
     snapshot: createEmptySnapshot(),
-    source: null,
+    liveTransportCloser: null,
     fallbackPriceTimer: null,
     fallbackTradesTimer: null,
     streamErrorTimer: null,
