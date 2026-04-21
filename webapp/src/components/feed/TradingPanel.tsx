@@ -67,8 +67,12 @@ interface TradingPanelProps {
   onAutoConfirmChange: (enabled: boolean) => void;
   mevProtectionEnabled: boolean;
   onMevProtectionChange: (enabled: boolean) => void;
+  mevProtectionDisabled?: boolean;
+  mevProtectionHint?: string | null;
   protectionEnabled: boolean;
   onProtectionEnabledChange: (enabled: boolean) => void;
+  protectionDisabled?: boolean;
+  protectionHint?: string | null;
   stopLossPercent: string;
   onStopLossPercentChange: (value: string) => void;
   takeProfitPercent: string;
@@ -182,8 +186,12 @@ export function TradingPanel({
   onAutoConfirmChange,
   mevProtectionEnabled,
   onMevProtectionChange,
+  mevProtectionDisabled = false,
+  mevProtectionHint = null,
   protectionEnabled,
   onProtectionEnabledChange,
+  protectionDisabled = false,
+  protectionHint = null,
   stopLossPercent,
   onStopLossPercentChange,
   takeProfitPercent,
@@ -511,28 +519,34 @@ export function TradingPanel({
                 <span className={cn("text-[11px] font-semibold", mevProtectionEnabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-white/60")}>
                   MEV Protection
                 </span>
-                <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Frontrun & sandwich guard</p>
+                <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Execution route preference</p>
               </div>
             </div>
             <Switch
               checked={mevProtectionEnabled}
               onCheckedChange={onMevProtectionChange}
+              disabled={mevProtectionDisabled}
               className="data-[state=checked]:bg-emerald-500/80 scale-[0.75]"
             />
           </div>
+          {mevProtectionHint ? (
+            <p className="mt-2 text-[10px] leading-4 text-slate-500 dark:text-white/45">
+              {mevProtectionHint}
+            </p>
+          ) : null}
           {mevProtectionEnabled ? (
             <div className="flex items-center gap-3 mt-2 pt-2 border-t border-emerald-500/10 dark:border-emerald-500/10">
               <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
                 <Lock className="w-2.5 h-2.5" />
-                <span>Private mempool</span>
+                <span>{chainType === "ethereum" ? "EVM route pending" : "Priority fee"}</span>
               </div>
               <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
                 <Shield className="w-2.5 h-2.5" />
-                <span>{chainType === "ethereum" ? "Flashbots" : "Jito bundles"}</span>
+                <span>{chainType === "ethereum" ? "Not live" : "Jupiter proxy"}</span>
               </div>
               <div className="flex items-center gap-1 text-[9px] text-emerald-600/70 dark:text-emerald-400/70">
                 <Zap className="w-2.5 h-2.5" />
-                <span>{chainType === "ethereum" ? "MEV-Share" : "Skip validators"}</span>
+                <span>{chainType === "ethereum" ? "Awaiting EVM path" : "Route budget"}</span>
               </div>
             </div>
           ) : null}
@@ -563,10 +577,16 @@ export function TradingPanel({
             <Switch
               checked={protectionEnabled}
               onCheckedChange={onProtectionEnabledChange}
+              disabled={protectionDisabled}
               className="data-[state=checked]:bg-amber-500/80 scale-[0.75]"
             />
           </div>
-          {protectionEnabled ? (
+          {protectionHint ? (
+            <p className="mt-2 text-[10px] leading-4 text-slate-500 dark:text-white/45">
+              {protectionHint}
+            </p>
+          ) : null}
+          {protectionEnabled && !protectionDisabled ? (
             <div className="mt-2 pt-2 border-t border-amber-500/10 dark:border-amber-500/10 space-y-2">
               {/* Stop Loss */}
               <div className="flex items-center gap-2">
@@ -697,8 +717,8 @@ export function TradingPanel({
               <DetailRow label="Total Route Fee" value={routeFeeDisplay} />
               <DetailRow label="Creator Reward" value={creatorFeeDisplay} />
               <DetailRow label="Platform Fee" value={platformFeeDisplay} />
-              <DetailRow label="Route" value={chainType === "ethereum" ? "Uniswap v3" : "Jupiter v6"} />
-              <DetailRow label="MEV Protection" value={mevProtectionEnabled ? (chainType === "ethereum" ? "Enabled (Flashbots)" : "Enabled (Jito)") : "Disabled"} />
+              <DetailRow label="Route" value={chainType === "ethereum" ? "EVM route pending" : "Jupiter v6"} />
+              <DetailRow label="MEV Protection" value={mevProtectionEnabled ? (chainType === "ethereum" ? "Pending EVM route" : "Priority route enabled") : "Disabled"} />
               {quoteFreshnessLabel && quoteFreshnessLabel !== "Waiting for quote" ? (
                 <DetailRow label="Quote" value={quoteFreshnessLabel} />
               ) : null}

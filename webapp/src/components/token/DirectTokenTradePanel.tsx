@@ -166,6 +166,7 @@ export function DirectTokenTradePanel({
   tokenAddress,
   chainType,
   tokenSymbol,
+  tokenName,
   tokenImage,
   tokenPriceUsd,
   liveStateLabel,
@@ -173,6 +174,7 @@ export function DirectTokenTradePanel({
   tokenAddress: string;
   chainType: "solana" | "ethereum";
   tokenSymbol: string;
+  tokenName: string;
   tokenImage: string | null;
   tokenPriceUsd: number | null;
   liveStateLabel: string | null;
@@ -727,14 +729,22 @@ export function DirectTokenTradePanel({
         onAutoConfirmChange={setAutoConfirmEnabled}
         mevProtectionEnabled={mevProtectionEnabled}
         onMevProtectionChange={setMevProtectionEnabled}
+        mevProtectionDisabled={chainType === "ethereum"}
+        mevProtectionHint={
+          chainType === "ethereum"
+            ? "Ethereum direct routing is not live yet."
+            : "This currently requests higher-priority Solana route handling through the Jupiter swap proxy."
+        }
         protectionEnabled={priceProtectionEnabled}
         onProtectionEnabledChange={setPriceProtectionEnabled}
+        protectionDisabled
+        protectionHint="Auto TP/SL is not live on token-page direct trades yet. That automation currently exists only on the post trade flow."
         stopLossPercent={stopLossPercent}
         onStopLossPercentChange={setStopLossPercent}
         takeProfitPercent={takeProfitPercent}
         onTakeProfitPercentChange={setTakeProfitPercent}
-        protectionStatusLabel={priceProtectionEnabled ? "Arms after your next fill." : "Optional price guard"}
-        protectionStatusTone={priceProtectionEnabled ? "armed" : "idle"}
+        protectionStatusLabel="Coming soon on token-page direct trades"
+        protectionStatusTone="idle"
         quoteFreshnessLabel={quoteFreshnessLabel}
         liveStateLabel={liveStateLabel}
         tradeError={

@@ -3108,6 +3108,7 @@ export default function TokenPage() {
                   tokenAddress={token.address}
                   chainType={token.chainType === "solana" ? "solana" : "ethereum"}
                   tokenSymbol={token.symbol || "TOKEN"}
+                  tokenName={token.name || token.symbol || "Token"}
                   tokenImage={token.imageUrl}
                   tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
                   liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
