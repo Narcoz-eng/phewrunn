@@ -6,6 +6,13 @@ import { Connection, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Wallet2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import {
+  fetchJupiterQuoteFast,
+  type JupiterQuoteRequestPayload,
+  type JupiterQuoteResponse,
+  type JupiterSwapResponse,
+  type TradeAttributionType,
+} from "@/lib/trading/jupiter-proxy";
 import { mapTradeExecutionError, type TradeExecutionErrorState } from "@/lib/trade-errors";
 import { appendTradeVerificationMemoToTransaction } from "@/lib/solana-trade";
 import { TradingPanel } from "@/components/feed/TradingPanel";
@@ -13,7 +20,6 @@ import PortfolioPanel, { type PortfolioPosition } from "@/components/feed/Portfo
 import { cn } from "@/lib/utils";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
-const JUPITER_QUOTE_TIMEOUT_MS = 4_800;
 const JUPITER_QUOTE_REFRESH_BEFORE_EXECUTE_MS = 8_000;
 const TRADE_SOL_BALANCE_BUFFER_SOL = 0.01;
 const QUICK_BUY_PRESETS = ["0.10", "0.20", "0.50", "1.00"];
@@ -21,41 +27,6 @@ const SELL_QUICK_PERCENTS = [25, 50, 75, 100];
 const MAX_ATOMIC_TRADE_AMOUNT = Number.MAX_SAFE_INTEGER;
 
 type TradeSide = "buy" | "sell";
-type TradeAttributionType = "token_page_direct" | "post_attributed";
-
-type JupiterQuoteRequestPayload = {
-  inputMint: string;
-  outputMint: string;
-  amount: number;
-  slippageBps: number;
-  swapMode: "ExactIn";
-  attributionType: TradeAttributionType;
-};
-
-type JupiterQuoteResponse = {
-  inputMint: string;
-  inAmount: string;
-  outputMint: string;
-  outAmount: string;
-  otherAmountThreshold: string;
-  swapMode: string;
-  slippageBps: number;
-  priceImpactPct?: string;
-  platformFee?: {
-    amount?: string;
-    feeBps?: number;
-    mint?: string;
-  };
-};
-
-type JupiterSwapResponse = {
-  swapTransaction?: string;
-  lastValidBlockHeight?: number;
-  tradeFeeEventId?: string | null;
-  tradeVerificationMemo?: string | null;
-  platformFeeBpsApplied?: number;
-  posterShareBpsApplied?: number;
-};
 
 type TradePanelContextResponse = {
   source: string;
@@ -77,61 +48,6 @@ type TradeNotice = {
   detail: string;
   txSignature: string | null;
 };
-
-function createAbortSignalWithTimeout(timeoutMs: number, externalSignal?: AbortSignal): {
-  signal: AbortSignal;
-  cleanup: () => void;
-} {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const handleExternalAbort = () => controller.abort();
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      controller.abort();
-    } else {
-      externalSignal.addEventListener("abort", handleExternalAbort, { once: true });
-    }
-  }
-
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timeoutId);
-      if (externalSignal) {
-        externalSignal.removeEventListener("abort", handleExternalAbort);
-      }
-    },
-  };
-}
-
-async function fetchJupiterQuoteFast(
-  payload: JupiterQuoteRequestPayload,
-  options?: { signal?: AbortSignal; timeoutMs?: number }
-): Promise<JupiterQuoteResponse> {
-  const { signal, cleanup } = createAbortSignalWithTimeout(
-    options?.timeoutMs ?? JUPITER_QUOTE_TIMEOUT_MS,
-    options?.signal
-  );
-
-  try {
-    const response = await fetch("/api/posts/jupiter/quote", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      throw new Error(bodyText || `Quote failed (${response.status})`);
-    }
-    return (await response.json()) as JupiterQuoteResponse;
-  } finally {
-    cleanup();
-  }
-}
 
 function formatTokenAmountFromAtomic(amount: string | null | undefined, decimals: number): string {
   if (!amount) return "N/A";

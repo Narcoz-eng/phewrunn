@@ -39,6 +39,12 @@ import { appendTradeVerificationMemoToTransaction } from "@/lib/solana-trade";
 import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
 import { mapTradeExecutionError, type TradeExecutionErrorState } from "@/lib/trade-errors";
 import {
+  fetchJupiterQuoteFast,
+  type JupiterQuoteRequestPayload,
+  type JupiterQuoteResponse,
+  type JupiterSwapResponse,
+} from "@/lib/trading/jupiter-proxy";
+import {
   buildTokenIntelligenceSnapshotFromLivePayload,
   getTokenLiveIntelligence,
 } from "@/lib/token-live-intelligence";
@@ -129,11 +135,9 @@ const DEFAULT_QUICK_BUY_PRESETS_SOL = ["0.10", "0.20", "0.50", "1.00"];
 const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 300, 500];
 const REALTIME_SETTLEMENT_REFRESH_THROTTLE_MS = 8_000;
 const PASSIVE_VISIBLE_PRICE_REFRESH_COOLDOWN_MS = 90_000;
-const JUPITER_QUOTE_TIMEOUT_MS = 4_800;
 const JUPITER_QUOTE_STALE_MAX_AGE_MS = 15_000;
 const JUPITER_QUOTE_REFRESH_BEFORE_EXECUTE_MS = 8_000;
 const QUICK_BUY_QUOTE_PREFETCH_TIMEOUT_MS = 4_200;
-const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
 const TRADE_PANEL_PORTFOLIO_DEFER_MS = 650;
 const VISIBLE_BUNDLE_SCAN_REFRESH_INTERVAL_MS = 5_000;
 const SHARED_ALPHA_QUERY_STALE_TIME_MS = 60_000;
@@ -227,186 +231,6 @@ function getTouchDistance(touches: TouchList): number | null {
   return Math.hypot(deltaX, deltaY);
 }
 
-type JupiterQuoteRequestPayload = {
-  inputMint: string;
-  outputMint: string;
-  amount: number;
-  slippageBps: number;
-  swapMode: "ExactIn";
-  postId: string;
-  attributionType: "token_page_direct" | "post_attributed";
-};
-
-type JupiterQuoteResponse = {
-  inputMint: string;
-  inAmount: string;
-  outputMint: string;
-  outAmount: string;
-  otherAmountThreshold: string;
-  swapMode: string;
-  slippageBps: number;
-  priceImpactPct?: string;
-  routePlan?: Array<{
-    swapInfo?: {
-      label?: string;
-      inAmount?: string;
-      outAmount?: string;
-    };
-    percent?: number;
-  }>;
-  contextSlot?: number;
-  timeTaken?: number;
-  platformFee?: {
-    amount?: string;
-    feeBps?: number;
-    mint?: string;
-  };
-};
-
-type JupiterSwapResponse = {
-  swapTransaction?: string;
-  lastValidBlockHeight?: number;
-  tradeFeeEventId?: string | null;
-  tradeVerificationMemo?: string | null;
-  platformFeeBpsApplied?: number;
-  posterShareBpsApplied?: number;
-};
-
-const jupiterQuoteCache = new Map<
-  string,
-  { quote: JupiterQuoteResponse; expiresAtMs: number }
->();
-const jupiterQuoteInFlight = new Map<string, Promise<JupiterQuoteResponse>>();
-
-function buildJupiterQuoteCacheKey(payload: JupiterQuoteRequestPayload): string {
-  return [
-    payload.inputMint,
-    payload.outputMint,
-    String(payload.amount),
-    String(payload.slippageBps),
-    payload.swapMode,
-    payload.postId,
-    payload.attributionType,
-  ].join(":");
-}
-
-function createAbortSignalWithTimeout(timeoutMs: number, externalSignal?: AbortSignal): {
-  signal: AbortSignal;
-  cleanup: () => void;
-} {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const handleExternalAbort = () => controller.abort();
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      controller.abort();
-    } else {
-      externalSignal.addEventListener("abort", handleExternalAbort, { once: true });
-    }
-  }
-
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timeoutId);
-      if (externalSignal) {
-        externalSignal.removeEventListener("abort", handleExternalAbort);
-      }
-    },
-  };
-}
-
-function isRetryableJupiterQuoteError(error: unknown): boolean {
-  const message = (
-    error instanceof Error ? error.message : typeof error === "string" ? error : ""
-  ).toLowerCase();
-  return (
-    message.includes("aborted") ||
-    message.includes("timeout") ||
-    message.includes("failed to fetch") ||
-    message.includes("networkerror")
-  );
-}
-
-async function fetchJupiterQuoteFast(
-  payload: JupiterQuoteRequestPayload,
-  options?: { timeoutMs?: number; signal?: AbortSignal }
-): Promise<JupiterQuoteResponse> {
-  const key = buildJupiterQuoteCacheKey(payload);
-  const now = Date.now();
-  const cached = jupiterQuoteCache.get(key);
-  if (cached && cached.expiresAtMs > now) {
-    return cached.quote;
-  }
-  if (cached) {
-    jupiterQuoteCache.delete(key);
-  }
-
-  const inFlight = jupiterQuoteInFlight.get(key);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const requestOnce = async (timeoutMs: number): Promise<JupiterQuoteResponse> => {
-    const { signal, cleanup } = createAbortSignalWithTimeout(timeoutMs, options?.signal);
-    try {
-      const res = await fetch("/api/posts/jupiter/quote", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-        signal,
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-      if (!res.ok) {
-        const bodyText = await res.text().catch(() => "");
-        let message = bodyText || `Quote failed (${res.status})`;
-        if (bodyText) {
-          try {
-            const parsed = JSON.parse(bodyText) as { error?: { message?: string } };
-            const upstreamMessage = parsed?.error?.message;
-            if (typeof upstreamMessage === "string" && upstreamMessage.trim().length > 0) {
-              message = upstreamMessage.trim();
-            }
-          } catch {
-            // Keep raw text for non-JSON upstream responses.
-          }
-        }
-        throw new Error(message);
-      }
-
-      const quote = (await res.json()) as JupiterQuoteResponse;
-      jupiterQuoteCache.set(key, {
-        quote,
-        expiresAtMs: Date.now() + JUPITER_QUOTE_MEMORY_CACHE_TTL_MS,
-      });
-      return quote;
-    } finally {
-      cleanup();
-    }
-  };
-
-  const requestPromise = (async () => {
-    try {
-      const baseTimeoutMs = options?.timeoutMs ?? JUPITER_QUOTE_TIMEOUT_MS;
-      try {
-        return await requestOnce(baseTimeoutMs);
-      } catch (error) {
-        if (options?.signal?.aborted || !isRetryableJupiterQuoteError(error)) {
-          throw error;
-        }
-        const retryTimeoutMs = Math.max(baseTimeoutMs + 1_400, JUPITER_QUOTE_TIMEOUT_MS + 1_200);
-        return await requestOnce(retryTimeoutMs);
-      }
-    } finally {
-      jupiterQuoteInFlight.delete(key);
-    }
-  })();
-
-  jupiterQuoteInFlight.set(key, requestPromise);
-  return requestPromise;
-}
 
 async function fetchTradePanelContextFast(args: {
   walletAddress: string;
