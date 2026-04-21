@@ -29,7 +29,6 @@ import {
   type TokenCommunityAsset,
   type TokenCommunityAssetStorageHealth,
   type TokenCommunityAssetImportRequest,
-  type TokenCommunityAssetPresignResponse,
   type TokenCommunityProfile,
   type TokenCommunityReactionSummary,
   type TokenCommunityReply,
@@ -166,6 +165,9 @@ function getAssetStorageIssueCopy(health: TokenCommunityAssetStorageHealth | nul
   if (!health) return null;
   if (health.issues.includes("partial_storage_config")) {
     return "Community brand-kit storage is only partially configured. Add the missing R2 bucket, key, secret, region, and public asset URL before uploading.";
+  }
+  if (health.issues.includes("storage_endpoint_includes_path")) {
+    return "The R2 storage endpoint includes a bucket path. Use only the account endpoint host for COMMUNITY_ASSET_STORAGE_ENDPOINT and keep the bucket name in COMMUNITY_ASSET_STORAGE_BUCKET.";
   }
   if (
     health.issues.includes("public_base_uses_storage_api_host") ||
@@ -1072,32 +1074,32 @@ export function TokenCommunitySection({
 
   const uploadCommunityAsset = async (kind: "logo" | "banner" | "mascot" | "reference_meme", file: File) => {
     const dimensions = await getImageDimensions(file);
-    const presigned = await api.post<TokenCommunityAssetPresignResponse>(
-      `/api/tokens/${tokenAddress}/community/assets/presign`,
-      {
-        kind,
-        fileName: file.name,
-        contentType: file.type || "image/png",
-        sizeBytes: file.size,
-        width: dimensions?.width,
-        height: dimensions?.height,
-      },
-    );
+    const formData = new FormData();
+    formData.append("kind", kind);
+    formData.append("file", file);
+    if (dimensions?.width) {
+      formData.append("width", String(dimensions.width));
+    }
+    if (dimensions?.height) {
+      formData.append("height", String(dimensions.height));
+    }
     try {
-      const response = await fetch(presigned.upload.url, {
-        method: presigned.upload.method,
-        headers: presigned.upload.headers,
-        body: file,
+      const response = await api.raw(`/api/tokens/${tokenAddress}/community/assets/upload`, {
+        method: "POST",
+        body: formData,
       });
       if (!response.ok) {
-        throw new Error(`Upload blocked by storage policy (${response.status})`);
+        const json = await response.json().catch(() => null);
+        throw new Error(
+          json?.error?.message || json?.message || `Upload failed with status ${response.status}`,
+        );
       }
-
-      return api.post<TokenCommunityAsset>(
-        `/api/tokens/${tokenAddress}/community/assets/${presigned.asset.id}/complete`,
-      );
+      const json = await response.json().catch(() => null);
+      if (!json?.data) {
+        throw new Error("Upload finished without asset metadata");
+      }
+      return json.data as TokenCommunityAsset;
     } catch (error) {
-      await api.delete(`/api/tokens/${tokenAddress}/community/assets/${presigned.asset.id}`).catch(() => undefined);
       const healthHint = getAssetStorageIssueCopy(assetStorageHealth);
       if (healthHint) {
         throw new Error(healthHint);

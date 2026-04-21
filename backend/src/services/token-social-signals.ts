@@ -68,7 +68,7 @@ function emptySignals(
     callCount24h: 0,
     uniqueAuthors24h: 0,
     fetchedAt: null,
-    message: "External X signals are not connected yet.",
+    message: "External X signals are not configured yet. Set SOCIAL_SIGNALS_PROVIDER and SOCIAL_SIGNALS_BASE_URL.",
     ...overrides,
   };
 }

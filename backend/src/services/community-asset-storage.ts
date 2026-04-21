@@ -20,6 +20,14 @@ type CommunityAssetStorageConfig = {
   uploadExpiresSeconds: number;
 };
 
+function normalizeStorageEndpoint(rawEndpoint: string): URL {
+  const endpoint = new URL(rawEndpoint);
+  endpoint.pathname = "";
+  endpoint.search = "";
+  endpoint.hash = "";
+  return endpoint;
+}
+
 export type CommunityAssetStorageDiagnostics = {
   configured: boolean;
   healthy: boolean;
@@ -94,7 +102,7 @@ function getStorageConfig(): CommunityAssetStorageConfig | null {
     `${endpoint.replace(/\/+$/, "")}/${bucket}`;
 
   return {
-    endpoint: new URL(endpoint),
+    endpoint: normalizeStorageEndpoint(endpoint),
     region,
     bucket,
     accessKeyId,
@@ -128,6 +136,10 @@ export function getCommunityAssetStorageDiagnostics(): CommunityAssetStorageDiag
   if (rawEndpoint) {
     try {
       endpointHost = new URL(rawEndpoint).host;
+      const endpointPath = new URL(rawEndpoint).pathname.replace(/\/+$/, "");
+      if (endpointPath && endpointPath !== "") {
+        issues.push("storage_endpoint_includes_path");
+      }
     } catch {
       issues.push("invalid_endpoint_url");
     }

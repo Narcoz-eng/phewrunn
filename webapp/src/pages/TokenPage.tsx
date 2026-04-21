@@ -342,6 +342,10 @@ function parseTokenPageTab(value: string | null): TokenPageTab {
   return "trade";
 }
 
+function buildXSearchUrl(query: string): string {
+  return `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
+}
+
 function formatPct(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
   return `${value.toFixed(1)}%`;
@@ -2508,6 +2512,16 @@ export default function TokenPage() {
     },
   });
   const socialSignals = socialSignalsQuery.data ?? null;
+  const socialSignalQueries = useMemo(() => {
+    const queries = socialSignals?.matchedQueries?.length
+      ? socialSignals.matchedQueries
+      : [
+          token?.address ?? null,
+          token?.symbol ? `$${token.symbol.replace(/^\$/, "")}` : null,
+          token?.name ?? null,
+        ];
+    return [...new Set(queries.filter((value): value is string => Boolean(value && value.trim())))].slice(0, 3);
+  }, [socialSignals?.matchedQueries, token?.address, token?.name, token?.symbol]);
 
   const followMutation = useMutation({
     mutationFn: async () => {
@@ -3500,7 +3514,22 @@ export default function TokenPage() {
                           </a>
                         )) : (
                           <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
-                            No recent X posts matched this token yet.
+                            <div>No recent X posts matched this token yet.</div>
+                            {socialSignalQueries.length > 0 ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {socialSignalQueries.map((query) => (
+                                  <a
+                                    key={query}
+                                    href={buildXSearchUrl(query)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:border-primary/25"
+                                  >
+                                    Search {query}
+                                  </a>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </div>
@@ -3508,7 +3537,22 @@ export default function TokenPage() {
                   </div>
                 ) : (
                   <div className="rounded-[20px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
-                    {socialSignals?.message || "External X signals are not connected yet."}
+                    <div>{socialSignals?.message || "External X signals are not connected yet."}</div>
+                    {socialSignalQueries.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {socialSignalQueries.map((query) => (
+                          <a
+                            key={query}
+                            href={buildXSearchUrl(query)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:border-primary/25"
+                          >
+                            Search X for {query}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>

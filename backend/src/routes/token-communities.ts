@@ -947,6 +947,12 @@ function mapRouteError(error: unknown) {
       error: { message: "Asset storage is not configured", code: "ASSET_STORAGE_UNAVAILABLE" },
     };
   }
+  if (error.message === "INVALID_ASSET_UPLOAD") {
+    return {
+      status: 400 as const,
+      error: { message: "Upload one image file at a time", code: "INVALID_ASSET_UPLOAD" },
+    };
+  }
   if (error.message === "REMOTE_ASSET_FETCH_FAILED") {
     return {
       status: 400 as const,
@@ -988,6 +994,43 @@ function inferRemoteAssetFilename(sourceUrl: string, fallbackContentType: string
   const extension =
     fallbackContentType.split("/")[1]?.replace(/[^a-z0-9.+-]/gi, "").toLowerCase() || "png";
   return `remote-asset.${extension}`;
+}
+
+function parseOptionalPositiveInt(value: string | File | null): number | null {
+  if (typeof value !== "string") return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function getUploadedImageFromFormData(formData: FormData): {
+  kind: CommunityAssetKind;
+  file: File;
+  width: number | null;
+  height: number | null;
+} {
+  const kindValue = formData.get("kind");
+  const fileValue = formData.get("file");
+
+  if (typeof kindValue !== "string" || !isCommunityAssetKind(kindValue)) {
+    throw new Error("INVALID_ASSET_UPLOAD");
+  }
+  if (!(fileValue instanceof File)) {
+    throw new Error("INVALID_ASSET_UPLOAD");
+  }
+  if (!/^image\/[a-z0-9.+-]+$/i.test(fileValue.type || "")) {
+    throw new Error("REMOTE_ASSET_NOT_IMAGE");
+  }
+  if (fileValue.size <= 0 || fileValue.size > 8 * 1024 * 1024) {
+    throw new Error("REMOTE_ASSET_TOO_LARGE");
+  }
+
+  return {
+    kind: kindValue,
+    file: fileValue,
+    width: parseOptionalPositiveInt(formData.get("width")),
+    height: parseOptionalPositiveInt(formData.get("height")),
+  };
 }
 
 tokenCommunitiesRouter.get(
@@ -1204,6 +1247,82 @@ tokenCommunitiesRouter.get(
     try {
       await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
       return c.json({ data: getCommunityAssetStorageDiagnostics() });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/assets/upload",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema),
+  async (c) => {
+    try {
+      if (!isCommunityAssetStorageConfigured()) {
+        throw new Error("COMMUNITY_ASSET_STORAGE_NOT_CONFIGURED");
+      }
+      const viewer = c.get("user")!;
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const diagnostics = getCommunityAssetStorageDiagnostics();
+      const uploadSessionId = randomUUID();
+      const formData = await c.req.formData();
+      const payload = getUploadedImageFromFormData(formData);
+      const body = new Uint8Array(await payload.file.arrayBuffer());
+      const objectKey = buildCommunityAssetObjectKey({
+        tokenAddress: token.address,
+        kind: payload.kind,
+        fileName: payload.file.name,
+      });
+      const upload = await uploadCommunityAssetObject({
+        objectKey,
+        contentType: payload.file.type || "image/png",
+        body,
+      });
+
+      const asset = await prisma.tokenCommunityAsset.create({
+        data: {
+          tokenId: token.id,
+          kind: payload.kind,
+          status: "ready",
+          url: upload.publicUrl,
+          objectKey,
+          mimeType: payload.file.type || "image/png",
+          width: payload.width,
+          height: payload.height,
+          sizeBytes: payload.file.size,
+          uploadedById: viewer.id,
+        },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          url: true,
+          objectKey: true,
+          mimeType: true,
+          width: true,
+          height: true,
+          sizeBytes: true,
+          sortOrder: true,
+          createdAt: true,
+        },
+      });
+
+      console.info("[community-assets/upload]", {
+        uploadSessionId,
+        tokenAddress: token.address,
+        assetId: asset.id,
+        kind: payload.kind,
+        contentType: asset.mimeType,
+        sizeBytes: asset.sizeBytes,
+        endpointHost: diagnostics.endpointHost,
+        publicBaseHost: diagnostics.publicBaseHost,
+        issues: diagnostics.issues,
+      });
+
+      return c.json({ data: serializeCommunityAsset(token.address, asset) });
     } catch (error) {
       const mapped = mapRouteError(error);
       if (mapped) return c.json(mapped.error, mapped.status);
