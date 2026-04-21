@@ -145,6 +145,19 @@ const envSchema = z.object({
       normalizeOptionalStringEnv,
       z.string().regex(/^\d+$/, "COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS must be an integer string").optional()
     ),
+
+  // Optional: external social signals provider (X / Twitter)
+  SOCIAL_SIGNALS_PROVIDER: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "SOCIAL_SIGNALS_PROVIDER cannot be empty").optional()),
+  SOCIAL_SIGNALS_BASE_URL: z
+    .preprocess(normalizeOptionalStringEnv, z.string().url("SOCIAL_SIGNALS_BASE_URL must be a valid URL").optional()),
+  SOCIAL_SIGNALS_API_KEY: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(1, "SOCIAL_SIGNALS_API_KEY cannot be empty").optional()),
+  SOCIAL_SIGNALS_REQUEST_TIMEOUT_MS: z
+    .preprocess(
+      normalizeOptionalStringEnv,
+      z.string().regex(/^\d+$/, "SOCIAL_SIGNALS_REQUEST_TIMEOUT_MS must be an integer string").optional()
+    ),
 });
 
 /**
@@ -152,6 +165,60 @@ const envSchema = z.object({
  */
 function validateProductionConfig(parsed: z.infer<typeof envSchema>): string[] {
   const warnings: string[] = [];
+  const storageFields = [
+    parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT,
+    parsed.COMMUNITY_ASSET_STORAGE_REGION,
+    parsed.COMMUNITY_ASSET_STORAGE_BUCKET,
+    parsed.COMMUNITY_ASSET_ACCESS_KEY_ID,
+    parsed.COMMUNITY_ASSET_SECRET_ACCESS_KEY,
+  ];
+  const communityStorageProvidedCount = storageFields.filter(Boolean).length;
+  const hasPartialCommunityAssetStorageConfig =
+    communityStorageProvidedCount > 0 && communityStorageProvidedCount < storageFields.length;
+  const hasAnySocialSignalsConfig = Boolean(
+    parsed.SOCIAL_SIGNALS_PROVIDER ||
+      parsed.SOCIAL_SIGNALS_BASE_URL ||
+      parsed.SOCIAL_SIGNALS_API_KEY
+  );
+  const hasFullSocialSignalsConfig = Boolean(
+    parsed.SOCIAL_SIGNALS_PROVIDER &&
+      parsed.SOCIAL_SIGNALS_BASE_URL
+  );
+  const storageEndpointHost = parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT
+    ? new URL(parsed.COMMUNITY_ASSET_STORAGE_ENDPOINT).host
+    : null;
+  const publicBaseHost = parsed.COMMUNITY_ASSET_PUBLIC_BASE_URL
+    ? new URL(parsed.COMMUNITY_ASSET_PUBLIC_BASE_URL).host
+    : null;
+
+  if (hasPartialCommunityAssetStorageConfig) {
+    warnings.push(
+      "Community asset storage is only partially configured; uploads/imports will fail until endpoint, region, bucket, access key, and secret are all set"
+    );
+  }
+
+  if (
+    parsed.COMMUNITY_ASSET_PUBLIC_BASE_URL &&
+    storageEndpointHost &&
+    publicBaseHost &&
+    storageEndpointHost === publicBaseHost
+  ) {
+    warnings.push(
+      "COMMUNITY_ASSET_PUBLIC_BASE_URL points at the storage API host; use a public bucket/custom domain URL instead"
+    );
+  }
+
+  if (parsed.COMMUNITY_ASSET_PUBLIC_BASE_URL?.includes("cloudflarestorage.com")) {
+    warnings.push(
+      "COMMUNITY_ASSET_PUBLIC_BASE_URL is using the R2 API endpoint rather than a public asset domain; browser image loads may fail"
+    );
+  }
+
+  if (hasAnySocialSignalsConfig && !hasFullSocialSignalsConfig) {
+    warnings.push(
+      "External social signals are only partially configured; set SOCIAL_SIGNALS_PROVIDER and SOCIAL_SIGNALS_BASE_URL together"
+    );
+  }
 
   if (parsed.NODE_ENV === "production") {
     // Check for secure database URL
@@ -306,6 +373,10 @@ function getSafeConfig(parsed: z.infer<typeof envSchema>): Record<string, string
     COMMUNITY_ASSET_SECRET_ACCESS_KEY: parsed.COMMUNITY_ASSET_SECRET_ACCESS_KEY ? "configured" : "not set",
     COMMUNITY_ASSET_PUBLIC_BASE_URL: parsed.COMMUNITY_ASSET_PUBLIC_BASE_URL ? "configured" : "not set",
     COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS: parsed.COMMUNITY_ASSET_UPLOAD_EXPIRES_SECONDS ?? "600",
+    SOCIAL_SIGNALS_PROVIDER: parsed.SOCIAL_SIGNALS_PROVIDER ?? "not set",
+    SOCIAL_SIGNALS_BASE_URL: parsed.SOCIAL_SIGNALS_BASE_URL ? "configured" : "not set",
+    SOCIAL_SIGNALS_API_KEY: parsed.SOCIAL_SIGNALS_API_KEY ? "configured" : "not set",
+    SOCIAL_SIGNALS_REQUEST_TIMEOUT_MS: parsed.SOCIAL_SIGNALS_REQUEST_TIMEOUT_MS ?? "2500",
   };
 }
 

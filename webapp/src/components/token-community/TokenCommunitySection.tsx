@@ -27,6 +27,7 @@ import {
   getAvatarUrl,
   type TokenActiveRaidResponse,
   type TokenCommunityAsset,
+  type TokenCommunityAssetStorageHealth,
   type TokenCommunityAssetImportRequest,
   type TokenCommunityAssetPresignResponse,
   type TokenCommunityProfile,
@@ -75,6 +76,7 @@ type ThreadPage = {
   items: TokenCommunityThread[];
   hasMore: boolean;
   nextCursor: string | null;
+  sort?: "latest" | "trending";
 };
 
 type DraftAssets = {
@@ -158,6 +160,23 @@ function getAssetActionErrorMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+function getAssetStorageIssueCopy(health: TokenCommunityAssetStorageHealth | null | undefined): string | null {
+  if (!health) return null;
+  if (health.issues.includes("partial_storage_config")) {
+    return "Community brand-kit storage is only partially configured. Add the missing R2 bucket, key, secret, region, and public asset URL before uploading.";
+  }
+  if (
+    health.issues.includes("public_base_uses_storage_api_host") ||
+    health.issues.includes("public_base_points_at_r2_api_endpoint")
+  ) {
+    return "The asset public URL is pointing at the R2 API host instead of a browser-loadable public domain. Set COMMUNITY_ASSET_PUBLIC_BASE_URL to the public bucket or CDN URL.";
+  }
+  if (health.issues.includes("missing_public_base_url")) {
+    return "Asset storage can sign uploads, but no public asset base URL is configured yet. Set COMMUNITY_ASSET_PUBLIC_BASE_URL before using community uploads.";
+  }
+  return null;
 }
 
 function draftAssetIds(assets: DraftAssets): string[] {
@@ -568,6 +587,7 @@ export function TokenCommunitySection({
   const tokenLabel = buildTokenLabel(tokenSymbol, tokenName);
   const viewerCanCreateByRole = Boolean(viewer && (viewer.isAdmin || viewerLevel >= 3));
   const [activeTab, setActiveTab] = useState<"board" | "raid">("board");
+  const [threadSort, setThreadSort] = useState<"latest" | "trending">("latest");
   const [threadCursor, setThreadCursor] = useState<string | null>(null);
   const [threads, setThreads] = useState<TokenCommunityThread[]>([]);
   const [hasMoreThreads, setHasMoreThreads] = useState(false);
@@ -597,6 +617,14 @@ export function TokenCommunitySection({
     queryFn: async () => api.get<TokenCommunityRoom>(`/api/tokens/${tokenAddress}/community/room`),
   });
 
+  const assetHealthQuery = useQuery({
+    queryKey: ["token-community-asset-health", tokenAddress],
+    enabled: Boolean(viewer?.id),
+    staleTime: 30_000,
+    queryFn: async () =>
+      api.get<TokenCommunityAssetStorageHealth>(`/api/tokens/${tokenAddress}/community/assets/health`),
+  });
+
   const profileQuery = useQuery({
     queryKey: ["token-community-profile", tokenAddress],
     enabled: Boolean(viewer?.id && (roomQuery.data?.exists || editorMode === "edit")),
@@ -604,10 +632,13 @@ export function TokenCommunitySection({
   });
 
   const threadsQuery = useQuery({
-    queryKey: ["token-community-threads", tokenAddress, threadCursor],
+    queryKey: ["token-community-threads", tokenAddress, threadSort, threadCursor],
     enabled: Boolean(viewer?.id && roomQuery.data?.exists),
     queryFn: async () => {
-      const suffix = threadCursor ? `?cursor=${encodeURIComponent(threadCursor)}` : "";
+      const params = new URLSearchParams();
+      params.set("sort", threadSort);
+      if (threadCursor) params.set("cursor", threadCursor);
+      const suffix = params.size > 0 ? `?${params.toString()}` : "";
       return api.get<ThreadPage>(`/api/tokens/${tokenAddress}/community/threads${suffix}`);
     },
   });
@@ -698,6 +729,8 @@ export function TokenCommunitySection({
   const activeStepProgress = raidStep === 1 ? 25 : raidStep === 2 ? 50 : raidStep === 3 ? 75 : 100;
   const roomHydrating = roomQuery.isLoading && !roomQuery.data;
   const roomLoadError = roomQuery.error instanceof Error ? roomQuery.error : null;
+  const assetStorageHealth = assetHealthQuery.data ?? null;
+  const assetStorageIssueCopy = getAssetStorageIssueCopy(assetStorageHealth);
 
   useEffect(() => {
     if (!threadsQuery.data) return;
@@ -712,6 +745,13 @@ export function TokenCommunitySection({
     setHasMoreThreads(threadsQuery.data.hasMore);
     setNextThreadCursor(threadsQuery.data.nextCursor);
   }, [threadCursor, threadsQuery.data]);
+
+  useEffect(() => {
+    setThreadCursor(null);
+    setThreads([]);
+    setHasMoreThreads(false);
+    setNextThreadCursor(null);
+  }, [threadSort]);
 
   useEffect(() => {
     if (!room || entryIntentRef.current === entryIntentToken) return;
@@ -1043,16 +1083,30 @@ export function TokenCommunitySection({
         height: dimensions?.height,
       },
     );
+    try {
+      const response = await fetch(presigned.upload.url, {
+        method: presigned.upload.method,
+        headers: presigned.upload.headers,
+        body: file,
+      });
+      if (!response.ok) {
+        throw new Error(`Upload blocked by storage policy (${response.status})`);
+      }
 
-    const response = await fetch(presigned.upload.url, {
-      method: presigned.upload.method,
-      headers: presigned.upload.headers,
-      body: file,
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to upload ${kind.replace("_", " ")}`);
+      return api.post<TokenCommunityAsset>(
+        `/api/tokens/${tokenAddress}/community/assets/${presigned.asset.id}/complete`,
+      );
+    } catch (error) {
+      await api.delete(`/api/tokens/${tokenAddress}/community/assets/${presigned.asset.id}`).catch(() => undefined);
+      const healthHint = getAssetStorageIssueCopy(assetStorageHealth);
+      if (healthHint) {
+        throw new Error(healthHint);
+      }
+      if (error instanceof Error && /failed to fetch/i.test(error.message)) {
+        throw new Error("Upload could not reach asset storage. Check the R2 bucket CORS policy and public asset domain.");
+      }
+      throw error;
     }
-    return presigned.asset;
   };
 
   const importCommunityAsset = async (
@@ -1747,6 +1801,22 @@ export function TokenCommunitySection({
                   </p>
                 </div>
 
+                {assetStorageIssueCopy ? (
+                  <div className="mt-4 rounded-[18px] border border-amber-300/35 bg-amber-500/10 p-4 text-sm leading-6 text-amber-900 dark:text-amber-100">
+                    <div className="font-semibold">Asset storage needs attention</div>
+                    <p className="mt-1">{assetStorageIssueCopy}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3 rounded-full"
+                      onClick={() => void assetHealthQuery.refetch()}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      Recheck storage
+                    </Button>
+                  </div>
+                ) : null}
+
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   {editorDraft.assets.referenceMemes.map((asset) => (
                     <AssetPreview key={asset.id} asset={asset} label="Reference meme" className="p-2" />
@@ -1882,9 +1952,28 @@ export function TokenCommunitySection({
                 ) : null}
 
                 <div className="rounded-[26px] border border-border/60 bg-card p-5">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <MessageSquare className="h-4 w-4 text-primary" />
-                    Community board
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <MessageSquare className="h-4 w-4 text-primary" />
+                      Community board
+                    </div>
+                    <div className="inline-flex rounded-full border border-border/60 bg-secondary/70 p-1">
+                      {(["latest", "trending"] as const).map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setThreadSort(value)}
+                          className={cn(
+                            "rounded-full px-3 py-1.5 text-xs font-semibold transition-colors",
+                            threadSort === value
+                              ? "bg-background text-foreground shadow-sm"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {value === "latest" ? "Latest" : "Trending"}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   {canWriteInRoom ? (
                     <div className="mt-4 space-y-3">

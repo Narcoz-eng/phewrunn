@@ -422,11 +422,63 @@ export interface TokenCommunityAssetUpload {
 export interface TokenCommunityAssetPresignResponse {
   asset: TokenCommunityAsset;
   upload: TokenCommunityAssetUpload;
+  uploadSessionId?: string;
 }
 
 export interface TokenCommunityAssetImportRequest {
   kind: "logo" | "banner" | "mascot" | "reference_meme" | string;
   sourceUrl: string;
+}
+
+export interface TokenCommunityAssetStorageHealth {
+  configured: boolean;
+  healthy: boolean;
+  partialConfig: boolean;
+  endpoint: string | null;
+  endpointHost: string | null;
+  bucket: string | null;
+  publicBaseUrl: string | null;
+  publicBaseHost: string | null;
+  issues: string[];
+}
+
+export interface TokenSocialSignalKol {
+  handle: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  followerCountEstimate: number | null;
+  matchedPostCount: number;
+  engagementScore: number;
+  url: string | null;
+}
+
+export interface TokenSocialSignalPost {
+  id: string;
+  url: string | null;
+  text: string;
+  authorHandle: string;
+  authorDisplayName: string | null;
+  authorAvatarUrl: string | null;
+  createdAt: string;
+  likeCount: number;
+  repostCount: number;
+  replyCount: number;
+  matchedBy: "ca" | "symbol" | "name";
+  isCall: boolean;
+}
+
+export interface TokenSocialSignals {
+  configured: boolean;
+  available: boolean;
+  stale: boolean;
+  source: string | null;
+  matchedQueries: string[];
+  topKols: TokenSocialSignalKol[];
+  latestPosts: TokenSocialSignalPost[];
+  callCount24h: number;
+  uniqueAuthors24h: number;
+  fetchedAt: string | null;
+  message: string | null;
 }
 
 // Level constants

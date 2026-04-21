@@ -13,6 +13,7 @@ import {
   createCommunityAssetUpload,
   deleteCommunityAssetObject,
   fetchCommunityAssetObject,
+  getCommunityAssetStorageDiagnostics,
   uploadCommunityAssetObject,
   isCommunityAssetStorageConfigured,
   type CommunityAssetKind,
@@ -42,6 +43,7 @@ const TokenAddressParamSchema = z.object({
 const ThreadListQuerySchema = z.object({
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(30).optional(),
+  sort: z.enum(["latest", "trending"]).optional(),
 });
 
 const CommunityProfileBaseSchema = z.object({
@@ -963,6 +965,12 @@ function mapRouteError(error: unknown) {
       error: { message: "Image is too large. Keep it under 8 MB", code: "REMOTE_ASSET_TOO_LARGE" },
     };
   }
+  if (error.message === "ASSET_UPLOAD_MISSING") {
+    return {
+      status: 409 as const,
+      error: { message: "The uploaded image could not be confirmed in storage", code: "ASSET_UPLOAD_MISSING" },
+    };
+  }
   return null;
 }
 
@@ -1188,6 +1196,22 @@ tokenCommunitiesRouter.patch(
   },
 );
 
+tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/assets/health",
+  requireAuth,
+  zValidator("param", TokenAddressParamSchema),
+  async (c) => {
+    try {
+      await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      return c.json({ data: getCommunityAssetStorageDiagnostics() });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
 tokenCommunitiesRouter.post(
   "/:tokenAddress/community/assets/presign",
   requireNotBanned,
@@ -1201,6 +1225,8 @@ tokenCommunitiesRouter.post(
       const viewer = c.get("user")!;
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
       const payload = c.req.valid("json");
+      const diagnostics = getCommunityAssetStorageDiagnostics();
+      const uploadSessionId = randomUUID();
       const objectKey = buildCommunityAssetObjectKey({
         tokenAddress: token.address,
         kind: payload.kind,
@@ -1239,6 +1265,18 @@ tokenCommunitiesRouter.post(
         },
       });
 
+      console.info("[community-assets/presign]", {
+        uploadSessionId,
+        tokenAddress: token.address,
+        assetId: asset.id,
+        kind: payload.kind,
+        contentType: payload.contentType,
+        sizeBytes: payload.sizeBytes,
+        endpointHost: diagnostics.endpointHost,
+        publicBaseHost: diagnostics.publicBaseHost,
+        issues: diagnostics.issues,
+      });
+
       return c.json({
         data: {
           asset: serializeCommunityAsset(token.address, asset),
@@ -1248,8 +1286,93 @@ tokenCommunitiesRouter.post(
             headers: upload.headers,
             expiresAt: upload.expiresAt,
           },
+          uploadSessionId,
         },
       });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.post(
+  "/:tokenAddress/community/assets/:assetId/complete",
+  requireNotBanned,
+  zValidator("param", TokenAddressParamSchema.extend({ assetId: z.string().trim().min(1) })),
+  async (c) => {
+    try {
+      if (!isCommunityAssetStorageConfigured()) {
+        throw new Error("COMMUNITY_ASSET_STORAGE_NOT_CONFIGURED");
+      }
+      const viewer = c.get("user")!;
+      const { tokenAddress, assetId } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      const asset = await prisma.tokenCommunityAsset.findFirst({
+        where: {
+          id: assetId,
+          tokenId: token.id,
+          uploadedById: viewer.id,
+        },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          url: true,
+          objectKey: true,
+          mimeType: true,
+          width: true,
+          height: true,
+          sizeBytes: true,
+          sortOrder: true,
+          createdAt: true,
+        },
+      });
+
+      if (!asset) {
+        return c.json({ error: { message: "Asset not found", code: "NOT_FOUND" } }, 404);
+      }
+
+      if (asset.status === "ready") {
+        return c.json({ data: serializeCommunityAsset(token.address, asset) });
+      }
+
+      const storageResponse = await fetchCommunityAssetObject(asset.objectKey);
+      if (!storageResponse.ok) {
+        console.warn("[community-assets/complete] storage verification failed", {
+          tokenAddress: token.address,
+          assetId: asset.id,
+          status: storageResponse.status,
+        });
+        throw new Error("ASSET_UPLOAD_MISSING");
+      }
+
+      const updated = await prisma.tokenCommunityAsset.update({
+        where: { id: asset.id },
+        data: { status: "ready" },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          url: true,
+          objectKey: true,
+          mimeType: true,
+          width: true,
+          height: true,
+          sizeBytes: true,
+          sortOrder: true,
+          createdAt: true,
+        },
+      });
+
+      console.info("[community-assets/complete]", {
+        tokenAddress: token.address,
+        assetId: updated.id,
+        kind: updated.kind,
+      });
+
+      return c.json({ data: serializeCommunityAsset(token.address, updated) });
     } catch (error) {
       const mapped = mapRouteError(error);
       if (mapped) return c.json(mapped.error, mapped.status);
@@ -1271,6 +1394,8 @@ tokenCommunitiesRouter.post(
       const viewer = c.get("user")!;
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
       const payload = c.req.valid("json");
+      const diagnostics = getCommunityAssetStorageDiagnostics();
+      const uploadSessionId = randomUUID();
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15_000);
@@ -1347,6 +1472,17 @@ tokenCommunitiesRouter.post(
           sortOrder: true,
           createdAt: true,
         },
+      });
+
+      console.info("[community-assets/import]", {
+        uploadSessionId,
+        tokenAddress: token.address,
+        assetId: asset.id,
+        kind: payload.kind,
+        sourceUrl: payload.sourceUrl,
+        endpointHost: diagnostics.endpointHost,
+        publicBaseHost: diagnostics.publicBaseHost,
+        issues: diagnostics.issues,
       });
 
       return c.json({ data: serializeCommunityAsset(token.address, asset) });
@@ -1503,6 +1639,7 @@ tokenCommunitiesRouter.get(
       const query = c.req.valid("query");
       const cursor = decodeCursor(query.cursor);
       const limit = query.limit ?? 12;
+      const sort = query.sort ?? "latest";
       const hasCommunity = await prisma.tokenCommunityProfile.findUnique({
         where: { tokenId: token.id },
         select: { id: true },
@@ -1514,7 +1651,7 @@ tokenCommunitiesRouter.get(
       const threads = await prisma.tokenCommunityThread.findMany({
         where: {
           tokenId: token.id,
-          ...(cursor
+          ...(sort === "latest" && cursor
             ? {
                 OR: [
                   { createdAt: { lt: cursor.createdAt } },
@@ -1552,14 +1689,37 @@ tokenCommunitiesRouter.get(
             take: 60,
           },
         },
-        orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-        take: limit + 1,
+        orderBy:
+          sort === "trending"
+            ? [{ isPinned: "desc" }, { lastActivityAt: "desc" }, { createdAt: "desc" }]
+            : [{ isPinned: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        take: sort === "trending" ? Math.max(limit * 3, 24) : limit + 1,
       });
 
-      const hasMore = threads.length > limit;
-      const items = hasMore ? threads.slice(0, limit) : threads;
+      const rankedThreads =
+        sort === "trending"
+          ? [...threads].sort((left, right) => {
+              const leftReactionCount = left.reactions.length;
+              const rightReactionCount = right.reactions.length;
+              const leftScore =
+                (left.isPinned ? 10_000 : 0) +
+                left.replyCount * 5 +
+                leftReactionCount * 7 +
+                Math.max(0, Math.round((left.lastActivityAt.getTime() - left.createdAt.getTime()) / 60_000));
+              const rightScore =
+                (right.isPinned ? 10_000 : 0) +
+                right.replyCount * 5 +
+                rightReactionCount * 7 +
+                Math.max(0, Math.round((right.lastActivityAt.getTime() - right.createdAt.getTime()) / 60_000));
+              if (rightScore !== leftScore) return rightScore - leftScore;
+              return right.lastActivityAt.getTime() - left.lastActivityAt.getTime();
+            })
+          : threads;
+
+      const hasMore = sort === "latest" && rankedThreads.length > limit;
+      const items = hasMore ? rankedThreads.slice(0, limit) : rankedThreads.slice(0, limit);
       const nextCursor =
-        hasMore && items.length > 0
+        sort === "latest" && hasMore && items.length > 0
           ? encodeCursor(items[items.length - 1]!.createdAt, items[items.length - 1]!.id)
           : null;
 
@@ -1568,6 +1728,7 @@ tokenCommunitiesRouter.get(
           items: items.map((thread) => serializeThread(c.get("user")?.id ?? null, thread)),
           hasMore,
           nextCursor,
+          sort,
         },
       });
     } catch (error) {

@@ -20,6 +20,18 @@ type CommunityAssetStorageConfig = {
   uploadExpiresSeconds: number;
 };
 
+export type CommunityAssetStorageDiagnostics = {
+  configured: boolean;
+  healthy: boolean;
+  partialConfig: boolean;
+  endpoint: string | null;
+  endpointHost: string | null;
+  bucket: string | null;
+  publicBaseUrl: string | null;
+  publicBaseHost: string | null;
+  issues: string[];
+};
+
 function sha256Hex(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -89,6 +101,76 @@ function getStorageConfig(): CommunityAssetStorageConfig | null {
     secretAccessKey,
     publicBaseUrl,
     uploadExpiresSeconds,
+  };
+}
+
+export function getCommunityAssetStorageDiagnostics(): CommunityAssetStorageDiagnostics {
+  const rawEndpoint = env.COMMUNITY_ASSET_STORAGE_ENDPOINT?.trim() ?? null;
+  const rawRegion = env.COMMUNITY_ASSET_STORAGE_REGION?.trim() ?? null;
+  const rawBucket = env.COMMUNITY_ASSET_STORAGE_BUCKET?.trim() ?? null;
+  const rawAccessKeyId = env.COMMUNITY_ASSET_ACCESS_KEY_ID?.trim() ?? null;
+  const rawSecretAccessKey = env.COMMUNITY_ASSET_SECRET_ACCESS_KEY?.trim() ?? null;
+  const rawPublicBaseUrl = env.COMMUNITY_ASSET_PUBLIC_BASE_URL?.trim() ?? null;
+
+  const providedCount = [
+    rawEndpoint,
+    rawRegion,
+    rawBucket,
+    rawAccessKeyId,
+    rawSecretAccessKey,
+  ].filter(Boolean).length;
+  const partialConfig = providedCount > 0 && providedCount < 5;
+  const config = getStorageConfig();
+  const issues: string[] = [];
+
+  let endpointHost: string | null = null;
+  let publicBaseHost: string | null = null;
+  if (rawEndpoint) {
+    try {
+      endpointHost = new URL(rawEndpoint).host;
+    } catch {
+      issues.push("invalid_endpoint_url");
+    }
+  }
+  if (rawPublicBaseUrl) {
+    try {
+      publicBaseHost = new URL(rawPublicBaseUrl).host;
+    } catch {
+      issues.push("invalid_public_base_url");
+    }
+  }
+
+  if (partialConfig) {
+    issues.push("partial_storage_config");
+  }
+
+  if (config && !rawPublicBaseUrl) {
+    issues.push("missing_public_base_url");
+  }
+
+  if (
+    rawPublicBaseUrl &&
+    publicBaseHost &&
+    endpointHost &&
+    publicBaseHost === endpointHost
+  ) {
+    issues.push("public_base_uses_storage_api_host");
+  }
+
+  if (rawPublicBaseUrl?.includes("cloudflarestorage.com")) {
+    issues.push("public_base_points_at_r2_api_endpoint");
+  }
+
+  return {
+    configured: Boolean(config),
+    healthy: Boolean(config) && issues.length === 0,
+    partialConfig,
+    endpoint: rawEndpoint,
+    endpointHost,
+    bucket: rawBucket,
+    publicBaseUrl: rawPublicBaseUrl,
+    publicBaseHost,
+    issues,
   };
 }
 

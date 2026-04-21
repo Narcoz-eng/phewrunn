@@ -9,7 +9,7 @@ import {
   mergeLiveSamplesIntoCandles,
   type LiveTradeSample,
 } from "@/lib/live-candle-stream";
-import { Post, PostAuthor, ReactionCounts, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
+import { Post, PostAuthor, ReactionCounts, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -65,8 +65,10 @@ const TOKEN_CHART_INTERVAL_OPTIONS = [
   { value: "1D", label: "1D" },
 ] as const;
 const TOKEN_QUICK_BUY_PRESETS = ["0.10", "0.20", "0.50", "1.00"] as const;
+const TOKEN_PAGE_TABS = ["trade", "community", "intel"] as const;
 
 type TokenChartIntervalValue = (typeof TOKEN_CHART_INTERVAL_OPTIONS)[number]["value"];
+type TokenPageTab = (typeof TOKEN_PAGE_TABS)[number];
 
 type TokenChartPoint = {
   timestamp: string;
@@ -334,6 +336,11 @@ type TokenLiveData = {
   bundleScanCompletedAt: string | null;
   updatedAt: string;
 };
+
+function parseTokenPageTab(value: string | null): TokenPageTab {
+  if (value === "community" || value === "intel") return value;
+  return "trade";
+}
 
 function formatPct(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
@@ -1483,51 +1490,6 @@ function pickBestCachedTokenPost(posts: Post[] | null | undefined): Post | null 
   return best;
 }
 
-function pickPrimaryTradeCall(posts: Post[] | null | undefined): Post | null {
-  let best: Post | null = null;
-
-  for (const candidate of posts ?? []) {
-    if (!candidate?.id || !candidate.contractAddress || candidate.chainType !== "solana") {
-      continue;
-    }
-
-    if (!best) {
-      best = candidate;
-      continue;
-    }
-
-    const candidateVersion = parseTimestamp(
-      candidate.lastIntelligenceAt ?? candidate.bundleScanCompletedAt ?? candidate.lastMcapUpdate ?? candidate.createdAt
-    );
-    const bestVersion = parseTimestamp(
-      best.lastIntelligenceAt ?? best.bundleScanCompletedAt ?? best.lastMcapUpdate ?? best.createdAt
-    );
-    if (candidateVersion !== bestVersion) {
-      if (candidateVersion > bestVersion) {
-        best = candidate;
-      }
-      continue;
-    }
-
-    const candidateRouteQuality =
-      Number(Boolean(candidate.pairAddress || candidate.dexscreenerUrl)) +
-      Number(typeof candidate.currentMcap === "number" && Number.isFinite(candidate.currentMcap) && candidate.currentMcap > 0) +
-      Number(typeof candidate.liquidity === "number" && Number.isFinite(candidate.liquidity) && candidate.liquidity > 0) +
-      getTokenIntelligenceRichnessFromPost(candidate);
-    const bestRouteQuality =
-      Number(Boolean(best.pairAddress || best.dexscreenerUrl)) +
-      Number(typeof best.currentMcap === "number" && Number.isFinite(best.currentMcap) && best.currentMcap > 0) +
-      Number(typeof best.liquidity === "number" && Number.isFinite(best.liquidity) && best.liquidity > 0) +
-      getTokenIntelligenceRichnessFromPost(best);
-
-    if (candidateRouteQuality > bestRouteQuality) {
-      best = candidate;
-    }
-  }
-
-  return best;
-}
-
 function mergeTokenPageDataWithCachedPosts(
   current: TokenPageData,
   cachedPosts: Post[] | null | undefined
@@ -1964,7 +1926,7 @@ function riskTone(label: string | null | undefined): string {
 export default function TokenPage() {
   const { tokenAddress } = useParams<{ tokenAddress: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data: session, canPerformAuthenticatedWrites } = useSession();
   const [communityEntryIntent, setCommunityEntryIntent] = useState<"create-community" | null>(null);
@@ -2000,6 +1962,7 @@ export default function TokenPage() {
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("5m");
   const [liveTradeSamples, setLiveTradeSamples] = useState<LiveTradeSample[]>([]);
   const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
+  const activeTokenTab = parseTokenPageTab(searchParams.get("tab"));
 
   useEffect(() => {
     setLiveTradeSamples([]);
@@ -2406,11 +2369,6 @@ export default function TokenPage() {
       ),
     [cachedPostsForToken, token?.recentCalls]
   );
-  const primaryTradeCall = useMemo(
-    () => pickPrimaryTradeCall(recentCalls),
-    [recentCalls]
-  );
-
   const displayLiveChartData = liveChartData;
   const displayTimeline = useMemo(
     () => mergeTimelineEvents(token?.timeline ?? [], deriveTimelineFromCalls(recentCalls)),
@@ -2438,6 +2396,84 @@ export default function TokenPage() {
     return pickStableMarketCap(liveMarketCap ?? token?.marketCap ?? null, token?.marketCap ?? null, recentCalls);
   })();
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
+  const setTokenTab = (tab: TokenPageTab) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === "trade") {
+      next.delete("tab");
+    } else {
+      next.set("tab", tab);
+    }
+    setSearchParams(next, { replace: true });
+  };
+  const tokenTradeBridgePost = useMemo<Post | null>(() => {
+    if (!token || token.chainType !== "solana") return null;
+    return {
+      id: `token-trade-bridge:${token.address}`,
+      content: `Token-native trade lane for ${token.symbol ? `$${token.symbol}` : token.name || token.address}.`,
+      authorId: "system:phew-router",
+      author: {
+        id: "system:phew-router",
+        name: "Phew Router",
+        username: "phewrouter",
+        image: null,
+        level: 10,
+        xp: 0,
+        isVerified: true,
+      },
+      contractAddress: token.address,
+      chainType: token.chainType,
+      tokenName: token.name,
+      tokenSymbol: token.symbol,
+      tokenImage: token.imageUrl,
+      entryMcap: displayMarketCap,
+      currentMcap: displayMarketCap,
+      mcap1h: null,
+      mcap6h: null,
+      settled: false,
+      settledAt: null,
+      isWin: null,
+      lastMcapUpdate: token.lastIntelligenceAt,
+      lastIntelligenceAt: token.lastIntelligenceAt,
+      trackingMode: "live",
+      createdAt: token.lastIntelligenceAt ?? new Date().toISOString(),
+      _count: {
+        likes: 0,
+        comments: 0,
+        reposts: 0,
+      },
+      isLiked: false,
+      isReposted: false,
+      viewCount: 0,
+      dexscreenerUrl: token.dexscreenerUrl,
+      confidenceScore: token.confidenceScore,
+      hotAlphaScore: token.hotAlphaScore,
+      earlyRunnerScore: token.earlyRunnerScore,
+      highConvictionScore: token.highConvictionScore,
+      marketHealthScore: token.marketHealthScore,
+      setupQualityScore: token.setupQualityScore,
+      opportunityScore: token.opportunityScore,
+      dataReliabilityScore: token.dataReliabilityScore,
+      activityStatus: token.activityStatus,
+      activityStatusLabel: token.activityStatusLabel,
+      isTradable: token.isTradable,
+      bullishSignalsSuppressed: token.bullishSignalsSuppressed,
+      sentimentScore: token.sentimentScore,
+      tokenRiskScore: token.tokenRiskScore,
+      bundleRiskLabel: token.bundleRiskLabel,
+      liquidity: token.liquidity,
+      volume24h: token.volume24h,
+      holderCount: token.holderCount,
+      largestHolderPct: token.largestHolderPct,
+      top10HolderPct: token.top10HolderPct,
+      bundledWalletCount: token.bundledWalletCount,
+      estimatedBundledSupplyPct: token.estimatedBundledSupplyPct,
+      bundleClusters: token.bundleClusters,
+      reactionCounts: token.sentiment?.reactions,
+      threadCount: 0,
+      radarReasons: token.earlyRunnerReasons ?? [],
+    };
+  }, [displayMarketCap, token]);
+  const canTradeTokenDirectly = Boolean(tokenTradeBridgePost);
   const hasChartTelemetry = chartData.some(
     (point) =>
       [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
@@ -2458,6 +2494,20 @@ export default function TokenPage() {
         ? "GeckoTerminal live + token stream"
         : "Live chart + token stream";
   const canCreateTokenCommunity = Boolean(session?.user && (session.user.isAdmin || (session.user.level ?? 0) >= 3));
+  const socialSignalsQuery = useQuery<TokenSocialSignals>({
+    queryKey: ["token-social-signals", tokenAddress],
+    enabled: Boolean(tokenAddress && activeTokenTab === "intel"),
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    queryFn: async () => {
+      if (!tokenAddress) throw new Error("Token address is required");
+      return api.get<TokenSocialSignals>(`/api/tokens/${tokenAddress}/social-signals`);
+    },
+  });
+  const socialSignals = socialSignalsQuery.data ?? null;
 
   const followMutation = useMutation({
     mutationFn: async () => {
@@ -2501,12 +2551,13 @@ export default function TokenPage() {
   });
 
   const handleOpenTradePanel = () => {
-    if (!primaryTradeCall) {
-      toast.info("No trade-ready call is available for this token yet.");
+    setTokenTab("trade");
+    if (!tokenTradeBridgePost) {
+      toast.info("Direct trading is currently available for Solana tokens only.");
       return;
     }
     setPendingQuickBuyAmountSol(null);
-    setPendingTradeCallId(primaryTradeCall.id);
+    setPendingTradeCallId(tokenTradeBridgePost.id);
     recentCallsRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
@@ -2514,12 +2565,13 @@ export default function TokenPage() {
   };
 
   const handleQuickBuyPreset = (amount: string) => {
-    if (!primaryTradeCall) {
-      toast.info("No trade-ready call is available for this token yet.");
+    setTokenTab("trade");
+    if (!tokenTradeBridgePost) {
+      toast.info("Direct trading is currently available for Solana tokens only.");
       return;
     }
     setPendingQuickBuyAmountSol(amount);
-    setPendingTradeCallId(primaryTradeCall.id);
+    setPendingTradeCallId(tokenTradeBridgePost.id);
     recentCallsRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
@@ -2528,6 +2580,7 @@ export default function TokenPage() {
 
   const handleCommunityAction = () => {
     if (!token) return;
+    setTokenTab("community");
     if (!token.communityExists) {
       setCommunityEntryIntent("create-community");
       setCommunityEntryIntentToken((current) => current + 1);
@@ -2541,14 +2594,15 @@ export default function TokenPage() {
   };
 
   useEffect(() => {
-    if (!shouldAutoOpenTradePanel || hasConsumedTradeDeepLink || !primaryTradeCall) return;
-    setPendingTradeCallId(primaryTradeCall.id);
+    if (!shouldAutoOpenTradePanel || hasConsumedTradeDeepLink || !tokenTradeBridgePost) return;
+    setTokenTab("trade");
+    setPendingTradeCallId(tokenTradeBridgePost.id);
     setHasConsumedTradeDeepLink(true);
     recentCallsRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
     });
-  }, [hasConsumedTradeDeepLink, primaryTradeCall, shouldAutoOpenTradePanel]);
+  }, [hasConsumedTradeDeepLink, shouldAutoOpenTradePanel, tokenTradeBridgePost]);
 
   const showTokenLoading = !token && isLoading;
   const topHolders = mergedTopHolders;
@@ -2727,7 +2781,7 @@ export default function TokenPage() {
                 <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-col lg:items-end">
                   <Button
                     onClick={handleOpenTradePanel}
-                    disabled={!primaryTradeCall}
+                    disabled={!canTradeTokenDirectly}
                     className="h-10 gap-2 rounded-full border border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.98),rgba(52,211,153,0.9))] px-5 text-sm font-semibold text-slate-950 shadow-[0_16px_40px_-16px_hsl(var(--primary)/0.55)] hover:brightness-[1.04] disabled:opacity-50"
                   >
                     <PhewTradeIcon className="h-3.5 w-3.5" />
@@ -2785,6 +2839,45 @@ export default function TokenPage() {
             </motion.section>
 
             {/* ── SECTION 2: SCORE RINGS ── */}
+            <motion.section variants={sectionVariants}>
+              <div className="rounded-[24px] border border-border/60 bg-card/90 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.22)] dark:shadow-none">
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: "trade", label: "Trade", hint: "Chart, quick buy, recent calls", icon: Coins },
+                    {
+                      value: "community",
+                      label: "Community",
+                      hint: token.communityExists ? "Room, raids, threads" : "Create or join the room",
+                      icon: Users,
+                    },
+                    { value: "intel", label: "Intel", hint: "Signals, holders, external X", icon: ShieldCheck },
+                  ] as const).map((tab) => {
+                    const Icon = tab.icon;
+                    const active = activeTokenTab === tab.value;
+                    return (
+                      <button
+                        key={tab.value}
+                        type="button"
+                        onClick={() => setTokenTab(tab.value)}
+                        className={cn(
+                          "rounded-[20px] border px-4 py-3 text-left transition-all",
+                          active
+                            ? "border-primary/35 bg-[linear-gradient(135deg,hsl(var(--primary)/0.16),rgba(52,211,153,0.1))] shadow-[0_18px_38px_-30px_hsl(var(--primary)/0.5)]"
+                            : "border-transparent bg-secondary/70 hover:border-border/60 hover:bg-secondary"
+                        )}
+                      >
+                        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                          <Icon className={cn("h-4 w-4", active ? "text-primary" : "text-muted-foreground")} />
+                          {tab.label}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">{tab.hint}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.section>
+            {activeTokenTab === "intel" ? (
             <motion.section variants={sectionVariants}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -2853,8 +2946,10 @@ export default function TokenPage() {
                 )}
               </div>
             </motion.section>
+            ) : null}
 
             {/* ── SECTION 3: CHART + QUICK BUY ── */}
+            {activeTokenTab === "trade" ? (
             <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_270px]">
               <div className="app-surface p-5 sm:p-6">
                 <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2961,7 +3056,7 @@ export default function TokenPage() {
                         type="button"
                         variant="outline"
                         onClick={() => handleQuickBuyPreset(amount)}
-                        disabled={!primaryTradeCall}
+                        disabled={!canTradeTokenDirectly}
                         className="h-11 rounded-[18px] border-primary/20 bg-white/70 text-sm font-semibold text-foreground hover:border-primary/35 hover:bg-primary/8 dark:bg-white/[0.03]"
                       >
                         {amount} SOL
@@ -2971,7 +3066,7 @@ export default function TokenPage() {
                   <Button
                     type="button"
                     onClick={handleOpenTradePanel}
-                    disabled={!primaryTradeCall}
+                    disabled={!canTradeTokenDirectly}
                     className="mt-3 h-11 w-full rounded-[18px] border border-primary/25 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),rgba(52,211,153,0.88))] text-sm font-semibold text-slate-950 shadow-[0_18px_36px_-26px_hsl(var(--primary)/0.48)] hover:brightness-[1.03] disabled:opacity-60"
                   >
                     Open full trade panel
@@ -3008,8 +3103,11 @@ export default function TokenPage() {
                 </div>
               </div>
             </motion.section>
+            ) : null}
 
             {/* ── SECTION 4: RISK + HOLDERS ── */}
+            {activeTokenTab === "intel" ? (
+            <>
             <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_1fr]">
               <div className="app-surface p-5">
                 <div className="mb-4 flex items-center gap-2">
@@ -3289,6 +3387,133 @@ export default function TokenPage() {
             </motion.section>
 
             {/* ── SECTION 5: TIMELINE + SENTIMENT ── */}
+            <motion.section variants={sectionVariants} className="space-y-5">
+              <div className="app-surface p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <ExternalLink className="h-4 w-4 text-primary" />
+                      <h3 className="text-base font-semibold text-foreground">External X signals</h3>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Relevant posts matched by contract, symbol, and token name, plus the top accounts talking about it.
+                    </p>
+                  </div>
+                  {socialSignalsQuery.isFetching ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Updating
+                    </span>
+                  ) : socialSignals?.source ? (
+                    <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">
+                      {socialSignals.source}
+                    </span>
+                  ) : null}
+                </div>
+                {socialSignals?.available ? (
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-[18px] border border-border/60 bg-secondary/60 p-4">
+                        <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Calls 24h</div>
+                        <div className="mt-2 text-2xl font-black text-foreground">{socialSignals.callCount24h}</div>
+                      </div>
+                      <div className="rounded-[18px] border border-border/60 bg-secondary/60 p-4">
+                        <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Unique authors</div>
+                        <div className="mt-2 text-2xl font-black text-foreground">{socialSignals.uniqueAuthors24h}</div>
+                      </div>
+                      <div className="rounded-[18px] border border-border/60 bg-secondary/60 p-4">
+                        <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Matched by</div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {socialSignals.matchedQueries.slice(0, 3).map((query) => (
+                            <span key={query} className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground">
+                              {query}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid gap-4 xl:grid-cols-[0.92fr,1.08fr]">
+                      <div className="space-y-3">
+                        <div className="text-sm font-semibold text-foreground">Top KOLs from X</div>
+                        {socialSignals.topKols.length > 0 ? socialSignals.topKols.map((kol, index) => (
+                          <div key={`${kol.handle}-${index}`} className="flex items-center justify-between gap-3 rounded-[18px] border border-border/60 bg-secondary/55 p-3">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-primary/15 bg-white/60 text-xs font-bold text-primary dark:bg-white/[0.05]">
+                                {index + 1}
+                              </div>
+                              <Avatar className="h-10 w-10 border border-border">
+                                <AvatarImage src={kol.avatarUrl ?? undefined} />
+                                <AvatarFallback>{kol.handle.charAt(0).toUpperCase()}</AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-foreground">{kol.displayName || `@${kol.handle}`}</div>
+                                <div className="truncate text-xs text-muted-foreground">
+                                  @{kol.handle} · {kol.matchedPostCount} matched posts
+                                </div>
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div className="text-sm font-bold text-foreground">{Math.round(kol.engagementScore)}</div>
+                              <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">engagement</div>
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
+                            No top KOL matches yet for this token.
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-3">
+                        <div className="text-sm font-semibold text-foreground">Latest X activity</div>
+                        {socialSignals.latestPosts.length > 0 ? socialSignals.latestPosts.map((post) => (
+                          <a
+                            key={post.id}
+                            href={post.url ?? `https://x.com/${post.authorHandle}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block rounded-[18px] border border-border/60 bg-secondary/55 p-4 transition-colors hover:border-primary/25 hover:bg-secondary"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-semibold text-foreground">
+                                    {post.authorDisplayName || `@${post.authorHandle}`}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">@{post.authorHandle}</span>
+                                  {post.isCall ? (
+                                    <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                                      call
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{post.text}</p>
+                              </div>
+                              <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                              <span>{formatTimeAgo(post.createdAt)}</span>
+                              <span>likes {post.likeCount}</span>
+                              <span>reposts {post.repostCount}</span>
+                              <span>replies {post.replyCount}</span>
+                              <span>matched {post.matchedBy}</span>
+                            </div>
+                          </a>
+                        )) : (
+                          <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
+                            No recent X posts matched this token yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-[20px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
+                    {socialSignals?.message || "External X signals are not connected yet."}
+                  </div>
+                )}
+              </div>
+            </motion.section>
+
             <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_1fr]">
               <div className="app-surface p-5">
                 <div className="mb-5 flex items-center gap-2">
@@ -3435,7 +3660,10 @@ export default function TokenPage() {
                 </div>
               </div>
             </motion.section>
+            </>
+            ) : null}
 
+            {activeTokenTab === "community" ? (
             <motion.section variants={sectionVariants}>
               <Suspense
                 fallback={
@@ -3458,8 +3686,10 @@ export default function TokenPage() {
                 />
               </Suspense>
             </motion.section>
+            ) : null}
 
             {/* ── SECTION 6: RECENT CALLS ── */}
+            {activeTokenTab === "trade" ? (
             <motion.section variants={sectionVariants}>
               <div ref={recentCallsRef} className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -3489,7 +3719,22 @@ export default function TokenPage() {
                   </div>
                 )}
               </div>
+              {tokenTradeBridgePost ? (
+                <div className="hidden">
+                  <PostCard
+                    post={tokenTradeBridgePost}
+                    currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
+                    autoOpenTradePanel={pendingTradeCallId === tokenTradeBridgePost.id}
+                    autoPrefillBuyAmountSol={pendingTradeCallId === tokenTradeBridgePost.id ? pendingQuickBuyAmountSol : null}
+                    onTradePanelAutoOpened={() => {
+                      setPendingTradeCallId((current) => (current === tokenTradeBridgePost.id ? null : current));
+                      setPendingQuickBuyAmountSol(null);
+                    }}
+                  />
+                </div>
+              ) : null}
             </motion.section>
+            ) : null}
           </motion.div>
         )}
       </main>

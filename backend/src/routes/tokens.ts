@@ -14,6 +14,7 @@ import {
   getTokenOverviewByAddress,
   invalidateViewerSocialCaches,
 } from "../services/intelligence/engine.js";
+import { loadTokenSocialSignals } from "../services/token-social-signals.js";
 import {
   computeStateAwareIntelligenceScores,
   computeConfidenceScore,
@@ -1510,6 +1511,23 @@ tokensRouter.get("/:tokenAddress/sentiment", zValidator("param", TokenAddressPar
   }
 
   return c.json({ data: overview.token.sentiment }, 200, buildTokenRouteHeaders(false));
+});
+
+tokensRouter.get("/:tokenAddress/social-signals", zValidator("param", TokenAddressParamSchema), async (c) => {
+  const { tokenAddress } = c.req.valid("param");
+  const token = await findTokenByAddress(tokenAddress);
+
+  if (!token) {
+    return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+  }
+
+  const data = await loadTokenSocialSignals({
+    tokenAddress: token.address,
+    symbol: token.symbol ?? null,
+    name: token.name ?? null,
+  });
+
+  return c.json({ data }, 200, buildTokenRouteHeaders(false));
 });
 
 tokensRouter.post("/:tokenAddress/follow", requireNotBanned, zValidator("param", TokenAddressParamSchema), async (c) => {
