@@ -7,6 +7,7 @@ import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Wallet2 } from "lucid
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { mapTradeExecutionError, type TradeExecutionErrorState } from "@/lib/trade-errors";
+import { appendTradeVerificationMemoToTransaction } from "@/lib/solana-trade";
 import { TradingPanel } from "@/components/feed/TradingPanel";
 import PortfolioPanel, { type PortfolioPosition } from "@/components/feed/PortfolioPanel";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ const JUPITER_QUOTE_REFRESH_BEFORE_EXECUTE_MS = 8_000;
 const TRADE_SOL_BALANCE_BUFFER_SOL = 0.01;
 const QUICK_BUY_PRESETS = ["0.10", "0.20", "0.50", "1.00"];
 const SELL_QUICK_PERCENTS = [25, 50, 75, 100];
+const MAX_ATOMIC_TRADE_AMOUNT = Number.MAX_SAFE_INTEGER;
 
 type TradeSide = "buy" | "sell";
 type TradeAttributionType = "token_page_direct" | "post_attributed";
@@ -50,6 +52,7 @@ type JupiterSwapResponse = {
   swapTransaction?: string;
   lastValidBlockHeight?: number;
   tradeFeeEventId?: string | null;
+  tradeVerificationMemo?: string | null;
   platformFeeBpsApplied?: number;
   posterShareBpsApplied?: number;
 };
@@ -193,9 +196,8 @@ export function DirectTokenTradePanel({
   const [sellAmountToken, setSellAmountToken] = useState("");
   const [slippageBps, setSlippageBps] = useState(100);
   const [slippageInputPercent, setSlippageInputPercent] = useState("1.0");
-  const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(true);
+  const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(false);
   const [mevProtectionEnabled, setMevProtectionEnabled] = useState(true);
-  const [priceProtectionEnabled, setPriceProtectionEnabled] = useState(false);
   const [stopLossPercent, setStopLossPercent] = useState("-15");
   const [takeProfitPercent, setTakeProfitPercent] = useState("50");
   const [txSignature, setTxSignature] = useState<string | null>(null);
@@ -204,6 +206,7 @@ export function DirectTokenTradePanel({
   const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
   const [lastQuoteAtMs, setLastQuoteAtMs] = useState(0);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
+  const executionInFlightRef = useRef(false);
 
   const isSolanaTradeSupported = chainType === "solana";
   const walletPublicKey = wallet.publicKey;
@@ -285,10 +288,18 @@ export function DirectTokenTradePanel({
     if (!isSolanaTradeSupported) return null;
     if (tradeSide === "buy") {
       if (!Number.isFinite(parsedBuyAmountSol) || parsedBuyAmountSol <= 0) return null;
-      return Math.max(1, Math.round(parsedBuyAmountSol * LAMPORTS_PER_SOL));
+      const nextAmountAtomic = Math.round(parsedBuyAmountSol * LAMPORTS_PER_SOL);
+      if (!Number.isSafeInteger(nextAmountAtomic) || nextAmountAtomic > MAX_ATOMIC_TRADE_AMOUNT) {
+        return null;
+      }
+      return Math.max(1, nextAmountAtomic);
     }
     if (!Number.isFinite(parsedSellAmountToken) || parsedSellAmountToken <= 0) return null;
-    return Math.max(1, Math.round(parsedSellAmountToken * Math.pow(10, outputTokenDecimals)));
+    const nextAmountAtomic = Math.round(parsedSellAmountToken * Math.pow(10, outputTokenDecimals));
+    if (!Number.isSafeInteger(nextAmountAtomic) || nextAmountAtomic > MAX_ATOMIC_TRADE_AMOUNT) {
+      return null;
+    }
+    return Math.max(1, nextAmountAtomic);
   }, [isSolanaTradeSupported, outputTokenDecimals, parsedBuyAmountSol, parsedSellAmountToken, tradeSide]);
 
   const quoteQuery = useQuery<JupiterQuoteResponse>({
@@ -488,7 +499,11 @@ export function DirectTokenTradePanel({
       });
       return;
     }
+    if (executionInFlightRef.current) {
+      return;
+    }
 
+    executionInFlightRef.current = true;
     setIsExecuting(true);
     setTradeError(null);
     setTxSignature(null);
@@ -524,11 +539,18 @@ export function DirectTokenTradePanel({
       const transaction = VersionedTransaction.deserialize(
         Uint8Array.from(atob(swapPayload.swapTransaction), (char) => char.charCodeAt(0))
       );
-      const signedTransaction = await wallet.signTransaction(transaction);
+      const transactionForSigning = swapPayload.tradeVerificationMemo
+        ? await appendTradeVerificationMemoToTransaction(
+            tradeReadConnection,
+            transaction,
+            swapPayload.tradeVerificationMemo
+          )
+        : transaction;
+      const signedTransaction = await wallet.signTransaction(transactionForSigning);
       const sendCommitment = autoConfirmEnabled ? "processed" : "confirmed";
       const signature = await tradeReadConnection.sendRawTransaction(signedTransaction.serialize(), {
-        maxRetries: autoConfirmEnabled ? 0 : 2,
-        skipPreflight: autoConfirmEnabled,
+        maxRetries: 2,
+        skipPreflight: false,
         preflightCommitment: sendCommitment,
       });
 
@@ -544,7 +566,7 @@ export function DirectTokenTradePanel({
         await tradeReadConnection.confirmTransaction(
           {
             signature,
-            blockhash: transaction.message.recentBlockhash,
+            blockhash: transactionForSigning.message.recentBlockhash,
             lastValidBlockHeight: swapPayload.lastValidBlockHeight,
           },
           sendCommitment
@@ -561,6 +583,15 @@ export function DirectTokenTradePanel({
       });
 
       preparedSwapRef.current = null;
+      if (swapPayload.tradeFeeEventId) {
+        void api.post("/api/posts/jupiter/fee-confirm", {
+          tradeFeeEventId: swapPayload.tradeFeeEventId,
+          txSignature: signature,
+          walletAddress: walletPublicKey.toBase58(),
+        }).catch((error) => {
+          console.warn("[trade-fee] Failed to confirm fee event", error);
+        });
+      }
       void quoteQuery.refetch();
       void tradePanelContextQuery.refetch();
       void portfolioQuery.refetch();
@@ -575,6 +606,7 @@ export function DirectTokenTradePanel({
         txSignature: null,
       });
     } finally {
+      executionInFlightRef.current = false;
       setIsExecuting(false);
     }
   }, [
@@ -733,17 +765,17 @@ export function DirectTokenTradePanel({
         mevProtectionHint={
           chainType === "ethereum"
             ? "Ethereum direct routing is not live yet."
-            : "This currently requests higher-priority Solana route handling through the Jupiter swap proxy."
+            : "Standard public execution. Turning this on only adds a higher-priority route request; it does not provide private MEV protection."
         }
-        protectionEnabled={priceProtectionEnabled}
-        onProtectionEnabledChange={setPriceProtectionEnabled}
+        protectionEnabled={false}
+        onProtectionEnabledChange={() => undefined}
         protectionDisabled
-        protectionHint="Auto TP/SL is not live on token-page direct trades yet. That automation currently exists only on the post trade flow."
+        protectionHint="Automated TP/SL is disabled until a server-backed execution path exists."
         stopLossPercent={stopLossPercent}
         onStopLossPercentChange={setStopLossPercent}
         takeProfitPercent={takeProfitPercent}
         onTakeProfitPercentChange={setTakeProfitPercent}
-        protectionStatusLabel="Coming soon on token-page direct trades"
+        protectionStatusLabel="Disabled in production"
         protectionStatusTone="idle"
         quoteFreshnessLabel={quoteFreshnessLabel}
         liveStateLabel={liveStateLabel}

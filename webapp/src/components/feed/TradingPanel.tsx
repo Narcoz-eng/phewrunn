@@ -459,7 +459,7 @@ export function TradingPanel({
           </div>
         </div>
 
-        {/* MEV Protection */}
+        {/* Route Priority */}
         {tradeError ? (
           <div className="rounded-xl border border-rose-500/18 bg-rose-500/[0.05] px-3 py-3">
             <div className="flex items-start justify-between gap-3">
@@ -500,7 +500,7 @@ export function TradingPanel({
           </div>
         ) : null}
 
-        {/* MEV Protection */}
+        {/* Route Priority */}
         <div className={cn(
           "rounded-xl border px-3 py-2.5",
           mevProtectionEnabled
@@ -517,7 +517,7 @@ export function TradingPanel({
               </div>
               <div>
                 <span className={cn("text-[11px] font-semibold", mevProtectionEnabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-white/60")}>
-                  MEV Protection
+                  Priority Route
                 </span>
                 <p className="text-[9px] text-slate-400 dark:text-white/35 leading-tight">Execution route preference</p>
               </div>
@@ -718,7 +718,7 @@ export function TradingPanel({
               <DetailRow label="Creator Reward" value={creatorFeeDisplay} />
               <DetailRow label="Platform Fee" value={platformFeeDisplay} />
               <DetailRow label="Route" value={chainType === "ethereum" ? "EVM route pending" : "Jupiter v6"} />
-              <DetailRow label="MEV Protection" value={mevProtectionEnabled ? (chainType === "ethereum" ? "Pending EVM route" : "Priority route enabled") : "Disabled"} />
+              <DetailRow label="Route Priority" value={mevProtectionEnabled ? (chainType === "ethereum" ? "Pending EVM route" : "Priority route enabled") : "Disabled"} />
               {quoteFreshnessLabel && quoteFreshnessLabel !== "Waiting for quote" ? (
                 <DetailRow label="Quote" value={quoteFreshnessLabel} />
               ) : null}

@@ -53,7 +53,7 @@ export const TradeTransactionsFeed = memo(function TradeTransactionsFeed({
 
   const freshnessLabel = useMemo(() => {
     if (!lastTradeEventAtMs) {
-      return usingFallbackPolling ? "Waiting for trades" : "Waiting for stream";
+      return usingFallbackPolling ? "Syncing fallback trades" : "Connecting live feed";
     }
     const ageSeconds = Math.max(0, Math.round((nowMs - lastTradeEventAtMs) / 1000));
     if (ageSeconds <= 1) {
@@ -174,10 +174,10 @@ export const TradeTransactionsFeed = memo(function TradeTransactionsFeed({
           <div className="flex min-h-[6rem] flex-col items-center justify-center gap-2 px-4 py-5 text-center">
             <Loader2 className="h-4 w-4 animate-spin text-slate-400 dark:text-white/28" />
             <div className="text-[12px] font-medium text-slate-600 dark:text-white/58">
-              Waiting for new trade prints
+              Connecting trade feed
             </div>
             <div className="text-[11px] text-slate-400 dark:text-white/30">
-              The feed will populate live as swaps hit the pair.
+              Recent swaps will appear here as soon as the route sends its first print.
             </div>
           </div>
         )

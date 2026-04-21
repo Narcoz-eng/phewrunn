@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
+import { PublicKey } from "@solana/web3.js";
 import { prisma, withPrismaRetry, isPrismaPoolPressureActive } from "../prisma.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import {
@@ -7120,22 +7121,91 @@ const BatchPostPricesSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(50),
 });
 
+function isValidSolanaAddress(value: string): boolean {
+  try {
+    return new PublicKey(value).toBase58().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const SolanaAddressStringSchema = z.string().min(32).max(64).refine(isValidSolanaAddress, {
+  message: "Invalid Solana address",
+});
+
+const AtomicAmountNumberSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+
+const AtomicAmountStringSchema = z.string().regex(/^\d+$/, "Expected atomic amount string");
+
+const JupiterQuoteResponseSchema = z
+  .object({
+    inputMint: SolanaAddressStringSchema,
+    outputMint: SolanaAddressStringSchema,
+    inAmount: AtomicAmountStringSchema,
+    outAmount: AtomicAmountStringSchema,
+    otherAmountThreshold: AtomicAmountStringSchema,
+    swapMode: z.enum(["ExactIn", "ExactOut"]),
+    slippageBps: z.number().int().min(1).max(5000),
+    contextSlot: z.number().int().nonnegative().optional(),
+    priceImpactPct: z.string().optional(),
+    platformFee: z
+      .object({
+        amount: AtomicAmountStringSchema.optional(),
+        feeBps: z.number().int().min(0).max(5000).optional(),
+        mint: SolanaAddressStringSchema.optional(),
+      })
+      .optional(),
+  })
+  .passthrough()
+  .superRefine((value, ctx) => {
+    if (value.inputMint === value.outputMint) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outputMint"],
+        message: "inputMint and outputMint must differ",
+      });
+    }
+  });
+
 const JupiterQuoteProxySchema = z
   .object({
-    inputMint: z.string().min(32).max(64),
-    outputMint: z.string().min(32).max(64),
-    amount: z.number().int().positive(),
+    inputMint: SolanaAddressStringSchema,
+    outputMint: SolanaAddressStringSchema,
+    amount: AtomicAmountNumberSchema,
     slippageBps: z.number().int().min(1).max(5000),
     swapMode: z.enum(["ExactIn", "ExactOut"]).optional().default("ExactIn"),
     postId: z.string().min(1).optional(),
     attributionType: z.enum(["token_page_direct", "post_attributed"]).optional().default("post_attributed"),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.inputMint === value.outputMint) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outputMint"],
+        message: "inputMint and outputMint must differ",
+      });
+    }
+    if (value.attributionType === "post_attributed" && !value.postId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["postId"],
+        message: "postId is required for post-attributed trades",
+      });
+    }
+    if (value.attributionType === "token_page_direct" && value.postId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["postId"],
+        message: "postId is not allowed for token-page direct trades",
+      });
+    }
+  });
 
 const JupiterSwapProxySchema = z
   .object({
-    quoteResponse: z.record(z.string(), z.any()),
-    userPublicKey: z.string().min(32).max(64),
+    quoteResponse: JupiterQuoteResponseSchema,
+    userPublicKey: SolanaAddressStringSchema,
     postId: z.string().min(1).optional(),
     tradeSide: z.enum(["buy", "sell"]).optional(),
     wrapAndUnwrapSol: z.boolean().optional(),
@@ -7143,13 +7213,29 @@ const JupiterSwapProxySchema = z
     mevProtection: z.boolean().optional(),
     attributionType: z.enum(["token_page_direct", "post_attributed"]).optional().default("post_attributed"),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.attributionType === "post_attributed" && !value.postId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["postId"],
+        message: "postId is required for post-attributed trades",
+      });
+    }
+    if (value.attributionType === "token_page_direct" && value.postId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["postId"],
+        message: "postId is not allowed for token-page direct trades",
+      });
+    }
+  });
 
 const JupiterFeeConfirmSchema = z
   .object({
     tradeFeeEventId: z.string().min(1),
     txSignature: z.string().min(40).max(128),
-    walletAddress: z.string().min(32).max(64),
+    walletAddress: SolanaAddressStringSchema,
   })
   .strict();
 
@@ -7189,8 +7275,15 @@ const ChartLiveQuerySchema = z
 
 const TradePanelContextSchema = z
   .object({
-    walletAddress: z.string().min(32).max(64),
-    tokenMint: z.string().min(32).max(64),
+    walletAddress: SolanaAddressStringSchema,
+    tokenMint: SolanaAddressStringSchema,
+  })
+  .strict();
+
+const PortfolioRequestSchema = z
+  .object({
+    walletAddress: SolanaAddressStringSchema,
+    tokenMints: z.array(SolanaAddressStringSchema).max(120).optional(),
   })
   .strict();
 
@@ -7608,13 +7701,15 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
     select: { walletAddress: true },
   });
   const linkedWalletAddress = safeString(traderUser?.walletAddress);
+  const normalizedLinkedWalletAddress = linkedWalletAddress ? new PublicKey(linkedWalletAddress).toBase58() : null;
+  const normalizedUserPublicKey = new PublicKey(payload.userPublicKey).toBase58();
   if (!linkedWalletAddress) {
     return c.json(
       { error: { message: "Link a wallet before building trades", code: "WALLET_NOT_LINKED" } },
       403
     );
   }
-  if (linkedWalletAddress !== payload.userPublicKey) {
+  if (normalizedLinkedWalletAddress !== normalizedUserPublicKey) {
     return c.json(
       { error: { message: "Trade wallet does not match the authenticated wallet", code: "WALLET_MISMATCH" } },
       403
@@ -7623,7 +7718,7 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
 
   const attributionType = normalizeTradeAttributionType(payload.attributionType);
   const platformFeeBps = getActivePlatformFeeBps(attributionType);
-  const quote = safeRecord(payload.quoteResponse) ?? {};
+  const quote = payload.quoteResponse;
 
   const postContextPromise: Promise<JupiterSwapPostContext | null> = payload.postId
     ? (async () => {
@@ -7782,6 +7877,18 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
       ? Math.min(platformFeeBps, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
       : platformFeeBps;
   const postContext = await withTimeoutFallback(postContextPromise, 180, null);
+  if (attributionType !== "token_page_direct" && payload.postId && !postContext) {
+    return c.json(
+      { error: { message: "Post context is unavailable for this trade", code: "POST_CONTEXT_UNAVAILABLE" } },
+      409
+    );
+  }
+  if (postContext && postContext.chainType !== "solana") {
+    return c.json(
+      { error: { message: "Only Solana trade attribution is supported", code: "UNSUPPORTED_CHAIN" } },
+      400
+    );
+  }
 
   if (
     attributionType !== "token_page_direct" &&
@@ -7941,7 +8048,9 @@ postsRouter.post(
       return c.json({ error: { message: "Forbidden", code: "FORBIDDEN" } }, 403);
     }
 
-    if (existing.traderWalletAddress !== payload.walletAddress) {
+    const normalizedPayloadWalletAddress = new PublicKey(payload.walletAddress).toBase58();
+    const normalizedExistingWalletAddress = new PublicKey(existing.traderWalletAddress).toBase58();
+    if (normalizedExistingWalletAddress !== normalizedPayloadWalletAddress) {
       return c.json({ error: { message: "Wallet mismatch for fee event", code: "WALLET_MISMATCH" } }, 403);
     }
 
@@ -7961,7 +8070,10 @@ postsRouter.post(
       return c.json({ error: { message: "Fee event already confirmed", code: "ALREADY_CONFIRMED" } }, 409);
     }
 
-    if (user.walletAddress && user.walletAddress !== payload.walletAddress) {
+    if (
+      user.walletAddress &&
+      new PublicKey(user.walletAddress).toBase58() !== normalizedPayloadWalletAddress
+    ) {
       return c.json({ error: { message: "Authenticated wallet mismatch", code: "WALLET_MISMATCH" } }, 403);
     }
 
@@ -8794,14 +8906,17 @@ postsRouter.post(
         403
       );
     }
-    if (linkedWallet.walletAddress !== walletAddress) {
+    const normalizedLinkedWalletAddress = new PublicKey(linkedWallet.walletAddress).toBase58();
+    const normalizedWalletAddress = new PublicKey(walletAddress).toBase58();
+    const normalizedTokenMint = new PublicKey(tokenMint).toBase58();
+    if (normalizedLinkedWalletAddress !== normalizedWalletAddress) {
       return c.json(
         { error: { message: "Trade access is restricted to the linked wallet owner", code: "FORBIDDEN" } },
         403
       );
     }
 
-    const cacheKey = `${walletAddress}:${tokenMint}`;
+    const cacheKey = `${normalizedWalletAddress}:${normalizedTokenMint}`;
     const now = Date.now();
     const cached = tradePanelContextCache.get(cacheKey);
     if (cached && cached.expiresAtMs > now) {
@@ -8810,7 +8925,10 @@ postsRouter.post(
 
     let request = tradePanelContextInFlight.get(cacheKey);
     if (!request) {
-      request = getHeliusTradePanelContext({ walletAddress, tokenMint });
+      request = getHeliusTradePanelContext({
+        walletAddress: normalizedWalletAddress,
+        tokenMint: normalizedTokenMint,
+      });
       tradePanelContextInFlight.set(cacheKey, request);
     }
 
@@ -8843,13 +8961,7 @@ postsRouter.post(
 postsRouter.post(
   "/portfolio",
   requireNotBanned,
-  zValidator(
-    "json",
-    z.object({
-      walletAddress: z.string(),
-      tokenMints: z.array(z.string()).max(120).optional(),
-    })
-  ),
+  zValidator("json", PortfolioRequestSchema),
   async (c) => {
     const currentUser = c.get("user");
     if (!currentUser) {
@@ -8867,19 +8979,22 @@ postsRouter.post(
         403
       );
     }
-    if (linkedWallet.walletAddress !== walletAddress) {
+    const normalizedLinkedWalletAddress = new PublicKey(linkedWallet.walletAddress).toBase58();
+    const normalizedWalletAddress = new PublicKey(walletAddress).toBase58();
+    if (normalizedLinkedWalletAddress !== normalizedWalletAddress) {
       return c.json(
         { error: { message: "Portfolio access is restricted to the linked wallet owner", code: "FORBIDDEN" } },
         403
       );
     }
+    const normalizedTokenMints = tokenMints?.map((mint) => new PublicKey(mint).toBase58());
 
-    const hasExplicitMints = Array.isArray(tokenMints) && tokenMints.length > 0;
+    const hasExplicitMints = Array.isArray(normalizedTokenMints) && normalizedTokenMints.length > 0;
 
     // Get trade snapshots (holdings + prices) for all mints
     const snapshots = await getWalletTradeSnapshotsForSolanaTokens({
-      walletAddress,
-      tokenMints,
+      walletAddress: normalizedWalletAddress,
+      tokenMints: normalizedTokenMints,
       withPricing: hasExplicitMints,
     });
 
@@ -8892,7 +9007,7 @@ postsRouter.post(
 
     const portfolioMints =
       hasExplicitMints
-        ? tokenMints
+        ? normalizedTokenMints
         : Object.keys(snapshots);
 
     // Enrich with metadata, but keep wallet-wide fetches bounded to avoid panel stalls.

@@ -6,12 +6,9 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import {
-  AddressLookupTableAccount,
   Connection,
   LAMPORTS_PER_SOL,
   PublicKey,
-  TransactionInstruction,
-  TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -38,6 +35,7 @@ import {
   getChartBucketMs,
   mergeLiveSamplesIntoCandles,
 } from "@/lib/live-candle-stream";
+import { appendTradeVerificationMemoToTransaction } from "@/lib/solana-trade";
 import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
 import { mapTradeExecutionError, type TradeExecutionErrorState } from "@/lib/trade-errors";
 import {
@@ -139,10 +137,10 @@ const JUPITER_QUOTE_MEMORY_CACHE_TTL_MS = 4_000;
 const TRADE_PANEL_PORTFOLIO_DEFER_MS = 650;
 const VISIBLE_BUNDLE_SCAN_REFRESH_INTERVAL_MS = 5_000;
 const SHARED_ALPHA_QUERY_STALE_TIME_MS = 60_000;
-const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const MAX_CREATOR_ROUTE_FEE_BPS = 50;
 const DEFAULT_TOTAL_ROUTE_FEE_BPS = 100;
 const FAST_TRADE_PRICE_POLL_INTERVAL_MS = 1_250;
+const MAX_ATOMIC_TRADE_AMOUNT = Number.MAX_SAFE_INTEGER;
 const TRADE_SOL_BALANCE_BUFFER_SOL = 0.01;
 let lastRealtimeSettlementRefreshAt = 0;
 const DEX_CHART_INTERVAL_OPTIONS = [
@@ -317,59 +315,6 @@ function createAbortSignalWithTimeout(timeoutMs: number, externalSignal?: AbortS
       }
     },
   };
-}
-
-async function loadAddressLookupTablesForTransaction(
-  connection: Connection,
-  transaction: VersionedTransaction
-): Promise<AddressLookupTableAccount[]> {
-  if (!("addressTableLookups" in transaction.message)) {
-    return [];
-  }
-
-  const addressTableLookups = transaction.message.addressTableLookups ?? [];
-  if (addressTableLookups.length === 0) {
-    return [];
-  }
-
-  const lookupTableResponses = await Promise.all(
-    addressTableLookups.map((lookup) => connection.getAddressLookupTable(lookup.accountKey))
-  );
-
-  return lookupTableResponses
-    .map((response) => response.value)
-    .filter((table): table is AddressLookupTableAccount => table !== null);
-}
-
-async function appendTradeVerificationMemoToTransaction(
-  connection: Connection,
-  transaction: VersionedTransaction,
-  memo: string
-): Promise<VersionedTransaction> {
-  const addressLookupTableAccounts = await loadAddressLookupTablesForTransaction(
-    connection,
-    transaction
-  );
-  const decompiledMessage = TransactionMessage.decompile(
-    transaction.message,
-    addressLookupTableAccounts.length > 0
-      ? { addressLookupTableAccounts }
-      : undefined
-  );
-  decompiledMessage.instructions.push(
-    new TransactionInstruction({
-      programId: MEMO_PROGRAM_ID,
-      keys: [],
-      data: new TextEncoder().encode(memo),
-    })
-  );
-
-  const compiledMessage =
-    "addressTableLookups" in transaction.message
-      ? decompiledMessage.compileToV0Message(addressLookupTableAccounts)
-      : decompiledMessage.compileToLegacyMessage();
-
-  return new VersionedTransaction(compiledMessage);
 }
 
 function isRetryableJupiterQuoteError(error: unknown): boolean {
@@ -1272,10 +1217,7 @@ export function PostCard({
     if (typeof window === "undefined") return true;
     return window.localStorage.getItem(TRADE_MEV_PROTECTION_STORAGE_KEY) !== "false";
   });
-  const [priceProtectionEnabled, setPriceProtectionEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(TRADE_PRICE_PROTECTION_ENABLED_STORAGE_KEY) === "true";
-  });
+  const [priceProtectionEnabled] = useState(false);
   const [stopLossPercentInput, setStopLossPercentInput] = useState(() => {
     if (typeof window === "undefined") return "-15";
     return window.localStorage.getItem(TRADE_STOP_LOSS_PCT_STORAGE_KEY) || "-15";
@@ -1288,6 +1230,7 @@ export function PostCard({
   const [tradeError, setTradeError] = useState<TradeExecutionErrorState | null>(null);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const swapBuildInFlightRef = useRef<{ key: string; promise: Promise<JupiterSwapResponse> } | null>(null);
+  const executionInFlightRef = useRef(false);
   const protectionAutoSellRetryCountRef = useRef(0);
   const protectionAutoArmCooldownUntilRef = useRef(0);
 
@@ -3708,7 +3651,13 @@ export function PostCard({
   const parsedBuyAmountSol = Number(buyAmountSol);
   const buyAmountLamports =
     Number.isFinite(parsedBuyAmountSol) && parsedBuyAmountSol > 0
-      ? Math.max(1, Math.floor(parsedBuyAmountSol * LAMPORTS_PER_SOL))
+      ? (() => {
+          const nextAmountAtomic = Math.floor(parsedBuyAmountSol * LAMPORTS_PER_SOL);
+          if (!Number.isSafeInteger(nextAmountAtomic) || nextAmountAtomic > MAX_ATOMIC_TRADE_AMOUNT) {
+            return null;
+          }
+          return Math.max(1, nextAmountAtomic);
+        })()
       : null;
   const dexTokenDataQuery = useQuery({
     queryKey: ["dexTokenData", post.chainType, post.contractAddress],
@@ -3913,7 +3862,13 @@ export function PostCard({
   const parsedSellAmountToken = Number(sellAmountToken);
   const sellAmountAtomic =
     Number.isFinite(parsedSellAmountToken) && parsedSellAmountToken > 0 && hasResolvedTokenDecimals
-      ? Math.max(1, Math.floor(parsedSellAmountToken * Math.pow(10, outputTokenDecimals)))
+      ? (() => {
+          const nextAmountAtomic = Math.floor(parsedSellAmountToken * Math.pow(10, outputTokenDecimals));
+          if (!Number.isSafeInteger(nextAmountAtomic) || nextAmountAtomic > MAX_ATOMIC_TRADE_AMOUNT) {
+            return null;
+          }
+          return Math.max(1, nextAmountAtomic);
+        })()
       : null;
   const tradeAmountAtomic = tradeSide === "buy" ? buyAmountLamports : sellAmountAtomic;
   const deferredTradeAmountAtomic = useDeferredValue(tradeAmountAtomic);
@@ -4448,7 +4403,11 @@ export function PostCard({
       surfaceTradeError(new Error("Sell amount is higher than your current token balance"));
       return;
     }
+    if (executionInFlightRef.current) {
+      return;
+    }
 
+    executionInFlightRef.current = true;
     setIsExecutingBuy(true);
     setBuyTxSignature(null);
     setTradeError(null);
@@ -4478,8 +4437,8 @@ export function PostCard({
       const signedTx = await walletSignTransaction(transactionForSigning);
       const sendCommitment = autoConfirmEnabled ? "processed" : "confirmed";
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
-        maxRetries: autoConfirmEnabled ? 0 : 2,
-        skipPreflight: autoConfirmEnabled,
+        maxRetries: 2,
+        skipPreflight: false,
         preflightCommitment: sendCommitment,
       });
 
@@ -4554,9 +4513,11 @@ export function PostCard({
         void refetchJupiterQuote();
       }
     } finally {
+      executionInFlightRef.current = false;
       setIsExecutingBuy(false);
     }
   }, [
+    executionInFlightRef,
     buildSwapTransaction,
     buyAmountExceedsBalance,
     isSolanaTradeSupported,
@@ -5864,14 +5825,17 @@ export function PostCard({
     onAutoConfirmChange: handleAutoConfirmChange,
     mevProtectionEnabled,
     onMevProtectionChange: setMevProtectionEnabled,
-    protectionEnabled: priceProtectionEnabled,
-    onProtectionEnabledChange: setPriceProtectionEnabled,
+    mevProtectionHint: "Standard public execution. Turning this on only adds a higher-priority route request; it does not provide private MEV protection.",
+    protectionEnabled: false,
+    onProtectionEnabledChange: () => undefined,
+    protectionDisabled: true,
+    protectionHint: "Automated TP/SL is disabled until a server-backed execution path exists.",
     stopLossPercent: stopLossPercentInput,
     onStopLossPercentChange: setStopLossPercentInput,
     takeProfitPercent: takeProfitPercentInput,
     onTakeProfitPercentChange: setTakeProfitPercentInput,
-    protectionStatusLabel: protectionStatus.label,
-    protectionStatusTone: protectionStatus.tone,
+    protectionStatusLabel: "Disabled in production",
+    protectionStatusTone: "idle" as const,
     quoteFreshnessLabel,
     liveStateLabel: tradeLiveMetaLabel,
     tradeError: tradeError

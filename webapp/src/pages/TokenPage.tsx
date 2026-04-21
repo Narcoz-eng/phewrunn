@@ -4,10 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import {
-  appendLiveTradeSample,
   getChartBucketMs,
   mergeLiveSamplesIntoCandles,
-  type LiveTradeSample,
 } from "@/lib/live-candle-stream";
 import { Post, PostAuthor, ReactionCounts, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -40,6 +38,8 @@ import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { DirectTokenTradePanel } from "@/components/token/DirectTokenTradePanel";
+import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
+import { TradeTransactionsFeed } from "@/components/feed/TradeTransactionsFeed";
 
 const TokenTelemetryCharts = lazy(() =>
   importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
@@ -2091,12 +2091,7 @@ export default function TokenPage() {
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("5m");
-  const [liveTradeSamples, setLiveTradeSamples] = useState<LiveTradeSample[]>([]);
   const activeTokenTab = parseTokenPageTab(searchParams.get("tab"));
-
-  useEffect(() => {
-    setLiveTradeSamples([]);
-  }, [tokenAddress]);
 
   const handleCopyTokenAddress = async () => {
     if (!token?.address) return;
@@ -2263,6 +2258,20 @@ export default function TokenPage() {
     }
   }, [liveTokenQuery.data, queryClient, tokenAddress, tokenQueryKey]);
 
+  const {
+    liveSamples: tradePanelLiveSamples,
+    recentTrades: tradePanelRecentTrades,
+    liveStatus: tradePanelLiveStatus,
+    usingFallbackPolling: tradePanelUsingFallbackPolling,
+    hasConnectedStream: tradePanelHasConnectedStream,
+    lastTradeEventAtMs: tradePanelLastTradeEventAtMs,
+  } = useTradePanelLiveFeed({
+    enabled: activeTokenTab === "trade" && Boolean(token?.address),
+    tokenAddress: token?.address ?? null,
+    pairAddress: token?.pairAddress ?? null,
+    chainType: token?.chainType === "solana" ? "solana" : "ethereum",
+  });
+
   useEffect(() => {
     if (!tokenCacheKey || !isTokenPageDataCacheable(token)) return;
     writeSessionCache(tokenCacheKey, token);
@@ -2305,13 +2314,15 @@ export default function TokenPage() {
     refetchOnWindowFocus: false,
     retry: 1,
     refetchInterval:
-      chartRequestConfig.timeframe === "minute"
-        ? chartRequestConfig.aggregate <= 5
-          ? 5_000
-          : 8_000
-        : chartRequestConfig.timeframe === "hour"
-          ? 15_000
-          : 45_000,
+      tradePanelHasConnectedStream && !tradePanelUsingFallbackPolling
+        ? false
+        : chartRequestConfig.timeframe === "minute"
+          ? chartRequestConfig.aggregate <= 5
+            ? 5_000
+            : 8_000
+          : chartRequestConfig.timeframe === "hour"
+            ? 15_000
+            : 45_000,
     queryFn: async () => {
       if (!tokenAddress || !token) {
         return {
@@ -2357,41 +2368,6 @@ export default function TokenPage() {
       };
     },
   });
-
-  const liveTradeCount24h =
-    (typeof liveTokenQuery.data?.buys24h === "number" ? liveTokenQuery.data.buys24h : 0) +
-    (typeof liveTokenQuery.data?.sells24h === "number" ? liveTokenQuery.data.sells24h : 0);
-
-  useEffect(() => {
-    const nextPriceUsd = liveTokenQuery.data?.priceUsd;
-    if (typeof nextPriceUsd !== "number" || !Number.isFinite(nextPriceUsd) || nextPriceUsd <= 0) {
-      return;
-    }
-
-    const timestampMs =
-      liveTokenQuery.data?.updatedAt && Number.isFinite(Date.parse(liveTokenQuery.data.updatedAt))
-        ? Date.parse(liveTokenQuery.data.updatedAt)
-        : Date.now();
-
-    setLiveTradeSamples((current) =>
-      appendLiveTradeSample(
-        current,
-        {
-          timestamp: timestampMs,
-          priceUsd: nextPriceUsd,
-          volume24hUsd: liveTokenQuery.data?.volume24h ?? null,
-          tradeCount24h: liveTradeCount24h,
-        },
-        720
-      )
-    );
-  }, [
-    liveChartQuery.data?.source,
-    liveTokenQuery.data?.priceUsd,
-    liveTokenQuery.data?.updatedAt,
-    liveTokenQuery.data?.volume24h,
-    liveTradeCount24h,
-  ]);
 
   const chartData = useMemo(
     () => {
@@ -2453,10 +2429,10 @@ export default function TokenPage() {
     () =>
       mergeLiveSamplesIntoCandles(
         liveChartQuery.data?.candles ?? [],
-        liveTradeSamples,
+        tradePanelLiveSamples,
         getChartBucketMs(chartRequestConfig.timeframe, chartRequestConfig.aggregate)
       ),
-    [chartRequestConfig.aggregate, chartRequestConfig.timeframe, liveChartQuery.data?.candles, liveTradeSamples]
+    [chartRequestConfig.aggregate, chartRequestConfig.timeframe, liveChartQuery.data?.candles, tradePanelLiveSamples]
   );
 
   const liveChartData = useMemo(
@@ -2535,7 +2511,8 @@ export default function TokenPage() {
     }
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
-  const canTradeTokenDirectly = Boolean(token?.address && token.isTradable);
+  const isSolanaTradeSupported = token?.chainType === "solana";
+  const canTradeTokenDirectly = Boolean(token?.address && token.isTradable && isSolanaTradeSupported);
   const hasChartTelemetry = chartData.some(
     (point) =>
       [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
@@ -2903,7 +2880,7 @@ export default function TokenPage() {
               <div className="rounded-[24px] border border-border/60 bg-card/90 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.22)] dark:shadow-none">
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { value: "trade", label: "Trade", hint: "Chart, direct buy panel, recent calls", icon: Coins },
+                    { value: "trade", label: "Trade", hint: "Chart, live prints, recent calls", icon: Coins },
                     {
                       value: "community",
                       label: "Community",
@@ -3100,26 +3077,45 @@ export default function TokenPage() {
                     </div>
                   )}
                 </div>
+                <div className="mt-4">
+                  <TradeTransactionsFeed
+                    trades={tradePanelRecentTrades}
+                    liveMode={tradePanelLiveStatus.mode}
+                    usingFallbackPolling={tradePanelUsingFallbackPolling}
+                    lastTradeEventAtMs={tradePanelLastTradeEventAtMs}
+                  />
+                </div>
               </div>
 
               {/* Direct trade sidebar */}
               <div className="space-y-4">
-                <DirectTokenTradePanel
-                  tokenAddress={token.address}
-                  chainType={token.chainType === "solana" ? "solana" : "ethereum"}
-                  tokenSymbol={token.symbol || "TOKEN"}
-                  tokenName={token.name || token.symbol || "Token"}
-                  tokenImage={token.imageUrl}
-                  tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
-                  liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
-                />
+                {isSolanaTradeSupported ? (
+                  <DirectTokenTradePanel
+                    tokenAddress={token.address}
+                    chainType="solana"
+                    tokenSymbol={token.symbol || "TOKEN"}
+                    tokenName={token.name || token.symbol || "Token"}
+                    tokenImage={token.imageUrl}
+                    tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
+                    liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
+                  />
+                ) : (
+                  <div className="app-surface p-5">
+                    <div className="text-sm font-semibold text-foreground">Direct swaps unavailable</div>
+                    <div className="mt-1 text-xs leading-6 text-muted-foreground">
+                      Ethereum execution is intentionally disabled on this page until wallet, routing, approvals, and confirmation handling are fully production-ready.
+                    </div>
+                  </div>
+                )}
 
                 <div className="app-surface p-5">
                   <div className="text-sm font-semibold text-foreground">Live route</div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    {hasLiveChartTelemetry
-                      ? `${liveChartSourceLabel} is updating this panel in real time.`
-                      : "Live candles will appear here as soon as market route data is available."}
+                    {tradePanelHasConnectedStream
+                      ? `${liveChartSourceLabel} is updating this panel from the live trade stream.`
+                      : tradePanelUsingFallbackPolling
+                        ? "Streaming is unavailable right now, so the panel is using fast fallback refreshes."
+                        : "Live candles will appear here as soon as market route data is available."}
                   </div>
                   <div className="mt-4 space-y-2 text-xs text-muted-foreground">
                     <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
@@ -3138,6 +3134,16 @@ export default function TokenPage() {
                       <span>Confidence</span>
                       <span className={cn("font-semibold", scoreTone(token.confidenceScore))}>
                         {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)}%` : "N/A"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-[16px] border border-border/60 bg-secondary px-3 py-2">
+                      <span>Trade stream</span>
+                      <span className="font-semibold text-foreground">
+                        {tradePanelHasConnectedStream
+                          ? "Live"
+                          : tradePanelUsingFallbackPolling
+                            ? "Fallback"
+                            : "Starting"}
                       </span>
                     </div>
                   </div>
