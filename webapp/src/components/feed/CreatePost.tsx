@@ -227,7 +227,7 @@ export function CreatePost({
         clearTimeout(debounceRef.current);
       }
     };
-  }, [detected?.address, detected?.chainType, fetchTokenInfo]);
+  }, [detected, fetchTokenInfo]);
 
   const handleSubmit = async () => {
     // Check liquidation

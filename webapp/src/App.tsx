@@ -14,7 +14,7 @@ import { AuthInitializer } from "@/components/AuthInitializer";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 
-const lazyPage = <T extends { default: ComponentType<any> }>(
+const lazyPage = <T extends { default: ComponentType<unknown> }>(
   loader: () => Promise<T>,
   scope: string
 ) => lazy(() => importWithRecovery(loader, scope));

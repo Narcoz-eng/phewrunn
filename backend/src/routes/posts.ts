@@ -2243,12 +2243,13 @@ const CHART_PROVIDER_FRESHNESS_GRACE_CANDLES = 6;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PLATFORM_FEE_ACCOUNT_FALLBACK = "Gqxyto95NExADzBbGka8j1Ki9QjKcEgSHPYVrNCJQTC6";
 const FIXED_PLATFORM_FEE_BPS = 100; // 1.00% total routed fee (0.50% creator + 0.50% platform)
+const TOKEN_PAGE_DIRECT_PLATFORM_FEE_BPS = 50; // 0.50% platform-only fee for token-page direct trades
 const DEFAULT_POSTER_TRADE_FEE_SHARE_BPS = 50;
 const MAX_POSTER_TRADE_FEE_SHARE_BPS = 50; // max 0.50% effective creator fee
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
-const JUPITER_PLATFORM_FEE_BPS = FIXED_PLATFORM_FEE_BPS;
 const JUPITER_PLATFORM_FEE_ACCOUNT =
   process.env.JUPITER_PLATFORM_FEE_ACCOUNT?.trim() || PLATFORM_FEE_ACCOUNT_FALLBACK;
+type TradeAttributionType = "token_page_direct" | "post_attributed";
 const JUPITER_PRIORITY_LEVEL = (() => {
   const raw = process.env.JUPITER_PRIORITY_LEVEL?.trim().toLowerCase();
   if (raw === "medium" || raw === "high" || raw === "veryhigh") {
@@ -2286,14 +2287,38 @@ const chartPoolAddressCache = new Map<string, { poolAddress: string | null; expi
 const chartPoolAddressInFlight = new Map<string, Promise<string | null>>();
 const chartCandlesSourceHealth = new Map<ChartCandlesSource, ChartCandlesSourceHealth>();
 
-function getActivePlatformFeeBps(): number {
+function normalizeTradeAttributionType(value: string | null | undefined): TradeAttributionType {
+  return value === "token_page_direct" ? "token_page_direct" : "post_attributed";
+}
+
+function getActivePlatformFeeBps(attributionType: TradeAttributionType = "post_attributed"): number {
   if (!JUPITER_PLATFORM_FEE_ACCOUNT) return 0;
-  return JUPITER_PLATFORM_FEE_BPS;
+  return attributionType === "token_page_direct"
+    ? TOKEN_PAGE_DIRECT_PLATFORM_FEE_BPS
+    : FIXED_PLATFORM_FEE_BPS;
 }
 
 function clampPosterFeeShareBps(value: number | null | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_POSTER_TRADE_FEE_SHARE_BPS;
   return Math.min(MAX_POSTER_TRADE_FEE_SHARE_BPS, Math.max(0, Math.round(Number(value))));
+}
+
+function hasCreatorFeePayoutAddress(author: {
+  walletAddress?: string | null;
+  tradeFeePayoutAddress?: string | null;
+} | null | undefined): boolean {
+  return Boolean(
+    (typeof author?.tradeFeePayoutAddress === "string" && author.tradeFeePayoutAddress.trim()) ||
+      (typeof author?.walletAddress === "string" && author.walletAddress.trim())
+  );
+}
+
+function isCreatorFeeEligible(author: {
+  walletAddress?: string | null;
+  tradeFeeRewardsEnabled?: boolean;
+  tradeFeePayoutAddress?: string | null;
+} | null | undefined): boolean {
+  return Boolean(author?.tradeFeeRewardsEnabled !== false && hasCreatorFeePayoutAddress(author));
 }
 
 function buildJupiterQuoteCacheKey(payload: {
@@ -7103,6 +7128,7 @@ const JupiterQuoteProxySchema = z
     slippageBps: z.number().int().min(1).max(5000),
     swapMode: z.enum(["ExactIn", "ExactOut"]).optional().default("ExactIn"),
     postId: z.string().min(1).optional(),
+    attributionType: z.enum(["token_page_direct", "post_attributed"]).optional().default("post_attributed"),
   })
   .strict();
 
@@ -7115,6 +7141,7 @@ const JupiterSwapProxySchema = z
     wrapAndUnwrapSol: z.boolean().optional(),
     dynamicComputeUnitLimit: z.boolean().optional(),
     mevProtection: z.boolean().optional(),
+    attributionType: z.enum(["token_page_direct", "post_attributed"]).optional().default("post_attributed"),
   })
   .strict();
 
@@ -7463,7 +7490,33 @@ async function forwardJupiterRequest(
 
 postsRouter.post("/jupiter/quote", zValidator("json", JupiterQuoteProxySchema), async (c) => {
   const payload = c.req.valid("json");
-  const platformFeeBps = getActivePlatformFeeBps();
+  const attributionType = normalizeTradeAttributionType(payload.attributionType);
+  let platformFeeBps = getActivePlatformFeeBps(attributionType);
+  if (attributionType === "post_attributed" && payload.postId) {
+    try {
+      const postAuthor = await prisma.post.findUnique({
+        where: { id: payload.postId },
+        select: {
+          author: {
+            select: {
+              walletAddress: true,
+              tradeFeeRewardsEnabled: true,
+              tradeFeePayoutAddress: true,
+            },
+          },
+        },
+      });
+      platformFeeBps = isCreatorFeeEligible(postAuthor?.author)
+        ? FIXED_PLATFORM_FEE_BPS
+        : TOKEN_PAGE_DIRECT_PLATFORM_FEE_BPS;
+    } catch (error) {
+      console.warn("[jupiter/quote] creator fee eligibility lookup skipped", {
+        postId: payload.postId,
+        message: getErrorMessage(error),
+      });
+      platformFeeBps = TOKEN_PAGE_DIRECT_PLATFORM_FEE_BPS;
+    }
+  }
   const cacheKey = buildJupiterQuoteCacheKey(payload, platformFeeBps);
   const now = Date.now();
   const cached = jupiterQuoteCache.get(cacheKey);
@@ -7568,7 +7621,8 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
     );
   }
 
-  const platformFeeBps = getActivePlatformFeeBps();
+  const attributionType = normalizeTradeAttributionType(payload.attributionType);
+  const platformFeeBps = getActivePlatformFeeBps(attributionType);
   const quote = safeRecord(payload.quoteResponse) ?? {};
 
   const postContextPromise: Promise<JupiterSwapPostContext | null> = payload.postId
@@ -7725,17 +7779,18 @@ postsRouter.post("/jupiter/swap", requireNotBanned, zValidator("json", JupiterSw
   const quotePlatformFeeBpsRaw = Number(platformFeeInfo?.feeBps);
   const platformFeeBpsApplied =
     Number.isFinite(quotePlatformFeeBpsRaw) && quotePlatformFeeBpsRaw > 0
-      ? Math.min(FIXED_PLATFORM_FEE_BPS, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
+      ? Math.min(platformFeeBps, Math.max(1, Math.round(quotePlatformFeeBpsRaw)))
       : platformFeeBps;
   const postContext = await withTimeoutFallback(postContextPromise, 180, null);
 
   if (
+    attributionType !== "token_page_direct" &&
     postContext &&
     postContext.chainType === "solana" &&
     platformFeeAmountBigInt > 0n &&
     platformFeeBpsApplied > 0
   ) {
-    const posterShareBps = postContext.author.tradeFeeRewardsEnabled
+    const posterShareBps = isCreatorFeeEligible(postContext.author)
       ? clampPosterFeeShareBps(postContext.author.tradeFeeShareBps)
       : 0;
     posterShareBpsApplied = posterShareBps;

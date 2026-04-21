@@ -11,7 +11,7 @@ import {
 } from "@/lib/live-candle-stream";
 import { Post, PostAuthor, ReactionCounts, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
+import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, Users, Activity, Flame, Target, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
@@ -34,10 +34,12 @@ import {
   mergePreferredPostCollections,
 } from "@/lib/post-query-cache";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
+import { DirectTokenTradePanel } from "@/components/token/DirectTokenTradePanel";
 
 const TokenTelemetryCharts = lazy(() =>
   importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
@@ -66,7 +68,6 @@ const TOKEN_CHART_INTERVAL_OPTIONS = [
   { value: "4h", label: "4h" },
   { value: "1D", label: "1D" },
 ] as const;
-const TOKEN_QUICK_BUY_PRESETS = ["0.10", "0.20", "0.50", "1.00"] as const;
 const TOKEN_PAGE_TABS = ["trade", "community", "intel"] as const;
 
 type TokenChartIntervalValue = (typeof TOKEN_CHART_INTERVAL_OPTIONS)[number]["value"];
@@ -2089,11 +2090,8 @@ export default function TokenPage() {
   const lastKnownTokenRef = useRef<TokenPageData | null>(null);
   const recentCallsRef = useRef<HTMLDivElement | null>(null);
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
-  const [pendingTradeCallId, setPendingTradeCallId] = useState<string | null>(null);
-  const [pendingQuickBuyAmountSol, setPendingQuickBuyAmountSol] = useState<string | null>(null);
   const [chartInterval, setChartInterval] = useState<TokenChartIntervalValue>("5m");
   const [liveTradeSamples, setLiveTradeSamples] = useState<LiveTradeSample[]>([]);
-  const [hasConsumedTradeDeepLink, setHasConsumedTradeDeepLink] = useState(false);
   const activeTokenTab = parseTokenPageTab(searchParams.get("tab"));
 
   useEffect(() => {
@@ -2528,7 +2526,7 @@ export default function TokenPage() {
     return pickStableMarketCap(liveMarketCap ?? token?.marketCap ?? null, token?.marketCap ?? null, recentCalls);
   })();
   const shouldAutoOpenTradePanel = searchParams.get("trade") === "1";
-  const setTokenTab = (tab: TokenPageTab) => {
+  const setTokenTab = useCallback((tab: TokenPageTab) => {
     const next = new URLSearchParams(searchParams);
     if (tab === "trade") {
       next.delete("tab");
@@ -2536,76 +2534,8 @@ export default function TokenPage() {
       next.set("tab", tab);
     }
     setSearchParams(next, { replace: true });
-  };
-  const tokenTradeBridgePost = useMemo<Post | null>(() => {
-    if (!token || token.chainType !== "solana") return null;
-    return {
-      id: `token-trade-bridge:${token.address}`,
-      content: `Token-native trade lane for ${token.symbol ? `$${token.symbol}` : token.name || token.address}.`,
-      authorId: "system:phew-router",
-      author: {
-        id: "system:phew-router",
-        name: "Phew Router",
-        username: "phewrouter",
-        image: null,
-        level: 10,
-        xp: 0,
-        isVerified: true,
-      },
-      contractAddress: token.address,
-      chainType: token.chainType,
-      tokenName: token.name,
-      tokenSymbol: token.symbol,
-      tokenImage: token.imageUrl,
-      entryMcap: displayMarketCap,
-      currentMcap: displayMarketCap,
-      mcap1h: null,
-      mcap6h: null,
-      settled: false,
-      settledAt: null,
-      isWin: null,
-      lastMcapUpdate: token.lastIntelligenceAt,
-      lastIntelligenceAt: token.lastIntelligenceAt,
-      trackingMode: "live",
-      createdAt: token.lastIntelligenceAt ?? new Date().toISOString(),
-      _count: {
-        likes: 0,
-        comments: 0,
-        reposts: 0,
-      },
-      isLiked: false,
-      isReposted: false,
-      viewCount: 0,
-      dexscreenerUrl: token.dexscreenerUrl,
-      confidenceScore: token.confidenceScore,
-      hotAlphaScore: token.hotAlphaScore,
-      earlyRunnerScore: token.earlyRunnerScore,
-      highConvictionScore: token.highConvictionScore,
-      marketHealthScore: token.marketHealthScore,
-      setupQualityScore: token.setupQualityScore,
-      opportunityScore: token.opportunityScore,
-      dataReliabilityScore: token.dataReliabilityScore,
-      activityStatus: token.activityStatus,
-      activityStatusLabel: token.activityStatusLabel,
-      isTradable: token.isTradable,
-      bullishSignalsSuppressed: token.bullishSignalsSuppressed,
-      sentimentScore: token.sentimentScore,
-      tokenRiskScore: token.tokenRiskScore,
-      bundleRiskLabel: token.bundleRiskLabel,
-      liquidity: token.liquidity,
-      volume24h: token.volume24h,
-      holderCount: token.holderCount,
-      largestHolderPct: token.largestHolderPct,
-      top10HolderPct: token.top10HolderPct,
-      bundledWalletCount: token.bundledWalletCount,
-      estimatedBundledSupplyPct: token.estimatedBundledSupplyPct,
-      bundleClusters: token.bundleClusters,
-      reactionCounts: token.sentiment?.reactions,
-      threadCount: 0,
-      radarReasons: token.earlyRunnerReasons ?? [],
-    };
-  }, [displayMarketCap, token]);
-  const canTradeTokenDirectly = Boolean(tokenTradeBridgePost);
+  }, [searchParams, setSearchParams]);
+  const canTradeTokenDirectly = Boolean(token?.address && token.isTradable);
   const hasChartTelemetry = chartData.some(
     (point) =>
       [point.marketCap, point.liquidity, point.volume24h, point.holderCount].some(
@@ -2626,6 +2556,7 @@ export default function TokenPage() {
         ? "GeckoTerminal live + token stream"
         : "Live chart + token stream";
   const canCreateTokenCommunity = Boolean(session?.user && (session.user.isAdmin || (session.user.level ?? 0) >= 3));
+  const createCommunityLockedReason = "Reach level 3 to create a community";
   const socialSignalsQuery = useQuery<TokenSocialSignals>({
     queryKey: ["token-social-signals", tokenAddress],
     enabled: Boolean(tokenAddress && activeTokenTab === "intel"),
@@ -2694,36 +2625,16 @@ export default function TokenPage() {
 
   const handleOpenTradePanel = () => {
     setTokenTab("trade");
-    if (!tokenTradeBridgePost) {
-      toast.info("Direct trading is currently available for Solana tokens only.");
-      return;
-    }
-    setPendingQuickBuyAmountSol(null);
-    setPendingTradeCallId(tokenTradeBridgePost.id);
-    recentCallsRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  };
-
-  const handleQuickBuyPreset = (amount: string) => {
-    setTokenTab("trade");
-    if (!tokenTradeBridgePost) {
-      toast.info("Direct trading is currently available for Solana tokens only.");
-      return;
-    }
-    setPendingQuickBuyAmountSol(amount);
-    setPendingTradeCallId(tokenTradeBridgePost.id);
-    recentCallsRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
   };
 
   const handleCommunityAction = () => {
     if (!token) return;
     setTokenTab("community");
     if (!token.communityExists) {
+      if (!canCreateTokenCommunity) {
+        toast.info(createCommunityLockedReason);
+        return;
+      }
       setCommunityEntryIntent("create-community");
       setCommunityEntryIntentToken((current) => current + 1);
       document.getElementById("token-community-room")?.scrollIntoView({
@@ -2736,15 +2647,9 @@ export default function TokenPage() {
   };
 
   useEffect(() => {
-    if (!shouldAutoOpenTradePanel || hasConsumedTradeDeepLink || !tokenTradeBridgePost) return;
+    if (!shouldAutoOpenTradePanel) return;
     setTokenTab("trade");
-    setPendingTradeCallId(tokenTradeBridgePost.id);
-    setHasConsumedTradeDeepLink(true);
-    recentCallsRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  }, [hasConsumedTradeDeepLink, shouldAutoOpenTradePanel, tokenTradeBridgePost]);
+  }, [setTokenTab, shouldAutoOpenTradePanel]);
 
   const showTokenLoading = !token && isLoading;
   const topHolders = mergedTopHolders;
@@ -2929,28 +2834,41 @@ export default function TokenPage() {
                     <PhewTradeIcon className="h-3.5 w-3.5" />
                     Trade
                   </Button>
-                  <Button
-                    variant={token.isFollowing ? "outline" : "outline"}
-                    onClick={handleCommunityAction}
-                    disabled={followMutation.isPending || (!token.communityExists && !canCreateTokenCommunity)}
-                    className={cn("h-10 rounded-full px-5 text-sm font-semibold transition-all",
-                      token.communityExists && token.isFollowing
-                        ? "border-primary/30 bg-primary/8 text-primary hover:bg-primary/12"
-                        : !token.communityExists
-                          ? "border-amber-300/40 bg-amber-400/10 text-amber-700 hover:border-amber-300/60 dark:text-amber-300"
-                          : "border-border/60 bg-secondary hover:border-primary/30"
-                    )}
-                  >
-                    {followMutation.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : !token.communityExists ? (
-                      canCreateTokenCommunity ? "Create Community" : "Community Not Open Yet"
-                    ) : token.isFollowing ? (
-                      "Joined"
-                    ) : (
-                      "Join Community"
-                    )}
-                  </Button>
+                  <TooltipProvider delayDuration={120}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={!token.communityExists && !canCreateTokenCommunity ? 0 : -1}>
+                          <Button
+                            variant={token.isFollowing ? "outline" : "outline"}
+                            onClick={handleCommunityAction}
+                            disabled={followMutation.isPending || (!token.communityExists && !canCreateTokenCommunity)}
+                            className={cn("h-10 rounded-full px-5 text-sm font-semibold transition-all",
+                              token.communityExists && token.isFollowing
+                                ? "border-primary/30 bg-primary/8 text-primary hover:bg-primary/12"
+                                : !token.communityExists
+                                  ? "border-amber-300/40 bg-amber-400/10 text-amber-700 hover:border-amber-300/60 dark:text-amber-300"
+                                  : "border-border/60 bg-secondary hover:border-primary/30"
+                            )}
+                          >
+                            {followMutation.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : !token.communityExists ? (
+                              canCreateTokenCommunity ? "Create Community" : "Community Locked"
+                            ) : token.isFollowing ? (
+                              "Joined"
+                            ) : (
+                              "Join Community"
+                            )}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!token.communityExists && !canCreateTokenCommunity ? (
+                        <TooltipContent side="bottom" className="max-w-[220px] text-center">
+                          {createCommunityLockedReason}
+                        </TooltipContent>
+                      ) : null}
+                    </Tooltip>
+                  </TooltipProvider>
                   <a
                     href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
                     target="_blank"
@@ -2985,7 +2903,7 @@ export default function TokenPage() {
               <div className="rounded-[24px] border border-border/60 bg-card/90 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.22)] dark:shadow-none">
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { value: "trade", label: "Trade", hint: "Chart, quick buy, recent calls", icon: Coins },
+                    { value: "trade", label: "Trade", hint: "Chart, direct buy panel, recent calls", icon: Coins },
                     {
                       value: "community",
                       label: "Community",
@@ -3092,7 +3010,7 @@ export default function TokenPage() {
 
             {/* ── SECTION 3: CHART + QUICK BUY ── */}
             {activeTokenTab === "trade" ? (
-            <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[1fr_270px]">
+            <motion.section variants={sectionVariants} className="grid gap-5 lg:items-start lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.92fr)]">
               <div className="app-surface p-5 sm:p-6">
                 <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -3184,36 +3102,16 @@ export default function TokenPage() {
                 </div>
               </div>
 
-              {/* Quick buy sidebar */}
+              {/* Direct trade sidebar */}
               <div className="space-y-4">
-                <div className="app-surface p-5">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Zap className="h-4 w-4 text-primary" />
-                    <div className="text-sm font-semibold text-foreground">Quick buy</div>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    {TOKEN_QUICK_BUY_PRESETS.map((amount) => (
-                      <Button
-                        key={amount}
-                        type="button"
-                        variant="outline"
-                        onClick={() => handleQuickBuyPreset(amount)}
-                        disabled={!canTradeTokenDirectly}
-                        className="h-11 rounded-[18px] border-primary/20 bg-white/70 text-sm font-semibold text-foreground hover:border-primary/35 hover:bg-primary/8 dark:bg-white/[0.03]"
-                      >
-                        {amount} SOL
-                      </Button>
-                    ))}
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={handleOpenTradePanel}
-                    disabled={!canTradeTokenDirectly}
-                    className="mt-3 h-11 w-full rounded-[18px] border border-primary/25 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),rgba(52,211,153,0.88))] text-sm font-semibold text-slate-950 shadow-[0_18px_36px_-26px_hsl(var(--primary)/0.48)] hover:brightness-[1.03] disabled:opacity-60"
-                  >
-                    Open full trade panel
-                  </Button>
-                </div>
+                <DirectTokenTradePanel
+                  tokenAddress={token.address}
+                  chainType={token.chainType === "solana" ? "solana" : "ethereum"}
+                  tokenSymbol={token.symbol || "TOKEN"}
+                  tokenImage={token.imageUrl}
+                  tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
+                  liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
+                />
 
                 <div className="app-surface p-5">
                   <div className="text-sm font-semibold text-foreground">Live route</div>
@@ -3846,12 +3744,6 @@ export default function TokenPage() {
                       key={post.id}
                       post={post}
                       currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
-                      autoOpenTradePanel={pendingTradeCallId === post.id}
-                      autoPrefillBuyAmountSol={pendingTradeCallId === post.id ? pendingQuickBuyAmountSol : null}
-                      onTradePanelAutoOpened={() => {
-                        setPendingTradeCallId((current) => (current === post.id ? null : current));
-                        setPendingQuickBuyAmountSol(null);
-                      }}
                     />
                   ))
                 ) : (
@@ -3860,20 +3752,6 @@ export default function TokenPage() {
                   </div>
                 )}
               </div>
-              {tokenTradeBridgePost ? (
-                <div className="hidden">
-                  <PostCard
-                    post={tokenTradeBridgePost}
-                    currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
-                    autoOpenTradePanel={pendingTradeCallId === tokenTradeBridgePost.id}
-                    autoPrefillBuyAmountSol={pendingTradeCallId === tokenTradeBridgePost.id ? pendingQuickBuyAmountSol : null}
-                    onTradePanelAutoOpened={() => {
-                      setPendingTradeCallId((current) => (current === tokenTradeBridgePost.id ? null : current));
-                      setPendingQuickBuyAmountSol(null);
-                    }}
-                  />
-                </div>
-              ) : null}
             </motion.section>
             ) : null}
           </motion.div>

@@ -45,6 +45,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   buildRaidMemeDataUrl,
   renderRaidMemePngBlob,
@@ -1388,6 +1389,23 @@ export function TokenCommunitySection({
                     Create Community
                   </Button>
                 ) : null}
+                {!room.exists && !canCreateCommunity ? (
+                  <TooltipProvider delayDuration={120}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>
+                          <Button
+                            className="rounded-full border-white/20 bg-white/10 text-white/75 hover:bg-white/10"
+                            disabled
+                          >
+                            Community Locked
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>Reach level 3 to create a community</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
                 {room.exists && !room.joined ? (
                   <Button
                     className="rounded-full bg-white text-slate-950 hover:bg-white/90"
@@ -1926,9 +1944,18 @@ export function TokenCommunitySection({
                     Create Community
                   </Button>
                 ) : (
-                  <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/60 p-4 text-sm text-muted-foreground">
-                    Community Not Open Yet. Trusted members at level 3+ can create the first room for this token.
-                  </div>
+                  <TooltipProvider delayDuration={120}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>
+                          <Button className="rounded-full" variant="outline" disabled>
+                            Community Locked
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>Reach level 3 to create a community</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
               </div>
             </div>

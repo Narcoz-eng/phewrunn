@@ -236,6 +236,7 @@ type JupiterQuoteRequestPayload = {
   slippageBps: number;
   swapMode: "ExactIn";
   postId: string;
+  attributionType: "token_page_direct" | "post_attributed";
 };
 
 type JupiterQuoteResponse = {
@@ -287,6 +288,7 @@ function buildJupiterQuoteCacheKey(payload: JupiterQuoteRequestPayload): string 
     String(payload.slippageBps),
     payload.swapMode,
     payload.postId,
+    payload.attributionType,
   ].join(":");
 }
 
@@ -1823,6 +1825,7 @@ export function PostCard({
     post.lastMcapUpdate,
     post.settledAt,
     post.createdAt,
+    currentMcap,
     localSettled,
     localMcap1h,
     localMcap6h,
@@ -2198,7 +2201,7 @@ export function PostCard({
     }).format(value);
   const winCardVerifiedPnlText =
     verifiedTotalPnlUsd === null ? null : `${verifiedTotalPnlUsd >= 0 ? "+" : "-"}${formatUsdStat(Math.abs(verifiedTotalPnlUsd))}`;
-  const buildWinCardSnapshotMetric = (label: string, snapshotMcap: number | null) => {
+  const buildWinCardSnapshotMetric = useCallback((label: string, snapshotMcap: number | null) => {
     if (post.entryMcap === null || snapshotMcap === null) {
       return {
         label,
@@ -2219,10 +2222,10 @@ export function PostCard({
         snapshotPercent === null ? "N/A" : `${snapshotPercent >= 0 ? "+" : ""}${snapshotPercent.toFixed(2)}%`,
       profitText: `${snapshotProfit >= 0 ? "+" : "-"}${formatMarketCap(Math.abs(snapshotProfit))}`,
       positive: isPositive,
-      magnitudeRatio: 0, // will be normalized below
+      magnitudeRatio: 0,
       _rawAbsPercent: absPercent,
     };
-  };
+  }, [post.entryMcap]);
   const buildWinCardRenderModel = useCallback(
     (latestSnapshot?: BatchedPostPriceSnapshot | null): WinCardRenderModel => {
       const resolvedCurrentMcap =
@@ -2444,6 +2447,7 @@ export function PostCard({
       soldAmount,
       soldUsd,
       verifiedTotalPnlUsd,
+      buildWinCardSnapshotMetric,
       winCardVerifiedPnlText,
     ]
   );
@@ -2628,7 +2632,7 @@ export function PostCard({
         winCardPreviewUrlRef.current = null;
       }
     };
-  }, []);
+  }, [exactLogoImageSrc]);
 
   const loadWinCardLogoDataUrl = useCallback(async () => {
     if (winCardLogoDataUrlRef.current) {
@@ -2678,7 +2682,7 @@ export function PostCard({
 
     winCardLogoDataUrlPromiseRef.current = promise;
     return promise;
-  }, []);
+  }, [exactLogoImageSrc]);
 
   const loadWinCardAvatarDataUrl = useCallback(async () => {
     if (winCardAvatarDataUrlRef.current) {
@@ -4003,6 +4007,7 @@ export function PostCard({
         slippageBps,
         swapMode: "ExactIn",
         postId: post.id,
+        attributionType: "post_attributed",
       };
     },
     [post.contractAddress, post.id, slippageBps]
@@ -4174,8 +4179,7 @@ export function PostCard({
   };
 
   useEffect(() => {
-    if (!tradeError) return;
-    setTradeError(null);
+    setTradeError((current) => (current ? null : current));
   }, [
     buyAmountSol,
     mevProtectionEnabled,
@@ -4345,6 +4349,7 @@ export function PostCard({
           userPublicKey: walletPublicKey.toBase58(),
           postId: post.id,
           tradeSide,
+          attributionType: "post_attributed",
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
           mevProtection: mevProtectionEnabled,
@@ -4385,10 +4390,11 @@ export function PostCard({
   );
 
   const handleExecuteJupiterBuy = useCallback(async () => {
+    const tradeToastId = `post-trade:${post.id}`;
     const surfaceTradeError = (error: unknown) => {
       const mapped = mapTradeExecutionError(error);
       setTradeError(mapped);
-      toast.error(mapped.message);
+      toast.error(mapped.title, { id: tradeToastId, description: mapped.message });
       return mapped;
     };
 
@@ -4446,6 +4452,10 @@ export function PostCard({
     setIsExecutingBuy(true);
     setBuyTxSignature(null);
     setTradeError(null);
+    toast.loading(`${tradeSide === "buy" ? "Buy" : "Sell"} ${displayTokenSymbol} order created`, {
+      id: tradeToastId,
+      description: "Preparing the route and transaction.",
+    });
     try {
       const swapPayload = await buildSwapTransaction(quote);
       const swapTransaction = swapPayload.swapTransaction;
@@ -4461,6 +4471,10 @@ export function PostCard({
             swapPayload.tradeVerificationMemo
           )
         : tx;
+      toast.loading("Awaiting wallet signature", {
+        id: tradeToastId,
+        description: `Sign this ${tradeSide} transaction to continue.`,
+      });
       const signedTx = await walletSignTransaction(transactionForSigning);
       const sendCommitment = autoConfirmEnabled ? "processed" : "confirmed";
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
@@ -4480,13 +4494,27 @@ export function PostCard({
             },
             sendCommitment
           )
+          .then(() => {
+            toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} confirmed`, {
+              id: tradeToastId,
+              description: "Your trade landed successfully on-chain.",
+            });
+          })
           .catch((error) => {
             console.warn("[jupiter-trade] Confirmation warning", error);
           });
       } else {
-        void tradeReadConnection.confirmTransaction(signature, sendCommitment).catch((error) => {
-          console.warn("[jupiter-trade] Confirmation warning", error);
-        });
+        void tradeReadConnection
+          .confirmTransaction(signature, sendCommitment)
+          .then(() => {
+            toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} confirmed`, {
+              id: tradeToastId,
+              description: "Your trade landed successfully on-chain.",
+            });
+          })
+          .catch((error) => {
+            console.warn("[jupiter-trade] Confirmation warning", error);
+          });
       }
 
       setBuyTxSignature(signature);
@@ -4513,7 +4541,10 @@ export function PostCard({
           console.warn("[trade-fee] Failed to confirm fee event", error);
         });
       }
-      toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} order sent successfully`);
+      toast.success("Transaction submitted", {
+        id: tradeToastId,
+        description: `${tradeSide === "buy" ? "Buy" : "Sell"} order is on-chain now. Waiting for confirmation.`,
+      });
       void refetchJupiterQuote();
     } catch (error) {
       preparedSwapRef.current = null;
@@ -4531,7 +4562,6 @@ export function PostCard({
     isSolanaTradeSupported,
     jupiterQuoteData,
     lastGoodQuoteBySide,
-    mapTradeExecutionError,
     post.contractAddress,
     refetchJupiterQuote,
     sellAmountExceedsBalance,
@@ -4546,6 +4576,8 @@ export function PostCard({
     walletPublicKey,
     walletSignTransaction,
     armedTradeProtection?.trigger,
+    displayTokenSymbol,
+    post.id,
     post.currentMcap,
     protectionAutoArmCooldownUntilRef,
     refetchTradePanelContext,
@@ -4588,16 +4620,16 @@ export function PostCard({
   const jupiterPlatformFeeAtomic = jupiterQuote?.platformFee?.amount ?? null;
   const jupiterPlatformFeeBps = jupiterQuote?.platformFee?.feeBps ?? null;
   const jupiterPlatformFeeMint = jupiterQuote?.platformFee?.mint ?? null;
+  const totalRouteFeeBps =
+    jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
+      ? Math.max(0, Math.round(Number(jupiterPlatformFeeBps)))
+      : DEFAULT_TOTAL_ROUTE_FEE_BPS;
   const creatorRouteFeeBps =
-    post.author.tradeFeeRewardsEnabled === false
+    post.author.tradeFeeRewardsEnabled === false || totalRouteFeeBps <= MAX_CREATOR_ROUTE_FEE_BPS
       ? 0
       : Number.isFinite(post.author.tradeFeeShareBps)
         ? Math.max(0, Math.min(MAX_CREATOR_ROUTE_FEE_BPS, Math.round(Number(post.author.tradeFeeShareBps))))
         : MAX_CREATOR_ROUTE_FEE_BPS;
-  const totalRouteFeeBps =
-    jupiterPlatformFeeBps !== null && Number.isFinite(jupiterPlatformFeeBps)
-      ? Math.max(DEFAULT_TOTAL_ROUTE_FEE_BPS, Math.round(Number(jupiterPlatformFeeBps)))
-      : DEFAULT_TOTAL_ROUTE_FEE_BPS;
   const retainedPlatformFeeBps = Math.max(0, totalRouteFeeBps - creatorRouteFeeBps);
   const jupiterPlatformFeeAmountDisplay =
     !jupiterPlatformFeeAtomic || jupiterPlatformFeeAtomic === "0"
@@ -6812,7 +6844,7 @@ export function PostCard({
                   </div>
                 </div>
               </div>
-
+              {/* eslint-disable-next-line */}
               {true ? (
               <div className="rounded-2xl border border-slate-900/10 bg-slate-900/[0.03] p-4 shadow-[0_18px_44px_-36px_rgba(148,163,184,0.65)] dark:border-white/10 dark:bg-black/20 dark:shadow-none">
                 <div className="flex items-center justify-between gap-2">
@@ -7207,6 +7239,7 @@ export function PostCard({
                   </div>
                 )}
               </div>
+              {/* eslint-disable-next-line */}
               {false && (
               <div className="hidden">
                 <div className="absolute inset-0 bg-[linear-gradient(135deg,#071019_0%,#07111a_44%,#04080f_100%)]" />

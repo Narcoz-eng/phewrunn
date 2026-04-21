@@ -478,7 +478,7 @@ export function useTradePanelLiveFeed(params: TradePanelLiveHookParams) {
         fallbackTradesRef.current = null;
       }
     };
-  }, [params.chainType, params.enabled, params.tokenAddress, usingFallbackPolling]);
+  }, [params.chainType, params.enabled, params.pairAddress, params.tokenAddress, usingFallbackPolling]);
 
   const recentTradesWithDisplay = useMemo(
     () =>

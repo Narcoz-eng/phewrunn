@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { Loader2, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isBundlePlaceholderState } from "@/lib/bundle-intelligence";
