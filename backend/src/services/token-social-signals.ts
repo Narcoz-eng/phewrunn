@@ -72,7 +72,8 @@ function emptySignals(
     callCount24h: 0,
     uniqueAuthors24h: 0,
     fetchedAt: null,
-    message: "External X signals are not configured yet. Set SOCIAL_SIGNALS_PROVIDER and SOCIAL_SIGNALS_BASE_URL.",
+    message:
+      "External X signals are not configured yet. Set SOCIAL_SIGNALS_PROVIDER plus SOCIAL_SIGNALS_BASE_URL, or use SOCIAL_SIGNALS_PROVIDER=socialdata with SOCIAL_SIGNALS_API_KEY.",
     ...overrides,
   };
 }

@@ -9,7 +9,7 @@ import {
   mergeLiveSamplesIntoCandles,
   type LiveTradeSample,
 } from "@/lib/live-candle-stream";
-import { Post, PostAuthor, ReactionCounts, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
+import { Post, PostAuthor, ReactionCounts, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, TrendingUp, Users, Activity, Flame, Zap, Target, ChevronRight, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -33,6 +33,8 @@ import {
   getCachedPostsForToken,
   mergePreferredPostCollections,
 } from "@/lib/post-query-cache";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
@@ -344,6 +346,131 @@ function parseTokenPageTab(value: string | null): TokenPageTab {
 
 function buildXSearchUrl(query: string): string {
   return `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
+}
+
+function formatCompactMetric(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    notation: value >= 1_000 ? "compact" : "standard",
+    maximumFractionDigits: value >= 1_000 ? 1 : 0,
+  }).format(value);
+}
+
+function getMatchedByLabel(value: TokenSocialSignalPost["matchedBy"]): string {
+  if (value === "symbol") return "matched by symbol";
+  if (value === "name") return "matched by name";
+  return "matched by contract";
+}
+
+function XPostVisualCard({
+  post,
+  compact = false,
+}: {
+  post: TokenSocialSignalPost;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-[26px] border border-white/10 bg-[#0f1419] text-white shadow-[0_30px_80px_-32px_rgba(15,20,25,0.88)]",
+        compact ? "p-4" : "p-5",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <Avatar className={cn("shrink-0 border border-white/10", compact ? "h-10 w-10" : "h-12 w-12")}>
+          <AvatarImage src={post.authorAvatarUrl ?? undefined} />
+          <AvatarFallback className="bg-white/10 text-white">
+            {(post.authorDisplayName || post.authorHandle).charAt(0).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">
+                {post.authorDisplayName || `@${post.authorHandle}`}
+              </div>
+              <div className="truncate text-xs text-white/55">
+                @{post.authorHandle} · {formatTimeAgo(post.createdAt)}
+              </div>
+            </div>
+            {post.isCall ? (
+              <span className="shrink-0 rounded-full border border-sky-400/25 bg-sky-400/14 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
+                Call
+              </span>
+            ) : null}
+          </div>
+          <div className={cn("mt-3 whitespace-pre-wrap break-words text-white/92", compact ? "text-[13px] leading-5" : "text-sm leading-6")}>
+            {post.text}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-white/45">
+            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">{getMatchedByLabel(post.matchedBy)}</span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">likes {formatCompactMetric(post.likeCount)}</span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">reposts {formatCompactMetric(post.repostCount)}</span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">replies {formatCompactMetric(post.replyCount)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SocialSignalPostLink({ post, isMobile }: { post: TokenSocialSignalPost; isMobile: boolean }) {
+  const href = post.url ?? `https://x.com/${post.authorHandle}`;
+  const card = (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="block rounded-[18px] border border-border/60 bg-secondary/55 p-3 sm:p-4 transition-colors hover:border-primary/25 hover:bg-secondary"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-sm font-semibold text-foreground">
+              {post.authorDisplayName || `@${post.authorHandle}`}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">@{post.authorHandle}</span>
+            {post.isCall ? (
+              <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                call
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 break-words text-sm leading-6 text-muted-foreground line-clamp-4">{post.text}</p>
+        </div>
+        <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+        <span>{formatTimeAgo(post.createdAt)}</span>
+        <span>likes {formatCompactMetric(post.likeCount)}</span>
+        <span>reposts {formatCompactMetric(post.repostCount)}</span>
+        <span>replies {formatCompactMetric(post.replyCount)}</span>
+        <span>{getMatchedByLabel(post.matchedBy)}</span>
+      </div>
+    </a>
+  );
+
+  if (isMobile) {
+    return card;
+  }
+
+  return (
+    <HoverCard openDelay={120} closeDelay={100}>
+      <HoverCardTrigger asChild>{card}</HoverCardTrigger>
+      <HoverCardContent
+        side="left"
+        align="start"
+        sideOffset={16}
+        className="w-[min(92vw,430px)] border-0 bg-transparent p-0 shadow-none"
+      >
+        <div className="space-y-3">
+          <XPostVisualCard post={post} />
+          <div className="rounded-[18px] border border-border/60 bg-background/95 p-3 text-xs text-muted-foreground shadow-xl backdrop-blur">
+            Hover preview mirrors the matched X post. Click the card to open the original on X.
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
 }
 
 function formatPct(value: number | null | undefined): string {
@@ -1933,6 +2060,7 @@ export default function TokenPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data: session, canPerformAuthenticatedWrites } = useSession();
+  const isMobile = useIsMobile();
   const [communityEntryIntent, setCommunityEntryIntent] = useState<"create-community" | null>(null);
   const [communityEntryIntentToken, setCommunityEntryIntentToken] = useState(0);
   const viewerScope = session?.user?.id ?? "anonymous";
@@ -3402,8 +3530,8 @@ export default function TokenPage() {
 
             {/* ── SECTION 5: TIMELINE + SENTIMENT ── */}
             <motion.section variants={sectionVariants} className="space-y-5">
-              <div className="app-surface p-5">
-                <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="app-surface p-4 sm:p-5">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
                       <ExternalLink className="h-4 w-4 text-primary" />
@@ -3439,7 +3567,7 @@ export default function TokenPage() {
                         <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Matched by</div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {socialSignals.matchedQueries.slice(0, 3).map((query) => (
-                            <span key={query} className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground">
+                            <span key={query} className="max-w-full break-all rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground">
                               {query}
                             </span>
                           ))}
@@ -3480,38 +3608,7 @@ export default function TokenPage() {
                       <div className="space-y-3">
                         <div className="text-sm font-semibold text-foreground">Top X posts</div>
                         {socialSignals.latestPosts.length > 0 ? socialSignals.latestPosts.map((post) => (
-                          <a
-                            key={post.id}
-                            href={post.url ?? `https://x.com/${post.authorHandle}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="block rounded-[18px] border border-border/60 bg-secondary/55 p-4 transition-colors hover:border-primary/25 hover:bg-secondary"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-sm font-semibold text-foreground">
-                                    {post.authorDisplayName || `@${post.authorHandle}`}
-                                  </span>
-                                  <span className="text-xs text-muted-foreground">@{post.authorHandle}</span>
-                                  {post.isCall ? (
-                                    <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
-                                      call
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{post.text}</p>
-                              </div>
-                              <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                              <span>{formatTimeAgo(post.createdAt)}</span>
-                              <span>likes {post.likeCount}</span>
-                              <span>reposts {post.repostCount}</span>
-                              <span>replies {post.replyCount}</span>
-                              <span>matched {post.matchedBy}</span>
-                            </div>
-                          </a>
+                          <SocialSignalPostLink key={post.id} post={post} isMobile={isMobile} />
                         )) : (
                           <div className="rounded-[18px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
                             <div>No top X posts matched this token yet.</div>
@@ -3523,7 +3620,7 @@ export default function TokenPage() {
                                     href={buildXSearchUrl(query)}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:border-primary/25"
+                                    className="max-w-full break-all rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:border-primary/25"
                                   >
                                     Search {query}
                                   </a>
@@ -3546,7 +3643,7 @@ export default function TokenPage() {
                             href={buildXSearchUrl(query)}
                             target="_blank"
                             rel="noreferrer"
-                            className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:border-primary/25"
+                            className="max-w-full break-all rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:border-primary/25"
                           >
                             Search X for {query}
                           </a>

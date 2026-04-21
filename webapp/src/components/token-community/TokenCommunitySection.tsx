@@ -175,9 +175,6 @@ function getAssetStorageIssueCopy(health: TokenCommunityAssetStorageHealth | nul
   ) {
     return "The asset public URL is pointing at the R2 API host instead of a browser-loadable public domain. Set COMMUNITY_ASSET_PUBLIC_BASE_URL to the public bucket or CDN URL.";
   }
-  if (health.issues.includes("missing_public_base_url")) {
-    return "Asset storage can sign uploads, but no public asset base URL is configured yet. Set COMMUNITY_ASSET_PUBLIC_BASE_URL before using community uploads.";
-  }
   return null;
 }
 
@@ -1105,7 +1102,7 @@ export function TokenCommunitySection({
         throw new Error(healthHint);
       }
       if (error instanceof Error && /failed to fetch/i.test(error.message)) {
-        throw new Error("Upload could not reach asset storage. Check the R2 bucket CORS policy and public asset domain.");
+        throw new Error("Upload could not reach the backend asset bridge. Check the API deployment, R2 endpoint, and storage credentials.");
       }
       throw error;
     }

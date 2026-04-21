@@ -156,10 +156,6 @@ export function getCommunityAssetStorageDiagnostics(): CommunityAssetStorageDiag
     issues.push("partial_storage_config");
   }
 
-  if (config && !rawPublicBaseUrl) {
-    issues.push("missing_public_base_url");
-  }
-
   if (
     rawPublicBaseUrl &&
     publicBaseHost &&
