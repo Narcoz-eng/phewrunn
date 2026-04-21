@@ -190,10 +190,6 @@ function scheduleBackgroundLoopBootstrap(): void {
 
   backgroundLoopsBootstrapTimer = setTimeout(() => {
     backgroundLoopsBootstrapTimer = null;
-    if (Date.now() - lastAuthSensitiveRequestAt < INTELLIGENCE_PRIORITY_AUTH_QUIET_MS) {
-      scheduleBackgroundLoopBootstrap();
-      return;
-    }
     backgroundLoopsBootstrapped = true;
     const canRun = () => Date.now() - lastAuthSensitiveRequestAt >= INTELLIGENCE_PRIORITY_AUTH_QUIET_MS;
     if (INTELLIGENCE_PRIORITY_LOOP_ENABLED) {

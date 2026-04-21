@@ -402,7 +402,21 @@ function createEventSourceUrl(stream: SharedTokenLiveStream): string {
   if (stream.params.pairAddress) {
     query.set("pairAddress", stream.params.pairAddress);
   }
-  return `${API_BASE_URL}/api/posts/chart/live?${query.toString()}`;
+
+  const relativePath = `/api/posts/chart/live?${query.toString()}`;
+  if (typeof window === "undefined") {
+    return relativePath;
+  }
+
+  try {
+    const apiOrigin = new URL(API_BASE_URL, window.location.origin).origin;
+    if (apiOrigin === window.location.origin) {
+      return relativePath;
+    }
+    return new URL(relativePath, API_BASE_URL).toString();
+  } catch {
+    return relativePath;
+  }
 }
 
 function startLiveTransport(stream: SharedTokenLiveStream): void {
@@ -433,6 +447,10 @@ function startLiveTransport(stream: SharedTokenLiveStream): void {
         timestampMs: Date.now(),
       },
     }));
+
+    if (stream.snapshot.recentTrades.length === 0) {
+      void refreshFallbackTrades(stream);
+    }
   };
 
   source.addEventListener("snapshot", (event) => {

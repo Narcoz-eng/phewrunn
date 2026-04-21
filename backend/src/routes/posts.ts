@@ -4870,6 +4870,14 @@ function triggerSettlementCycleNonBlocking(reason: string): void {
     });
 }
 
+export function triggerOrganicSettlementWakeup(reason: string): void {
+  if (!shouldRunOrganicSettlementWakeups()) {
+    return;
+  }
+
+  triggerSettlementCycleNonBlocking(reason);
+}
+
 export function startMaintenanceLoop(opts?: { canRun?: () => boolean }): void {
   if (opts?.canRun) {
     maintenanceLoopCanRun = opts.canRun;

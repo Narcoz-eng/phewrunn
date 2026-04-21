@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables } from "../auth.js";
 import { listFeedCalls } from "../services/intelligence/engine.js";
+import { triggerOrganicSettlementWakeup } from "./posts.js";
 
 export const feedRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -34,6 +35,14 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
     kind !== "following" &&
     !query.cursor &&
     !query.search?.trim();
+
+  if (!query.cursor) {
+    const reason = query.search?.trim()
+      ? `feed-router:${kind}:search`
+      : `feed-router:${kind}`;
+    triggerOrganicSettlementWakeup(reason);
+  }
+
   const result = await listFeedCalls({
     kind,
     viewerId: viewer?.id ?? null,
