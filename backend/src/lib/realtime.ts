@@ -39,6 +39,14 @@ type RealtimeConnectionState = {
   subscriptions: Map<string, () => void>;
 };
 
+type AppInvalidateScope =
+  | "feed"
+  | "leaderboard"
+  | "profiles"
+  | "profile-performance"
+  | "user-posts"
+  | "token-page";
+
 type TokenSubscriptionPayload = {
   tokenAddress: string;
   pairAddress?: string | null;
@@ -124,6 +132,19 @@ function sendTokenStatus(
     type: "market.status",
     channel,
     payload,
+  });
+}
+
+function sendAppInvalidate(
+  socket: ServerWebSocket<RealtimeSocketData>,
+  scopes: AppInvalidateScope[]
+): void {
+  sendSocketMessage(socket, {
+    type: "app.invalidate",
+    payload: {
+      scopes,
+      timestampMs: Date.now(),
+    },
   });
 }
 
@@ -293,3 +314,14 @@ export const realtimeWebSocketHandlers = {
     cleanupRealtimeConnection(socket.data.socketId);
   },
 };
+
+export function broadcastAppInvalidate(scopes: AppInvalidateScope[]): void {
+  if (scopes.length === 0 || realtimeConnections.size === 0) {
+    return;
+  }
+
+  const normalizedScopes = [...new Set(scopes)];
+  for (const connection of realtimeConnections.values()) {
+    sendAppInvalidate(connection.socket, normalizedScopes);
+  }
+}

@@ -74,6 +74,7 @@ import {
 } from "../services/intelligence/engine.js";
 import { fanoutPostedAlphaAlert } from "../services/intelligence/alerts.js";
 import { runMarketAlertScan, type MarketAlertScanResult } from "../services/marketAlerts.js";
+import { broadcastAppInvalidate } from "../lib/realtime.js";
 
 export const postsRouter = new Hono<{ Variables: AuthVariables }>();
 const IS_SERVERLESS_RUNTIME =
@@ -2115,6 +2116,15 @@ export function invalidatePostReadCaches(options?: { leaderboard?: boolean }): v
   if (options?.leaderboard) {
     invalidateLeaderboardCaches();
   }
+
+  broadcastAppInvalidate([
+    "feed",
+    "leaderboard",
+    "profiles",
+    "profile-performance",
+    "user-posts",
+    "token-page",
+  ]);
 }
 
 async function readTotalPostCountHint(): Promise<number | null> {

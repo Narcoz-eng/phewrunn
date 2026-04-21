@@ -38,11 +38,22 @@ type TokenSubscriptionState = {
   handlers: Map<string, TokenRealtimeHandlers>;
 };
 
+type AppInvalidatePayload = {
+  scopes?: string[];
+  timestampMs?: number;
+};
+
+type AppRealtimeHandlers = {
+  onInvalidate?: (payload: AppInvalidatePayload) => void;
+  onError?: (error: Error) => void;
+};
+
 type RealtimeSocketState = {
   socket: WebSocket | null;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectAttempts: number;
   tokens: Map<string, TokenSubscriptionState>;
+  appHandlers: Map<string, AppRealtimeHandlers>;
 };
 
 const realtimeSocketState: RealtimeSocketState = {
@@ -50,6 +61,7 @@ const realtimeSocketState: RealtimeSocketState = {
   reconnectTimer: null,
   reconnectAttempts: 0,
   tokens: new Map(),
+  appHandlers: new Map(),
 };
 
 function buildTokenChannelKey(params: TokenRealtimeParams): string {
@@ -83,6 +95,12 @@ function notifyTokenHandlers(channel: string, notifier: (handlers: TokenRealtime
     return;
   }
   for (const handlers of tokenState.handlers.values()) {
+    notifier(handlers);
+  }
+}
+
+function notifyAppHandlers(notifier: (handlers: AppRealtimeHandlers) => void): void {
+  for (const handlers of realtimeSocketState.appHandlers.values()) {
     notifier(handlers);
   }
 }
@@ -163,6 +181,12 @@ function handleRealtimeMessage(rawMessage: MessageEvent<string>): void {
       notifyTokenHandlers(channel, (handlers) => {
         handlers.onStatus?.((parsed.payload ?? null) as TradePanelLiveStatus);
       });
+      return;
+    }
+    if (parsed.type === "app.invalidate") {
+      notifyAppHandlers((handlers) => {
+        handlers.onInvalidate?.((parsed.payload ?? null) as AppInvalidatePayload);
+      });
     }
   } catch {
     // Ignore malformed realtime payloads.
@@ -170,7 +194,7 @@ function handleRealtimeMessage(rawMessage: MessageEvent<string>): void {
 }
 
 function ensureRealtimeSocket(): void {
-  if (typeof window === "undefined" || realtimeSocketState.tokens.size === 0) {
+  if (typeof window === "undefined" || (realtimeSocketState.tokens.size === 0 && realtimeSocketState.appHandlers.size === 0)) {
     return;
   }
 
@@ -200,6 +224,9 @@ function ensureRealtimeSocket(): void {
         handlers.onError?.(new Error("Realtime socket error"));
       });
     }
+    notifyAppHandlers((handlers) => {
+      handlers.onError?.(new Error("Realtime socket error"));
+    });
   };
 
   socket.onclose = () => {
@@ -210,12 +237,15 @@ function ensureRealtimeSocket(): void {
         handlers.onError?.(new Error("Realtime socket disconnected"));
       });
     }
+    notifyAppHandlers((handlers) => {
+      handlers.onError?.(new Error("Realtime socket disconnected"));
+    });
     scheduleRealtimeReconnect();
   };
 }
 
 function maybeCloseRealtimeSocket(): void {
-  if (realtimeSocketState.tokens.size > 0) {
+  if (realtimeSocketState.tokens.size > 0 || realtimeSocketState.appHandlers.size > 0) {
     return;
   }
 
@@ -227,6 +257,21 @@ function maybeCloseRealtimeSocket(): void {
   realtimeSocketState.socket?.close();
   realtimeSocketState.socket = null;
   realtimeSocketState.reconnectAttempts = 0;
+}
+
+export function subscribeToAppRealtime(handlers: AppRealtimeHandlers): () => void {
+  const handlerId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+  realtimeSocketState.appHandlers.set(handlerId, handlers);
+  ensureRealtimeSocket();
+
+  return () => {
+    realtimeSocketState.appHandlers.delete(handlerId);
+    maybeCloseRealtimeSocket();
+  };
 }
 
 export function subscribeToTokenRealtime(

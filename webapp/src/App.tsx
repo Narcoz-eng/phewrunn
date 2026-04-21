@@ -1,8 +1,8 @@
-import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AuthInitializer } from "@/components/AuthInitializer";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
+import { subscribeToAppRealtime } from "@/lib/realtime/app-realtime-client";
 
 const lazyPage = <T extends { default: ComponentType<unknown> }>(
   loader: () => Promise<T>,
@@ -250,6 +251,45 @@ function AnimatedRoutes() {
   );
 }
 
+function RealtimeInvalidationBridge() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    return subscribeToAppRealtime({
+      onInvalidate: (payload) => {
+        const scopes = new Set(payload.scopes ?? []);
+
+        if (scopes.has("feed")) {
+          void queryClient.invalidateQueries({ queryKey: ["posts"], refetchType: "active" });
+        }
+        if (scopes.has("leaderboard")) {
+          void queryClient.invalidateQueries({ queryKey: ["leaderboard"], refetchType: "active" });
+          void queryClient.invalidateQueries({ queryKey: ["leaderboards"], refetchType: "active" });
+        }
+        if (scopes.has("profiles")) {
+          void queryClient.invalidateQueries({ queryKey: ["profile", "me"], refetchType: "active" });
+          void queryClient.invalidateQueries({ queryKey: ["userProfile"], refetchType: "active" });
+        }
+        if (scopes.has("profile-performance")) {
+          void queryClient.invalidateQueries({ queryKey: ["profile", "performance"], refetchType: "active" });
+          void queryClient.invalidateQueries({ queryKey: ["userProfilePerformance"], refetchType: "active" });
+        }
+        if (scopes.has("user-posts")) {
+          void queryClient.invalidateQueries({ queryKey: ["profile", "posts"], refetchType: "active" });
+          void queryClient.invalidateQueries({ queryKey: ["profile", "reposts"], refetchType: "active" });
+          void queryClient.invalidateQueries({ queryKey: ["userPosts"], refetchType: "active" });
+          void queryClient.invalidateQueries({ queryKey: ["userReposts"], refetchType: "active" });
+        }
+        if (scopes.has("token-page")) {
+          void queryClient.invalidateQueries({ queryKey: ["token-page"], refetchType: "active" });
+        }
+      },
+    });
+  }, [queryClient]);
+
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
@@ -257,6 +297,7 @@ const App = () => (
         <PrivyWalletProvider>
           <AuthProvider>
             <AuthInitializer>
+              <RealtimeInvalidationBridge />
               <TooltipProvider>
                 <Toaster />
                 <Sonner />
