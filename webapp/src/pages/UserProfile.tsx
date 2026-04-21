@@ -53,7 +53,11 @@ import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2 } from "lucide-react";
 import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
-import { buildTraderPerformanceVm } from "@/viewmodels/trader-performance";
+import {
+  buildTraderPerformanceVm,
+  buildTraderPerformanceVmFromSnapshot,
+  type UserPerformanceSnapshot,
+} from "@/viewmodels/trader-performance";
 
 interface UserProfileData {
   id?: string | null;
@@ -77,6 +81,8 @@ interface UserProfileData {
     totalProfitPercent: number;
   };
 }
+
+type UserPerformanceResponse = UserPerformanceSnapshot;
 
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
@@ -469,6 +475,22 @@ export default function UserProfile() {
     retry: 0,
   });
 
+  const { data: performanceSnapshot } = useQuery({
+    queryKey: ["userProfilePerformance", userId, viewerCacheScope],
+    queryFn: async () => {
+      if (!userId) {
+        throw new Error("User not found");
+      }
+      return await api.get<UserPerformanceResponse>(`/api/users/${userId}/performance`);
+    },
+    enabled: !!userId,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+
   useEffect(() => {
     if (!user || !isUserFetched || !userProfileCacheKey) return;
     writeSessionCache(userProfileCacheKey, user);
@@ -769,8 +791,19 @@ export default function UserProfile() {
   const profileAvatarSeed =
     user?.id ?? user?.username ?? (normalizedProfileIdentifier || "trader");
   const performanceVm = useMemo(
-    () =>
-      user
+    () => {
+      if (performanceSnapshot) {
+        return buildTraderPerformanceVmFromSnapshot({
+          snapshot: performanceSnapshot,
+          avatarUrl: getAvatarUrl(
+            performanceSnapshot.user.id ?? profileAvatarSeed,
+            performanceSnapshot.user.image
+          ),
+          postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
+        });
+      }
+
+      return user
         ? buildTraderPerformanceVm({
             displayName: user.name ?? user.username ?? "Trader",
             handle: user.username ? `@${user.username}` : null,
@@ -782,8 +815,9 @@ export default function UserProfile() {
             recentTrades,
             postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
           })
-        : null,
-    [profileAvatarSeed, recentTrades, user]
+        : null;
+    },
+    [performanceSnapshot, profileAvatarSeed, recentTrades, user]
   );
 
   const formatJoinDate = (dateString: string) => {

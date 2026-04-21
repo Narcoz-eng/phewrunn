@@ -19,50 +19,44 @@ import { ArrowLeft, House, Trophy, UserRound } from "lucide-react";
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
 const TOP_USERS_CACHE_TTL_MS = 10 * 60_000;
+type PerformancePeriod = "7d" | "30d" | "all";
 
-type Period = "day" | "week";
-type SortMode = "level" | "activity" | "winrate";
-
-type TopUser = {
+type PerformanceLeaderboardEntry = {
   rank: number;
   user: {
     id: string;
     username: string | null;
     name: string;
     image: string | null;
-    level: number;
-    xp: number;
     isVerified?: boolean;
   };
-  stats: {
-    totalAlphas: number;
-    recentAlphas?: number;
-    wins: number;
-    losses: number;
-    winRate: number;
+  performance: {
+    avgRoi: number | null;
+    winRate: number | null;
+    trustScore: number | null;
+    callsCount: number;
+    firstCallCount: number;
   };
+  recentTokens: Array<{
+    address: string;
+    symbol: string | null;
+    image: string | null;
+  }>;
 };
 
 type TopUsersResponse = {
-  data: TopUser[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
+  data: PerformanceLeaderboardEntry[];
 };
 
-function buildTopUsersCacheKey(sortBy: SortMode, period: Period): string {
-  return `phew.leaderboard.terminal:v1:${sortBy}:${period}`;
+function buildTopUsersCacheKey(period: PerformancePeriod): string {
+  return `phew.leaderboard.performance:v1:${period}`;
 }
 
 export default function Leaderboard() {
   const navigate = useNavigate();
   const { data: session } = useSession();
   const { hasLiveSession } = useAuth();
-  const [period, setPeriod] = useState<Period>("day");
-  const [sortMode, setSortMode] = useState<SortMode>("activity");
+  const [period, setPeriod] = useState<PerformancePeriod>("30d");
 
   const sessionBackedUser = session?.user
     ? {
@@ -94,12 +88,12 @@ export default function Leaderboard() {
     retry: false,
   });
 
-  const topUsersCacheKey = buildTopUsersCacheKey(sortMode, period);
+  const topUsersCacheKey = buildTopUsersCacheKey(period);
   const cachedTopUsers = readSessionCache<TopUsersResponse>(topUsersCacheKey, TOP_USERS_CACHE_TTL_MS);
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ["leaderboard", "terminal-top-users", sortMode, period],
+    queryKey: ["leaderboard", "terminal-performance", period],
     queryFn: async () => {
-      const response = await api.raw(`/api/leaderboard/top-users?page=1&limit=100&sortBy=${sortMode}&period=${period}`);
+      const response = await api.raw(`/api/leaderboard/performance?period=${period}&limit=100`);
       if (!response.ok) {
         throw new Error(`Failed to load leaderboard: ${response.status}`);
       }
@@ -119,28 +113,23 @@ export default function Leaderboard() {
   });
 
   const rows = useMemo(
-    () => buildLeaderboardRowsVm(data?.data ?? [], sortMode),
-    [data?.data, sortMode]
+    () => buildLeaderboardRowsVm(data?.data ?? []),
+    [data?.data]
   );
 
   const pinnedRank = useMemo<LeaderboardPinnedRankVM | null>(() => {
-    const exact = buildPinnedRankVm(data?.data ?? [], currentUser?.id ?? null, sortMode);
+    const exact = buildPinnedRankVm(data?.data ?? [], currentUser?.id ?? null);
     if (exact) return exact;
     if (!currentUser) return null;
     return {
       title: "Your rank",
       rankLabel: "Top 100?",
-      valueLabel:
-        sortMode === "activity"
-          ? `${currentUser.level} level`
-          : sortMode === "winrate"
-            ? "Building record"
-            : `${currentUser.xp?.toLocaleString?.() ?? 0} XP`,
+      valueLabel: "Building record",
       valueTone: "neutral",
       avatarUrl: getAvatarUrl(currentUser.id, currentUser.image),
       avatarFallback: (currentUser.name || currentUser.username || "?").charAt(0).toUpperCase(),
     };
-  }, [currentUser, data?.data, sortMode]);
+  }, [currentUser, data?.data]);
 
   const unreadCacheKey = session?.user?.id
     ? `${NOTIFICATIONS_UNREAD_CACHE_PREFIX}:${session.user.id}`
@@ -185,56 +174,31 @@ export default function Leaderboard() {
         ) : (
           <div className={cn("transition-opacity", isFetching && "opacity-80")}>
             <DenseLeaderboardView
-              eyebrow="Competitive ranking"
-              title="Leaderboard"
-              subtitle="Scan the strongest traders without leaving the screen."
+              eyebrow="Performance board"
+              title="Trader Rankings"
+              subtitle="Backend-ranked call performance with live-linked trader profiles."
               pinnedRank={pinnedRank}
               timeframeTabs={[
                 {
-                  key: "day",
-                  label: "24h",
-                  active: period === "day",
-                  onSelect: () => setPeriod("day"),
-                },
-                {
-                  key: "week",
+                  key: "7d",
                   label: "7d",
-                  active: period === "week",
-                  onSelect: () => setPeriod("week"),
+                  active: period === "7d",
+                  onSelect: () => setPeriod("7d"),
                 },
                 {
-                  key: "month",
+                  key: "30d",
                   label: "30d",
-                  active: false,
-                  disabled: true,
+                  active: period === "30d",
+                  onSelect: () => setPeriod("30d"),
                 },
                 {
                   key: "all",
                   label: "All",
-                  active: false,
-                  disabled: true,
+                  active: period === "all",
+                  onSelect: () => setPeriod("all"),
                 },
               ]}
-              modeTabs={[
-                {
-                  key: "activity",
-                  label: "Activity",
-                  active: sortMode === "activity",
-                  onSelect: () => setSortMode("activity"),
-                },
-                {
-                  key: "winrate",
-                  label: "Win Rate",
-                  active: sortMode === "winrate",
-                  onSelect: () => setSortMode("winrate"),
-                },
-                {
-                  key: "level",
-                  label: "Level",
-                  active: sortMode === "level",
-                  onSelect: () => setSortMode("level"),
-                },
-              ]}
+              modeTabs={[]}
               rows={rows}
               onSelectRow={(row) => {
                 const source = data?.data.find((item) => item.user.id === row.id);

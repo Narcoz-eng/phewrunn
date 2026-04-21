@@ -117,7 +117,10 @@ export function TraderPerformanceView({
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-[2rem] font-semibold leading-none text-white sm:text-[2.4rem]">
+                <div className="rounded-full border border-white/8 bg-white/4 px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-white/42">
+                  Performance
+                </div>
+                <h1 className="truncate text-[1.8rem] font-semibold leading-none text-white sm:text-[2.15rem]">
                   {vm.displayName}
                 </h1>
                 {vm.handle ? (
@@ -125,9 +128,9 @@ export function TraderPerformanceView({
                 ) : null}
               </div>
               {vm.bio ? (
-                <p className="mt-4 max-w-xl text-lg text-white/82">{vm.bio}</p>
+                <p className="mt-3 max-w-xl text-base text-white/74">{vm.bio}</p>
               ) : null}
-              <div className="mt-5 flex flex-wrap gap-x-6 gap-y-3 text-sm text-white/68">
+              <div className="mt-5 grid gap-2 text-sm text-white/68 sm:grid-cols-2 xl:grid-cols-5">
                 <span><strong className="text-white">{vm.followingLabel.split(" ")[0]}</strong> Following</span>
                 <span><strong className="text-white">{vm.followersLabel.split(" ")[0]}</strong> Followers</span>
                 <span>{vm.avgHoldLabel}</span>
@@ -162,7 +165,8 @@ export function TraderPerformanceView({
       <div className="terminal-dot-grid px-5 pb-5 pt-5 sm:px-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-[3rem] font-semibold leading-none tracking-tight text-white sm:text-[4rem]">
+            <div className="text-[11px] uppercase tracking-[0.24em] text-white/38">Primary performance</div>
+            <div className="mt-2 text-[3rem] font-semibold leading-none tracking-tight text-white sm:text-[4rem]">
               {vm.heroValueLabel}
             </div>
             {vm.heroSubValueLabel ? (
@@ -207,8 +211,8 @@ export function TraderPerformanceView({
         <div className="mt-8">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <h2 className="text-[1.9rem] font-semibold text-white">{vm.positionsHeading}</h2>
-              {vm.positionsCountLabel ? <span className="text-sm text-white/44">• {vm.positionsCountLabel}</span> : null}
+              <h2 className="text-[1.65rem] font-semibold text-white">{vm.positionsHeading}</h2>
+              {vm.positionsCountLabel ? <span className="text-sm text-white/44">| {vm.positionsCountLabel}</span> : null}
             </div>
           </div>
 
@@ -282,7 +286,7 @@ export function DenseLeaderboardView({
       <div className="flex items-end justify-between gap-4 border-b border-white/6 pb-4">
         <div>
           {eyebrow ? <div className="text-sm text-white/38">{eyebrow}</div> : null}
-          <h1 className="mt-1 text-[2rem] font-semibold text-white">{title}</h1>
+          <h1 className="mt-1 text-[1.8rem] font-semibold text-white">{title}</h1>
           {subtitle ? <p className="mt-1 text-sm text-white/50">{subtitle}</p> : null}
         </div>
       </div>
@@ -306,12 +310,8 @@ export function DenseLeaderboardView({
       ) : null}
 
       <div className="mt-6 flex items-center justify-between gap-3">
-        <h2 className="text-[2rem] font-semibold text-white">Top traders</h2>
+        <h2 className="text-[1.75rem] font-semibold text-white">Top traders</h2>
         <TerminalChipTabs options={timeframeTabs} />
-      </div>
-
-      <div className="mt-3">
-        <TerminalChipTabs options={modeTabs} />
       </div>
 
       <div className="mt-5 space-y-3">
@@ -335,20 +335,31 @@ export function DenseLeaderboardView({
             </Avatar>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[1.15rem] font-semibold text-white sm:text-[1.3rem]">{row.displayName}</div>
-              {row.handle ? <div className="mt-1 truncate text-sm text-white/48">{row.handle}</div> : null}
+              <div className="mt-1 truncate text-sm text-white/48">
+                {[row.handle, row.metadataLabel].filter(Boolean).join(" | ")}
+              </div>
             </div>
             <div className="shrink-0 text-right">
               <div className="text-[1.35rem] font-semibold leading-none">
                 <ValueTone tone={row.valueTone}>{row.valueLabel}</ValueTone>
               </div>
-              <div className="mt-2 flex justify-end gap-2">
-                {row.metaBadges.slice(0, 2).map((badge) => (
-                  <span key={badge} className="terminal-chip text-[10px] opacity-80">
-                    {badge}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-1 text-xs text-white/42">{row.subLabel}</div>
+              {row.changeLabel ? (
+                <div className="mt-1 text-xs font-medium">
+                  <ValueTone tone={row.changeTone}>{row.changeLabel}</ValueTone>
+                </div>
+              ) : null}
+              {row.recentTokens.length ? (
+                <div className="mt-2 flex justify-end gap-1.5">
+                  {row.recentTokens.slice(0, 3).map((token) => (
+                    <Avatar key={`${row.id}:${token.address}`} className="h-7 w-7 border border-white/8">
+                      <AvatarImage src={token.image ?? undefined} />
+                      <AvatarFallback className="bg-white/5 text-[10px] text-white">
+                        {(token.symbol ?? "?").charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </button>
         ))}

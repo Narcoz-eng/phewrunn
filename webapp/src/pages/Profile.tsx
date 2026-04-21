@@ -69,7 +69,11 @@ import { BannerPicker } from "@/components/profile/BannerPicker";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2, ImageIcon } from "lucide-react";
 import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
-import { buildTraderPerformanceVm } from "@/viewmodels/trader-performance";
+import {
+  buildTraderPerformanceVm,
+  buildTraderPerformanceVmFromSnapshot,
+  type UserPerformanceSnapshot,
+} from "@/viewmodels/trader-performance";
 
 interface ExtendedUser extends User {
   followersCount?: number;
@@ -556,6 +560,23 @@ export default function Profile() {
     },
     initialData: user?.id ? (cachedWalletOverview ?? undefined) : undefined,
     enabled: !!user?.id && !!user?.walletAddress && enableWalletOverviewQuery,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+
+  const { data: performanceSnapshot } = useQuery({
+    queryKey: ["profile", "performance", user?.id ?? session?.user?.id ?? "anonymous"],
+    queryFn: async () => {
+      const identifier = user?.username ?? user?.id ?? session?.user?.username ?? session?.user?.id;
+      if (!identifier) {
+        throw new Error("User not found");
+      }
+      return await api.get<UserPerformanceSnapshot>(`/api/users/${identifier}/performance`);
+    },
+    enabled: Boolean(user?.id ?? session?.user?.id),
     staleTime: 60_000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -1063,8 +1084,23 @@ export default function Profile() {
   }, [posts]);
 
   const performanceVm = useMemo(
-    () =>
-      canonicalProfileUser
+    () => {
+      if (performanceSnapshot && canonicalProfileUser) {
+        return buildTraderPerformanceVmFromSnapshot({
+          snapshot: {
+            ...performanceSnapshot,
+            walletOverview:
+              performanceSnapshot.walletOverview ??
+              (walletOverview
+                ? { ...walletOverview, address: displayWalletAddress ?? walletOverview.address }
+                : null),
+          },
+          avatarUrl: getAvatarUrl(canonicalProfileUser.id, canonicalProfileUser.image),
+          postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
+        });
+      }
+
+      return canonicalProfileUser
         ? buildTraderPerformanceVm({
             displayName: canonicalProfileUser.name || canonicalProfileUser.username || "Trader",
             handle: canonicalProfileUser.username ? `@${canonicalProfileUser.username}` : null,
@@ -1082,12 +1118,14 @@ export default function Profile() {
             recentTrades,
             postsFallbackHrefBuilder: (address) => (address ? `/token/${address}` : null),
           })
-        : null,
+        : null;
+    },
     [
       canonicalProfileUser,
       displayWalletAddress,
       followersCount,
       followingCount,
+      performanceSnapshot,
       recentTrades,
       walletOverview,
     ]

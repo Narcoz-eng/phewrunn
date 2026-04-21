@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma, isPrismaPoolPressureActive, isTransientPrismaError, notePrismaPoolPressure } from "../prisma.js";
 import { type AuthVariables } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete, redisGetString, redisIncr, redisSetString } from "../lib/redis.js";
@@ -60,6 +61,11 @@ type LeaderboardStatsPayload = {
     postsThisWeek: number;
   }>;
 };
+
+const LeaderboardPerformanceQuerySchema = z.object({
+  period: z.enum(["7d", "30d", "all"]).default("30d"),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+});
 
 const DAILY_GAINERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 10_000;
 const TOP_USERS_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 15_000;
@@ -1570,6 +1576,127 @@ leaderboardRouter.get("/top-users", zValidator("query", LeaderboardQuerySchema),
   } finally {
     topUsersInFlight.delete(topUsersCacheKey);
   }
+});
+
+leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformanceQuerySchema), async (c) => {
+  c.header("Cache-Control", buildLeaderboardRouteHeaders()["Cache-Control"]);
+  const { period, limit } = c.req.valid("query");
+
+  const orderBy =
+    period === "7d"
+      ? [{ avgRoi7d: "desc" as const }, { winRate7d: "desc" as const }, { trustScore: "desc" as const }]
+      : period === "30d"
+        ? [{ avgRoi30d: "desc" as const }, { winRate30d: "desc" as const }, { trustScore: "desc" as const }]
+        : [{ trustScore: "desc" as const }, { avgRoi30d: "desc" as const }, { firstCallCount: "desc" as const }];
+
+  const users = await prisma.user.findMany({
+    where:
+      period === "7d"
+        ? {
+            OR: [
+              { avgRoi7d: { not: null } },
+              { winRate7d: { not: null } },
+              { firstCallCount: { gt: 0 } },
+            ],
+          }
+        : period === "30d"
+          ? {
+              OR: [
+                { avgRoi30d: { not: null } },
+                { winRate30d: { not: null } },
+                { firstCallCount: { gt: 0 } },
+              ],
+            }
+          : {
+              OR: [
+                { trustScore: { not: null } },
+                { firstCallCount: { gt: 0 } },
+              ],
+            },
+    orderBy,
+    take: limit,
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      image: true,
+      isVerified: true,
+      avgRoi7d: true,
+      avgRoi30d: true,
+      winRate7d: true,
+      winRate30d: true,
+      trustScore: true,
+      firstCallCount: true,
+      _count: {
+        select: {
+          posts: true,
+        },
+      },
+    },
+  });
+
+  const recentCalls = users.length
+    ? await prisma.post.findMany({
+        where: {
+          authorId: { in: users.map((user) => user.id) },
+          contractAddress: { not: null },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit * 8,
+        select: {
+          authorId: true,
+          contractAddress: true,
+          tokenSymbol: true,
+          tokenImage: true,
+        },
+      })
+    : [];
+
+  const recentTokensByUser = new Map<string, Array<{ address: string; symbol: string | null; image: string | null }>>();
+  for (const call of recentCalls) {
+    if (!call.contractAddress) continue;
+    const existing = recentTokensByUser.get(call.authorId) ?? [];
+    if (existing.some((token) => token.address === call.contractAddress)) {
+      continue;
+    }
+    existing.push({
+      address: call.contractAddress,
+      symbol: call.tokenSymbol ?? null,
+      image: call.tokenImage ?? null,
+    });
+    recentTokensByUser.set(call.authorId, existing);
+  }
+
+  return c.json({
+    data: users.map((user, index) => ({
+      rank: index + 1,
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        image: user.image,
+        isVerified: user.isVerified,
+      },
+      performance: {
+        avgRoi:
+          period === "7d"
+            ? user.avgRoi7d
+            : period === "30d"
+              ? user.avgRoi30d
+              : user.avgRoi30d,
+        winRate:
+          period === "7d"
+            ? user.winRate7d
+            : period === "30d"
+              ? user.winRate30d
+              : user.winRate30d,
+        trustScore: user.trustScore,
+        callsCount: user._count.posts,
+        firstCallCount: user.firstCallCount,
+      },
+      recentTokens: (recentTokensByUser.get(user.id) ?? []).slice(0, 3),
+    })),
+  });
 });
 
 /**

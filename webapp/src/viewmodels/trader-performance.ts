@@ -40,10 +40,16 @@ export type LeaderboardRowVM = {
   handle: string | null;
   avatarUrl: string | null;
   avatarFallback: string;
+  metadataLabel: string;
   valueLabel: string;
   valueTone: "gain" | "loss" | "neutral";
-  subLabel: string;
-  metaBadges: string[];
+  changeLabel: string | null;
+  changeTone: "gain" | "loss" | "neutral";
+  recentTokens: Array<{
+    address: string;
+    symbol: string | null;
+    image: string | null;
+  }>;
 };
 
 export type LeaderboardPinnedRankVM = {
@@ -66,29 +72,78 @@ type TraderPerformanceInput = {
   walletData?: WalletData | null;
   recentTrades?: RecentTrade[];
   postsFallbackHrefBuilder?: (address: string | null) => string | null;
+  chartPointsOverride?: number[] | null;
+  heroValueLabelOverride?: string | null;
+  heroSubValueLabelOverride?: string | null;
+  heroSubCaptionOverride?: string | null;
+  heroSubToneOverride?: "gain" | "loss" | "neutral";
+  positionsHeadingOverride?: string | null;
 };
 
-type LeaderboardTopUser = {
+type LeaderboardPerformanceEntry = {
   rank: number;
   user: {
     id: string;
     username: string | null;
     name: string;
     image: string | null;
-    level: number;
-    xp: number;
     isVerified?: boolean;
   };
-  stats: {
-    totalAlphas: number;
-    recentAlphas?: number;
-    wins: number;
-    losses: number;
-    winRate: number;
+  performance: {
+    avgRoi: number | null;
+    winRate: number | null;
+    trustScore: number | null;
+    callsCount: number;
+    firstCallCount: number;
   };
+  recentTokens: Array<{
+    address: string;
+    symbol: string | null;
+    image: string | null;
+  }>;
 };
 
-type LeaderboardMetricMode = "level" | "activity" | "winrate";
+export type UserPerformanceSnapshot = {
+  source: "wallet" | "calls";
+  user: {
+    id: string;
+    name: string;
+    username: string | null;
+    image: string | null;
+    bio: string | null;
+    createdAt: string;
+    isVerified: boolean;
+    followersCount: number;
+    followingCount: number;
+  };
+  callMetrics: {
+    callsCount: number;
+    winRate7d: number | null;
+    winRate30d: number | null;
+    avgRoi7d: number | null;
+    avgRoi30d: number | null;
+    trustScore: number | null;
+    reputationTier: string | null;
+    firstCallCount: number;
+    firstCallAvgRoi: number | null;
+  };
+  walletOverview: WalletData | null;
+  chartPoints: number[];
+  recentCalls: Array<{
+    id: string;
+    content: string;
+    contractAddress: string | null;
+    chainType: string | null;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    entryMcap: number | null;
+    currentMcap: number | null;
+    settledAt: string | null;
+    createdAt: string;
+    isWin: boolean | null;
+  }>;
+};
 
 function formatCompactNumber(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "0";
@@ -263,48 +318,112 @@ export function buildTraderPerformanceVm(input: TraderPerformanceInput): TraderP
     avgHoldLabel: formatAverageHoldLabel(recentTrades),
     tradeCountLabel: `${formatCompactNumber(recentTradeCount)} trades`,
     joinedLabel: formatJoinDate(input.joinedAt),
-    heroValueLabel: totalPnlUsd !== null ? formatUsd(totalPnlUsd) : `${formatCompactNumber(recentTradeCount)} trades`,
+    heroValueLabel:
+      input.heroValueLabelOverride ??
+      (totalPnlUsd !== null ? formatUsd(totalPnlUsd) : `${formatCompactNumber(recentTradeCount)} trades`),
     heroSubValueLabel:
-      totalPnlUsd !== null
-        ? recent24hCount > 0
-          ? `${recent24hCount} closed trades`
-          : "No closed trades"
+      input.heroSubValueLabelOverride !== undefined
+        ? input.heroSubValueLabelOverride
+        : totalPnlUsd !== null
+          ? recent24hCount > 0
+            ? `${recent24hCount} closed trades`
+            : "No closed trades"
+          : recent24hCount > 0
+            ? `${recent24hCount} closed trades`
+            : null,
+    heroSubCaption:
+      input.heroSubCaptionOverride !== undefined
+        ? input.heroSubCaptionOverride
         : recent24hCount > 0
-          ? `${recent24hCount} closed trades`
-          : null,
-    heroSubCaption: recent24hCount > 0 ? "24h activity" : totalPnlUsd !== null ? "24h activity" : null,
-    heroSubTone: totalPnlUsd !== null && totalPnlUsd >= 0 ? "gain" : totalPnlUsd !== null ? "loss" : "neutral",
-    chartPoints: buildSparklinePoints(walletData, recentTrades),
+          ? "24h activity"
+          : totalPnlUsd !== null
+            ? "24h activity"
+            : null,
+    heroSubTone:
+      input.heroSubToneOverride ??
+      (totalPnlUsd !== null && totalPnlUsd >= 0 ? "gain" : totalPnlUsd !== null ? "loss" : "neutral"),
+    chartPoints: input.chartPointsOverride && input.chartPointsOverride.length > 0
+      ? input.chartPointsOverride
+      : buildSparklinePoints(walletData, recentTrades),
     cashBalanceLabel:
       walletData?.balanceUsd != null
         ? formatUsd(walletData.balanceUsd)
         : walletData?.balanceUsdc != null
           ? formatUsd(walletData.balanceUsdc)
           : null,
-    positionsHeading: tokenPositions.length > 0 ? "Open positions" : "Recent calls",
+    positionsHeading: input.positionsHeadingOverride ?? (tokenPositions.length > 0 ? "Open positions" : "Recent calls"),
     positionsCountLabel: positions.length > 0 ? `${positions.length}` : null,
     positions,
   };
 }
 
+export function buildTraderPerformanceVmFromSnapshot(params: {
+  snapshot: UserPerformanceSnapshot;
+  avatarUrl: string | null;
+  postsFallbackHrefBuilder?: (address: string | null) => string | null;
+}): TraderPerformanceVM {
+  const { snapshot } = params;
+  const recentTrades: RecentTrade[] = snapshot.recentCalls.map((call) => ({
+    id: call.id,
+    content: call.content || call.tokenName || call.tokenSymbol || "Recent call",
+    contractAddress: call.contractAddress,
+    chainType: call.chainType,
+    entryMcap: call.entryMcap,
+    currentMcap: call.currentMcap,
+    settled: true,
+    settledAt: call.settledAt,
+    isWin: call.isWin,
+    createdAt: call.createdAt,
+  }));
+  const primaryAvgRoi = snapshot.callMetrics.avgRoi30d ?? snapshot.callMetrics.avgRoi7d;
+
+  return buildTraderPerformanceVm({
+    displayName: snapshot.user.name || snapshot.user.username || "Trader",
+    handle: snapshot.user.username ? `@${snapshot.user.username}` : null,
+    avatarUrl: params.avatarUrl,
+    bio: snapshot.user.bio,
+    followersCount: snapshot.user.followersCount,
+    followingCount: snapshot.user.followingCount,
+    joinedAt: snapshot.user.createdAt,
+    walletData: snapshot.walletOverview ?? undefined,
+    recentTrades,
+    postsFallbackHrefBuilder: params.postsFallbackHrefBuilder,
+    chartPointsOverride: snapshot.chartPoints,
+    heroValueLabelOverride:
+      snapshot.source === "wallet"
+        ? undefined
+        : formatPercent(primaryAvgRoi, 1) ?? `${formatCompactNumber(snapshot.callMetrics.callsCount)} calls`,
+    heroSubValueLabelOverride:
+      snapshot.callMetrics.winRate30d !== null && Number.isFinite(snapshot.callMetrics.winRate30d)
+        ? `${snapshot.callMetrics.winRate30d.toFixed(0)}% win rate`
+        : snapshot.callMetrics.trustScore !== null && Number.isFinite(snapshot.callMetrics.trustScore)
+          ? `${snapshot.callMetrics.trustScore.toFixed(0)} trust`
+          : null,
+    heroSubCaptionOverride:
+      snapshot.callMetrics.winRate30d !== null && Number.isFinite(snapshot.callMetrics.winRate30d)
+        ? "30d call record"
+        : snapshot.callMetrics.trustScore !== null && Number.isFinite(snapshot.callMetrics.trustScore)
+          ? "Trader trust"
+          : null,
+    heroSubToneOverride:
+      snapshot.source === "wallet"
+        ? "neutral"
+        : primaryAvgRoi !== null && Number.isFinite(primaryAvgRoi)
+          ? primaryAvgRoi >= 0
+            ? "gain"
+            : "loss"
+          : "neutral",
+    positionsHeadingOverride: snapshot.source === "wallet" ? "Open positions" : "Recent calls",
+  });
+}
+
 export function buildLeaderboardRowsVm(
-  users: LeaderboardTopUser[],
-  mode: LeaderboardMetricMode
+  users: LeaderboardPerformanceEntry[]
 ): LeaderboardRowVM[] {
   return users.map((item) => {
-    const valueLabel =
-      mode === "activity"
-        ? `${item.stats.recentAlphas ?? item.stats.totalAlphas ?? 0}`
-        : mode === "winrate"
-          ? `${item.stats.winRate.toFixed(1)}%`
-          : `LVL ${item.user.level}`;
-
-    const subLabel =
-      mode === "activity"
-        ? `${item.stats.totalAlphas} total calls`
-        : mode === "winrate"
-          ? `${item.stats.wins}W / ${item.stats.losses}L`
-          : `${item.user.xp.toLocaleString()} XP`;
+    const avgRoi = item.performance.avgRoi;
+    const winRate = item.performance.winRate;
+    const trustScore = item.performance.trustScore;
 
     return {
       id: item.user.id,
@@ -313,47 +432,46 @@ export function buildLeaderboardRowsVm(
       handle: item.user.username ? `@${item.user.username}` : null,
       avatarUrl: item.user.image ?? null,
       avatarFallback: (item.user.name || item.user.username || "?").charAt(0).toUpperCase(),
-      valueLabel,
-      valueTone:
-        mode === "winrate"
-          ? item.stats.winRate >= 60
+      metadataLabel: `${item.performance.callsCount} calls • ${item.performance.firstCallCount} first`,
+      valueLabel: formatPercent(avgRoi, 1) ?? "0.0%",
+      valueTone: avgRoi === null ? "neutral" : avgRoi >= 0 ? "gain" : "loss",
+      changeLabel:
+        winRate !== null && Number.isFinite(winRate)
+          ? `${winRate.toFixed(0)}% win`
+          : trustScore !== null && Number.isFinite(trustScore)
+            ? `${trustScore.toFixed(0)} trust`
+            : null,
+      changeTone:
+        winRate !== null && Number.isFinite(winRate)
+          ? winRate >= 60
             ? "gain"
-            : item.stats.winRate > 40
+            : winRate >= 40
               ? "neutral"
               : "loss"
-          : mode === "activity"
-            ? "gain"
-            : "neutral",
-      subLabel,
-      metaBadges: [
-        `${item.stats.totalAlphas} calls`,
-        `${item.stats.winRate.toFixed(0)}% win`,
-      ],
+          : "neutral",
+      recentTokens: item.recentTokens ?? [],
     };
   });
 }
 
 export function buildPinnedRankVm(
-  users: LeaderboardTopUser[],
-  currentUserId: string | null,
-  mode: LeaderboardMetricMode
+  users: LeaderboardPerformanceEntry[],
+  currentUserId: string | null
 ): LeaderboardPinnedRankVM | null {
   if (!currentUserId) return null;
   const row = users.find((item) => item.user.id === currentUserId);
   if (!row) return null;
 
-  const valueLabel =
-    mode === "activity"
-      ? `${row.stats.recentAlphas ?? row.stats.totalAlphas ?? 0} trades`
-      : mode === "winrate"
-        ? `${row.stats.winRate.toFixed(1)}% win rate`
-        : `${row.user.xp.toLocaleString()} XP`;
-
   return {
     title: "Your rank",
     rankLabel: `#${row.rank}`,
-    valueLabel,
-    valueTone: mode === "winrate" && row.stats.winRate >= 60 ? "gain" : "neutral",
+    valueLabel: formatPercent(row.performance.avgRoi, 1) ?? "0.0%",
+    valueTone:
+      typeof row.performance.avgRoi === "number" && Number.isFinite(row.performance.avgRoi)
+        ? row.performance.avgRoi >= 0
+          ? "gain"
+          : "loss"
+        : "neutral",
     avatarUrl: row.user.image ?? null,
     avatarFallback: (row.user.name || row.user.username || "?").charAt(0).toUpperCase(),
   };

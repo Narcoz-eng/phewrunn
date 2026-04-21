@@ -1190,6 +1190,50 @@ type WalletOverviewPayload = {
   }>;
 };
 
+type UserPerformanceRecentCallPayload = {
+  id: string;
+  content: string;
+  contractAddress: string | null;
+  chainType: string | null;
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  tokenImage: string | null;
+  entryMcap: number | null;
+  currentMcap: number | null;
+  settledAt: string | null;
+  createdAt: string;
+  isWin: boolean | null;
+};
+
+type UserPerformancePayload = {
+  source: "wallet" | "calls";
+  user: {
+    id: string;
+    name: string;
+    username: string | null;
+    image: string | null;
+    bio: string | null;
+    createdAt: string;
+    isVerified: boolean;
+    followersCount: number;
+    followingCount: number;
+  };
+  callMetrics: {
+    callsCount: number;
+    winRate7d: number | null;
+    winRate30d: number | null;
+    avgRoi7d: number | null;
+    avgRoi30d: number | null;
+    trustScore: number | null;
+    reputationTier: string | null;
+    firstCallCount: number;
+    firstCallAvgRoi: number | null;
+  };
+  walletOverview: WalletOverviewPayload | null;
+  chartPoints: number[];
+  recentCalls: UserPerformanceRecentCallPayload[];
+};
+
 function buildWalletStatusPayload(params: {
   walletAddress: string | null | undefined;
   walletProvider?: string | null | undefined;
@@ -1237,6 +1281,166 @@ function buildEmptyWalletOverview(connected: boolean): WalletOverviewPayload {
     totalVolumeSoldUsd: null,
     totalProfitUsd: null,
     tokenPositions: [],
+  };
+}
+
+async function resolveWalletOverviewForUser(userId: string, walletAddress: string | null | undefined): Promise<WalletOverviewPayload> {
+  if (!walletAddress || !isLikelySolanaWalletAddress(walletAddress) || !isHeliusConfigured()) {
+    return buildEmptyWalletOverview(Boolean(walletAddress));
+  }
+
+  let postedTokens: Array<{
+    contractAddress: string | null;
+    chainType: string | null;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    createdAt: Date;
+  }> = [];
+
+  try {
+    postedTokens = await withPrismaRetry(
+      () =>
+        prisma.post.findMany({
+          where: {
+            authorId: userId,
+            chainType: "solana",
+            contractAddress: { not: null },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 200,
+          select: {
+            contractAddress: true,
+            chainType: true,
+            tokenName: true,
+            tokenSymbol: true,
+            tokenImage: true,
+            createdAt: true,
+          },
+        }),
+      { label: "users:wallet-overview:posts" }
+    );
+  } catch (error) {
+    if (isTransientPrismaError(error)) {
+      console.warn("[users/wallet-overview] posted-token lookup unavailable; returning empty overview", {
+        userId,
+        message: getErrorMessage(error),
+      });
+      return buildEmptyWalletOverview(true);
+    }
+    throw error;
+  }
+
+  if (postedTokens.length === 0) {
+    return buildEmptyWalletOverview(true);
+  }
+
+  const tokenMetaByMint = new Map<string, {
+    mint: string;
+    tokenName: string | null;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    firstPostedAt: Date;
+  }>();
+
+  let earliestPostMs: number | null = null;
+  for (const post of postedTokens) {
+    const mint = post.contractAddress;
+    if (!mint) continue;
+    const createdAtMs = post.createdAt.getTime();
+    if (earliestPostMs === null || createdAtMs < earliestPostMs) {
+      earliestPostMs = createdAtMs;
+    }
+
+    if (!tokenMetaByMint.has(mint)) {
+      tokenMetaByMint.set(mint, {
+        mint,
+        tokenName: post.tokenName,
+        tokenSymbol: post.tokenSymbol,
+        tokenImage: post.tokenImage,
+        firstPostedAt: post.createdAt,
+      });
+    }
+  }
+
+  if (tokenMetaByMint.size > PROFILE_WALLET_OVERVIEW_MAX_TOKENS) {
+    const limited = new Map<string, {
+      mint: string;
+      tokenName: string | null;
+      tokenSymbol: string | null;
+      tokenImage: string | null;
+      firstPostedAt: Date;
+    }>();
+    for (const [mint, meta] of tokenMetaByMint.entries()) {
+      if (limited.size >= PROFILE_WALLET_OVERVIEW_MAX_TOKENS) break;
+      limited.set(mint, meta);
+    }
+    tokenMetaByMint.clear();
+    for (const [mint, meta] of limited.entries()) {
+      tokenMetaByMint.set(mint, meta);
+    }
+  }
+
+  let portfolio: Awaited<ReturnType<typeof getWalletPortfolioOverviewForPostedTokens>> | null = null;
+  try {
+    portfolio = await Promise.race([
+      getWalletPortfolioOverviewForPostedTokens({
+        walletAddress,
+        tokens: [...tokenMetaByMint.values()].map((t) => ({ mint: t.mint, chainType: "solana" })),
+        sinceMs: earliestPostMs,
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), PROFILE_WALLET_OVERVIEW_TIMEOUT_MS)),
+    ]);
+    if (portfolio === null) {
+      console.warn("[users/wallet-overview] Timed out or unavailable; returning fallback", {
+        userId,
+      });
+    }
+  } catch (error) {
+    console.warn("[users/wallet-overview] Failed to build wallet overview; returning fallback", {
+      userId,
+      error,
+    });
+    portfolio = null;
+  }
+
+  if (!portfolio) {
+    return buildEmptyWalletOverview(true);
+  }
+
+  const tokenPositions = [...tokenMetaByMint.values()]
+    .map((meta) => {
+      const wallet = portfolio.tokens[meta.mint];
+      if (!wallet) return null;
+      return {
+        mint: meta.mint,
+        tokenName: meta.tokenName,
+        tokenSymbol: meta.tokenSymbol,
+        tokenImage: meta.tokenImage,
+        holdingAmount: wallet.holdingAmount ?? null,
+        holdingUsd: wallet.holdingUsd ?? null,
+        boughtAmount: wallet.boughtAmount ?? null,
+        soldAmount: wallet.soldAmount ?? null,
+        totalPnlUsd: wallet.totalPnlUsd ?? null,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => {
+      const aValue = a.holdingUsd ?? a.totalPnlUsd ?? 0;
+      const bValue = b.holdingUsd ?? b.totalPnlUsd ?? 0;
+      return bValue - aValue;
+    });
+
+  return {
+    connected: true,
+    balanceSol: portfolio.balanceSol,
+    balanceUsd: portfolio.balanceUsd,
+    totalVolumeBoughtSol: portfolio.totalVolumeBoughtSol,
+    totalVolumeSoldSol: portfolio.totalVolumeSoldSol,
+    totalVolumeBoughtUsd: portfolio.totalVolumeBoughtUsd,
+    totalVolumeSoldUsd: portfolio.totalVolumeSoldUsd,
+    totalProfitUsd: portfolio.totalProfitUsd,
+    tokenPositions,
   };
 }
 
@@ -2127,170 +2331,165 @@ usersRouter.get("/:identifier/wallet/overview", requireAuth, async (c) => {
     );
   }
 
-  if (!user.walletAddress || !isLikelySolanaWalletAddress(user.walletAddress) || !isHeliusConfigured()) {
-    return c.json({
-      data: buildEmptyWalletOverview(Boolean(user.walletAddress)),
-    });
-  }
+  const walletOverview = await resolveWalletOverviewForUser(user.id, user.walletAddress);
+  return c.json({ data: walletOverview });
+});
 
-  let postedTokens: Array<{
-    contractAddress: string | null;
-    chainType: string | null;
-    tokenName: string | null;
-    tokenSymbol: string | null;
-    tokenImage: string | null;
-    createdAt: Date;
-  }> = [];
+usersRouter.get("/:identifier/performance", async (c) => {
+  const identifier = c.req.param("identifier");
+  const sessionUser = c.get("user");
 
-  try {
-    postedTokens = await withPrismaRetry(
-      () =>
-        prisma.post.findMany({
-          where: {
-            authorId: user.id,
-            chainType: "solana",
-            contractAddress: { not: null },
+  const user = await withPrismaRetry(
+    () =>
+      prisma.user.findFirst({
+        where: buildUserIdentifierWhere(identifier),
+        select: {
+          id: true,
+          name: true,
+          username: true,
+          image: true,
+          bio: true,
+          createdAt: true,
+          isVerified: true,
+          walletAddress: true,
+          winRate7d: true,
+          winRate30d: true,
+          avgRoi7d: true,
+          avgRoi30d: true,
+          trustScore: true,
+          reputationTier: true,
+          firstCallCount: true,
+          firstCallAvgRoi: true,
+          _count: {
+            select: {
+              followers: true,
+              following: true,
+              posts: true,
+            },
           },
-          orderBy: { createdAt: "desc" },
-          take: 200,
-          select: {
-            contractAddress: true,
-            chainType: true,
-            tokenName: true,
-            tokenSymbol: true,
-            tokenImage: true,
-            createdAt: true,
-          },
-        }),
-      { label: "users:wallet-overview:posts" }
-    );
-  } catch (error) {
-    if (isTransientPrismaError(error)) {
-      console.warn("[users/wallet-overview] posted-token lookup unavailable; returning empty overview", {
-        userId: user.id,
-        message: getErrorMessage(error),
-      });
-      return c.json({ data: buildEmptyWalletOverview(true) });
-    }
-    throw error;
-  }
-
-  if (postedTokens.length === 0) {
-    return c.json({
-      data: buildEmptyWalletOverview(true),
-    });
-  }
-
-  const tokenMetaByMint = new Map<string, {
-    mint: string;
-    tokenName: string | null;
-    tokenSymbol: string | null;
-    tokenImage: string | null;
-    firstPostedAt: Date;
-  }>();
-
-  let earliestPostMs: number | null = null;
-  for (const post of postedTokens) {
-    const mint = post.contractAddress;
-    if (!mint) continue;
-    const createdAtMs = post.createdAt.getTime();
-    if (earliestPostMs === null || createdAtMs < earliestPostMs) {
-      earliestPostMs = createdAtMs;
-    }
-
-    if (!tokenMetaByMint.has(mint)) {
-      tokenMetaByMint.set(mint, {
-        mint,
-        tokenName: post.tokenName,
-        tokenSymbol: post.tokenSymbol,
-        tokenImage: post.tokenImage,
-        firstPostedAt: post.createdAt,
-      });
-    }
-  }
-
-  if (tokenMetaByMint.size > PROFILE_WALLET_OVERVIEW_MAX_TOKENS) {
-    const limited = new Map<string, {
-      mint: string;
-      tokenName: string | null;
-      tokenSymbol: string | null;
-      tokenImage: string | null;
-      firstPostedAt: Date;
-    }>();
-    for (const [mint, meta] of tokenMetaByMint.entries()) {
-      if (limited.size >= PROFILE_WALLET_OVERVIEW_MAX_TOKENS) break;
-      limited.set(mint, meta);
-    }
-    tokenMetaByMint.clear();
-    for (const [mint, meta] of limited.entries()) {
-      tokenMetaByMint.set(mint, meta);
-    }
-  }
-  let portfolio: Awaited<ReturnType<typeof getWalletPortfolioOverviewForPostedTokens>> | null = null;
-  try {
-    portfolio = await Promise.race([
-      getWalletPortfolioOverviewForPostedTokens({
-        walletAddress: user.walletAddress,
-        tokens: [...tokenMetaByMint.values()].map((t) => ({ mint: t.mint, chainType: "solana" })),
-        sinceMs: earliestPostMs,
+        },
       }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), PROFILE_WALLET_OVERVIEW_TIMEOUT_MS)),
-    ]);
-    if (portfolio === null) {
-      console.warn("[users/wallet-overview] Timed out or unavailable; returning fallback", {
-        userId: user.id,
-      });
-    }
-  } catch (error) {
-    console.warn("[users/wallet-overview] Failed to build wallet overview; returning fallback", {
-      userId: user.id,
-      error,
-    });
-    portfolio = null;
+    { label: "users:performance:user" }
+  );
+
+  if (!user) {
+    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  if (!portfolio) {
-    return c.json({
-      data: buildEmptyWalletOverview(true),
-    });
-  }
+  const settledCalls = await withPrismaRetry(
+    () =>
+      prisma.post.findMany({
+        where: {
+          authorId: user.id,
+          settled: true,
+        },
+        orderBy: [{ settledAt: "desc" }, { createdAt: "desc" }],
+        take: 24,
+        select: {
+          id: true,
+          content: true,
+          contractAddress: true,
+          chainType: true,
+          tokenName: true,
+          tokenSymbol: true,
+          tokenImage: true,
+          entryMcap: true,
+          currentMcap: true,
+          settledAt: true,
+          createdAt: true,
+          isWin: true,
+        },
+      }),
+    { label: "users:performance:settled-calls" }
+  );
 
-  const tokenPositions = [...tokenMetaByMint.values()]
-    .map((meta) => {
-      const wallet = portfolio.tokens[meta.mint];
-      if (!wallet) return null;
-      return {
-        mint: meta.mint,
-        tokenName: meta.tokenName,
-        tokenSymbol: meta.tokenSymbol,
-        tokenImage: meta.tokenImage,
-        holdingAmount: wallet.holdingAmount ?? null,
-        holdingUsd: wallet.holdingUsd ?? null,
-        boughtAmount: wallet.boughtAmount ?? null,
-        soldAmount: wallet.soldAmount ?? null,
-        totalPnlUsd: wallet.totalPnlUsd ?? null,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => item !== null)
-    .sort((a, b) => {
-      const aValue = a.holdingUsd ?? a.totalPnlUsd ?? 0;
-      const bValue = b.holdingUsd ?? b.totalPnlUsd ?? 0;
-      return bValue - aValue;
+  const traderMetricRows = await withPrismaRetry(
+    () =>
+      prisma.traderMetricDaily.findMany({
+        where: { traderId: user.id },
+        orderBy: { bucketDate: "desc" },
+        take: 30,
+        select: {
+          avgRoi: true,
+        },
+      }),
+    { label: "users:performance:chart" }
+  ).catch(() => []);
+
+  const fallbackChartPoints = settledCalls
+    .slice()
+    .reverse()
+    .map((call) => {
+      if (typeof call.entryMcap !== "number" || !Number.isFinite(call.entryMcap) || call.entryMcap <= 0) {
+        return 0;
+      }
+      if (typeof call.currentMcap !== "number" || !Number.isFinite(call.currentMcap)) {
+        return 0;
+      }
+      return Math.round((((call.currentMcap - call.entryMcap) / call.entryMcap) * 100) * 100) / 100;
     });
 
-  return c.json({
-    data: {
-      connected: true,
-      balanceSol: portfolio.balanceSol,
-      balanceUsd: portfolio.balanceUsd,
-      totalVolumeBoughtSol: portfolio.totalVolumeBoughtSol,
-      totalVolumeSoldSol: portfolio.totalVolumeSoldSol,
-      totalVolumeBoughtUsd: portfolio.totalVolumeBoughtUsd,
-      totalVolumeSoldUsd: portfolio.totalVolumeSoldUsd,
-      totalProfitUsd: portfolio.totalProfitUsd,
-      tokenPositions,
-    }
-  });
+  const chartPoints =
+    traderMetricRows.length > 0
+      ? traderMetricRows
+          .slice()
+          .reverse()
+          .map((row) => Math.round((row.avgRoi ?? 0) * 100) / 100)
+      : fallbackChartPoints.length > 0
+        ? fallbackChartPoints
+        : [0];
+
+  const walletOverview =
+    sessionUser?.id === user.id
+      ? await resolveWalletOverviewForUser(user.id, user.walletAddress)
+      : null;
+
+  const payload: UserPerformancePayload = {
+    source:
+      walletOverview?.connected && Array.isArray(walletOverview.tokenPositions) && walletOverview.tokenPositions.length > 0
+        ? "wallet"
+        : "calls",
+    user: {
+      id: user.id,
+      name: user.name,
+      username: user.username,
+      image: user.image,
+      bio: user.bio,
+      createdAt: user.createdAt.toISOString(),
+      isVerified: user.isVerified,
+      followersCount: user._count.followers,
+      followingCount: user._count.following,
+    },
+    callMetrics: {
+      callsCount: user._count.posts,
+      winRate7d: user.winRate7d,
+      winRate30d: user.winRate30d,
+      avgRoi7d: user.avgRoi7d,
+      avgRoi30d: user.avgRoi30d,
+      trustScore: user.trustScore,
+      reputationTier: user.reputationTier,
+      firstCallCount: user.firstCallCount,
+      firstCallAvgRoi: user.firstCallAvgRoi,
+    },
+    walletOverview,
+    chartPoints,
+    recentCalls: settledCalls.slice(0, 6).map((call) => ({
+      id: call.id,
+      content: call.content,
+      contractAddress: call.contractAddress,
+      chainType: call.chainType,
+      tokenName: call.tokenName,
+      tokenSymbol: call.tokenSymbol,
+      tokenImage: call.tokenImage,
+      entryMcap: call.entryMcap,
+      currentMcap: call.currentMcap,
+      settledAt: call.settledAt?.toISOString() ?? null,
+      createdAt: call.createdAt.toISOString(),
+      isWin: call.isWin,
+    })),
+  };
+
+  return c.json({ data: payload });
 });
 
 usersRouter.get("/me/fee-settings", requireAuth, async (c) => {
