@@ -45,6 +45,10 @@ import {
   type JupiterSwapResponse,
 } from "@/lib/trading/jupiter-proxy";
 import {
+  buildTradeExecutionViewModel,
+  type TradeExecutionStepKey,
+} from "@/lib/trading/execution-state";
+import {
   buildTokenIntelligenceSnapshotFromLivePayload,
   getTokenLiveIntelligence,
 } from "@/lib/token-live-intelligence";
@@ -1037,6 +1041,9 @@ export function PostCard({
   const [pendingProtectionAutoExecute, setPendingProtectionAutoExecute] = useState(false);
   const [isExecutingBuy, setIsExecutingBuy] = useState(false);
   const [buyTxSignature, setBuyTxSignature] = useState<string | null>(null);
+  const [tradeExecutionStep, setTradeExecutionStep] = useState<TradeExecutionStepKey | null>(null);
+  const [tradeExecutionFailureStep, setTradeExecutionFailureStep] = useState<TradeExecutionStepKey | null>(null);
+  const [tradeExecutionFailureDetail, setTradeExecutionFailureDetail] = useState<string | null>(null);
   const [mevProtectionEnabled, setMevProtectionEnabled] = useState(() => {
     if (typeof window === "undefined") return true;
     return window.localStorage.getItem(TRADE_MEV_PROTECTION_STORAGE_KEY) !== "false";
@@ -1402,7 +1409,17 @@ export function PostCard({
     setPendingQuickBuyAutoExecute(false);
     preparedSwapRef.current = null;
     swapBuildInFlightRef.current = null;
+    setTradeExecutionStep(null);
+    setTradeExecutionFailureStep(null);
+    setTradeExecutionFailureDetail(null);
   }, [isBuyDialogOpen]);
+
+  useEffect(() => {
+    if (isExecutingBuy) return;
+    setTradeExecutionStep(null);
+    setTradeExecutionFailureStep(null);
+    setTradeExecutionFailureDetail(null);
+  }, [buyAmountSol, isExecutingBuy, post.id, sellAmountToken, slippageBps, tradeSide]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -4235,6 +4252,10 @@ export function PostCard({
     setIsExecutingBuy(true);
     setBuyTxSignature(null);
     setTradeError(null);
+    setTradeExecutionFailureStep(null);
+    setTradeExecutionFailureDetail(null);
+    setTradeExecutionStep("quote_ready");
+    let activeExecutionStep: TradeExecutionStepKey = "quote_ready";
     toast.loading(`${tradeSide === "buy" ? "Buy" : "Sell"} ${displayTokenSymbol} order created`, {
       id: tradeToastId,
       description: "Preparing the route and transaction.",
@@ -4258,7 +4279,11 @@ export function PostCard({
         id: tradeToastId,
         description: `Sign this ${tradeSide} transaction to continue.`,
       });
+      setTradeExecutionStep("awaiting_signature");
+      activeExecutionStep = "awaiting_signature";
       const signedTx = await walletSignTransaction(transactionForSigning);
+      setTradeExecutionStep("source_swap");
+      activeExecutionStep = "source_swap";
       const sendCommitment = autoConfirmEnabled ? "processed" : "confirmed";
       const signature = await tradeReadConnection.sendRawTransaction(signedTx.serialize(), {
         maxRetries: 2,
@@ -4267,6 +4292,8 @@ export function PostCard({
       });
 
       preparedSwapRef.current = null;
+      setTradeExecutionStep("receiving");
+      activeExecutionStep = "receiving";
       if (typeof swapPayload.lastValidBlockHeight === "number") {
         void tradeReadConnection
           .confirmTransaction(
@@ -4278,6 +4305,7 @@ export function PostCard({
             sendCommitment
           )
           .then(() => {
+            setTradeExecutionStep("settled");
             toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} confirmed`, {
               id: tradeToastId,
               description: "Your trade landed successfully on-chain.",
@@ -4290,6 +4318,7 @@ export function PostCard({
         void tradeReadConnection
           .confirmTransaction(signature, sendCommitment)
           .then(() => {
+            setTradeExecutionStep("settled");
             toast.success(`${tradeSide === "buy" ? "Buy" : "Sell"} confirmed`, {
               id: tradeToastId,
               description: "Your trade landed successfully on-chain.",
@@ -4333,6 +4362,9 @@ export function PostCard({
       preparedSwapRef.current = null;
       console.error("[jupiter-trade] Failed to execute trade", error);
       const mapped = surfaceTradeError(error);
+      setTradeExecutionStep("failed");
+      setTradeExecutionFailureStep(activeExecutionStep);
+      setTradeExecutionFailureDetail(mapped.message);
       if (mapped.shouldRefetchQuote) {
         void refetchJupiterQuote();
       }
@@ -4547,6 +4579,19 @@ export function PostCard({
       deltaPct: calculatePercentChange(post.entryMcap, Number(point.mcap)),
     }));
   const currentTradeDeltaPct = tradeChartData[tradeChartData.length - 1]?.deltaPct ?? null;
+  const tradeExecutionViewModel = useMemo(
+    () =>
+      tradeExecutionStep
+        ? buildTradeExecutionViewModel({
+            current: tradeExecutionStep,
+            side: tradeSide,
+            tokenSymbol: displayTokenSymbol,
+            failureDetail: tradeExecutionFailureDetail,
+            failureStep: tradeExecutionFailureStep,
+          })
+        : null,
+    [displayTokenSymbol, tradeExecutionFailureDetail, tradeExecutionFailureStep, tradeExecutionStep, tradeSide]
+  );
   const jupiterStatusLabel = !isSolanaTradeSupported
     ? "Unsupported chain"
     : jupiterQuoteQuery.isLoading || jupiterQuoteQuery.isFetching
@@ -5622,7 +5667,7 @@ export function PostCard({
     routeFeeDisplay: jupiterRouteFeeDisplay,
     creatorFeeDisplay,
     platformFeeDisplay: retainedPlatformFeeDisplay,
-    jupiterStatusLabel,
+    jupiterStatusLabel: isExecutingBuy ? tradeExecutionViewModel?.headline ?? "Execution active" : jupiterStatusLabel,
     isQuoteLoading: showQuoteLoading,
     isExecuting: isExecutingBuy,
     canExecute: canExecuteJupiterBuy,
@@ -5662,6 +5707,7 @@ export function PostCard({
     protectionStatusTone: "idle" as const,
     quoteFreshnessLabel,
     liveStateLabel: tradeLiveMetaLabel,
+    executionViewModel: tradeExecutionViewModel,
     tradeError: tradeError
       ? {
           title: tradeError.title,

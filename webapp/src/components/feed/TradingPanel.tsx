@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import type { TradeExecutionViewModel } from "@/lib/trading/execution-state";
 import { cn } from "@/lib/utils";
 import {
   Zap,
@@ -86,6 +87,7 @@ interface TradingPanelProps {
     message: string;
     retryable: boolean;
   } | null;
+  executionViewModel?: TradeExecutionViewModel | null;
   onClearTradeError?: () => void;
   onRetryTradeError?: () => void;
 }
@@ -201,6 +203,7 @@ export function TradingPanel({
   quoteFreshnessLabel = null,
   liveStateLabel = null,
   tradeError = null,
+  executionViewModel = null,
   onClearTradeError,
   onRetryTradeError,
 }: TradingPanelProps) {
@@ -497,6 +500,89 @@ export function TradingPanel({
                 ) : null}
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {executionViewModel ? (
+          <div
+            className={cn(
+              "rounded-xl border px-3 py-3",
+              executionViewModel.tone === "complete"
+                ? "border-emerald-500/20 bg-emerald-500/[0.05]"
+                : executionViewModel.tone === "error"
+                  ? "border-rose-500/20 bg-rose-500/[0.05]"
+                  : "border-slate-900/[0.06] bg-slate-900/[0.03] dark:border-white/[0.08] dark:bg-white/[0.03]"
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div
+                  className={cn(
+                    "text-[11px] font-semibold uppercase tracking-widest",
+                    executionViewModel.tone === "complete"
+                      ? "text-emerald-600 dark:text-emerald-300"
+                      : executionViewModel.tone === "error"
+                        ? "text-rose-600 dark:text-rose-300"
+                        : "text-slate-600 dark:text-white/68"
+                  )}
+                >
+                  {executionViewModel.headline}
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-slate-600 dark:text-white/65">
+                  {executionViewModel.detail}
+                </div>
+              </div>
+              {isExecuting ? (
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-slate-400 dark:text-white/35" />
+              ) : null}
+            </div>
+            <div
+              className="mt-3 grid gap-2"
+              style={{
+                gridTemplateColumns: `repeat(${Math.min(Math.max(executionViewModel.steps.length, 1), 4)}, minmax(0, 1fr))`,
+              }}
+            >
+              {executionViewModel.steps.map((step) => (
+                <div
+                  key={step.key}
+                  className={cn(
+                    "rounded-lg border px-2.5 py-2",
+                    step.tone === "complete"
+                      ? "border-emerald-500/18 bg-emerald-500/[0.06]"
+                      : step.tone === "active"
+                        ? "border-sky-500/18 bg-sky-500/[0.05]"
+                        : step.tone === "error"
+                          ? "border-rose-500/18 bg-rose-500/[0.06]"
+                          : "border-slate-900/[0.06] bg-white/45 dark:border-white/[0.08] dark:bg-white/[0.02]"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={cn(
+                        "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold",
+                        step.tone === "complete"
+                          ? "bg-emerald-500/16 text-emerald-600 dark:text-emerald-300"
+                          : step.tone === "active"
+                            ? "bg-sky-500/16 text-sky-600 dark:text-sky-300"
+                            : step.tone === "error"
+                              ? "bg-rose-500/16 text-rose-600 dark:text-rose-300"
+                              : "bg-slate-900/[0.06] text-slate-500 dark:bg-white/[0.06] dark:text-white/35"
+                      )}
+                    >
+                      {step.tone === "complete" ? "✓" : step.tone === "error" ? "!" : "•"}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold text-slate-700 dark:text-white/78">
+                        {step.label}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-1 text-[10px] leading-4 text-slate-500 dark:text-white/42">
+                    {step.description}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : null}
 

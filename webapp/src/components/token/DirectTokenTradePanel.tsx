@@ -7,6 +7,10 @@ import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Wallet2 } from "lucid
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import {
+  buildTradeExecutionViewModel,
+  type TradeExecutionStepKey,
+} from "@/lib/trading/execution-state";
+import {
   fetchJupiterQuoteFast,
   type JupiterQuoteRequestPayload,
   type JupiterQuoteResponse,
@@ -120,6 +124,9 @@ export function DirectTokenTradePanel({
   const [tradeError, setTradeError] = useState<TradeExecutionErrorState | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
+  const [executionStep, setExecutionStep] = useState<TradeExecutionStepKey | null>(null);
+  const [executionFailureStep, setExecutionFailureStep] = useState<TradeExecutionStepKey | null>(null);
+  const [executionFailureDetail, setExecutionFailureDetail] = useState<string | null>(null);
   const [lastQuoteAtMs, setLastQuoteAtMs] = useState(0);
   const preparedSwapRef = useRef<{ key: string; payload: JupiterSwapResponse; cachedAt: number } | null>(null);
   const executionInFlightRef = useRef(false);
@@ -240,7 +247,26 @@ export function DirectTokenTradePanel({
 
   useEffect(() => {
     preparedSwapRef.current = null;
-  }, [tokenAddress, tradeSide, buyAmountSol, sellAmountToken, slippageBps]);
+    if (!isExecuting) {
+      setExecutionStep(null);
+      setExecutionFailureStep(null);
+      setExecutionFailureDetail(null);
+    }
+  }, [buyAmountSol, isExecuting, sellAmountToken, slippageBps, tokenAddress, tradeSide]);
+
+  const executionViewModel = useMemo(
+    () =>
+      executionStep
+        ? buildTradeExecutionViewModel({
+            current: executionStep,
+            side: tradeSide,
+            tokenSymbol,
+            failureDetail: executionFailureDetail,
+            failureStep: executionFailureStep,
+          })
+        : null,
+    [executionFailureDetail, executionFailureStep, executionStep, tokenSymbol, tradeSide]
+  );
 
   const quoteData = quoteQuery.data ?? null;
   const jupiterOutputFormatted = quoteData
@@ -423,6 +449,10 @@ export function DirectTokenTradePanel({
     setIsExecuting(true);
     setTradeError(null);
     setTxSignature(null);
+    setExecutionFailureStep(null);
+    setExecutionFailureDetail(null);
+    setExecutionStep("quote_ready");
+    let activeExecutionStep: TradeExecutionStepKey = "quote_ready";
     updateTradeNotice({
       tone: "info",
       title: `${tradeSide === "buy" ? "Buy" : "Sell"} ${tokenSymbol} order has been created`,
@@ -451,6 +481,8 @@ export function DirectTokenTradePanel({
         detail: `Sign this ${tradeSide} transaction to continue.`,
         txSignature: null,
       });
+      setExecutionStep("awaiting_signature");
+      activeExecutionStep = "awaiting_signature";
 
       const transaction = VersionedTransaction.deserialize(
         Uint8Array.from(atob(swapPayload.swapTransaction), (char) => char.charCodeAt(0))
@@ -463,6 +495,8 @@ export function DirectTokenTradePanel({
           )
         : transaction;
       const signedTransaction = await wallet.signTransaction(transactionForSigning);
+      setExecutionStep("source_swap");
+      activeExecutionStep = "source_swap";
       const sendCommitment = autoConfirmEnabled ? "processed" : "confirmed";
       const signature = await tradeReadConnection.sendRawTransaction(signedTransaction.serialize(), {
         maxRetries: 2,
@@ -477,6 +511,8 @@ export function DirectTokenTradePanel({
         detail: `${tradeSide === "buy" ? "Buy" : "Sell"} transaction is on-chain now. Waiting for confirmation.`,
         txSignature: signature,
       });
+      setExecutionStep("receiving");
+      activeExecutionStep = "receiving";
 
       if (typeof swapPayload.lastValidBlockHeight === "number") {
         await tradeReadConnection.confirmTransaction(
@@ -497,6 +533,7 @@ export function DirectTokenTradePanel({
         detail: `Executed with ${(jupiterPlatformFeeBps / 100).toFixed(2)}% platform fee on the direct token trade lane.`,
         txSignature: signature,
       });
+      setExecutionStep("settled");
 
       preparedSwapRef.current = null;
       if (swapPayload.tradeFeeEventId) {
@@ -515,6 +552,9 @@ export function DirectTokenTradePanel({
       preparedSwapRef.current = null;
       const mapped = mapTradeExecutionError(error);
       setTradeError(mapped);
+      setExecutionStep("failed");
+      setExecutionFailureStep(activeExecutionStep);
+      setExecutionFailureDetail(mapped.message);
       updateTradeNotice({
         tone: "error",
         title: mapped.title,
@@ -650,7 +690,7 @@ export function DirectTokenTradePanel({
         routeFeeDisplay={routeFeeDisplay}
         creatorFeeDisplay="Not applied on token-page direct trades"
         platformFeeDisplay={`${(jupiterPlatformFeeBps / 100).toFixed(2)}%`}
-        jupiterStatusLabel={isExecuting ? "Processing trade..." : "Platform fee only"}
+        jupiterStatusLabel={isExecuting ? executionViewModel?.headline ?? "Processing trade..." : "Platform fee only"}
         isQuoteLoading={quoteQuery.isLoading || quoteQuery.isFetching}
         isExecuting={isExecuting}
         canExecute={canExecute}
@@ -695,6 +735,7 @@ export function DirectTokenTradePanel({
         protectionStatusTone="idle"
         quoteFreshnessLabel={quoteFreshnessLabel}
         liveStateLabel={liveStateLabel}
+        executionViewModel={executionViewModel}
         tradeError={
           tradeError
             ? {
