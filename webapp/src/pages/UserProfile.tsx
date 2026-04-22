@@ -21,7 +21,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowLeft,
+  BrainCircuit,
   Calendar,
+  Coins,
   TrendingUp,
   TrendingDown,
   UserMinus,
@@ -32,6 +34,9 @@ import {
   AlertTriangle,
   Skull,
   Flag,
+  ShieldCheck,
+  Trophy,
+  Wallet,
 } from "lucide-react";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { ReportDialog } from "@/components/reporting/ReportDialog";
@@ -53,6 +58,13 @@ import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2 } from "lucide-react";
 import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
+import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2EmptyState } from "@/components/ui/v2/V2EmptyState";
+import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
+import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
+import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
+import { V2Surface } from "@/components/ui/v2/V2Surface";
+import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 import {
   buildTraderPerformanceVm,
   buildTraderPerformanceVmFromSnapshot,
@@ -87,6 +99,7 @@ type UserPerformanceResponse = UserPerformanceSnapshot;
 
 type PostFilter = "all" | "wins" | "losses";
 type MainTab = "posts" | "reposts";
+type ProfileTab = "overview" | "calls" | "raids" | "portfolio" | "stats";
 type FollowMutationResponse = { following: boolean; followerCount: number };
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_PROFILE_POSTS_CACHE_TTL_MS = 45_000;
@@ -186,6 +199,7 @@ export default function UserProfile() {
   const { userId } = useParams<{ userId: string }>();
   const { data: session, hasLiveSession, canPerformAuthenticatedWrites } = useSession();
   const queryClient = useQueryClient();
+  const [profileTab, setProfileTab] = useState<ProfileTab>("overview");
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [performancePeriod, setPerformancePeriod] = useState<PerformancePeriod>("30d");
@@ -822,6 +836,64 @@ export default function UserProfile() {
     },
     [performancePeriod, performanceSnapshot, profileAvatarSeed, recentTrades, user]
   );
+  const xpFloor = Math.floor((user?.xp ?? 0) / 1000) * 1000;
+  const xpCeiling = xpFloor + 1000;
+  const xpProgress = Math.max(0, Math.min(((user?.xp ?? 0) - xpFloor) / 1000, 1));
+  const aiTraderScore = useMemo(() => {
+    const trustScore = performanceSnapshot?.periodMetrics?.[performancePeriod]?.trustScore;
+    if (typeof trustScore === "number" && Number.isFinite(trustScore)) {
+      return trustScore;
+    }
+    const fallback = performanceSnapshot?.callMetrics?.trustScore;
+    if (typeof fallback === "number" && Number.isFinite(fallback)) {
+      return fallback;
+    }
+    return userStats.winRate;
+  }, [performancePeriod, performanceSnapshot, userStats.winRate]);
+  const walletOverview = performanceSnapshot?.walletOverview ?? null;
+  const topCalls = useMemo(
+    () => (performanceSnapshot?.recentCalls ?? []).slice(0, 4),
+    [performanceSnapshot?.recentCalls]
+  );
+  const profileBadges = useMemo(() => {
+    const badges: Array<{ label: string; tone: "xp" | "ai" | "live" | "risk" | "default" }> = [];
+    if ((user?.level ?? 0) >= 20) badges.push({ label: "Legend", tone: "xp" });
+    if (typeof aiTraderScore === "number" && aiTraderScore >= 80) badges.push({ label: "AI Elite", tone: "ai" });
+    if ((performanceSnapshot?.periodMetrics?.[performancePeriod]?.avgRoi ?? 0) > 0) badges.push({ label: "Positive Edge", tone: "live" });
+    if ((performanceSnapshot?.callMetrics?.firstCallCount ?? 0) >= 5) badges.push({ label: "First Caller", tone: "default" });
+    if ((user?.stats?.followers ?? 0) >= 1000) badges.push({ label: "Signal Leader", tone: "xp" });
+    if (!badges.length) badges.push({ label: "Building Track Record", tone: "default" });
+    return badges.slice(0, 5);
+  }, [aiTraderScore, performancePeriod, performanceSnapshot, user?.level, user?.stats?.followers]);
+  const overviewMetrics = useMemo(
+    () => [
+      {
+        label: "Followers",
+        value: Intl.NumberFormat("en-US", { notation: (user?.stats?.followers ?? 0) >= 1000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(user?.stats?.followers ?? 0),
+        hint: "Audience reached",
+        accent: <Trophy className="h-5 w-5 text-lime-300" />,
+      },
+      {
+        label: "Calls",
+        value: Intl.NumberFormat("en-US", { notation: (userStats.totalCalls ?? 0) >= 1000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(userStats.totalCalls ?? 0),
+        hint: "Tracked calls",
+        accent: <Coins className="h-5 w-5 text-cyan-300" />,
+      },
+      {
+        label: "Win Rate",
+        value: `${(userStats.winRate ?? 0).toFixed(0)}%`,
+        hint: `${winsCount} wins / ${lossesCount} losses`,
+        accent: <ShieldCheck className="h-5 w-5 text-lime-300" />,
+      },
+      {
+        label: "AI Score",
+        value: `${aiTraderScore.toFixed(1)}`,
+        hint: performanceSnapshot?.callMetrics?.reputationTier || "Live trader model",
+        accent: <BrainCircuit className="h-5 w-5 text-cyan-300" />,
+      },
+    ],
+    [aiTraderScore, lossesCount, performanceSnapshot?.callMetrics?.reputationTier, user?.stats?.followers, userStats.totalCalls, userStats.winRate, winsCount]
+  );
 
   const formatJoinDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -832,46 +904,69 @@ export default function UserProfile() {
   };
 
   return (
-    <div className="terminal-screen min-h-screen text-white">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 pt-6 sm:px-6">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate(-1)}
-            className="h-10 w-10 rounded-2xl border border-white/8 bg-white/5 text-white hover:bg-white/10"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div>
-            <div className="text-xs uppercase tracking-[0.22em] text-white/38">Trader performance</div>
-            <h1 className="text-lg font-semibold text-white">{profileDisplayName || "Profile"}</h1>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 pb-24 pt-6 sm:px-6">
-        {isLoadingUser ? (
-          <div className="space-y-4">
-            <Skeleton className="h-[180px] w-full rounded-[32px] bg-white/8" />
-            <Skeleton className="h-[420px] w-full rounded-[32px] bg-white/8" />
-            <Skeleton className="h-[320px] w-full rounded-[32px] bg-white/8" />
-          </div>
-        ) : userError && !user ? (
-          <div className="terminal-card flex flex-col items-center gap-4 px-6 py-14 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10">
-              <AlertCircle className="h-8 w-8 text-destructive" />
+    <div className="space-y-5 pb-24">
+      <V2PageHeader
+        title={profileDisplayName || "Profile"}
+        description="Trader reputation, XP progression, recent calls, and performance intelligence surfaced through the existing public profile stack."
+        badge={<V2StatusPill tone="xp">{getLevelLabel(user?.level ?? 0)}</V2StatusPill>}
+        onBack={() => navigate(-1)}
+        action={
+          user ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowShareCard(true)}
+                className="h-10 rounded-full border-white/10 bg-white/[0.04] text-white/78 hover:bg-white/[0.08] hover:text-white"
+              >
+                <Share2 className="mr-2 h-4 w-4" />
+                Share
+              </Button>
+              {!isOwnProfile ? (
+                <Button
+                  type="button"
+                  onClick={() => followMutation.mutate()}
+                  disabled={followMutation.isPending}
+                  className={cn(
+                    "h-10 rounded-full px-4",
+                    user.isFollowing
+                      ? "border border-white/10 bg-white/[0.04] text-white/78 hover:bg-white/[0.08] hover:text-white"
+                      : "text-slate-950"
+                  )}
+                  variant={user.isFollowing ? "outline" : "default"}
+                >
+                  {followMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <PhewFollowIcon className="mr-2 h-4 w-4" />
+                  )}
+                  {user.isFollowing ? "Following" : "Follow"}
+                </Button>
+              ) : null}
             </div>
-            <p className="text-white/62">{userErrorMessage}</p>
-            <Button
-              onClick={() => navigate(-1)}
-              className="rounded-2xl bg-white/8 text-white hover:bg-white/12"
-            >
+          ) : null
+        }
+      />
+
+      {isLoadingUser ? (
+        <div className="space-y-4">
+          <Skeleton className="h-[220px] w-full rounded-[32px] bg-white/8" />
+          <Skeleton className="h-[420px] w-full rounded-[32px] bg-white/8" />
+          <Skeleton className="h-[320px] w-full rounded-[32px] bg-white/8" />
+        </div>
+      ) : userError && !user ? (
+        <V2EmptyState
+          icon={<AlertCircle className="h-7 w-7" />}
+          title={userErrorMessage}
+          description="The public profile could not be loaded from the existing user route."
+          action={
+            <Button onClick={() => navigate(-1)} className="rounded-full px-5">
               Go Back
             </Button>
-          </div>
-        ) : user ? (
-          <div className="space-y-6 animate-fade-in">
+          }
+        />
+      ) : user ? (
+        <div className="space-y-5 animate-fade-in">
             {/* Danger Zone Warning Banner */}
             {(user.level <= LIQUIDATION_LEVEL || isInDangerZone(user.level)) && (
               <div
@@ -898,44 +993,161 @@ export default function UserProfile() {
               </div>
             )}
 
-            {performanceVm ? (
-              <TraderPerformanceView
-                vm={performanceVm}
-                headerActions={[
-                  {
-                    key: "share",
-                    label: <Share2 className="h-4 w-4" />,
-                    onClick: () => setShowShareCard(true),
-                    variant: "ghost",
-                  },
-                  ...(!isOwnProfile
-                    ? [
-                        {
-                          key: "follow",
-                          label: followMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : user.isFollowing ? (
-                            "Following"
-                          ) : (
-                            <>
-                              <PhewFollowIcon className="h-4 w-4" />
-                              Follow
-                            </>
-                          ),
-                          onClick: () => followMutation.mutate(),
-                          variant: user.isFollowing ? ("ghost" as const) : ("primary" as const),
-                        },
-                      ]
-                    : []),
-                ]}
-                heroTabs={[
-                  { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
-                  { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
-                  { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
-                  { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
-                ]}
-              />
-            ) : null}
+            <V2Surface tone="accent" className="relative overflow-hidden p-0">
+              {user.bannerImage ? (
+                <div className="relative h-32 border-b border-white/8 sm:h-40">
+                  <div
+                    className="absolute inset-0 bg-cover bg-center opacity-60"
+                    style={{ backgroundImage: `url("${user.bannerImage}")` }}
+                    aria-hidden="true"
+                  />
+                  <div
+                    className="absolute inset-0 bg-[linear-gradient(180deg,rgba(1,4,9,0.18),rgba(1,4,9,0.88)),radial-gradient(circle_at_top_left,rgba(169,255,52,0.18),transparent_30%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.14),transparent_30%)]"
+                    aria-hidden="true"
+                  />
+                </div>
+              ) : (
+                <div
+                  className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_28%),linear-gradient(180deg,rgba(5,10,14,0.2),rgba(5,10,14,0.86))]"
+                  aria-hidden="true"
+                />
+              )}
+
+              <div className="relative space-y-6 p-5 sm:p-6 lg:p-7">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex min-w-0 items-start gap-4">
+                    <Avatar className="h-24 w-24 rounded-[28px] border border-lime-300/20 shadow-[0_24px_64px_-28px_rgba(169,255,52,0.42)]">
+                      <AvatarImage src={getAvatarUrl(profileAvatarSeed, user.image)} />
+                      <AvatarFallback className="bg-white/[0.04] text-3xl font-semibold text-white">
+                        {profileDisplayName.charAt(0).toUpperCase() || "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <V2StatusPill tone="xp">Level {user.level}</V2StatusPill>
+                        <V2StatusPill tone="ai">{aiTraderScore.toFixed(1)} AI score</V2StatusPill>
+                        {user.isVerified ? <V2StatusPill tone="live">Verified</V2StatusPill> : null}
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-end gap-3">
+                        <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                          {user.name || profileDisplayName}
+                        </h2>
+                        {user.username ? (
+                          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-white/56">
+                            @{user.username}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-white/56">
+                        <span>Joined {formatJoinDate(user.createdAt)}</span>
+                        <span className="text-white/24">•</span>
+                        <span>{getLevelLabel(user.level)} trader</span>
+                        <span className="text-white/24">•</span>
+                        <span>{user.stats.following ?? 0} following</span>
+                      </div>
+                      <div className="mt-4 h-3 w-full max-w-md overflow-hidden rounded-full bg-white/8">
+                        <div
+                          className="h-full rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.95),rgba(45,212,191,0.9))]"
+                          style={{ width: `${Math.max(8, xpProgress * 100)}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 text-sm text-white/50">
+                        {(user.xp ?? 0).toLocaleString()} XP • Next band {xpFloor.toLocaleString()} - {xpCeiling.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid w-full gap-3 sm:grid-cols-2 lg:w-[360px]">
+                    <V2Surface tone="soft" className="p-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">AI Trader Score</div>
+                      <div className="mt-3 text-3xl font-semibold text-white">{aiTraderScore.toFixed(1)}</div>
+                      <div className="mt-2 text-sm text-white/50">
+                        {performanceSnapshot?.callMetrics?.reputationTier || "Live trust model"}
+                      </div>
+                    </V2Surface>
+                    <V2Surface tone="soft" className="p-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Top Calls</div>
+                      <div className="mt-3 text-3xl font-semibold text-white">{topCalls.length}</div>
+                      <div className="mt-2 text-sm text-white/50">
+                        Recent high-signal calls tracked in performance history
+                      </div>
+                    </V2Surface>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {overviewMetrics.map((metric) => (
+                    <V2MetricCard
+                      key={metric.label}
+                      label={metric.label}
+                      value={metric.value}
+                      hint={metric.hint}
+                      accent={metric.accent}
+                    />
+                  ))}
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_360px]">
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="Badges"
+                      title="Trader identity"
+                      description="Signals derived from level, followership, trust score, and first-call behavior already present in the current profile stack."
+                    />
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {profileBadges.map((badge) => (
+                        <V2StatusPill key={badge.label} tone={badge.tone}>
+                          {badge.label}
+                        </V2StatusPill>
+                      ))}
+                    </div>
+                  </V2Surface>
+
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="Top Calls"
+                      title="Best recent setups"
+                      description="Pulled from the existing performance snapshot rather than a new backend contract."
+                    />
+                    <div className="mt-4 space-y-3">
+                      {topCalls.length ? topCalls.map((call) => (
+                        <div key={call.id} className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-white">
+                                {call.tokenSymbol ? `$${call.tokenSymbol}` : call.tokenName || "Recent call"}
+                              </div>
+                              <div className="mt-1 truncate text-xs text-white/44">
+                                {call.content || "Tracked call"} • {new Date(call.createdAt).toLocaleDateString()}
+                              </div>
+                            </div>
+                            <div className={cn("text-sm font-semibold", call.isWin === false ? "text-rose-300" : "text-lime-300")}>
+                              {call.isWin === false ? "Loss" : "Win"}
+                            </div>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="rounded-[20px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/46">
+                          No recent calls have been indexed for this profile yet.
+                        </div>
+                      )}
+                    </div>
+                  </V2Surface>
+                </div>
+              </div>
+            </V2Surface>
+
+            <V2TabBar
+              value={profileTab}
+              onChange={setProfileTab}
+              items={[
+                { value: "overview", label: "Overview", badge: "hero + signal map" },
+                { value: "calls", label: "Calls", badge: `${filteredPosts.length} visible` },
+                { value: "raids", label: "Raids", badge: "community impact" },
+                { value: "portfolio", label: "Portfolio", badge: walletOverview?.connected ? "wallet linked" : "wallet pending" },
+                { value: "stats", label: "Stats", badge: "AI + trust" },
+              ]}
+            />
 
             {false ? (
               <>
@@ -1018,8 +1230,53 @@ export default function UserProfile() {
               </>
             ) : null}
 
-            {/* User Posts Section */}
-            <div className="space-y-4">
+            {profileTab === "overview" ? (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_360px]">
+                <div className="space-y-4">
+                  {performanceVm ? (
+                    <TraderPerformanceView
+                      vm={performanceVm}
+                      heroTabs={[
+                        { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
+                        { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
+                        { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
+                        { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
+                      ]}
+                    />
+                  ) : null}
+                </div>
+                <div className="space-y-4">
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="Signal Stack"
+                      title="Why this trader ranks"
+                      description="Trust, followers, XP progression, and first-call behavior shape how this trader appears across the product."
+                    />
+                    <div className="mt-4 grid gap-3">
+                      <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Followers</div>
+                        <div className="mt-2 text-2xl font-semibold text-white">{user.stats.followers ?? 0}</div>
+                      </div>
+                      <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Total Profit</div>
+                        <div className={cn("mt-2 text-2xl font-semibold", userStats.totalProfitPercent >= 0 ? "text-lime-300" : "text-rose-300")}>
+                          {userStats.totalProfitPercent >= 0 ? "+" : ""}{userStats.totalProfitPercent.toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                  </V2Surface>
+
+                  <TraderIntelligenceCard
+                    handle={user.username ?? user.id ?? userId}
+                    enabled={isPostsFetched}
+                    deferMs={1500}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {profileTab === "calls" ? (
+              <div className="space-y-4">
               {/* Main Tabs: Posts | Reposts */}
               <Tabs
                 value={mainTab}
@@ -1160,9 +1417,140 @@ export default function UserProfile() {
                 </TabsContent>
               </Tabs>
             </div>
+            ) : null}
+
+            {profileTab === "raids" ? (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_360px]">
+                <V2Surface className="p-5 sm:p-6">
+                  <V2SectionHeader
+                    eyebrow="Raid Footprint"
+                    title="Cross-community impact"
+                    description="A dedicated public raid-history endpoint does not exist yet, so this section stays truthful and derives visible contribution from current profile and performance data."
+                  />
+                  <div className="mt-5 grid gap-3 md:grid-cols-3">
+                    <V2MetricCard label="Followers" value={user.stats.followers ?? 0} hint="Potential amplification reach" />
+                    <V2MetricCard label="Reposts" value={reposts.length} hint="Visible social amplification" />
+                    <V2MetricCard label="First Calls" value={performanceSnapshot?.callMetrics?.firstCallCount ?? 0} hint="Early participation proxy" />
+                  </div>
+                  <div className="mt-5 rounded-[24px] border border-white/8 bg-white/[0.03] p-5 text-sm leading-6 text-white/58">
+                    This trader already has measurable reach, trust, and first-caller behavior. When a dedicated raid-history aggregate is added, it can plug into this surface without changing the current profile contracts.
+                  </div>
+                </V2Surface>
+                <V2Surface className="p-5" tone="soft">
+                  <V2SectionHeader
+                    eyebrow="Status"
+                    title="Raid readiness"
+                    description="Current scorecards that would matter in coordinated X pushes."
+                  />
+                  <div className="mt-4 space-y-3">
+                    {profileBadges.map((badge) => (
+                      <div key={`raid-${badge.label}`} className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                        {badge.label}
+                      </div>
+                    ))}
+                  </div>
+                </V2Surface>
+              </div>
+            ) : null}
+
+            {profileTab === "portfolio" ? (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_360px]">
+                <V2Surface className="p-5 sm:p-6">
+                  <V2SectionHeader
+                    eyebrow="Portfolio"
+                    title="Wallet-linked view"
+                    description="This reuses the existing performance snapshot wallet overview when present."
+                  />
+                  {walletOverview?.connected ? (
+                    <div className="mt-5 space-y-4">
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <V2MetricCard label="Wallet" value={walletOverview.address ? `${walletOverview.address.slice(0, 4)}...${walletOverview.address.slice(-4)}` : "Connected"} hint="Connected account" accent={<Wallet className="h-5 w-5 text-lime-300" />} />
+                        <V2MetricCard label="Balance" value={`$${(walletOverview.balanceUsd ?? 0).toLocaleString()}`} hint={`${walletOverview.balanceSol ?? 0} SOL`} />
+                        <V2MetricCard label="PHEW" value={(walletOverview.platformCoinHoldings ?? 0).toLocaleString()} hint="Platform holdings" />
+                        <V2MetricCard label="PnL" value={`$${(walletOverview.totalProfitUsd ?? 0).toLocaleString()}`} hint="Realized + unrealized" />
+                      </div>
+                      <div className="space-y-3">
+                        {(walletOverview.tokenPositions ?? []).slice(0, 6).map((position) => (
+                          <div key={position.mint} className="flex items-center justify-between gap-4 rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                            <div>
+                              <div className="text-sm font-semibold text-white">
+                                {position.tokenSymbol ? `$${position.tokenSymbol}` : position.tokenName || "Position"}
+                              </div>
+                              <div className="mt-1 text-xs text-white/44">
+                                {(position.holdingAmount ?? 0).toLocaleString()} tokens
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm font-semibold text-white">${(position.holdingUsd ?? 0).toLocaleString()}</div>
+                              <div className={cn("mt-1 text-xs", (position.totalPnlUsd ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+                                {(position.totalPnlUsd ?? 0) >= 0 ? "+" : ""}${(position.totalPnlUsd ?? 0).toLocaleString()}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <V2EmptyState
+                      icon={<Wallet className="h-7 w-7" />}
+                      title="No wallet snapshot"
+                      description="This public profile does not currently expose a connected wallet portfolio in the performance snapshot."
+                    />
+                  )}
+                </V2Surface>
+                <V2Surface className="p-5" tone="soft">
+                  <V2SectionHeader
+                    eyebrow="Flow"
+                    title="Capital profile"
+                    description="Current buy, sell, and balance context derived from the existing wallet overview."
+                  />
+                  <div className="mt-4 grid gap-3">
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      Bought: ${(walletOverview?.totalVolumeBoughtUsd ?? 0).toLocaleString()}
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      Sold: ${(walletOverview?.totalVolumeSoldUsd ?? 0).toLocaleString()}
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      USDC: ${(walletOverview?.balanceUsdc ?? 0).toLocaleString()}
+                    </div>
+                  </div>
+                </V2Surface>
+              </div>
+            ) : null}
+
+            {profileTab === "stats" ? (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_360px]">
+                <TraderIntelligenceCard
+                  handle={user.username ?? user.id ?? userId}
+                  enabled={isPostsFetched}
+                  deferMs={1500}
+                />
+                <V2Surface className="p-5" tone="soft">
+                  <V2SectionHeader
+                    eyebrow="Core Stats"
+                    title="Public profile metrics"
+                    description="Straight from the existing public profile and performance snapshot."
+                  />
+                  <div className="mt-4 grid gap-3">
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      Followers: {user.stats.followers ?? 0}
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      Following: {user.stats.following ?? 0}
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      Calls: {performanceSnapshot?.periodMetrics?.[performancePeriod]?.callsCount ?? userStats.totalCalls}
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/70">
+                      Avg ROI: {(performanceSnapshot?.periodMetrics?.[performancePeriod]?.avgRoi ?? 0).toFixed(1)}%
+                    </div>
+                  </div>
+                </V2Surface>
+              </div>
+            ) : null}
           </div>
         ) : null}
-      </main>
 
       {/* Share Profile Card Dialog */}
       {user && (

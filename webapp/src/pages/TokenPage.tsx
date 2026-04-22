@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { api, ApiError, TimeoutError } from "@/lib/api";
@@ -7,7 +7,7 @@ import {
   getChartBucketMs,
   mergeLiveSamplesIntoCandles,
 } from "@/lib/live-candle-stream";
-import { Post, PostAuthor, ReactionCounts, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
+import { Post, PostAuthor, ReactionCounts, TokenActiveRaidResponse, TokenCommunityRoom, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, Users, Activity, Flame, Target, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -41,6 +41,12 @@ import { DirectTokenTradePanel } from "@/components/token/DirectTokenTradePanel"
 import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
 import { TradeTransactionsFeed } from "@/components/feed/TradeTransactionsFeed";
 import { TradeTerminalLayout } from "@/components/feed/TradeTerminalLayout";
+import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
+import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
+import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
+import { V2Surface } from "@/components/ui/v2/V2Surface";
+import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 
 const TokenTelemetryCharts = lazy(() =>
   importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
@@ -2643,9 +2649,37 @@ export default function TokenPage() {
         : "Live chart + token stream";
   const canCreateTokenCommunity = Boolean(session?.user && (session.user.isAdmin || (session.user.level ?? 0) >= 3));
   const createCommunityLockedReason = "Reach level 3 to create a community";
+  const communityRoomQuery = useQuery<TokenCommunityRoom>({
+    queryKey: ["token-page", "community-room", tokenAddress],
+    enabled: Boolean(tokenAddress && token?.communityExists),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    queryFn: async () => {
+      if (!tokenAddress) throw new Error("Token address is required");
+      return api.get<TokenCommunityRoom>(`/api/tokens/${tokenAddress}/community/room`);
+    },
+  });
+  const activeRaidOverviewQuery = useQuery<TokenActiveRaidResponse>({
+    queryKey: ["token-page", "active-raid", tokenAddress],
+    enabled: Boolean(tokenAddress && token?.communityExists),
+    staleTime: 15_000,
+    gcTime: 5 * 60_000,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    queryFn: async () => {
+      if (!tokenAddress) throw new Error("Token address is required");
+      return api.get<TokenActiveRaidResponse>(`/api/tokens/${tokenAddress}/community/raids/active`);
+    },
+  });
+  const communityRoom = communityRoomQuery.data ?? null;
+  const activeRaidOverview = activeRaidOverviewQuery.data?.campaign ?? null;
   const socialSignalsQuery = useQuery<TokenSocialSignals>({
     queryKey: ["token-social-signals", tokenAddress],
-    enabled: Boolean(tokenAddress && activeTokenTab === "intel"),
+    enabled: Boolean(tokenAddress),
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     placeholderData: (previousData) => previousData,
@@ -2667,6 +2701,106 @@ export default function TokenPage() {
         ];
     return [...new Set(queries.filter((value): value is string => Boolean(value && value.trim())))].slice(0, 3);
   }, [socialSignals?.matchedQueries, token?.address, token?.name, token?.symbol]);
+  const flagshipSignals = useMemo(() => {
+    const entries = [
+      {
+        label: "Confidence",
+        value:
+          typeof token?.confidenceScore === "number" && Number.isFinite(token.confidenceScore)
+            ? `${token.confidenceScore.toFixed(0)}/100`
+            : "--",
+        tone:
+          typeof token?.confidenceScore === "number" && token.confidenceScore >= 70
+            ? "live"
+            : typeof token?.confidenceScore === "number" && token.confidenceScore >= 45
+              ? "ai"
+              : "risk",
+        caption: token?.bullishSignalsSuppressed
+          ? "Signal is capped until the token is active again."
+          : "Model-weighted signal reliability.",
+      },
+      {
+        label: "Market Health",
+        value:
+          typeof token?.marketHealthScore === "number" && Number.isFinite(token.marketHealthScore)
+            ? `${token.marketHealthScore.toFixed(0)}/100`
+            : "--",
+        tone:
+          typeof token?.marketHealthScore === "number" && token.marketHealthScore >= 70
+            ? "live"
+            : "default",
+        caption: "Liquidity, volume, and routing quality.",
+      },
+      {
+        label: "Hot Alpha",
+        value:
+          typeof token?.hotAlphaScore === "number" && Number.isFinite(token.hotAlphaScore)
+            ? `${token.hotAlphaScore.toFixed(0)}`
+            : "--",
+        tone:
+          typeof token?.hotAlphaScore === "number" && token.hotAlphaScore >= 60
+            ? "xp"
+            : "default",
+        caption: "Freshness and social pickup.",
+      },
+      {
+        label: "Bundle Risk",
+        value: token?.bundleRiskLabel ?? "Pending",
+        tone:
+          token?.bundleRiskLabel && /high|elevated|critical/i.test(token.bundleRiskLabel)
+            ? "risk"
+            : "default",
+        caption:
+          resolvedBundledSupplyPct !== null
+            ? `${formatPct(resolvedBundledSupplyPct)} estimated bundled supply`
+            : "Bundle scan still resolving.",
+      },
+      {
+        label: "Community",
+        value:
+          communityRoom?.exists
+            ? `${communityRoom.memberCount.toLocaleString()} members`
+            : token?.communityExists
+              ? "Opening room"
+              : "No room yet",
+        tone: communityRoom?.exists ? "live" : "default",
+        caption:
+          activeRaidOverview
+            ? `${activeRaidOverview.participantCount} raiders live`
+            : communityRoom?.currentRaidPulse?.label ?? "No active raid pulse.",
+      },
+      {
+        label: "X Flow",
+        value:
+          socialSignals?.available
+            ? `${socialSignals.callCount24h} calls / ${socialSignals.uniqueAuthors24h} authors`
+            : socialSignalsQuery.isFetching
+              ? "Updating"
+              : "Not connected",
+        tone: socialSignals?.available ? "ai" : "default",
+        caption:
+          socialSignals?.available
+            ? socialSignals.topKols.length > 0
+              ? `${socialSignals.topKols[0]?.displayName || socialSignals.topKols[0]?.handle || "Top KOL"} leading`
+              : "No KOL spike yet"
+            : "External X signals are not available for this token.",
+      },
+    ] as const;
+
+    return entries;
+  }, [
+    activeRaidOverview,
+    communityRoom,
+    resolvedBundledSupplyPct,
+    socialSignals,
+    socialSignalsQuery.isFetching,
+    token?.bullishSignalsSuppressed,
+    token?.bundleRiskLabel,
+    token?.communityExists,
+    token?.confidenceScore,
+    token?.hotAlphaScore,
+    token?.marketHealthScore,
+  ]);
 
   const followMutation = useMutation({
     mutationFn: async () => {
@@ -2750,38 +2884,42 @@ export default function TokenPage() {
       : "No recent calls are available for this token yet.";
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="app-topbar">
-        <div className="mx-auto flex h-[4.4rem] max-w-[980px] items-center justify-between gap-3 px-4 sm:px-5">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-              onClick={() => navigate(-1)}
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/80">Phew Ultra</div>
-              <h1 className="font-semibold text-lg">Token Lab</h1>
+    <div className="space-y-5">
+      <V2PageHeader
+        title={token?.symbol ? `$${token.symbol}` : token?.name || "Token Lab"}
+        description={token?.name ? `${token.name} intelligence, trading, bundle risk, and community coordination in one operating surface.` : "Token intelligence, trading, bundle risk, and community coordination in one operating surface."}
+        badge={
+          <V2StatusPill tone={isRefreshingLive ? "live" : token ? "ai" : "default"}>
+            {isRefreshingLive ? "Live" : token ? "Intelligence ready" : "Loading"}
+          </V2StatusPill>
+        }
+        onBack={() => navigate(-1)}
+        action={
+          token ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                onClick={handleOpenTradePanel}
+                disabled={!canTradeTokenDirectly}
+                className="rounded-2xl"
+              >
+                <PhewTradeIcon className="mr-2 h-4 w-4" />
+                Trade
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
+                onClick={() => navigate(`/bundle-checker?token=${token.address}`)}
+              >
+                Bundle Checker
+              </Button>
             </div>
-          </div>
-          {isRefreshingLive ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
-              <Activity className="h-3 w-3 animate-pulse" />
-              Live
-            </span>
-          ) : token ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary px-3 py-1 text-[11px] text-muted-foreground">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Intelligence ready
-            </span>
-          ) : null}
-        </div>
-      </header>
+          ) : null
+        }
+      />
 
-      <main className="mx-auto max-w-[980px] px-4 pb-12 pt-5 sm:px-5">
+      <main className="space-y-5">
         {showTokenLoading ? (
           <TokenScanningState
             address={tokenAddress}
@@ -2789,34 +2927,34 @@ export default function TokenPage() {
             subtitle="We are mapping liquidity, community sentiment, holder concentration, bundle risk, and conviction signals for this token."
           />
         ) : !token ? (
-          <div className="app-empty-state min-h-[360px]">
+          <V2Surface className="flex min-h-[360px] flex-col items-center justify-center gap-4 px-6 py-12 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertCircle className="h-8 w-8 text-destructive" />
             </div>
             {error && !(error instanceof ApiError && error.status === 404) ? (
               <>
-                <p className="text-lg font-semibold text-foreground">Failed to load token</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-lg font-semibold text-white">Failed to load token</p>
+                <p className="text-sm text-white/48">
                   {error instanceof TimeoutError
                     ? "The request timed out. Please try again."
                     : "Something went wrong loading this token. Please try again."}
                 </p>
                 <button
                   onClick={() => void refetchToken()}
-                  className="mt-2 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
+                  className="mt-2 rounded-2xl border border-white/10 px-4 py-2 text-sm text-white/72 transition-colors hover:bg-white/[0.04]"
                 >
                   Try again
                 </button>
               </>
             ) : (
               <>
-                <p className="text-lg font-semibold text-foreground">Token not found</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-lg font-semibold text-white">Token not found</p>
+                <p className="text-sm text-white/48">
                   We could not load token intelligence for this address.
                 </p>
               </>
             )}
-          </div>
+          </V2Surface>
         ) : (
           <motion.div
             className="space-y-5"
@@ -2824,6 +2962,381 @@ export default function TokenPage() {
             initial="hidden"
             animate="visible"
           >
+            <motion.section variants={sectionVariants}>
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_380px]">
+                <V2Surface tone="accent" className="relative overflow-hidden p-0">
+                  {token.communityBannerUrl ? (
+                    <div className="relative h-36 border-b border-white/8 sm:h-44">
+                      <div
+                        className="absolute inset-0 bg-cover bg-center opacity-55"
+                        style={{ backgroundImage: `url("${token.communityBannerUrl}")` }}
+                        aria-hidden="true"
+                      />
+                      <div
+                        className="absolute inset-0 bg-[linear-gradient(180deg,rgba(1,4,9,0.22),rgba(1,4,9,0.9)),radial-gradient(circle_at_top_left,rgba(169,255,52,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.18),transparent_32%)]"
+                        aria-hidden="true"
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.14),transparent_28%),linear-gradient(180deg,rgba(5,10,14,0.2),rgba(5,10,14,0.82))]"
+                      aria-hidden="true"
+                    />
+                  )}
+
+                  <div className="relative space-y-6 p-5 sm:p-6 lg:p-7">
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex min-w-0 items-start gap-4">
+                        <div className="relative shrink-0">
+                          <div className="flex h-[84px] w-[84px] items-center justify-center overflow-hidden rounded-[26px] border border-lime-300/25 bg-black/20 shadow-[0_28px_64px_-28px_rgba(169,255,52,0.45)] backdrop-blur-md">
+                            {token.imageUrl ? (
+                              <img src={token.imageUrl} alt={token.symbol ?? "Token"} className="h-full w-full object-cover" />
+                            ) : (
+                              <Coins className="h-9 w-9 text-lime-300" />
+                            )}
+                          </div>
+                          <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-black/35 bg-emerald-400 shadow-[0_0_20px_rgba(74,222,128,0.55)]">
+                            <span className="h-2 w-2 rounded-full bg-[#03110a]" />
+                          </span>
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <V2StatusPill tone="live">{token.activityStatusLabel ?? "Live"}</V2StatusPill>
+                            <V2StatusPill tone="ai">
+                              {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)} confidence` : "AI tracking"}
+                            </V2StatusPill>
+                            <V2StatusPill tone="risk">
+                              {bundleScanPending ? "Bundle scan pending" : token.bundleRiskLabel || "Bundle risk unknown"}
+                            </V2StatusPill>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap items-end gap-x-3 gap-y-2">
+                            <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                              {token.symbol || token.address.slice(0, 6)}
+                            </h2>
+                            <div className="pb-1 text-base text-white/56">
+                              {token.name && token.name !== token.symbol ? token.name : "Central token surface"}
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/48">
+                            <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 font-mono">
+                              {token.chainType}
+                            </span>
+                            <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
+                              {token.address.slice(0, 6)}...{token.address.slice(-4)}
+                            </span>
+                            <button
+                              onClick={handleCopyTokenAddress}
+                              className="inline-flex h-8 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+                              aria-label="Copy address"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                              Copy CA
+                            </button>
+                            <a
+                              href={token.dexscreenerUrl ?? `https://dexscreener.com/${token.chainType === "solana" ? "solana" : "ethereum"}/${token.address}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-8 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+                            >
+                              Dexscreener
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </div>
+
+                          <p className="mt-4 max-w-2xl text-sm leading-6 text-white/62">
+                            Phew.run is tracking live market structure, wallet concentration, trader conviction, and raid/community momentum for this token in one operating surface.
+                          </p>
+
+                          {token.earlyRunnerReasons?.length ? (
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              {token.earlyRunnerReasons.map((reason) => (
+                                <span
+                                  key={reason}
+                                  className="rounded-full border border-lime-300/14 bg-lime-300/8 px-3 py-1 text-[11px] font-medium text-lime-200/92"
+                                >
+                                  {reason}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 lg:max-w-[240px] lg:justify-end">
+                        <Button
+                          onClick={handleOpenTradePanel}
+                          disabled={!canTradeTokenDirectly}
+                          className="h-11 gap-2 rounded-full border border-lime-300/30 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.9))] px-5 text-sm font-semibold text-slate-950 shadow-[0_24px_48px_-24px_rgba(45,212,191,0.45)] hover:brightness-[1.05] disabled:opacity-50"
+                        >
+                          <PhewTradeIcon className="h-3.5 w-3.5" />
+                          Open terminal
+                        </Button>
+                        <TooltipProvider delayDuration={120}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span tabIndex={!token.communityExists && !canCreateTokenCommunity ? 0 : -1}>
+                                <Button
+                                  variant="outline"
+                                  onClick={handleCommunityAction}
+                                  disabled={followMutation.isPending || (!token.communityExists && !canCreateTokenCommunity)}
+                                  className={cn(
+                                    "h-11 rounded-full border px-5 text-sm font-semibold transition-all",
+                                    token.communityExists && token.isFollowing
+                                      ? "border-lime-300/18 bg-lime-300/10 text-lime-200 hover:bg-lime-300/14"
+                                      : !token.communityExists
+                                        ? "border-amber-300/35 bg-amber-400/10 text-amber-200 hover:border-amber-300/60"
+                                        : "border-white/10 bg-white/[0.04] text-white/76 hover:bg-white/[0.08] hover:text-white"
+                                  )}
+                                >
+                                  {followMutation.isPending ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : !token.communityExists ? (
+                                    canCreateTokenCommunity ? "Create community" : "Community locked"
+                                  ) : token.isFollowing ? (
+                                    "Joined community"
+                                  ) : (
+                                    "Join community"
+                                  )}
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            {!token.communityExists && !canCreateTokenCommunity ? (
+                              <TooltipContent side="bottom" className="max-w-[220px] text-center">
+                                {createCommunityLockedReason}
+                              </TooltipContent>
+                            ) : null}
+                          </Tooltip>
+                        </TooltipProvider>
+                        <Link
+                          to={`/bundle-checker?token=${token.address}`}
+                          className="inline-flex h-11 items-center gap-2 rounded-full border border-cyan-300/16 bg-cyan-300/8 px-5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/12"
+                        >
+                          Bundle checker
+                        </Link>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <V2MetricCard
+                        label="Market Cap"
+                        value={formatMarketMetric(displayMarketCap)}
+                        hint="Live token valuation"
+                        accent={<Activity className="h-5 w-5 text-lime-300" />}
+                      />
+                      <V2MetricCard
+                        label="Liquidity"
+                        value={formatMarketMetric(token.liquidity)}
+                        hint="Current onchain depth"
+                        accent={<BarChart3 className="h-5 w-5 text-cyan-300" />}
+                      />
+                      <V2MetricCard
+                        label="Volume 24h"
+                        value={formatMarketMetric(token.volume24h)}
+                        hint="Execution flow"
+                        accent={<Flame className="h-5 w-5 text-lime-300" />}
+                      />
+                      <V2MetricCard
+                        label="Holders"
+                        value={token.holderCount?.toLocaleString() ?? "N/A"}
+                        hint={token.holderCountSource ? `Source: ${token.holderCountSource}` : "Latest indexed count"}
+                        accent={<Users className="h-5 w-5 text-white/44" />}
+                      />
+                    </div>
+                  </div>
+                </V2Surface>
+
+                <div className="space-y-4">
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="AI Intel"
+                      title="Operating read"
+                      description="Phew intelligence combines confidence, live structure, sentiment, bundle pressure, and social velocity."
+                    />
+                    <div className="mt-4 space-y-3">
+                      {flagshipSignals.map((signal) => (
+                        <div
+                          key={signal.label}
+                          className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">
+                                {signal.label}
+                              </div>
+                              <div className="mt-2 text-lg font-semibold text-white">{signal.value}</div>
+                            </div>
+                            <V2StatusPill
+                              tone={
+                                signal.tone === "ai"
+                                  ? "ai"
+                                  : signal.tone === "risk"
+                                    ? "risk"
+                                    : signal.tone === "live"
+                                      ? "live"
+                                      : "default"
+                              }
+                            >
+                              {signal.caption}
+                            </V2StatusPill>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </V2Surface>
+
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="Live modules"
+                      title="Trade, raid, community"
+                      description="The token page is the control tower for execution, raids, and social coordination."
+                    />
+                    <div className="mt-4 grid gap-3">
+                      <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-white">Trading terminal</div>
+                            <div className="mt-1 text-sm text-white/48">
+                              {canTradeTokenDirectly ? "Order entry, live prints, and conviction flow are online." : "Realtime analysis is available while direct trading is unavailable."}
+                            </div>
+                          </div>
+                          <Button
+                            onClick={handleOpenTradePanel}
+                            disabled={!canTradeTokenDirectly}
+                            size="sm"
+                            className="h-9 rounded-full px-4 text-slate-950"
+                          >
+                            Trade
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-white">Community room</div>
+                            <div className="mt-1 text-sm text-white/48">
+                              {communityRoom
+                                ? `${communityRoom.memberCount.toLocaleString()} members • ${communityRoom.onlineNowEstimate.toLocaleString()} live now`
+                                : token.communityExists
+                                  ? "Community room is available and loading."
+                                  : "Create the room to coordinate calls, raids, and replies."}
+                            </div>
+                          </div>
+                          <Link
+                            to={`/communities/${token.address}`}
+                            className="inline-flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-white/76 transition hover:bg-white/[0.08] hover:text-white"
+                          >
+                            Open
+                          </Link>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-white">Raid pulse</div>
+                            <div className="mt-1 text-sm text-white/48">
+                              {activeRaidOverview
+                                ? `${activeRaidOverview.participantCount.toLocaleString()} participants • ${activeRaidOverview.postedCount.toLocaleString()} posts launched`
+                                : "No active raid yet. Launch from the community when the setup is ready."}
+                            </div>
+                          </div>
+                          {activeRaidOverview ? (
+                            <Link
+                              to={`/raids/${token.address}/${activeRaidOverview.id}`}
+                              className="inline-flex h-9 items-center gap-2 rounded-full border border-lime-300/18 bg-lime-300/10 px-4 text-sm font-medium text-lime-200 transition hover:bg-lime-300/14"
+                            >
+                              Live raid
+                            </Link>
+                          ) : (
+                            <Link
+                              to={`/communities/${token.address}`}
+                              className="inline-flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-white/76 transition hover:bg-white/[0.08] hover:text-white"
+                            >
+                              Open board
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </V2Surface>
+                </div>
+              </div>
+            </motion.section>
+
+            <motion.section variants={sectionVariants}>
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {flagshipSignals.map((signal) => (
+                    <V2MetricCard
+                      key={`metric-${signal.label}`}
+                      label={signal.label}
+                      value={signal.value}
+                      hint={signal.caption}
+                    />
+                  ))}
+                </div>
+                <V2Surface className="p-5" tone="soft">
+                  <V2SectionHeader
+                    eyebrow="Signal Context"
+                    title="What is moving now"
+                    description="Bundle risk, social signal strength, trader participation, and community pressure are already fused into the current token payload."
+                  />
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Top traders</div>
+                      <div className="mt-2 text-xl font-semibold text-white">{displayTopTraders.length}</div>
+                      <div className="mt-1 text-white/48">Tracked conviction accounts</div>
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Recent calls</div>
+                      <div className="mt-2 text-xl font-semibold text-white">{recentCallsCount}</div>
+                      <div className="mt-1 text-white/48">Auto-indexed call history</div>
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Bundled supply</div>
+                      <div className="mt-2 text-xl font-semibold text-white">
+                        {typeof resolvedBundledSupplyPct === "number" ? `${resolvedBundledSupplyPct.toFixed(2)}%` : "--"}
+                      </div>
+                      <div className="mt-1 text-white/48">{bundleScanPending ? "Scan still resolving" : "Estimated overlap concentration"}</div>
+                    </div>
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">X calls</div>
+                      <div className="mt-2 text-xl font-semibold text-white">
+                        {socialSignals?.available ? socialSignals.callCount24h.toLocaleString() : "--"}
+                      </div>
+                      <div className="mt-1 text-white/48">
+                        {socialSignals?.available ? `${socialSignals.uniqueAuthors24h.toLocaleString()} unique authors` : "Social signal stream offline"}
+                      </div>
+                    </div>
+                  </div>
+                </V2Surface>
+              </div>
+            </motion.section>
+
+            <motion.section variants={sectionVariants}>
+              <V2TabBar
+                value={activeTokenTab}
+                onChange={(value) => setTokenTab(value)}
+                items={[
+                  { value: "trade", label: "Trade", badge: "terminal + calls" },
+                  {
+                    value: "community",
+                    label: "Community",
+                    badge: token.communityExists
+                      ? `${communityRoom?.memberCount ? communityRoom.memberCount.toLocaleString() : "live"} members`
+                      : "launch room",
+                  },
+                  { value: "intel", label: "Intel", badge: socialSignalsQuery.isFetching ? "updating" : "AI + risk" },
+                ]}
+              />
+            </motion.section>
+
+            {false ? (
+            <>
             {/* ── SECTION 1: HERO ── */}
             <motion.section variants={sectionVariants} className="overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(160deg,rgba(255,255,255,0.96),rgba(243,249,245,0.97))] shadow-[0_32px_80px_-40px_hsl(var(--primary)/0.18)] dark:bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.11),transparent_48%),linear-gradient(180deg,rgba(10,16,24,0.98),rgba(5,10,16,0.99))] dark:shadow-none">
               {token.communityBannerUrl ? (
@@ -3023,6 +3536,8 @@ export default function TokenPage() {
                 </div>
               </div>
             </motion.section>
+            </>
+            ) : null}
             {activeTokenTab === "intel" ? (
             <motion.section variants={sectionVariants}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
