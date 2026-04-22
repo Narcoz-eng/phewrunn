@@ -38,11 +38,9 @@ import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { DirectTokenTradePanel } from "@/components/token/DirectTokenTradePanel";
-import { TokenFlagshipHero } from "@/components/token/TokenFlagshipHero";
 import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
 import { TradeTransactionsFeed } from "@/components/feed/TradeTransactionsFeed";
 import { TradeTerminalLayout } from "@/components/feed/TradeTerminalLayout";
-import { V2PageHeader } from "@/components/layout/V2PageHeader";
 import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
 import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
@@ -2886,40 +2884,6 @@ export default function TokenPage() {
 
   return (
     <div className="space-y-5">
-      <V2PageHeader
-        title={token?.symbol ? `$${token.symbol}` : token?.name || "Token Lab"}
-        description={token?.name ? `${token.name} intelligence, trading, bundle risk, and community coordination in one operating surface.` : "Token intelligence, trading, bundle risk, and community coordination in one operating surface."}
-        badge={
-          <V2StatusPill tone={isRefreshingLive ? "live" : token ? "ai" : "default"}>
-            {isRefreshingLive ? "Live" : token ? "Intelligence ready" : "Loading"}
-          </V2StatusPill>
-        }
-        onBack={() => navigate(-1)}
-        action={
-          token ? (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                onClick={handleOpenTradePanel}
-                disabled={!canTradeTokenDirectly}
-                className="rounded-2xl"
-              >
-                <PhewTradeIcon className="mr-2 h-4 w-4" />
-                Trade
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
-                onClick={() => navigate(`/bundle-checker?token=${token.address}`)}
-              >
-                Bundle Checker
-              </Button>
-            </div>
-          ) : null
-        }
-      />
-
       <main className="space-y-5">
         {showTokenLoading ? (
           <TokenScanningState
@@ -3096,7 +3060,7 @@ export default function TokenPage() {
                 </TooltipProvider>
               }
             />
-            <motion.section variants={sectionVariants} className="hidden">
+            <motion.section variants={sectionVariants}>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_380px]">
                 <V2Surface tone="accent" className="relative overflow-hidden p-0">
                   {token.communityBannerUrl ? (
@@ -3456,7 +3420,7 @@ export default function TokenPage() {
                 value={activeTokenTab}
                 onChange={(value) => setTokenTab(value)}
                 items={[
-                  { value: "trade", label: "Trade", badge: "terminal + calls" },
+                  { value: "trade", label: "Trading Terminal", badge: "chart + execution" },
                   {
                     value: "community",
                     label: "Community",
@@ -3464,7 +3428,7 @@ export default function TokenPage() {
                       ? `${communityRoom?.memberCount ? communityRoom.memberCount.toLocaleString() : "live"} members`
                       : "launch room",
                   },
-                  { value: "intel", label: "Intel", badge: socialSignalsQuery.isFetching ? "updating" : "AI + risk" },
+                  { value: "intel", label: "AI Intelligence", badge: socialSignalsQuery.isFetching ? "updating" : "AI + risk" },
                 ]}
               />
             </motion.section>
@@ -3636,14 +3600,14 @@ export default function TokenPage() {
               <div className="rounded-[24px] border border-border/60 bg-card/90 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.22)] dark:shadow-none">
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { value: "trade", label: "Trade", hint: "Chart, live prints, recent calls", icon: Coins },
+                    { value: "trade", label: "Trading Terminal", hint: "Chart, live prints, recent calls", icon: Coins },
                     {
                       value: "community",
                       label: "Community",
                       hint: token.communityExists ? "Room, raids, threads" : "Create or join the room",
                       icon: Users,
                     },
-                    { value: "intel", label: "Intel", hint: "Signals, holders, external X", icon: ShieldCheck },
+                    { value: "intel", label: "AI Intelligence", hint: "Signals, holders, external X", icon: ShieldCheck },
                   ] as const).map((tab) => {
                     const Icon = tab.icon;
                     const active = activeTokenTab === tab.value;

@@ -3,19 +3,18 @@ import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteD
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError, TimeoutError } from "@/lib/api";
-import { Post, User } from "@/types";
+import { DiscoveryFeedSidebarResponse, Post, User } from "@/types";
 import { PostCard, type PostCardRealtimePriceMode } from "@/components/feed/PostCard";
 import { PostCardSkeleton, ProfileCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { CreatePost } from "@/components/feed/CreatePost";
 import { LevelBar } from "@/components/feed/LevelBar";
 import { FeedHeader, FeedTab } from "@/components/feed/FeedHeader";
 import { AnnouncementBanner } from "@/components/feed/AnnouncementBanner";
-import { TrendingSection } from "@/components/feed/TrendingSection";
 import { SearchBar } from "@/components/feed/SearchBar";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame } from "lucide-react";
+import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame, ArrowUpRight, Users, Zap, Search, TrendingUp } from "lucide-react";
 import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -24,7 +23,6 @@ import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundl
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
 import { syncPostsIntoQueryCache } from "@/lib/post-query-cache";
-import { V2PageHeader } from "@/components/layout/V2PageHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 
 interface FeedPage {
@@ -2510,28 +2508,22 @@ export default function Feed() {
 
   const autoLoadEnabled = Boolean(hasNextPage && hasUserScrolledForAutoLoad);
   const showLoadMoreControls = Boolean(hasNextPage);
-  const showTrendingSection = activeTab === "latest" && searchQuery.trim().length < 3;
+  const { data: discoverySidebar } = useQuery({
+    queryKey: ["discovery", "feed-sidebar"],
+    queryFn: () => api.get<DiscoveryFeedSidebarResponse>("/api/discovery/feed-sidebar"),
+    enabled: feedTrendingReady,
+    staleTime: 45_000,
+    refetchOnWindowFocus: false,
+    refetchInterval: 90_000,
+  });
+  const sidebarTopGainers = discoverySidebar?.topGainers ?? [];
+  const sidebarLiveRaid = discoverySidebar?.liveRaids?.[0] ?? null;
+  const sidebarTrendingCalls = discoverySidebar?.trendingCalls ?? [];
+  const sidebarTrendingCommunities = discoverySidebar?.trendingCommunities ?? [];
+  const sidebarAiSpotlight = discoverySidebar?.aiSpotlight ?? null;
 
   return (
-    <div className="space-y-5">
-      <V2PageHeader
-        title="Feed"
-        description="Auto-tracked calls, trader reputation, and AI-ranked alpha running on the existing feed query and realtime invalidation stack."
-        badge={<V2StatusPill tone="ai">{activeTab === "latest" ? "Live Feed" : activeTab.replace("-", " ")}</V2StatusPill>}
-        action={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={isManualRefreshing}
-            className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
-          >
-            <RefreshCw className={cn("mr-2 h-4 w-4", isManualRefreshing && "animate-spin")} />
-            Refresh
-          </Button>
-        }
-      />
+    <div className="space-y-4">
       <FeedHeader
         user={user ?? null}
         activeTab={activeTab}
@@ -2541,104 +2533,148 @@ export default function Feed() {
         compact
       />
 
-      <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
-        {/* 1. Pinned Announcements (at very top) */}
-        <AnnouncementBanner enabled={feedAnnouncementsReady} />
-
-        {/* 2. Trending Now Section */}
-        {showTrendingSection ? (
-          <QueryErrorBoundary sectionName="Trending">
-            <TrendingSection enabled={feedTrendingReady} />
-          </QueryErrorBoundary>
-        ) : null}
-
-        {/* 3. Search Bar (prominent, always visible) */}
-        <SearchBar
-          value={searchQuery}
-          onChange={handleSearchChange}
-          isLoading={isRefreshing && searchQuery.length >= 3}
-        />
-
-        {/* User Profile Card */}
-        {isLoadingUser ? (
-          <ProfileCardSkeleton className="mb-6" />
-        ) : user ? (
-          <div className="app-surface mb-6 p-5 sm:p-6">
-            <div className="flex items-center gap-4">
-              <Avatar className="h-16 w-16 border-2 border-primary/25 ring-4 ring-white/70 dark:ring-background">
-                <AvatarImage src={getAvatarUrl(user.id, user.image)} />
-                <AvatarFallback className="bg-muted text-muted-foreground text-xl">
-                  {user.name?.charAt(0) || "?"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
+      <main className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-4">
+          <section className="relative overflow-hidden rounded-[30px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <h2 className="font-bold text-lg truncate">{user.username || user.name}</h2>
-                  <PhewTrophyIcon className="h-4 w-4 text-primary" />
+                  <V2StatusPill tone="live">{activeTab === "latest" ? "Live discovery" : activeTab.replace("-", " ")}</V2StatusPill>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/34">Signal network</span>
                 </div>
-                <p className="truncate text-xs text-muted-foreground">{user.email}</p>
-                {/* XP Display */}
-                <p className="mt-3 text-lg font-semibold text-primary">
-                  {user.xp?.toLocaleString() || 0} XP
-                </p>
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.3rem]">Run the feed.</h1>
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-white/56">
+                    Auto-tracked calls, AI conviction, live raid pressure, and trader reputation in one discovery surface.
+                  </p>
+                </div>
               </div>
-            </div>
-            {/* Large Level Bar */}
-            <div className="mt-5">
-              <LevelBar level={user.level} size="xl" />
-            </div>
-          </div>
-        ) : userError ? (
-          <div className="app-surface mb-6 border-destructive/30 p-5">
-            <div className="flex items-center gap-3 text-destructive">
-              <AlertCircle className="h-5 w-5" />
-              <span className="text-sm">Failed to load profile</span>
-              <Button variant="ghost" size="sm" onClick={() => refetchUser()} className="ml-auto">
-                Retry
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={isManualRefreshing}
+                className="h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+              >
+                <RefreshCw className={cn("mr-2 h-4 w-4", isManualRefreshing && "animate-spin")} />
+                Refresh feed
               </Button>
             </div>
-          </div>
-        ) : null}
 
-        {/* Create Post */}
-        <div className="mb-6">
-          <CreatePost
-            user={user ?? null}
-            onSubmit={handleCreatePost}
-            isSubmitting={createPostMutation.isPending}
-            isAuthPending={isAuthWritePending}
-          />
-        </div>
+            <div className="mt-4">
+              <SearchBar
+                value={searchQuery}
+                onChange={handleSearchChange}
+                isLoading={isRefreshing && searchQuery.length >= 3}
+              />
+            </div>
+          </section>
 
-        {/* 4. Refresh Button and Tab Label */}
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            {searchQuery.length >= 3 ? (
-              `Search results for "${searchQuery}"`
-            ) : (
-              <>
-                {activeTab === "latest" && "Latest Posts"}
-                {activeTab === "hot-alpha" && "Hot Alpha"}
-                {activeTab === "early-runners" && "Early Runners"}
-                {activeTab === "high-conviction" && "High Conviction"}
-                {activeTab === "following" && "Following"}
-              </>
-            )}
-          </h3>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="h-9 gap-1.5 rounded-full border border-border/60 bg-white/60 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.16)] hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
-            <span className="text-xs">Refresh</span>
-          </Button>
-        </div>
+          <section className="space-y-3">
+            <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.95),rgba(6,10,15,0.98))] p-3">
+              <FeedHeader
+                user={user ?? null}
+                activeTab={activeTab}
+                onTabChange={handleTabChange}
+                onLogout={handleSignOut}
+                enableUnreadCountQuery={feedUnreadQueryReady}
+                compact
+              />
+            </div>
 
-        {/* Feed */}
-        <div className="space-y-4">
+            <QueryErrorBoundary sectionName="Announcements">
+              <AnnouncementBanner enabled={feedAnnouncementsReady} />
+            </QueryErrorBoundary>
+          </section>
+
+          {isLoadingUser ? (
+            <ProfileCardSkeleton className="mb-0" />
+          ) : user ? (
+            <section className="overflow-hidden rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.96),rgba(6,10,14,0.98))] p-5 shadow-[0_30px_70px_-46px_rgba(45,212,191,0.5)]">
+              <div className="flex items-start gap-4">
+                <Avatar className="h-16 w-16 border border-lime-300/20 shadow-[0_0_24px_rgba(169,255,52,0.2)]">
+                  <AvatarImage src={getAvatarUrl(user.id, user.image)} />
+                  <AvatarFallback className="bg-white/[0.04] text-lg text-white">
+                    {user.name?.charAt(0) || "?"}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="truncate text-lg font-semibold text-white">{user.username || user.name}</h2>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-lime-300/18 bg-lime-300/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200">
+                      <PhewTrophyIcon className="h-3 w-3" />
+                      Level {user.level ?? 0}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-sm text-white/42">{user.email}</p>
+                  <div className="mt-4 flex flex-wrap items-end gap-3">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">XP</div>
+                      <div className="mt-1 text-2xl font-semibold text-lime-300">{(user.xp ?? 0).toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5 text-xs text-white/56">
+                      Reputation band active
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4">
+                <LevelBar level={user.level} size="xl" />
+              </div>
+            </section>
+          ) : userError ? (
+            <div className="rounded-[24px] border border-destructive/30 bg-destructive/10 p-4">
+              <div className="flex items-center gap-3 text-destructive">
+                <AlertCircle className="h-5 w-5" />
+                <span className="text-sm">Failed to load profile</span>
+                <Button variant="ghost" size="sm" onClick={() => refetchUser()} className="ml-auto">
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.96),rgba(6,10,14,0.98))] p-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Post signal</div>
+                <div className="mt-1 text-sm text-white/58">Drop a new call, paste a CA, or post a thesis with conviction.</div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="h-9 gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 text-white/62 hover:bg-white/[0.08] hover:text-white"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+                Live
+              </Button>
+            </div>
+            <CreatePost
+              user={user ?? null}
+              onSubmit={handleCreatePost}
+              isSubmitting={createPostMutation.isPending}
+              isAuthPending={isAuthWritePending}
+            />
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+                  {searchQuery.length >= 3 ? `Search mode` : activeTab === "latest" ? "For you" : activeTab.replace("-", " ")}
+                </div>
+                <div className="mt-1 text-sm text-white/56">
+                  {searchQuery.length >= 3 ? `Results for "${searchQuery}"` : "Calls stay visible with conviction, risk, and trade context surfaced up front."}
+                </div>
+              </div>
+              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50">
+                {displayedPosts.length} visible
+              </div>
+            </div>
+
           {activeTab === "latest" && !effectiveSearchQuery && pendingLatestCount > 0 ? (
             <div className="sticky top-[7.25rem] z-20 flex justify-center">
               <Button
@@ -2804,7 +2840,135 @@ export default function Feed() {
               ) : null}
             </>
           )}
+          </section>
         </div>
+
+        <aside className="space-y-4">
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+              <TrendingUp className="h-3.5 w-3.5 text-lime-300" />
+              Top gainers (24h)
+            </div>
+            <div className="mt-4 space-y-3">
+              {sidebarTopGainers.slice(0, 5).map((item) => (
+                <button
+                  key={item.address}
+                  type="button"
+                  onClick={() => navigate(`/token/${item.address}`)}
+                  className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-white">{item.symbol || item.name || item.address.slice(0, 6)}</div>
+                    <div className="mt-0.5 truncate text-xs text-white/42">{item.name || item.address}</div>
+                  </div>
+                  <div className="text-sm font-semibold text-emerald-300">
+                    {typeof item.change24hPct === "number" ? `${item.change24hPct >= 0 ? "+" : ""}${item.change24hPct.toFixed(2)}%` : "—"}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(10,15,14,0.96),rgba(7,10,13,0.98))] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">X raids live</div>
+                <div className="mt-1 text-sm font-semibold text-white">{sidebarLiveRaid?.title || "No active raid pulse"}</div>
+              </div>
+              <V2StatusPill tone="live">{sidebarLiveRaid ? "Live" : "Idle"}</V2StatusPill>
+            </div>
+            {sidebarLiveRaid ? (
+              <>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Participants</div>
+                    <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.participantCount.toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Pool</div>
+                    <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.poolAmount ? sidebarLiveRaid.poolAmount.toLocaleString() : "—"}</div>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => navigate(`/raids/${sidebarLiveRaid.tokenAddress}/${sidebarLiveRaid.id}`)}
+                  className="mt-4 h-11 w-full rounded-full border border-lime-300/30 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.88))] text-sm font-semibold text-slate-950"
+                >
+                  Join raid
+                </Button>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-white/48">A live coordinated campaign will surface here as soon as one opens.</p>
+            )}
+          </section>
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+              <Zap className="h-3.5 w-3.5 text-cyan-300" />
+              Trending calls
+            </div>
+            <div className="mt-4 space-y-3">
+              {sidebarTrendingCalls.slice(0, 4).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => navigate(`/post/${item.id}`)}
+                  className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-white">{item.title}</div>
+                    <div className="mt-0.5 truncate text-xs text-white/42">@{item.authorHandle || "trader"} • {item.direction || "call"}</div>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 text-white/34" />
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+              <Users className="h-3.5 w-3.5 text-lime-300" />
+              Trending communities
+            </div>
+            <div className="mt-4 space-y-3">
+              {sidebarTrendingCommunities.slice(0, 4).map((community) => (
+                <button
+                  key={community.tokenAddress}
+                  type="button"
+                  onClick={() => navigate(`/communities/${community.tokenAddress}`)}
+                  className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-white">{community.name}</div>
+                    <div className="mt-0.5 truncate text-xs text-white/42">
+                      {community.memberCount.toLocaleString()} members • {community.onlineCount.toLocaleString()} online
+                    </div>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 text-white/34" />
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {sidebarAiSpotlight ? (
+            <section className="rounded-[28px] border border-cyan-300/12 bg-[radial-gradient(circle_at_top_left,rgba(45,212,191,0.12),transparent_30%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+                <Search className="h-3.5 w-3.5 text-cyan-300" />
+                AI spotlight
+              </div>
+              <div className="mt-3 text-lg font-semibold text-white">{sidebarAiSpotlight.title}</div>
+              <p className="mt-2 text-sm leading-6 text-white/54">{sidebarAiSpotlight.summary}</p>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => sidebarAiSpotlight.tokenAddress ? navigate(`/token/${sidebarAiSpotlight.tokenAddress}`) : undefined}
+                className="mt-4 h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+              >
+                Open signal
+              </Button>
+            </section>
+          ) : null}
+        </aside>
       </main>
     </div>
   );

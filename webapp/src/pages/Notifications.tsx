@@ -14,7 +14,7 @@ import { useAuth, useSession } from "@/lib/auth-client";
 import { Notification } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CheckCheck, ArrowLeft, BellOff } from "lucide-react";
+import { CheckCheck, ArrowLeft, BellOff, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
 import { readSessionCache, readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
@@ -22,7 +22,6 @@ import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
 import { PhewBellIcon } from "@/components/icons/PhewIcons";
-import { V2PageHeader } from "@/components/layout/V2PageHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { V2Surface } from "@/components/ui/v2/V2Surface";
 import { V2TabBar } from "@/components/ui/v2/V2TabBar";
@@ -783,39 +782,49 @@ export default function Notifications() {
 
   return (
     <div ref={pageTopRef} className="space-y-5">
-      <V2PageHeader
-        title="Notifications"
-        description="Mentions, raids, follows, and system intelligence using the current notifications pipeline with expanded V2 categorization."
-        badge={<V2StatusPill tone="live">{unreadCount > 0 ? `${unreadCount} unread` : "Inbox clear"}</V2StatusPill>}
-        onBack={() => navigate(-1)}
-        action={
-          unreadCount > 0 ? (
+      <section className="overflow-hidden rounded-[30px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <V2StatusPill tone="live">{unreadCount > 0 ? `${unreadCount} unread` : "Inbox clear"}</V2StatusPill>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/34">Premium inbox</span>
+            </div>
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.2rem]">Notifications</h1>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-white/56">
+                Mentions, raid movement, follows, AI detections, and system rewards routed through the live notifications stack.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {unreadCount > 0 ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                onClick={handleMarkAllRead}
+                disabled={markAllReadMutation.isPending || !canPerformAuthenticatedWrites}
+              >
+                <CheckCheck className="mr-2 h-4 w-4" />
+                Mark all read
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
-              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
-              onClick={handleMarkAllRead}
-              disabled={markAllReadMutation.isPending || !canPerformAuthenticatedWrites}
+              className="h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/62 hover:bg-white/[0.08] hover:text-white"
+              onClick={() => setShowAlertPreferences((prev) => !prev)}
             >
-              <CheckCheck className="mr-2 h-4 w-4" />
-              Mark all read
+              <Settings2 className="mr-2 h-4 w-4" />
+              {showAlertPreferences ? "Hide settings" : "Settings"}
             </Button>
-          ) : null
-        }
-      />
+          </div>
+        </div>
+      </section>
 
       <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
         <V2Surface className="min-h-[calc(100vh-8rem)] overflow-hidden">
           <div className="relative z-10 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
-            <div className="mb-3 flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAlertPreferences((prev) => !prev)}
-              >
-                {showAlertPreferences ? "Hide alert settings" : "Alert settings"}
-              </Button>
-            </div>
             <AnimatePresence initial={false}>
               {showAlertPreferences ? (
                 <motion.div
