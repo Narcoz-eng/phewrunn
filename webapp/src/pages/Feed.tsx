@@ -24,6 +24,8 @@ import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundl
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
 import { syncPostsIntoQueryCache } from "@/lib/post-query-cache";
+import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 
 interface FeedPage {
   items: Post[];
@@ -2511,17 +2513,35 @@ export default function Feed() {
   const showTrendingSection = activeTab === "latest" && searchQuery.trim().length < 3;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
+    <div className="space-y-5">
+      <V2PageHeader
+        title="Feed"
+        description="Auto-tracked calls, trader reputation, and AI-ranked alpha running on the existing feed query and realtime invalidation stack."
+        badge={<V2StatusPill tone="ai">{activeTab === "latest" ? "Live Feed" : activeTab.replace("-", " ")}</V2StatusPill>}
+        action={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isManualRefreshing}
+            className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+          >
+            <RefreshCw className={cn("mr-2 h-4 w-4", isManualRefreshing && "animate-spin")} />
+            Refresh
+          </Button>
+        }
+      />
       <FeedHeader
         user={user ?? null}
         activeTab={activeTab}
         onTabChange={handleTabChange}
         onLogout={handleSignOut}
         enableUnreadCountQuery={feedUnreadQueryReady}
+        compact
       />
 
-      <main className="app-page-shell">
+      <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
         {/* 1. Pinned Announcements (at very top) */}
         <AnnouncementBanner enabled={feedAnnouncementsReady} />
 

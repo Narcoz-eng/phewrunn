@@ -15,7 +15,11 @@ import {
   type LeaderboardPinnedRankVM,
 } from "@/viewmodels/trader-performance";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, House, Trophy, UserRound } from "lucide-react";
+import { Trophy } from "lucide-react";
+import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
+import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
+import { V2Surface } from "@/components/ui/v2/V2Surface";
 
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;
@@ -153,100 +157,111 @@ export default function Leaderboard() {
     retry: 0,
   });
 
+  const leaderStats = useMemo(() => {
+    const entries = data?.data ?? [];
+    const bestAvgRoi = entries.reduce((best, entry) => {
+      const value = entry.performance.avgRoi ?? Number.NEGATIVE_INFINITY;
+      return value > best ? value : best;
+    }, Number.NEGATIVE_INFINITY);
+    const totalSettledCalls = entries.reduce((sum, entry) => sum + entry.performance.settledCount, 0);
+    const totalTrackedCallers = entries.length;
+    const averageWinRate =
+      entries.length > 0
+        ? entries.reduce((sum, entry) => sum + (entry.performance.winRate ?? 0), 0) / entries.length
+        : null;
+
+    return [
+      {
+        label: "Tracked Traders",
+        value: totalTrackedCallers.toLocaleString(),
+        hint: "Current ranked rows",
+      },
+      {
+        label: "Settled Calls",
+        value: totalSettledCalls.toLocaleString(),
+        hint: "Backend-ranked outcomes",
+      },
+      {
+        label: "Best Avg ROI",
+        value: Number.isFinite(bestAvgRoi) ? `${bestAvgRoi >= 0 ? "+" : ""}${bestAvgRoi.toFixed(1)}%` : "--",
+        hint: `For ${period}`,
+      },
+      {
+        label: "Avg Win Rate",
+        value: averageWinRate !== null ? `${averageWinRate.toFixed(1)}%` : "--",
+        hint: "Across ranked traders",
+      },
+    ];
+  }, [data?.data, period]);
+
   return (
-    <div className="terminal-screen min-h-screen text-white">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 pt-6 sm:px-6">
-        <div className="flex items-center gap-3">
+    <div className="space-y-5 text-white">
+      <V2PageHeader
+        title="Leaderboard"
+        description="Backend-ranked trader performance, preserved from the existing performance buckets and surfaced in the V2 shell without changing the leaderboard contract."
+        badge={<V2StatusPill tone="xp">Performance Rank</V2StatusPill>}
+        action={
           <Button
+            type="button"
             variant="ghost"
-            size="icon"
-            className="h-10 w-10 rounded-2xl border border-white/8 bg-white/5 text-white hover:bg-white/10"
+            className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
             onClick={() => navigate("/")}
           >
-            <ArrowLeft className="h-4 w-4" />
+            Back to feed
           </Button>
-          <div>
-            <div className="text-xs uppercase tracking-[0.22em] text-white/38">Terminal ranking</div>
-            <div className="text-lg font-semibold text-white">Leaderboard</div>
-          </div>
-        </div>
-      </header>
+        }
+      />
 
-      <main className="mx-auto max-w-5xl px-4 pb-32 pt-6 sm:px-6">
-        {isLoading ? (
-          <div className="terminal-card px-6 py-10 text-white/56">Loading leaderboard...</div>
-        ) : (
-          <div className={cn("transition-opacity", isFetching && "opacity-80")}>
-            <DenseLeaderboardView
-              eyebrow="Calls leaderboard"
-              title="Signal Performance Board"
-              subtitle="Ranked from backend performance buckets, not UI-derived metrics. Rows stay on real call results until the trade-PnL board ships."
-              pinnedRank={pinnedRank}
-              timeframeTabs={[
-                {
-                  key: "24h",
-                  label: "24h",
-                  active: period === "24h",
-                  onSelect: () => setPeriod("24h"),
-                },
-                {
-                  key: "7d",
-                  label: "7d",
-                  active: period === "7d",
-                  onSelect: () => setPeriod("7d"),
-                },
-                {
-                  key: "30d",
-                  label: "30d",
-                  active: period === "30d",
-                  onSelect: () => setPeriod("30d"),
-                },
-                {
-                  key: "all",
-                  label: "All",
-                  active: period === "all",
-                  onSelect: () => setPeriod("all"),
-                },
-              ]}
-              modeTabs={[]}
-              rows={rows}
-              onSelectRow={(row) => {
-                const source = data?.data.find((item) => item.user.id === row.id);
-                navigate(buildProfilePath(row.id, source?.user.username ?? null));
-              }}
-            />
-          </div>
-        )}
-      </main>
-
-      <div className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex justify-center px-4">
-        <div className="terminal-nav-pill pointer-events-auto flex items-center gap-2 px-2 py-2">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => navigate("/")}
-            className="h-14 min-w-[72px] rounded-[26px] text-white/58 hover:bg-white/6 hover:text-white"
-          >
-            <House className="h-5 w-5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => navigate("/leaderboard")}
-            className="h-14 min-w-[88px] rounded-[26px] bg-white/10 text-white hover:bg-white/10"
-          >
-            <Trophy className="h-5 w-5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => navigate("/profile")}
-            className="h-14 min-w-[72px] rounded-[26px] text-white/58 hover:bg-white/6 hover:text-white"
-          >
-            <UserRound className="h-5 w-5" />
-          </Button>
-        </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {leaderStats.map((stat) => (
+          <V2MetricCard key={stat.label} label={stat.label} value={stat.value} hint={stat.hint} accent={<Trophy className="h-5 w-5 text-lime-300" />} />
+        ))}
       </div>
+
+      {isLoading ? (
+        <V2Surface className="px-6 py-10 text-white/56">Loading leaderboard...</V2Surface>
+      ) : (
+        <V2Surface className={cn("p-4 sm:p-5 transition-opacity", isFetching && "opacity-80")}>
+          <DenseLeaderboardView
+            eyebrow="Calls leaderboard"
+            title="Signal Performance Board"
+            subtitle="Ranked from backend performance buckets, not UI-derived metrics. Rows stay on real call results until the trade-PnL board ships."
+            pinnedRank={pinnedRank}
+            timeframeTabs={[
+              {
+                key: "24h",
+                label: "24h",
+                active: period === "24h",
+                onSelect: () => setPeriod("24h"),
+              },
+              {
+                key: "7d",
+                label: "7d",
+                active: period === "7d",
+                onSelect: () => setPeriod("7d"),
+              },
+              {
+                key: "30d",
+                label: "30d",
+                active: period === "30d",
+                onSelect: () => setPeriod("30d"),
+              },
+              {
+                key: "all",
+                label: "All",
+                active: period === "all",
+                onSelect: () => setPeriod("all"),
+              },
+            ]}
+            modeTabs={[]}
+            rows={rows}
+            onSelectRow={(row) => {
+              const source = data?.data.find((item) => item.user.id === row.id);
+              navigate(buildProfilePath(row.id, source?.user.username ?? null));
+            }}
+          />
+        </V2Surface>
+      )}
     </div>
   );
 }

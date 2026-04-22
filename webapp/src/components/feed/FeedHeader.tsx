@@ -31,6 +31,7 @@ interface FeedHeaderProps {
   onTabChange: (tab: FeedTab) => void;
   onLogout: () => void;
   enableUnreadCountQuery?: boolean;
+  compact?: boolean;
 }
 
 const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: string }> }[] = [
@@ -49,6 +50,7 @@ export function FeedHeader({
   onTabChange,
   onLogout,
   enableUnreadCountQuery = true,
+  compact = false,
 }: FeedHeaderProps) {
   const navigate = useNavigate();
   const { hasLiveSession } = useAuth();
@@ -100,8 +102,9 @@ export function FeedHeader({
   }, [activeTab]);
 
   return (
-    <header className="app-topbar">
+    <header className={compact ? "v2-surface px-3 py-3 sm:px-4" : "app-topbar"}>
       {/* Top Row - Branding & Actions */}
+      {!compact ? (
       <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
         {/* Branding - Clean and minimal */}
         <BrandLogo size="sm" className="gap-3" />
@@ -196,11 +199,12 @@ export function FeedHeader({
           )}
         </div>
       </div>
+      ) : null}
 
       {/* Tab Bar */}
-      <div className="mx-auto max-w-[780px] px-3 pb-3 sm:px-5">
+      <div className={cn("mx-auto max-w-[780px]", compact ? "px-1" : "px-3 pb-3 sm:px-5")}>
         <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        <nav className="app-tab-rail relative inline-flex min-w-max gap-1">
+        <nav className={cn("relative inline-flex min-w-max gap-1", compact ? "v2-tabbar" : "app-tab-rail")}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -211,8 +215,12 @@ export function FeedHeader({
               className={cn(
                 "relative z-10 inline-flex shrink-0 items-center gap-1.5 rounded-[18px] px-3.5 py-2 text-[13px] font-semibold transition-colors sm:px-4 sm:py-2.5 sm:text-sm",
                 activeTab === tab.id
-                  ? "bg-white/85 text-foreground shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.22)] dark:bg-white/[0.07] sm:bg-transparent sm:shadow-none"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? compact
+                    ? "v2-tabbar-item-active text-white"
+                    : "bg-white/85 text-foreground shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.22)] dark:bg-white/[0.07] sm:bg-transparent sm:shadow-none"
+                  : compact
+                    ? "text-white/54 hover:text-white"
+                    : "text-muted-foreground hover:text-foreground"
               )}
             >
               {tab.icon ? <tab.icon className="hidden h-3.5 w-3.5 sm:block" /> : null}
@@ -220,13 +228,13 @@ export function FeedHeader({
             </button>
           ))}
           {/* Animated indicator - thin and elegant */}
-          <div
+          {!compact ? <div
             className="absolute bottom-1.5 top-1.5 hidden rounded-[18px] border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.95),hsl(37_34%_95%/0.9))] shadow-[0_18px_34px_-30px_hsl(var(--foreground)/0.16)] transition-all duration-300 ease-out dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none sm:block"
             style={{
               left: indicatorStyle.left,
               width: indicatorStyle.width,
             }}
-          />
+          /> : null}
         </nav>
         </div>
       </div>

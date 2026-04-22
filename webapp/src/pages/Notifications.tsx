@@ -22,6 +22,10 @@ import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
 import { PhewBellIcon } from "@/components/icons/PhewIcons";
+import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
+import { V2Surface } from "@/components/ui/v2/V2Surface";
+import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
 const NOTIFICATIONS_CACHE_TTL_MS = 60_000;
@@ -208,8 +212,47 @@ function mergeNotifications(notifications: Notification[]): Notification[] {
   return merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
-function EmptyState({ mode }: { mode: "all" | "unread" }) {
-  const isUnreadMode = mode === "unread";
+type NotificationCategory = "all" | "mentions" | "raids" | "follows" | "system";
+
+function getNotificationCategory(notification: Notification): Exclude<NotificationCategory, "all"> {
+  const type = notification.type.toLowerCase();
+  const reasonCode = notification.reasonCode?.toLowerCase() ?? "";
+  const entityType = notification.entityType?.toLowerCase() ?? "";
+  const message = notification.message.toLowerCase();
+
+  if (type === "follow") return "follows";
+  if (type.includes("raid") || reasonCode.includes("raid") || entityType.includes("raid") || message.includes("raid")) {
+    return "raids";
+  }
+  if (reasonCode.includes("mention") || message.includes("mentioned you")) {
+    return "mentions";
+  }
+  return "system";
+}
+
+function EmptyState({ mode }: { mode: NotificationCategory }) {
+  const copy: Record<NotificationCategory, { title: string; body: string }> = {
+    all: {
+      title: "No notifications yet",
+      body: "When someone interacts with your posts or follows you, you'll see it here.",
+    },
+    mentions: {
+      title: "No mentions right now",
+      body: "Direct mentions and callouts will appear here.",
+    },
+    raids: {
+      title: "No raid alerts right now",
+      body: "Active raid updates, joins, and completions will appear here.",
+    },
+    follows: {
+      title: "No follow activity yet",
+      body: "New followers will show up here once your profile starts attracting fresh attention.",
+    },
+    system: {
+      title: "No system alerts right now",
+      body: "AI detections, rewards, and platform notifications will appear here.",
+    },
+  };
   return (
     <div className="mx-auto flex min-h-[360px] max-w-[680px] items-center justify-center px-4 py-6">
       <div className="app-empty-state w-full gap-5 px-8 py-12">
@@ -217,13 +260,9 @@ function EmptyState({ mode }: { mode: "all" | "unread" }) {
           <BellOff className="h-10 w-10 text-muted-foreground" />
         </div>
         <div>
-          <p className="text-lg font-semibold text-foreground">
-            {isUnreadMode ? "You're all caught up" : "No notifications yet"}
-          </p>
+          <p className="text-lg font-semibold text-foreground">{copy[mode].title}</p>
           <p className="mt-1 text-sm text-muted-foreground max-w-xs">
-            {isUnreadMode
-              ? "Unread alerts will appear here as soon as there is new activity."
-              : "When someone interacts with your posts or follows you, you'll see it here."}
+            {copy[mode].body}
           </p>
         </div>
       </div>
@@ -237,7 +276,7 @@ export default function Notifications() {
   const pageTopRef = useRef<HTMLDivElement>(null);
   const { data: session } = useSession();
   const { isAuthenticated, hasLiveSession, canPerformAuthenticatedWrites, isUsingCachedUser } = useAuth();
-  const [activeFilter, setActiveFilter] = useState<"all" | "unread">("all");
+  const [activeFilter, setActiveFilter] = useState<NotificationCategory>("all");
   const [showAlertPreferences, setShowAlertPreferences] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
@@ -585,9 +624,10 @@ export default function Notifications() {
 
   const mergedNotifications = useMemo(() => mergeNotifications(notifications), [notifications]);
   const unreadCount = mergedNotifications.filter((n) => !n.read).length;
-  const filteredNotifications = activeFilter === "unread"
-    ? mergedNotifications.filter((notification) => !notification.read)
-    : mergedNotifications;
+  const filteredNotifications =
+    activeFilter === "all"
+      ? mergedNotifications
+      : mergedNotifications.filter((notification) => getNotificationCategory(notification) === activeFilter);
   const shouldShowSessionRecovery = isAuthenticated && isUsingCachedUser && filteredNotifications.length === 0;
   const shouldShowRecoveryBanner = isAuthenticated && isUsingCachedUser && filteredNotifications.length > 0;
   const contentStateKey = !isAuthenticated
@@ -742,47 +782,30 @@ export default function Notifications() {
   );
 
   return (
-    <div ref={pageTopRef} className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="app-topbar">
-        <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
-          <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-                onClick={() => navigate(-1)}
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-              <div className="flex items-center gap-2">
-                <PhewBellIcon className="h-5 w-5 text-primary" />
-                <h1 className="font-semibold text-lg">Notifications</h1>
-                {unreadCount > 0 && (
-                  <span className="rounded-full border border-white/70 bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground shadow-[0_12px_24px_-18px_hsl(var(--primary)/0.65)] dark:border-black/30">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
-                )}
-              </div>
-            </div>
-
-          {unreadCount > 0 && (
+    <div ref={pageTopRef} className="space-y-5">
+      <V2PageHeader
+        title="Notifications"
+        description="Mentions, raids, follows, and system intelligence using the current notifications pipeline with expanded V2 categorization."
+        badge={<V2StatusPill tone="live">{unreadCount > 0 ? `${unreadCount} unread` : "Inbox clear"}</V2StatusPill>}
+        onBack={() => navigate(-1)}
+        action={
+          unreadCount > 0 ? (
             <Button
               variant="ghost"
               size="sm"
-              className="h-9 gap-1.5 rounded-full border border-border/60 bg-white/60 px-3 text-muted-foreground shadow-[0_18px_30px_-28px_hsl(var(--foreground)/0.16)] hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
+              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
               onClick={handleMarkAllRead}
               disabled={markAllReadMutation.isPending || !canPerformAuthenticatedWrites}
             >
-              <CheckCheck className="h-4 w-4" />
-              <span className="text-xs">Mark all read</span>
+              <CheckCheck className="mr-2 h-4 w-4" />
+              Mark all read
             </Button>
-          )}
-        </div>
-      </header>
+          ) : null
+        }
+      />
 
-      <main className="app-page-shell pt-5">
-        <div className="app-surface min-h-[calc(100vh-4rem)] overflow-hidden">
+      <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
+        <V2Surface className="min-h-[calc(100vh-8rem)] overflow-hidden">
           <div className="relative z-10 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
             <div className="mb-3 flex justify-end">
               <Button
@@ -917,41 +940,17 @@ export default function Notifications() {
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-border/65 bg-background/55 p-1.5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.7)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none">
-              {([
-                ["all", "All"],
-                ["unread", "Unread"],
-              ] as const).map(([value, label]) => {
-                const isActive = activeFilter === value;
-
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setActiveFilter(value)}
-                    className={cn(
-                      "relative isolate h-11 overflow-hidden rounded-[18px] px-4 text-sm font-semibold transition-all duration-200",
-                      isActive
-                        ? "text-foreground"
-                        : "text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/[0.04]"
-                    )}
-                  >
-                    {isActive ? (
-                      <motion.span
-                        layoutId="notifications-filter-pill"
-                        transition={
-                          prefersReducedMotion
-                            ? { duration: 0 }
-                            : { type: "spring", stiffness: 420, damping: 34, mass: 0.8 }
-                        }
-                        className="absolute inset-0 border border-primary/15 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.98),hsl(37_34%_95%/0.92))] shadow-[0_16px_28px_-24px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-[linear-gradient(180deg,rgba(18,20,26,0.96),rgba(11,13,18,0.98))] dark:shadow-none"
-                      />
-                    ) : null}
-                    <span className="relative z-10">{label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <V2TabBar
+              value={activeFilter}
+              onChange={setActiveFilter}
+              items={[
+                { value: "all", label: "All" },
+                { value: "mentions", label: "Mentions" },
+                { value: "raids", label: "X Raids" },
+                { value: "follows", label: "Follows" },
+                { value: "system", label: "System" },
+              ]}
+            />
           </div>
 
           <AnimatePresence mode="wait" initial={false}>
@@ -965,7 +964,7 @@ export default function Notifications() {
               {notificationsContent}
             </motion.div>
           </AnimatePresence>
-        </div>
+        </V2Surface>
       </main>
     </div>
   );

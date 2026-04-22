@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AuthInitializer } from "@/components/AuthInitializer";
+import { V2AppShell } from "@/components/layout/V2AppShell";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { subscribeToAppRealtime } from "@/lib/realtime/app-realtime-client";
@@ -31,6 +32,10 @@ const HandleOnboarding = lazyPage(() => import("./pages/HandleOnboarding"), "rou
 const Login = lazyPage(() => import("./pages/Login"), "route:login");
 const PostDetail = lazyPage(() => import("./pages/PostDetail"), "route:post-detail");
 const TokenPage = lazyPage(() => import("./pages/TokenPage"), "route:token-page");
+const Terminal = lazyPage(() => import("./pages/Terminal"), "route:terminal");
+const BundleChecker = lazyPage(() => import("./pages/BundleChecker"), "route:bundle-checker");
+const CommunityPage = lazyPage(() => import("./pages/CommunityPage"), "route:community-page");
+const RaidPage = lazyPage(() => import("./pages/RaidPage"), "route:raid-page");
 const Terms = lazyPage(() => import("./pages/Terms"), "route:terms");
 const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
@@ -74,6 +79,10 @@ function PublicHandleProfileRoute() {
 
 function WithSolanaRuntime({ children }: { children: ReactNode }) {
   return <SolanaRouteProvider>{children}</SolanaRouteProvider>;
+}
+
+function WithProductShell({ children }: { children: ReactNode }) {
+  return <V2AppShell>{children}</V2AppShell>;
 }
 
 function hasCompletedHandle(username: string | null | undefined): boolean {
@@ -148,9 +157,11 @@ function AnimatedRoutes() {
             path="/"
             element={
               <ProtectedRoute>
-                <WithSolanaRuntime>
-                  <Feed />
-                </WithSolanaRuntime>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <Feed />
+                  </WithSolanaRuntime>
+                </WithProductShell>
               </ProtectedRoute>
             }
           />
@@ -158,9 +169,11 @@ function AnimatedRoutes() {
             path="/profile"
             element={
               <ProtectedRoute>
-                <WithSolanaRuntime>
-                  <Profile />
-                </WithSolanaRuntime>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <Profile />
+                  </WithSolanaRuntime>
+                </WithProductShell>
               </ProtectedRoute>
             }
           />
@@ -192,7 +205,9 @@ function AnimatedRoutes() {
             path="/notifications"
             element={
               <ProtectedRoute>
-                <Notifications />
+                <WithProductShell>
+                  <Notifications />
+                </WithProductShell>
               </ProtectedRoute>
             }
           />
@@ -200,7 +215,9 @@ function AnimatedRoutes() {
             path="/leaderboard"
             element={
               <ProtectedRoute>
-                <Leaderboard />
+                <WithProductShell>
+                  <Leaderboard />
+                </WithProductShell>
               </ProtectedRoute>
             }
           />
@@ -208,9 +225,11 @@ function AnimatedRoutes() {
             path="/post/:postId"
             element={
               <ProtectedRoute>
-                <WithSolanaRuntime>
-                  <PostDetail />
-                </WithSolanaRuntime>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <PostDetail />
+                  </WithSolanaRuntime>
+                </WithProductShell>
               </ProtectedRoute>
             }
           />
@@ -218,9 +237,53 @@ function AnimatedRoutes() {
             path="/token/:tokenAddress"
             element={
               <ProtectedRoute>
-                <WithSolanaRuntime>
-                  <TokenPage />
-                </WithSolanaRuntime>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <TokenPage />
+                  </WithSolanaRuntime>
+                </WithProductShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/terminal"
+            element={
+              <ProtectedRoute>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <Terminal />
+                  </WithSolanaRuntime>
+                </WithProductShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/bundle-checker"
+            element={
+              <ProtectedRoute>
+                <WithProductShell>
+                  <BundleChecker />
+                </WithProductShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/communities/:tokenAddress"
+            element={
+              <ProtectedRoute>
+                <WithProductShell>
+                  <CommunityPage />
+                </WithProductShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/raids/:tokenAddress/:raidId"
+            element={
+              <ProtectedRoute>
+                <WithProductShell>
+                  <RaidPage />
+                </WithProductShell>
               </ProtectedRoute>
             }
           />

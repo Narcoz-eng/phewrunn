@@ -68,6 +68,8 @@ import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { BannerPicker } from "@/components/profile/BannerPicker";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2, ImageIcon } from "lucide-react";
+import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
 import {
   buildTraderPerformanceVm,
@@ -1204,40 +1206,31 @@ export default function Profile() {
   const shouldShowProfileSignInState = !session?.user && !cachedProfileBySession;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="app-topbar">
-        <div className="mx-auto flex h-[4.4rem] max-w-[780px] items-center justify-between px-4 sm:px-5">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate("/")}
-              className="h-10 w-10 rounded-2xl border border-border/60 bg-white/60 shadow-[0_18px_34px_-28px_hsl(var(--foreground)/0.18)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <h1 className="font-heading font-semibold text-lg">Profile</h1>
-          </div>
-
-          {profileViewTab === "profile" ? (
+    <div className="space-y-5">
+      <V2PageHeader
+        title="Profile"
+        description="Level, XP, trader intelligence, wallet settings, and earnings, all preserved from the current profile system."
+        badge={<V2StatusPill tone="xp">{profileViewTab === "profile" ? "Trader Profile" : "Settings"}</V2StatusPill>}
+        onBack={() => navigate("/")}
+        action={
+          profileViewTab === "profile" ? (
             !isEditing ? (
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9 rounded-full"
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
                   onClick={() => setIsShareCardOpen(true)}
                 >
                   <Share2 className="h-4 w-4" />
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={() => setProfileView("settings")}
-                  className="h-9 gap-1.5 rounded-full px-3"
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
                 >
-                  <PhewEditIcon className="h-3.5 w-3.5" />
+                  <PhewEditIcon className="mr-2 h-3.5 w-3.5" />
                   Settings
                 </Button>
               </div>
@@ -1248,33 +1241,33 @@ export default function Profile() {
                   size="sm"
                   onClick={handleCancel}
                   disabled={updateProfileMutation.isPending}
-                  className="h-8 px-3 gap-1.5"
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="mr-2 h-3.5 w-3.5" />
                   Cancel
                 </Button>
                 <Button
                   size="sm"
                   onClick={handleSave}
                   disabled={updateProfileMutation.isPending}
-                  className="h-8 px-3 gap-1.5"
+                  className="rounded-2xl px-4"
                 >
                   {updateProfileMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Check className="h-3.5 w-3.5" />
+                    <Check className="mr-2 h-3.5 w-3.5" />
                   )}
                   Save
                 </Button>
               </div>
             )
           ) : (
-            <span className="text-xs text-muted-foreground">Trading Settings</span>
-          )}
-        </div>
-      </header>
+            <span className="text-xs uppercase tracking-[0.2em] text-white/42">Trading settings</span>
+          )
+        }
+      />
 
-      <main className="app-page-shell">
+      <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
         <Dialog
           open={isCropDialogOpen}
           onOpenChange={(open) => {
