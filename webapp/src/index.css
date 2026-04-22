@@ -672,6 +672,99 @@
     background:
       linear-gradient(90deg, rgba(169, 255, 52, 0.18), rgba(65, 232, 207, 0.14));
   }
+
+  .v2-hero-board {
+    @apply relative overflow-hidden rounded-[32px] border border-white/[0.08] text-white;
+    background:
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.16), transparent 20%),
+      radial-gradient(circle at top right, rgba(65, 232, 207, 0.12), transparent 22%),
+      linear-gradient(180deg, rgba(7, 14, 17, 0.98), rgba(3, 8, 10, 0.98));
+    box-shadow:
+      0 36px 90px -52px rgba(0, 0, 0, 0.82),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .v2-panel-grid {
+    @apply grid gap-4;
+    grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+  }
+
+  .v2-dense-module {
+    @apply rounded-[26px] border border-white/[0.08] text-white;
+    background:
+      linear-gradient(180deg, rgba(10, 18, 21, 0.98), rgba(6, 12, 14, 0.98));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 24px 64px -46px rgba(0, 0, 0, 0.84);
+  }
+
+  .v2-micro-kpi {
+    @apply rounded-[20px] border border-white/[0.08] px-4 py-3;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+  }
+
+  .v2-signal-row {
+    @apply flex items-center justify-between gap-4 rounded-[18px] border border-white/[0.08] px-4 py-3;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .v2-terminal-frame {
+    @apply overflow-hidden rounded-[30px] border border-white/[0.08] text-white;
+    background:
+      radial-gradient(circle at top, rgba(169, 255, 52, 0.08), transparent 24%),
+      linear-gradient(180deg, rgba(6, 11, 14, 0.99), rgba(3, 7, 9, 0.99));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.05),
+      0 36px 88px -52px rgba(0, 0, 0, 0.86);
+  }
+
+  .v2-terminal-grid {
+    @apply grid gap-[1px];
+    background: rgba(255, 255, 255, 0.07);
+    grid-template-columns: minmax(240px, 0.55fr) minmax(0, 1.1fr) minmax(260px, 0.6fr);
+  }
+
+  .v2-terminal-cell {
+    @apply min-h-0;
+    background: linear-gradient(180deg, rgba(8, 14, 17, 0.98), rgba(5, 10, 12, 0.98));
+  }
+
+  .v2-auth-hero-lines::before {
+    content: "";
+    position: absolute;
+    inset: -12% -18% auto -18%;
+    height: 320px;
+    pointer-events: none;
+    opacity: 0.92;
+    background:
+      radial-gradient(circle at 18% 46%, rgba(169, 255, 52, 0.38), transparent 18%),
+      radial-gradient(circle at 84% 42%, rgba(45, 212, 191, 0.3), transparent 18%),
+      linear-gradient(90deg, transparent 0%, rgba(169, 255, 52, 0.22) 16%, transparent 32%, transparent 64%, rgba(45, 212, 191, 0.2) 82%, transparent 100%);
+    filter: blur(52px);
+  }
+
+  .v2-auth-preview-grid {
+    @apply grid gap-[1px] overflow-hidden rounded-[28px] border border-white/[0.08];
+    grid-template-columns: 220px minmax(0, 1fr) 280px;
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 28px 80px -54px rgba(0, 0, 0, 0.92);
+  }
+
+  .v2-auth-preview-cell {
+    background:
+      linear-gradient(180deg, rgba(7, 12, 15, 0.99), rgba(3, 7, 8, 0.99));
+  }
+
+  @media (max-width: 1279px) {
+    .v2-panel-grid,
+    .v2-terminal-grid,
+    .v2-auth-preview-grid {
+      grid-template-columns: 1fr;
+    }
+  }
 }
 
 @layer utilities {
