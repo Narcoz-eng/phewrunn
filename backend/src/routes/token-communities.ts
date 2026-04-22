@@ -419,6 +419,28 @@ function serializeParticipant(participant: {
   };
 }
 
+function serializeParticipantWithUser(participant: {
+  id: string;
+  status: string;
+  currentStep: string;
+  joinedAt: Date;
+  launchedAt: Date | null;
+  postedAt: Date | null;
+  user: {
+    id: string;
+    name: string;
+    username: string | null;
+    image: string | null;
+    level: number;
+    isVerified: boolean;
+  };
+}) {
+  return {
+    ...serializeParticipant(participant),
+    user: serializeCommunityAuthor(participant.user),
+  };
+}
+
 function serializeSubmission(
   viewerId: string | null,
   submission: {
@@ -896,6 +918,400 @@ async function loadActiveRaidView(token: { id: string; address: string }, viewer
       banner: readyAssets.banner ? serializeCommunityAsset(token.address, readyAssets.banner) : null,
       mascot: readyAssets.mascot ? serializeCommunityAsset(token.address, readyAssets.mascot) : null,
       referenceMemes: readyAssets.referenceMemes.map((asset) => serializeCommunityAsset(token.address, asset)),
+    },
+  };
+}
+
+async function loadCommunitySummaryView(
+  token: { id: string; address: string; symbol: string | null; name: string | null; imageUrl: string | null },
+  viewerId: string | null,
+) {
+  const [profile, memberStats, counts, pinnedThread, activeRaid, recentRaids, topCalls] = await Promise.all([
+    prisma.tokenCommunityProfile.findUnique({
+      where: { tokenId: token.id },
+      select: {
+        id: true,
+        headline: true,
+        xCashtag: true,
+        voiceHints: true,
+        insideJokes: true,
+        preferredTemplateIds: true,
+        raidLeadMinLevel: true,
+        whyLine: true,
+        welcomePrompt: true,
+        vibeTags: true,
+        mascotName: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.tokenCommunityMemberStats.findMany({
+      where: { tokenId: token.id },
+      select: {
+        contributionScore: true,
+        lastActiveAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            isVerified: true,
+          },
+        },
+      },
+      orderBy: [{ contributionScore: "desc" }, { lastActiveAt: "desc" }],
+      take: 8,
+    }),
+    prisma.token.findUnique({
+      where: { id: token.id },
+      select: {
+        _count: {
+          select: {
+            followers: true,
+            communityThreads: true,
+            calls: true,
+            raidCampaigns: true,
+          },
+        },
+      },
+    }),
+    prisma.tokenCommunityThread.findFirst({
+      where: {
+        tokenId: token.id,
+        deletedAt: null,
+        isPinned: true,
+      },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        kind: true,
+        raidCampaignId: true,
+        replyCount: true,
+        isPinned: true,
+        lastActivityAt: true,
+        deletedAt: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            isVerified: true,
+          },
+        },
+        reactions: {
+          select: {
+            emoji: true,
+            userId: true,
+          },
+        },
+      },
+      orderBy: [{ lastActivityAt: "desc" }, { createdAt: "desc" }],
+    }),
+    prisma.tokenRaidCampaign.findFirst({
+      where: {
+        tokenId: token.id,
+        status: "active",
+      },
+      select: {
+        id: true,
+        objective: true,
+        openedAt: true,
+        participants: {
+          select: { id: true },
+        },
+        submissions: {
+          where: { xPostUrl: { not: null } },
+          select: { id: true },
+        },
+      },
+      orderBy: { openedAt: "desc" },
+    }),
+    prisma.tokenRaidCampaign.findMany({
+      where: { tokenId: token.id },
+      select: {
+        id: true,
+        objective: true,
+        status: true,
+        openedAt: true,
+        closedAt: true,
+        participants: {
+          select: { id: true },
+        },
+      },
+      orderBy: { openedAt: "desc" },
+      take: 5,
+    }),
+    prisma.post.findMany({
+      where: { tokenId: token.id },
+      select: {
+        id: true,
+        content: true,
+        contractAddress: true,
+        tokenSymbol: true,
+        tokenName: true,
+        tokenImage: true,
+        confidenceScore: true,
+        highConvictionScore: true,
+        roiCurrentPct: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            isVerified: true,
+          },
+        },
+        likes: { select: { id: true } },
+        reposts: { select: { id: true } },
+      },
+      orderBy: [{ highConvictionScore: "desc" }, { confidenceScore: "desc" }, { createdAt: "desc" }],
+      take: 4,
+    }),
+  ]);
+
+  const onlineThresholdMs = 15 * 60 * 1000;
+  const onlineMembers = memberStats
+    .filter((member) => Date.now() - member.lastActiveAt.getTime() <= onlineThresholdMs)
+    .slice(0, 6)
+    .map((member) => serializeCommunityAuthor(member.user));
+
+  return {
+    hero: {
+      tokenAddress: token.address,
+      symbol: token.symbol,
+      name: token.name,
+      imageUrl: token.imageUrl,
+      profile: buildProfileResponse({ symbol: token.symbol, name: token.name }, profile),
+      memberCount: counts?._count.followers ?? 0,
+      onlineCount: onlineMembers.length,
+    },
+    stats: {
+      members: counts?._count.followers ?? 0,
+      posts: counts?._count.communityThreads ?? 0,
+      calls: counts?._count.calls ?? 0,
+      raids: counts?._count.raidCampaigns ?? 0,
+    },
+    pinnedCall: pinnedThread ? serializeThread(viewerId, pinnedThread) : null,
+    topContributors: memberStats.map((member) => ({
+      score: member.contributionScore,
+      user: serializeCommunityAuthor(member.user),
+      lastActiveAt: member.lastActiveAt.toISOString(),
+    })),
+    onlineMembers,
+    activeRaid: activeRaid
+      ? {
+          id: activeRaid.id,
+          objective: activeRaid.objective,
+          openedAt: activeRaid.openedAt.toISOString(),
+          participantCount: activeRaid.participants.length,
+          postedCount: activeRaid.submissions.length,
+        }
+      : null,
+    recentRaids: recentRaids.map((raid) => ({
+      id: raid.id,
+      objective: raid.objective,
+      status: raid.status,
+      openedAt: raid.openedAt.toISOString(),
+      closedAt: raid.closedAt?.toISOString() ?? null,
+      participantCount: raid.participants.length,
+    })),
+    topCalls: topCalls.map((call) => ({
+      id: call.id,
+      content: call.content,
+      contractAddress: call.contractAddress,
+      tokenSymbol: call.tokenSymbol,
+      tokenName: call.tokenName,
+      tokenImage: call.tokenImage,
+      confidenceScore: call.confidenceScore,
+      highConvictionScore: call.highConvictionScore,
+      roiCurrentPct: call.roiCurrentPct,
+      createdAt: call.createdAt.toISOString(),
+      engagementCount: call.likes.length + call.reposts.length,
+      author: serializeCommunityAuthor(call.author),
+    })),
+  };
+}
+
+async function loadRaidDetailView(
+  token: { id: string; address: string; symbol: string | null; name: string | null; imageUrl: string | null },
+  raidId: string,
+  viewerId: string | null,
+) {
+  const [raid, assets] = await Promise.all([
+    prisma.tokenRaidCampaign.findFirst({
+      where: {
+        id: raidId,
+        tokenId: token.id,
+      },
+      select: {
+        id: true,
+        status: true,
+        objective: true,
+        memeOptionsJson: true,
+        copyOptionsJson: true,
+        openedAt: true,
+        closedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+            level: true,
+            isVerified: true,
+          },
+        },
+        participants: {
+          select: {
+            id: true,
+            userId: true,
+            status: true,
+            currentStep: true,
+            joinedAt: true,
+            launchedAt: true,
+            postedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                isVerified: true,
+              },
+            },
+          },
+          orderBy: [{ joinedAt: "desc" }],
+          take: 200,
+        },
+        submissions: {
+          select: {
+            id: true,
+            memeOptionId: true,
+            copyOptionId: true,
+            renderPayloadJson: true,
+            composerText: true,
+            xPostUrl: true,
+            postedAt: true,
+            createdAt: true,
+            updatedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                isVerified: true,
+              },
+            },
+            boosts: {
+              select: { userId: true },
+            },
+          },
+          orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
+          take: 100,
+        },
+      },
+    }),
+    prisma.tokenCommunityAsset.findMany({
+      where: { tokenId: token.id, status: "ready" },
+      select: {
+        id: true,
+        kind: true,
+        status: true,
+        url: true,
+        objectKey: true,
+        mimeType: true,
+        width: true,
+        height: true,
+        sizeBytes: true,
+        sortOrder: true,
+        createdAt: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+    }),
+  ]);
+
+  if (!raid) {
+    return null;
+  }
+
+  const visibleSubmissions = raid.submissions.filter((submission) => submission.xPostUrl);
+  const participantCount = raid.participants.length;
+  const postedCount = visibleSubmissions.length;
+  const milestoneTarget = Math.max(10, Math.ceil(participantCount / 10) * 10);
+
+  const logoAsset = assets.find((asset) => asset.kind === "logo") ?? null;
+  const bannerAsset = assets.find((asset) => asset.kind === "banner") ?? null;
+  const mascotAsset = assets.find((asset) => asset.kind === "mascot") ?? null;
+
+  return {
+    campaign: {
+      id: raid.id,
+      status: raid.status,
+      objective: raid.objective,
+      memeOptions: parseStoredMemeOptions(raid.memeOptionsJson),
+      copyOptions: parseStoredCopyOptions(raid.copyOptionsJson),
+      openedAt: raid.openedAt.toISOString(),
+      closedAt: raid.closedAt?.toISOString() ?? null,
+      createdAt: raid.createdAt.toISOString(),
+      updatedAt: raid.updatedAt.toISOString(),
+      participantCount,
+      postedCount,
+      milestoneTarget,
+      progressPct: milestoneTarget > 0 ? Math.min(100, Math.round((postedCount / milestoneTarget) * 100)) : 0,
+      token: {
+        address: token.address,
+        symbol: token.symbol,
+        name: token.name,
+        imageUrl: token.imageUrl,
+      },
+      createdBy: serializeCommunityAuthor(raid.createdBy),
+    },
+    participants: raid.participants.map((participant) => serializeParticipantWithUser(participant)),
+    leaderboard: visibleSubmissions
+      .map((submission) => ({
+        ...serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]),
+        impactScore:
+          (submission.boosts?.length ?? 0) * 5 +
+          (submission.postedAt ? 15 : 0) +
+          submission.user.level,
+      }))
+      .sort((a, b) => b.impactScore - a.impactScore),
+    updates: raid.submissions.map((submission) =>
+      serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]),
+    ),
+    viewerState: {
+      participant:
+        viewerId
+          ? raid.participants
+              .filter((participant) => participant.userId === viewerId)
+              .map((participant) => serializeParticipantWithUser(participant))[0] ?? null
+          : null,
+      submission:
+        viewerId
+          ? raid.submissions
+              .filter((submission) => submission.user.id === viewerId)
+              .map((submission) => serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]))[0] ??
+            null
+          : null,
+    },
+    communityAssets: {
+      logo: logoAsset ? serializeCommunityAsset(token.address, logoAsset) : null,
+      banner: bannerAsset ? serializeCommunityAsset(token.address, bannerAsset) : null,
+      mascot: mascotAsset ? serializeCommunityAsset(token.address, mascotAsset) : null,
     },
   };
 }
@@ -2312,6 +2728,148 @@ tokenCommunitiesRouter.delete(
 );
 
 tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/summary",
+  zValidator("param", TokenAddressParamSchema),
+  async (c) => {
+    try {
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const summary = await loadCommunitySummaryView(
+        {
+          id: token.id,
+          address: token.address,
+          symbol: token.symbol ?? null,
+          name: token.name ?? null,
+          imageUrl: token.imageUrl ?? null,
+        },
+        c.get("user")?.id ?? null,
+      );
+      return c.json({ data: summary });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/top-calls",
+  zValidator("param", TokenAddressParamSchema),
+  async (c) => {
+    try {
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const posts = await prisma.post.findMany({
+        where: { tokenId: token.id },
+        select: {
+          id: true,
+          content: true,
+          contractAddress: true,
+          tokenSymbol: true,
+          tokenName: true,
+          tokenImage: true,
+          confidenceScore: true,
+          highConvictionScore: true,
+          roiCurrentPct: true,
+          createdAt: true,
+          author: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+              isVerified: true,
+            },
+          },
+          likes: { select: { id: true } },
+          reposts: { select: { id: true } },
+          comments: { select: { id: true } },
+        },
+        orderBy: [{ highConvictionScore: "desc" }, { confidenceScore: "desc" }, { createdAt: "desc" }],
+        take: 20,
+      });
+
+      return c.json({
+        data: posts.map((post) => ({
+          id: post.id,
+          content: post.content,
+          contractAddress: post.contractAddress,
+          tokenSymbol: post.tokenSymbol,
+          tokenName: post.tokenName,
+          tokenImage: post.tokenImage,
+          confidenceScore: post.confidenceScore,
+          highConvictionScore: post.highConvictionScore,
+          roiCurrentPct: post.roiCurrentPct,
+          createdAt: post.createdAt.toISOString(),
+          engagementCount: post.likes.length + post.reposts.length + post.comments.length,
+          author: serializeCommunityAuthor(post.author),
+        })),
+      });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/raids",
+  zValidator("param", TokenAddressParamSchema),
+  async (c) => {
+    try {
+      const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
+      const raids = await prisma.tokenRaidCampaign.findMany({
+        where: { tokenId: token.id },
+        select: {
+          id: true,
+          status: true,
+          objective: true,
+          openedAt: true,
+          closedAt: true,
+          createdAt: true,
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              image: true,
+              level: true,
+              isVerified: true,
+            },
+          },
+          participants: { select: { id: true } },
+          submissions: {
+            where: { xPostUrl: { not: null } },
+            select: { id: true },
+          },
+        },
+        orderBy: { openedAt: "desc" },
+        take: 20,
+      });
+
+      return c.json({
+        data: raids.map((raid) => ({
+          id: raid.id,
+          status: raid.status,
+          objective: raid.objective,
+          openedAt: raid.openedAt.toISOString(),
+          closedAt: raid.closedAt?.toISOString() ?? null,
+          createdAt: raid.createdAt.toISOString(),
+          participantCount: raid.participants.length,
+          postedCount: raid.submissions.length,
+          createdBy: serializeCommunityAuthor(raid.createdBy),
+        })),
+      });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.get(
   "/:tokenAddress/community/raids/active",
   requireAuth,
   zValidator("param", TokenAddressParamSchema),
@@ -2320,6 +2878,36 @@ tokenCommunitiesRouter.get(
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
       const active = await loadActiveRaidView(token, c.get("user")?.id ?? null);
       return c.json({ data: active });
+    } catch (error) {
+      const mapped = mapRouteError(error);
+      if (mapped) return c.json(mapped.error, mapped.status);
+      throw error;
+    }
+  },
+);
+
+tokenCommunitiesRouter.get(
+  "/:tokenAddress/community/raids/:raidId",
+  zValidator("param", TokenAddressParamSchema.extend({ raidId: z.string().trim().min(1) })),
+  async (c) => {
+    try {
+      const { tokenAddress, raidId } = c.req.valid("param");
+      const token = await resolveTokenByAddressOrThrow(tokenAddress);
+      const detail = await loadRaidDetailView(
+        {
+          id: token.id,
+          address: token.address,
+          symbol: token.symbol ?? null,
+          name: token.name ?? null,
+          imageUrl: token.imageUrl ?? null,
+        },
+        raidId,
+        c.get("user")?.id ?? null,
+      );
+      if (!detail) {
+        return c.json({ error: { message: "Raid not found", code: "NOT_FOUND" } }, 404);
+      }
+      return c.json({ data: detail });
     } catch (error) {
       const mapped = mapRouteError(error);
       if (mapped) return c.json(mapped.error, mapped.status);

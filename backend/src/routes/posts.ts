@@ -7305,8 +7305,17 @@ const PortfolioRequestSchema = z
   })
   .strict();
 
+const TerminalDepthRequestSchema = z
+  .object({
+    tokenMint: SolanaAddressStringSchema,
+    chainType: z.enum(["solana", "evm", "ethereum"]).optional().default("solana"),
+    pairAddress: z.string().min(10).max(128).optional(),
+  })
+  .strict();
+
 type ChartTradesQuery = z.infer<typeof ChartTradesQuerySchema>;
 type ChartLiveQuery = z.infer<typeof ChartLiveQuerySchema>;
+type TerminalDepthRequest = z.infer<typeof TerminalDepthRequestSchema>;
 
 type PriceRoutePostRecord = {
   id: string;
@@ -8313,6 +8322,136 @@ async function loadChartTrades(payload: ChartTradesQuery) {
   return trades;
 }
 
+const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+async function fetchDerivedTerminalQuote(params: {
+  inputMint: string;
+  outputMint: string;
+  amount: number;
+}) {
+  const search = new URLSearchParams({
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: String(params.amount),
+    slippageBps: "50",
+    swapMode: "ExactIn",
+  });
+  const response = await forwardJupiterRequest(
+    JUPITER_QUOTE_URLS.map((base) => `${base}?${search.toString()}`),
+    {
+      method: "GET",
+      headers: { accept: "application/json" },
+      timeoutMs: 4_800,
+      hedgeDelayMs: 60,
+    }
+  );
+  if (response.status >= 400) {
+    throw new Error(response.bodyText || `Quote failed (${response.status})`);
+  }
+  return JupiterQuoteResponseSchema.parse(JSON.parse(response.bodyText));
+}
+
+async function buildTerminalDepthPayload(payload: TerminalDepthRequest) {
+  if (payload.chainType !== "solana") {
+    throw new Error("TERMINAL_DEPTH_SOLANA_ONLY");
+  }
+
+  const [_, trades] = await Promise.all([
+    getHeliusTokenMetadataForMint({ mint: payload.tokenMint, chainType: payload.chainType }),
+    loadChartTrades({
+      tokenAddress: payload.tokenMint,
+      pairAddress: payload.pairAddress,
+      chainType: payload.chainType,
+      limit: 24,
+    }),
+  ]);
+
+  const tokenDecimals = 6;
+
+  const recentPrice =
+    trades.find((trade) => typeof trade.priceUsd === "number" && Number.isFinite(trade.priceUsd))?.priceUsd ?? null;
+  const quoteSizesUsd = [5, 10, 25, 50, 100, 250];
+
+  const bidQuotes = await Promise.all(
+    quoteSizesUsd.map(async (usdSize) => {
+      const quote = await fetchDerivedTerminalQuote({
+        inputMint: SOLANA_USDC_MINT,
+        outputMint: payload.tokenMint,
+        amount: Math.round(usdSize * 1_000_000),
+      });
+      const outputAmount = Number(quote.outAmount) / Math.pow(10, tokenDecimals);
+      const unitPrice = outputAmount > 0 ? usdSize / outputAmount : recentPrice ?? 0;
+      return {
+        price: Number(unitPrice.toFixed(10)),
+        amount: Number(outputAmount.toFixed(4)),
+        totalUsd: usdSize,
+        side: "bid" as const,
+      };
+    }),
+  );
+
+  const sellSizesToken = quoteSizesUsd.map((usdSize) => {
+    const referencePrice = recentPrice && recentPrice > 0 ? recentPrice : bidQuotes[0]?.price ?? 0.000001;
+    return Math.max(1, usdSize / referencePrice);
+  });
+
+  const askQuotes = await Promise.all(
+    sellSizesToken.map(async (tokenAmount) => {
+      const atomicAmount = Math.max(1, Math.round(tokenAmount * Math.pow(10, tokenDecimals)));
+      const quote = await fetchDerivedTerminalQuote({
+        inputMint: payload.tokenMint,
+        outputMint: SOLANA_USDC_MINT,
+        amount: atomicAmount,
+      });
+      const outUsd = Number(quote.outAmount) / 1_000_000;
+      const unitPrice = tokenAmount > 0 ? outUsd / tokenAmount : recentPrice ?? 0;
+      return {
+        price: Number(unitPrice.toFixed(10)),
+        amount: Number(tokenAmount.toFixed(4)),
+        totalUsd: Number(outUsd.toFixed(2)),
+        side: "ask" as const,
+      };
+    }),
+  );
+
+  const bestBid = bidQuotes[0]?.price ?? recentPrice ?? null;
+  const bestAsk = askQuotes[0]?.price ?? recentPrice ?? null;
+  const spread =
+    bestBid !== null && bestAsk !== null ? Number(Math.max(0, bestAsk - bestBid).toFixed(10)) : null;
+
+  const depthSeries = [
+    ...askQuotes.map((quote, index) => ({
+      side: "ask" as const,
+      level: index + 1,
+      cumulativeUsd: Number(
+        askQuotes.slice(0, index + 1).reduce((sum, entry) => sum + entry.totalUsd, 0).toFixed(2),
+      ),
+      price: quote.price,
+    })),
+    ...bidQuotes.map((quote, index) => ({
+      side: "bid" as const,
+      level: index + 1,
+      cumulativeUsd: Number(
+        bidQuotes.slice(0, index + 1).reduce((sum, entry) => sum + entry.totalUsd, 0).toFixed(2),
+      ),
+      price: quote.price,
+    })),
+  ];
+
+  return {
+    bids: bidQuotes.sort((left, right) => right.price - left.price),
+    asks: askQuotes.sort((left, right) => left.price - right.price),
+    spread,
+    depthSeries,
+    positionSummary: {
+      tokenMint: payload.tokenMint,
+      tokenDecimals,
+      referencePrice: recentPrice ?? bestBid ?? bestAsk,
+      recentTradeCount: trades.length,
+    },
+  };
+}
+
 function secondsPerCandle(timeframe: "minute" | "hour" | "day", aggregate: number): number {
   if (timeframe === "minute") return Math.max(1, aggregate) * 60;
   if (timeframe === "hour") return Math.max(1, aggregate) * 60 * 60;
@@ -9097,6 +9236,39 @@ postsRouter.post(
         totalUnrealizedPnl: hasPnl ? Math.round(totalUnrealizedPnl * 100) / 100 : null,
       },
     });
+  }
+);
+
+postsRouter.post(
+  "/terminal/depth",
+  zValidator("json", TerminalDepthRequestSchema),
+  async (c) => {
+    try {
+      const payload = c.req.valid("json");
+      const data = await buildTerminalDepthPayload(payload);
+      return c.json({ data });
+    } catch (error) {
+      if (getErrorMessage(error) === "TERMINAL_DEPTH_SOLANA_ONLY") {
+        return c.json(
+          {
+            error: {
+              message: "Terminal depth is currently available for Solana markets only",
+              code: "TERMINAL_DEPTH_SOLANA_ONLY",
+            },
+          },
+          400
+        );
+      }
+      return c.json(
+        {
+          error: {
+            message: getErrorMessage(error),
+            code: "TERMINAL_DEPTH_FAILED",
+          },
+        },
+        502
+      );
+    }
   }
 );
 

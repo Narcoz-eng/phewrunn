@@ -412,6 +412,295 @@ export interface TokenActiveRaidResponse {
   };
 }
 
+export interface DiscoverySidebarMover {
+  address: string;
+  symbol: string | null;
+  name: string | null;
+  imageUrl: string | null;
+  priceChange24hPct: number | null;
+  volume24h: number | null;
+  liquidity: number | null;
+}
+
+export interface DiscoverySidebarRaid {
+  id: string;
+  tokenAddress: string;
+  objective: string;
+  status: string;
+  participantCount: number;
+  postedCount: number;
+  openedAt: string;
+  tokenSymbol: string | null;
+  tokenImageUrl: string | null;
+}
+
+export interface DiscoverySidebarCall {
+  id: string;
+  ticker: string | null;
+  title: string | null;
+  callsCount: number;
+  roiCurrentPct: number | null;
+  roiPeakPct: number | null;
+}
+
+export interface DiscoverySidebarCommunity {
+  tokenAddress: string;
+  xCashtag: string | null;
+  headline: string | null;
+  memberCount: number;
+  onlineNowEstimate: number;
+  imageUrl: string | null;
+}
+
+export interface DiscoverySidebarAiSpotlight {
+  id: string;
+  ticker: string | null;
+  title: string | null;
+  confidenceScore: number | null;
+  highConvictionScore: number | null;
+  timingTier: string | null;
+}
+
+export interface DiscoveryFeedSidebarResponse {
+  topGainers: DiscoverySidebarMover[];
+  liveRaids: DiscoverySidebarRaid[];
+  trendingCalls: DiscoverySidebarCall[];
+  trendingCommunities: DiscoverySidebarCommunity[];
+  aiSpotlight: DiscoverySidebarAiSpotlight | null;
+}
+
+export interface BundleCheckerLinkedWallet {
+  address: string;
+  label: string | null;
+  valueUsd: number | null;
+  supplyPct: number | null;
+  relationStrength: number | null;
+}
+
+export interface BundleCheckerGraphNode {
+  id: string;
+  label: string;
+  kind: "token" | "cluster" | "wallet" | string;
+  weight: number;
+  highlight?: boolean;
+}
+
+export interface BundleCheckerGraphEdge {
+  source: string;
+  target: string;
+  weight: number;
+  relationLabel: string | null;
+}
+
+export interface BundleCheckerBehaviorPoint {
+  timestamp: string;
+  bundledSupplyPct: number | null;
+  linkedWalletCount: number | null;
+  totalHoldingsUsd: number | null;
+}
+
+export interface BundleCheckerRelatedToken {
+  address: string;
+  symbol: string | null;
+  name: string | null;
+}
+
+export interface BundleCheckerResponse {
+  entity: {
+    address: string;
+    symbol: string | null;
+    name: string | null;
+  };
+  riskSummary: {
+    score: number | null;
+    label: string | null;
+    clusterPct: number | null;
+    walletCount: number | null;
+    totalValueUsd: number | null;
+  };
+  bundlesDetected: number;
+  totalWallets: number;
+  totalHoldingsUsd: number | null;
+  bundledSupplyPct: number | null;
+  linkedWallets: BundleCheckerLinkedWallet[];
+  graph: {
+    nodes: BundleCheckerGraphNode[];
+    edges: BundleCheckerGraphEdge[];
+  };
+  behaviorSeries: BundleCheckerBehaviorPoint[];
+  relatedTokens: BundleCheckerRelatedToken[];
+}
+
+export interface TokenCommunitySummaryResponse {
+  hero: {
+    tokenAddress: string;
+    xCashtag: string | null;
+    headline: string | null;
+    imageUrl: string | null;
+    bannerUrl: string | null;
+    memberCount: number;
+    onlineNowEstimate: number;
+    joined: boolean;
+  };
+  stats: {
+    members: number;
+    posts: number;
+    calls: number;
+  };
+  pinnedCall: TokenCommunitySuggestedThread | null;
+  onlineMembers: TokenCommunityRecentMember[];
+  topContributors: TokenCommunityContributor[];
+  activeRaid: DiscoverySidebarRaid | null;
+  recentRaids: DiscoverySidebarRaid[];
+}
+
+export interface TokenCommunityTopCall {
+  id: string;
+  ticker: string | null;
+  title: string | null;
+  conviction: string | null;
+  roiCurrentPct: number | null;
+  roiPeakPct: number | null;
+  author: TokenCommunityAuthor;
+  createdAt: string;
+}
+
+export interface TokenRaidDetailMilestone {
+  label: string;
+  threshold: number;
+  unlocked: boolean;
+}
+
+export interface TokenRaidDetailUpdate {
+  id: string;
+  kind: string;
+  body: string;
+  createdAt: string;
+  user: TokenCommunityAuthor | null;
+}
+
+export interface TokenRaidDetailResponse {
+  campaign: TokenRaidCampaign | null;
+  submissions: TokenRaidSubmission[];
+  mySubmission: TokenRaidSubmission | null;
+  myParticipant: TokenRaidParticipant | null;
+  communityAssets: TokenActiveRaidResponse["communityAssets"];
+  participants: Array<{
+    id: string;
+    status: string;
+    currentStep: string;
+    joinedAt: string;
+    launchedAt: string | null;
+    postedAt: string | null;
+    user: TokenCommunityAuthor | null;
+  }>;
+  leaderboard: Array<{
+    submissionId: string;
+    boostCount: number;
+    postedAt: string | null;
+    user: TokenCommunityAuthor;
+  }>;
+  updates: TokenRaidDetailUpdate[];
+  milestones: TokenRaidDetailMilestone[];
+}
+
+export interface TerminalDepthLevel {
+  price: number;
+  amount: number;
+  totalUsd: number;
+  side: "bid" | "ask";
+}
+
+export interface TerminalDepthPoint {
+  price: number;
+  bidDepthUsd: number;
+  askDepthUsd: number;
+}
+
+export interface TerminalDepthResponse {
+  bids: TerminalDepthLevel[];
+  asks: TerminalDepthLevel[];
+  spread: number | null;
+  depthSeries: TerminalDepthPoint[];
+  positionSummary: {
+    openOrders: number;
+    holdingsUsd: number | null;
+    exposureUsd: number | null;
+  };
+}
+
+export interface ProfileHubResponse {
+  hero: {
+    id: string;
+    name: string | null;
+    username: string | null;
+    image: string | null;
+    bannerImage: string | null;
+    createdAt: string | null;
+    isVerified: boolean;
+    isFollowing: boolean;
+    level: number;
+    xp: number;
+    bio: string | null;
+    followersCount: number;
+    followingCount: number;
+    earnedPoints: number | null;
+  };
+  xp: {
+    level: number;
+    xp: number;
+    nextLevelXp: number;
+    progressPct: number;
+  };
+  aiScore: {
+    score: number | null;
+    label: string;
+    percentile: string | null;
+  };
+  topCalls: Array<{
+    id: string;
+    ticker: string | null;
+    title: string | null;
+    roiCurrentPct: number | null;
+    roiPeakPct: number | null;
+    createdAt: string;
+  }>;
+  raidImpact: {
+    raidsJoined: number;
+    raidsWon: number;
+    boostCount: number;
+    contributionScore: number;
+  };
+  badges: Array<{
+    id: string;
+    label: string;
+    tone: string;
+  }>;
+  reputationMetrics: Array<{
+    label: string;
+    value: string;
+  }>;
+  portfolioSnapshot: {
+    connected: boolean;
+    address: string | null;
+    balanceUsd: number | null;
+    balanceSol: number | null;
+    tokenPositions: Array<{
+      mint: string;
+      tokenSymbol: string | null;
+      tokenName: string | null;
+      holdingAmount: number | null;
+      holdingUsd: number | null;
+      totalPnlUsd: number | null;
+    }>;
+  } | null;
+  performanceSummary: {
+    winRate: number | null;
+    totalCalls: number;
+    totalProfitPercent: number | null;
+  };
+}
+
 export interface TokenCommunityAssetUpload {
   method: string;
   url: string;

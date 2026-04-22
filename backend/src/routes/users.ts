@@ -953,6 +953,201 @@ async function getUserStatsSafely(userId: string): Promise<{
   }
 }
 
+async function loadProfileHubPayload(identifier: string, viewerId: string | null) {
+  const user = await prisma.user.findFirst({
+    where: buildUserIdentifierWhere(identifier),
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      image: true,
+      bannerImage: true,
+      bio: true,
+      level: true,
+      xp: true,
+      isVerified: true,
+      createdAt: true,
+      walletAddress: true,
+      _count: {
+        select: {
+          followers: true,
+          following: true,
+          posts: true,
+        },
+      },
+    },
+  });
+
+  if (!user) {
+    return null;
+  }
+
+  const [stats, topCalls, raidImpactRows, isFollowing] = await Promise.all([
+    getUserStatsSafely(user.id),
+    prisma.post.findMany({
+      where: {
+        authorId: user.id,
+      },
+      select: {
+        id: true,
+        content: true,
+        chainType: true,
+        tokenSymbol: true,
+        tokenName: true,
+        tokenImage: true,
+        contractAddress: true,
+        roiCurrentPct: true,
+        roiPeakPct: true,
+        highConvictionScore: true,
+        confidenceScore: true,
+        createdAt: true,
+      },
+      orderBy: [{ roiCurrentPct: "desc" }, { highConvictionScore: "desc" }, { createdAt: "desc" }],
+      take: 5,
+    }),
+    prisma.tokenCommunityMemberStats.findMany({
+      where: {
+        userId: user.id,
+      },
+      select: {
+        tokenId: true,
+        raidsJoined: true,
+        raidsLaunched: true,
+        raidPostsLinked: true,
+        boostsGiven: true,
+        contributionScore: true,
+        currentRaidStreak: true,
+        bestRaidStreak: true,
+        token: {
+          select: {
+            address: true,
+            symbol: true,
+            name: true,
+            imageUrl: true,
+          },
+        },
+      },
+      orderBy: [{ contributionScore: "desc" }, { updatedAt: "desc" }],
+      take: 8,
+    }),
+    viewerId ? getIsFollowingSafely(viewerId, user.id) : Promise.resolve(false),
+  ]);
+
+  const portfolioTokens = [...new Set(
+    topCalls
+      .filter((call) => call.chainType === "solana" && typeof call.contractAddress === "string")
+      .map((call) => call.contractAddress as string)
+  )]
+    .slice(0, PROFILE_POST_WALLET_ENRICH_MAX_POSTS)
+    .map((mint) => ({ mint, chainType: "solana" as const }));
+
+  const portfolio =
+    user.walletAddress && portfolioTokens.length > 0
+      ? await Promise.race([
+          getWalletPortfolioOverviewForPostedTokens({
+            walletAddress: user.walletAddress,
+            tokens: portfolioTokens,
+          }).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), PROFILE_WALLET_OVERVIEW_TIMEOUT_MS)),
+        ])
+      : null;
+
+  const reputationScore = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(
+        stats.winRate * 0.45 +
+          Math.max(0, stats.totalProfitPercent) * 0.08 +
+          user.level * 2.5 +
+          topCalls.reduce((sum, call) => sum + (call.highConvictionScore ?? 0), 0) / Math.max(1, topCalls.length * 2),
+      ),
+    ),
+  );
+
+  const raidImpact = {
+    totalJoined: raidImpactRows.reduce((sum, row) => sum + row.raidsJoined, 0),
+    totalLaunched: raidImpactRows.reduce((sum, row) => sum + row.raidsLaunched, 0),
+    totalPostsLinked: raidImpactRows.reduce((sum, row) => sum + row.raidPostsLinked, 0),
+    totalBoostsGiven: raidImpactRows.reduce((sum, row) => sum + row.boostsGiven, 0),
+    currentStreak: Math.max(0, ...raidImpactRows.map((row) => row.currentRaidStreak)),
+    bestStreak: Math.max(0, ...raidImpactRows.map((row) => row.bestRaidStreak)),
+    communities: raidImpactRows.map((row) => ({
+      tokenAddress: row.token.address,
+      symbol: row.token.symbol,
+      name: row.token.name,
+      imageUrl: row.token.imageUrl,
+      contributionScore: row.contributionScore,
+      raidsJoined: row.raidsJoined,
+      raidsLaunched: row.raidsLaunched,
+      raidPostsLinked: row.raidPostsLinked,
+      boostsGiven: row.boostsGiven,
+    })),
+  };
+
+  const badges = [
+    stats.winRate >= 60 ? "precision-caller" : null,
+    reputationScore >= 80 ? "elite-signal" : null,
+    raidImpact.totalLaunched >= 3 ? "raid-captain" : null,
+    topCalls.some((call) => (call.roiCurrentPct ?? 0) >= 25) ? "runner-hunter" : null,
+    user.level >= 25 ? "legend-tier" : null,
+  ].filter((badge): badge is string => Boolean(badge));
+
+  return {
+    hero: {
+      id: user.id,
+      name: user.name,
+      username: user.username,
+      image: user.image,
+      bannerImage: user.bannerImage,
+      bio: user.bio,
+      level: user.level,
+      xp: user.xp,
+      isVerified: user.isVerified,
+      createdAt: user.createdAt.toISOString(),
+      followerCount: user._count.followers,
+      followingCount: user._count.following,
+      postCount: user._count.posts,
+      isFollowing,
+    },
+    xp: {
+      level: user.level,
+      currentXp: user.xp,
+      nextLevelXp: Math.max((user.level + 1) * 1000, 1_000),
+    },
+    aiScore: {
+      score: reputationScore,
+      label: reputationScore >= 90 ? "legend" : reputationScore >= 75 ? "elite" : reputationScore >= 60 ? "credible" : "developing",
+      summary: `${user.name || user.username || "Trader"} ranks with ${stats.winRate}% win rate across ${stats.totalCalls} settled calls.`,
+    },
+    topCalls: topCalls.map((call) => ({
+      id: call.id,
+      content: call.content,
+      tokenSymbol: call.tokenSymbol,
+      tokenName: call.tokenName,
+      tokenImage: call.tokenImage,
+      contractAddress: call.contractAddress,
+      roiCurrentPct: call.roiCurrentPct,
+      roiPeakPct: call.roiPeakPct,
+      confidenceScore: call.confidenceScore,
+      highConvictionScore: call.highConvictionScore,
+      createdAt: call.createdAt.toISOString(),
+    })),
+    raidImpact,
+    badges,
+    reputationMetrics: {
+      winRate: stats.winRate,
+      totalCalls: stats.totalCalls,
+      wins: stats.wins,
+      losses: stats.losses,
+      totalProfitPercent: stats.totalProfitPercent,
+      reputationScore,
+    },
+    portfolioSnapshot: portfolio,
+    performanceSummary: stats,
+  };
+}
+
 async function findUserPostsRaw(authorId: string): Promise<any[]> {
   const rows = await prisma.$queryRaw<RawUserPostRow[]>(Prisma.sql`
     SELECT
@@ -2889,6 +3084,16 @@ usersRouter.get("/me/fee-earnings", requireAuth, async (c) => {
       recentEvents,
     },
   });
+});
+
+usersRouter.get("/:identifier/profile-hub", async (c) => {
+  const identifier = c.req.param("identifier");
+  const currentUser = c.get("user");
+  const payload = await loadProfileHubPayload(identifier, currentUser?.id ?? null);
+  if (!payload) {
+    return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
+  }
+  return c.json({ data: payload });
 });
 
 // Get user profile by ID or username

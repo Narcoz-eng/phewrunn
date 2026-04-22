@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { animate, motion, useMotionValue } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   clearPrivySyncFailureState,
   setPrivyAuthBootstrapState,
@@ -13,46 +13,9 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandLogo } from "@/components/BrandLogo";
 import { InboxRouteIcon, RouteArrowIcon } from "@/components/login/LoginPageIcons";
 import { Button } from "@/components/ui/button";
-import { Loader2, Mail, Send, Wallet, Zap } from "lucide-react";
+import { Loader2, Mail, Zap } from "lucide-react";
 import { BuyPanelViz } from "@/components/login/BuyPanelViz";
 import { AlertsViz } from "@/components/login/AlertsViz";
-import { WeeklyBestSection } from "@/components/login/WeeklyBestSection";
-
-function AnimatedStat({
-  rawValue,
-  suffix,
-  label,
-  delay,
-}: {
-  rawValue: number;
-  suffix: string;
-  label: string;
-  delay: number;
-}) {
-  const motionVal = useMotionValue(0);
-  const [display, setDisplay] = useState<string>("0");
-
-  useEffect(() => {
-    const unsub = motionVal.on("change", (v) => {
-      setDisplay(rawValue % 1 !== 0 ? v.toFixed(1) : String(Math.round(v)));
-    });
-    const ctrl = animate(motionVal, rawValue, { duration: 1.6, delay, ease: "easeOut" });
-    return () => {
-      ctrl.stop();
-      unsub();
-    };
-  }, [delay, motionVal, rawValue]);
-
-  return (
-    <div className="text-center">
-      <div className="text-2xl font-bold tracking-tight text-white tabular-nums sm:text-3xl">
-        {display}
-        <span className="text-lime-300/82">{suffix}</span>
-      </div>
-      <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-white/42">{label}</div>
-    </div>
-  );
-}
 
 function Background() {
   return (
@@ -149,7 +112,7 @@ function PrivyLoginButton() {
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2">
         <button
           type="button"
           className={orbClassName}
@@ -176,40 +139,6 @@ function PrivyLoginButton() {
             {privyReady ? "Email" : "Initializing..."}
           </span>
         </button>
-        <button type="button" className={orbClassName} disabled>
-          <span className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-cyan-300">
-            <Send className="h-7 w-7" />
-          </span>
-          <span className="text-sm font-medium text-white/52">Telegram Soon</span>
-        </button>
-        <button type="button" className={orbClassName} disabled>
-          <span className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-lime-300">
-            <Wallet className="h-7 w-7" />
-          </span>
-          <span className="text-sm font-medium text-white/52">Wallet Soon</span>
-        </button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Button
-          type="button"
-          className="h-[54px] rounded-[22px] border border-lime-300/12 bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] px-5 text-slate-950 shadow-[0_16px_48px_-22px_rgba(152,233,220,0.72)]"
-          onClick={() => login({ loginMethods: ["email"] })}
-          disabled={isSyncing || isRetryBlocked}
-        >
-          {isSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <InboxRouteIcon className="mr-2 h-4 w-4" />}
-          Fastest lane
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-[54px] rounded-[22px] border border-white/12 bg-white/[0.03] px-5 text-white/82 hover:bg-white/[0.08] hover:text-white"
-          onClick={() => login({ loginMethods: ["twitter"] })}
-          disabled={isSyncing || isRetryBlocked}
-        >
-          {isSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RouteArrowIcon className="mr-2 h-4 w-4" />}
-          Social lane
-        </Button>
       </div>
 
       {visibleStatus ? <p className="pt-0.5 text-center text-[11px] text-muted-foreground">{visibleStatus}</p> : null}
@@ -221,8 +150,8 @@ function PrivyLoginButton() {
 function FallbackLoginButton() {
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-4">
-        {["X", "Email", "Telegram", "Wallet"].map((label) => (
+      <div className="grid gap-3 sm:grid-cols-2">
+        {["X", "Email"].map((label) => (
           <Button key={label} type="button" variant="outline" className="h-[120px] rounded-[28px] opacity-50" disabled>
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -230,16 +159,6 @@ function FallbackLoginButton() {
             </div>
           </Button>
         ))}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Button type="button" className="h-[54px] rounded-[22px] opacity-50" disabled>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Fastest lane
-        </Button>
-        <Button type="button" variant="outline" className="h-[54px] rounded-[22px] opacity-50" disabled>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Social lane
-        </Button>
       </div>
     </div>
   );
@@ -294,43 +213,17 @@ function LoginCard({ privyAvailable }: { privyAvailable: boolean }) {
         </motion.div>
 
         <motion.div
-          className="mt-6 grid gap-3 border-t border-white/8 pt-5 sm:grid-cols-3"
+          className="mt-6 border-t border-white/8 pt-5 text-center text-sm text-white/52"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.35, delay: 0.5 }}
         >
-          <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Auth Rail</div>
-            <div className="mt-2 text-sm font-semibold text-white">Secure email + social bootstrap</div>
-          </div>
-          <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Trading Lane</div>
-            <div className="mt-2 text-sm font-semibold text-white">0.5% route fee preserved</div>
-          </div>
-          <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Reputation</div>
-            <div className="mt-2 text-sm font-semibold text-white">XP and profile state compound after entry</div>
-          </div>
+          Already have an account? <button type="button" className="font-semibold text-lime-300">Log in</button>
         </motion.div>
       </div>
-
-      <motion.p
-        className="mt-4 text-center text-[11px] text-white/42"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.35, delay: 0.58 }}
-      >
-        Wallet linking and deeper trading permissions are handled after the account session is live.
-      </motion.p>
     </motion.div>
   );
 }
-
-const STATS = [
-  { rawValue: 10, suffix: "K+", label: "Calls settled" },
-  { rawValue: 68, suffix: "%", label: "Avg accuracy" },
-  { rawValue: 2.4, suffix: "K", label: "Active traders" },
-];
 
 export default function Login() {
   const navigate = useNavigate();
@@ -362,32 +255,18 @@ export default function Login() {
     <div className="min-h-screen overflow-x-hidden bg-background text-white">
       <Background />
 
-      <motion.header
-        className="relative z-40"
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: "easeOut" }}
-      >
-        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-5 sm:px-8">
-          <BrandLogo size="sm" showTagline={false} />
-          <div className="flex items-center gap-3">
-            <span className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/56 sm:inline-flex">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-lime-300 animate-pulse" />
-              Product live
-            </span>
-            <ThemeToggle size="icon" className="h-9 w-9 border border-white/10 bg-white/[0.04]" />
-          </div>
-        </div>
-      </motion.header>
+      <div className="relative z-40 flex justify-end px-5 pt-5 sm:px-8">
+        <ThemeToggle size="icon" className="h-9 w-9 border border-white/10 bg-white/[0.04]" />
+      </div>
 
-      <main className="relative z-10 px-5 pb-16 pt-6 sm:px-8 sm:pt-8">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-10">
+      <main className="relative z-10 px-5 pb-16 pt-4 sm:px-8 sm:pt-6">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
           <section className="v2-auth-hero-lines relative text-center">
             <motion.div
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.08, ease: "easeOut" }}
-              className="mx-auto max-w-4xl"
+              className="mx-auto max-w-5xl"
             >
               <div className="flex justify-center">
                 <BrandLogo size="lg" className="scale-[1.08]" />
@@ -404,22 +283,13 @@ export default function Login() {
               <p className="mx-auto mt-6 max-w-3xl text-lg leading-8 text-white/58 sm:text-[1.35rem]">
                 Social calls. AI intelligence. X raids. Trading terminal. Bundle risk. All in one operating surface.
               </p>
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-6">
-                {STATS.map((stat, index) => (
-                  <div key={stat.label} className="rounded-full border border-white/8 bg-white/[0.03] px-5 py-3">
-                    <AnimatedStat
-                      rawValue={stat.rawValue}
-                      suffix={stat.suffix}
-                      label={stat.label}
-                      delay={0.24 + index * 0.08}
-                    />
-                  </div>
-                ))}
-              </div>
             </motion.div>
 
-            <div className="mx-auto mt-10 max-w-5xl">
+            <div className="mx-auto mt-10 max-w-4xl">
               <LoginCard privyAvailable={privyAvailable} />
+              <p className="mt-5 text-center text-[11px] text-white/42">
+                By signing in you agree to Terms of Service and Privacy Policy.
+              </p>
             </div>
           </section>
 
@@ -563,8 +433,6 @@ export default function Login() {
                 </div>
               </div>
             </div>
-
-            <WeeklyBestSection optimizeMotion={false} />
           </section>
         </div>
       </main>
