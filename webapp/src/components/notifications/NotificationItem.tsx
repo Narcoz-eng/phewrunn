@@ -42,14 +42,14 @@ const notificationIcons: Record<string, { icon: typeof PhewBellIcon; colorClass:
   posted_alpha: { icon: PhewBellIcon, colorClass: "text-primary" },
   early_runner_detected: { icon: TrendingUp, colorClass: "text-emerald-500" },
   hot_alpha_detected: { icon: Flame, colorClass: "text-orange-500" },
-  high_conviction_detected: { icon: Star, colorClass: "text-violet-500" },
+  high_conviction_detected: { icon: Star, colorClass: "text-lime-300" },
   bundle_risk_changed: { icon: AlertTriangle, colorClass: "text-amber-500" },
   token_confidence_crossed: { icon: Award, colorClass: "text-primary" },
   token_liquidity_surge: { icon: Droplets, colorClass: "text-cyan-400" },
   token_holder_growth: { icon: TrendingUp, colorClass: "text-emerald-500" },
   token_momentum: { icon: TrendingUp, colorClass: "text-primary" },
   token_whale_accumulating: { icon: TrendingUp, colorClass: "text-amber-500" },
-  token_smart_money: { icon: Star, colorClass: "text-violet-500" },
+  token_smart_money: { icon: Star, colorClass: "text-cyan-300" },
   liquidity_spike: { icon: Droplets, colorClass: "text-cyan-400" },
   volume_spike: { icon: BarChart2, colorClass: "text-orange-400" },
 };
@@ -194,10 +194,10 @@ export function NotificationItem({
       whileHover={prefersReducedMotion ? undefined : { y: -1.5 }}
       transition={cardTransition}
       className={cn(
-        "group relative overflow-hidden rounded-[24px] border border-border/65 transition-all duration-200 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.14)] dark:shadow-none",
+        "group relative overflow-hidden rounded-[26px] border transition-all duration-200",
         !notification.read
-          ? "bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.1),transparent_48%),linear-gradient(180deg,hsl(0_0%_100%/0.94),hsl(38_35%_94%/0.92))] hover:border-primary/20 hover:bg-primary/[0.05] hover:shadow-[0_24px_42px_-34px_hsl(var(--primary)/0.22)] dark:bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.12),transparent_44%),linear-gradient(180deg,rgba(14,16,22,0.96),rgba(10,12,16,0.98))] dark:hover:shadow-none"
-          : "bg-[linear-gradient(180deg,hsl(0_0%_100%/0.82),hsl(38_30%_93%/0.86))] hover:border-border hover:bg-white/90 hover:shadow-[0_24px_42px_-34px_hsl(var(--foreground)/0.18)] dark:bg-[linear-gradient(180deg,rgba(12,14,20,0.92),rgba(8,10,14,0.96))] dark:hover:shadow-none"
+          ? "border-lime-300/14 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.1),transparent_38%),linear-gradient(180deg,rgba(11,14,18,0.98),rgba(8,10,14,0.98))] hover:border-lime-300/24"
+          : "border-white/8 bg-[linear-gradient(180deg,rgba(10,13,18,0.94),rgba(7,9,13,0.98))] hover:border-white/14"
       )}
     >
       <div
@@ -205,51 +205,34 @@ export function NotificationItem({
         tabIndex={0}
         onClick={handleRowActivate}
         onKeyDown={handleRowKeyDown}
-        className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3.5 px-4 py-4 outline-none sm:grid-cols-[auto,minmax(0,1fr),auto] sm:px-5"
+        className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-4 px-4 py-4 outline-none sm:grid-cols-[auto,minmax(0,1fr),auto] sm:px-5"
       >
         <div className="relative shrink-0">
-          <Avatar
-            className={cn(
-              "h-10 w-10 border border-border/60",
-              fromUser && "cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all"
-            )}
-            onClick={handleAvatarClick}
-          >
-            {fromUser ? (
-              <>
-                <AvatarImage src={getAvatarUrl(fromUser.id, fromUser.image)} />
-                <AvatarFallback className="bg-muted text-muted-foreground">
-                  {(fromUser.username || fromUser.name)?.charAt(0) || "?"}
-                </AvatarFallback>
-              </>
-            ) : (
-              <>
-                <AvatarImage src="" />
-                <AvatarFallback className="bg-primary/20 text-primary">
-                  <PhewBellIcon className="h-4 w-4" />
-                </AvatarFallback>
-              </>
-            )}
-          </Avatar>
-          <div
-            className={cn(
-              "absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background/95 shadow-[0_10px_18px_-16px_hsl(var(--foreground)/0.3)] dark:shadow-none",
-              !notification.read && "border-primary/30 bg-primary/15"
-            )}
-          >
-            <IconComponent className={cn("h-3 w-3", colorClass)} />
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/8 bg-white/[0.03]">
+            <IconComponent className={cn("h-4 w-4", colorClass)} />
           </div>
+          {fromUser ? (
+            <Avatar
+              className="absolute -bottom-1.5 -right-1.5 h-6 w-6 border border-black/70"
+              onClick={handleAvatarClick}
+            >
+              <AvatarImage src={getAvatarUrl(fromUser.id, fromUser.image)} />
+              <AvatarFallback className="bg-white/[0.08] text-[10px] text-white">
+                {(fromUser.username || fromUser.name)?.charAt(0) || "?"}
+              </AvatarFallback>
+            </Avatar>
+          ) : null}
         </div>
 
         <div className="min-w-0 pt-0.5">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            <span className="max-w-[12rem] truncate text-sm font-semibold text-foreground sm:max-w-[18rem]">
+            <span className="max-w-[12rem] truncate text-sm font-semibold text-white sm:max-w-[18rem]">
               {fromUser ? `@${fromUser.username || fromUser.name}` : "PHEW"}
             </span>
-            <span className="text-xs text-muted-foreground">{formatTimeAgo(notification.createdAt)}</span>
-            {!notification.read ? <span className="h-2 w-2 rounded-full bg-primary shrink-0" /> : null}
+            <span className="text-xs text-white/42">{formatTimeAgo(notification.createdAt)}</span>
+            {!notification.read ? <span className="h-2 w-2 rounded-full bg-lime-300 shrink-0" /> : null}
           </div>
-          <p className={cn("mt-1 text-sm leading-relaxed text-foreground/95", !notification.read && "font-medium")}>
+          <p className={cn("mt-1 text-sm leading-relaxed text-white/92", !notification.read && "font-medium")}>
             {notification.message}
           </p>
           {hasMergedItems ? (
@@ -259,20 +242,20 @@ export function NotificationItem({
                 event.stopPropagation();
                 setIsExpanded((prev) => !prev);
               }}
-              className="mt-1 text-xs text-primary hover:underline"
+              className="mt-1 text-xs text-lime-300 hover:underline"
             >
               {isExpanded ? "Hide grouped activity" : `Show grouped activity (${mergedCount})`}
             </button>
           ) : null}
           {detailPreview ? (
-            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{detailPreview}</p>
+            <p className="mt-2 line-clamp-2 rounded-[16px] border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-white/52">{detailPreview}</p>
           ) : null}
           {notification.post?.contractAddress ? (
-            <p className="mt-1 truncate text-[11px] font-mono text-muted-foreground/85">
+            <p className="mt-2 truncate text-[11px] font-mono text-white/36">
               {notification.post.contractAddress}
             </p>
           ) : tokenAddress ? (
-            <p className="mt-1 truncate text-[11px] font-mono text-muted-foreground/85">
+            <p className="mt-2 truncate text-[11px] font-mono text-white/36">
               {tokenAddress}
             </p>
           ) : null}
@@ -283,7 +266,7 @@ export function NotificationItem({
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 rounded-full border border-border/70 bg-background/80 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
+              className="h-9 w-9 rounded-full border border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08] hover:text-white"
               onClick={handleMarkReadClick}
               title="Mark as read"
             >
@@ -293,7 +276,7 @@ export function NotificationItem({
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 rounded-full border border-border/70 bg-background/80 text-muted-foreground shadow-[0_12px_22px_-18px_hsl(var(--foreground)/0.25)] hover:bg-background hover:text-foreground dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:bg-white/[0.08]"
+            className="h-9 w-9 rounded-full border border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08] hover:text-white"
             onClick={handleDismissClick}
             title="Dismiss notification"
           >
@@ -309,7 +292,7 @@ export function NotificationItem({
             animate={{ opacity: 1, height: "auto" }}
             exit={prefersReducedMotion ? { opacity: 1, height: 0 } : { opacity: 0, height: 0 }}
             transition={cardTransition}
-            className="overflow-hidden border-t border-border/60 bg-muted/15"
+            className="overflow-hidden border-t border-white/8 bg-black/20"
           >
             <div className="px-4 pb-4 pt-3">
               <div className="space-y-2">
@@ -330,23 +313,23 @@ export function NotificationItem({
                           navigate(itemHref);
                         }
                       }}
-                      className="w-full rounded-[16px] border border-border/60 bg-background/70 px-3 py-2.5 text-left transition-colors hover:bg-background/90"
+                      className="w-full rounded-[16px] border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.06]"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] text-muted-foreground">{formatTimeAgo(item.createdAt)}</span>
+                        <span className="text-[11px] text-white/42">{formatTimeAgo(item.createdAt)}</span>
                         {item.post?.contractAddress ? (
-                          <span className="truncate text-[10px] font-mono text-muted-foreground">
+                          <span className="truncate text-[10px] font-mono text-white/34">
                             {item.post.contractAddress}
                           </span>
                         ) : itemTokenAddress ? (
-                          <span className="truncate text-[10px] font-mono text-muted-foreground">
+                          <span className="truncate text-[10px] font-mono text-white/34">
                             {itemTokenAddress}
                           </span>
                         ) : null}
                       </div>
-                      <p className="mt-1 line-clamp-1 text-xs text-foreground/90">{item.message}</p>
+                      <p className="mt-1 line-clamp-1 text-xs text-white/90">{item.message}</p>
                       {itemPreview ? (
-                        <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{itemPreview}</p>
+                        <p className="mt-0.5 line-clamp-1 text-[11px] text-white/48">{itemPreview}</p>
                       ) : null}
                     </button>
                   );

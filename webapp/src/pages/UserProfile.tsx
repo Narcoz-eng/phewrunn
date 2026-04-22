@@ -58,6 +58,7 @@ import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2 } from "lucide-react";
 import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
+import { BrandLogo } from "@/components/BrandLogo";
 import { V2PageHeader } from "@/components/layout/V2PageHeader";
 import { V2EmptyState } from "@/components/ui/v2/V2EmptyState";
 import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
@@ -1014,6 +1015,12 @@ export default function UserProfile() {
               )}
 
               <div className="relative space-y-6 p-5 sm:p-6 lg:p-7">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-white/8 bg-black/20 px-4 py-3">
+                  <BrandLogo size="sm" />
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/44">
+                    A PHEW RUNNING THE INTERNET
+                  </div>
+                </div>
                 <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex min-w-0 items-start gap-4">
                     <Avatar className="h-24 w-24 rounded-[28px] border border-lime-300/20 shadow-[0_24px_64px_-28px_rgba(169,255,52,0.42)]">
@@ -1044,6 +1051,23 @@ export default function UserProfile() {
                         <span>{getLevelLabel(user.level)} trader</span>
                         <span className="text-white/24">•</span>
                         <span>{user.stats.following ?? 0} following</span>
+                      </div>
+                      <p className="mt-4 max-w-2xl text-sm leading-6 text-white/60">
+                        Building. Trading. Winning. A reputation surface driven by calls, performance, raid impact, and AI signal quality.
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-8 text-sm">
+                        <div>
+                          <div className="text-white/40">Following</div>
+                          <div className="mt-1 text-2xl font-semibold text-white">{(user.stats.following ?? 0).toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-white/40">Followers</div>
+                          <div className="mt-1 text-2xl font-semibold text-white">{(user.stats.followers ?? 0).toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-white/40">Wins</div>
+                          <div className="mt-1 text-2xl font-semibold text-white">{(user.stats.wins ?? 0).toLocaleString()}</div>
+                        </div>
                       </div>
                       <div className="mt-4 h-3 w-full max-w-md overflow-hidden rounded-full bg-white/8">
                         <div
