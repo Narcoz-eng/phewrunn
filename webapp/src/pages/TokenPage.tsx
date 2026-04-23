@@ -9,7 +9,7 @@ import {
 } from "@/lib/live-candle-stream";
 import { Post, PostAuthor, ReactionCounts, TokenActiveRaidResponse, TokenCommunityRoom, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, ShieldAlert, Users, Activity, Flame, Target, ShieldCheck } from "lucide-react";
+import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, Share2, ShieldAlert, Users, Activity, Flame, Target, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
 import { PostCard } from "@/components/feed/PostCard";
@@ -2217,6 +2217,25 @@ export default function TokenPage() {
     }
   };
 
+  const handleShareTokenPage = async () => {
+    if (typeof window === "undefined" || !token) return;
+    const url = window.location.href;
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+        await navigator.share({
+          title: token.symbol ? `$${token.symbol} on Phew.run` : token.name || "Token on Phew.run",
+          text: "Open the token intelligence control tower on Phew.run.",
+          url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast.success("Token page link copied");
+      }
+    } catch {
+      toast.error("Failed to share token page");
+    }
+  };
+
   const {
     data: tokenQueryData,
     isLoading,
@@ -2846,6 +2865,19 @@ export default function TokenPage() {
     setTokenTab("trade");
   };
 
+  const handleWatchAction = () => {
+    if (!token) return;
+    if (!session?.user) {
+      toast.info("Sign in to watch tokens");
+      return;
+    }
+    if (!canPerformAuthenticatedWrites) {
+      toast.info("Signing you in...");
+      return;
+    }
+    followMutation.mutate();
+  };
+
   const handleCommunityAction = () => {
     if (!token) return;
     setTokenTab("community");
@@ -2862,7 +2894,10 @@ export default function TokenPage() {
       });
       return;
     }
-    followMutation.mutate();
+    document.getElementById("token-community-room")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
   };
 
   useEffect(() => {
@@ -2973,7 +3008,7 @@ export default function TokenPage() {
             animate="visible"
           >
             <motion.section id="token-hero-band" variants={sectionVariants}>
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_380px]">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.52fr)_420px]">
                 <V2Surface tone="accent" className="relative overflow-hidden p-0">
                   {token.communityBannerUrl ? (
                     <div className="relative h-36 border-b border-white/8 sm:h-44">
@@ -2983,7 +3018,7 @@ export default function TokenPage() {
                         aria-hidden="true"
                       />
                       <div
-                        className="absolute inset-0 bg-[linear-gradient(180deg,rgba(1,4,9,0.22),rgba(1,4,9,0.9)),radial-gradient(circle_at_top_left,rgba(169,255,52,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.18),transparent_32%)]"
+                        className="absolute inset-0 bg-[linear-gradient(180deg,rgba(1,4,9,0.22),rgba(1,4,9,0.92)),radial-gradient(circle_at_top_left,rgba(169,255,52,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.18),transparent_32%)]"
                         aria-hidden="true"
                       />
                     </div>
@@ -2995,10 +3030,15 @@ export default function TokenPage() {
                   )}
 
                   <div className="relative space-y-6 p-5 sm:p-6 lg:p-7">
-                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-white/8 bg-black/20 px-4 py-3 text-[11px] uppercase tracking-[0.22em] text-white/58">
+                      <span className="text-lime-300">Token intelligence control tower</span>
+                      <span>Execution, holder structure, raid pressure, and call context stay separated but visible together.</span>
+                    </div>
+
+                    <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
                       <div className="flex min-w-0 items-start gap-4">
                         <div className="relative shrink-0">
-                          <div className="flex h-[84px] w-[84px] items-center justify-center overflow-hidden rounded-[26px] border border-lime-300/25 bg-black/20 shadow-[0_28px_64px_-28px_rgba(169,255,52,0.45)] backdrop-blur-md">
+                          <div className="flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-[28px] border border-lime-300/25 bg-black/20 shadow-[0_28px_64px_-28px_rgba(169,255,52,0.45)] backdrop-blur-md">
                             {token.imageUrl ? (
                               <img src={token.imageUrl} alt={token.symbol ?? "Token"} className="h-full w-full object-cover" />
                             ) : (
@@ -3014,24 +3054,24 @@ export default function TokenPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <V2StatusPill tone="live">{token.activityStatusLabel ?? "Live"}</V2StatusPill>
                             <V2StatusPill tone="ai">
-                              {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)} confidence` : "AI tracking"}
+                              {typeof token.confidenceScore === "number" ? `${token.confidenceScore.toFixed(0)} conviction` : "AI tracking"}
                             </V2StatusPill>
                             <V2StatusPill tone="risk">
-                              {bundleScanPending ? "Bundle scan pending" : token.bundleRiskLabel || "Bundle risk unknown"}
+                              {bundleScanPending ? "Bundle scan pending" : token.bundleRiskLabel || "Risk unscoped"}
                             </V2StatusPill>
                           </div>
 
                           <div className="mt-4 flex flex-wrap items-end gap-x-3 gap-y-2">
-                            <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                            <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                               {token.symbol || token.address.slice(0, 6)}
-                            </h2>
+                            </h1>
                             <div className="pb-1 text-base text-white/56">
-                              {token.name && token.name !== token.symbol ? token.name : "Central token surface"}
+                              {token.name && token.name !== token.symbol ? token.name : "Live token command surface"}
                             </div>
                           </div>
 
                           <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
-                            <div className="text-[2.15rem] font-semibold leading-none tracking-tight text-white sm:text-[2.7rem]">
+                            <div className="text-[2.2rem] font-semibold leading-none tracking-tight text-white sm:text-[2.9rem]">
                               {formatTokenPrice(Number(liveTokenQuery.data?.priceUsd ?? token.priceUsd ?? Number.NaN))}
                             </div>
                             <div
@@ -3045,7 +3085,7 @@ export default function TokenPage() {
                               )}
                             >
                               {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct)
-                                ? `${liveChartPriceChangePct >= 0 ? "+" : ""}${liveChartPriceChangePct.toFixed(2)}% (24h)`
+                                ? `${liveChartPriceChangePct >= 0 ? "+" : ""}${liveChartPriceChangePct.toFixed(2)}% 24h`
                                 : "24h move loading"}
                             </div>
                           </div>
@@ -3076,8 +3116,8 @@ export default function TokenPage() {
                             </a>
                           </div>
 
-                          <p className="mt-4 max-w-2xl text-sm leading-6 text-white/62">
-                            Phew.run is tracking live market structure, bundle pressure, trader conviction, recent calls, and raid/community momentum for this token in one intelligence board.
+                          <p className="mt-4 max-w-3xl text-sm leading-6 text-white/62">
+                            This page answers what the token is doing right now, why it matters, who is active around it, and what action is available next across market, intelligence, community, and raid systems.
                           </p>
 
                           {token.earlyRunnerReasons?.length ? (
@@ -3095,14 +3135,36 @@ export default function TokenPage() {
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 flex-wrap items-center gap-2 lg:max-w-[240px] lg:justify-end">
+                      <div className="flex shrink-0 flex-wrap gap-2 xl:max-w-[340px] xl:justify-end">
                         <Button
                           onClick={handleOpenTradePanel}
                           disabled={!canTradeTokenDirectly}
                           className="h-11 gap-2 rounded-full border border-lime-300/30 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.9))] px-5 text-sm font-semibold text-slate-950 shadow-[0_24px_48px_-24px_rgba(45,212,191,0.45)] hover:brightness-[1.05] disabled:opacity-50"
                         >
                           <PhewTradeIcon className="h-3.5 w-3.5" />
-                          Open terminal
+                          Trade
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleWatchAction}
+                          disabled={followMutation.isPending}
+                          className={cn(
+                            "h-11 rounded-full border px-5 text-sm font-semibold transition-all",
+                            token.isFollowing
+                              ? "border-lime-300/18 bg-lime-300/10 text-lime-200 hover:bg-lime-300/14"
+                              : "border-white/10 bg-white/[0.04] text-white/76 hover:bg-white/[0.08] hover:text-white"
+                          )}
+                        >
+                          {followMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          {token.isFollowing ? "Watching" : "Watch"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleShareTokenPage}
+                          className="h-11 gap-2 rounded-full border border-white/10 bg-white/[0.04] px-5 text-sm font-semibold text-white/76 hover:bg-white/[0.08] hover:text-white"
+                        >
+                          <Share2 className="h-3.5 w-3.5" />
+                          Share
                         </Button>
                         <TooltipProvider delayDuration={120}>
                           <Tooltip>
@@ -3111,25 +3173,14 @@ export default function TokenPage() {
                                 <Button
                                   variant="outline"
                                   onClick={handleCommunityAction}
-                                  disabled={followMutation.isPending || (!token.communityExists && !canCreateTokenCommunity)}
                                   className={cn(
                                     "h-11 rounded-full border px-5 text-sm font-semibold transition-all",
-                                    token.communityExists && token.isFollowing
-                                      ? "border-lime-300/18 bg-lime-300/10 text-lime-200 hover:bg-lime-300/14"
-                                      : !token.communityExists
-                                        ? "border-amber-300/35 bg-amber-400/10 text-amber-200 hover:border-amber-300/60"
-                                        : "border-white/10 bg-white/[0.04] text-white/76 hover:bg-white/[0.08] hover:text-white"
+                                    !token.communityExists
+                                      ? "border-amber-300/35 bg-amber-400/10 text-amber-200 hover:border-amber-300/60"
+                                      : "border-white/10 bg-white/[0.04] text-white/76 hover:bg-white/[0.08] hover:text-white"
                                   )}
                                 >
-                                  {followMutation.isPending ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : !token.communityExists ? (
-                                    canCreateTokenCommunity ? "Create community" : "Community locked"
-                                  ) : token.isFollowing ? (
-                                    "Joined community"
-                                  ) : (
-                                    "Join community"
-                                  )}
+                                  {!token.communityExists ? (canCreateTokenCommunity ? "Create room" : "Room locked") : "Open community"}
                                 </Button>
                               </span>
                             </TooltipTrigger>
@@ -3140,16 +3191,24 @@ export default function TokenPage() {
                             ) : null}
                           </Tooltip>
                         </TooltipProvider>
-                        <Link
-                          to={`/bundle-checker?token=${token.address}`}
-                          className="inline-flex h-11 items-center gap-2 rounded-full border border-cyan-300/16 bg-cyan-300/8 px-5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/12"
-                        >
-                          Bundle checker
-                        </Link>
+                        {activeRaidOverview ? (
+                          <Link
+                            to={`/raids/${token.address}/${activeRaidOverview.id}`}
+                            className="inline-flex h-11 items-center gap-2 rounded-full border border-lime-300/20 bg-lime-300/10 px-5 text-sm font-semibold text-lime-200 transition hover:bg-lime-300/14"
+                          >
+                            Join raid
+                          </Link>
+                        ) : null}
                       </div>
                     </div>
 
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                      <V2MetricCard
+                        label="Price"
+                        value={formatTokenPrice(Number(liveTokenQuery.data?.priceUsd ?? token.priceUsd ?? Number.NaN))}
+                        hint="Last routed print"
+                        accent={<Target className="h-5 w-5 text-lime-300" />}
+                      />
                       <V2MetricCard
                         label="Market Cap"
                         value={formatMarketMetric(displayMarketCap)}
@@ -3163,7 +3222,7 @@ export default function TokenPage() {
                         accent={<BarChart3 className="h-5 w-5 text-cyan-300" />}
                       />
                       <V2MetricCard
-                        label="Volume 24h"
+                        label="24h Volume"
                         value={formatMarketMetric(token.volume24h)}
                         hint="Execution flow"
                         accent={<Flame className="h-5 w-5 text-lime-300" />}
@@ -3176,38 +3235,36 @@ export default function TokenPage() {
                       />
                     </div>
 
-                    <div className="grid gap-3 lg:grid-cols-4">
+                    <div className="grid gap-3 xl:grid-cols-4">
                       <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Momentum</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Token State</div>
                         <div className="mt-2 text-sm font-semibold text-white">
-                          {typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}/100` : "Tracking"}
+                          {token.activityStatusLabel ?? "Monitoring"}
                         </div>
-                        <div className="mt-1 text-xs text-white/48">Freshness and market response</div>
+                        <div className="mt-1 text-xs text-white/48">Live market posture and routing health</div>
                       </div>
                       <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Smart Money</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Call Context</div>
                         <div className="mt-2 text-sm font-semibold text-white">
-                          {displayTopTraders.length > 0 ? `${displayTopTraders.length} tracked` : "Quiet"}
+                          {recentCallsCount} signal{recentCallsCount === 1 ? "" : "s"} tracked
                         </div>
-                        <div className="mt-1 text-xs text-white/48">Trader conviction around this setup</div>
+                        <div className="mt-1 text-xs text-white/48">Token mentions from real calls stay separate from token price action</div>
                       </div>
                       <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Community</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Community Pressure</div>
                         <div className="mt-2 text-sm font-semibold text-white">
-                          {communityRoom?.exists ? `${communityRoom.memberCount.toLocaleString()} members` : token.communityExists ? "Room live" : "Not opened"}
+                          {communityRoom?.exists ? `${communityRoom.memberCount.toLocaleString()} members` : token.communityExists ? "Room warming" : "No room"}
                         </div>
-                        <div className="mt-1 text-xs text-white/48">Calls, replies, and raid coordination</div>
+                        <div className="mt-1 text-xs text-white/48">
+                          {activeRaidOverview ? `${activeRaidOverview.participantCount.toLocaleString()} raiders are active now` : "No active raid is applying direct pressure yet"}
+                        </div>
                       </div>
                       <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Bundle Pressure</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Holder Pressure</div>
                         <div className="mt-2 text-sm font-semibold text-white">
-                          {bundleScanPending
-                            ? "Scanning"
-                            : resolvedBundledSupplyPct !== null
-                              ? `${formatPct(resolvedBundledSupplyPct)} bundled`
-                              : token.bundleRiskLabel || "Unknown"}
+                          {bundleScanPending ? "Scanning" : resolvedBundledSupplyPct !== null ? `${formatPct(resolvedBundledSupplyPct)} bundled` : token.bundleRiskLabel || "Pending"}
                         </div>
-                        <div className="mt-1 text-xs text-white/48">Linked-wallet overlap and supply concentration</div>
+                        <div className="mt-1 text-xs text-white/48">Bundle overlap and holder concentration stay visible beside the trade surface</div>
                       </div>
                     </div>
                   </div>
@@ -3216,9 +3273,9 @@ export default function TokenPage() {
                 <div className="space-y-4">
                   <V2Surface className="p-5" tone="soft">
                     <V2SectionHeader
-                      eyebrow="AI Detection"
-                      title="High-conviction operating read"
-                      description="Confidence, setup quality, opportunity now, and market health are surfaced beside the chart so the token can be judged at a glance."
+                      eyebrow="AI Conviction"
+                      title="Why this token matters right now"
+                      description="This stack combines conviction, opportunity, structure, and live risk so the token can be judged before you touch the chart."
                     />
                     <div className="mt-4 rounded-[26px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_32%),linear-gradient(180deg,rgba(10,17,14,0.98),rgba(4,8,10,0.98))] p-4">
                       <div className="flex items-start justify-between gap-4">
@@ -3231,32 +3288,27 @@ export default function TokenPage() {
                             <span className="ml-1 text-xl text-white/38">/100</span>
                           </div>
                           <p className="mt-3 text-sm leading-6 text-white/58">
-                            Strong momentum, live trader attention, and current structure are being evaluated against social velocity, wallet concentration, and setup quality.
+                            Confidence is framed against setup quality, opportunity now, sentiment, and whether the market is active enough for bullish detection to remain valid.
                           </p>
                         </div>
                         <div className="grid shrink-0 gap-2 text-right">
-                          <V2StatusPill tone="live">
-                            {token.activityStatusLabel ?? "Live"}
-                          </V2StatusPill>
+                          <V2StatusPill tone="live">{token.activityStatusLabel ?? "Live"}</V2StatusPill>
                           <V2StatusPill tone="risk">
                             {bundleScanPending ? "Bundle scan pending" : token.bundleRiskLabel || "Risk loading"}
                           </V2StatusPill>
                         </div>
                       </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
                         {[
-                          { label: "Momentum", value: typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}` : "N/A" },
-                          { label: "Volume", value: formatMarketMetric(token.volume24h) },
-                          { label: "Smart Money", value: displayTopTraders.length > 0 ? "Detected" : "Quiet" },
-                          { label: "Risk", value: token.bundleRiskLabel || "Pending" },
+                          { label: "Opportunity", value: typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}/100` : "Tracking" },
+                          { label: "Market Health", value: typeof token.marketHealthScore === "number" ? `${token.marketHealthScore.toFixed(0)}/100` : "Tracking" },
+                          { label: "Setup Quality", value: typeof token.setupQualityScore === "number" ? `${token.setupQualityScore.toFixed(0)}/100` : "Tracking" },
+                          { label: "Sentiment", value: `${sentimentView.score.toFixed(0)}/100` },
                         ].map((metric) => (
-                          <span
-                            key={metric.label}
-                            className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] font-medium text-white/72"
-                          >
-                            <span className="text-white/42">{metric.label}</span>
-                            <span className="ml-2 text-white">{metric.value}</span>
-                          </span>
+                          <div key={metric.label} className="rounded-[18px] border border-white/10 bg-white/[0.04] px-3 py-3">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">{metric.label}</div>
+                            <div className="mt-2 text-base font-semibold text-white">{metric.value}</div>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -3264,12 +3316,64 @@ export default function TokenPage() {
 
                   <V2Surface className="p-5" tone="soft">
                     <V2SectionHeader
-                      eyebrow="Top Signals"
-                      title="Signal stack"
-                      description="Whale activity, holder growth, social velocity, and community/raid pressure are surfaced as the operating signal set for this token."
+                      eyebrow="Holder and Bundle"
+                      title="Accumulation, selling, and concentration"
+                      description="The right rail keeps wallet concentration and bundle behavior in frame so token conviction is never separated from ownership structure."
+                    />
+                    <div className="mt-4 space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Largest Holder</div>
+                          <div className="mt-2 text-lg font-semibold text-white">{formatPct(token.risk.largestHolderPct ?? 0)}</div>
+                        </div>
+                        <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Top 10 Supply</div>
+                          <div className="mt-2 text-lg font-semibold text-white">{formatPct(token.risk.top10HolderPct ?? 0)}</div>
+                        </div>
+                        <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Bundled Wallets</div>
+                          <div className="mt-2 text-lg font-semibold text-white">
+                            {typeof token.risk.bundledWalletCount === "number" ? token.risk.bundledWalletCount.toLocaleString() : "Pending"}
+                          </div>
+                        </div>
+                        <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Bundled Supply</div>
+                          <div className="mt-2 text-lg font-semibold text-white">
+                            {resolvedBundledSupplyPct !== null ? formatPct(resolvedBundledSupplyPct) : "Pending"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {(token.bundleClusters.length ? token.bundleClusters.slice(0, 3) : []).map((cluster) => (
+                          <div key={cluster.id ?? cluster.clusterLabel} className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-white">{cluster.clusterLabel}</div>
+                                <div className="mt-1 text-xs text-white/46">
+                                  {cluster.walletCount} wallets • {cluster.currentAction || "monitoring"}
+                                </div>
+                              </div>
+                              <div className="text-sm font-semibold text-white">{cluster.estimatedSupplyPct.toFixed(1)}%</div>
+                            </div>
+                          </div>
+                        ))}
+                        {!token.bundleClusters.length ? (
+                          <div className="rounded-[20px] border border-dashed border-white/12 bg-white/[0.02] px-4 py-5 text-sm text-white/54">
+                            Bundle clustering is still resolving for this token.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </V2Surface>
+
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="Social and Raid Pressure"
+                      title="Signal, community, and next action"
+                      description="This stack keeps calls, community room velocity, and raid status visible so the token is not isolated from the rest of the product."
                     />
                     <div className="mt-4 grid gap-3">
-                      {flagshipSignals.map((signal) => (
+                      {flagshipSignals.slice(0, 4).map((signal) => (
                         <div
                           key={signal.label}
                           className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3"
@@ -3297,80 +3401,16 @@ export default function TokenPage() {
                           </div>
                         </div>
                       ))}
-                    </div>
-                  </V2Surface>
-
-                  <V2Surface className="p-5" tone="soft">
-                    <V2SectionHeader
-                      eyebrow="Bundle Checker"
-                      title="Cluster pressure"
-                      description="Bundle overlap, linked wallets, and supply concentration feed directly into the token decision surface."
-                    />
-                    <div className="mt-4 rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">Bundle analysis</div>
-                          <div className="mt-2 text-2xl font-semibold text-white">
-                            {bundleScanPending ? "Scanning" : token.bundleRiskLabel || "Pending"}
-                          </div>
-                          <div className="mt-2 text-sm text-white/52">
-                            {resolvedBundledSupplyPct !== null
-                              ? `${formatPct(resolvedBundledSupplyPct)} estimated bundled supply across ${token.risk.bundledWalletCount?.toLocaleString() ?? 0} wallets.`
-                              : "Linked wallet concentration and bundled supply are being resolved."}
-                          </div>
-                        </div>
-                        <Link
-                          to={`/bundle-checker?token=${token.address}`}
-                          className="inline-flex h-10 items-center gap-2 rounded-full border border-cyan-300/16 bg-cyan-300/8 px-4 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/12"
-                        >
-                          Open checker
-                        </Link>
-                      </div>
-                    </div>
-                  </V2Surface>
-
-                  <V2Surface className="p-5" tone="soft">
-                    <V2SectionHeader
-                      eyebrow="Live modules"
-                      title="Trade, community, raids"
-                      description="Execution, room activity, and raid pressure stay pinned beside the intelligence stack."
-                    />
-                    <div className="mt-4 grid gap-3">
-                      <div
-                        id="token-community-module"
-                        className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-white">Trading terminal</div>
-                            <div className="mt-1 text-sm text-white/48">
-                              {canTradeTokenDirectly ? "Order entry, live prints, and conviction flow are online." : "Realtime analysis is available while direct trading is unavailable."}
-                            </div>
-                          </div>
-                          <Button
-                            onClick={handleOpenTradePanel}
-                            disabled={!canTradeTokenDirectly}
-                            size="sm"
-                            className="h-9 rounded-full px-4 text-slate-950"
-                          >
-                            Trade
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div
-                        id="token-raid-module"
-                        className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4"
-                      >
+                      <div id="token-community-module" className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-white">Community room</div>
                             <div className="mt-1 text-sm text-white/48">
                               {communityRoom
-                                ? `${communityRoom.memberCount.toLocaleString()} members • ${communityRoom.onlineNowEstimate.toLocaleString()} live now`
+                                ? `${communityRoom.memberCount.toLocaleString()} members • ${communityRoom.onlineNowEstimate.toLocaleString()} online`
                                 : token.communityExists
                                   ? "Community room is available and loading."
-                                  : "Create the room to coordinate calls, raids, and replies."}
+                                  : "Open a room to organize calls, replies, and raid pressure."}
                             </div>
                           </div>
                           <Link
@@ -3381,15 +3421,14 @@ export default function TokenPage() {
                           </Link>
                         </div>
                       </div>
-
-                      <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                      <div id="token-raid-module" className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-white">Raid pulse</div>
+                            <div className="text-sm font-semibold text-white">Raid pressure</div>
                             <div className="mt-1 text-sm text-white/48">
                               {activeRaidOverview
-                                ? `${activeRaidOverview.participantCount.toLocaleString()} participants • ${activeRaidOverview.postedCount.toLocaleString()} posts launched`
-                                : "No active raid yet. Launch from the community when the setup is ready."}
+                                ? `${activeRaidOverview.participantCount.toLocaleString()} participants • ${activeRaidOverview.postedCount.toLocaleString()} posts • ${activeRaidOverview.progressPct}% progress`
+                                : "No active raid is applying direct coordinated pressure right now."}
                             </div>
                           </div>
                           {activeRaidOverview ? (
@@ -3397,7 +3436,7 @@ export default function TokenPage() {
                               to={`/raids/${token.address}/${activeRaidOverview.id}`}
                               className="inline-flex h-9 items-center gap-2 rounded-full border border-lime-300/18 bg-lime-300/10 px-4 text-sm font-medium text-lime-200 transition hover:bg-lime-300/14"
                             >
-                              Live raid
+                              Join raid
                             </Link>
                           ) : (
                             <Link
