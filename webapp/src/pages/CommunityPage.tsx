@@ -83,6 +83,7 @@ export default function CommunityPage() {
   const topCalls = topCallsQuery.data ?? [];
   const raids = raidsQuery.data ?? [];
   const activeRaid = summary?.activeRaid ?? raids[0] ?? null;
+  const featuredTopCall = topCalls[0] ?? null;
   const heroName = summary?.hero.xCashtag || profile?.xCashtag || room?.xCashtag || "Community";
   const heroImage = summary?.hero.imageUrl || room?.assets.logo?.renderUrl || room?.assets.mascot?.renderUrl || undefined;
   const banner = summary?.hero.bannerUrl || room?.assets.banner?.renderUrl || undefined;
@@ -233,23 +234,27 @@ export default function CommunityPage() {
                   {summary.pinnedCall.title || `${heroName} LONG`}
                 </div>
                 <p className="mt-3 text-sm leading-7 text-white/62">{summary.pinnedCall.content}</p>
-                <div className="mt-5 rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(45,212,191,0.04))] p-4">
-                  <div className="h-[180px] rounded-[20px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))] p-3">
-                    <div className="flex h-full items-end gap-2">
-                      {Array.from({ length: 18 }).map((_, index) => (
-                        <div key={index} className="flex flex-1 items-end">
-                          <div
-                            className="w-full rounded-t-[10px] bg-[linear-gradient(180deg,rgba(169,255,52,0.95),rgba(45,212,191,0.75))]"
-                            style={{ height: `${28 + ((index * 19) % 74)}%` }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-sm">
-                    <div className="text-white/44">Pinned momentum snapshot</div>
-                    <div className="font-semibold text-lime-300">+24.23%</div>
-                  </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <MiniMetric label="Pinned By" value={summary.pinnedCall.author.username || summary.pinnedCall.author.name || "Community"} />
+                  <MiniMetric
+                    label="Top Call ROI"
+                    value={featuredTopCall ? formatPct(featuredTopCall.roiCurrentPct) : "--"}
+                  />
+                  <MiniMetric
+                    label="Peak ROI"
+                    value={featuredTopCall ? formatPct(featuredTopCall.roiPeakPct) : "--"}
+                  />
+                </div>
+                <div className="mt-4 rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(45,212,191,0.04))] px-4 py-4 text-sm leading-6 text-white/56">
+                  {featuredTopCall ? (
+                    <>
+                      Ranked call context comes from the real community top-calls feed. The pinned thread remains the real featured community post.
+                    </>
+                  ) : (
+                    <>
+                      This is the real pinned community post. Ranked call performance will appear here when the community top-calls feed has enough data.
+                    </>
+                  )}
                 </div>
               </div>
             </section>

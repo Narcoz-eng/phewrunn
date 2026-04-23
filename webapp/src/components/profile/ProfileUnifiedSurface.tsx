@@ -140,6 +140,48 @@ function OverviewCard({
   );
 }
 
+function SideRailCard({
+  eyebrow,
+  title,
+  children,
+  className,
+}: {
+  eyebrow: string;
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={cn(
+        "rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.98),rgba(5,9,13,0.98))] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.22)]",
+        className
+      )}
+    >
+      <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">{eyebrow}</div>
+      <h3 className="mt-2 text-xl font-semibold text-white">{title}</h3>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+function MetricListRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+      <div className="text-sm text-white/52">{label}</div>
+      <div className={cn("text-sm font-semibold text-white", tone)}>{value}</div>
+    </div>
+  );
+}
+
 export function ProfileUnifiedSurface({
   hub,
   isOwnProfile,
@@ -166,11 +208,34 @@ export function ProfileUnifiedSurface({
   const callBadge = `${hub.performanceSummary.totalCalls} tracked`;
   const raidBadge = `${hub.raidHistory.length} recent`;
   const portfolioBadge = hub.portfolioSnapshot?.connected ? "wallet linked" : "wallet quiet";
+  const primaryCall = hub.topCalls[0] ?? null;
+  const nextRewardLevel = hub.xp.level + 1;
+  const nextRewardXp = Math.max(hub.xp.nextLevelXp - hub.xp.xp, 0);
+  const signalStats = [
+    { label: "Followers", value: formatCompact(hub.hero.followersCount) },
+    { label: "Calls Shared", value: formatCompact(hub.performanceSummary.totalCalls) },
+    { label: "Raids Joined", value: formatCompact(hub.raidImpact.raidsJoined) },
+    { label: "Boost Count", value: formatCompact(hub.raidImpact.boostCount) },
+    { label: "Raid Wins", value: formatCompact(hub.raidImpact.raidsWon) },
+    { label: "Contribution", value: formatCompact(hub.raidImpact.contributionScore) },
+  ];
 
   return (
     <div className="space-y-5 pb-24">
       <section className="overflow-hidden rounded-[34px] border border-white/8 bg-[#080b12] shadow-[0_26px_90px_rgba(0,0,0,0.32)]">
-        <div className="bg-[radial-gradient(circle_at_18%_0%,rgba(163,230,53,0.22),transparent_30%),radial-gradient(circle_at_80%_0%,rgba(34,211,238,0.18),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))] px-5 pb-6 pt-5 sm:px-6">
+        <div className="relative px-5 pb-6 pt-5 sm:px-6">
+          {hub.hero.bannerImage ? (
+            <div className="absolute inset-x-0 top-0 h-[240px] overflow-hidden">
+              <div
+                className="absolute inset-0 bg-cover bg-center opacity-35"
+                style={{ backgroundImage: `url("${hub.hero.bannerImage}")` }}
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,5,8,0.2),rgba(2,5,8,0.88)),radial-gradient(circle_at_14%_8%,rgba(163,230,53,0.26),transparent_28%),radial-gradient(circle_at_80%_10%,rgba(34,211,238,0.22),transparent_28%)]" />
+            </div>
+          ) : (
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(163,230,53,0.22),transparent_30%),radial-gradient(circle_at_80%_0%,rgba(34,211,238,0.18),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
+          )}
+          <div className="relative">
           <div className="rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,15,0.72),rgba(3,6,10,0.82))] px-4 py-3 text-[11px] uppercase tracking-[0.26em] text-white/68">
             <span className="text-lime-300">Phew.run</span>
             <span className="ml-3 text-white/48">A phew running the internet</span>
@@ -281,6 +346,7 @@ export function ProfileUnifiedSurface({
               {heroActions ? <div className="flex flex-wrap justify-end gap-2">{heroActions}</div> : null}
             </div>
           </div>
+          </div>
         </div>
       </section>
 
@@ -293,79 +359,187 @@ export function ProfileUnifiedSurface({
       </div>
 
       {profileTab === "overview" ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_380px]">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_380px]">
           <div className="space-y-4">
-            <OverviewCard eyebrow="Performance" title="Signal performance">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className={cn("text-[3rem] font-semibold leading-none", toneClass(totalProfitPercent))}>
-                    {performanceLabel}
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
+              <OverviewCard eyebrow="About Me" title="Trader identity">
+                <div className="space-y-4">
+                  <p className="text-sm leading-7 text-white/66">
+                    {hub.hero.bio ||
+                      "I call high-conviction setups, build raid pressure, and stay focused on reputation-backed execution."}
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <MetricListRow label="Handle" value={hub.hero.username ? `@${hub.hero.username}` : "Unlisted"} />
+                    <MetricListRow label="Joined" value={formatJoinDate(hub.hero.createdAt)} />
+                    <MetricListRow
+                      label="Verification"
+                      value={hub.hero.isVerified ? "Verified trader" : "Open profile"}
+                      tone={hub.hero.isVerified ? "text-cyan-300" : undefined}
+                    />
+                    <MetricListRow
+                      label="AI posture"
+                      value={hub.aiScore.percentile ?? hub.aiScore.label}
+                      tone="text-lime-300"
+                    />
                   </div>
-                  <div className="mt-2 text-sm text-white/52">
-                    {hub.performanceSummary.totalCalls} settled calls tracked with reputation and raid context.
+                </div>
+              </OverviewCard>
+
+              <OverviewCard eyebrow="Call Performance" title="Signal performance">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className={cn("text-[3rem] font-semibold leading-none", toneClass(totalProfitPercent))}>
+                      {performanceLabel}
+                    </div>
+                    <div className="mt-2 max-w-xl text-sm leading-6 text-white/52">
+                      {hub.performanceSummary.totalCalls} settled calls tracked with reputation and raid context. This module is call-based only and does not imply wallet profit.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {performanceTabs.map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={tab.onSelect}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs font-medium tracking-wide transition-colors",
+                          tab.active
+                            ? "border-lime-300/30 bg-lime-300/12 text-lime-200"
+                            : "border-white/8 bg-white/[0.03] text-white/52 hover:bg-white/[0.06] hover:text-white/86"
+                        )}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  {performanceTabs.map((tab) => (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={tab.onSelect}
-                      className={cn(
-                        "rounded-full border px-3 py-1.5 text-xs font-medium tracking-wide transition-colors",
-                        tab.active
-                          ? "border-lime-300/30 bg-lime-300/12 text-lime-200"
-                          : "border-white/8 bg-white/[0.03] text-white/52 hover:bg-white/[0.06] hover:text-white/86"
-                      )}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
+                <div className="mt-5 overflow-hidden rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(14,18,34,0.98),rgba(8,10,18,0.98))] px-2 pb-2 pt-5">
+                  <div className="flex items-center justify-between gap-4 px-4">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                      {performanceVm?.chartLabel ?? "Performance curve"}
+                    </div>
+                    <div className="rounded-full border border-lime-300/16 bg-lime-300/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-lime-200">
+                      Call ROI
+                    </div>
+                  </div>
+                  <svg viewBox="0 0 100 42" className="mt-3 h-[220px] w-full" preserveAspectRatio="none">
+                    <path d={`${sparklinePath} L100 42 L0 42 Z`} fill="url(#profile-area-fill)" opacity="0.18" />
+                    <path d={sparklinePath} fill="none" stroke="url(#profile-line)" strokeWidth="1.8" strokeLinecap="round" />
+                    <defs>
+                      <linearGradient id="profile-line" x1="0%" x2="100%">
+                        <stop offset="0%" stopColor="rgba(184,255,47,0.9)" />
+                        <stop offset="100%" stopColor="rgba(31,228,198,0.95)" />
+                      </linearGradient>
+                      <linearGradient id="profile-area-fill" x1="0%" x2="0%" y1="0%" y2="100%">
+                        <stop offset="0%" stopColor="rgba(184,255,47,0.68)" />
+                        <stop offset="100%" stopColor="rgba(31,228,198,0)" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
                 </div>
-              </div>
-              <div className="mt-5 overflow-hidden rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(14,18,34,0.98),rgba(8,10,18,0.98))] px-2 pb-2 pt-5">
-                <div className="px-4 text-[10px] uppercase tracking-[0.22em] text-white/34">
-                  {performanceVm?.chartLabel ?? "Performance curve"}
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <MetricListRow label="Tracked Calls" value={formatCompact(hub.performanceSummary.totalCalls)} />
+                  <MetricListRow
+                    label="Win Rate"
+                    value={`${hub.performanceSummary.winRate?.toFixed(0) ?? "0"}%`}
+                    tone="text-lime-300"
+                  />
+                  <MetricListRow label="Performance Type" value="Call-based" tone="text-cyan-300" />
                 </div>
-                <svg viewBox="0 0 100 42" className="mt-3 h-[220px] w-full" preserveAspectRatio="none">
-                  <path d={`${sparklinePath} L100 42 L0 42 Z`} fill="url(#profile-area-fill)" opacity="0.18" />
-                  <path d={sparklinePath} fill="none" stroke="url(#profile-line)" strokeWidth="1.8" strokeLinecap="round" />
-                  <defs>
-                    <linearGradient id="profile-line" x1="0%" x2="100%">
-                      <stop offset="0%" stopColor="rgba(184,255,47,0.9)" />
-                      <stop offset="100%" stopColor="rgba(31,228,198,0.95)" />
-                    </linearGradient>
-                    <linearGradient id="profile-area-fill" x1="0%" x2="0%" y1="0%" y2="100%">
-                      <stop offset="0%" stopColor="rgba(184,255,47,0.68)" />
-                      <stop offset="100%" stopColor="rgba(31,228,198,0)" />
-                    </linearGradient>
-                  </defs>
-                </svg>
+              </OverviewCard>
+            </div>
+
+            <OverviewCard eyebrow="Wallet Snapshot" title="Portfolio state">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
+                <div className="space-y-3">
+                  <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/34">Wallet</div>
+                    <div className="mt-2 text-lg font-semibold text-white">
+                      {hub.portfolioSnapshot?.address
+                        ? `${hub.portfolioSnapshot.address.slice(0, 6)}...${hub.portfolioSnapshot.address.slice(-4)}`
+                        : "Unavailable"}
+                    </div>
+                  </div>
+                  <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/34">Wallet performance</div>
+                    <div className="mt-2 text-[2rem] font-semibold leading-none text-white">
+                      ${((hub.portfolioSnapshot?.balanceUsd ?? 0) || 0).toLocaleString()}
+                    </div>
+                    <div className="mt-2 text-sm text-white/50">
+                      This panel reflects the linked or public wallet snapshot only and is intentionally separate from call ROI.
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <MetricListRow
+                    label="SOL Balance"
+                    value={(hub.portfolioSnapshot?.balanceSol ?? 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                  />
+                  <MetricListRow
+                    label="Positions"
+                    value={formatCompact(hub.portfolioSnapshot?.tokenPositions.length ?? 0)}
+                  />
+                  <MetricListRow
+                    label="State"
+                    value={hub.portfolioSnapshot?.connected ? "Wallet linked" : "Snapshot unavailable"}
+                    tone={hub.portfolioSnapshot?.connected ? "text-cyan-300" : undefined}
+                  />
+                </div>
               </div>
             </OverviewCard>
 
-            <OverviewCard eyebrow="Badges" title="Trader identity">
-              <div className="flex flex-wrap gap-3">
-                {hub.badges.length ? hub.badges.map((badge) => (
-                  <div
-                    key={badge.id}
-                    className={cn(
-                      "rounded-full border px-4 py-2 text-sm capitalize",
-                      badge.tone === "xp" && "border-lime-300/25 bg-lime-300/10 text-lime-200",
-                      badge.tone === "live" && "border-cyan-300/25 bg-cyan-300/10 text-cyan-200",
-                      badge.tone !== "xp" && badge.tone !== "live" && "border-white/10 bg-white/[0.04] text-white/74"
-                    )}
-                  >
-                    {badge.label}
+            {primaryCall ? (
+              <OverviewCard eyebrow="Pinned Call" title="Highest-signal recent setup">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-lime-300/18 bg-lime-300/10 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-lime-200">
+                        {primaryCall.ticker ? `$${primaryCall.ticker}` : "Tracked call"}
+                      </span>
+                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-white/58">
+                        Call Performance
+                      </span>
+                    </div>
+                    <div className="mt-4 text-2xl font-semibold tracking-[-0.04em] text-white">
+                      {primaryCall.title || "High-conviction call"}
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <MetricListRow
+                        label="Current ROI"
+                        value={
+                          typeof primaryCall.roiCurrentPct === "number"
+                            ? `${primaryCall.roiCurrentPct >= 0 ? "+" : ""}${primaryCall.roiCurrentPct.toFixed(1)}%`
+                            : "Tracking"
+                        }
+                        tone={toneClass(primaryCall.roiCurrentPct)}
+                      />
+                      <MetricListRow
+                        label="Peak ROI"
+                        value={
+                          typeof primaryCall.roiPeakPct === "number"
+                            ? `${primaryCall.roiPeakPct >= 0 ? "+" : ""}${primaryCall.roiPeakPct.toFixed(1)}%`
+                            : "Tracking"
+                        }
+                        tone={toneClass(primaryCall.roiPeakPct)}
+                      />
+                      <MetricListRow label="Logged" value={formatJoinDate(primaryCall.createdAt)} />
+                    </div>
                   </div>
-                )) : (
-                  <div className="text-sm text-white/58">No verified badge cluster yet.</div>
-                )}
-              </div>
-            </OverviewCard>
-          </div>
+                  <div className="w-full rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(45,212,191,0.04))] p-4 lg:max-w-[320px]">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-white/38">Call context</div>
+                    <div className="mt-4 space-y-3">
+                      <MetricListRow label="Classification" value="High-signal call" tone="text-lime-300" />
+                      <MetricListRow label="Performance Type" value="Signal ROI" tone="text-cyan-300" />
+                      <MetricListRow label="Usage" value="Reputation and call ranking" />
+                    </div>
+                    <div className="mt-4 rounded-[18px] border border-white/8 bg-[#0a1016] px-4 py-3 text-xs leading-6 text-white/48">
+                      This module tracks the published setup itself. It does not represent wallet profit unless a separate wallet panel says so.
+                    </div>
+                  </div>
+                </div>
+              </OverviewCard>
+            ) : null}
 
-          <div className="space-y-4">
             <OverviewCard eyebrow="Top Calls" title="Best recent setups">
               <div className="space-y-3">
                 {hub.topCalls.length ? hub.topCalls.map((call) => (
@@ -374,7 +548,9 @@ export function ProfileUnifiedSurface({
                       <div className="truncate text-sm font-semibold text-white">
                         {call.ticker ? `$${call.ticker}` : call.title || "Tracked call"}
                       </div>
-                      <div className="mt-1 truncate text-xs text-white/44">{call.title || "High-signal call tracked in performance history"}</div>
+                      <div className="mt-1 truncate text-xs text-white/44">
+                        {call.title || "High-signal call tracked in performance history"}
+                      </div>
                     </div>
                     <div className={cn("shrink-0 text-sm font-semibold", toneClass(call.roiCurrentPct ?? call.roiPeakPct ?? null))}>
                       {typeof (call.roiCurrentPct ?? call.roiPeakPct) === "number"
@@ -387,27 +563,82 @@ export function ProfileUnifiedSurface({
                 )}
               </div>
             </OverviewCard>
+          </div>
 
-            <OverviewCard eyebrow="Raid Impact" title="Cross-community pressure">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-white/34">Joined</div>
-                  <div className="mt-2 text-2xl font-semibold text-white">{hub.raidImpact.raidsJoined}</div>
+          <div className="space-y-4">
+            {statsAside}
+
+            <SideRailCard eyebrow="User Level" title={hub.reputationMetrics.find((metric) => /tier|rank|reputation/i.test(metric.label))?.value ?? "Legend"}>
+              <div className="space-y-4">
+                <div>
+                  <div className="text-sm text-white/58">Level {hub.xp.level}</div>
+                  <div className="mt-2 text-lg font-semibold text-white">
+                    {hub.xp.xp.toLocaleString()} / {hub.xp.nextLevelXp.toLocaleString()} XP
+                  </div>
                 </div>
-                <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-white/34">Won</div>
-                  <div className="mt-2 text-2xl font-semibold text-white">{hub.raidImpact.raidsWon}</div>
+                <div className="h-3 overflow-hidden rounded-full bg-white/8">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#b9ff2f,#1fe4c6)] shadow-[0_0_22px_rgba(31,228,198,0.28)]"
+                    style={{ width: `${hub.xp.progressPct}%` }}
+                  />
                 </div>
-                <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-white/34">Boosts</div>
-                  <div className="mt-2 text-2xl font-semibold text-white">{hub.raidImpact.boostCount}</div>
-                </div>
-                <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-white/34">Contribution</div>
-                  <div className="mt-2 text-2xl font-semibold text-white">{hub.raidImpact.contributionScore}</div>
+                <div className="rounded-[20px] border border-lime-300/16 bg-lime-300/8 px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-white/40">Next Reward</div>
+                  <div className="mt-2 text-sm font-semibold text-lime-200">Level {nextRewardLevel}</div>
+                  <div className="mt-1 text-sm text-white/56">{nextRewardXp.toLocaleString()} XP to unlock</div>
                 </div>
               </div>
-            </OverviewCard>
+            </SideRailCard>
+
+            <SideRailCard eyebrow="Top Badges" title="Badge stack">
+              <div className="grid grid-cols-2 gap-3">
+                {hub.badges.length ? hub.badges.slice(0, 8).map((badge) => (
+                  <div
+                    key={badge.id}
+                    className={cn(
+                      "rounded-[18px] border px-3 py-3 text-center text-sm font-medium capitalize",
+                      badge.tone === "xp" && "border-lime-300/25 bg-lime-300/10 text-lime-200",
+                      badge.tone === "live" && "border-cyan-300/25 bg-cyan-300/10 text-cyan-200",
+                      badge.tone !== "xp" && badge.tone !== "live" && "border-white/10 bg-white/[0.04] text-white/74"
+                    )}
+                  >
+                    {badge.label}
+                  </div>
+                )) : (
+                  <div className="col-span-2 text-sm text-white/58">No verified badge cluster yet.</div>
+                )}
+              </div>
+            </SideRailCard>
+
+            <SideRailCard eyebrow="Signal Stats" title="Reputation board">
+              <div className="space-y-3">
+                {signalStats.map((metric) => (
+                  <MetricListRow key={metric.label} label={metric.label} value={metric.value} />
+                ))}
+              </div>
+            </SideRailCard>
+
+            <SideRailCard eyebrow="Recent Raids" title="Campaign footprint">
+              <div className="space-y-3">
+                {hub.raidHistory.length ? hub.raidHistory.slice(0, 4).map((raid) => (
+                  <a
+                    key={raid.id}
+                    href={`/raids/${raid.tokenAddress}/${raid.id}`}
+                    className="block rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3 transition-colors hover:bg-white/[0.06]"
+                  >
+                    <div className="text-sm font-semibold text-white">
+                      {raid.tokenSymbol ? `$${raid.tokenSymbol}` : raid.tokenName || "Raid"}
+                    </div>
+                    <div className="mt-1 text-xs text-white/44">{raid.objective}</div>
+                    <div className="mt-2 text-[11px] uppercase tracking-[0.18em] text-white/34">
+                      {raid.status} • {raid.boostCount} boosts
+                    </div>
+                  </a>
+                )) : (
+                  <div className="text-sm text-white/56">No raid history is visible yet.</div>
+                )}
+              </div>
+            </SideRailCard>
           </div>
         </div>
       ) : null}
