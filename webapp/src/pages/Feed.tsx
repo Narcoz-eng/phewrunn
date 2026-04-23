@@ -8,13 +8,13 @@ import { PostCard, type PostCardRealtimePriceMode } from "@/components/feed/Post
 import { PostCardSkeleton, ProfileCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { CreatePost } from "@/components/feed/CreatePost";
 import { LevelBar } from "@/components/feed/LevelBar";
-import { FeedHeader, FeedTab } from "@/components/feed/FeedHeader";
+import { FeedTab } from "@/components/feed/FeedHeader";
 import { AnnouncementBanner } from "@/components/feed/AnnouncementBanner";
 import { SearchBar } from "@/components/feed/SearchBar";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame, ArrowUpRight, Users, Zap, Search, TrendingUp } from "lucide-react";
+import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame, ArrowUpRight, Users, Zap, TrendingUp, type LucideIcon } from "lucide-react";
 import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -80,6 +80,19 @@ type LegacyFeedResponse = {
   hasMore?: boolean;
   totalPosts?: number | null;
 };
+
+const FEED_TAB_ITEMS: Array<{
+  id: FeedTab;
+  label: string;
+  icon?: LucideIcon;
+  description: string;
+}> = [
+  { id: "latest", label: "For You", description: "Auto-tracked calls, discussion, and live trader flow." },
+  { id: "following", label: "Following", description: "Signals and updates from traders you follow." },
+  { id: "hot-alpha", label: "Hot Alpha", icon: Flame, description: "Fast-moving setups with engagement and momentum." },
+  { id: "high-conviction", label: "Top Calls", icon: BrainCircuit, description: "Highest-conviction signals ranked by quality." },
+  { id: "early-runners", label: "X Raids", icon: Radar, description: "Early momentum and raid pressure before the room rotates." },
+];
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -2521,55 +2534,93 @@ export default function Feed() {
   const sidebarTrendingCalls = discoverySidebar?.trendingCalls ?? [];
   const sidebarTrendingCommunities = discoverySidebar?.trendingCommunities ?? [];
   const sidebarAiSpotlight = discoverySidebar?.aiSpotlight ?? null;
+  const activeFeedTabMeta = FEED_TAB_ITEMS.find((item) => item.id === activeTab) ?? FEED_TAB_ITEMS[0];
 
   return (
     <div className="space-y-4">
       <main className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-4">
           <section className="relative overflow-hidden rounded-[32px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <V2StatusPill tone="live">{activeTab === "latest" ? "Live discovery" : activeTab.replace("-", " ")}</V2StatusPill>
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/34">Signal network</span>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <V2StatusPill tone="live">{activeFeedTabMeta.label}</V2StatusPill>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/34">Signal network</span>
+                  </div>
+                  <div>
+                    <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.55rem]">Run the feed.</h1>
+                    <p className="mt-1 max-w-2xl text-sm leading-6 text-white/56">
+                      {activeFeedTabMeta.description}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.55rem]">Run the feed.</h1>
-                  <p className="mt-1 max-w-2xl text-sm leading-6 text-white/56">
-                    Auto-tracked calls, AI conviction, live raid pressure, and trader reputation in one discovery surface.
-                  </p>
+                <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[340px]">
+                  <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Top gainers</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{sidebarTopGainers.length}</div>
+                    <div className="mt-1 text-xs text-white/44">24h movers tracked</div>
+                  </div>
+                  <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Raid pressure</div>
+                    <div className="mt-2 text-lg font-semibold text-white">
+                      {sidebarLiveRaid ? sidebarLiveRaid.participantCount.toLocaleString() : "0"}
+                    </div>
+                    <div className="mt-1 text-xs text-white/44">Live raiders moving now</div>
+                  </div>
+                  <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Trending calls</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{sidebarTrendingCalls.length}</div>
+                    <div className="mt-1 text-xs text-white/44">Signal cards in rotation</div>
+                  </div>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleRefresh}
-                disabled={isManualRefreshing}
-                className="h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
-              >
-                <RefreshCw className={cn("mr-2 h-4 w-4", isManualRefreshing && "animate-spin")} />
-                Refresh feed
-              </Button>
-            </div>
 
-            <div className="mt-5">
-              <SearchBar
-                value={searchQuery}
-                onChange={handleSearchChange}
-                isLoading={isRefreshing && searchQuery.length >= 3}
-              />
-            </div>
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                <div className="min-w-0 flex-1">
+                  <SearchBar
+                    value={searchQuery}
+                    onChange={handleSearchChange}
+                    isLoading={isRefreshing && searchQuery.length >= 3}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefresh}
+                  disabled={isManualRefreshing}
+                  className="h-12 rounded-[18px] border border-white/10 bg-white/[0.04] px-5 text-white/72 hover:bg-white/[0.08] hover:text-white xl:min-w-[180px]"
+                >
+                  <RefreshCw className={cn("mr-2 h-4 w-4", isManualRefreshing && "animate-spin")} />
+                  Refresh feed
+                </Button>
+              </div>
 
-            <div className="mt-4 rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <FeedHeader
-                user={user ?? null}
-                activeTab={activeTab}
-                onTabChange={handleTabChange}
-                onLogout={handleSignOut}
-                enableUnreadCountQuery={feedUnreadQueryReady}
-                compact
-              />
+              <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="flex flex-wrap gap-2">
+                  {FEED_TAB_ITEMS.map((tab) => {
+                    const Icon = tab.icon;
+                    const active = tab.id === activeTab;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => handleTabChange(tab.id)}
+                        className={cn(
+                          "inline-flex h-11 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-all",
+                          active
+                            ? "border-lime-300/25 bg-[linear-gradient(135deg,rgba(169,255,52,0.18),rgba(45,212,191,0.14))] text-white shadow-[0_0_0_1px_rgba(163,230,53,0.08)]"
+                            : "border-white/8 bg-white/[0.03] text-white/56 hover:bg-white/[0.06] hover:text-white/84"
+                        )}
+                      >
+                        {Icon ? <Icon className={cn("h-4 w-4", active ? "text-lime-200" : "text-white/40")} /> : null}
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </section>
 
