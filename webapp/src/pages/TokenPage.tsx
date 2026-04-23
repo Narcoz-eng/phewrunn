@@ -45,7 +45,6 @@ import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
 import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { V2Surface } from "@/components/ui/v2/V2Surface";
-import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 
 const TokenTelemetryCharts = lazy(() =>
   importWithRecovery(() => import("@/components/token/TokenTelemetryCharts"), "token-page:telemetry-charts")
@@ -78,6 +77,7 @@ const TOKEN_PAGE_TABS = ["trade", "community", "intel"] as const;
 
 type TokenChartIntervalValue = (typeof TOKEN_CHART_INTERVAL_OPTIONS)[number]["value"];
 type TokenPageTab = (typeof TOKEN_PAGE_TABS)[number];
+type TokenSurfaceRailItem = "overview" | "trade" | "intel" | "bundle" | "community" | "raids" | "about";
 
 type TokenChartPoint = {
   timestamp: string;
@@ -2882,6 +2882,51 @@ export default function TokenPage() {
       ? "Recent token calls are still loading for this address."
       : "No recent calls are available for this token yet.";
 
+  const handleTokenSurfaceRail = (item: TokenSurfaceRailItem) => {
+    if (!token) return;
+
+    const scrollToId = (id: string) => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    };
+
+    switch (item) {
+      case "overview":
+        setTokenTab("trade");
+        scrollToId("token-hero-band");
+        return;
+      case "trade":
+        setTokenTab("trade");
+        scrollToId("token-terminal-section");
+        return;
+      case "intel":
+        setTokenTab("intel");
+        scrollToId("token-intel-section");
+        return;
+      case "bundle":
+        navigate(`/bundle-checker?token=${token.address}`);
+        return;
+      case "community":
+        setTokenTab("community");
+        scrollToId("token-community-room");
+        return;
+      case "raids":
+        if (activeRaidOverview) {
+          navigate(`/raids/${token.address}/${activeRaidOverview.id}`);
+          return;
+        }
+        setTokenTab("community");
+        scrollToId("token-raid-module");
+        return;
+      case "about":
+        setTokenTab("trade");
+        scrollToId("token-recent-calls");
+        return;
+    }
+  };
+
   return (
     <div className="space-y-5">
       <main className="space-y-5">
@@ -2927,7 +2972,7 @@ export default function TokenPage() {
             initial="hidden"
             animate="visible"
           >
-            <motion.section variants={sectionVariants}>
+            <motion.section id="token-hero-band" variants={sectionVariants}>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_380px]">
                 <V2Surface tone="accent" className="relative overflow-hidden p-0">
                   {token.communityBannerUrl ? (
@@ -3159,7 +3204,10 @@ export default function TokenPage() {
                       description="The token page is the control tower for execution, raids, and social coordination."
                     />
                     <div className="mt-4 grid gap-3">
-                      <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                      <div
+                        id="token-community-module"
+                        className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4"
+                      >
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-white">Trading terminal</div>
@@ -3178,7 +3226,10 @@ export default function TokenPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                      <div
+                        id="token-raid-module"
+                        className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4"
+                      >
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-white">Community room</div>
@@ -3232,75 +3283,37 @@ export default function TokenPage() {
               </div>
             </motion.section>
 
-            <motion.section variants={sectionVariants} className="hidden">
-              <div className="grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  {flagshipSignals.map((signal) => (
-                    <V2MetricCard
-                      key={`metric-${signal.label}`}
-                      label={signal.label}
-                      value={signal.value}
-                      hint={signal.caption}
-                    />
+            <motion.section variants={sectionVariants}>
+              <div className="overflow-hidden rounded-[30px] border border-white/8 bg-[#070b12] px-4 py-4 shadow-[0_24px_90px_rgba(0,0,0,0.26)] sm:px-5">
+                <div className="grid gap-2 lg:grid-cols-7">
+                  {[
+                    { key: "overview", label: "Overview", active: activeTokenTab === "trade" },
+                    { key: "trade", label: "Trading Terminal", active: activeTokenTab === "trade" },
+                    { key: "intel", label: "AI Intelligence", active: activeTokenTab === "intel" },
+                    { key: "bundle", label: "Bundle Checker", active: false },
+                    { key: "community", label: "Community", active: activeTokenTab === "community" },
+                    { key: "raids", label: "X Raids", active: false },
+                    { key: "about", label: "About", active: false },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => handleTokenSurfaceRail(item.key as TokenSurfaceRailItem)}
+                      className={cn(
+                        "rounded-full border px-4 py-3 text-sm font-medium transition-colors",
+                        item.active
+                          ? "border-lime-300/30 bg-lime-300/12 text-white shadow-[0_0_0_1px_rgba(163,230,53,0.08)]"
+                          : "border-white/8 bg-white/[0.03] text-white/58 hover:bg-white/[0.06] hover:text-white/84"
+                      )}
+                    >
+                      {item.label}
+                    </button>
                   ))}
                 </div>
-                <V2Surface className="p-5" tone="soft">
-                  <V2SectionHeader
-                    eyebrow="Signal Context"
-                    title="What is moving now"
-                    description="Bundle risk, social signal strength, trader participation, and community pressure are already fused into the current token payload."
-                  />
-                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Top traders</div>
-                      <div className="mt-2 text-xl font-semibold text-white">{displayTopTraders.length}</div>
-                      <div className="mt-1 text-white/48">Tracked conviction accounts</div>
-                    </div>
-                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Recent calls</div>
-                      <div className="mt-2 text-xl font-semibold text-white">{recentCallsCount}</div>
-                      <div className="mt-1 text-white/48">Auto-indexed call history</div>
-                    </div>
-                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Bundled supply</div>
-                      <div className="mt-2 text-xl font-semibold text-white">
-                        {typeof resolvedBundledSupplyPct === "number" ? `${resolvedBundledSupplyPct.toFixed(2)}%` : "--"}
-                      </div>
-                      <div className="mt-1 text-white/48">{bundleScanPending ? "Scan still resolving" : "Estimated overlap concentration"}</div>
-                    </div>
-                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">X calls</div>
-                      <div className="mt-2 text-xl font-semibold text-white">
-                        {socialSignals?.available ? socialSignals.callCount24h.toLocaleString() : "--"}
-                      </div>
-                      <div className="mt-1 text-white/48">
-                        {socialSignals?.available ? `${socialSignals.uniqueAuthors24h.toLocaleString()} unique authors` : "Social signal stream offline"}
-                      </div>
-                    </div>
-                  </div>
-                </V2Surface>
               </div>
             </motion.section>
-
-            <motion.section variants={sectionVariants}>
-              <V2TabBar
-                value={activeTokenTab}
-                onChange={(value) => setTokenTab(value)}
-                items={[
-                  { value: "trade", label: "Trading Terminal", badge: "chart + execution" },
-                  {
-                    value: "community",
-                    label: "Community",
-                    badge: token.communityExists
-                      ? `${communityRoom?.memberCount ? communityRoom.memberCount.toLocaleString() : "live"} members`
-                      : "launch room",
-                  },
-                  { value: "intel", label: "AI Intelligence", badge: socialSignalsQuery.isFetching ? "updating" : "AI + risk" },
-                ]}
-              />
-            </motion.section>
             {activeTokenTab === "intel" ? (
-            <motion.section variants={sectionVariants}>
+            <motion.section id="token-intel-section" variants={sectionVariants}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-foreground">AI state</div>
@@ -3372,7 +3385,7 @@ export default function TokenPage() {
 
             {/* ── SECTION 3: CHART + QUICK BUY ── */}
             {activeTokenTab === "trade" ? (
-              <motion.section variants={sectionVariants} className="terminal-card overflow-hidden">
+              <motion.section id="token-terminal-section" variants={sectionVariants} className="terminal-card overflow-hidden">
                 <div className="border-b border-white/6 px-5 py-4 sm:px-6">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                     <div>
@@ -4220,7 +4233,7 @@ export default function TokenPage() {
             ) : null}
 
             {activeTokenTab === "community" ? (
-            <motion.section variants={sectionVariants}>
+            <motion.section id="token-community-room" variants={sectionVariants}>
               <Suspense
                 fallback={
                   <div className="app-surface p-5">
@@ -4246,7 +4259,7 @@ export default function TokenPage() {
 
             {/* ── SECTION 6: RECENT CALLS ── */}
             {activeTokenTab === "trade" ? (
-            <motion.section variants={sectionVariants}>
+            <motion.section id="token-recent-calls" variants={sectionVariants}>
               <div ref={recentCallsRef} className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

@@ -9,9 +9,8 @@ import { LevelBadge, LevelBar } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
-import { ProfileDashboard, UserStats, RecentTrade, WalletData } from "@/components/profile/ProfileDashboard";
+import { UserStats, RecentTrade, WalletData } from "@/components/profile/ProfileDashboard";
 import { TraderIntelligenceCard } from "@/components/profile/TraderIntelligenceCard";
-import { WalletConnection } from "@/components/profile/WalletConnection";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -64,13 +63,9 @@ import {
 import { PhewEditIcon } from "@/components/icons/PhewIcons";
 import { LivePortfolioDialog } from "@/components/account/LivePortfolioDialog";
 import { MyInvitesSection } from "@/components/profile/MyInvitesSection";
-import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { BannerPicker } from "@/components/profile/BannerPicker";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2, ImageIcon } from "lucide-react";
-import { V2PageHeader } from "@/components/layout/V2PageHeader";
-import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
-import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
 import { ProfileUnifiedSurface, type SharedProfileTab } from "@/components/profile/ProfileUnifiedSurface";
 import {
   buildTraderPerformanceVm,
