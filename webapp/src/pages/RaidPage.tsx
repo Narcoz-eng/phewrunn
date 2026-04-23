@@ -326,12 +326,12 @@ export default function RaidPage() {
                     <div className="text-xs text-white/42">{new Date(update.createdAt).toLocaleString()}</div>
                   </div>
                   <div className="mt-2 text-sm text-white/58">{update.body}</div>
-                  {update.kind === "submission" && canPerformAuthenticatedWrites && submissions.length ? (
+                  {update.kind === "submission" && canPerformAuthenticatedWrites ? (
                     <div className="mt-3">
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => boostMutation.mutate(submissions[0]!.id)}
+                        onClick={() => boostMutation.mutate(update.id)}
                         disabled={boostMutation.isPending}
                         className="h-10 rounded-[14px] border-white/10 bg-white/[0.04] px-4 text-white/80 hover:bg-white/[0.08] hover:text-white"
                       >

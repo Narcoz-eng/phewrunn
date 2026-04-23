@@ -2524,15 +2524,6 @@ export default function Feed() {
 
   return (
     <div className="space-y-4">
-      <FeedHeader
-        user={user ?? null}
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        onLogout={handleSignOut}
-        enableUnreadCountQuery={feedUnreadQueryReady}
-        compact
-      />
-
       <main className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
           <section className="relative overflow-hidden rounded-[30px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
@@ -2569,10 +2560,8 @@ export default function Feed() {
                 isLoading={isRefreshing && searchQuery.length >= 3}
               />
             </div>
-          </section>
 
-          <section className="space-y-3">
-            <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.95),rgba(6,10,15,0.98))] p-3">
+            <div className="mt-4 rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-3">
               <FeedHeader
                 user={user ?? null}
                 activeTab={activeTab}
@@ -2582,7 +2571,9 @@ export default function Feed() {
                 compact
               />
             </div>
+          </section>
 
+          <section className="space-y-3">
             <QueryErrorBoundary sectionName="Announcements">
               <AnnouncementBanner enabled={feedAnnouncementsReady} />
             </QueryErrorBoundary>

@@ -801,7 +801,7 @@ export default function Notifications() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                className="h-10 rounded-full border border-lime-300/18 bg-lime-300/10 px-4 text-lime-100 hover:bg-lime-300/14 hover:text-white"
                 onClick={handleMarkAllRead}
                 disabled={markAllReadMutation.isPending || !canPerformAuthenticatedWrites}
               >
@@ -812,19 +812,19 @@ export default function Notifications() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/62 hover:bg-white/[0.08] hover:text-white"
+              className="h-10 rounded-full border border-white/10 bg-white/[0.03] px-3 text-white/56 hover:bg-white/[0.06] hover:text-white"
               onClick={() => setShowAlertPreferences((prev) => !prev)}
             >
-              <Settings2 className="mr-2 h-4 w-4" />
-              {showAlertPreferences ? "Hide settings" : "Settings"}
+              <Settings2 className="h-4 w-4" />
+              <span className="sr-only">{showAlertPreferences ? "Hide settings" : "Settings"}</span>
             </Button>
           </div>
         </div>
       </section>
 
-      <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
-        <V2Surface className="min-h-[calc(100vh-8rem)] overflow-hidden">
-          <div className="relative z-10 border-b border-border/60 bg-background/80 px-4 pb-4 pt-4 shadow-[0_18px_36px_-34px_hsl(var(--foreground)/0.16)] backdrop-blur-xl dark:bg-black/30 dark:shadow-none">
+      <main className="space-y-4">
+        <section className="min-h-[calc(100vh-8rem)] overflow-hidden rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)]">
+          <div className="relative z-10 border-b border-white/8 bg-black/20 px-4 pb-4 pt-4 backdrop-blur-xl">
             <AnimatePresence initial={false}>
               {showAlertPreferences ? (
                 <motion.div
@@ -973,7 +973,7 @@ export default function Notifications() {
               {notificationsContent}
             </motion.div>
           </AnimatePresence>
-        </V2Surface>
+        </section>
       </main>
     </div>
   );
