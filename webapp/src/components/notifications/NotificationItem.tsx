@@ -115,6 +115,20 @@ function getNotificationIcon(notification: Notification) {
   return notificationIcons[notification.type] || { icon: PhewBellIcon, colorClass: "text-primary" };
 }
 
+function formatNotificationTone(notification: Notification): string {
+  const type = notification.type.toLowerCase();
+  if (type.includes("raid")) return "X Raid";
+  if (type.includes("follow")) return "Follow";
+  if (type.includes("comment")) return "Reply";
+  if (type.includes("like")) return "Like";
+  if (type.includes("repost")) return "Repost";
+  if (type.includes("whale")) return "Whale";
+  if (type.includes("smart_money")) return "Smart Money";
+  if (type.includes("confidence")) return "AI";
+  if (type.includes("post") || type.includes("alpha")) return "Post";
+  return "System";
+}
+
 interface NotificationItemProps {
   notification: Notification;
   onMarkClicked: (notification: Notification) => void;
@@ -136,6 +150,7 @@ export function NotificationItem({
   const mergedItems = Array.isArray(notification.mergedItems) ? notification.mergedItems : [];
   const hasMergedItems = mergedItems.length > 1;
   const mergedCount = notification.mergedCount ?? mergedItems.length;
+  const toneLabel = formatNotificationTone(notification);
   const cardTransition = prefersReducedMotion
     ? { duration: 0 }
     : { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
@@ -196,7 +211,7 @@ export function NotificationItem({
       className={cn(
         "group relative overflow-hidden rounded-[26px] border transition-all duration-200",
         !notification.read
-          ? "border-lime-300/14 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.1),transparent_38%),linear-gradient(180deg,rgba(11,14,18,0.98),rgba(8,10,14,0.98))] hover:border-lime-300/24"
+          ? "border-lime-300/14 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_38%),linear-gradient(180deg,rgba(11,14,18,0.98),rgba(8,10,14,0.98))] shadow-[0_24px_60px_-42px_rgba(169,255,52,0.22)] hover:border-lime-300/24"
           : "border-white/8 bg-[linear-gradient(180deg,rgba(10,13,18,0.94),rgba(7,9,13,0.98))] hover:border-white/14"
       )}
     >
@@ -208,7 +223,7 @@ export function NotificationItem({
         className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-4 px-4 py-4 outline-none sm:grid-cols-[auto,minmax(0,1fr),auto] sm:px-5"
       >
         <div className="relative shrink-0">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/8 bg-white/[0.03]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/8 bg-[linear-gradient(180deg,rgba(18,24,28,0.98),rgba(8,12,14,0.98))]">
             <IconComponent className={cn("h-4 w-4", colorClass)} />
           </div>
           {fromUser ? (
@@ -228,6 +243,9 @@ export function NotificationItem({
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="max-w-[12rem] truncate text-sm font-semibold text-white sm:max-w-[18rem]">
               {fromUser ? `@${fromUser.username || fromUser.name}` : "PHEW"}
+            </span>
+            <span className="rounded-full border border-white/8 bg-white/[0.03] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/44">
+              {toneLabel}
             </span>
             <span className="text-xs text-white/42">{formatTimeAgo(notification.createdAt)}</span>
             {!notification.read ? <span className="h-2 w-2 rounded-full bg-lime-300 shrink-0" /> : null}
@@ -261,7 +279,7 @@ export function NotificationItem({
           ) : null}
         </div>
 
-        <div className="col-start-2 flex items-center gap-1.5 justify-self-start pt-1 sm:col-start-3 sm:justify-self-end sm:pt-0.5 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+        <div className="col-start-2 flex items-center gap-1.5 justify-self-start pt-1 sm:col-start-3 sm:justify-self-end sm:pt-0.5 sm:opacity-70 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
           {!notification.read ? (
             <Button
               variant="ghost"

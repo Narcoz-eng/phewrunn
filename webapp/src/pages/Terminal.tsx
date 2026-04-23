@@ -110,6 +110,26 @@ export default function Terminal() {
     });
   }, [tradeFeed.recentTrades]);
 
+  const largePrints = useMemo(
+    () => tradeFeed.recentTrades.filter((trade) => trade.isLarge).slice(0, 5),
+    [tradeFeed.recentTrades]
+  );
+
+  const buyPressurePct = useMemo(() => {
+    const sample = tradeFeed.recentTrades.slice(0, 24);
+    if (!sample.length) return null;
+    const buyCount = sample.filter((trade) => trade.side === "buy").length;
+    return Math.round((buyCount / sample.length) * 100);
+  }, [tradeFeed.recentTrades]);
+
+  const convictionLabel = token?.highConvictionScore
+    ? token.highConvictionScore >= 90
+      ? "High Conviction"
+      : token.highConvictionScore >= 70
+        ? "Bullish Setup"
+        : "Developing"
+    : "Developing";
+
   return (
     <div className="space-y-5">
       <section className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5 sm:p-6">
@@ -119,6 +139,19 @@ export default function Terminal() {
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">
               {token ? `${token.symbol ? `$${token.symbol}` : token.name || "Token"} / USDT` : "Execution-first board"}
             </h1>
+            {token ? (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full border border-lime-300/16 bg-lime-300/10 px-3 py-1 font-semibold text-lime-200">
+                  {convictionLabel}
+                </span>
+                <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-white/58">
+                  {token.chainType === "solana" ? "Solana route" : "Ethereum route"}
+                </span>
+                <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-white/58">
+                  {tradeFeed.liveStatus.connected ? "Realtime prints" : "Fallback polling"}
+                </span>
+              </div>
+            ) : null}
           </div>
           <div className="flex min-w-[300px] items-center gap-2 rounded-[20px] border border-white/10 bg-white/[0.04] p-2">
             <Input
@@ -190,7 +223,7 @@ export default function Terminal() {
               </div>
             </div>
 
-            <div className="grid gap-0 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
+            <div className="grid gap-0 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
               <div className="border-r border-white/8 px-4 py-4">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Order Book</div>
                 <div className="mt-4 rounded-[22px] border border-white/8 bg-white/[0.02] p-3">
@@ -230,8 +263,23 @@ export default function Terminal() {
                   </div>
                 </div>
 
+                <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                  <InlineMetric
+                    label="Buy pressure"
+                    value={buyPressurePct !== null ? `${buyPressurePct}%` : "--"}
+                    tone="lime"
+                  />
+                  <InlineMetric
+                    label="Confidence"
+                    value={token.confidenceScore ? `${token.confidenceScore.toFixed(0)}` : "--"}
+                    tone="teal"
+                  />
+                  <InlineMetric label="Holders" value={formatAmount(token.holderCount)} tone="default" />
+                  <InlineMetric label="Activity" value={token.activityStatusLabel ?? "Monitoring"} tone="default" />
+                </div>
+
                 <div className="mt-4 rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,14,17,0.98),rgba(4,8,10,0.98))] p-4">
-                  <div className="relative h-[340px] overflow-hidden rounded-[20px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))]">
+                  <div className="relative h-[320px] overflow-hidden rounded-[20px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))]">
                     <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:56px_56px]" />
                     <div className="absolute inset-x-0 bottom-0 flex items-end gap-1 px-4 pb-4">
                       {chartBars.map((bar, index) => (
@@ -274,7 +322,12 @@ export default function Terminal() {
                   />
 
                   <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Depth Chart</div>
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Depth Chart</div>
+                      <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-white/44">
+                        Derived from quote ladder
+                      </div>
+                    </div>
                     <div className="mt-4 grid h-[220px] grid-cols-2 gap-4">
                       <div className="relative overflow-hidden rounded-[18px] border border-lime-300/10 bg-lime-300/6">
                         <div className="absolute inset-x-0 bottom-0">
@@ -335,44 +388,86 @@ export default function Terminal() {
             </div>
           </section>
 
-          <section className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
-            <div className="flex flex-wrap gap-3">
-              {[
-                { value: "orders", label: "Open Orders" },
-                { value: "history", label: "Order History" },
-                { value: "positions", label: "Positions" },
-                { value: "holdings", label: "Holdings" },
-              ].map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => setActiveBottomTab(item.value as typeof activeBottomTab)}
-                  className={cn(
-                    "rounded-full border px-4 py-2 text-sm transition",
-                    activeBottomTab === item.value ? "border-lime-300/18 bg-lime-300/8 text-lime-200" : "border-white/8 bg-white/[0.03] text-white/54 hover:text-white"
-                  )}
-                >
-                  {item.label}
-                </button>
-              ))}
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_380px]">
+            <div className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Terminal Board</div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {[
+                  { value: "orders", label: "Open Orders" },
+                  { value: "history", label: "Order History" },
+                  { value: "positions", label: "Positions" },
+                  { value: "holdings", label: "Holdings" },
+                ].map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setActiveBottomTab(item.value as typeof activeBottomTab)}
+                    className={cn(
+                      "rounded-full border px-4 py-2 text-sm transition",
+                      activeBottomTab === item.value ? "border-lime-300/18 bg-lime-300/8 text-lime-200" : "border-white/8 bg-white/[0.03] text-white/54 hover:text-white"
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                <BottomCard
+                  label={activeBottomTab === "orders" ? "Open Orders" : activeBottomTab === "history" ? "Executed Prints" : activeBottomTab === "positions" ? "Exposure" : "Holdings"}
+                  value={
+                    activeBottomTab === "orders"
+                      ? formatAmount(depth?.positionSummary.openOrders ?? 0)
+                      : activeBottomTab === "history"
+                        ? formatAmount(tradeFeed.recentTrades.length)
+                        : activeBottomTab === "positions"
+                          ? formatUsd(depth?.positionSummary.exposureUsd)
+                          : formatUsd(depth?.positionSummary.holdingsUsd)
+                  }
+                  hint="Live terminal state"
+                />
+                <BottomCard label="Spread" value={depth?.spread ? formatUsd(depth.spread) : "--"} hint="Derived execution gap" />
+                <BottomCard label="Holders" value={formatAmount(token.holderCount)} hint="Token context" />
+              </div>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              <BottomCard
-                label={activeBottomTab === "orders" ? "Open Orders" : activeBottomTab === "history" ? "Executed Prints" : activeBottomTab === "positions" ? "Exposure" : "Holdings"}
-                value={
-                  activeBottomTab === "orders"
-                    ? formatAmount(depth?.positionSummary.openOrders ?? 0)
-                    : activeBottomTab === "history"
-                      ? formatAmount(tradeFeed.recentTrades.length)
-                      : activeBottomTab === "positions"
-                        ? formatUsd(depth?.positionSummary.exposureUsd)
-                        : formatUsd(depth?.positionSummary.holdingsUsd)
-                }
-                hint="Live terminal state"
-              />
-              <BottomCard label="Spread" value={depth?.spread ? formatUsd(depth.spread) : "--"} hint="Derived execution gap" />
-              <BottomCard label="Holders" value={formatAmount(token.holderCount)} hint="Token context" />
+            <div className="space-y-4">
+              <div className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Whale Activity</div>
+                <div className="mt-4 space-y-3">
+                  {largePrints.length > 0 ? (
+                    largePrints.map((trade) => (
+                      <div key={trade.id} className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-white">{trade.walletShort ?? "Large print"}</div>
+                          <div className={cn("text-sm font-semibold", trade.side === "buy" ? "text-lime-300" : "text-rose-300")}>
+                            {trade.side === "buy" ? "Bought" : "Sold"}
+                          </div>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-3 text-xs text-white/46">
+                          <span>{formatUsd(trade.volumeUsd)}</span>
+                          <span>{formatAmount(trade.priceUsd)} / token</span>
+                          <span>{new Date(trade.timestampMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-6 text-sm text-white/48">
+                      Waiting for large prints from the live route.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Execution Pulse</div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <BottomCard label="Smart Money" value={largePrints.length > 1 ? "Active" : "Quiet"} hint="Based on large route prints" />
+                  <BottomCard label="Momentum" value={(token.priceChange24hPct ?? 0) >= 0 ? "Bullish" : "Weak"} hint="24H trend" />
+                  <BottomCard label="Buy Flow" value={buyPressurePct !== null ? `${buyPressurePct}%` : "--"} hint="Recent trade sample" />
+                  <BottomCard label="Live Route" value={tradeFeed.liveStatus.connected ? "Connected" : "Fallback"} hint="Execution transport" />
+                </div>
+              </div>
             </div>
           </section>
         </>
@@ -385,6 +480,32 @@ function KpiBox({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[16px] border border-white/8 bg-white/[0.03] px-4 py-3">
       <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">{label}</div>
+      <div className="mt-2 text-lg font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function InlineMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "lime" | "teal" | "default";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-[18px] border px-3 py-3",
+        tone === "lime"
+          ? "border-lime-300/16 bg-lime-300/8"
+          : tone === "teal"
+            ? "border-cyan-300/16 bg-cyan-300/8"
+            : "border-white/8 bg-white/[0.03]"
+      )}
+    >
+      <div className="text-[10px] uppercase tracking-[0.16em] text-white/36">{label}</div>
       <div className="mt-2 text-lg font-semibold text-white">{value}</div>
     </div>
   );

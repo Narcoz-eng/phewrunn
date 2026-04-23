@@ -14,7 +14,7 @@ import { useAuth, useSession } from "@/lib/auth-client";
 import { Notification } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CheckCheck, ArrowLeft, BellOff, Settings2 } from "lucide-react";
+import { CheckCheck, BellOff, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationItem, NotificationItemSkeleton } from "@/components/notifications/NotificationItem";
 import { readSessionCache, readSessionCacheEntry, writeSessionCache } from "@/lib/session-cache";
@@ -23,7 +23,6 @@ import { cn } from "@/lib/utils";
 import { buildProfilePath } from "@/lib/profile-path";
 import { PhewBellIcon } from "@/components/icons/PhewIcons";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
-import { V2Surface } from "@/components/ui/v2/V2Surface";
 import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 
 const NOTIFICATIONS_CACHE_KEY = "phew.notifications.list";
@@ -783,7 +782,7 @@ export default function Notifications() {
   return (
     <div ref={pageTopRef} className="space-y-5">
       <section className="overflow-hidden rounded-[30px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <V2StatusPill tone="live">{unreadCount > 0 ? `${unreadCount} unread` : "Inbox clear"}</V2StatusPill>
@@ -816,6 +815,7 @@ export default function Notifications() {
               onClick={() => setShowAlertPreferences((prev) => !prev)}
             >
               <Settings2 className="h-4 w-4" />
+              <span className="ml-2 hidden sm:inline">{showAlertPreferences ? "Hide settings" : "Settings"}</span>
               <span className="sr-only">{showAlertPreferences ? "Hide settings" : "Settings"}</span>
             </Button>
           </div>
@@ -823,8 +823,8 @@ export default function Notifications() {
       </section>
 
       <main className="space-y-4">
-        <section className="min-h-[calc(100vh-8rem)] overflow-hidden rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)]">
-          <div className="relative z-10 border-b border-white/8 bg-black/20 px-4 pb-4 pt-4 backdrop-blur-xl">
+        <section className="min-h-[calc(100vh-8rem)] overflow-hidden rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.98),rgba(4,8,13,1))] shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)]">
+          <div className="relative z-10 border-b border-white/8 bg-[linear-gradient(180deg,rgba(11,17,18,0.62),rgba(6,9,13,0.1))] px-4 pb-4 pt-4 backdrop-blur-xl">
             <AnimatePresence initial={false}>
               {showAlertPreferences ? (
                 <motion.div
@@ -949,17 +949,19 @@ export default function Notifications() {
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            <V2TabBar
-              value={activeFilter}
-              onChange={setActiveFilter}
-              items={[
-                { value: "all", label: "All" },
-                { value: "mentions", label: "Mentions" },
-                { value: "raids", label: "X Raids" },
-                { value: "follows", label: "Follows" },
-                { value: "system", label: "System" },
-              ]}
-            />
+            <div className="rounded-[22px] border border-white/8 bg-black/20 p-2">
+              <V2TabBar
+                value={activeFilter}
+                onChange={setActiveFilter}
+                items={[
+                  { value: "all", label: "All" },
+                  { value: "mentions", label: "Mentions" },
+                  { value: "raids", label: "X Raids" },
+                  { value: "follows", label: "Follows" },
+                  { value: "system", label: "System" },
+                ]}
+              />
+            </div>
           </div>
 
           <AnimatePresence mode="wait" initial={false}>
