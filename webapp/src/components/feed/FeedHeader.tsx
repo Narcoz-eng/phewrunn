@@ -35,11 +35,11 @@ interface FeedHeaderProps {
 }
 
 const tabs: { id: FeedTab; label: string; icon?: ComponentType<{ className?: string }> }[] = [
-  { id: "latest", label: "Latest" },
-  { id: "hot-alpha", label: "Hot Alpha", icon: Flame },
-  { id: "early-runners", label: "Early Runners", icon: Radar },
-  { id: "high-conviction", label: "High Conviction", icon: BrainCircuit },
+  { id: "latest", label: "For You" },
   { id: "following", label: "Following" },
+  { id: "hot-alpha", label: "Hot Alpha", icon: Flame },
+  { id: "high-conviction", label: "High Conviction", icon: BrainCircuit },
+  { id: "early-runners", label: "Early Runners", icon: Radar },
 ];
 const NOTIFICATIONS_UNREAD_CACHE_PREFIX = "phew.notifications.unread";
 const NOTIFICATIONS_UNREAD_CACHE_TTL_MS = 60_000;

@@ -12,7 +12,7 @@ import { LevelBadge } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
-import { ProfileDashboard, type UserStats, type RecentTrade } from "@/components/profile/ProfileDashboard";
+import { type UserStats, type RecentTrade } from "@/components/profile/ProfileDashboard";
 import { TraderIntelligenceCard } from "@/components/profile/TraderIntelligenceCard";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -54,18 +54,8 @@ import {
   syncPostsIntoQueryCache,
 } from "@/lib/post-query-cache";
 import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
-import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2 } from "lucide-react";
-import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
-import { BrandLogo } from "@/components/BrandLogo";
-import { V2PageHeader } from "@/components/layout/V2PageHeader";
-import { V2EmptyState } from "@/components/ui/v2/V2EmptyState";
-import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
-import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
-import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
-import { V2Surface } from "@/components/ui/v2/V2Surface";
-import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 import { ProfileUnifiedSurface } from "@/components/profile/ProfileUnifiedSurface";
 import {
   buildTraderPerformanceVm,

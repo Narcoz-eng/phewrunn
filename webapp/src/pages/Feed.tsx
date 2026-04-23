@@ -2524,9 +2524,9 @@ export default function Feed() {
 
   return (
     <div className="space-y-4">
-      <main className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <main className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-4">
-          <section className="relative overflow-hidden rounded-[30px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(4,8,13,0.98))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
+          <section className="relative overflow-hidden rounded-[32px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -2534,7 +2534,7 @@ export default function Feed() {
                   <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/34">Signal network</span>
                 </div>
                 <div>
-                  <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.3rem]">Run the feed.</h1>
+                  <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.55rem]">Run the feed.</h1>
                   <p className="mt-1 max-w-2xl text-sm leading-6 text-white/56">
                     Auto-tracked calls, AI conviction, live raid pressure, and trader reputation in one discovery surface.
                   </p>
@@ -2553,7 +2553,7 @@ export default function Feed() {
               </Button>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-5">
               <SearchBar
                 value={searchQuery}
                 onChange={handleSearchChange}
@@ -2561,7 +2561,7 @@ export default function Feed() {
               />
             </div>
 
-            <div className="mt-4 rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-3">
+            <div className="mt-4 rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
               <FeedHeader
                 user={user ?? null}
                 activeTab={activeTab}
@@ -2579,10 +2579,11 @@ export default function Feed() {
             </QueryErrorBoundary>
           </section>
 
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
           {isLoadingUser ? (
             <ProfileCardSkeleton className="mb-0" />
           ) : user ? (
-            <section className="overflow-hidden rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.96),rgba(6,10,14,0.98))] p-5 shadow-[0_30px_70px_-46px_rgba(45,212,191,0.5)]">
+            <section className="overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),linear-gradient(180deg,rgba(9,13,20,0.96),rgba(6,10,14,0.98))] p-5 shadow-[0_30px_70px_-46px_rgba(45,212,191,0.5)]">
               <div className="flex items-start gap-4">
                 <Avatar className="h-16 w-16 border border-lime-300/20 shadow-[0_0_24px_rgba(169,255,52,0.2)]">
                   <AvatarImage src={getAvatarUrl(user.id, user.image)} />
@@ -2626,7 +2627,7 @@ export default function Feed() {
             </div>
           ) : null}
 
-          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.96),rgba(6,10,14,0.98))] p-4">
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.97),rgba(6,10,14,0.99))] p-4 shadow-[0_26px_60px_-42px_rgba(0,0,0,0.88)]">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Post signal</div>
@@ -2650,6 +2651,7 @@ export default function Feed() {
               isAuthPending={isAuthWritePending}
             />
           </section>
+          </div>
 
           <section className="space-y-4">
             <div className="flex items-center justify-between">
@@ -2916,6 +2918,27 @@ export default function Feed() {
             </div>
           </section>
 
+          {sidebarAiSpotlight ? (
+            <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(11,16,13,0.96),rgba(7,10,12,0.99))] p-4">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+                <BrainCircuit className="h-3.5 w-3.5 text-lime-200" />
+                AI watchlist
+              </div>
+              <div className="mt-3 rounded-[22px] border border-lime-300/14 bg-lime-300/8 p-4">
+                <div className="text-sm font-semibold text-white">{sidebarAiSpotlight.title}</div>
+                <p className="mt-2 text-sm leading-6 text-white/62">{sidebarAiSpotlight.summary}</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => sidebarAiSpotlight.tokenAddress ? navigate(`/token/${sidebarAiSpotlight.tokenAddress}`) : undefined}
+                  className="mt-4 h-10 rounded-full border border-white/10 bg-black/20 px-4 text-white/76 hover:bg-white/[0.08] hover:text-white"
+                >
+                  Open watch
+                </Button>
+              </div>
+            </section>
+          ) : null}
+
           <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
               <Users className="h-3.5 w-3.5 text-lime-300" />
@@ -2940,25 +2963,6 @@ export default function Feed() {
               ))}
             </div>
           </section>
-
-          {sidebarAiSpotlight ? (
-            <section className="rounded-[28px] border border-cyan-300/12 bg-[radial-gradient(circle_at_top_left,rgba(45,212,191,0.12),transparent_30%),linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-                <Search className="h-3.5 w-3.5 text-cyan-300" />
-                AI spotlight
-              </div>
-              <div className="mt-3 text-lg font-semibold text-white">{sidebarAiSpotlight.title}</div>
-              <p className="mt-2 text-sm leading-6 text-white/54">{sidebarAiSpotlight.summary}</p>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => sidebarAiSpotlight.tokenAddress ? navigate(`/token/${sidebarAiSpotlight.tokenAddress}`) : undefined}
-                className="mt-4 h-10 rounded-full border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
-              >
-                Open signal
-              </Button>
-            </section>
-          ) : null}
         </aside>
       </main>
     </div>

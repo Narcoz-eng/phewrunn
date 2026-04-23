@@ -558,91 +558,102 @@
   .v2-shell {
     @apply min-h-screen;
     background:
-      radial-gradient(circle at top left, rgba(169, 255, 52, 0.08), transparent 16%),
-      radial-gradient(circle at top right, rgba(65, 232, 207, 0.09), transparent 20%),
-      linear-gradient(180deg, #021015 0%, #03080c 58%, #030609 100%);
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 16%),
+      radial-gradient(circle at 82% 4%, rgba(45, 212, 191, 0.12), transparent 18%),
+      radial-gradient(circle at 50% 28%, rgba(24, 62, 68, 0.18), transparent 34%),
+      linear-gradient(180deg, #031016 0%, #02080d 56%, #020509 100%);
   }
 
   .v2-shell-main {
-    @apply min-h-screen lg:pl-[19.5rem];
+    @apply min-h-screen lg:pl-[18.25rem];
   }
 
   .v2-shell-content {
-    @apply px-4 pb-28 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pb-10;
+    @apply px-3 pb-28 pt-3 sm:px-5 sm:pt-5 lg:px-7 lg:pb-10;
   }
 
   .v2-sidebar {
-    @apply fixed inset-y-0 left-0 z-40 w-[18rem] flex-col border-r border-white/[0.06] px-5 py-5;
+    @apply fixed inset-y-0 left-0 z-40 w-[16.75rem] flex-col border-r border-white/[0.06] px-4 py-4;
     background:
-      radial-gradient(circle at top left, rgba(169, 255, 52, 0.08), transparent 26%),
-      linear-gradient(180deg, rgba(5, 16, 19, 0.98), rgba(4, 9, 12, 0.98));
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 24%),
+      radial-gradient(circle at bottom left, rgba(45, 212, 191, 0.08), transparent 30%),
+      linear-gradient(180deg, rgba(3, 16, 17, 0.985), rgba(2, 10, 11, 0.99));
     box-shadow:
       inset -1px 0 0 rgba(255, 255, 255, 0.03),
-      24px 0 80px -72px rgba(0, 0, 0, 0.78);
+      32px 0 120px -88px rgba(0, 0, 0, 0.95);
   }
 
   .v2-sidebar-link {
-    @apply inline-flex items-center gap-3 rounded-[18px] border border-transparent px-3.5 py-3 text-sm font-medium;
-    color: rgba(255, 255, 255, 0.52);
+    @apply inline-flex items-center gap-3 rounded-[20px] border border-transparent px-3.5 py-3 text-sm font-medium;
+    color: rgba(255, 255, 255, 0.5);
     background: transparent;
   }
 
   .v2-sidebar-link:hover {
-    @apply border-white/[0.06];
-    color: rgba(255, 255, 255, 0.86);
-    background: rgba(255, 255, 255, 0.04);
+    @apply border-white/[0.07];
+    color: rgba(255, 255, 255, 0.9);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.02));
   }
 
   .v2-sidebar-link-active {
     @apply border-white/[0.08] text-white;
     background:
-      linear-gradient(90deg, rgba(169, 255, 52, 0.14), rgba(65, 232, 207, 0.12));
+      linear-gradient(120deg, rgba(163, 230, 53, 0.17), rgba(45, 212, 191, 0.13));
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
-      0 14px 34px -28px rgba(65, 232, 207, 0.42);
+      0 18px 40px -30px rgba(45, 212, 191, 0.46);
   }
 
   .v2-sidebar-user {
-    @apply mt-6 rounded-[24px] border border-white/[0.08] p-4;
+    @apply mt-5 rounded-[26px] border border-white/[0.08] p-4;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.08), transparent 32%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.03),
+      0 24px 50px -40px rgba(0, 0, 0, 0.88);
   }
 
   .v2-mobile-nav {
     @apply fixed inset-x-3 bottom-3 z-50 grid grid-cols-5 gap-2 rounded-[26px] border border-white/[0.08] p-2 backdrop-blur-xl;
     background:
-      linear-gradient(180deg, rgba(8, 16, 18, 0.9), rgba(4, 10, 12, 0.94));
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.12), transparent 35%),
+      linear-gradient(180deg, rgba(6, 16, 18, 0.92), rgba(3, 9, 11, 0.96));
     box-shadow:
-      0 24px 70px -40px rgba(0, 0, 0, 0.82);
+      0 24px 80px -42px rgba(0, 0, 0, 0.92);
   }
 
   .v2-mobile-nav-item {
-    @apply flex h-12 items-center justify-center rounded-[18px];
+    @apply flex h-12 items-center justify-center rounded-[18px] border border-transparent;
     color: rgba(255, 255, 255, 0.54);
   }
 
   .v2-mobile-nav-item-active {
-    @apply text-white;
-    background: linear-gradient(90deg, rgba(169, 255, 52, 0.18), rgba(65, 232, 207, 0.14));
+    @apply border-white/[0.08] text-white;
+    background: linear-gradient(120deg, rgba(169, 255, 52, 0.18), rgba(65, 232, 207, 0.14));
+    box-shadow: 0 14px 32px -24px rgba(45, 212, 191, 0.5);
   }
 
   .v2-page-header {
-    @apply mb-5 flex flex-col gap-4 rounded-[28px] border border-white/[0.07] px-5 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6;
+    @apply mb-5 flex flex-col gap-4 rounded-[30px] border border-white/[0.07] px-5 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6;
     background:
-      radial-gradient(circle at top left, rgba(169, 255, 52, 0.1), transparent 32%),
-      linear-gradient(180deg, rgba(10, 17, 19, 0.94), rgba(6, 11, 13, 0.98));
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.11), transparent 28%),
+      radial-gradient(circle at top right, rgba(45, 212, 191, 0.1), transparent 24%),
+      linear-gradient(180deg, rgba(7, 13, 17, 0.96), rgba(4, 8, 12, 0.99));
     box-shadow:
-      0 28px 80px -60px rgba(0, 0, 0, 0.78),
+      0 32px 90px -60px rgba(0, 0, 0, 0.88),
       inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
   .v2-surface {
     @apply rounded-[28px] border border-white/[0.07] text-white;
     background:
-      radial-gradient(circle at top, rgba(169, 255, 52, 0.06), transparent 30%),
-      linear-gradient(180deg, rgba(10, 16, 18, 0.96), rgba(6, 10, 12, 0.98));
+      radial-gradient(circle at top left, rgba(255, 255, 255, 0.03), transparent 28%),
+      radial-gradient(circle at top, rgba(169, 255, 52, 0.07), transparent 26%),
+      linear-gradient(180deg, rgba(7, 11, 17, 0.98), rgba(4, 8, 12, 0.99));
     box-shadow:
-      0 28px 80px -58px rgba(0, 0, 0, 0.82),
+      0 30px 84px -56px rgba(0, 0, 0, 0.95),
       inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
@@ -745,12 +756,12 @@
   }
 
   .v2-auth-preview-grid {
-    @apply grid gap-[1px] overflow-hidden rounded-[28px] border border-white/[0.08];
-    grid-template-columns: 220px minmax(0, 1fr) 280px;
-    background: rgba(255, 255, 255, 0.08);
+    @apply grid gap-[1px] overflow-hidden rounded-[32px] border border-white/[0.08];
+    grid-template-columns: 210px minmax(0, 1fr) 300px;
+    background: rgba(255, 255, 255, 0.07);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
-      0 28px 80px -54px rgba(0, 0, 0, 0.92);
+      0 32px 100px -54px rgba(0, 0, 0, 0.94);
   }
 
   .v2-auth-preview-cell {
