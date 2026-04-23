@@ -172,39 +172,21 @@ function LoginCard({ privyAvailable }: { privyAvailable: boolean }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay: 0.12, ease: "easeOut" }}
     >
-      <div className="relative overflow-hidden rounded-[34px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,12,0.98),rgba(3,7,9,0.98))] p-6 shadow-[0_30px_90px_-48px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:p-7">
-        <div className="pointer-events-none absolute inset-x-[16%] top-0 h-32 rounded-full bg-lime-300/8 blur-3xl" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_24%),radial-gradient(circle_at_top_right,rgba(65,232,207,0.1),transparent_24%)]" />
-
-        <div className="relative">
-          <motion.div
-            className="mb-3 text-[10px] uppercase tracking-[0.3em] text-lime-300/78"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.28 }}
-          >
-            Continue with
-          </motion.div>
-          <motion.h2
-            className="text-[1.6rem] font-heading font-bold tracking-tight text-white sm:text-[1.8rem]"
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, delay: 0.32 }}
-          >
-            Enter the operating layer
-          </motion.h2>
-          <motion.p
-            className="mt-2 text-sm leading-6 text-white/56"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.35, delay: 0.38 }}
-          >
-            Social calls, AI intelligence, raids, bundle risk, and direct execution stay in one flow after sign-in.
-          </motion.p>
-        </div>
+      <div className="relative overflow-hidden rounded-[34px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,12,0.96),rgba(3,7,9,0.96))] p-6 shadow-[0_34px_96px_-52px_rgba(0,0,0,0.95)] backdrop-blur-2xl sm:p-7">
+        <div className="pointer-events-none absolute inset-x-[18%] top-0 h-24 rounded-full bg-lime-300/6 blur-3xl" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.1),transparent_22%),radial-gradient(circle_at_top_right,rgba(65,232,207,0.08),transparent_24%)]" />
 
         <motion.div
-          className="mt-6"
+          className="relative mb-5 text-[10px] uppercase tracking-[0.3em] text-white/46"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4, delay: 0.28 }}
+        >
+          Continue with
+        </motion.div>
+
+        <motion.div
+          className="relative"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.42 }}
@@ -219,6 +201,9 @@ function LoginCard({ privyAvailable }: { privyAvailable: boolean }) {
           transition={{ duration: 0.35, delay: 0.5 }}
         >
           Already have an account? <button type="button" className="font-semibold text-lime-300">Log in</button>
+          <div className="mt-3 text-[11px] text-white/42">
+            Supported sign-in methods only. Session routing, invite bootstrap, and account recovery stay unchanged.
+          </div>
         </motion.div>
       </div>
     </motion.div>
@@ -343,7 +328,7 @@ export default function Login() {
                     <span className="ml-2 text-sm text-emerald-300">+24.23%</span>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_320px]">
+                <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_300px]">
                   <div className="rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(6,11,14,0.98),rgba(3,8,10,0.98))] p-4">
                     <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/36">Chart core</div>
                     <BuyPanelViz />
@@ -388,20 +373,24 @@ export default function Login() {
                 </div>
                 <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">24H High</div>
-                    <div className="mt-3 text-lg font-semibold text-white">0.00001350</div>
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">AI Detection</div>
+                    <div className="mt-3 text-lg font-semibold text-[#41e8cf]">98.7 / 100</div>
+                    <div className="mt-1 text-xs text-lime-300">High conviction</div>
                   </div>
                   <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">24H Vol</div>
-                    <div className="mt-3 text-lg font-semibold text-white">$46.1M</div>
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">Top Signals</div>
+                    <div className="mt-3 text-lg font-semibold text-white">Whale + Smart Money</div>
+                    <div className="mt-1 text-xs text-white/42">Momentum, social, holder growth</div>
                   </div>
                   <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">Active Raid</div>
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">X Raid Active</div>
                     <div className="mt-3 text-lg font-semibold text-white">$PEPE RAID</div>
+                    <div className="mt-1 text-xs text-lime-300">1,245 participants · 76%</div>
                   </div>
                   <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
                     <div className="text-[11px] uppercase tracking-[0.18em] text-white/36">Community</div>
-                    <div className="mt-3 text-lg font-semibold text-white">12.4K members</div>
+                    <div className="mt-3 text-lg font-semibold text-white">$PEPE Community</div>
+                    <div className="mt-1 text-xs text-white/42">12.4K members · 245 online</div>
                   </div>
                 </div>
               </div>
