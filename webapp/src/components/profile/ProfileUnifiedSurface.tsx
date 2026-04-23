@@ -211,6 +211,22 @@ export function ProfileUnifiedSurface({
   const primaryCall = hub.topCalls[0] ?? null;
   const nextRewardLevel = hub.xp.level + 1;
   const nextRewardXp = Math.max(hub.xp.nextLevelXp - hub.xp.xp, 0);
+  const favoriteTokens = (hub.portfolioSnapshot?.tokenPositions ?? [])
+    .slice(0, 5)
+    .map((position) => ({
+      id: position.mint,
+      label: position.tokenSymbol ? `$${position.tokenSymbol}` : position.tokenName || "Token",
+      value:
+        typeof position.totalPnlUsd === "number" && Number.isFinite(position.totalPnlUsd)
+          ? `${position.totalPnlUsd >= 0 ? "+" : ""}$${Math.abs(position.totalPnlUsd).toLocaleString()}`
+          : `${Math.round(position.holdingUsd ?? 0).toLocaleString()} USD`,
+      tone:
+        typeof position.totalPnlUsd === "number" && Number.isFinite(position.totalPnlUsd)
+          ? position.totalPnlUsd >= 0
+            ? "text-lime-300"
+            : "text-rose-300"
+          : "text-white",
+    }));
   const signalStats = [
     { label: "Followers", value: formatCompact(hub.hero.followersCount) },
     { label: "Calls Shared", value: formatCompact(hub.performanceSummary.totalCalls) },
@@ -349,6 +365,27 @@ export function ProfileUnifiedSurface({
           </div>
         </div>
       </section>
+
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {[
+          { label: "Following", value: formatCompact(hub.hero.followingCount), hint: "Network graph" },
+          { label: "Followers", value: formatCompact(hub.hero.followersCount), hint: "Social reputation" },
+          { label: "X Score", value: hub.aiScore.score?.toFixed(1) ?? "0.0", hint: "AI trader score" },
+          { label: "Total Calls", value: formatCompact(hub.performanceSummary.totalCalls), hint: "Signal history" },
+          { label: "Win Rate", value: `${hub.performanceSummary.winRate?.toFixed(0) ?? "0"}%`, hint: "Call board only" },
+          {
+            label: "Wallet Snapshot",
+            value: hub.portfolioSnapshot?.connected ? `$${Math.round(hub.portfolioSnapshot.balanceUsd ?? 0).toLocaleString()}` : "Not linked",
+            hint: "Portfolio board only",
+          },
+        ].map((metric) => (
+          <div key={metric.label} className="rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.98),rgba(5,9,13,0.98))] px-4 py-4">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-white/36">{metric.label}</div>
+            <div className="mt-2 text-[1.6rem] font-semibold leading-none text-white">{metric.value}</div>
+            <div className="mt-2 text-xs text-white/44">{metric.hint}</div>
+          </div>
+        ))}
+      </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <ProfileTabButton active={profileTab === "overview"} label="Overview" onClick={() => onProfileTabChange("overview")} />
@@ -610,11 +647,24 @@ export function ProfileUnifiedSurface({
               </div>
             </SideRailCard>
 
-            <SideRailCard eyebrow="Signal Stats" title="Reputation board">
+            <SideRailCard eyebrow="Community Stats" title="Reputation board">
               <div className="space-y-3">
                 {signalStats.map((metric) => (
                   <MetricListRow key={metric.label} label={metric.label} value={metric.value} />
                 ))}
+              </div>
+            </SideRailCard>
+
+            <SideRailCard eyebrow="Favorite Tokens" title="Wallet focus">
+              <div className="space-y-3">
+                {favoriteTokens.length ? favoriteTokens.map((token) => (
+                  <div key={token.id} className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                    <div className="text-sm font-semibold text-white">{token.label}</div>
+                    <div className={cn("text-sm font-semibold", token.tone)}>{token.value}</div>
+                  </div>
+                )) : (
+                  <div className="text-sm text-white/56">Connect a wallet snapshot to surface favorite tokens here.</div>
+                )}
               </div>
             </SideRailCard>
 

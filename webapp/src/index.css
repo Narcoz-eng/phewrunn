@@ -572,6 +572,33 @@
     @apply px-3 pb-28 pt-3 sm:px-5 sm:pt-5 lg:px-7 lg:pb-10;
   }
 
+  .v2-shell-stage {
+    @apply mx-auto max-w-[1680px] space-y-5 rounded-[34px] border border-white/[0.06] p-3 sm:p-4 lg:p-5;
+    background:
+      radial-gradient(circle at top, rgba(169, 255, 52, 0.06), transparent 20%),
+      radial-gradient(circle at 86% 10%, rgba(45, 212, 191, 0.07), transparent 18%),
+      linear-gradient(180deg, rgba(4, 8, 12, 0.74), rgba(3, 6, 10, 0.88));
+    box-shadow:
+      0 44px 120px -72px rgba(0, 0, 0, 0.9),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .v2-shell-topbar {
+    @apply rounded-[28px] border border-white/[0.07] px-4 py-4 sm:px-5;
+    background:
+      radial-gradient(circle at top left, rgba(169, 255, 52, 0.08), transparent 26%),
+      linear-gradient(180deg, rgba(8, 13, 18, 0.94), rgba(5, 9, 13, 0.98));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 20px 52px -40px rgba(0, 0, 0, 0.88);
+  }
+
+  .v2-shell-search {
+    @apply flex min-w-[280px] items-center gap-3 rounded-[20px] border border-white/[0.08] px-4 py-3;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+  }
+
   .v2-sidebar {
     @apply fixed inset-y-0 left-0 z-40 w-[16.75rem] flex-col border-r border-white/[0.06] px-4 py-4;
     background:

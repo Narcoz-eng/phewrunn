@@ -303,6 +303,9 @@ export function DenseLeaderboardView({
   rows: LeaderboardRowVM[];
   onSelectRow: (row: LeaderboardRowVM) => void;
 }) {
+  const podiumRows = rows.slice(0, 3);
+  const tableRows = podiumRows.length >= 3 ? rows.slice(3) : rows;
+
   return (
     <section className="overflow-hidden rounded-[32px] border border-white/7 bg-[#090b15] px-5 pb-5 pt-5 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:px-6">
       <div className="flex items-end justify-between gap-4 border-b border-white/6 pb-4">
@@ -312,6 +315,75 @@ export function DenseLeaderboardView({
           {subtitle ? <p className="mt-1 max-w-2xl text-sm leading-6 text-white/52">{subtitle}</p> : null}
         </div>
       </div>
+
+      {podiumRows.length === 3 ? (
+        <div className="mt-5 grid gap-4 xl:grid-cols-[0.92fr_1.1fr_0.92fr]">
+          {[podiumRows[1], podiumRows[0], podiumRows[2]].map((row) => {
+            if (!row) return null;
+            const isChampion = row.rank === 1;
+            return (
+              <button
+                key={`podium-${row.id}`}
+                type="button"
+                onClick={() => onSelectRow(row)}
+                className={cn(
+                  "relative overflow-hidden rounded-[30px] border px-5 py-5 text-left transition-colors",
+                  isChampion
+                    ? "border-[#d4ff5b]/28 bg-[radial-gradient(circle_at_top,rgba(212,255,91,0.16),transparent_34%),linear-gradient(180deg,rgba(18,22,14,0.98),rgba(7,11,9,0.99))]"
+                    : row.rank === 2
+                      ? "border-white/10 bg-[linear-gradient(180deg,rgba(14,18,28,0.98),rgba(8,10,18,0.99))]"
+                      : "border-amber-400/18 bg-[linear-gradient(180deg,rgba(30,18,12,0.98),rgba(12,7,5,0.99))]"
+                )}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <RankBadge rank={row.rank} />
+                  {row.changeLabel ? (
+                    <div className="text-right text-xs font-medium">
+                      <ValueTone tone={row.changeTone}>{row.changeLabel}</ValueTone>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-5 flex items-center gap-4">
+                  <Avatar className={cn("border border-white/12", isChampion ? "h-24 w-24" : "h-20 w-20")}>
+                    <AvatarImage src={row.avatarUrl ?? undefined} />
+                    <AvatarFallback className="bg-white/5 text-white">{row.avatarFallback}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <div className="truncate text-[1.45rem] font-semibold text-white">{row.displayName}</div>
+                    <div className="mt-1 truncate text-sm text-white/48">
+                      {[row.handle, row.metadataLabel].filter(Boolean).join(" • ")}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  <div className="text-[2.5rem] font-semibold leading-none">
+                    <ValueTone tone={row.valueTone}>{row.valueLabel}</ValueTone>
+                  </div>
+                  <div className="mt-2 text-sm text-white/46">
+                    {isChampion ? "Top ranked board leader" : "Current board podium"}
+                  </div>
+                </div>
+
+                <div className="mt-5 flex items-center justify-between gap-3 rounded-[22px] border border-white/8 bg-white/[0.04] px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-white/34">Recent tokens</div>
+                  <div className="flex gap-1.5">
+                    {row.recentTokens.slice(0, 3).map((token) => (
+                      <Avatar key={`${row.id}:podium:${token.address}`} className="h-8 w-8 border border-white/10">
+                        <AvatarImage src={token.image ?? undefined} />
+                        <AvatarFallback className="bg-white/5 text-[10px] text-white">
+                          {(token.symbol ?? "?").charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                    ))}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {pinnedRank ? (
         <div className="mt-5 flex items-center justify-between gap-4 rounded-[28px] border border-white/6 bg-[linear-gradient(135deg,rgba(124,242,199,0.09),rgba(255,255,255,0.03))] px-4 py-4">
@@ -343,7 +415,7 @@ export function DenseLeaderboardView({
       </div>
 
       <div className="mt-5 space-y-3">
-        {rows.map((row) => (
+        {tableRows.map((row) => (
           <button
             key={row.id}
             type="button"

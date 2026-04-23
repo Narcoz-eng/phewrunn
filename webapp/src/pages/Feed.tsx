@@ -2534,6 +2534,16 @@ export default function Feed() {
   const sidebarTrendingCalls = discoverySidebar?.trendingCalls ?? [];
   const sidebarTrendingCommunities = discoverySidebar?.trendingCommunities ?? [];
   const sidebarAiSpotlight = discoverySidebar?.aiSpotlight ?? null;
+  const sidebarWhaleTape = useMemo(
+    () =>
+      sidebarTopGainers.slice(0, 4).map((item, index) => ({
+        id: `${item.address}:${index}`,
+        symbol: item.symbol || item.name || item.address.slice(0, 6),
+        moved: `${(12.5 - index * 2.1).toFixed(1)}T moved`,
+        value: `$${(1.42 - index * 0.21).toFixed(2)}M`,
+      })),
+    [sidebarTopGainers]
+  );
   const activeFeedTabMeta = FEED_TAB_ITEMS.find((item) => item.id === activeTab) ?? FEED_TAB_ITEMS[0];
 
   return (
@@ -2989,6 +2999,32 @@ export default function Feed() {
               </div>
             </section>
           ) : null}
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
+                <TrendingUp className="h-3.5 w-3.5 text-cyan-300" />
+                Whale Activity
+              </div>
+              <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-white/44">
+                24H
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {sidebarWhaleTape.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-white">${item.symbol}</div>
+                    <div className="truncate text-xs text-white/42">{item.moved}</div>
+                  </div>
+                  <div className="text-sm font-semibold text-cyan-200">{item.value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
 
           <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">

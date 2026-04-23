@@ -14,6 +14,15 @@ import {
 } from "@/components/ui/tooltip";
 import { PhewSendIcon } from "@/components/icons/PhewIcons";
 
+const COMPOSER_ACTIONS = [
+  { label: "Image", tone: "default" },
+  { label: "Chart", tone: "default" },
+  { label: "Long", tone: "lime" },
+  { label: "Short", tone: "rose" },
+  { label: "Raid", tone: "amber" },
+  { label: "Poll", tone: "default" },
+] as const;
+
 interface CreatePostProps {
   user: User | null;
   onSubmit: (content: string) => Promise<void>;
@@ -310,6 +319,32 @@ export function CreatePost({
         </TooltipProvider>
 
         <div className="flex-1 space-y-3">
+          <div className="rounded-[22px] border border-border/60 bg-background/35 px-3 py-3 dark:border-white/8 dark:bg-white/[0.03]">
+            <div className="flex flex-wrap items-center gap-2">
+              {COMPOSER_ACTIONS.map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                    action.tone === "lime"
+                      ? "border-lime-300/20 bg-lime-300/10 text-lime-200"
+                      : action.tone === "rose"
+                        ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
+                        : action.tone === "amber"
+                          ? "border-amber-300/20 bg-amber-300/10 text-amber-200"
+                          : "border-border/60 bg-background/50 text-muted-foreground dark:border-white/8 dark:bg-black/20 dark:text-white/56"
+                  )}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground dark:text-white/34">
+              Compose a trade call, chart take, raid announcement, or structured discussion.
+            </div>
+          </div>
+
           <textarea
             ref={textareaRef}
             placeholder={

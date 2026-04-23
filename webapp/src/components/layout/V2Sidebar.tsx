@@ -1,4 +1,17 @@
-import { Activity, Bell, Boxes, CandlestickChart, LogOut, Radar, Trophy, UserRound } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  Boxes,
+  CandlestickChart,
+  Flame,
+  LogOut,
+  Radar,
+  ShieldCheck,
+  Sparkles,
+  Trophy,
+  UserRound,
+  Users,
+} from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -78,14 +91,43 @@ function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
 export function V2Sidebar() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
+  const xpProgress = Math.max(6, ((user?.xp ?? 0) % 1000) / 10);
 
   return (
     <>
       <aside className="v2-sidebar hidden lg:flex">
-        <div className="flex items-center justify-between gap-3">
-          <BrandLogo size="md" className="gap-3" />
-          <div className="rounded-full border border-emerald-400/18 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300">
-            Live
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <BrandLogo size="md" className="gap-3" />
+            <div className="rounded-full border border-emerald-400/18 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300">
+              Live
+            </div>
+          </div>
+
+          <div className="rounded-[24px] border border-white/[0.08] bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.1),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/36">
+              Operator Mode
+            </div>
+            <div className="mt-3 grid gap-3">
+              <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/[0.07] bg-black/20 px-3 py-3">
+                <div className="flex items-center gap-2 text-sm text-white/68">
+                  <Sparkles className="h-4 w-4 text-[#76ff44]" />
+                  AI signal mesh
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#76ff44]">
+                  Active
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/[0.07] bg-black/20 px-3 py-3">
+                <div className="flex items-center gap-2 text-sm text-white/68">
+                  <Flame className="h-4 w-4 text-cyan-300" />
+                  Raid pressure
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/48">
+                  Monitoring
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -111,12 +153,41 @@ export function V2Sidebar() {
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/[0.06]">
             <div
               className="h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#41e8cf)]"
-              style={{ width: `${Math.max(6, ((user?.xp ?? 0) % 1000) / 10)}%` }}
+              style={{ width: `${xpProgress}%` }}
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-white/42">
             <span>{(user?.xp ?? 0).toLocaleString()} XP</span>
             <span>Realtime enabled</span>
+          </div>
+          <div className="mt-4 rounded-[22px] border border-white/[0.08] bg-black/20 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">
+              Quick actions
+            </div>
+            <div className="mt-3 grid gap-2">
+              {[
+                { label: "Open terminal", icon: CandlestickChart, onClick: () => navigate("/terminal") },
+                { label: "Launch raid", icon: Flame, onClick: () => navigate("/") },
+                { label: "Leader arena", icon: Trophy, onClick: () => navigate("/leaderboard") },
+                { label: "Community room", icon: Users, onClick: () => navigate("/profile") },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={item.onClick}
+                    className="flex items-center justify-between rounded-[16px] border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-left text-sm text-white/66 transition hover:border-[#76ff44]/20 hover:bg-white/[0.06] hover:text-white"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon className="h-4 w-4 text-[#76ff44]" />
+                      {item.label}
+                    </span>
+                    <ShieldCheck className="h-3.5 w-3.5 text-white/28" />
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div className="mt-4 flex gap-2">
             <Button
