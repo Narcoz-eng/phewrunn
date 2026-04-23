@@ -3030,6 +3030,26 @@ export default function TokenPage() {
                             </div>
                           </div>
 
+                          <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
+                            <div className="text-[2.15rem] font-semibold leading-none tracking-tight text-white sm:text-[2.7rem]">
+                              {formatTokenPrice(Number(liveTokenQuery.data?.priceUsd ?? token.priceUsd ?? Number.NaN))}
+                            </div>
+                            <div
+                              className={cn(
+                                "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em]",
+                                typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct)
+                                  ? liveChartPriceChangePct >= 0
+                                    ? "bg-emerald-500/12 text-emerald-300"
+                                    : "bg-rose-500/12 text-rose-300"
+                                  : "bg-white/[0.05] text-white/48"
+                              )}
+                            >
+                              {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct)
+                                ? `${liveChartPriceChangePct >= 0 ? "+" : ""}${liveChartPriceChangePct.toFixed(2)}% (24h)`
+                                : "24h move loading"}
+                            </div>
+                          </div>
+
                           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/48">
                             <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 font-mono">
                               {token.chainType}
@@ -3057,7 +3077,7 @@ export default function TokenPage() {
                           </div>
 
                           <p className="mt-4 max-w-2xl text-sm leading-6 text-white/62">
-                            Phew.run is tracking live market structure, wallet concentration, trader conviction, and raid/community momentum for this token in one operating surface.
+                            Phew.run is tracking live market structure, bundle pressure, trader conviction, recent calls, and raid/community momentum for this token in one intelligence board.
                           </p>
 
                           {token.earlyRunnerReasons?.length ? (
@@ -3155,17 +3175,100 @@ export default function TokenPage() {
                         accent={<Users className="h-5 w-5 text-white/44" />}
                       />
                     </div>
+
+                    <div className="grid gap-3 lg:grid-cols-4">
+                      <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Momentum</div>
+                        <div className="mt-2 text-sm font-semibold text-white">
+                          {typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}/100` : "Tracking"}
+                        </div>
+                        <div className="mt-1 text-xs text-white/48">Freshness and market response</div>
+                      </div>
+                      <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Smart Money</div>
+                        <div className="mt-2 text-sm font-semibold text-white">
+                          {displayTopTraders.length > 0 ? `${displayTopTraders.length} tracked` : "Quiet"}
+                        </div>
+                        <div className="mt-1 text-xs text-white/48">Trader conviction around this setup</div>
+                      </div>
+                      <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Community</div>
+                        <div className="mt-2 text-sm font-semibold text-white">
+                          {communityRoom?.exists ? `${communityRoom.memberCount.toLocaleString()} members` : token.communityExists ? "Room live" : "Not opened"}
+                        </div>
+                        <div className="mt-1 text-xs text-white/48">Calls, replies, and raid coordination</div>
+                      </div>
+                      <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Bundle Pressure</div>
+                        <div className="mt-2 text-sm font-semibold text-white">
+                          {bundleScanPending
+                            ? "Scanning"
+                            : resolvedBundledSupplyPct !== null
+                              ? `${formatPct(resolvedBundledSupplyPct)} bundled`
+                              : token.bundleRiskLabel || "Unknown"}
+                        </div>
+                        <div className="mt-1 text-xs text-white/48">Linked-wallet overlap and supply concentration</div>
+                      </div>
+                    </div>
                   </div>
                 </V2Surface>
 
                 <div className="space-y-4">
                   <V2Surface className="p-5" tone="soft">
                     <V2SectionHeader
-                      eyebrow="AI Intel"
-                      title="Operating read"
-                      description="Phew intelligence combines confidence, live structure, sentiment, bundle pressure, and social velocity."
+                      eyebrow="AI Detection"
+                      title="High-conviction operating read"
+                      description="Confidence, setup quality, opportunity now, and market health are surfaced beside the chart so the token can be judged at a glance."
                     />
-                    <div className="mt-4 space-y-3">
+                    <div className="mt-4 rounded-[26px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_32%),linear-gradient(180deg,rgba(10,17,14,0.98),rgba(4,8,10,0.98))] p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <V2StatusPill tone="ai">
+                            {typeof token.confidenceScore === "number" && token.confidenceScore >= 70 ? "High conviction" : "Monitoring"}
+                          </V2StatusPill>
+                          <div className="mt-4 text-[3rem] font-semibold leading-none text-[#41e8cf]">
+                            {typeof token.confidenceScore === "number" ? token.confidenceScore.toFixed(1) : "0.0"}
+                            <span className="ml-1 text-xl text-white/38">/100</span>
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-white/58">
+                            Strong momentum, live trader attention, and current structure are being evaluated against social velocity, wallet concentration, and setup quality.
+                          </p>
+                        </div>
+                        <div className="grid shrink-0 gap-2 text-right">
+                          <V2StatusPill tone="live">
+                            {token.activityStatusLabel ?? "Live"}
+                          </V2StatusPill>
+                          <V2StatusPill tone="risk">
+                            {bundleScanPending ? "Bundle scan pending" : token.bundleRiskLabel || "Risk loading"}
+                          </V2StatusPill>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {[
+                          { label: "Momentum", value: typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}` : "N/A" },
+                          { label: "Volume", value: formatMarketMetric(token.volume24h) },
+                          { label: "Smart Money", value: displayTopTraders.length > 0 ? "Detected" : "Quiet" },
+                          { label: "Risk", value: token.bundleRiskLabel || "Pending" },
+                        ].map((metric) => (
+                          <span
+                            key={metric.label}
+                            className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] font-medium text-white/72"
+                          >
+                            <span className="text-white/42">{metric.label}</span>
+                            <span className="ml-2 text-white">{metric.value}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </V2Surface>
+
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
+                      eyebrow="Top Signals"
+                      title="Signal stack"
+                      description="Whale activity, holder growth, social velocity, and community/raid pressure are surfaced as the operating signal set for this token."
+                    />
+                    <div className="mt-4 grid gap-3">
                       {flagshipSignals.map((signal) => (
                         <div
                           key={signal.label}
@@ -3199,9 +3302,38 @@ export default function TokenPage() {
 
                   <V2Surface className="p-5" tone="soft">
                     <V2SectionHeader
+                      eyebrow="Bundle Checker"
+                      title="Cluster pressure"
+                      description="Bundle overlap, linked wallets, and supply concentration feed directly into the token decision surface."
+                    />
+                    <div className="mt-4 rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">Bundle analysis</div>
+                          <div className="mt-2 text-2xl font-semibold text-white">
+                            {bundleScanPending ? "Scanning" : token.bundleRiskLabel || "Pending"}
+                          </div>
+                          <div className="mt-2 text-sm text-white/52">
+                            {resolvedBundledSupplyPct !== null
+                              ? `${formatPct(resolvedBundledSupplyPct)} estimated bundled supply across ${token.risk.bundledWalletCount?.toLocaleString() ?? 0} wallets.`
+                              : "Linked wallet concentration and bundled supply are being resolved."}
+                          </div>
+                        </div>
+                        <Link
+                          to={`/bundle-checker?token=${token.address}`}
+                          className="inline-flex h-10 items-center gap-2 rounded-full border border-cyan-300/16 bg-cyan-300/8 px-4 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/12"
+                        >
+                          Open checker
+                        </Link>
+                      </div>
+                    </div>
+                  </V2Surface>
+
+                  <V2Surface className="p-5" tone="soft">
+                    <V2SectionHeader
                       eyebrow="Live modules"
-                      title="Trade, raid, community"
-                      description="The token page is the control tower for execution, raids, and social coordination."
+                      title="Trade, community, raids"
+                      description="Execution, room activity, and raid pressure stay pinned beside the intelligence stack."
                     />
                     <div className="mt-4 grid gap-3">
                       <div
