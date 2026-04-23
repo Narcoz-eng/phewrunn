@@ -239,15 +239,12 @@ export function CreatePost({
   }, [detected, fetchTokenInfo]);
 
   const handleSubmit = async () => {
-    // Check liquidation
     if (isLiquidated) {
       toast.error("Account Liquidated: Reputation too low");
       return;
     }
 
-    // Validate content
     const trimmedContent = content.trim();
-
     if (trimmedContent.length < MIN_CHARS) {
       toast.error(`Post must be at least ${MIN_CHARS} characters`);
       return;
@@ -258,14 +255,6 @@ export function CreatePost({
       return;
     }
 
-    // Validate CA presence
-    const caDetected = detectContractAddress(trimmedContent);
-    if (!caDetected) {
-      toast.error("Post must contain a valid contract address");
-      return;
-    }
-
-    // Submit
     await onSubmit(trimmedContent);
     setContent("");
     setTokenInfo(null);
@@ -274,17 +263,18 @@ export function CreatePost({
   if (!user) return null;
 
   return (
-    <div className={cn(
-      "app-surface p-4 sm:p-5 transition-all",
-      isLiquidated && "border-red-600/30 bg-red-950/10"
-    )}>
-      {/* Liquidation Warning - Enhanced */}
+    <div
+      className={cn(
+        "rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,8,12,0.98))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all sm:p-5",
+        isLiquidated && "border-red-600/30 bg-red-950/10"
+      )}
+    >
       {isLiquidated && (
-        <div className="mb-4 p-4 bg-red-600/20 border border-red-600 rounded-lg flex items-start gap-3 animate-pulse">
-          <Skull className="h-6 w-6 text-red-500 flex-shrink-0 mt-0.5" />
+        <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-red-600/50 bg-red-600/20 p-4">
+          <Skull className="mt-0.5 h-6 w-6 shrink-0 text-red-500" />
           <div>
             <p className="text-sm font-bold text-red-500 uppercase tracking-wide">LIQUIDATED</p>
-            <p className="text-xs text-red-300 mt-1">
+            <p className="mt-1 text-xs text-red-300">
               You are at level -5 (liquidation). You cannot post new alphas until your level improves.
             </p>
           </div>
@@ -292,21 +282,19 @@ export function CreatePost({
       )}
 
       <div className="flex gap-3">
-        {/* Clickable Avatar - navigates to profile for editing */}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 onClick={() => navigate("/profile")}
-                className="relative group flex-shrink-0"
+                className="group relative flex-shrink-0"
               >
-                <Avatar className="h-10 w-10 border border-border group-hover:border-primary/50 transition-colors">
+                <Avatar className="h-11 w-11 border border-white/10 transition-colors group-hover:border-lime-300/30">
                   <AvatarImage src={getAvatarUrl(user.id, user.image)} />
-                  <AvatarFallback className="bg-muted text-muted-foreground">
+                  <AvatarFallback className="bg-white/[0.04] text-white/70">
                     {user.name?.charAt(0) || "?"}
                   </AvatarFallback>
                 </Avatar>
-                {/* Camera overlay on hover */}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
                   <Camera className="h-4 w-4 text-white" />
                 </div>
@@ -319,8 +307,16 @@ export function CreatePost({
         </TooltipProvider>
 
         <div className="flex-1 space-y-3">
-          <div className="rounded-[22px] border border-border/60 bg-background/35 px-3 py-3 dark:border-white/8 dark:bg-white/[0.03]">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">
+                Composer Modes
+              </div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-white/30">
+                Text first, token context optional
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               {COMPOSER_ACTIONS.map((action) => (
                 <button
                   key={action.label}
@@ -333,15 +329,15 @@ export function CreatePost({
                         ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
                         : action.tone === "amber"
                           ? "border-amber-300/20 bg-amber-300/10 text-amber-200"
-                          : "border-border/60 bg-background/50 text-muted-foreground dark:border-white/8 dark:bg-black/20 dark:text-white/56"
+                          : "border-white/8 bg-black/20 text-white/56"
                   )}
                 >
                   {action.label}
                 </button>
               ))}
             </div>
-            <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground dark:text-white/34">
-              Compose a trade call, chart take, raid announcement, or structured discussion.
+            <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-white/34">
+              Compose a signal, chart thesis, raid update, poll, or plain discussion thread.
             </div>
           </div>
 
@@ -352,50 +348,45 @@ export function CreatePost({
                 ? "Posting disabled - Account liquidated"
                 : isAuthPending
                   ? "Signing you in..."
-                  : "Drop your alpha... (paste a contract address)"
+                  : "Post signal, discussion, or raid update. Paste a token CA to attach live token context."
             }
             value={content}
             onChange={(e) => !isLiquidated && !isAuthPending && setContent(e.target.value)}
             disabled={isComposerDisabled}
-            rows={3}
+            rows={4}
             className={cn(
-              "w-full min-h-[96px] max-h-[220px] resize-y rounded-[22px] border border-border/70 bg-[linear-gradient(180deg,hsl(0_0%_100%/0.92),hsl(38_32%_94%/0.88))] px-4 py-3 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.84),0_18px_34px_-28px_hsl(var(--foreground)/0.12)]",
-              "focus:outline-none focus:ring-2 focus:ring-primary/45 focus:border-primary/45",
-              "placeholder:text-muted-foreground/60 text-foreground leading-relaxed",
-              "dark:bg-[linear-gradient(180deg,rgba(13,15,21,0.92),rgba(8,10,14,0.96))] dark:shadow-none",
-              (isLiquidated || isAuthPending) && "opacity-40 cursor-not-allowed bg-muted/50 grayscale"
+              "min-h-[128px] w-full resize-y rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(11,15,21,0.96),rgba(7,10,14,0.98))] px-4 py-3 text-sm leading-7 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
+              "placeholder:text-white/32 focus:border-lime-300/20 focus:outline-none focus:ring-2 focus:ring-lime-300/12",
+              (isLiquidated || isAuthPending) && "cursor-not-allowed opacity-40 grayscale"
             )}
           />
           {isAuthPending ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-white/44">
               Signing you in...
             </p>
           ) : null}
 
-          {/* Token Preview */}
           {detected && (
-            <div className="app-surface-soft animate-fade-in-up p-3.5">
+            <div className="animate-fade-in-up rounded-[20px] border border-lime-300/14 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(45,212,191,0.04))] p-3.5">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                {/* Chain Badge & Address */}
                 <div className="flex items-center gap-2">
                   <span
                     className={cn(
-                      "text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border",
+                      "rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase",
                       detected.chainType === "solana"
-                        ? "bg-accent/15 text-accent border-accent/30 dark:bg-accent/20 dark:border-accent/40"
-                        : "bg-primary/15 text-primary border-primary/30 dark:bg-primary/20 dark:border-primary/40"
+                        ? "border-cyan-300/30 bg-cyan-300/12 text-cyan-200"
+                        : "border-lime-300/30 bg-lime-300/12 text-lime-200"
                     )}
                   >
                     {detected.chainType}
                   </span>
-                  <code className="text-xs text-muted-foreground font-mono">
+                  <code className="font-mono text-xs text-white/50">
                     {detected.address.slice(0, 6)}...{detected.address.slice(-4)}
                   </code>
                 </div>
 
-                {/* Token Info or Loading */}
                 {isFetchingToken ? (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 text-xs text-white/44">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     <span>Fetching token info...</span>
                   </div>
@@ -404,7 +395,7 @@ export function CreatePost({
                     href={tokenInfo.dexscreenerUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/15"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-xs font-semibold text-white/78 transition-colors hover:bg-white/[0.08]"
                   >
                     <ExternalLink className="h-3 w-3" />
                     Dexscreener
@@ -412,26 +403,25 @@ export function CreatePost({
                 ) : null}
               </div>
 
-              {/* Token Details */}
               {tokenInfo && !isFetchingToken && (
-                <div className="mt-3 border-t border-border/50 pt-3 animate-fade-in">
+                <div className="mt-3 animate-fade-in border-t border-white/8 pt-3">
                   <div className="flex items-center gap-2">
                     {tokenInfo.imageUrl ? (
                       <img
                         src={tokenInfo.imageUrl}
                         alt={tokenInfo.symbol}
-                        className="h-6 w-6 rounded-full border border-border/60 object-cover"
+                        className="h-6 w-6 rounded-full border border-white/10 object-cover"
                         loading="lazy"
                       />
                     ) : null}
-                    <span className="text-sm font-semibold text-foreground">
+                    <span className="text-sm font-semibold text-white">
                       {tokenInfo.symbol}
                     </span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-white/44">
                       {tokenInfo.name}
                     </span>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-white/52">
                     {tokenInfo.priceUsd != null ? (
                       <span>Price: ${tokenInfo.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
                     ) : null}
@@ -439,7 +429,7 @@ export function CreatePost({
                     {tokenInfo.liquidityUsd != null ? <span>Liquidity: ${tokenInfo.liquidityUsd.toLocaleString()}</span> : null}
                     {tokenInfo.volume24hUsd != null ? <span>24h Vol: ${tokenInfo.volume24hUsd.toLocaleString()}</span> : null}
                     {tokenInfo.priceChange24hPct != null ? (
-                      <span className={tokenInfo.priceChange24hPct >= 0 ? "text-gain" : "text-loss"}>
+                      <span className={tokenInfo.priceChange24hPct >= 0 ? "text-emerald-300" : "text-rose-300"}>
                         24h: {tokenInfo.priceChange24hPct >= 0 ? "+" : ""}
                         {tokenInfo.priceChange24hPct.toFixed(2)}%
                       </span>
@@ -450,27 +440,31 @@ export function CreatePost({
             </div>
           )}
 
-          {/* Footer */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Character count with color coding */}
               <span
                 className={cn(
                   "text-xs font-medium transition-colors",
                   charCount < MIN_CHARS
-                    ? "text-muted-foreground"
+                    ? "text-white/40"
                     : charCount <= MAX_CHARS
-                    ? "text-foreground"
-                    : "text-destructive"
+                    ? "text-white/74"
+                    : "text-rose-300"
                 )}
               >
                 {charCount}/{MAX_CHARS}
               </span>
               {charCount > 0 && charCount < MIN_CHARS && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-white/40">
                   (min {MIN_CHARS})
                 </span>
               )}
+              {!detected && charCount >= MIN_CHARS ? (
+                <span className="text-xs text-white/34">Posting as discussion / room update</span>
+              ) : null}
+              {detected && charCount >= MIN_CHARS ? (
+                <span className="text-xs text-lime-200/80">Token context attached</span>
+              ) : null}
             </div>
 
             <Button
@@ -481,7 +475,7 @@ export function CreatePost({
                 "relative overflow-hidden gap-2 rounded-2xl px-4",
                 isLiquidated
                   ? "bg-red-900/50 text-red-400 border border-red-600/50 cursor-not-allowed hover:bg-red-900/50"
-                  : "bg-primary hover:bg-primary/90 text-primary-foreground",
+                  : "border border-lime-300/24 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.9))] text-slate-950 hover:brightness-[1.05]",
                 "transition-all duration-200",
                 !isLiquidated && "hover:scale-[1.02] active:scale-[0.98]"
               )}
@@ -504,7 +498,7 @@ export function CreatePost({
               ) : (
                 <>
                   <PhewSendIcon className="h-4 w-4" />
-                  <span>Post</span>
+                  <span>Post Signal</span>
                 </>
               )}
             </Button>

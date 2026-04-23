@@ -384,7 +384,7 @@ export default function CommunityPage() {
 
         <div className="space-y-4">
           <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Top Contributors</div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Contributors Leaderboard</div>
             <div className="mt-4 space-y-3">
               {summary.topContributors.slice(0, 5).map((contributor, index) => (
                 <div key={contributor.user.id} className="flex items-center justify-between gap-4 rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
@@ -404,11 +404,12 @@ export default function CommunityPage() {
           </section>
 
           <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Community Stats</div>
-            <div className="mt-4 grid grid-cols-3 gap-3">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Room Metrics</div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
               <MiniMetric label="Members" value={formatCompact(summary.stats.members)} />
               <MiniMetric label="Posts" value={formatCompact(summary.stats.posts)} />
               <MiniMetric label="Calls" value={formatCompact(summary.stats.calls)} />
+              <MiniMetric label="Top Call ROI" value={featuredTopCall ? formatPct(featuredTopCall.roiCurrentPct) : "--"} />
             </div>
           </section>
 
@@ -490,13 +491,15 @@ export default function CommunityPage() {
           <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">
               <Users className="h-4 w-4 text-lime-200" />
-              Community Value
+              Room Signals
             </div>
             <div className="mt-4 space-y-3">
               {[
-                "AI detection compounds the best calls in the room.",
-                "Threads and replies keep the narrative live.",
-                "Raids convert community conviction into coordinated action.",
+                room.whyLine || profile?.whyLine || "This room exists to coordinate calls and push live token momentum together.",
+                room.welcomePrompt || profile?.welcomePrompt || "Threads, replies, and chart posts keep the room live between raids.",
+                activeRaid
+                  ? `${activeRaid.objective} is live with ${formatCompact(activeRaid.participantCount)} participants and ${formatCompact(activeRaid.postedCount)} submitted posts.`
+                  : "No live raid is active right now, so conviction is being expressed through calls and discussion threads.",
               ].map((line) => (
                 <div key={line} className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4 text-sm leading-6 text-white/58">
                   {line}

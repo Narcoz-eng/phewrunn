@@ -11,6 +11,16 @@ function normalizeTokenLabel(token: { symbol: string | null; name: string | null
   return token.symbol?.trim() || token.name?.trim() || "Unknown";
 }
 
+function inferSignalDirection(value: string | null | undefined): "LONG" | "SHORT" | null {
+  const normalized = value?.toLowerCase() ?? "";
+  if (!normalized) return null;
+  if (normalized.includes(" short")) return "SHORT";
+  if (normalized.startsWith("short ") || normalized.includes(" bearish")) return "SHORT";
+  if (normalized.includes(" long")) return "LONG";
+  if (normalized.startsWith("long ") || normalized.includes(" bullish")) return "LONG";
+  return null;
+}
+
 function parseReactionSummary(value: unknown): { count: number; positiveBias: number } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { count: 0, positiveBias: 0 };
@@ -90,6 +100,12 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         tokenName: true,
         tokenImage: true,
         contractAddress: true,
+        author: {
+          select: {
+            username: true,
+            name: true,
+          },
+        },
         highConvictionScore: true,
         confidenceScore: true,
         hotAlphaScore: true,
@@ -132,24 +148,25 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
   ]);
 
   const topGainers = topTokens
-    .map((token) => {
-      const dailyMove = Math.max(
-        toNumber(token.highConvictionScore) * 0.16,
-        toNumber(token.hotAlphaScore) * 0.12,
-        toNumber(token.sentimentScore) * 0.08,
-      );
-      return {
-        id: token.id,
-        tokenAddress: token.address,
-        symbol: normalizeTokenLabel(token),
-        name: token.name,
-        imageUrl: token.imageUrl,
-        priceChange24hPct: Math.round(dailyMove * 100) / 100,
-        liquidity: token.liquidity,
-        volume24h: token.volume24h,
-      };
-    })
-    .sort((a, b) => b.priceChange24hPct - a.priceChange24hPct)
+    .map((token) => ({
+      id: token.id,
+      address: token.address,
+      symbol: normalizeTokenLabel(token),
+      name: token.name,
+      imageUrl: token.imageUrl,
+      confidenceScore: token.confidenceScore,
+      highConvictionScore: token.highConvictionScore,
+      hotAlphaScore: token.hotAlphaScore,
+      liquidity: token.liquidity,
+      volume24h: token.volume24h,
+    }))
+    .sort(
+      (a, b) =>
+        toNumber(b.highConvictionScore) +
+        toNumber(b.confidenceScore) +
+        toNumber(b.hotAlphaScore) -
+        (toNumber(a.highConvictionScore) + toNumber(a.confidenceScore) + toNumber(a.hotAlphaScore)),
+    )
     .slice(0, 5);
 
   const trendingCalls = recentCalls
@@ -167,10 +184,13 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
 
       return {
         id: post.id,
+        title: post.tokenSymbol ? `$${post.tokenSymbol}` : post.tokenName ?? "Tracked call",
         tokenSymbol: post.tokenSymbol ?? post.tokenName ?? "Call",
         tokenName: post.tokenName,
         tokenImage: post.tokenImage,
         contractAddress: post.contractAddress,
+        authorHandle: post.author?.username ?? post.author?.name ?? "trader",
+        direction: inferSignalDirection(post.content),
         trendScore,
         conviction: post.highConvictionScore,
         confidence: post.confidenceScore,
@@ -189,10 +209,15 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
       return {
         id: token.id,
         tokenAddress: token.address,
-        symbol: normalizeTokenLabel(token),
+        xCashtag: normalizeTokenLabel(token),
+        headline: token.name,
         name: token.name,
         imageUrl: token.imageUrl,
         memberCount: token._count.followers,
+        onlineCount: Math.min(
+          token._count.followers,
+          Math.max(token._count.raidCampaigns * 8, token._count.communityThreads * 3),
+        ),
         threadCount: token._count.communityThreads,
         raidCount: token._count.raidCampaigns,
         communityScore:
@@ -218,27 +243,32 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
       liveRaids: liveRaids.map((raid) => ({
         id: raid.id,
         objective: raid.objective,
+        status: "active",
         openedAt: raid.openedAt.toISOString(),
         participantCount: raid.participants.length,
         postedCount: raid.submissions.length,
-        token: {
-          address: raid.token.address,
-          symbol: normalizeTokenLabel(raid.token),
-          name: raid.token.name,
-          imageUrl: raid.token.imageUrl,
-        },
+        tokenAddress: raid.token.address,
+        tokenSymbol: normalizeTokenLabel(raid.token),
+        tokenName: raid.token.name,
+        tokenImageUrl: raid.token.imageUrl,
       })),
       trendingCalls,
       trendingCommunities,
       aiSpotlight: aiSpotlightSource
         ? {
+            id: aiSpotlightSource.id,
             tokenAddress: aiSpotlightSource.address,
-            symbol: normalizeTokenLabel(aiSpotlightSource),
-            name: aiSpotlightSource.name,
+            ticker: normalizeTokenLabel(aiSpotlightSource),
+            title: aiSpotlightSource.name,
             imageUrl: aiSpotlightSource.imageUrl,
             confidenceScore: aiSpotlightSource.confidenceScore,
             highConvictionScore: aiSpotlightSource.highConvictionScore,
-            hotAlphaScore: aiSpotlightSource.hotAlphaScore,
+            timingTier:
+              toNumber(aiSpotlightSource.highConvictionScore) >= 80
+                ? "High Conviction"
+                : toNumber(aiSpotlightSource.confidenceScore) >= 65
+                  ? "Active"
+                  : "Monitoring",
             summary: `${normalizeTokenLabel(aiSpotlightSource)} is leading live conviction, confidence, and momentum signals right now.`,
           }
         : null,

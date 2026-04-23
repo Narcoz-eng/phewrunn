@@ -94,6 +94,14 @@ const FEED_TAB_ITEMS: Array<{
   { id: "early-runners", label: "X Raids", icon: Radar, description: "Early momentum and raid pressure before the room rotates." },
 ];
 
+function formatCompactMetric(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  return new Intl.NumberFormat("en-US", {
+    notation: value >= 1_000 ? "compact" : "standard",
+    maximumFractionDigits: value >= 1_000 ? 1 : 0,
+  }).format(value);
+}
+
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
   if (
@@ -2534,16 +2542,9 @@ export default function Feed() {
   const sidebarTrendingCalls = discoverySidebar?.trendingCalls ?? [];
   const sidebarTrendingCommunities = discoverySidebar?.trendingCommunities ?? [];
   const sidebarAiSpotlight = discoverySidebar?.aiSpotlight ?? null;
-  const sidebarWhaleTape = useMemo(
-    () =>
-      sidebarTopGainers.slice(0, 4).map((item, index) => ({
-        id: `${item.address}:${index}`,
-        symbol: item.symbol || item.name || item.address.slice(0, 6),
-        moved: `${(12.5 - index * 2.1).toFixed(1)}T moved`,
-        value: `$${(1.42 - index * 0.21).toFixed(2)}M`,
-      })),
-    [sidebarTopGainers]
-  );
+  const activeRaidProgressPct = sidebarLiveRaid
+    ? Math.max(8, Math.min(100, (sidebarLiveRaid.postedCount / Math.max(sidebarLiveRaid.participantCount, 1)) * 100))
+    : 0;
   const activeFeedTabMeta = FEED_TAB_ITEMS.find((item) => item.id === activeTab) ?? FEED_TAB_ITEMS[0];
 
   return (
@@ -2567,21 +2568,21 @@ export default function Feed() {
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[340px]">
                   <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Top gainers</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Top conviction</div>
                     <div className="mt-2 text-lg font-semibold text-white">{sidebarTopGainers.length}</div>
-                    <div className="mt-1 text-xs text-white/44">24h movers tracked</div>
+                    <div className="mt-1 text-xs text-white/44">Tokens scoring highest on live signal quality</div>
                   </div>
                   <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Raid pressure</div>
                     <div className="mt-2 text-lg font-semibold text-white">
                       {sidebarLiveRaid ? sidebarLiveRaid.participantCount.toLocaleString() : "0"}
                     </div>
-                    <div className="mt-1 text-xs text-white/44">Live raiders moving now</div>
+                    <div className="mt-1 text-xs text-white/44">Participants currently pushing a live room objective</div>
                   </div>
                   <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Trending calls</div>
                     <div className="mt-2 text-lg font-semibold text-white">{sidebarTrendingCalls.length}</div>
-                    <div className="mt-1 text-xs text-white/44">Signal cards in rotation</div>
+                    <div className="mt-1 text-xs text-white/44">Ranked by conviction, response, and current signal strength</div>
                   </div>
                 </div>
               </div>
@@ -2901,22 +2902,36 @@ export default function Feed() {
           <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
               <TrendingUp className="h-3.5 w-3.5 text-lime-300" />
-              Top gainers (24h)
+              Top conviction
             </div>
             <div className="mt-4 space-y-3">
               {sidebarTopGainers.slice(0, 5).map((item) => (
                 <button
-                  key={item.address}
+                  key={item.id}
                   type="button"
                   onClick={() => navigate(`/token/${item.address}`)}
                   className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
                 >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">{item.symbol || item.name || item.address.slice(0, 6)}</div>
-                    <div className="mt-0.5 truncate text-xs text-white/42">{item.name || item.address}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-white">
+                      {item.symbol || item.name || item.address.slice(0, 6)}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/42">
+                      <span>Conviction {typeof item.highConvictionScore === "number" ? item.highConvictionScore.toFixed(0) : "--"}</span>
+                      <span>Confidence {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/34">
+                      <span>Vol {formatCompactMetric(item.volume24h)}</span>
+                      <span>Liq {formatCompactMetric(item.liquidity)}</span>
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-emerald-300">
-                    {typeof item.change24hPct === "number" ? `${item.change24hPct >= 0 ? "+" : ""}${item.change24hPct.toFixed(2)}%` : "—"}
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-lime-300">
+                      {typeof item.highConvictionScore === "number" ? `${item.highConvictionScore.toFixed(0)}/100` : "--"}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-white/34">
+                      Signal stack
+                    </div>
                   </div>
                 </button>
               ))}
@@ -2926,8 +2941,10 @@ export default function Feed() {
           <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(10,15,14,0.96),rgba(7,10,13,0.98))] p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">X raids live</div>
-                <div className="mt-1 text-sm font-semibold text-white">{sidebarLiveRaid?.title || "No active raid pulse"}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Raid pressure</div>
+                <div className="mt-1 text-sm font-semibold text-white">
+                  {sidebarLiveRaid?.objective || "No active raid pulse"}
+                </div>
               </div>
               <V2StatusPill tone="live">{sidebarLiveRaid ? "Live" : "Idle"}</V2StatusPill>
             </div>
@@ -2939,8 +2956,23 @@ export default function Feed() {
                     <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.participantCount.toLocaleString()}</div>
                   </div>
                   <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Pool</div>
-                    <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.poolAmount ? sidebarLiveRaid.poolAmount.toLocaleString() : "—"}</div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Posts launched</div>
+                    <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.postedCount.toLocaleString()}</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-white/34">
+                    <span>Raid throughput</span>
+                    <span>{activeRaidProgressPct.toFixed(0)}%</span>
+                  </div>
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/8">
+                    <div
+                      className="h-full rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.96),rgba(45,212,191,0.88))]"
+                      style={{ width: `${activeRaidProgressPct}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 text-xs text-white/46">
+                    {sidebarLiveRaid.tokenSymbol || "This token"} has {sidebarLiveRaid.postedCount.toLocaleString()} live submissions against {sidebarLiveRaid.participantCount.toLocaleString()} active raiders.
                   </div>
                 </div>
                 <Button
@@ -2969,11 +3001,24 @@ export default function Feed() {
                   onClick={() => navigate(`/post/${item.id}`)}
                   className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
                 >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">{item.title}</div>
-                    <div className="mt-0.5 truncate text-xs text-white/42">@{item.authorHandle || "trader"} • {item.direction || "call"}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-white">
+                      {item.title || item.tokenSymbol || item.tokenName || "Tracked call"}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-white/42">
+                      @{item.authorHandle || "trader"} • {item.direction || "Signal"}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/34">
+                      <span>Conviction {typeof item.conviction === "number" ? item.conviction.toFixed(0) : "--"}</span>
+                      <span>Confidence {typeof item.confidence === "number" ? item.confidence.toFixed(0) : "--"}</span>
+                    </div>
                   </div>
-                  <ArrowUpRight className="h-4 w-4 text-white/34" />
+                  <div className="text-right">
+                    <div className={cn("text-sm font-semibold", typeof item.roiCurrentPct === "number" && item.roiCurrentPct >= 0 ? "text-lime-300" : "text-white")}>
+                      {typeof item.roiCurrentPct === "number" ? `${item.roiCurrentPct >= 0 ? "+" : ""}${item.roiCurrentPct.toFixed(1)}%` : "--"}
+                    </div>
+                    <ArrowUpRight className="ml-auto mt-1 h-4 w-4 text-white/34" />
+                  </div>
                 </button>
               ))}
             </div>
@@ -2986,8 +3031,22 @@ export default function Feed() {
                 AI watchlist
               </div>
               <div className="mt-3 rounded-[22px] border border-lime-300/14 bg-lime-300/8 p-4">
-                <div className="text-sm font-semibold text-white">{sidebarAiSpotlight.title}</div>
+                <div className="text-sm font-semibold text-white">{sidebarAiSpotlight.ticker || sidebarAiSpotlight.title}</div>
                 <p className="mt-2 text-sm leading-6 text-white/62">{sidebarAiSpotlight.summary}</p>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Confidence</div>
+                    <div className="mt-1 text-lg font-semibold text-white">
+                      {typeof sidebarAiSpotlight.confidenceScore === "number" ? `${sidebarAiSpotlight.confidenceScore.toFixed(0)}/100` : "--"}
+                    </div>
+                  </div>
+                  <div className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Timing</div>
+                    <div className="mt-1 text-lg font-semibold text-white">
+                      {sidebarAiSpotlight.timingTier || "Monitoring"}
+                    </div>
+                  </div>
+                </div>
                 <Button
                   type="button"
                   variant="ghost"
@@ -3003,25 +3062,33 @@ export default function Feed() {
           <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-                <TrendingUp className="h-3.5 w-3.5 text-cyan-300" />
-                Whale Activity
+                <BrainCircuit className="h-3.5 w-3.5 text-cyan-300" />
+                AI watchlist
               </div>
               <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-white/44">
-                24H
+                Live
               </div>
             </div>
             <div className="mt-4 space-y-3">
-              {sidebarWhaleTape.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3"
+              {sidebarTopGainers.slice(0, 4).map((item) => (
+                <button
+                  key={`watch-${item.id}`}
+                  type="button"
+                  onClick={() => navigate(`/token/${item.address}`)}
+                  className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">${item.symbol}</div>
-                    <div className="truncate text-xs text-white/42">{item.moved}</div>
+                    <div className="truncate text-sm font-semibold text-white">
+                      {item.symbol || item.name || item.address.slice(0, 6)}
+                    </div>
+                    <div className="truncate text-xs text-white/42">
+                      Hot alpha {typeof item.hotAlphaScore === "number" ? item.hotAlphaScore.toFixed(0) : "--"} • Vol {formatCompactMetric(item.volume24h)}
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-cyan-200">{item.value}</div>
-                </div>
+                  <div className="text-sm font-semibold text-cyan-200">
+                    {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}
+                  </div>
+                </button>
               ))}
             </div>
           </section>
@@ -3029,7 +3096,7 @@ export default function Feed() {
           <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
               <Users className="h-3.5 w-3.5 text-lime-300" />
-              Trending communities
+              Community momentum
             </div>
             <div className="mt-4 space-y-3">
               {sidebarTrendingCommunities.slice(0, 4).map((community) => (
@@ -3040,9 +3107,9 @@ export default function Feed() {
                   className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">{community.name}</div>
+                    <div className="truncate text-sm font-semibold text-white">{community.xCashtag || community.name}</div>
                     <div className="mt-0.5 truncate text-xs text-white/42">
-                      {community.memberCount.toLocaleString()} members • {community.onlineCount.toLocaleString()} online
+                      {community.memberCount.toLocaleString()} members • {community.threadCount.toLocaleString()} threads • {community.raidCount.toLocaleString()} raids
                     </div>
                   </div>
                   <ArrowUpRight className="h-4 w-4 text-white/34" />

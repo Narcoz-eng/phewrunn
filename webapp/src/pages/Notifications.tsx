@@ -11,7 +11,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth, useSession } from "@/lib/auth-client";
-import { Notification } from "@/types";
+import { Notification, formatTimeAgo } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CheckCheck, BellOff, Settings2 } from "lucide-react";
@@ -622,6 +622,20 @@ export default function Notifications() {
 
   const mergedNotifications = useMemo(() => mergeNotifications(notifications), [notifications]);
   const unreadCount = mergedNotifications.filter((n) => !n.read).length;
+  const notificationCounts = useMemo(
+    () => ({
+      mentions: mergedNotifications.filter((notification) => getNotificationCategory(notification) === "mentions").length,
+      raids: mergedNotifications.filter((notification) => getNotificationCategory(notification) === "raids").length,
+      follows: mergedNotifications.filter((notification) => getNotificationCategory(notification) === "follows").length,
+      system: mergedNotifications.filter((notification) => getNotificationCategory(notification) === "system").length,
+    }),
+    [mergedNotifications]
+  );
+  const latestUnreadNotification = mergedNotifications.find((notification) => !notification.read) ?? mergedNotifications[0] ?? null;
+  const latestRaidNotification =
+    mergedNotifications.find((notification) => getNotificationCategory(notification) === "raids") ?? null;
+  const latestMentionNotification =
+    mergedNotifications.find((notification) => getNotificationCategory(notification) === "mentions") ?? null;
   const filteredNotifications =
     activeFilter === "all"
       ? mergedNotifications
@@ -822,9 +836,23 @@ export default function Notifications() {
         </div>
       </section>
 
-      <main className="space-y-4">
+      <main className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="min-h-[calc(100vh-8rem)] overflow-hidden rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.98),rgba(4,8,13,1))] shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)]">
           <div className="relative z-10 border-b border-white/8 bg-[linear-gradient(180deg,rgba(11,17,18,0.62),rgba(6,9,13,0.1))] px-4 pb-4 pt-4 backdrop-blur-xl">
+            <div className="mb-4 grid gap-3 sm:grid-cols-4">
+              {[
+                { label: "Unread", value: unreadCount.toString(), hint: "Needs review" },
+                { label: "Mentions", value: notificationCounts.mentions.toString(), hint: "Direct callouts" },
+                { label: "X Raids", value: notificationCounts.raids.toString(), hint: "Room movement" },
+                { label: "System", value: notificationCounts.system.toString(), hint: "AI / rewards / alerts" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">{item.label}</div>
+                  <div className="mt-2 text-lg font-semibold text-white">{item.value}</div>
+                  <div className="mt-1 text-xs text-white/44">{item.hint}</div>
+                </div>
+              ))}
+            </div>
             <AnimatePresence initial={false}>
               {showAlertPreferences ? (
                 <motion.div
@@ -976,6 +1004,84 @@ export default function Notifications() {
             </motion.div>
           </AnimatePresence>
         </section>
+
+        <aside className="space-y-4">
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Inbox health</div>
+                <div className="mt-2 text-xl font-semibold text-white">Routing snapshot</div>
+              </div>
+              <V2StatusPill tone="live">{unreadCount > 0 ? "Live" : "Quiet"}</V2StatusPill>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {[
+                { label: "Unread alerts", value: unreadCount.toString(), tone: unreadCount > 0 ? "text-lime-300" : "text-white" },
+                { label: "Follow activity", value: notificationCounts.follows.toString(), tone: "text-white" },
+                { label: "System triggers", value: notificationCounts.system.toString(), tone: "text-cyan-200" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{item.label}</div>
+                  <div className={cn("mt-2 text-lg font-semibold", item.tone)}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Latest unread</div>
+            {latestUnreadNotification ? (
+              <div className="mt-4 rounded-[20px] border border-lime-300/14 bg-lime-300/8 p-4">
+                <div className="text-sm font-semibold text-white">{latestUnreadNotification.message}</div>
+                <div className="mt-2 text-xs text-white/52">
+                  {latestUnreadNotification.fromUser?.username
+                    ? `@${latestUnreadNotification.fromUser.username}`
+                    : latestUnreadNotification.entityType || "system"} • {getNotificationCategory(latestUnreadNotification)}
+                </div>
+                <div className="mt-3 text-xs text-white/40">{formatTimeAgo(latestUnreadNotification.createdAt)} ago</div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[20px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/46">
+                Nothing unread right now.
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Priority channels</div>
+            <div className="mt-4 space-y-3">
+              {[
+                { label: "Mentions", item: latestMentionNotification, count: notificationCounts.mentions },
+                { label: "X Raids", item: latestRaidNotification, count: notificationCounts.raids },
+              ].map((entry) => (
+                <div key={entry.label} className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-white">{entry.label}</div>
+                    <div className="text-xs font-semibold text-lime-300">{entry.count}</div>
+                  </div>
+                  <div className="mt-2 text-xs leading-6 text-white/48">
+                    {entry.item ? entry.item.message : `No ${entry.label.toLowerCase()} routed yet.`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Notification legend</div>
+            <div className="mt-4 grid gap-3">
+              {[
+                "Mentions track direct post callouts and replies tied to you.",
+                "X Raids capture room launches, joins, boosts, and completions.",
+                "System alerts cover AI detections, rewards, and platform notices.",
+              ].map((line) => (
+                <div key={line} className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-3 text-sm leading-6 text-white/56">
+                  {line}
+                </div>
+              ))}
+            </div>
+          </section>
+        </aside>
       </main>
     </div>
   );

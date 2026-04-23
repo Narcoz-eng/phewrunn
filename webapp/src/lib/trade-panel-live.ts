@@ -34,13 +34,21 @@ export type { TradePanelLiveStatus, TradePanelRecentTrade };
 
 export function useTradePanelLiveFeed(params: TokenLiveStreamParams) {
   const [snapshot, setSnapshot] = useState<TokenLiveStreamSnapshot>(() => createEmptySnapshot());
+  const { chainType, enabled, pairAddress, tokenAddress } = params;
 
-  useEffect(() => subscribeToTokenLiveStream(params, setSnapshot), [
-    params.chainType,
-    params.enabled,
-    params.pairAddress,
-    params.tokenAddress,
-  ]);
+  useEffect(
+    () =>
+      subscribeToTokenLiveStream(
+        {
+          chainType,
+          enabled,
+          pairAddress,
+          tokenAddress,
+        },
+        setSnapshot,
+      ),
+    [chainType, enabled, pairAddress, tokenAddress]
+  );
 
   const recentTradesWithDisplay = useMemo(
     () =>

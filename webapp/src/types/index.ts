@@ -421,11 +421,14 @@ export interface TokenActiveRaidResponse {
 }
 
 export interface DiscoverySidebarMover {
+  id: string;
   address: string;
   symbol: string | null;
   name: string | null;
   imageUrl: string | null;
-  priceChange24hPct: number | null;
+  confidenceScore: number | null;
+  highConvictionScore: number | null;
+  hotAlphaScore: number | null;
   volume24h: number | null;
   liquidity: number | null;
 }
@@ -444,29 +447,43 @@ export interface DiscoverySidebarRaid {
 
 export interface DiscoverySidebarCall {
   id: string;
-  ticker: string | null;
   title: string | null;
-  callsCount: number;
+  tokenSymbol: string | null;
+  tokenName: string | null;
+  tokenImage: string | null;
+  contractAddress: string | null;
+  authorHandle: string;
+  direction: "LONG" | "SHORT" | null;
+  trendScore: number;
+  conviction: number | null;
+  confidence: number | null;
   roiCurrentPct: number | null;
-  roiPeakPct: number | null;
 }
 
 export interface DiscoverySidebarCommunity {
+  id: string;
   tokenAddress: string;
   xCashtag: string | null;
   headline: string | null;
   memberCount: number;
-  onlineNowEstimate: number;
+  onlineCount: number;
+  threadCount: number;
+  raidCount: number;
+  communityScore: number;
+  name?: string | null;
   imageUrl: string | null;
 }
 
 export interface DiscoverySidebarAiSpotlight {
   id: string;
+  tokenAddress: string;
   ticker: string | null;
   title: string | null;
+  imageUrl: string | null;
   confidenceScore: number | null;
   highConvictionScore: number | null;
   timingTier: string | null;
+  summary: string;
 }
 
 export interface DiscoveryFeedSidebarResponse {
