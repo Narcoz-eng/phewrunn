@@ -289,9 +289,9 @@ export function ProfileUnifiedSurface({
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(163,230,53,0.22),transparent_30%),radial-gradient(circle_at_80%_0%,rgba(34,211,238,0.18),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
           )}
           <div className="relative space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,15,0.72),rgba(3,6,10,0.82))] px-4 py-3 text-[11px] uppercase tracking-[0.26em] text-white/68">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-lime-300/20 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,15,0.72),rgba(3,6,10,0.82))] px-4 py-3 text-[11px] uppercase tracking-[0.26em] text-white/68">
               <div>
-                <span className="text-lime-300">Reputation Surface</span>
+                <span className="text-lime-300">THIS IS A REPUTATION SURFACE</span>
                 <span className="ml-3 text-white/48">
                   {isOwnProfile ? "This profile ranks identity, calls, raids, and trust." : "Public trader identity, ranked by real activity."}
                 </span>
@@ -396,10 +396,10 @@ export function ProfileUnifiedSurface({
               </div>
 
               <div className="grid gap-3">
-                <div className="rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.1),transparent_34%),linear-gradient(180deg,rgba(7,10,15,0.98),rgba(4,7,11,0.98))] p-5">
+                <div className="rounded-[28px] border border-lime-300/18 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_34%),linear-gradient(180deg,rgba(7,10,15,0.98),rgba(4,7,11,0.98))] p-5 shadow-[0_16px_60px_rgba(120,255,67,0.08)]">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">Reputation band</div>
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">Reputation command center</div>
                       <div className="mt-3 text-[1.25rem] font-semibold text-white">
                         {reputationBand?.value ?? "Live trader"}
                       </div>
@@ -424,6 +424,19 @@ export function ProfileUnifiedSurface({
                         {formatCompact(hub.raidImpact.contributionScore)}
                       </div>
                     </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <MetricListRow label="Followers" value={formatCompact(hub.hero.followersCount)} />
+                    <MetricListRow label="Following" value={formatCompact(hub.hero.followingCount)} />
+                    <MetricListRow
+                      label="Signal win rate"
+                      value={`${hub.performanceSummary.winRate?.toFixed(0) ?? "0"}%`}
+                      tone="text-lime-300"
+                    />
+                    <MetricListRow
+                      label="Tracked calls"
+                      value={formatCompact(hub.performanceSummary.totalCalls)}
+                    />
                   </div>
                 </div>
 
@@ -457,9 +470,8 @@ export function ProfileUnifiedSurface({
       </div>
 
       {profileTab === "overview" ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_380px]">
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(300px,0.82fr)]">
-            <div className="space-y-4">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.84fr)_340px]">
+          <div className="space-y-4">
               <OverviewCard eyebrow="Signal Performance" title="Call reputation engine">
                 <div className="flex flex-col gap-5">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -533,7 +545,7 @@ export function ProfileUnifiedSurface({
                     </svg>
                   </div>
 
-                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_220px]">
+                  <div className="grid gap-3">
                     {primaryCall ? (
                       <div className="rounded-[24px] border border-lime-300/16 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(45,212,191,0.04))] p-4">
                         <div className="flex flex-wrap items-center gap-2">
@@ -566,15 +578,6 @@ export function ProfileUnifiedSurface({
                         A ranked call will appear here as soon as this profile has settled signal history to surface.
                       </div>
                     )}
-
-                    <div className="rounded-[24px] border border-white/8 bg-[#0a1016] p-4">
-                      <div className="text-[11px] uppercase tracking-[0.2em] text-white/38">Surface rules</div>
-                      <div className="mt-4 space-y-3">
-                        <MetricListRow label="Classification" value="Signal ROI" tone="text-lime-300" />
-                        <MetricListRow label="Usage" value="Rank, trust, badges" tone="text-cyan-300" />
-                        <MetricListRow label="Wallet overlap" value="Separated" />
-                      </div>
-                    </div>
                   </div>
                 </div>
               </OverviewCard>
@@ -624,10 +627,10 @@ export function ProfileUnifiedSurface({
                   )}
                 </div>
               </OverviewCard>
-            </div>
+          </div>
 
-            <div className="space-y-4">
-              <OverviewCard eyebrow="Wallet Snapshot" title="Portfolio surface">
+          <div className="space-y-4">
+            <OverviewCard eyebrow="Wallet Snapshot" title="Portfolio surface">
                 <div className="space-y-4">
                   <div className="inline-flex items-center rounded-full border border-amber-300/18 bg-amber-300/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-amber-200">
                     Wallet-based only, not signal ROI
@@ -695,9 +698,9 @@ export function ProfileUnifiedSurface({
                     </div>
                   </div>
                 </div>
-              </OverviewCard>
+            </OverviewCard>
 
-              <OverviewCard eyebrow="Recent Activity" title="Calls, raids, and profile momentum">
+            <OverviewCard eyebrow="Recent Activity" title="Calls, raids, and profile momentum">
                 <div className="space-y-3">
                   {recentActivity.length ? (
                     recentActivity.map((item) => (
@@ -733,8 +736,7 @@ export function ProfileUnifiedSurface({
                     </div>
                   )}
                 </div>
-              </OverviewCard>
-            </div>
+            </OverviewCard>
           </div>
 
           <div className="space-y-4">
@@ -793,51 +795,6 @@ export function ProfileUnifiedSurface({
                 {signalStats.map((metric) => (
                   <MetricListRow key={metric.label} label={metric.label} value={metric.value} />
                 ))}
-              </div>
-            </SideRailCard>
-
-            <SideRailCard eyebrow="Reputation Notes" title="Why this profile ranks">
-              <div className="grid gap-3">
-                <div className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-sm font-semibold text-white">Signal track</div>
-                  <div className="mt-1 text-xs leading-6 text-white/48">
-                    Win rate, settled call ROI, and call count build the trust surface visible across feeds and rankings.
-                  </div>
-                </div>
-                <div className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-sm font-semibold text-white">Wallet track</div>
-                  <div className="mt-1 text-xs leading-6 text-white/48">
-                    Portfolio state is shown separately and only when a linked or public wallet snapshot is available.
-                  </div>
-                </div>
-                <div className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
-                  <div className="text-sm font-semibold text-white">Raid track</div>
-                  <div className="mt-1 text-xs leading-6 text-white/48">
-                    Joined campaigns, boosts, and contribution scores compound level progression and contributor ranking.
-                  </div>
-                </div>
-              </div>
-            </SideRailCard>
-
-            <SideRailCard eyebrow="Recent Raid Rooms" title="Coordinated campaign footprint">
-              <div className="space-y-3">
-                {hub.raidHistory.length ? hub.raidHistory.slice(0, 4).map((raid) => (
-                  <a
-                    key={raid.id}
-                    href={`/raids/${raid.tokenAddress}/${raid.id}`}
-                    className="block rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3 transition-colors hover:bg-white/[0.06]"
-                  >
-                    <div className="text-sm font-semibold text-white">
-                      {raid.tokenSymbol ? `$${raid.tokenSymbol}` : raid.tokenName || "Raid"}
-                    </div>
-                    <div className="mt-1 text-xs text-white/44">{raid.objective}</div>
-                    <div className="mt-2 text-[11px] uppercase tracking-[0.18em] text-white/34">
-                      {raid.status} • {raid.boostCount} boosts
-                    </div>
-                  </a>
-                )) : (
-                  <div className="text-sm text-white/56">No raid history is visible yet.</div>
-                )}
               </div>
             </SideRailCard>
           </div>
