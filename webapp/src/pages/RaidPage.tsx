@@ -3,9 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   BrainCircuit,
-  Gift,
+  ExternalLink,
   Megaphone,
-  RadioTower,
   ShieldCheck,
   TimerReset,
   Trophy,
@@ -18,7 +17,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { V2RightRailCard } from "@/components/ui/v2/V2RightRailCard";
+import { V2ProgressBar } from "@/components/ui/v2/V2ProgressBar";
 import type { TokenRaidDetailResponse } from "@/types";
+
+type RaidViewTab = "activity" | "participants" | "leaderboard";
 
 function formatCompact(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "--";
@@ -26,14 +29,6 @@ function formatCompact(value: number | null | undefined) {
     notation: value >= 1_000 ? "compact" : "standard",
     maximumFractionDigits: 1,
   }).format(value);
-}
-
-function formatPoolValue(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "--";
-  return `${new Intl.NumberFormat("en-US", {
-    notation: value >= 1_000 ? "compact" : "standard",
-    maximumFractionDigits: 1,
-  }).format(value)} $PHEW`;
 }
 
 function formatRelativeCountdown(date: string | null | undefined) {
@@ -46,14 +41,12 @@ function formatRelativeCountdown(date: string | null | undefined) {
   return `${hours}h ${minutes}m`;
 }
 
-type RaidViewTab = "feed" | "participants" | "leaderboard";
-
 export default function RaidPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { tokenAddress = "", raidId = "" } = useParams<{ tokenAddress: string; raidId: string }>();
   const { canPerformAuthenticatedWrites } = useAuth();
-  const [tab, setTab] = useState<RaidViewTab>("feed");
+  const [tab, setTab] = useState<RaidViewTab>("activity");
   const [xPostUrl, setXPostUrl] = useState("");
 
   const raidQuery = useQuery<TokenRaidDetailResponse>({
@@ -76,53 +69,36 @@ export default function RaidPage() {
   const firstCopy = raid?.copyOptions?.[0] ?? null;
   const firstMeme = raid?.memeOptions?.[0] ?? null;
 
-  const participantTarget = Math.max((raid?.participantCount ?? 0) + 200, 1000);
-  const progressPct = useMemo(() => {
-    if (!raid) return 0;
-    return Math.min(100, Math.round((raid.participantCount / participantTarget) * 100));
-  }, [participantTarget, raid]);
+  const totalBoosts = useMemo(
+    () => leaderboard.reduce((sum, entry) => sum + entry.boostCount, 0),
+    [leaderboard]
+  );
 
-  const projectedPool = useMemo(() => {
-    if (!raid) return 0;
-    return Math.max(raid.participantCount * 20, milestones.filter((item) => item.unlocked).length * 2500);
-  }, [milestones, raid]);
-
-  const joinedPercent = useMemo(() => {
-    if (!raid) return 0;
-    return Math.round((raid.participantCount / Math.max(participantTarget, 1)) * 100);
-  }, [participantTarget, raid]);
-
-  const postedPercent = useMemo(() => {
-    if (!raid) return 0;
-    return Math.round((raid.postedCount / Math.max(raid.participantCount, 1)) * 100);
-  }, [raid]);
-
-  const liveChat = useMemo(() => {
-    const participantMessages = participants.slice(0, 5).map((participant, index) => ({
-      id: `participant-${participant.id}`,
-      author: participant.user?.username || participant.user?.name || `Raider ${index + 1}`,
-      avatar: participant.user?.image ?? null,
-      badge: participant.status === "joined" ? "Raider" : "Active",
-      message:
-        participant.currentStep === "posted"
-          ? "Creative launched. Pushing thread reach now."
-          : participant.currentStep === "launching"
-            ? "Kit loaded. Moving into the feed."
-            : "Ready for the next push. Room is active.",
-      createdAt: participant.postedAt || participant.joinedAt,
-    }));
-    const updateMessages = updates.slice(0, 4).map((update, index) => ({
+  const activityFeed = useMemo(() => {
+    const updateRows = updates.map((update) => ({
       id: `update-${update.id}`,
-      author: update.user?.username || update.user?.name || `Room ${index + 1}`,
-      avatar: update.user?.image ?? null,
-      badge: update.kind === "submission" ? "Submission" : "Update",
-      message: update.body,
+      kind: update.kind === "submission" ? "Submission" : "Raid Update",
+      title: update.user?.username || update.user?.name || "Room system",
+      body: update.body,
       createdAt: update.createdAt,
+      href: null as string | null,
     }));
-    return [...updateMessages, ...participantMessages]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 6);
-  }, [participants, updates]);
+
+    const submissionRows = submissions
+      .filter((submission) => submission.xPostUrl)
+      .map((submission) => ({
+        id: `submission-${submission.id}`,
+        kind: "Posted Link",
+        title: submission.user.username || submission.user.name,
+        body: submission.composerText,
+        createdAt: submission.postedAt || submission.updatedAt,
+        href: submission.xPostUrl,
+      }));
+
+    return [...updateRows, ...submissionRows]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 12);
+  }, [submissions, updates]);
 
   const invalidateRaid = async () => {
     await Promise.all([
@@ -249,10 +225,10 @@ export default function RaidPage() {
                     <span className="h-1 w-1 rounded-full bg-white/24" />
                     <span>{raid.closedAt ? "Historical room" : "Mission is active"}</span>
                     <span className="h-1 w-1 rounded-full bg-white/24" />
-                    <span>Target token {tokenAddress.slice(0, 6)}...{tokenAddress.slice(-4)}</span>
+                    <span>Target token {raid.token?.symbol ? `$${raid.token.symbol}` : `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`}</span>
                   </div>
                   <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
-                    This room is built to coordinate reach, push narrative saturation, and convert community intent into a measurable raid outcome. Raid progress remains separate from token performance and is tracked as room participation plus posted execution.
+                    Mission control tracks actual joined raiders, posted links, boosts, and stored room updates. Token price action and trader profitability stay outside this progress model.
                   </p>
                   <div className="mt-5 flex flex-wrap gap-2">
                     {!myParticipant ? (
@@ -300,9 +276,9 @@ export default function RaidPage() {
               </div>
 
               <div className="mt-6 grid gap-3 md:grid-cols-4">
-                <HeroMetric label="Participants" value={formatCompact(raid.participantCount)} detail={`${joinedPercent}% of goal`} />
-                <HeroMetric label="Raid Pool" value={formatPoolValue(projectedPool)} detail="Room rewards pool" />
-                <HeroMetric label="Posts Launched" value={formatCompact(raid.postedCount)} detail={`${postedPercent}% room execution`} />
+                <HeroMetric label="Participants" value={formatCompact(raid.participantCount)} detail="Joined room members" />
+                <HeroMetric label="Posted Links" value={formatCompact(raid.postedCount)} detail="Verified live posts" />
+                <HeroMetric label="Milestone Target" value={formatCompact(raid.milestoneTarget)} detail="Room goal" />
                 <HeroMetric label="Time Left" value={raid.closedAt ? "Closed" : formatRelativeCountdown(raid.closedAt)} detail={raid.closedAt ? "Historical raid" : "Live countdown"} />
               </div>
 
@@ -311,21 +287,18 @@ export default function RaidPage() {
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Raid Progress</div>
                     <div className="mt-2 text-sm text-white/56">
-                      Mission progress measures room participation and posted execution, not token ROI.
+                      Progress comes directly from the raid detail payload and tracks posted execution against the active raid target.
                     </div>
                   </div>
-                  <div className="text-2xl font-semibold text-white">{progressPct}%</div>
+                  <div className="text-2xl font-semibold text-white">{raid.progressPct}%</div>
                 </div>
-                <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/8">
-                  <div
-                    className="h-full rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.96),rgba(45,212,191,0.9))]"
-                    style={{ width: `${progressPct}%` }}
-                  />
+                <div className="mt-4">
+                  <V2ProgressBar value={raid.progressPct} valueLabel="Posted execution progress" />
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  <ProgressCell label="Joined" value={`${formatCompact(raid.participantCount)} / ${formatCompact(participantTarget)}`} />
-                  <ProgressCell label="Posted" value={`${formatCompact(raid.postedCount)} live links`} />
-                  <ProgressCell label="Milestones" value={`${milestones.filter((item) => item.unlocked).length} / ${milestones.length} unlocked`} />
+                  <ProgressCell label="Joined" value={formatCompact(raid.participantCount)} />
+                  <ProgressCell label="Posted" value={formatCompact(raid.postedCount)} />
+                  <ProgressCell label="Boosts" value={formatCompact(totalBoosts)} />
                 </div>
               </div>
             </div>
@@ -334,7 +307,7 @@ export default function RaidPage() {
           <div className="border-l border-white/8 bg-[linear-gradient(180deg,rgba(9,13,15,0.92),rgba(5,8,10,0.98))] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Raid Chat</div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Activity</div>
                 <div className="mt-1 text-sm font-semibold text-white">Room pulse</div>
               </div>
               <span className="rounded-full border border-lime-300/18 bg-lime-300/8 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-lime-200">
@@ -342,31 +315,37 @@ export default function RaidPage() {
               </span>
             </div>
             <div className="mt-4 space-y-3">
-              {liveChat.length ? liveChat.map((item) => (
-                <div key={item.id} className="rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
-                  <div className="flex items-start gap-3">
-                    <Avatar className="h-10 w-10 border border-white/8">
-                      <AvatarImage src={item.avatar ?? undefined} />
-                      <AvatarFallback className="bg-white/[0.04] text-white">
-                        {item.author.charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-white">{item.author}</div>
-                          <div className="text-[11px] text-white/40">{item.badge}</div>
-                        </div>
-                        <div className="text-[11px] text-white/36">{new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+              {activityFeed.length ? (
+                activityFeed.slice(0, 6).map((item) => (
+                  <div key={item.id} className="rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white">{item.title}</div>
+                        <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-lime-200">{item.kind}</div>
                       </div>
-                      <div className="mt-1 text-sm leading-6 text-white/64">{item.message}</div>
+                      <div className="text-[11px] text-white/36">
+                        {new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </div>
                     </div>
+                    <div className="mt-2 text-sm leading-6 text-white/62">{item.body}</div>
+                    {item.href ? (
+                      <a
+                        href={item.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-lime-300"
+                      >
+                        Open X link
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    ) : null}
                   </div>
-                </div>
-              )) : (
-                <EmptyCopy text="Waiting for room activity..." />
+                ))
+              ) : (
+                <EmptyCopy text="No room activity has been recorded yet." />
               )}
             </div>
+
             <div className="mt-4 rounded-[18px] border border-white/8 bg-black/20 p-3">
               <Input
                 value={xPostUrl}
@@ -392,8 +371,8 @@ export default function RaidPage() {
           <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Mission Structure</div>
-                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">How the room wins</h2>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">How To Join</div>
+                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">Room workflow</h2>
               </div>
               <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-white/48">
                 Mission control
@@ -402,9 +381,9 @@ export default function RaidPage() {
             <div className="mt-5 grid gap-3 md:grid-cols-4">
               {[
                 { step: "1", title: "Join Room", text: "Enter the raid and attach yourself to the mission." },
-                { step: "2", title: "Launch Creative", text: "Use the copy and meme stack instead of posting cold." },
-                { step: "3", title: "Submit Link", text: "Prove execution so the room can track output." },
-                { step: "4", title: "Boost Others", text: "Keep the room dense by amplifying active raiders." },
+                { step: "2", title: "Launch Creative", text: "Use the stored meme and copy stack instead of posting cold." },
+                { step: "3", title: "Submit Link", text: "Post your X link so the room can count execution." },
+                { step: "4", title: "Boost Others", text: "Amplify live submissions and keep the room dense." },
               ].map((item) => (
                 <div key={item.step} className="rounded-[22px] border border-white/8 bg-black/20 px-4 py-4">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full border border-lime-300/20 bg-lime-300/10 text-sm font-semibold text-lime-200">
@@ -420,33 +399,32 @@ export default function RaidPage() {
           <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Milestones & Rewards</div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Milestones</div>
                 <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">Room progression</h2>
               </div>
               <TimerReset className="h-5 w-5 text-lime-200" />
             </div>
             <div className="mt-5 grid gap-3 md:grid-cols-4 xl:grid-cols-5">
-              {milestones.length ? milestones.map((milestone, index) => (
-                <div
-                  key={milestone.label}
-                  className={cn(
-                    "rounded-[22px] border px-4 py-4",
-                    milestone.unlocked ? "border-lime-300/18 bg-lime-300/8" : "border-white/8 bg-black/20"
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-white">{milestone.label}</div>
-                    <div className={cn("text-xs font-semibold", milestone.unlocked ? "text-lime-200" : "text-white/38")}>
-                      {milestone.unlocked ? "Unlocked" : "Locked"}
+              {milestones.length ? (
+                milestones.map((milestone) => (
+                  <div
+                    key={milestone.label}
+                    className={cn(
+                      "rounded-[22px] border px-4 py-4",
+                      milestone.unlocked ? "border-lime-300/18 bg-lime-300/8" : "border-white/8 bg-black/20"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-white">{milestone.label}</div>
+                      <div className={cn("text-xs font-semibold", milestone.unlocked ? "text-lime-200" : "text-white/38")}>
+                        {milestone.unlocked ? "Unlocked" : "Locked"}
+                      </div>
                     </div>
+                    <div className="mt-4 text-2xl font-semibold text-white">{formatCompact(milestone.threshold)}</div>
+                    <div className="mt-1 text-xs text-white/46">Required room output</div>
                   </div>
-                  <div className="mt-4 text-2xl font-semibold text-white">{formatCompact(milestone.threshold)}</div>
-                  <div className="mt-1 text-xs text-white/46">Warrior threshold</div>
-                  <div className="mt-4 rounded-[16px] border border-white/8 bg-white/[0.03] px-3 py-3 text-xs text-white/60">
-                    Reward {formatPoolValue((index + 1) * 2500)}
-                  </div>
-                </div>
-              )) : (
+                ))
+              ) : (
                 <EmptyCopy text="Milestones are not available for this room yet." />
               )}
             </div>
@@ -460,7 +438,7 @@ export default function RaidPage() {
               </div>
               <div className="flex gap-2 rounded-[18px] border border-white/8 bg-black/20 p-1">
                 {[
-                  { value: "feed", label: "Feed" },
+                  { value: "activity", label: "Activity" },
                   { value: "participants", label: "Participants" },
                   { value: "leaderboard", label: "Leaderboard" },
                 ].map((item) => (
@@ -480,26 +458,25 @@ export default function RaidPage() {
             </div>
 
             <div className="mt-5 space-y-3">
-              {tab === "feed" ? (
-                updates.length ? (
-                  updates.map((update) => (
+              {tab === "activity" ? (
+                activityFeed.length ? (
+                  activityFeed.map((item) => (
                     <StreamCard
-                      key={update.id}
-                      label={update.kind === "submission" ? "Submission" : "Raid Update"}
-                      title={update.user?.username || update.user?.name || "Room System"}
-                      body={update.body}
-                      meta={new Date(update.createdAt).toLocaleString()}
+                      key={item.id}
+                      label={item.kind}
+                      title={item.title}
+                      body={item.body}
+                      meta={new Date(item.createdAt).toLocaleString()}
                       action={
-                        update.kind === "submission" && canPerformAuthenticatedWrites ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => boostMutation.mutate(update.id)}
-                            disabled={boostMutation.isPending}
-                            className="h-9 rounded-[14px] border-white/10 bg-white/[0.04] px-4 text-white/80 hover:bg-white/[0.08] hover:text-white"
+                        item.href ? (
+                          <a
+                            href={item.href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-9 items-center rounded-[14px] border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/80 transition hover:bg-white/[0.08] hover:text-white"
                           >
-                            Boost
-                          </Button>
+                            Open
+                          </a>
                         ) : null
                       }
                     />
@@ -510,29 +487,46 @@ export default function RaidPage() {
               ) : null}
 
               {tab === "participants" ? (
-                participants.length ? participants.map((participant) => (
-                  <StreamCard
-                    key={participant.id}
-                    label={participant.currentStep || "Joined"}
-                    title={participant.user?.username || participant.user?.name || "Participant"}
-                    body={`Status: ${participant.status}. Current step: ${participant.currentStep}.`}
-                    meta={new Date(participant.joinedAt).toLocaleString()}
-                  />
-                )) : (
+                participants.length ? (
+                  participants.map((participant) => (
+                    <StreamCard
+                      key={participant.id}
+                      label={participant.currentStep || "Joined"}
+                      title={participant.user?.username || participant.user?.name || "Participant"}
+                      body={`Status: ${participant.status}. Current step: ${participant.currentStep}.`}
+                      meta={new Date(participant.joinedAt).toLocaleString()}
+                    />
+                  ))
+                ) : (
                   <EmptyCopy text="No participants visible yet." />
                 )
               ) : null}
 
               {tab === "leaderboard" ? (
-                leaderboard.length ? leaderboard.map((entry, index) => (
-                  <StreamCard
-                    key={entry.submissionId}
-                    label={`#${index + 1}`}
-                    title={entry.user.username || entry.user.name}
-                    body={`${entry.boostCount} boosts captured across submitted room content.`}
-                    meta={entry.postedAt ? `Posted ${new Date(entry.postedAt).toLocaleString()}` : "Prepared only"}
-                  />
-                )) : (
+                leaderboard.length ? (
+                  leaderboard.map((entry, index) => (
+                    <StreamCard
+                      key={entry.submissionId}
+                      label={`#${index + 1}`}
+                      title={entry.user.username || entry.user.name}
+                      body={`${entry.boostCount} boosts captured across submitted room content.`}
+                      meta={entry.postedAt ? `Posted ${new Date(entry.postedAt).toLocaleString()}` : "Prepared only"}
+                      action={
+                        canPerformAuthenticatedWrites ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => boostMutation.mutate(entry.submissionId)}
+                            disabled={boostMutation.isPending}
+                            className="h-9 rounded-[14px] border-white/10 bg-white/[0.04] px-4 text-white/80 hover:bg-white/[0.08] hover:text-white"
+                          >
+                            Boost
+                          </Button>
+                        ) : null
+                      }
+                    />
+                  ))
+                ) : (
                   <EmptyCopy text="No leaderboard activity yet." />
                 )
               ) : null}
@@ -541,44 +535,40 @@ export default function RaidPage() {
         </div>
 
         <div className="space-y-4">
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Top Raiders</div>
-              <Trophy className="h-4 w-4 text-lime-200" />
-            </div>
-            <div className="mt-4 space-y-3">
-              {leaderboard.slice(0, 5).length ? leaderboard.slice(0, 5).map((entry, index) => (
-                <div key={entry.submissionId} className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/[0.04] text-sm font-semibold text-lime-200">
-                      {index + 1}
+          <V2RightRailCard eyebrow="Top Raiders" title="Leaderboard" tone="soft">
+            <div className="space-y-3">
+              {leaderboard.slice(0, 5).length ? (
+                leaderboard.slice(0, 5).map((entry, index) => (
+                  <div key={entry.submissionId} className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/[0.04] text-sm font-semibold text-lime-200">
+                        {index + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-white">{entry.user.username || entry.user.name}</div>
+                        <div className="text-xs text-white/40">{entry.postedAt ? "Posted live" : "Prepared"}</div>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-white">{entry.user.username || entry.user.name}</div>
-                      <div className="text-xs text-white/40">{entry.postedAt ? "Posted live" : "Prepared"}</div>
-                    </div>
+                    <div className="text-sm font-semibold text-lime-300">{entry.boostCount}</div>
                   </div>
-                  <div className="text-sm font-semibold text-lime-300">{entry.boostCount}</div>
-                </div>
-              )) : (
+                ))
+              ) : (
                 <EmptyCopy text="Waiting for top raiders..." />
               )}
             </div>
-          </section>
+          </V2RightRailCard>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Raid Stats</div>
-            <div className="mt-4 grid gap-3">
+          <V2RightRailCard eyebrow="Raid Stats" title="Room state" tone="soft">
+            <div className="grid gap-3">
               <SidebarMetric icon={Users} label="Participants" value={formatCompact(raid.participantCount)} />
               <SidebarMetric icon={Zap} label="Posts Launched" value={formatCompact(raid.postedCount)} />
               <SidebarMetric icon={ShieldCheck} label="Milestones Cleared" value={`${milestones.filter((item) => item.unlocked).length}/${milestones.length}`} />
-              <SidebarMetric icon={Gift} label="Reward Pool" value={formatPoolValue(projectedPool)} />
+              <SidebarMetric icon={Trophy} label="Total Boosts" value={formatCompact(totalBoosts)} />
             </div>
-          </section>
+          </V2RightRailCard>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Creative Stack</div>
-            <div className="mt-4 space-y-3">
+          <V2RightRailCard eyebrow="Creative Stack" title="Stored raid assets" tone="soft">
+            <div className="space-y-3">
               {raid.copyOptions.slice(0, 2).map((option) => (
                 <div key={option.id} className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4">
                   <div className="text-sm font-semibold text-white">{option.label}</div>
@@ -593,13 +583,12 @@ export default function RaidPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </V2RightRailCard>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Why This Room Matters</div>
-            <div className="mt-4 space-y-3">
+          <V2RightRailCard eyebrow="Why This Room Matters" title="Execution semantics" tone="soft">
+            <div className="space-y-3">
               {[
-                { icon: RadioTower, label: "Live tracking", text: "Room progress updates independently from token price action." },
+                { icon: Zap, label: "Live tracking", text: "Raid progress updates from joined members, posted links, and boosts." },
                 { icon: BrainCircuit, label: "AI context", text: "Creative, signal, and community energy stay visible in one surface." },
                 { icon: Trophy, label: "Leaderboard", text: "Raid output is ranked as room execution, not trader profitability." },
               ].map((item) => {
@@ -617,7 +606,7 @@ export default function RaidPage() {
                 );
               })}
             </div>
-          </section>
+          </V2RightRailCard>
         </div>
       </div>
     </div>

@@ -219,7 +219,7 @@ export function LivePlatformPreview() {
                   <div className="rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3">
                     <div className="text-[10px] uppercase tracking-[0.14em] text-white/34">Direction</div>
                     <div className="mt-2 text-sm font-semibold text-white">
-                      {post.direction || post.postType || "--"}
+                      {post.direction || "post"}
                     </div>
                   </div>
                 </div>

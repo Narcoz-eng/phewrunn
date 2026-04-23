@@ -88,16 +88,6 @@ export default function CommunityPage() {
   const heroImage = summary?.hero.imageUrl || room?.assets.logo?.renderUrl || room?.assets.mascot?.renderUrl || undefined;
   const banner = summary?.hero.bannerUrl || room?.assets.banner?.renderUrl || undefined;
   const isLoading = summaryQuery.isLoading || roomQuery.isLoading;
-  const roomRules = [
-    "Trade calls and community discussion stay separate surfaces.",
-    "Raid progress is room coordination, not token or wallet performance.",
-    "High-signal posts beat generic noise inside this room.",
-  ];
-  const roomEvents = [
-    { title: "Raid kickoff", value: activeRaid ? "Live now" : "Pending", detail: activeRaid ? activeRaid.objective : "Waiting for next room push" },
-    { title: "Top call review", value: featuredTopCall ? "Daily" : "Standby", detail: featuredTopCall ? `${featuredTopCall.author.username || featuredTopCall.author.name} featured` : "No featured review yet" },
-  ];
-
   if (isLoading) {
     return (
       <div className="rounded-[30px] border border-white/8 bg-white/[0.03] px-6 py-10 text-sm text-white/56">

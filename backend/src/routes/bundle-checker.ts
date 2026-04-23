@@ -50,7 +50,7 @@ type BundleWalletNode = {
   id: string;
   label: string;
   valueUsd: number;
-  kind: "cluster" | "linked" | "main";
+  kind: "cluster" | "wallet" | "token";
 };
 
 function parseClusterEvidence(
@@ -95,7 +95,7 @@ function parseClusterEvidence(
       id: nodeId,
       label: rawAddress,
       valueUsd: toFiniteNumber(candidate.valueUsd ?? candidate.usdValue ?? candidate.exposureUsd),
-      kind: "linked",
+      kind: "wallet",
     });
     edges.push({
       source: baseNodeId,
@@ -172,7 +172,7 @@ bundleCheckerRouter.get(
         id: `token:${token.id}`,
         label: token.symbol?.trim() || token.name?.trim() || token.address,
         valueUsd: toFiniteNumber(token.volume24h),
-        kind: "main",
+        kind: "token",
       },
     ];
     const graphEdges: Array<{ source: string; target: string; weight: number }> = [];
@@ -219,7 +219,7 @@ bundleCheckerRouter.get(
       data: {
         entity: {
           id: token.id,
-          tokenAddress: token.address,
+          address: token.address,
           chainType: token.chainType,
           symbol: token.symbol,
           name: token.name,
@@ -239,25 +239,40 @@ bundleCheckerRouter.get(
         bundledSupplyPct: token.estimatedBundledSupplyPct,
         linkedWallets: linkedWallets
           .sort((a, b) => b.exposureUsd - a.exposureUsd)
-          .slice(0, 8),
+          .slice(0, 8)
+          .map((wallet) => ({
+            address: wallet.address,
+            label: wallet.clusterLabel,
+            valueUsd: wallet.exposureUsd,
+            supplyPct: null,
+            relationStrength: null,
+          })),
         graph: {
-          nodes: graphNodes,
-          edges: graphEdges,
+          nodes: graphNodes.map((node) => ({
+            id: node.id,
+            label: node.label,
+            kind: node.kind,
+            weight: Math.max(1, Math.round(node.valueUsd || 1)),
+            highlight: node.kind === "token",
+          })),
+          edges: graphEdges.map((edge) => ({
+            source: edge.source,
+            target: edge.target,
+            weight: edge.weight,
+            relationLabel: null,
+          })),
         },
         behaviorSeries: token.snapshots.map((snapshot) => ({
-          capturedAt: snapshot.capturedAt.toISOString(),
-          marketCap: snapshot.marketCap,
-          holderCount: snapshot.holderCount,
-          bundledWalletCount: snapshot.bundledWalletCount,
+          timestamp: snapshot.capturedAt.toISOString(),
           bundledSupplyPct: snapshot.estimatedBundledSupplyPct,
-          tokenRiskScore: snapshot.tokenRiskScore,
+          linkedWalletCount: snapshot.bundledWalletCount,
+          totalHoldingsUsd: snapshot.marketCap,
         })),
         relatedTokens: [
           {
-            tokenAddress: token.address,
+            address: token.address,
             symbol: token.symbol,
             name: token.name,
-            relationship: "source",
           },
         ],
       },
