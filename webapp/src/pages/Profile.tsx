@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useSession, useAuth, updateCachedAuthUser } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
-import { User, Post, getAvatarUrl, calculatePercentChange, LIQUIDATION_LEVEL } from "@/types";
+import { User, Post, getAvatarUrl, calculatePercentChange, LIQUIDATION_LEVEL, type ProfileHubResponse } from "@/types";
 import { LevelBadge, LevelBar } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { PostCard } from "@/components/feed/PostCard";
@@ -71,6 +71,7 @@ import { Share2, ImageIcon } from "lucide-react";
 import { V2PageHeader } from "@/components/layout/V2PageHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { TraderPerformanceView } from "@/components/experience/TraderPerformanceView";
+import { ProfileUnifiedSurface, type SharedProfileTab } from "@/components/profile/ProfileUnifiedSurface";
 import {
   buildTraderPerformanceVm,
   buildTraderPerformanceVmFromSnapshot,
@@ -257,6 +258,7 @@ export default function Profile() {
   const cropPreviewImgRef = useRef<HTMLImageElement>(null);
 
   const [isEditing, setIsEditing] = useState(false);
+  const [profileTab, setProfileTab] = useState<SharedProfileTab>("overview");
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [performancePeriod, setPerformancePeriod] = useState<PerformancePeriod>("30d");
@@ -1136,6 +1138,258 @@ export default function Profile() {
       walletOverview,
     ]
   );
+  const profileHubIdentifier =
+    canonicalProfileUser?.username ?? canonicalProfileUser?.id ?? session?.user?.username ?? session?.user?.id ?? null;
+  const { data: profileHubPayload } = useQuery({
+    queryKey: ["profile", "hub", profileHubIdentifier ?? "anonymous"],
+    queryFn: async () => {
+      if (!profileHubIdentifier) {
+        throw new Error("Profile identifier is required");
+      }
+      return await api.get<ProfileHubResponse>(`/api/users/${profileHubIdentifier}/profile-hub`);
+    },
+    enabled: !!profileHubIdentifier,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+  const profileHub = useMemo<ProfileHubResponse | null>(() => {
+    if (profileHubPayload) {
+      return profileHubPayload;
+    }
+    if (!canonicalProfileUser) {
+      return null;
+    }
+    const fallbackAiScore =
+      performanceSnapshot?.periodMetrics?.[performancePeriod]?.trustScore ??
+      performanceSnapshot?.callMetrics?.trustScore ??
+      winRate;
+    const fallbackCalls = [...posts]
+      .sort((left, right) => (right.roiCurrentPct ?? right.roiPeakPct ?? 0) - (left.roiCurrentPct ?? left.roiPeakPct ?? 0))
+      .slice(0, 4)
+      .map((post) => ({
+        id: post.id,
+        ticker: post.tokenSymbol,
+        title: post.content || post.tokenName || post.tokenSymbol,
+        roiCurrentPct: post.roiCurrentPct ?? null,
+        roiPeakPct: post.roiPeakPct ?? null,
+        createdAt: post.createdAt,
+      }));
+    return {
+      hero: {
+        id: canonicalProfileUser.id,
+        name: canonicalProfileUser.name,
+        username: canonicalProfileUser.username,
+        image: canonicalProfileUser.image,
+        bannerImage: canonicalProfileUser.bannerImage ?? null,
+        createdAt: canonicalProfileUser.createdAt,
+        isVerified: Boolean(canonicalProfileUser.isVerified),
+        isFollowing: false,
+        level: canonicalProfileUser.level,
+        xp: canonicalProfileUser.xp,
+        bio: canonicalProfileUser.bio ?? null,
+        followersCount,
+        followingCount,
+        earnedPoints: canonicalProfileUser.xp,
+      },
+      xp: {
+        level: canonicalProfileUser.level,
+        xp: canonicalProfileUser.xp,
+        nextLevelXp: Math.max(Math.floor(canonicalProfileUser.xp / 1000) * 1000 + 1000, 1000),
+        progressPct: Math.max(0, Math.min((canonicalProfileUser.xp % 1000) / 10, 100)),
+      },
+      aiScore: {
+        score: typeof fallbackAiScore === "number" && Number.isFinite(fallbackAiScore) ? fallbackAiScore : null,
+        label: typeof fallbackAiScore === "number" && fallbackAiScore >= 80 ? "elite" : "developing",
+        percentile: typeof fallbackAiScore === "number" && fallbackAiScore >= 80 ? "Top 10%" : null,
+      },
+      topCalls: fallbackCalls,
+      raidImpact: {
+        raidsJoined: 0,
+        raidsWon: 0,
+        boostCount: 0,
+        contributionScore: 0,
+      },
+      badges: [
+        { id: "level-band", label: `level ${canonicalProfileUser.level}`, tone: "xp" },
+        ...(winRate >= 60 ? [{ id: "win-rate", label: "positive edge", tone: "live" }] : []),
+      ],
+      reputationMetrics: [
+        { label: "Followers", value: `${followersCount}` },
+        { label: "Calls", value: `${totalSettled}` },
+        { label: "Win Rate", value: `${winRate}%` },
+        { label: "AI Score", value: typeof fallbackAiScore === "number" ? fallbackAiScore.toFixed(1) : "0.0" },
+      ],
+      portfolioSnapshot: walletOverview
+        ? {
+            connected: true,
+            address: displayWalletAddress ?? walletOverview.address ?? null,
+            balanceUsd: walletOverview.balanceUsd ?? null,
+            balanceSol: walletOverview.balanceSol ?? null,
+            tokenPositions: (walletOverview.tokenPositions ?? []).map((position) => ({
+              mint: position.mint,
+              tokenSymbol: position.tokenSymbol ?? null,
+              tokenName: position.tokenName ?? null,
+              holdingAmount: position.holdingAmount ?? null,
+              holdingUsd: position.holdingUsd ?? null,
+              totalPnlUsd: position.totalPnlUsd ?? null,
+            })),
+          }
+        : {
+            connected: Boolean(displayWalletAddress),
+            address: displayWalletAddress ?? null,
+            balanceUsd: null,
+            balanceSol: null,
+            tokenPositions: [],
+          },
+      performanceSummary: {
+        winRate,
+        totalCalls: totalSettled,
+        totalProfitPercent: userStats.totalProfitPercent,
+      },
+      raidHistory: [],
+    };
+  }, [
+    canonicalProfileUser,
+    displayWalletAddress,
+    followersCount,
+    followingCount,
+    performancePeriod,
+    performanceSnapshot,
+    posts,
+    profileHubPayload,
+    totalSettled,
+    userStats.totalProfitPercent,
+    walletOverview,
+    winRate,
+  ]);
+  const profileCallsContent = (
+    <div className="space-y-4">
+      <Tabs
+        value={mainTab}
+        onValueChange={(v) => setMainTab(v as MainTab)}
+        className="w-full"
+      >
+        <TabsList className="grid h-12 w-full grid-cols-2 rounded-[22px] border border-white/8 bg-[#090d15] p-1">
+          <TabsTrigger value="posts" className="rounded-[18px] data-[state=active]:bg-lime-300/14 data-[state=active]:text-white">
+            Posts
+          </TabsTrigger>
+          <TabsTrigger value="reposts" className="rounded-[18px] gap-1.5 data-[state=active]:bg-lime-300/14 data-[state=active]:text-white">
+            <Repeat2 className="h-3.5 w-3.5" />
+            Reposts
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="posts" className="mt-4">
+          <Tabs value={postFilter} onValueChange={(v) => setPostFilter(v as PostFilter)} className="w-full">
+            <TabsList className="grid h-11 w-full grid-cols-3 rounded-[20px] border border-white/8 bg-[#090d15] p-1">
+              <TabsTrigger value="all" className="rounded-[16px] data-[state=active]:bg-white/[0.08] data-[state=active]:text-white">All</TabsTrigger>
+              <TabsTrigger value="wins" className="rounded-[16px] gap-1.5 data-[state=active]:bg-white/[0.08] data-[state=active]:text-white">
+                <TrendingUp className="h-3.5 w-3.5" />
+                Wins
+              </TabsTrigger>
+              <TabsTrigger value="losses" className="rounded-[16px] gap-1.5 data-[state=active]:bg-white/[0.08] data-[state=active]:text-white">
+                <TrendingDown className="h-3.5 w-3.5" />
+                Losses
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value={postFilter} className="mt-4 space-y-4">
+              {isLoadingPosts ? (
+                <>
+                  {[1, 2, 3].map((i) => (
+                    <PostCardSkeleton
+                      key={i}
+                      showMarketData={i === 1 || i === 2}
+                      className="animate-fade-in-up"
+                      style={{ animationDelay: `${i * 0.1}s` }}
+                    />
+                  ))}
+                </>
+              ) : filteredPosts.length === 0 ? (
+                <div className="rounded-[28px] border border-dashed border-white/12 bg-white/[0.02] px-6 py-14 text-center">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white/[0.04]">
+                    <Sparkles className="h-8 w-8 text-white/42" />
+                  </div>
+                  <p className="mt-4 text-lg font-semibold text-white">
+                    {postFilter === "all" ? "No posts yet" : postFilter === "wins" ? "No wins yet" : "No losses yet"}
+                  </p>
+                  <p className="mt-2 text-sm text-white/48">
+                    {postFilter === "all" ? "Start posting your alpha calls." : "Keep trading to build a visible record."}
+                  </p>
+                </div>
+              ) : (
+                <WindowVirtualList
+                  items={filteredPosts}
+                  getItemKey={(post) => post.id}
+                  estimateItemHeight={560}
+                  overscanPx={1200}
+                  renderItem={(post, index) => (
+                    <div className={index < filteredPosts.length - 1 ? "pb-4" : undefined}>
+                      <div className="animate-fade-in-up" style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
+                        <PostCard
+                          post={post}
+                          currentUserId={user?.id}
+                          onLike={handleLike}
+                          onRepost={handleRepost}
+                          onComment={handleComment}
+                        />
+                      </div>
+                    </div>
+                  )}
+                />
+              )}
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
+        <TabsContent value="reposts" className="mt-4">
+          {isLoadingReposts ? (
+            <>
+              {[1, 2, 3].map((i) => (
+                <PostCardSkeleton
+                  key={i}
+                  showMarketData={i === 1 || i === 2}
+                  className="animate-fade-in-up"
+                  style={{ animationDelay: `${i * 0.1}s` }}
+                />
+              ))}
+            </>
+          ) : reposts.length === 0 ? (
+            <div className="rounded-[28px] border border-dashed border-white/12 bg-white/[0.02] px-6 py-14 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white/[0.04]">
+                <Repeat2 className="h-8 w-8 text-white/42" />
+              </div>
+              <p className="mt-4 text-lg font-semibold text-white">No reposts yet</p>
+              <p className="mt-2 text-sm text-white/48">Repost posts you want to save and amplify.</p>
+            </div>
+          ) : (
+            <WindowVirtualList
+              items={reposts}
+              getItemKey={(post) => post.id}
+              estimateItemHeight={560}
+              overscanPx={1200}
+              renderItem={(post, index) => (
+                <div className={index < reposts.length - 1 ? "pb-4" : undefined}>
+                  <div className="animate-fade-in-up" style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
+                    <PostCard
+                      post={post}
+                      currentUserId={user?.id}
+                      onLike={handleLike}
+                      onRepost={handleRepost}
+                      onComment={handleComment}
+                    />
+                  </div>
+                </div>
+              )}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
 
   // Handle like
   const handleLike = async (postId: string) => {
@@ -1207,66 +1461,6 @@ export default function Profile() {
 
   return (
     <div className="space-y-5">
-      <V2PageHeader
-        title="Profile"
-        description="Level, XP, trader intelligence, wallet settings, and earnings, all preserved from the current profile system."
-        badge={<V2StatusPill tone="xp">{profileViewTab === "profile" ? "Trader Profile" : "Settings"}</V2StatusPill>}
-        onBack={() => navigate("/")}
-        action={
-          profileViewTab === "profile" ? (
-            !isEditing ? (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
-                  onClick={() => setIsShareCardOpen(true)}
-                >
-                  <Share2 className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setProfileView("settings")}
-                  className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
-                >
-                  <PhewEditIcon className="mr-2 h-3.5 w-3.5" />
-                  Settings
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleCancel}
-                  disabled={updateProfileMutation.isPending}
-                  className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
-                >
-                  <X className="mr-2 h-3.5 w-3.5" />
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleSave}
-                  disabled={updateProfileMutation.isPending}
-                  className="rounded-2xl px-4"
-                >
-                  {updateProfileMutation.isPending ? (
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Check className="mr-2 h-3.5 w-3.5" />
-                  )}
-                  Save
-                </Button>
-              </div>
-            )
-          ) : (
-            <span className="text-xs uppercase tracking-[0.2em] text-white/42">Trading settings</span>
-          )
-        }
-      />
-
       <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
         <Dialog
           open={isCropDialogOpen}
@@ -1397,65 +1591,81 @@ export default function Profile() {
           </div>
         ) : user ? (
           <div className="space-y-6 animate-fade-in">
-            <Tabs value={profileViewTab} onValueChange={(value) => setProfileView(value as ProfileViewTab)} className="w-full">
-              <TabsList className="w-full grid grid-cols-2 h-10">
-                <TabsTrigger value="profile">Profile</TabsTrigger>
-                <TabsTrigger value="settings">Settings</TabsTrigger>
-              </TabsList>
-            </Tabs>
-
-            {profileViewTab === "profile" ? (
-              <>
-                {/* Danger Zone Warning Banner */}
-                {(user.level <= LIQUIDATION_LEVEL || isInDangerZone(user.level)) && (
-                  <div
-                    className={cn(
-                      "flex items-center gap-3 p-4 rounded-xl border animate-pulse",
-                      user.level <= LIQUIDATION_LEVEL
-                        ? "bg-red-600/20 border-red-600 text-red-500"
-                        : "bg-red-500/10 border-red-400 text-red-300"
-                    )}
-                  >
-                    {user.level <= LIQUIDATION_LEVEL ? (
-                      <Skull className="h-6 w-6 flex-shrink-0" />
-                    ) : (
-                      <AlertTriangle className="h-6 w-6 flex-shrink-0" />
-                    )}
-                    <div>
-                      <p className="font-bold text-sm">
-                        {user.level <= LIQUIDATION_LEVEL ? "ACCOUNT LIQUIDATED" : "REPUTATION AT RISK"}
-                      </p>
-                      <p className="text-xs opacity-80 mt-0.5">
-                        {getDangerMessage(user.level)}
-                      </p>
-                    </div>
-                  </div>
+            {(user.level <= LIQUIDATION_LEVEL || isInDangerZone(user.level)) && (
+              <div
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border p-4 animate-pulse",
+                  user.level <= LIQUIDATION_LEVEL
+                    ? "border-red-600 bg-red-600/20 text-red-500"
+                    : "border-red-400 bg-red-500/10 text-red-300"
                 )}
-                {performanceVm ? (
-                  <TraderPerformanceView
-                    vm={performanceVm}
-                    headerActions={[
-                      {
-                        key: "share",
-                        label: <Share2 className="h-4 w-4" />,
-                        onClick: () => setIsShareCardOpen(true),
-                        variant: "ghost",
-                      },
-                      {
-                        key: "portfolio",
-                        label: "Portfolio",
-                        onClick: () => setIsPortfolioOpen(true),
-                        variant: "ghost",
-                      },
-                    ]}
-                    heroTabs={[
-                      { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
-                      { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
-                      { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
-                      { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
-                    ]}
+              >
+                {user.level <= LIQUIDATION_LEVEL ? (
+                  <Skull className="h-6 w-6 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="h-6 w-6 flex-shrink-0" />
+                )}
+                <div>
+                  <p className="font-bold text-sm">
+                    {user.level <= LIQUIDATION_LEVEL ? "ACCOUNT LIQUIDATED" : "REPUTATION AT RISK"}
+                  </p>
+                  <p className="mt-0.5 text-xs opacity-80">{getDangerMessage(user.level)}</p>
+                </div>
+              </div>
+            )}
+
+            {profileHub ? (
+              <ProfileUnifiedSurface
+                hub={profileHub}
+                isOwnProfile
+                profileTab={profileTab}
+                onProfileTabChange={setProfileTab}
+                performanceVm={performanceVm}
+                performanceTabs={[
+                  { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
+                  { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
+                  { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
+                  { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
+                ]}
+                heroActions={
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
+                      onClick={() => setIsShareCardOpen(true)}
+                    >
+                      <Share2 className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsPortfolioOpen(true)}
+                      className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                    >
+                      Portfolio
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setProfileView(profileViewTab === "settings" ? "profile" : "settings")}
+                      className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                    >
+                      <PhewEditIcon className="mr-2 h-3.5 w-3.5" />
+                      {profileViewTab === "settings" ? "Hide settings" : "Settings"}
+                    </Button>
+                  </>
+                }
+                callsContent={profileCallsContent}
+                statsAside={
+                  <TraderIntelligenceCard
+                    handle={canonicalProfileUser?.username ?? canonicalProfileUser?.id ?? user.id}
+                    enabled={isPostsFetched}
+                    deferMs={1500}
                   />
-                ) : null}
+                }
+              />
+            ) : null}
 
             <LivePortfolioDialog
               open={isPortfolioOpen}
@@ -1497,163 +1707,54 @@ export default function Profile() {
               />
             )}
 
-            {/* User Posts Section */}
-            <div className="space-y-4">
-              {/* Main Tabs: Posts | Reposts */}
-              <Tabs
-                value={mainTab}
-                onValueChange={(v) => setMainTab(v as MainTab)}
-                className="w-full"
-              >
-                <TabsList className="w-full grid grid-cols-2 h-10">
-                  <TabsTrigger value="posts" className="gap-1.5">
-                    Posts
-                  </TabsTrigger>
-                  <TabsTrigger value="reposts" className="gap-1.5">
-                    <Repeat2 className="h-3.5 w-3.5" />
-                    Reposts
-                  </TabsTrigger>
-                </TabsList>
-
-                {/* Posts Tab Content */}
-                <TabsContent value="posts" className="mt-4">
-                  {/* Sub-tabs: All | Wins | Losses */}
-                  <Tabs
-                    value={postFilter}
-                    onValueChange={(v) => setPostFilter(v as PostFilter)}
-                    className="w-full"
-                  >
-                    <TabsList className="w-full grid grid-cols-3 h-10">
-                      <TabsTrigger value="all" className="gap-1.5">
-                        All
-                      </TabsTrigger>
-                      <TabsTrigger value="wins" className="gap-1.5">
-                        <TrendingUp className="h-3.5 w-3.5" />
-                        Wins
-                      </TabsTrigger>
-                      <TabsTrigger value="losses" className="gap-1.5">
-                        <TrendingDown className="h-3.5 w-3.5" />
-                        Losses
-                      </TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value={postFilter} className="mt-4 space-y-4">
-                      {isLoadingPosts ? (
-                        // Loading skeletons using PostCardSkeleton
-                        <>
-                          {[1, 2, 3].map((i) => (
-                            <PostCardSkeleton
-                              key={i}
-                              showMarketData={i === 1 || i === 2}
-                              className="animate-fade-in-up"
-                              style={{ animationDelay: `${i * 0.1}s` }}
-                            />
-                          ))}
-                        </>
-                      ) : filteredPosts.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-                          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                            <Sparkles className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                          <div>
-                            <p className="font-semibold text-foreground">
-                              {postFilter === "all"
-                                ? "No posts yet"
-                                : postFilter === "wins"
-                                ? "No wins yet"
-                                : "No losses yet"}
-                            </p>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {postFilter === "all"
-                                ? "Start posting your alpha calls!"
-                                : "Keep trading to build your record"}
-                            </p>
-                          </div>
-                        </div>
-                      ) : (
-                        <WindowVirtualList
-                          items={filteredPosts}
-                          getItemKey={(post) => post.id}
-                          estimateItemHeight={560}
-                          overscanPx={1200}
-                          renderItem={(post, index) => (
-                            <div className={index < filteredPosts.length - 1 ? "pb-4" : undefined}>
-                              <div
-                                className="animate-fade-in-up"
-                                style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
-                              >
-                                <PostCard
-                                  post={post}
-                                  currentUserId={user?.id}
-                                  onLike={handleLike}
-                                  onRepost={handleRepost}
-                                  onComment={handleComment}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        />
-                      )}
-                    </TabsContent>
-                  </Tabs>
-                </TabsContent>
-
-                {/* Reposts Tab Content */}
-                <TabsContent value="reposts" className="mt-4 space-y-4">
-                  {isLoadingReposts ? (
-                    // Loading skeletons using PostCardSkeleton
-                    <>
-                      {[1, 2, 3].map((i) => (
-                        <PostCardSkeleton
-                          key={i}
-                          showMarketData={i === 1 || i === 2}
-                          className="animate-fade-in-up"
-                          style={{ animationDelay: `${i * 0.1}s` }}
-                        />
-                      ))}
-                    </>
-                  ) : reposts.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-                      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                        <Repeat2 className="h-8 w-8 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <p className="font-semibold text-foreground">No reposts yet</p>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          Repost posts you want to save and share
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <WindowVirtualList
-                      items={reposts}
-                      getItemKey={(post) => post.id}
-                      estimateItemHeight={560}
-                      overscanPx={1200}
-                      renderItem={(post, index) => (
-                        <div className={index < reposts.length - 1 ? "pb-4" : undefined}>
-                          <div
-                            className="animate-fade-in-up"
-                            style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
-                          >
-                            <PostCard
-                              post={post}
-                              currentUserId={user?.id}
-                              onLike={handleLike}
-                              onRepost={handleRepost}
-                              onComment={handleComment}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    />
-                  )}
-                </TabsContent>
-              </Tabs>
-            </div>
-              </>
-            ) : (
+            {profileViewTab === "settings" ? (
               <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[26px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(163,230,53,0.12),transparent_30%),rgba(9,12,18,0.92)] px-5 py-4">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.24em] text-white/36">Profile settings</div>
+                    <h2 className="mt-2 text-[1.65rem] font-semibold text-white">Account, banner, and fee controls</h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isEditing ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleCancel}
+                          disabled={updateProfileMutation.isPending}
+                          className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                        >
+                          <X className="mr-2 h-3.5 w-3.5" />
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={handleSave}
+                          disabled={updateProfileMutation.isPending}
+                          className="rounded-2xl px-4"
+                        >
+                          {updateProfileMutation.isPending ? (
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="mr-2 h-3.5 w-3.5" />
+                          )}
+                          Save
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setProfileView("profile")}
+                        className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                      >
+                        <ArrowLeft className="mr-2 h-3.5 w-3.5" />
+                        Back to profile
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="app-surface p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -1779,7 +1880,7 @@ export default function Profile() {
                   )}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         ) : shouldShowProfileSignInState ? (
           <div className="flex flex-col items-center justify-center py-16 gap-4">

@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
-import { Post, calculatePercentChange, getAvatarUrl, LIQUIDATION_LEVEL } from "@/types";
+import { Post, calculatePercentChange, getAvatarUrl, LIQUIDATION_LEVEL, type ProfileHubResponse } from "@/types";
 import { LevelBadge } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
 import { PostCard } from "@/components/feed/PostCard";
@@ -66,6 +66,7 @@ import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { V2Surface } from "@/components/ui/v2/V2Surface";
 import { V2TabBar } from "@/components/ui/v2/V2TabBar";
+import { ProfileUnifiedSurface } from "@/components/profile/ProfileUnifiedSurface";
 import {
   buildTraderPerformanceVm,
   buildTraderPerformanceVmFromSnapshot,
@@ -894,6 +895,377 @@ export default function UserProfile() {
       },
     ],
     [aiTraderScore, lossesCount, performanceSnapshot?.callMetrics?.reputationTier, user?.stats?.followers, userStats.totalCalls, userStats.winRate, winsCount]
+  );
+
+  const profileHubIdentifier = user?.username ?? user?.id ?? userId ?? null;
+  const { data: profileHubPayload } = useQuery({
+    queryKey: ["userProfile", "hub", profileHubIdentifier ?? "anonymous"],
+    queryFn: async () => {
+      if (!profileHubIdentifier) {
+        throw new Error("Profile identifier is required");
+      }
+      return await api.get<ProfileHubResponse>(`/api/users/${profileHubIdentifier}/profile-hub`);
+    },
+    enabled: !!profileHubIdentifier,
+    staleTime: 60_000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+
+  const profileHub = useMemo<ProfileHubResponse | null>(() => {
+    if (profileHubPayload) {
+      return profileHubPayload;
+    }
+    if (!user) {
+      return null;
+    }
+    return {
+      hero: {
+        id: user.id ?? userId ?? "",
+        name: user.name ?? null,
+        username: user.username,
+        image: user.image,
+        bannerImage: user.bannerImage ?? null,
+        createdAt: user.createdAt,
+        isVerified: Boolean(user.isVerified),
+        isFollowing: Boolean(user.isFollowing),
+        level: user.level,
+        xp: user.xp,
+        bio: null,
+        followersCount: user.stats.followers ?? 0,
+        followingCount: user.stats.following ?? 0,
+        earnedPoints: user.xp,
+      },
+      xp: {
+        level: user.level,
+        xp: user.xp,
+        nextLevelXp: xpCeiling,
+        progressPct: xpProgress * 100,
+      },
+      aiScore: {
+        score: Number.isFinite(aiTraderScore) ? aiTraderScore : null,
+        label: performanceSnapshot?.callMetrics?.reputationTier ?? "developing",
+        percentile: aiTraderScore >= 80 ? "Top 10%" : null,
+      },
+      topCalls: topCalls.map((call) => ({
+        id: call.id,
+        ticker: call.tokenSymbol ?? null,
+        title: call.content || call.tokenName || call.tokenSymbol,
+        roiCurrentPct: call.currentMcap && call.entryMcap ? ((call.currentMcap - call.entryMcap) / call.entryMcap) * 100 : null,
+        roiPeakPct: null,
+        createdAt: call.createdAt,
+      })),
+      raidImpact: {
+        raidsJoined: 0,
+        raidsWon: 0,
+        boostCount: 0,
+        contributionScore: 0,
+      },
+      badges: profileBadges.map((badge, index) => ({
+        id: `${badge.label}-${index}`,
+        label: badge.label,
+        tone: badge.tone,
+      })),
+      reputationMetrics: [
+        { label: "Followers", value: `${user.stats.followers ?? 0}` },
+        { label: "Calls", value: `${userStats.totalCalls}` },
+        { label: "Win Rate", value: `${(userStats.winRate ?? 0).toFixed(0)}%` },
+        { label: "AI Score", value: aiTraderScore.toFixed(1) },
+      ],
+      portfolioSnapshot: walletOverview
+        ? {
+            connected: Boolean(walletOverview.connected),
+            address: walletOverview.address ?? null,
+            balanceUsd: walletOverview.balanceUsd ?? null,
+            balanceSol: walletOverview.balanceSol ?? null,
+            tokenPositions: (walletOverview.tokenPositions ?? []).map((position) => ({
+              mint: position.mint,
+              tokenSymbol: position.tokenSymbol ?? null,
+              tokenName: position.tokenName ?? null,
+              holdingAmount: position.holdingAmount ?? null,
+              holdingUsd: position.holdingUsd ?? null,
+              totalPnlUsd: position.totalPnlUsd ?? null,
+            })),
+          }
+        : {
+            connected: false,
+            address: null,
+            balanceUsd: null,
+            balanceSol: null,
+            tokenPositions: [],
+          },
+      performanceSummary: {
+        winRate: userStats.winRate,
+        totalCalls: userStats.totalCalls,
+        totalProfitPercent: userStats.totalProfitPercent,
+      },
+      raidHistory: [],
+    };
+  }, [aiTraderScore, profileBadges, profileHubPayload, topCalls, user, userId, userStats, walletOverview, xpCeiling, xpProgress, performanceSnapshot?.callMetrics?.reputationTier]);
+
+  const profileCallsContent = (
+    <div className="space-y-4">
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)} className="w-full">
+        <TabsList className="grid h-12 w-full grid-cols-2 rounded-[22px] border border-white/8 bg-[#090d15] p-1">
+          <TabsTrigger value="posts" className="rounded-[18px] data-[state=active]:bg-lime-300/14 data-[state=active]:text-white">
+            Posts
+          </TabsTrigger>
+          <TabsTrigger value="reposts" className="rounded-[18px] gap-1.5 data-[state=active]:bg-lime-300/14 data-[state=active]:text-white">
+            <PhewRepostIcon className="h-3.5 w-3.5" />
+            Reposts
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="posts" className="mt-4">
+          <Tabs value={postFilter} onValueChange={(v) => setPostFilter(v as PostFilter)} className="w-full">
+            <TabsList className="grid h-11 w-full grid-cols-3 rounded-[20px] border border-white/8 bg-[#090d15] p-1">
+              <TabsTrigger value="all" className="rounded-[16px] data-[state=active]:bg-white/[0.08] data-[state=active]:text-white">All</TabsTrigger>
+              <TabsTrigger value="wins" className="rounded-[16px] gap-1.5 data-[state=active]:bg-white/[0.08] data-[state=active]:text-white">
+                <TrendingUp className="h-3.5 w-3.5" />
+                Wins
+              </TabsTrigger>
+              <TabsTrigger value="losses" className="rounded-[16px] gap-1.5 data-[state=active]:bg-white/[0.08] data-[state=active]:text-white">
+                <TrendingDown className="h-3.5 w-3.5" />
+                Losses
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value={postFilter} className="mt-4 space-y-4">
+              {isLoadingPosts ? (
+                <>
+                  {[0, 1, 2].map((i) => (
+                    <PostCardSkeleton key={i} showMarketData={i < 2} />
+                  ))}
+                </>
+              ) : filteredPosts.length === 0 ? (
+                <div className="rounded-[28px] border border-dashed border-white/12 bg-white/[0.02] px-6 py-14 text-center">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white/[0.04]">
+                    <Sparkles className="h-8 w-8 text-white/42" />
+                  </div>
+                  <p className="mt-4 text-lg font-semibold text-white">
+                    {postFilter === "all" ? "No posts yet" : postFilter === "wins" ? "No wins yet" : "No losses yet"}
+                  </p>
+                  <p className="mt-2 text-sm text-white/48">
+                    {postFilter === "all" ? "This trader has not posted any alpha calls yet." : "Check back after more calls settle."}
+                  </p>
+                </div>
+              ) : (
+                <WindowVirtualList
+                  items={filteredPosts}
+                  getItemKey={(post) => post.id}
+                  estimateItemHeight={560}
+                  overscanPx={1200}
+                  renderItem={(post, index) => (
+                    <div className={index < filteredPosts.length - 1 ? "pb-4" : undefined}>
+                      <div className="animate-fade-in-up" style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
+                        <PostCard
+                          post={post}
+                          currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
+                          onLike={handleLike}
+                          onRepost={handleRepost}
+                          onComment={handleComment}
+                        />
+                      </div>
+                    </div>
+                  )}
+                />
+              )}
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
+        <TabsContent value="reposts" className="mt-4">
+          {isLoadingReposts ? (
+            <>
+              {[0, 1, 2].map((i) => (
+                <PostCardSkeleton key={i} showMarketData={i < 2} />
+              ))}
+            </>
+          ) : reposts.length === 0 ? (
+            <div className="rounded-[28px] border border-dashed border-white/12 bg-white/[0.02] px-6 py-14 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white/[0.04]">
+                <PhewRepostIcon className="h-8 w-8 text-white/42" />
+              </div>
+              <p className="mt-4 text-lg font-semibold text-white">No reposts yet</p>
+              <p className="mt-2 text-sm text-white/48">This trader has not amplified any calls yet.</p>
+            </div>
+          ) : (
+            <WindowVirtualList
+              items={reposts}
+              getItemKey={(post) => post.id}
+              estimateItemHeight={560}
+              overscanPx={1200}
+              renderItem={(post, index) => (
+                <div className={index < reposts.length - 1 ? "pb-4" : undefined}>
+                  <div className="animate-fade-in-up" style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
+                    <PostCard
+                      post={post}
+                      currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
+                      onLike={handleLike}
+                      onRepost={handleRepost}
+                      onComment={handleComment}
+                    />
+                  </div>
+                </div>
+              )}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 pb-24">
+      {isLoadingUser ? (
+        <div className="space-y-4">
+          <Skeleton className="h-[220px] w-full rounded-[32px] bg-white/8" />
+          <Skeleton className="h-[420px] w-full rounded-[32px] bg-white/8" />
+          <Skeleton className="h-[320px] w-full rounded-[32px] bg-white/8" />
+        </div>
+      ) : userError && !user ? (
+        <div className="rounded-[30px] border border-dashed border-white/12 px-6 py-16 text-center">
+          <div className="mx-auto max-w-lg">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h2 className="mt-5 text-2xl font-semibold text-white">{userErrorMessage}</h2>
+            <p className="mt-3 text-sm leading-6 text-white/54">
+              The public trader surface could not be loaded from the live profile routes.
+            </p>
+            <div className="mt-6 flex justify-center gap-3">
+              <Button onClick={() => navigate(-1)} className="rounded-full px-5">
+                Go Back
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : user ? (
+        <div className="space-y-5 animate-fade-in">
+          {(user.level <= LIQUIDATION_LEVEL || isInDangerZone(user.level)) && (
+            <div
+              className={cn(
+                "flex items-center gap-3 rounded-xl border p-4",
+                user.level <= LIQUIDATION_LEVEL
+                  ? "border-red-600 bg-red-600/20 text-red-500"
+                  : "border-red-400 bg-red-500/10 text-red-300"
+              )}
+            >
+              {user.level <= LIQUIDATION_LEVEL ? (
+                <Skull className="h-6 w-6 flex-shrink-0" />
+              ) : (
+                <AlertTriangle className="h-6 w-6 flex-shrink-0" />
+              )}
+              <div>
+                <p className="font-bold text-sm">
+                  {user.level <= LIQUIDATION_LEVEL ? "ACCOUNT LIQUIDATED" : "REPUTATION AT RISK"}
+                </p>
+                <p className="mt-0.5 text-xs opacity-80">{getDangerMessage(user.level)}</p>
+              </div>
+            </div>
+          )}
+
+          {profileHub ? (
+            <ProfileUnifiedSurface
+              hub={profileHub}
+              isOwnProfile={isOwnProfile}
+              profileTab={profileTab}
+              onProfileTabChange={(tab) => setProfileTab(tab as ProfileTab)}
+              performanceVm={performanceVm}
+              performanceTabs={[
+                { key: "24h", label: "24h", active: performancePeriod === "24h", onSelect: () => setPerformancePeriod("24h") },
+                { key: "7d", label: "7d", active: performancePeriod === "7d", onSelect: () => setPerformancePeriod("7d") },
+                { key: "30d", label: "30d", active: performancePeriod === "30d", onSelect: () => setPerformancePeriod("30d") },
+                { key: "all", label: "All", active: performancePeriod === "all", onSelect: () => setPerformancePeriod("all") },
+              ]}
+              heroActions={
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => navigate(-1)}
+                    className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowShareCard(true)}
+                    className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
+                  >
+                    <Share2 className="h-4 w-4" />
+                  </Button>
+                  {!isOwnProfile ? (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => followMutation.mutate()}
+                        disabled={followMutation.isPending}
+                        className={cn(
+                          "rounded-2xl px-4",
+                          user.isFollowing
+                            ? "border border-white/10 bg-white/[0.04] text-white/78 hover:bg-white/[0.08] hover:text-white"
+                            : "text-slate-950"
+                        )}
+                        variant={user.isFollowing ? "outline" : "default"}
+                      >
+                        {followMutation.isPending ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <PhewFollowIcon className="mr-2 h-4 w-4" />
+                        )}
+                        {user.isFollowing ? "Following" : "Follow"}
+                      </Button>
+                      <ReportDialog
+                        targetType="user"
+                        targetId={user.id ?? userId ?? ""}
+                        targetLabel={profileDisplayName || user.username || user.id || "Trader"}
+                        buttonLabel="Report"
+                        buttonClassName="rounded-2xl border-white/10 bg-white/[0.04] px-4 text-white/72 hover:bg-white/[0.08] hover:text-white"
+                      />
+                    </>
+                  ) : null}
+                </div>
+              }
+              callsContent={profileCallsContent}
+              statsAside={
+                <TraderIntelligenceCard
+                  handle={user.username ?? user.id ?? userId}
+                  enabled={isPostsFetched}
+                  deferMs={1500}
+                />
+              }
+            />
+          ) : null}
+
+          <ShareableProfileCard
+            open={showShareCard}
+            onOpenChange={setShowShareCard}
+            user={{
+              id: user.id ?? userId ?? "",
+              username: user.username,
+              name: user.name,
+              image: user.image,
+              level: user.level,
+              xp: user.xp,
+              isVerified: user.isVerified,
+              bannerImage: user.bannerImage,
+              stats: {
+                wins: user.stats.wins,
+                losses: user.stats.losses,
+                winRate: user.stats.winRate,
+                totalCalls: user.stats.totalCalls,
+              },
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 
   const formatJoinDate = (dateString: string) => {

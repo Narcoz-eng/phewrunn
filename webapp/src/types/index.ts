@@ -645,6 +645,7 @@ export interface ProfileHubResponse {
     followersCount: number;
     followingCount: number;
     earnedPoints: number | null;
+    isFollowing: boolean;
   };
   xp: {
     level: number;
@@ -699,6 +700,22 @@ export interface ProfileHubResponse {
     totalCalls: number;
     totalProfitPercent: number | null;
   };
+  raidHistory: Array<{
+    id: string;
+    objective: string;
+    status: string;
+    joinedAt: string;
+    launchedAt: string | null;
+    postedAt: string | null;
+    participantStatus: string;
+    participantCount: number;
+    submissionCount: number;
+    boostCount: number;
+    tokenAddress: string;
+    tokenSymbol: string | null;
+    tokenName: string | null;
+    tokenImageUrl: string | null;
+  }>;
 }
 
 export interface TokenCommunityAssetUpload {

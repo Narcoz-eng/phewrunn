@@ -982,7 +982,7 @@ async function loadProfileHubPayload(identifier: string, viewerId: string | null
     return null;
   }
 
-  const [stats, topCalls, raidImpactRows, isFollowing] = await Promise.all([
+  const [stats, topCalls, raidImpactRows, recentRaidHistoryRows, completedRaidWins, isFollowing] = await Promise.all([
     getUserStatsSafely(user.id),
     prisma.post.findMany({
       where: {
@@ -1029,6 +1029,65 @@ async function loadProfileHubPayload(identifier: string, viewerId: string | null
       },
       orderBy: [{ contributionScore: "desc" }, { updatedAt: "desc" }],
       take: 8,
+    }),
+    prisma.tokenRaidParticipant.findMany({
+      where: {
+        userId: user.id,
+      },
+      select: {
+        id: true,
+        status: true,
+        joinedAt: true,
+        launchedAt: true,
+        postedAt: true,
+        raidCampaign: {
+          select: {
+            id: true,
+            objective: true,
+            status: true,
+            openedAt: true,
+            closedAt: true,
+            token: {
+              select: {
+                address: true,
+                symbol: true,
+                name: true,
+                imageUrl: true,
+              },
+            },
+            _count: {
+              select: {
+                participants: true,
+                submissions: true,
+              },
+            },
+            submissions: {
+              where: { userId: user.id },
+              select: {
+                id: true,
+                postedAt: true,
+                _count: {
+                  select: {
+                    boosts: true,
+                  },
+                },
+              },
+              take: 1,
+            },
+          },
+        },
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      take: 8,
+    }),
+    prisma.tokenRaidParticipant.count({
+      where: {
+        userId: user.id,
+        postedAt: { not: null },
+        raidCampaign: {
+          status: "closed",
+        },
+      },
     }),
     viewerId ? getIsFollowingSafely(viewerId, user.id) : Promise.resolve(false),
   ]);
@@ -1085,6 +1144,41 @@ async function loadProfileHubPayload(identifier: string, viewerId: string | null
     })),
   };
 
+  const percentile =
+    reputationScore >= 90
+      ? "Top 1%"
+      : reputationScore >= 80
+        ? "Top 5%"
+        : reputationScore >= 70
+          ? "Top 10%"
+          : reputationScore >= 60
+            ? "Top 25%"
+            : null;
+
+  const xpFloor = Math.floor(Math.max(user.xp, 0) / 1000) * 1000;
+  const nextLevelXp = Math.max(xpFloor + 1000, 1000);
+  const progressPct = Math.max(0, Math.min(((user.xp - xpFloor) / Math.max(nextLevelXp - xpFloor, 1)) * 100, 100));
+
+  const recentRaidHistory = recentRaidHistoryRows.map((row) => {
+    const viewerSubmission = row.raidCampaign.submissions[0] ?? null;
+    return {
+      id: row.raidCampaign.id,
+      objective: row.raidCampaign.objective,
+      status: row.raidCampaign.status,
+      joinedAt: row.joinedAt.toISOString(),
+      launchedAt: row.launchedAt ? row.launchedAt.toISOString() : null,
+      postedAt: row.postedAt ? row.postedAt.toISOString() : null,
+      participantStatus: row.status,
+      participantCount: row.raidCampaign._count.participants,
+      submissionCount: row.raidCampaign._count.submissions,
+      boostCount: viewerSubmission?._count.boosts ?? 0,
+      tokenAddress: row.raidCampaign.token.address,
+      tokenSymbol: row.raidCampaign.token.symbol,
+      tokenName: row.raidCampaign.token.name,
+      tokenImageUrl: row.raidCampaign.token.imageUrl,
+    };
+  });
+
   const badges = [
     stats.winRate >= 60 ? "precision-caller" : null,
     reputationScore >= 80 ? "elite-signal" : null,
@@ -1105,46 +1199,75 @@ async function loadProfileHubPayload(identifier: string, viewerId: string | null
       xp: user.xp,
       isVerified: user.isVerified,
       createdAt: user.createdAt.toISOString(),
-      followerCount: user._count.followers,
+      followersCount: user._count.followers,
       followingCount: user._count.following,
-      postCount: user._count.posts,
+      earnedPoints: user.xp,
       isFollowing,
     },
     xp: {
       level: user.level,
-      currentXp: user.xp,
-      nextLevelXp: Math.max((user.level + 1) * 1000, 1_000),
+      xp: user.xp,
+      nextLevelXp,
+      progressPct,
     },
     aiScore: {
       score: reputationScore,
       label: reputationScore >= 90 ? "legend" : reputationScore >= 75 ? "elite" : reputationScore >= 60 ? "credible" : "developing",
-      summary: `${user.name || user.username || "Trader"} ranks with ${stats.winRate}% win rate across ${stats.totalCalls} settled calls.`,
+      percentile,
     },
-    topCalls: topCalls.map((call) => ({
+    topCalls: topCalls.slice(0, 4).map((call) => ({
       id: call.id,
-      content: call.content,
-      tokenSymbol: call.tokenSymbol,
-      tokenName: call.tokenName,
-      tokenImage: call.tokenImage,
-      contractAddress: call.contractAddress,
+      ticker: call.tokenSymbol,
+      title: call.content || call.tokenName || call.tokenSymbol,
       roiCurrentPct: call.roiCurrentPct,
       roiPeakPct: call.roiPeakPct,
-      confidenceScore: call.confidenceScore,
-      highConvictionScore: call.highConvictionScore,
       createdAt: call.createdAt.toISOString(),
     })),
-    raidImpact,
-    badges,
-    reputationMetrics: {
+    raidImpact: {
+      raidsJoined: raidImpact.totalJoined,
+      raidsWon: completedRaidWins,
+      boostCount: raidImpact.totalBoostsGiven,
+      contributionScore: raidImpactRows.reduce((sum, row) => sum + row.contributionScore, 0),
+    },
+    badges: badges.map((badge, index) => ({
+      id: `${badge}-${index}`,
+      label: badge.replace(/-/g, " "),
+      tone: badge.includes("elite") || badge.includes("legend") ? "xp" : badge.includes("raid") ? "live" : "default",
+    })),
+    reputationMetrics: [
+      { label: "Followers", value: `${user._count.followers}` },
+      { label: "Calls", value: `${stats.totalCalls}` },
+      { label: "Win Rate", value: `${Math.round(stats.winRate)}%` },
+      { label: "AI Score", value: `${reputationScore.toFixed(1)}` },
+    ],
+    portfolioSnapshot: portfolio
+      ? {
+          connected: true,
+          address: portfolio.walletAddress ?? null,
+          balanceUsd: portfolio.balanceUsd ?? null,
+          balanceSol: portfolio.balanceSol ?? null,
+          tokenPositions: Object.entries(portfolio.tokens ?? {}).map(([mint, position]) => ({
+            mint,
+            tokenSymbol: null,
+            tokenName: null,
+            holdingAmount: position.holdingAmount ?? null,
+            holdingUsd: position.holdingUsd ?? null,
+            totalPnlUsd: position.totalPnlUsd ?? null,
+          })),
+        }
+      : {
+          connected: false,
+          address: user.walletAddress ?? null,
+          balanceUsd: null,
+          balanceSol: null,
+          tokenPositions: [],
+        },
+    performanceSummary: {
       winRate: stats.winRate,
       totalCalls: stats.totalCalls,
-      wins: stats.wins,
-      losses: stats.losses,
       totalProfitPercent: stats.totalProfitPercent,
-      reputationScore,
     },
-    portfolioSnapshot: portfolio,
-    performanceSummary: stats,
+    raidHistory: recentRaidHistory,
   };
 }
 
