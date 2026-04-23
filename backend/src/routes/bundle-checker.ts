@@ -197,7 +197,7 @@ bundleCheckerRouter.get(
       graphEdges.push(...parsed.edges);
 
       for (const node of parsed.nodes) {
-        if (node.kind !== "linked") continue;
+        if (node.kind !== "wallet") continue;
         linkedWallets.push({
           address: node.label,
           exposureUsd: node.valueUsd,

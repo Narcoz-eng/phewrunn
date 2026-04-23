@@ -58,13 +58,13 @@ export default function RaidPage() {
   });
 
   const raid = raidQuery.data?.campaign ?? null;
-  const submissions = raidQuery.data?.submissions ?? [];
-  const participants = raidQuery.data?.participants ?? [];
-  const leaderboard = raidQuery.data?.leaderboard ?? [];
-  const updates = raidQuery.data?.updates ?? [];
+  const submissions = useMemo(() => raidQuery.data?.submissions ?? [], [raidQuery.data?.submissions]);
+  const participants = useMemo(() => raidQuery.data?.participants ?? [], [raidQuery.data?.participants]);
+  const leaderboard = useMemo(() => raidQuery.data?.leaderboard ?? [], [raidQuery.data?.leaderboard]);
+  const updates = useMemo(() => raidQuery.data?.updates ?? [], [raidQuery.data?.updates]);
   const myParticipant = raidQuery.data?.myParticipant ?? null;
   const mySubmission = raidQuery.data?.mySubmission ?? null;
-  const milestones = raidQuery.data?.milestones ?? [];
+  const milestones = useMemo(() => raidQuery.data?.milestones ?? [], [raidQuery.data?.milestones]);
   const communityAssets = raidQuery.data?.communityAssets ?? null;
   const firstCopy = raid?.copyOptions?.[0] ?? null;
   const firstMeme = raid?.memeOptions?.[0] ?? null;
