@@ -88,6 +88,15 @@ export default function CommunityPage() {
   const heroImage = summary?.hero.imageUrl || room?.assets.logo?.renderUrl || room?.assets.mascot?.renderUrl || undefined;
   const banner = summary?.hero.bannerUrl || room?.assets.banner?.renderUrl || undefined;
   const isLoading = summaryQuery.isLoading || roomQuery.isLoading;
+  const roomRules = [
+    "Trade calls and community discussion stay separate surfaces.",
+    "Raid progress is room coordination, not token or wallet performance.",
+    "High-signal posts beat generic noise inside this room.",
+  ];
+  const roomEvents = [
+    { title: "Raid kickoff", value: activeRaid ? "Live now" : "Pending", detail: activeRaid ? activeRaid.objective : "Waiting for next room push" },
+    { title: "Top call review", value: featuredTopCall ? "Daily" : "Standby", detail: featuredTopCall ? `${featuredTopCall.author.username || featuredTopCall.author.name} featured` : "No featured review yet" },
+  ];
 
   if (isLoading) {
     return (
@@ -197,6 +206,15 @@ export default function CommunityPage() {
                   {tab === item.value ? <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-lime-300" /> : null}
                 </button>
               ))}
+            </div>
+
+            <div className="mt-6 grid gap-3 md:grid-cols-4 xl:grid-cols-6">
+              <HeroStat label="Members" value={formatCompact(summary.hero.memberCount)} />
+              <HeroStat label="Online" value={formatCompact(summary.hero.onlineNowEstimate)} />
+              <HeroStat label="Posts" value={formatCompact(summary.stats.posts)} />
+              <HeroStat label="Calls" value={formatCompact(summary.stats.calls)} />
+              <HeroStat label="Top Call ROI" value={featuredTopCall ? formatPct(featuredTopCall.roiCurrentPct) : "--"} />
+              <HeroStat label="Raids" value={formatCompact(raids.length)} />
             </div>
           </div>
         </div>

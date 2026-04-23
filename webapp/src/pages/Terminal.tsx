@@ -130,8 +130,64 @@ export default function Terminal() {
         : "Developing"
     : "Developing";
 
+  const benchmarkMarkets = [
+    { symbol: "BTC", price: "$68.6K", change: "+1.32%" },
+    { symbol: "ETH", price: "$3.24K", change: "+2.21%" },
+    { symbol: "SOL", price: "$179.35", change: "+3.65%" },
+    { symbol: "X RAIDS", price: "Live", change: "Room flow" },
+  ];
+
+  const signalMatrix = useMemo(
+    () => [
+      {
+        label: "AI Analysis",
+        value: token?.highConvictionScore ? `${token.highConvictionScore.toFixed(0)} / 100` : "--",
+        detail: convictionLabel,
+      },
+      {
+        label: "Smart Money",
+        value: largePrints.length > 1 ? "Active" : "Quiet",
+        detail: `${largePrints.length} large prints`,
+      },
+      {
+        label: "Buy Flow",
+        value: buyPressurePct !== null ? `${buyPressurePct}%` : "--",
+        detail: "Recent trade sample",
+      },
+      {
+        label: "Community Room",
+        value: token?.symbol ? `$${token.symbol}` : "Open room",
+        detail: "Signals and raids",
+      },
+    ],
+    [buyPressurePct, convictionLabel, largePrints.length, token?.highConvictionScore, token?.symbol]
+  );
+
+  const liveFeedRows = useMemo(
+    () =>
+      tradeFeed.recentTrades.slice(0, 5).map((trade) => ({
+        id: trade.id,
+        headline: `${trade.walletShort ?? "Trader"} ${trade.side === "buy" ? "hit the ask" : "tapped the bid"}`,
+        detail: `${formatUsd(trade.volumeUsd)} / ${formatAmount(trade.priceUsd)}`,
+        at: new Date(trade.timestampMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      })),
+    [tradeFeed.recentTrades]
+  );
+
   return (
     <div className="space-y-5">
+      <section className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,8,12,0.98))] px-4 py-3">
+        <div className="grid gap-3 md:grid-cols-4">
+          {benchmarkMarkets.map((market) => (
+            <div key={market.symbol} className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{market.symbol}</div>
+              <div className="mt-2 text-sm font-semibold text-white">{market.price}</div>
+              <div className={cn("mt-1 text-xs", market.change.startsWith("+") ? "text-lime-300" : "text-cyan-200")}>{market.change}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5 sm:p-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
@@ -313,6 +369,30 @@ export default function Terminal() {
 
               <div className="border-l border-white/8 px-4 py-4">
                 <div className="space-y-4">
+                  <div className="rounded-[24px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),linear-gradient(180deg,rgba(11,16,13,0.98),rgba(7,10,12,0.99))] p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">AI Analysis</div>
+                      <span className="rounded-full border border-lime-300/18 bg-lime-300/8 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-lime-200">
+                        {convictionLabel}
+                      </span>
+                    </div>
+                    <div className="text-3xl font-semibold text-white">
+                      {token.highConvictionScore ? token.highConvictionScore.toFixed(1) : "--"}
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-white/56">
+                      Execution and token intelligence are shown together here, but they remain separate signals.
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      {signalMatrix.slice(0, 3).map((item) => (
+                        <div key={item.label} className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{item.label}</div>
+                          <div className="mt-1 text-sm font-semibold text-white">{item.value}</div>
+                          <div className="mt-1 text-xs text-white/42">{item.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <TradeTransactionsFeed
                     trades={tradeFeed.recentTrades}
                     liveMode={tradeFeed.liveStatus.mode}
@@ -383,51 +463,100 @@ export default function Terminal() {
                       </Link>
                     </div>
                   </div>
+
+                  <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Room Coordination</div>
+                      <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-white/44">
+                        Community
+                      </span>
+                    </div>
+                    <div className="text-lg font-semibold text-white">
+                      {token.symbol ? `$${token.symbol} room` : "Token room"}
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-white/54">
+                      Use the room for raids and discussion without confusing room progress with execution or PnL.
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                      <Link
+                        to={`/communities/${token.address}`}
+                        className="inline-flex h-10 flex-1 items-center justify-center rounded-[14px] border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/80 transition hover:bg-white/[0.08] hover:text-white"
+                      >
+                        Open Community
+                      </Link>
+                      <Link
+                        to={`/token/${token.address}?tab=community`}
+                        className="inline-flex h-10 flex-1 items-center justify-center rounded-[14px] border border-lime-300/18 bg-lime-300/10 px-4 text-sm font-semibold text-lime-200 transition hover:bg-lime-300/14"
+                      >
+                        View Signals
+                      </Link>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_380px]">
-            <div className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Terminal Board</div>
-              <div className="mt-4 flex flex-wrap gap-3">
-                {[
-                  { value: "orders", label: "Open Orders" },
-                  { value: "history", label: "Order History" },
-                  { value: "positions", label: "Positions" },
-                  { value: "holdings", label: "Holdings" },
-                ].map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => setActiveBottomTab(item.value as typeof activeBottomTab)}
-                    className={cn(
-                      "rounded-full border px-4 py-2 text-sm transition",
-                      activeBottomTab === item.value ? "border-lime-300/18 bg-lime-300/8 text-lime-200" : "border-white/8 bg-white/[0.03] text-white/54 hover:text-white"
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_400px]">
+            <div className="space-y-4">
+              <div className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Terminal Board</div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {[
+                    { value: "orders", label: "Open Orders" },
+                    { value: "history", label: "Order History" },
+                    { value: "positions", label: "Positions" },
+                    { value: "holdings", label: "Holdings" },
+                  ].map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      onClick={() => setActiveBottomTab(item.value as typeof activeBottomTab)}
+                      className={cn(
+                        "rounded-full border px-4 py-2 text-sm transition",
+                        activeBottomTab === item.value ? "border-lime-300/18 bg-lime-300/8 text-lime-200" : "border-white/8 bg-white/[0.03] text-white/54 hover:text-white"
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-3">
+                  <BottomCard
+                    label={activeBottomTab === "orders" ? "Open Orders" : activeBottomTab === "history" ? "Executed Prints" : activeBottomTab === "positions" ? "Exposure" : "Holdings"}
+                    value={
+                      activeBottomTab === "orders"
+                        ? formatAmount(depth?.positionSummary.openOrders ?? 0)
+                        : activeBottomTab === "history"
+                          ? formatAmount(tradeFeed.recentTrades.length)
+                          : activeBottomTab === "positions"
+                            ? formatUsd(depth?.positionSummary.exposureUsd)
+                            : formatUsd(depth?.positionSummary.holdingsUsd)
+                    }
+                    hint="Live terminal state"
+                  />
+                  <BottomCard label="Spread" value={depth?.spread ? formatUsd(depth.spread) : "--"} hint="Derived execution gap" />
+                  <BottomCard label="Holders" value={formatAmount(token.holderCount)} hint="Token context" />
+                </div>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <BottomCard
-                  label={activeBottomTab === "orders" ? "Open Orders" : activeBottomTab === "history" ? "Executed Prints" : activeBottomTab === "positions" ? "Exposure" : "Holdings"}
-                  value={
-                    activeBottomTab === "orders"
-                      ? formatAmount(depth?.positionSummary.openOrders ?? 0)
-                      : activeBottomTab === "history"
-                        ? formatAmount(tradeFeed.recentTrades.length)
-                        : activeBottomTab === "positions"
-                          ? formatUsd(depth?.positionSummary.exposureUsd)
-                          : formatUsd(depth?.positionSummary.holdingsUsd)
-                  }
-                  hint="Live terminal state"
-                />
-                <BottomCard label="Spread" value={depth?.spread ? formatUsd(depth.spread) : "--"} hint="Derived execution gap" />
-                <BottomCard label="Holders" value={formatAmount(token.holderCount)} hint="Token context" />
+              <div className="rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Signal Matrix</div>
+                    <div className="mt-1 text-sm text-white/54">AI context, room access, and trade flow.</div>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {signalMatrix.map((item) => (
+                    <div key={item.label} className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{item.label}</div>
+                      <div className="mt-3 text-xl font-semibold text-white">{item.value}</div>
+                      <div className="mt-1 text-xs text-white/44">{item.detail}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -466,6 +595,25 @@ export default function Terminal() {
                   <BottomCard label="Momentum" value={(token.priceChange24hPct ?? 0) >= 0 ? "Bullish" : "Weak"} hint="24H trend" />
                   <BottomCard label="Buy Flow" value={buyPressurePct !== null ? `${buyPressurePct}%` : "--"} hint="Recent trade sample" />
                   <BottomCard label="Live Route" value={tradeFeed.liveStatus.connected ? "Connected" : "Fallback"} hint="Execution transport" />
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] p-5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">Live Feed</div>
+                <div className="mt-4 space-y-3">
+                  {liveFeedRows.length ? liveFeedRows.map((row) => (
+                    <div key={row.id} className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-white">{row.headline}</div>
+                        <div className="text-[11px] text-white/40">{row.at}</div>
+                      </div>
+                      <div className="mt-1 text-xs text-white/50">{row.detail}</div>
+                    </div>
+                  )) : (
+                    <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-6 text-sm text-white/48">
+                      Waiting for fresh terminal prints.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
