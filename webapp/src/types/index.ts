@@ -394,8 +394,16 @@ export interface TokenRaidCampaign {
   threadId?: string | null;
   participantCount: number;
   postedCount: number;
+  milestoneTarget: number;
+  progressPct: number;
   memeChoiceCounts: Record<string, number>;
   copyChoiceCounts: Record<string, number>;
+  token?: {
+    address: string;
+    symbol: string | null;
+    name: string | null;
+    imageUrl: string | null;
+  };
   createdBy: TokenCommunityAuthor;
 }
 
@@ -508,8 +516,10 @@ export interface BundleCheckerRelatedToken {
 export interface BundleCheckerResponse {
   entity: {
     address: string;
+    chainType?: string | null;
     symbol: string | null;
     name: string | null;
+    imageUrl?: string | null;
   };
   riskSummary: {
     score: number | null;
@@ -623,9 +633,10 @@ export interface TerminalDepthResponse {
   spread: number | null;
   depthSeries: TerminalDepthPoint[];
   positionSummary: {
-    openOrders: number;
-    holdingsUsd: number | null;
-    exposureUsd: number | null;
+    tokenMint: string;
+    tokenDecimals: number;
+    referencePrice: number | null;
+    recentTradeCount: number;
   };
 }
 
