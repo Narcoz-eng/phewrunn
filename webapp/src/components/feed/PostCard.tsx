@@ -1976,6 +1976,33 @@ export function PostCard({
       : typeof post.author.trustScore === "number" && post.author.trustScore >= 58
         ? "Trusted"
         : "Provisional");
+  const cleanedContent = stripContractAddress(post.content).trim();
+  const settlementLabel = !localSettled ? "LIVE" : localIsWin ? "WIN" : "LOSS";
+  const settlementToneClassName = !localSettled
+    ? "border-lime-300/30 bg-lime-300/10 text-lime-100"
+    : localIsWin
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+      : "border-rose-400/30 bg-rose-400/10 text-rose-200";
+  const primarySignalLabel = bullishSignalsSuppressed
+    ? "Opportunity capped"
+    : highConvictionScore !== null && highConvictionScore >= 75
+      ? "High conviction"
+      : hotAlphaScore !== null && hotAlphaScore >= 70
+        ? "Hot alpha"
+        : earlyRunnerScore !== null && earlyRunnerScore >= 70
+          ? "Early runner"
+          : traderTier;
+  const primarySignalToneClassName = bullishSignalsSuppressed
+    ? "border-white/10 bg-white/[0.06] text-white/68"
+    : highConvictionScore !== null && highConvictionScore >= 75
+      ? "border-lime-300/35 bg-lime-300/12 text-lime-100"
+      : hotAlphaScore !== null && hotAlphaScore >= 70
+        ? "border-cyan-300/35 bg-cyan-300/12 text-cyan-100"
+        : earlyRunnerScore !== null && earlyRunnerScore >= 70
+          ? "border-teal-300/35 bg-teal-300/12 text-teal-100"
+          : "border-white/10 bg-white/[0.05] text-white/72";
+  const livePerformanceText =
+    percentChange !== null ? `${percentChange >= 0 ? "+" : ""}${percentChange.toFixed(2)}%` : "Pending";
   const formatUsdStat = (value: number) =>
     new Intl.NumberFormat(undefined, {
       style: "currency",
@@ -5729,10 +5756,10 @@ export function PostCard({
     <div
       ref={cardRef}
       className={cn(
-        "group app-surface relative rounded-[28px] transition-all duration-300",
-        "hover:border-primary/35 hover:shadow-[0_30px_90px_-56px_hsl(var(--foreground)/0.22)] dark:hover:shadow-none",
-        localSettled && localIsWin && "border-gain/20",
-        localSettled && !localIsWin && "border-loss/20",
+        "group relative overflow-hidden rounded-[30px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(163,230,53,0.09),transparent_22%),linear-gradient(180deg,rgba(8,12,20,0.98),rgba(5,8,14,0.98))] shadow-[0_28px_90px_-58px_rgba(0,0,0,0.95)] transition-all duration-300",
+        "hover:border-lime-300/24 hover:shadow-[0_34px_110px_-60px_rgba(132,255,105,0.22)]",
+        localSettled && localIsWin && "border-emerald-400/18",
+        localSettled && !localIsWin && "border-rose-400/18",
         className
       )}
     >
@@ -5750,71 +5777,159 @@ export function PostCard({
         {/* Header */}
         <div className="flex items-start gap-3">
           <Avatar
-            className="h-11 w-11 cursor-pointer border-2 border-primary/15 ring-4 ring-white/70 transition-all hover:ring-primary/20 dark:border-white/[0.08] dark:ring-background"
+            className="h-12 w-12 cursor-pointer border border-lime-300/20 ring-4 ring-black/40 transition-all hover:ring-lime-300/10"
             onClick={handleProfileClick}
           >
             <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
-            <AvatarFallback className="bg-muted text-muted-foreground text-sm font-medium">
+            <AvatarFallback className="bg-[#121924] text-white/72 text-sm font-medium">
               {post.author.name?.charAt(0) || "?"}
             </AvatarFallback>
           </Avatar>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={handleProfileClick}
-                className="font-semibold text-foreground truncate hover:text-primary hover:underline transition-colors"
-              >
-                {post.author.username || post.author.name}
-              </button>
-              {post.author.isVerified ? <VerifiedBadge size="sm" /> : null}
-              <LevelBadge level={post.author.level} />
-              <span className="text-muted-foreground text-xs">
-                {formatTimeAgo(post.createdAt)}
-              </span>
-              {/* Account actions */}
-              {currentUserId && currentUserId !== post.author.id && (
-                <div className="ml-auto flex items-center gap-1.5">
-                  <ReportDialog
-                    targetType="post"
-                    targetId={post.id}
-                    targetLabel={resolvedTokenSymbol ?? post.author.username ?? post.author.name}
-                    buttonVariant="ghost"
-                    buttonSize="icon"
-                    buttonClassName="h-8 w-8 rounded-full border border-border/75 bg-white/78 text-slate-500 shadow-[0_14px_24px_-20px_hsl(var(--foreground)/0.18)] hover:bg-white hover:text-slate-800 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white/40 dark:shadow-none dark:hover:bg-white/[0.08] dark:hover:text-white/70"
-                    iconOnly
-                  />
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={handleFollow}
-                    disabled={isFollowLoading}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all",
-                      isFollowing
-                        ? "border border-emerald-300/55 bg-emerald-50 text-emerald-700 shadow-[0_14px_28px_-24px_rgba(16,185,129,0.24)] hover:bg-emerald-100 dark:border-primary/25 dark:bg-primary/10 dark:text-primary dark:shadow-none dark:hover:bg-primary/15"
-                        : "border border-primary/20 bg-[linear-gradient(135deg,hsl(var(--primary)/0.95),hsl(var(--accent)/0.85))] text-slate-950 shadow-[0_16px_34px_-20px_hsl(var(--primary)/0.42)] hover:brightness-[1.03] dark:border-primary/15 dark:bg-primary dark:text-primary-foreground dark:hover:brightness-[1.03]"
-                    )}
+                    onClick={handleProfileClick}
+                    className="truncate text-[15px] font-semibold text-white transition-colors hover:text-lime-200 hover:underline"
                   >
-                    {isFollowLoading ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : isFollowing ? (
-                      <>
-                        <UserCheck className="h-3 w-3" />
-                        <span>Following</span>
-                      </>
-                    ) : (
-                      <>
-                        <PhewFollowIcon className="h-3 w-3" />
-                        <span>Follow</span>
-                      </>
-                    )}
+                    {post.author.username || post.author.name}
                   </button>
+                  {post.author.isVerified ? <VerifiedBadge size="sm" /> : null}
+                  <LevelBadge level={post.author.level} />
+                  <span className="rounded-full border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
+                    {traderTier}
+                  </span>
+                  <span className="text-[11px] text-white/38">{formatTimeAgo(post.createdAt)}</span>
                 </div>
-              )}
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/46">
+                  <span>{post.author.username ? `@${post.author.username}` : post.author.name}</span>
+                  {typeof post.author.avgRoi30d === "number" ? <span>Avg ROI {post.author.avgRoi30d.toFixed(1)}%</span> : null}
+                  {typeof post.author.winRate30d === "number" ? <span>{post.author.winRate30d.toFixed(0)}% win rate</span> : null}
+                  {typeof post.author.firstCallCount === "number" ? <span>{post.author.firstCallCount} first calls</span> : null}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]", primarySignalToneClassName)}>
+                  {primarySignalLabel}
+                </span>
+                <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]", settlementToneClassName)}>
+                  {settlementLabel}
+                </span>
+                {currentUserId && currentUserId !== post.author.id ? (
+                  <>
+                    <ReportDialog
+                      targetType="post"
+                      targetId={post.id}
+                      targetLabel={resolvedTokenSymbol ?? post.author.username ?? post.author.name}
+                      buttonVariant="ghost"
+                      buttonSize="icon"
+                      buttonClassName="h-9 w-9 rounded-full border border-white/10 bg-white/[0.04] text-white/46 hover:bg-white/[0.08] hover:text-white/80"
+                      iconOnly
+                    />
+                    <button
+                      onClick={handleFollow}
+                      disabled={isFollowLoading}
+                      className={cn(
+                        "flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-all",
+                        isFollowing
+                          ? "border border-emerald-400/25 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/15"
+                          : "border border-lime-300/30 bg-[linear-gradient(135deg,rgba(170,255,86,0.94),rgba(67,217,173,0.9))] text-[#08130f] hover:brightness-[1.03]"
+                      )}
+                    >
+                      {isFollowLoading ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : isFollowing ? (
+                        <>
+                          <UserCheck className="h-3 w-3" />
+                          <span>Following</span>
+                        </>
+                      ) : (
+                        <>
+                          <PhewFollowIcon className="h-3 w-3" />
+                          <span>Follow</span>
+                        </>
+                      )}
+                    </button>
+                  </>
+                ) : null}
+              </div>
             </div>
 
-            {/* Author Level Bar - Larger and Higher Contrast */}
-            <div className="mt-2">
+            <div className="mt-3">
               <LevelBar level={post.author.level} size="lg" showLabel={false} />
+            </div>
+
+            <div className="mt-4 rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] px-4 py-4 shadow-[0_20px_55px_-40px_rgba(0,0,0,0.95)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (tokenPageHref) {
+                          navigate(tokenPageHref);
+                        }
+                      }}
+                      className="text-left text-[1.95rem] font-bold leading-none tracking-tight text-white transition-colors hover:text-lime-200"
+                    >
+                      {displayTokenLabel}
+                    </button>
+                    {resolvedTokenSymbol && resolvedTokenName ? (
+                      <span className="text-sm font-medium text-white/42">({resolvedTokenName})</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-white/48">
+                    {post.contractAddress ? (
+                      <button
+                        type="button"
+                        onClick={() => tokenPageHref && navigate(tokenPageHref)}
+                        className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 font-medium text-white/62 transition-colors hover:border-lime-300/20 hover:text-white"
+                      >
+                        {displayTokenSubtitle}
+                      </button>
+                    ) : (
+                      <span>{displayTokenSubtitle}</span>
+                    )}
+                    {post.chainType ? <span>{post.chainType.toUpperCase()}</span> : null}
+                    {post.dexscreenerUrl ? <span>DEX live</span> : null}
+                  </div>
+                </div>
+                <div className="rounded-[18px] border border-white/10 bg-white/[0.05] px-4 py-3 text-right">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/46">
+                    Live performance
+                  </div>
+                  <div className={cn("mt-1 text-2xl font-bold tracking-tight", isGain ? "text-emerald-300" : isLoss ? "text-rose-300" : "text-white")}>
+                    {livePerformanceText}
+                  </div>
+                  <div className="mt-1 text-[11px] text-white/42">
+                    {post.roiPeakPct !== null && Number.isFinite(post.roiPeakPct)
+                      ? `Peak ${post.roiPeakPct >= 0 ? "+" : ""}${post.roiPeakPct.toFixed(1)}%`
+                      : "Monitoring route"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                <div className="rounded-[18px] border border-white/10 bg-black/20 px-3 py-2.5">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Entry MCAP</div>
+                  <div className="mt-1 font-semibold text-white">{formatMarketCap(post.entryMcap)}</div>
+                </div>
+                <div className="rounded-[18px] border border-white/10 bg-black/20 px-3 py-2.5">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">{winCardSettledMcapLabel}</div>
+                  <div className="mt-1 font-semibold text-white">{formatMarketCap(officialMcap)}</div>
+                </div>
+                <div className="rounded-[18px] border border-white/10 bg-black/20 px-3 py-2.5">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Liquidity</div>
+                  <div className="mt-1 font-semibold text-white">{formatMarketCap(post.liquidity)}</div>
+                </div>
+                <div className="rounded-[18px] border border-white/10 bg-black/20 px-3 py-2.5">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Volume 24h</div>
+                  <div className="mt-1 font-semibold text-white">{formatMarketCap(post.volume24h)}</div>
+                </div>
+              </div>
             </div>
 
             {/* Token Info Card - Display prominently if contract address exists */}
@@ -5842,14 +5957,11 @@ export function PostCard({
             )}
 
             {/* Post content - Cleaned of contract addresses */}
-            {(() => {
-              const cleanedContent = stripContractAddress(post.content);
-              return cleanedContent ? (
-                <p className="mt-3 text-foreground text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-                  {cleanedContent}
-                </p>
-              ) : null;
-            })()}
+            {cleanedContent ? (
+              <p className="mt-4 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-white/82">
+                {cleanedContent}
+              </p>
+            ) : null}
 
             {/* Market Cap Info */}
             {hasContractAddress && (
