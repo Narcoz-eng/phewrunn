@@ -1,15 +1,14 @@
 import { useMemo, useState } from "react";
-import { Bell, Globe, Mail, Search } from "lucide-react";
+import { Bell, Mail, Search } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-client";
 import { getAvatarUrl } from "@/types";
 
 const MARKET_STRIP = [
-  { symbol: "BTC", value: "$68.4K", delta: "+1.32%" },
-  { symbol: "ETH", value: "$3.2K", delta: "+2.21%" },
-  { symbol: "SOL", value: "$179.3", delta: "+3.65%" },
-  { symbol: "X", value: "Raid Flow", delta: "Live" },
+  { symbol: "Market Cap", value: "$2.45T", delta: "+2.34%" },
+  { symbol: "24H Volume", value: "$146.1B", delta: "+8.21%" },
+  { symbol: "BTC Dominance", value: "52.3%", delta: "-0.32%" },
 ] as const;
 
 export function V2ShellTopbar() {
@@ -51,14 +50,6 @@ export function V2ShellTopbar() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-11 w-11 rounded-2xl border border-white/10 bg-white/[0.04] text-white/62 hover:bg-white/[0.08] hover:text-white"
-            >
-              <Globe className="h-4 w-4" />
-            </Button>
             <Button
               type="button"
               variant="ghost"
