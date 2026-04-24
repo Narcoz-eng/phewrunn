@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { TokenCommunitySection } from "@/components/token-community/TokenCommunitySection";
+import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 import { cn } from "@/lib/utils";
 import type {
   TokenCommunityProfile,
@@ -36,6 +37,7 @@ export default function CommunityPage() {
   const { tokenAddress = "" } = useParams<{ tokenAddress: string }>();
   const { user, canPerformAuthenticatedWrites } = useAuth();
   const [tab, setTab] = useState<CommunityTab>("feed");
+  const [search, setSearch] = useState("");
 
   const summaryQuery = useQuery<TokenCommunitySummaryResponse>({
     queryKey: ["community-summary", tokenAddress],
@@ -111,6 +113,20 @@ export default function CommunityPage() {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-[24px] font-semibold tracking-tight text-white">COMMUNITY</h1>
+            <p className="mt-1 text-[13px] text-white/54">Home &gt; Communities &gt; {heroName}</p>
+          </div>
+          <V2PageTopbar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search posts, users, tokens..."
+            className="lg:min-w-[520px]"
+          />
+        </div>
+      </section>
       <section className="overflow-hidden rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))]">
         <div className="relative">
           {banner ? (

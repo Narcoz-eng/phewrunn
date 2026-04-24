@@ -12,7 +12,6 @@ import {
   Trophy,
   Users,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { useAuth, useSession } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import { buildProfilePath } from "@/lib/profile-path";
@@ -27,11 +26,12 @@ import {
 } from "@/viewmodels/trader-performance";
 import { cn } from "@/lib/utils";
 import { getAvatarUrl, type User } from "@/types";
-import { V2PageHeader } from "@/components/layout/V2PageHeader";
+import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { V2Surface } from "@/components/ui/v2/V2Surface";
 import { V2TabBar } from "@/components/ui/v2/V2TabBar";
+import { LeaderboardPodium } from "@/components/leaderboard/LeaderboardPodium";
 
 type LeaderboardBoard = "calls" | "wallet" | "raids" | "xp";
 
@@ -147,6 +147,7 @@ export default function Leaderboard() {
   const { hasLiveSession } = useAuth();
   const [period, setPeriod] = useState<PerformancePeriod>("30d");
   const [board, setBoard] = useState<LeaderboardBoard>("calls");
+  const [search, setSearch] = useState("");
 
   const sessionBackedUser = session?.user
     ? {
@@ -255,7 +256,17 @@ export default function Leaderboard() {
   );
   const xpRows = useMemo(() => mapXpRows(xpQuery.data?.data ?? []), [xpQuery.data?.data]);
 
-  const activeRows = board === "calls" ? callRows : board === "raids" ? raidRows : board === "xp" ? xpRows : [];
+  const activeRowsRaw = useMemo(
+    () => (board === "calls" ? callRows : board === "raids" ? raidRows : board === "xp" ? xpRows : []),
+    [board, callRows, raidRows, xpRows]
+  );
+  const activeRows = useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    if (!normalized) return activeRowsRaw;
+    return activeRowsRaw.filter((row) =>
+      `${row.displayName} ${row.handle ?? ""} ${row.metadataLabel}`.toLowerCase().includes(normalized)
+    );
+  }, [activeRowsRaw, search]);
   const activeLoading =
     board === "calls"
       ? performanceQuery.isLoading
@@ -397,21 +408,20 @@ export default function Leaderboard() {
 
   return (
     <div className="space-y-5 text-white">
-      <V2PageHeader
-        title="Leaderboard"
-        description="An arena surface, not a generic table. Call performance, wallet state, raid leadership, and XP progression now live as separate boards instead of one mixed metric stack."
-        badge={<V2StatusPill tone="xp">Competitive Surfaces</V2StatusPill>}
-        action={
-          <Button
-            type="button"
-            variant="ghost"
-            className="rounded-2xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
-            onClick={() => navigate("/")}
-          >
-            Back to feed
-          </Button>
-        }
-      />
+      <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-[26px] font-semibold tracking-tight text-white">Leaderboard</h1>
+            <p className="mt-1 text-[13px] text-white/54">Top traders, signal callers and raid leaders</p>
+          </div>
+          <V2PageTopbar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search users, tokens, raids..."
+            className="lg:min-w-[520px]"
+          />
+        </div>
+      </section>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {leaderStats.map((stat) => {
@@ -491,7 +501,8 @@ export default function Leaderboard() {
           ) : activeLoading ? (
             <V2Surface className="px-6 py-10 text-white/56">Loading leaderboard...</V2Surface>
           ) : (
-            <div className={cn("transition-opacity", activeFetching && "opacity-80")}>
+            <div className={cn("space-y-4 transition-opacity", activeFetching && "opacity-80")}>
+              {board === "calls" ? <LeaderboardPodium rows={activeRowsRaw} /> : null}
               <DenseLeaderboardView
                 eyebrow={boardCopy.eyebrow}
                 title={boardCopy.title}

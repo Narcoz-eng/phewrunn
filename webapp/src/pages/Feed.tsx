@@ -5,25 +5,21 @@ import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import { DiscoveryFeedSidebarResponse, Post, User } from "@/types";
 import { PostCard, type PostCardRealtimePriceMode } from "@/components/feed/PostCard";
-import { PostCardSkeleton, ProfileCardSkeleton } from "@/components/feed/PostCardSkeleton";
+import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { CreatePost } from "@/components/feed/CreatePost";
-import { LevelBar } from "@/components/feed/LevelBar";
 import { FeedTab } from "@/components/feed/FeedHeader";
 import { AnnouncementBanner } from "@/components/feed/AnnouncementBanner";
-import { SearchBar } from "@/components/feed/SearchBar";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame, ArrowUpRight, Users, Zap, TrendingUp, type LucideIcon } from "lucide-react";
-import { getAvatarUrl } from "@/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
-import { PhewTrophyIcon } from "@/components/icons/PhewIcons";
 import { syncPostsIntoQueryCache } from "@/lib/post-query-cache";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
+import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 
 interface FeedPage {
   items: Post[];
@@ -1672,7 +1668,6 @@ export default function Feed() {
   // Fetch current user with React Query
   const {
     data: user,
-    isLoading: isLoadingUser,
     error: userError,
     refetch: refetchUser,
     isFetched: isUserFetched,
@@ -2545,70 +2540,37 @@ export default function Feed() {
   const activeRaidProgressPct = sidebarLiveRaid
     ? Math.max(8, Math.min(100, (sidebarLiveRaid.postedCount / Math.max(sidebarLiveRaid.participantCount, 1)) * 100))
     : 0;
-  const activeFeedTabMeta = FEED_TAB_ITEMS.find((item) => item.id === activeTab) ?? FEED_TAB_ITEMS[0];
-
   return (
     <div className="space-y-4">
-      <main className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <main className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_340px]">
         <div className="space-y-4">
-          <section className="relative overflow-hidden rounded-[32px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_24%),linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-5 py-5 shadow-[0_34px_80px_-44px_rgba(15,20,28,0.9)] sm:px-6">
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <V2StatusPill tone="live">{activeFeedTabMeta.label}</V2StatusPill>
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/34">Signal network</span>
-                  </div>
-                  <div>
-                    <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.55rem]">Run the feed.</h1>
-                    <p className="mt-1 max-w-2xl text-sm leading-6 text-white/56">
-                      {activeFeedTabMeta.description}
-                    </p>
-                  </div>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[340px]">
-                  <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Top conviction</div>
-                    <div className="mt-2 text-lg font-semibold text-white">{sidebarTopGainers.length}</div>
-                    <div className="mt-1 text-xs text-white/44">Tokens scoring highest on live signal quality</div>
-                  </div>
-                  <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Raid pressure</div>
-                    <div className="mt-2 text-lg font-semibold text-white">
-                      {sidebarLiveRaid ? sidebarLiveRaid.participantCount.toLocaleString() : "0"}
-                    </div>
-                    <div className="mt-1 text-xs text-white/44">Participants currently pushing a live room objective</div>
-                  </div>
-                  <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Trending calls</div>
-                    <div className="mt-2 text-lg font-semibold text-white">{sidebarTrendingCalls.length}</div>
-                    <div className="mt-1 text-xs text-white/44">Ranked by conviction, response, and current signal strength</div>
-                  </div>
-                </div>
+          <section className="relative overflow-hidden rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 shadow-[0_28px_70px_-48px_rgba(15,20,28,0.9)] sm:px-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h1 className="text-[24px] font-semibold tracking-tight text-white">FEED</h1>
+                <p className="mt-1 text-[13px] leading-5 text-white/54">
+                  Real-time alpha from the smartest traders on the internet.
+                </p>
               </div>
+              <V2PageTopbar
+                value={searchQuery}
+                onChange={handleSearchChange}
+                placeholder="Search token, user, or wallet..."
+                className="lg:min-w-[520px]"
+              />
+            </div>
+          </section>
 
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-                <div className="min-w-0 flex-1">
-                  <SearchBar
-                    value={searchQuery}
-                    onChange={handleSearchChange}
-                    isLoading={isRefreshing && searchQuery.length >= 3}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleRefresh}
-                  disabled={isManualRefreshing}
-                  className="h-12 rounded-[18px] border border-white/10 bg-white/[0.04] px-5 text-white/72 hover:bg-white/[0.08] hover:text-white xl:min-w-[180px]"
-                >
-                  <RefreshCw className={cn("mr-2 h-4 w-4", isManualRefreshing && "animate-spin")} />
-                  Refresh feed
-                </Button>
-              </div>
+          <section className="rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.97),rgba(6,10,14,0.99))] p-3 shadow-[0_22px_58px_-42px_rgba(0,0,0,0.88)]">
+            <CreatePost
+              user={user ?? null}
+              onSubmit={handleCreatePost}
+              isSubmitting={createPostMutation.isPending}
+              isAuthPending={isAuthWritePending}
+            />
+          </section>
 
-              <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <section className="rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                 <div className="flex flex-wrap gap-2">
                   {FEED_TAB_ITEMS.map((tab) => {
                     const Icon = tab.icon;
@@ -2631,8 +2593,6 @@ export default function Feed() {
                     );
                   })}
                 </div>
-              </div>
-            </div>
           </section>
 
           <section className="space-y-3">
@@ -2641,43 +2601,7 @@ export default function Feed() {
             </QueryErrorBoundary>
           </section>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-          {isLoadingUser ? (
-            <ProfileCardSkeleton className="mb-0" />
-          ) : user ? (
-            <section className="overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_28%),linear-gradient(180deg,rgba(9,13,20,0.96),rgba(6,10,14,0.98))] p-5 shadow-[0_30px_70px_-46px_rgba(45,212,191,0.5)]">
-              <div className="flex items-start gap-4">
-                <Avatar className="h-16 w-16 border border-lime-300/20 shadow-[0_0_24px_rgba(169,255,52,0.2)]">
-                  <AvatarImage src={getAvatarUrl(user.id, user.image)} />
-                  <AvatarFallback className="bg-white/[0.04] text-lg text-white">
-                    {user.name?.charAt(0) || "?"}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-lg font-semibold text-white">{user.username || user.name}</h2>
-                    <span className="inline-flex items-center gap-1 rounded-full border border-lime-300/18 bg-lime-300/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200">
-                      <PhewTrophyIcon className="h-3 w-3" />
-                      Level {user.level ?? 0}
-                    </span>
-                  </div>
-                  <p className="mt-1 truncate text-sm text-white/42">{user.email}</p>
-                  <div className="mt-4 flex flex-wrap items-end gap-3">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">XP</div>
-                      <div className="mt-1 text-2xl font-semibold text-lime-300">{(user.xp ?? 0).toLocaleString()}</div>
-                    </div>
-                    <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5 text-xs text-white/56">
-                      Reputation band active
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4">
-                <LevelBar level={user.level} size="xl" />
-              </div>
-            </section>
-          ) : userError ? (
+          {userError ? (
             <div className="rounded-[24px] border border-destructive/30 bg-destructive/10 p-4">
               <div className="flex items-center gap-3 text-destructive">
                 <AlertCircle className="h-5 w-5" />
@@ -2688,32 +2612,6 @@ export default function Feed() {
               </div>
             </div>
           ) : null}
-
-          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.97),rgba(6,10,14,0.99))] p-4 shadow-[0_26px_60px_-42px_rgba(0,0,0,0.88)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Post signal</div>
-                <div className="mt-1 text-sm text-white/58">Drop a new call, paste a CA, or post a thesis with conviction.</div>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="h-9 gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 text-white/62 hover:bg-white/[0.08] hover:text-white"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
-                Live
-              </Button>
-            </div>
-            <CreatePost
-              user={user ?? null}
-              onSubmit={handleCreatePost}
-              isSubmitting={createPostMutation.isPending}
-              isAuthPending={isAuthWritePending}
-            />
-          </section>
-          </div>
 
           <section className="space-y-4">
             <div className="flex items-center justify-between">

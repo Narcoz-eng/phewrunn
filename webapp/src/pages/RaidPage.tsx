@@ -19,6 +19,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { V2RightRailCard } from "@/components/ui/v2/V2RightRailCard";
 import { V2ProgressBar } from "@/components/ui/v2/V2ProgressBar";
+import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 import type { TokenRaidDetailResponse } from "@/types";
 
 type RaidViewTab = "activity" | "participants" | "leaderboard";
@@ -48,6 +49,7 @@ export default function RaidPage() {
   const { canPerformAuthenticatedWrites } = useAuth();
   const [tab, setTab] = useState<RaidViewTab>("activity");
   const [xPostUrl, setXPostUrl] = useState("");
+  const [search, setSearch] = useState("");
 
   const raidQuery = useQuery<TokenRaidDetailResponse>({
     queryKey: ["raid-detail", tokenAddress, raidId],
@@ -184,6 +186,20 @@ export default function RaidPage() {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-[26px] font-semibold tracking-tight text-white">RAIDS</h1>
+            <p className="mt-1 text-[13px] text-white/54">Rally together. Break resistance.</p>
+          </div>
+          <V2PageTopbar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search tokens, users, raids..."
+            className="lg:min-w-[520px]"
+          />
+        </div>
+      </section>
       <section className="overflow-hidden rounded-[34px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))] shadow-[0_34px_90px_-56px_rgba(0,0,0,0.92)]">
         <div className="grid gap-0 xl:grid-cols-[minmax(0,1.2fr)_360px]">
           <div className="relative overflow-hidden p-5 sm:p-6 lg:p-7">

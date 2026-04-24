@@ -1,107 +1,66 @@
 import {
   Activity,
-  Bot,
   Bell,
   Boxes,
   CandlestickChart,
   Crosshair,
   Flame,
+  Globe2,
   LogOut,
-  MessageSquare,
-  Radar,
-  ScrollText,
+  Mail,
+  MoreHorizontal,
+  Settings,
   ShieldCheck,
-  Sparkles,
   Trophy,
   UserRound,
   Users,
-  WalletCards,
+  Wallet,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { getAvatarUrl } from "@/types";
 
-type SidebarNavItem = {
-  to: string;
+type NavItem = {
+  to?: string;
   label: string;
   icon: LucideIcon;
-  match: (pathname: string, search: string) => boolean;
+  disabled?: boolean;
+  badge?: string;
+  match?: (pathname: string, search: string) => boolean;
 };
 
-const navItems: SidebarNavItem[] = [
-  { to: "/", label: "Feed", icon: Activity, match: (pathname: string) => pathname === "/" },
+const navItems: NavItem[] = [
+  { to: "/", label: "Feed", icon: Activity, match: (pathname) => pathname === "/" },
   {
     to: "/terminal?mode=raids",
     label: "X Raids",
     icon: Crosshair,
-    match: (pathname: string, search: string) =>
-      pathname.startsWith("/terminal") && search.includes("mode=raids"),
+    match: (pathname, search) => pathname.startsWith("/terminal") && search.includes("mode=raids"),
   },
   {
     to: "/terminal",
     label: "Terminal",
     icon: CandlestickChart,
-    match: (pathname: string, search: string) =>
-      pathname.startsWith("/terminal") && !search.includes("mode=raids"),
+    match: (pathname, search) =>
+      (pathname.startsWith("/terminal") && !search.includes("mode=raids")) || pathname.startsWith("/token/"),
   },
-  {
-    to: "/token/So11111111111111111111111111111111111111112",
-    label: "Portfolio",
-    icon: WalletCards,
-    match: (pathname: string) => pathname.startsWith("/token/"),
-  },
-  {
-    to: "/bundle-checker",
-    label: "Wallet Tracker",
-    icon: Boxes,
-    match: (pathname: string) => pathname.startsWith("/bundle-checker"),
-  },
-  {
-    to: "/leaderboard",
-    label: "Leaderboard",
-    icon: Trophy,
-    match: (pathname: string) => pathname.startsWith("/leaderboard"),
-  },
-  {
-    to: "/communities/So11111111111111111111111111111111111111112",
-    label: "Communities",
-    icon: Users,
-    match: (pathname: string) => pathname.startsWith("/communities"),
-  },
-  {
-    to: "/leaderboard",
-    label: "AI Intelligence",
-    icon: Bot,
-    match: () => false,
-  },
-  {
-    to: "/notifications",
-    label: "Notifications",
-    icon: Bell,
-    match: (pathname: string) => pathname.startsWith("/notifications"),
-  },
-  { to: "/profile", label: "Messages", icon: MessageSquare, match: () => false },
-  { to: "/profile", label: "Watchlist", icon: ScrollText, match: () => false },
-  {
-    to: "/profile",
-    label: "Profile",
-    icon: UserRound,
-    match: (pathname: string) => pathname.startsWith("/profile"),
-  },
+  { to: "/bundle-checker", label: "Bundle Checker", icon: Boxes, match: (pathname) => pathname.startsWith("/bundle-checker") },
+  { label: "Portfolio", icon: Wallet, disabled: true },
+  { to: "/leaderboard", label: "Leaderboard", icon: Trophy, match: (pathname) => pathname.startsWith("/leaderboard") },
+  { label: "Communities", icon: Users, disabled: true },
+  { label: "AI Intelligence", icon: Zap, disabled: true },
+  { to: "/notifications", label: "Notifications", icon: Bell, badge: "12", match: (pathname) => pathname.startsWith("/notifications") },
+  { label: "Messages", icon: Mail, disabled: true },
+  { to: "/profile", label: "Profile", icon: UserRound, match: (pathname) => pathname.startsWith("/profile") },
+  { label: "More", icon: MoreHorizontal, disabled: true },
 ];
 
-const mobileNavItems = [
-  navItems[0],
-  navItems[1],
-  navItems[2],
-  navItems[5],
-  navItems[10],
-].filter(Boolean);
+const mobileNavItems = [navItems[0], navItems[1], navItems[2], navItems[5], navItems[10]].filter(Boolean);
 
 function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
   const location = useLocation();
@@ -110,18 +69,37 @@ function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
   return (
     <>
       {items.map((item) => {
-        const active = item.match(location.pathname, location.search);
+        const Icon = item.icon;
+        const active = Boolean(item.to && item.match?.(location.pathname, location.search));
+        const className = cn(
+          mobile ? "v2-mobile-nav-item" : "v2-sidebar-link",
+          active && (mobile ? "v2-mobile-nav-item-active" : "v2-sidebar-link-active"),
+          item.disabled && "cursor-not-allowed opacity-45"
+        );
+
+        const body = (
+          <>
+            <Icon className="h-[18px] w-[18px] shrink-0" />
+            <span className={cn("min-w-0 flex-1 truncate", mobile && "sr-only")}>{item.label}</span>
+            {item.badge && !mobile ? (
+              <span className="rounded-full bg-[#a9ff34] px-1.5 py-0.5 text-[10px] font-extrabold leading-none text-[#081108]">
+                {item.badge}
+              </span>
+            ) : null}
+          </>
+        );
+
+        if (!item.to || item.disabled) {
+          return (
+            <div key={item.label} className={className} aria-disabled="true" title="Unavailable">
+              {body}
+            </div>
+          );
+        }
+
         return (
-          <NavLink
-            key={`${item.label}:${item.to}`}
-            to={item.to}
-            className={cn(
-              mobile ? "v2-mobile-nav-item" : "v2-sidebar-link",
-              active && (mobile ? "v2-mobile-nav-item-active" : "v2-sidebar-link-active")
-            )}
-          >
-            <item.icon className="h-4.5 w-4.5 shrink-0" />
-            <span className={mobile ? "sr-only" : ""}>{item.label}</span>
+          <NavLink key={item.to} to={item.to} className={className}>
+            {body}
           </NavLink>
         );
       })}
@@ -132,128 +110,109 @@ function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
 export function V2Sidebar() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const xpProgress = Math.max(6, ((user?.xp ?? 0) % 1000) / 10);
+  const xp = user?.xp ?? 0;
+  const level = user?.level ?? 0;
+  const nextLevelXp = Math.max(25_000, Math.ceil((xp + 1) / 25_000) * 25_000);
+  const xpProgress = Math.max(4, Math.min(100, (xp / nextLevelXp) * 100));
+  const aiScore = null;
 
   return (
     <>
       <aside className="v2-sidebar hidden lg:flex">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <BrandLogo size="md" className="gap-3" />
-            <div className="rounded-full border border-emerald-400/18 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300">
-              Live
-            </div>
-          </div>
-
-          <div className="rounded-[24px] border border-white/[0.08] bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.1),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/36">
-              Operator Mode
-            </div>
-            <div className="mt-3 grid gap-3">
-              <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/[0.07] bg-black/20 px-3 py-3">
-                <div className="flex items-center gap-2 text-sm text-white/68">
-                  <Sparkles className="h-4 w-4 text-[#76ff44]" />
-                  AI signal mesh
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#76ff44]">
-                  Active
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/[0.07] bg-black/20 px-3 py-3">
-                <div className="flex items-center gap-2 text-sm text-white/68">
-                  <Flame className="h-4 w-4 text-cyan-300" />
-                  Raid pressure
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/48">
-                  Monitoring
-                </span>
-              </div>
-            </div>
-          </div>
+        <div className="px-1">
+          <BrandLogo size="md" className="gap-3" />
         </div>
 
-        <nav className="mt-8 flex flex-1 flex-col gap-2">
+        <nav className="mt-7 flex flex-1 flex-col gap-1.5">
           <SidebarNavItems />
         </nav>
 
-        <div className="v2-sidebar-user">
+        <div className="space-y-4 border-t border-white/[0.07] pt-4">
           <div className="flex items-center gap-3">
-            <Avatar className="h-11 w-11 border border-white/10">
+            <Avatar className="h-12 w-12 border border-lime-300/20">
               <AvatarImage src={user ? getAvatarUrl(user.id, user.image) : undefined} />
               <AvatarFallback className="bg-white/[0.06] text-white/70">
-                {(user?.name ?? "P").charAt(0)}
+                {(user?.name ?? user?.username ?? "P").charAt(0)}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-white">
-                {user?.username || user?.name || "Phew User"}
+                {user?.username || user?.name || "PhewRunner"}
               </div>
-              <div className="text-xs text-white/42">Level {user?.level ?? 0}</div>
+              <div className="text-xs text-white/48">Level {level}</div>
             </div>
           </div>
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/[0.06]">
-            <div
-              className="h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#41e8cf)]"
-              style={{ width: `${xpProgress}%` }}
-            />
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-white/42">
-            <span>{(user?.xp ?? 0).toLocaleString()} XP</span>
-            <span>Realtime enabled</span>
-          </div>
-          <div className="mt-4 rounded-[22px] border border-white/[0.08] bg-black/20 p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">
-              Quick actions
+
+          <div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-lime-300">{xp.toLocaleString()}</span>
+              <span className="text-white/46">/ {nextLevelXp.toLocaleString()} XP</span>
             </div>
-            <div className="mt-3 grid gap-2">
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#18d6a3)]"
+                style={{ width: `${xpProgress}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-[18px] border border-white/[0.08] bg-[radial-gradient(circle_at_right,rgba(45,212,191,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.015))] p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/78">AI Trader Score</div>
+            <div className="mt-2 flex items-end gap-1">
+              <span className="text-3xl font-semibold text-[#19e6a7]">
+                {typeof aiScore === "number" ? aiScore.toFixed(1) : "--"}
+              </span>
+              <span className="pb-1 text-xs text-white/44">/100</span>
+            </div>
+            <div className="mt-1 text-sm font-semibold text-[#a9ff34]">
+              {typeof aiScore === "number" && aiScore >= 90 ? "Top 1%" : "Live ranking"}
+            </div>
+          </div>
+
+          <div className="rounded-[18px] border border-white/[0.08] bg-white/[0.025] p-2.5">
+            <div className="px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/36">Quick Actions</div>
+            <div className="mt-2 grid gap-2">
               {[
-                { label: "Open terminal", icon: CandlestickChart, onClick: () => navigate("/terminal") },
-                { label: "Launch raid", icon: Flame, onClick: () => navigate("/terminal?mode=raids") },
-                { label: "Leader arena", icon: Trophy, onClick: () => navigate("/leaderboard") },
-                {
-                  label: "Community room",
-                  icon: Users,
-                  onClick: () => navigate("/communities/So11111111111111111111111111111111111111112"),
-                },
+                { label: "New Call", hint: "Share alpha", icon: Activity, onClick: () => navigate("/") },
+                { label: "Create Raid", hint: "Open community room", icon: Flame, disabled: true },
+                { label: "AI Scan", hint: "Analyze token", icon: Zap, onClick: () => navigate("/bundle-checker") },
+                { label: "Wallet Tracker", hint: "Smart money flow", icon: ShieldCheck, disabled: true },
               ].map((item) => {
                 const Icon = item.icon;
                 return (
                   <button
                     key={item.label}
                     type="button"
-                    onClick={item.onClick}
-                    className="flex items-center justify-between rounded-[16px] border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-left text-sm text-white/66 transition hover:border-[#76ff44]/20 hover:bg-white/[0.06] hover:text-white"
+                    onClick={item.disabled ? undefined : item.onClick}
+                    disabled={item.disabled}
+                    className="flex items-center gap-2.5 rounded-[12px] border border-white/[0.07] bg-white/[0.03] px-2.5 py-2 text-left transition hover:border-lime-300/20 hover:bg-white/[0.055] disabled:cursor-not-allowed disabled:opacity-45"
                   >
-                    <span className="flex items-center gap-2">
-                      <Icon className="h-4 w-4 text-[#76ff44]" />
-                      {item.label}
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-white/[0.07] bg-black/20">
+                      <Icon className="h-4 w-4 text-lime-300" />
                     </span>
-                    <ShieldCheck className="h-3.5 w-3.5 text-white/28" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-semibold text-white/82">{item.label}</span>
+                      <span className="block truncate text-[10px] text-white/38">{item.hint}</span>
+                    </span>
                   </button>
                 );
               })}
             </div>
           </div>
-          <div className="mt-4 flex gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
-              onClick={() => navigate("/profile")}
-            >
-              <Radar className="mr-2 h-4 w-4" />
-              Account
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="rounded-xl border border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08] hover:text-white"
-              onClick={signOut}
-            >
+
+          <div className="flex items-center justify-between px-1 pb-1 text-white/48">
+            <button type="button" className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Settings">
+              <Settings className="h-4 w-4" />
+            </button>
+            <button type="button" className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Security">
+              <ShieldCheck className="h-4 w-4" />
+            </button>
+            <button type="button" className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Language">
+              <Globe2 className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={signOut} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Sign out">
               <LogOut className="h-4 w-4" />
-            </Button>
+            </button>
           </div>
         </div>
       </aside>
