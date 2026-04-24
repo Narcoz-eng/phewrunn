@@ -1,16 +1,22 @@
 import {
   Activity,
+  Bot,
   Bell,
   Boxes,
   CandlestickChart,
+  Crosshair,
   Flame,
   LogOut,
+  MessageSquare,
   Radar,
+  ScrollText,
   ShieldCheck,
   Sparkles,
   Trophy,
   UserRound,
   Users,
+  WalletCards,
+  type LucideIcon,
 } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { BrandLogo } from "@/components/BrandLogo";
@@ -20,17 +26,38 @@ import { useAuth } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { getAvatarUrl } from "@/types";
 
-const navItems = [
+type SidebarNavItem = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  match: (pathname: string, search: string) => boolean;
+};
+
+const navItems: SidebarNavItem[] = [
   { to: "/", label: "Feed", icon: Activity, match: (pathname: string) => pathname === "/" },
+  {
+    to: "/terminal?mode=raids",
+    label: "X Raids",
+    icon: Crosshair,
+    match: (pathname: string, search: string) =>
+      pathname.startsWith("/terminal") && search.includes("mode=raids"),
+  },
   {
     to: "/terminal",
     label: "Terminal",
     icon: CandlestickChart,
-    match: (pathname: string) => pathname.startsWith("/terminal") || pathname.startsWith("/token/"),
+    match: (pathname: string, search: string) =>
+      pathname.startsWith("/terminal") && !search.includes("mode=raids"),
+  },
+  {
+    to: "/token/So11111111111111111111111111111111111111112",
+    label: "Portfolio",
+    icon: WalletCards,
+    match: (pathname: string) => pathname.startsWith("/token/"),
   },
   {
     to: "/bundle-checker",
-    label: "Bundle Checker",
+    label: "Wallet Tracker",
     icon: Boxes,
     match: (pathname: string) => pathname.startsWith("/bundle-checker"),
   },
@@ -41,11 +68,25 @@ const navItems = [
     match: (pathname: string) => pathname.startsWith("/leaderboard"),
   },
   {
+    to: "/communities/So11111111111111111111111111111111111111112",
+    label: "Communities",
+    icon: Users,
+    match: (pathname: string) => pathname.startsWith("/communities"),
+  },
+  {
+    to: "/leaderboard",
+    label: "AI Intelligence",
+    icon: Bot,
+    match: () => false,
+  },
+  {
     to: "/notifications",
     label: "Notifications",
     icon: Bell,
     match: (pathname: string) => pathname.startsWith("/notifications"),
   },
+  { to: "/profile", label: "Messages", icon: MessageSquare, match: () => false },
+  { to: "/profile", label: "Watchlist", icon: ScrollText, match: () => false },
   {
     to: "/profile",
     label: "Profile",
@@ -57,9 +98,9 @@ const navItems = [
 const mobileNavItems = [
   navItems[0],
   navItems[1],
-  navItems[3],
-  navItems[4],
+  navItems[2],
   navItems[5],
+  navItems[10],
 ].filter(Boolean);
 
 function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
@@ -69,10 +110,10 @@ function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
   return (
     <>
       {items.map((item) => {
-        const active = item.match(location.pathname);
+        const active = item.match(location.pathname, location.search);
         return (
           <NavLink
-            key={item.to}
+            key={`${item.label}:${item.to}`}
             to={item.to}
             className={cn(
               mobile ? "v2-mobile-nav-item" : "v2-sidebar-link",
@@ -167,9 +208,13 @@ export function V2Sidebar() {
             <div className="mt-3 grid gap-2">
               {[
                 { label: "Open terminal", icon: CandlestickChart, onClick: () => navigate("/terminal") },
-                { label: "Launch raid", icon: Flame, onClick: () => navigate("/") },
+                { label: "Launch raid", icon: Flame, onClick: () => navigate("/terminal?mode=raids") },
                 { label: "Leader arena", icon: Trophy, onClick: () => navigate("/leaderboard") },
-                { label: "Community room", icon: Users, onClick: () => navigate("/profile") },
+                {
+                  label: "Community room",
+                  icon: Users,
+                  onClick: () => navigate("/communities/So11111111111111111111111111111111111111112"),
+                },
               ].map((item) => {
                 const Icon = item.icon;
                 return (
