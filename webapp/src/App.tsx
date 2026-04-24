@@ -35,7 +35,9 @@ const PostDetail = lazyPage(() => import("./pages/PostDetail"), "route:post-deta
 const TokenPage = lazyPage(() => import("./pages/TokenPage"), "route:token-page");
 const Terminal = lazyPage(() => import("./pages/Terminal"), "route:terminal");
 const BundleChecker = lazyPage(() => import("./pages/BundleChecker"), "route:bundle-checker");
+const CommunitiesIndexPage = lazyPage(() => import("./pages/CommunitiesIndexPage"), "route:communities-index");
 const CommunityPage = lazyPage(() => import("./pages/CommunityPage"), "route:community-page");
+const RaidsIndexPage = lazyPage(() => import("./pages/RaidsIndexPage"), "route:raids-index");
 const RaidPage = lazyPage(() => import("./pages/RaidPage"), "route:raid-page");
 const Terms = lazyPage(() => import("./pages/Terms"), "route:terms");
 const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
@@ -262,11 +264,31 @@ function AnimatedRoutes() {
             }
           />
           <Route
+            path="/communities"
+            element={
+              <ProtectedRoute>
+                <WithProductShell>
+                  <CommunitiesIndexPage />
+                </WithProductShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/communities/:tokenAddress"
             element={
               <ProtectedRoute>
                 <WithProductShell>
                   <CommunityPage />
+                </WithProductShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/raids"
+            element={
+              <ProtectedRoute>
+                <WithProductShell>
+                  <RaidsIndexPage />
                 </WithProductShell>
               </ProtectedRoute>
             }

@@ -4,21 +4,21 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSession, useAuth } from "@/lib/auth-client";
 import { api, ApiError, TimeoutError } from "@/lib/api";
 import { DiscoveryFeedSidebarResponse, Post, User } from "@/types";
-import { PostCard, type PostCardRealtimePriceMode } from "@/components/feed/PostCard";
+import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { CreatePost } from "@/components/feed/CreatePost";
+import { FeedV2RightRail } from "@/components/feed/FeedV2RightRail";
 import { FeedTab } from "@/components/feed/FeedHeader";
 import { AnnouncementBanner } from "@/components/feed/AnnouncementBanner";
 import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Button } from "@/components/ui/button";
-import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame, ArrowUpRight, Users, Zap, TrendingUp, type LucideIcon } from "lucide-react";
+import { Sparkles, RefreshCw, AlertCircle, Radar, BrainCircuit, Flame, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { syncPostsIntoQueryCache } from "@/lib/post-query-cache";
-import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 
 interface FeedPage {
@@ -46,7 +46,6 @@ const FEED_TAB_PREFETCH_GAP_MS = import.meta.env.PROD ? 550 : 300;
 const FEED_UNREAD_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 1_000 : 350;
 const FEED_ANNOUNCEMENTS_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 2_400 : 650;
 const FEED_TRENDING_QUERY_STARTUP_DELAY_MS = import.meta.env.PROD ? 4_200 : 1_000;
-const FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS = import.meta.env.PROD ? 900 : 250;
 const FEED_BACKGROUND_REFRESH_STARTUP_DELAY_MS = import.meta.env.PROD ? 12_000 : 3_000;
 const FEED_AUTO_APPLY_NEW_POSTS_TOP_THRESHOLD_PX = 600;
 const FEED_REALTIME_STATE_FIELDS_COUNT = 20;
@@ -89,14 +88,6 @@ const FEED_TAB_ITEMS: Array<{
   { id: "high-conviction", label: "Top Calls", icon: BrainCircuit, description: "Highest-conviction signals ranked by quality." },
   { id: "early-runners", label: "X Raids", icon: Radar, description: "Early momentum and raid pressure before the room rotates." },
 ];
-
-function formatCompactMetric(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
-  return new Intl.NumberFormat("en-US", {
-    notation: value >= 1_000 ? "compact" : "standard",
-    maximumFractionDigits: value >= 1_000 ? 1 : 0,
-  }).format(value);
-}
 
 function isGlobalOverlayOpen(): boolean {
   if (typeof document === "undefined") return false;
@@ -1117,17 +1108,6 @@ function mergePostWithCachedRealtimeState(
   };
 }
 
-function resolveFeedCardRealtimePriceMode(post: Post): PostCardRealtimePriceMode {
-  const createdAtMs = new Date(post.createdAt).getTime();
-  if (!Number.isFinite(createdAtMs)) {
-    return "active";
-  }
-  if (!post.settled) {
-    return "active";
-  }
-  return Date.now() - createdAtMs < FEED_RECENT_POST_CACHE_BYPASS_AGE_MS ? "active" : "passive";
-}
-
 function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: string): string {
   const params = new URLSearchParams();
   params.set("limit", String(FEED_PAGE_SIZE));
@@ -1223,7 +1203,6 @@ export default function Feed() {
   const [feedUnreadQueryReady, setFeedUnreadQueryReady] = useState(false);
   const [feedAnnouncementsReady, setFeedAnnouncementsReady] = useState(false);
   const [feedTrendingReady, setFeedTrendingReady] = useState(false);
-  const [feedRealtimeEnrichmentReady, setFeedRealtimeEnrichmentReady] = useState(false);
   const [feedBackgroundRefreshReady, setFeedBackgroundRefreshReady] = useState(false);
   const [latestAcknowledgedTopId, setLatestAcknowledgedTopId] = useState<string | null>(() =>
     readSessionCache<string>(FEED_LATEST_ACK_CACHE_KEY, FEED_LATEST_ACK_CACHE_TTL_MS)
@@ -1786,14 +1765,6 @@ export default function Feed() {
     return () => window.clearTimeout(timer);
   }, [feedBackgroundRefreshReady, hasInitialFeedResult]);
 
-  useEffect(() => {
-    if (feedRealtimeEnrichmentReady || !hasInitialFeedResult) return;
-    const timer = window.setTimeout(() => {
-      setFeedRealtimeEnrichmentReady(true);
-    }, FEED_REALTIME_ENRICHMENT_STARTUP_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [feedRealtimeEnrichmentReady, hasInitialFeedResult]);
-
   const posts = useMemo(() => {
     const mergedPosts = postsPages?.pages.flatMap((page) => page.items) ?? [];
     if (activeTab === "hot-alpha" || activeTab === "early-runners" || activeTab === "high-conviction") {
@@ -2300,8 +2271,8 @@ export default function Feed() {
 
   // Create post mutation
   const createPostMutation = useMutation({
-    mutationFn: async (content: string) => {
-      const newPost = await api.post<Post>("/api/posts", { content });
+    mutationFn: async ({ content, postType }: { content: string; postType: NonNullable<Post["postType"]> }) => {
+      const newPost = await api.post<Post>("/api/posts", { content, postType });
       return newPost;
     },
     onSuccess: (newPost) => {
@@ -2336,7 +2307,7 @@ export default function Feed() {
       if (activeTab !== "latest" || effectiveSearchQuery) {
         prependPostToFeed("latest", "");
       }
-      toast.success("Alpha posted!");
+      toast.success("Post published");
       // Refresh user data in case level changed
       refetchUser();
     },
@@ -2443,11 +2414,11 @@ export default function Feed() {
   });
 
   // Handlers
-  const handleCreatePost = async (content: string) => {
+  const handleCreatePost = async (content: string, postType: NonNullable<Post["postType"]>) => {
     if (guardPendingAuthWrite()) {
       return;
     }
-    await createPostMutation.mutateAsync(content);
+    await createPostMutation.mutateAsync({ content, postType });
   };
 
   const handleLike = async (postId: string) => {
@@ -2532,14 +2503,6 @@ export default function Feed() {
     refetchOnWindowFocus: false,
     refetchInterval: 90_000,
   });
-  const sidebarTopGainers = discoverySidebar?.topGainers ?? [];
-  const sidebarLiveRaid = discoverySidebar?.liveRaids?.[0] ?? null;
-  const sidebarTrendingCalls = discoverySidebar?.trendingCalls ?? [];
-  const sidebarTrendingCommunities = discoverySidebar?.trendingCommunities ?? [];
-  const sidebarAiSpotlight = discoverySidebar?.aiSpotlight ?? null;
-  const activeRaidProgressPct = sidebarLiveRaid
-    ? Math.max(8, Math.min(100, (sidebarLiveRaid.postedCount / Math.max(sidebarLiveRaid.participantCount, 1)) * 100))
-    : 0;
   return (
     <div className="space-y-4">
       <main className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_340px]">
@@ -2750,15 +2713,12 @@ export default function Feed() {
                       className="animate-fade-in-up"
                       style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
                     >
-                          <PostCard
+                          <FeedV2PostCard
                             post={post}
                             currentUserId={user?.id}
                             onLike={handleLike}
                             onRepost={handleRepost}
                             onComment={handleComment}
-                            enableRealtimePricePolling={feedRealtimeEnrichmentReady}
-                            realtimePriceMode={resolveFeedCardRealtimePriceMode(post)}
-                            enableSharedAlphaPreviewPrefetch={feedRealtimeEnrichmentReady}
                           />
                     </div>
                   </div>
@@ -2795,227 +2755,7 @@ export default function Feed() {
           )}
           </section>
         </div>
-
-        <aside className="space-y-4">
-          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-              <TrendingUp className="h-3.5 w-3.5 text-lime-300" />
-              Top conviction
-            </div>
-            <div className="mt-4 space-y-3">
-              {sidebarTopGainers.slice(0, 5).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => navigate(`/token/${item.address}`)}
-                  className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-white">
-                      {item.symbol || item.name || item.address.slice(0, 6)}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/42">
-                      <span>Conviction {typeof item.highConvictionScore === "number" ? item.highConvictionScore.toFixed(0) : "--"}</span>
-                      <span>Confidence {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}</span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/34">
-                      <span>Vol {formatCompactMetric(item.volume24h)}</span>
-                      <span>Liq {formatCompactMetric(item.liquidity)}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-semibold text-lime-300">
-                      {typeof item.highConvictionScore === "number" ? `${item.highConvictionScore.toFixed(0)}/100` : "--"}
-                    </div>
-                    <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-white/34">
-                      Signal stack
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(10,15,14,0.96),rgba(7,10,13,0.98))] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Raid pressure</div>
-                <div className="mt-1 text-sm font-semibold text-white">
-                  {sidebarLiveRaid?.objective || "No active raid pulse"}
-                </div>
-              </div>
-              <V2StatusPill tone="live">{sidebarLiveRaid ? "Live" : "Idle"}</V2StatusPill>
-            </div>
-            {sidebarLiveRaid ? (
-              <>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Participants</div>
-                    <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.participantCount.toLocaleString()}</div>
-                  </div>
-                  <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Posts launched</div>
-                    <div className="mt-1 text-lg font-semibold text-white">{sidebarLiveRaid.postedCount.toLocaleString()}</div>
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-white/34">
-                    <span>Raid throughput</span>
-                    <span>{activeRaidProgressPct.toFixed(0)}%</span>
-                  </div>
-                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/8">
-                    <div
-                      className="h-full rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.96),rgba(45,212,191,0.88))]"
-                      style={{ width: `${activeRaidProgressPct}%` }}
-                    />
-                  </div>
-                  <div className="mt-2 text-xs text-white/46">
-                    {sidebarLiveRaid.tokenSymbol || "This token"} has {sidebarLiveRaid.postedCount.toLocaleString()} live submissions against {sidebarLiveRaid.participantCount.toLocaleString()} active raiders.
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  onClick={() => navigate(`/raids/${sidebarLiveRaid.tokenAddress}/${sidebarLiveRaid.id}`)}
-                  className="mt-4 h-11 w-full rounded-full border border-lime-300/30 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.88))] text-sm font-semibold text-slate-950"
-                >
-                  Join raid
-                </Button>
-              </>
-            ) : (
-              <p className="mt-3 text-sm text-white/48">A live coordinated campaign will surface here as soon as one opens.</p>
-            )}
-          </section>
-
-          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-              <Zap className="h-3.5 w-3.5 text-cyan-300" />
-              Trending calls
-            </div>
-            <div className="mt-4 space-y-3">
-              {sidebarTrendingCalls.slice(0, 4).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => navigate(`/post/${item.id}`)}
-                  className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-white">
-                      {item.title || item.tokenSymbol || item.tokenName || "Tracked call"}
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-white/42">
-                      @{item.authorHandle || "trader"} • {item.direction || "Signal"}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/34">
-                      <span>Conviction {typeof item.conviction === "number" ? item.conviction.toFixed(0) : "--"}</span>
-                      <span>Confidence {typeof item.confidence === "number" ? item.confidence.toFixed(0) : "--"}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className={cn("text-sm font-semibold", typeof item.roiCurrentPct === "number" && item.roiCurrentPct >= 0 ? "text-lime-300" : "text-white")}>
-                      {typeof item.roiCurrentPct === "number" ? `${item.roiCurrentPct >= 0 ? "+" : ""}${item.roiCurrentPct.toFixed(1)}%` : "--"}
-                    </div>
-                    <ArrowUpRight className="ml-auto mt-1 h-4 w-4 text-white/34" />
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {sidebarAiSpotlight ? (
-            <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(11,16,13,0.96),rgba(7,10,12,0.99))] p-4">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-                <BrainCircuit className="h-3.5 w-3.5 text-lime-200" />
-                AI watchlist
-              </div>
-              <div className="mt-3 rounded-[22px] border border-lime-300/14 bg-lime-300/8 p-4">
-                <div className="text-sm font-semibold text-white">{sidebarAiSpotlight.ticker || sidebarAiSpotlight.title}</div>
-                <p className="mt-2 text-sm leading-6 text-white/62">{sidebarAiSpotlight.summary}</p>
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Confidence</div>
-                    <div className="mt-1 text-lg font-semibold text-white">
-                      {typeof sidebarAiSpotlight.confidenceScore === "number" ? `${sidebarAiSpotlight.confidenceScore.toFixed(0)}/100` : "--"}
-                    </div>
-                  </div>
-                  <div className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Timing</div>
-                    <div className="mt-1 text-lg font-semibold text-white">
-                      {sidebarAiSpotlight.timingTier || "Monitoring"}
-                    </div>
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => sidebarAiSpotlight.tokenAddress ? navigate(`/token/${sidebarAiSpotlight.tokenAddress}`) : undefined}
-                  className="mt-4 h-10 rounded-full border border-white/10 bg-black/20 px-4 text-white/76 hover:bg-white/[0.08] hover:text-white"
-                >
-                  Open watch
-                </Button>
-              </div>
-            </section>
-          ) : null}
-
-          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-                <BrainCircuit className="h-3.5 w-3.5 text-cyan-300" />
-                AI watchlist
-              </div>
-              <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-white/44">
-                Live
-              </div>
-            </div>
-            <div className="mt-4 space-y-3">
-              {sidebarTopGainers.slice(0, 4).map((item) => (
-                <button
-                  key={`watch-${item.id}`}
-                  type="button"
-                  onClick={() => navigate(`/token/${item.address}`)}
-                  className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">
-                      {item.symbol || item.name || item.address.slice(0, 6)}
-                    </div>
-                    <div className="truncate text-xs text-white/42">
-                      Hot alpha {typeof item.hotAlphaScore === "number" ? item.hotAlphaScore.toFixed(0) : "--"} • Vol {formatCompactMetric(item.volume24h)}
-                    </div>
-                  </div>
-                  <div className="text-sm font-semibold text-cyan-200">
-                    {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-              <Users className="h-3.5 w-3.5 text-lime-300" />
-              Community momentum
-            </div>
-            <div className="mt-4 space-y-3">
-              {sidebarTrendingCommunities.slice(0, 4).map((community) => (
-                <button
-                  key={community.tokenAddress}
-                  type="button"
-                  onClick={() => navigate(`/communities/${community.tokenAddress}`)}
-                  className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">{community.xCashtag || community.name}</div>
-                    <div className="mt-0.5 truncate text-xs text-white/42">
-                      {community.memberCount.toLocaleString()} members • {community.threadCount.toLocaleString()} threads • {community.raidCount.toLocaleString()} raids
-                    </div>
-                  </div>
-                  <ArrowUpRight className="h-4 w-4 text-white/34" />
-                </button>
-              ))}
-            </div>
-          </section>
-        </aside>
+        <FeedV2RightRail discovery={discoverySidebar} />
       </main>
     </div>
   );

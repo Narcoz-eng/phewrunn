@@ -122,8 +122,12 @@ export type WalletStatus = z.infer<typeof WalletStatusSchema>;
 // Post Types
 // =====================================================
 
+export const PostTypeSchema = z.enum(["alpha", "discussion", "chart", "poll", "raid", "news"]);
+export type PostType = z.infer<typeof PostTypeSchema>;
+
 export const CreatePostSchema = z.object({
   content: z.string().min(10, "Post must be at least 10 characters").max(400, "Post must be less than 400 characters"),
+  postType: PostTypeSchema.optional(),
 });
 
 export type CreatePost = z.infer<typeof CreatePostSchema>;
@@ -131,6 +135,7 @@ export type CreatePost = z.infer<typeof CreatePostSchema>;
 export const PostSchema = z.object({
   id: z.string(),
   content: z.string(),
+  postType: PostTypeSchema.default("alpha"),
   authorId: z.string(),
   author: z.object({
     id: z.string(),

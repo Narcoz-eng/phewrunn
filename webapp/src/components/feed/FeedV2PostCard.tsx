@@ -1,0 +1,387 @@
+import { BarChart3, Bookmark, Heart, MessageSquare, MoreVertical, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
+import { getAvatarUrl, type Post } from "@/types";
+
+type FeedV2PostCardProps = {
+  post: Post;
+  currentUserId?: string;
+  onLike?: (postId: string) => Promise<void> | void;
+  onRepost?: (postId: string) => Promise<void> | void;
+  onComment?: (postId: string, content: string) => Promise<void> | void;
+};
+
+type FeedPostKind = "call" | "whale" | "poll" | "raid" | "news" | "discussion";
+
+function compact(value: number | null | undefined, prefix = ""): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  const formatted = new Intl.NumberFormat("en-US", {
+    notation: Math.abs(value) >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 2,
+  }).format(value);
+  return `${prefix}${formatted}`;
+}
+
+function pct(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function timeAgo(value: string): string {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "";
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function inferDirection(post: Post): "LONG" | "SHORT" | null {
+  const content = post.content.toLowerCase();
+  if (content.includes(" short") || content.startsWith("short ") || content.includes("bearish")) return "SHORT";
+  if (content.includes(" long") || content.startsWith("long ") || content.includes("bullish")) return "LONG";
+  if (typeof post.roiCurrentPct === "number") return post.roiCurrentPct >= 0 ? "LONG" : "SHORT";
+  return null;
+}
+
+function inferKind(post: Post): FeedPostKind {
+  if (post.postType === "alpha" || post.postType === "chart") return post.contractAddress || post.tokenSymbol ? "call" : "discussion";
+  if (post.postType === "discussion" || post.postType === "news" || post.postType === "poll" || post.postType === "raid") return post.postType;
+
+  const content = post.content.toLowerCase();
+  if (content.includes("[poll]") || content.includes("#poll") || content.startsWith("poll:")) return "poll";
+  if (content.includes("[raid]") || content.includes("#raid") || content.includes(" raid ")) return "raid";
+  if (content.includes("[news]") || content.includes("#news") || content.startsWith("news:")) return "news";
+  if (content.includes("whale") || content.includes("accumulation") || content.includes("moved off exchange")) return "whale";
+  if (post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
+  return "discussion";
+}
+
+function displayContent(post: Post): string {
+  return post.content.replace(/^\[(alpha|discussion|chart|poll|raid|news)\]\s*/i, "");
+}
+
+function tokenLabel(post: Post): string {
+  return post.tokenSymbol ? `$${post.tokenSymbol}` : post.tokenName || "Alpha";
+}
+
+function signalTitle(post: Post): string {
+  const direction = inferDirection(post);
+  return `${tokenLabel(post)}${direction ? ` ${direction}` : ""}`;
+}
+
+function riskLabel(post: Post): string {
+  const risk = post.tokenRiskScore ?? post.bundlePenaltyScore;
+  if (typeof risk !== "number") return "Unavailable";
+  if (risk >= 70) return "High";
+  if (risk >= 40) return "Medium";
+  return "Low";
+}
+
+function momentumLabel(post: Post): string {
+  const value = post.hotAlphaScore ?? post.earlyRunnerScore ?? post.roiCurrentPct;
+  if (typeof value !== "number") return "Unavailable";
+  if (value >= 80) return "Very High";
+  if (value >= 55) return "High";
+  if (value >= 25) return "Building";
+  return "Neutral";
+}
+
+function smartMoneyLabel(post: Post): string {
+  if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
+    return `${post.trustedTraderCount} trusted`;
+  }
+  if (typeof post.bundlePenaltyScore === "number") return post.bundlePenaltyScore <= 35 ? "Clean" : "Watch";
+  return "Unavailable";
+}
+
+function chartPoints(post: Post): number[] {
+  const start = typeof post.entryMcap === "number" && post.entryMcap > 0 ? post.entryMcap : 1;
+  const end = typeof post.currentMcap === "number" && post.currentMcap > 0 ? post.currentMcap : start;
+  const peak = typeof post.roiPeakPct === "number" ? start * (1 + post.roiPeakPct / 100) : Math.max(start, end);
+  return [start, start * 1.04, start * 0.98, peak * 0.72, peak * 0.88, end * 0.94, end];
+}
+
+function MiniChart({ post, tall = false }: { post: Post; tall?: boolean }) {
+  const hasChartData = post.entryMcap !== null || post.currentMcap !== null || post.roiCurrentPct !== null;
+  if (!hasChartData) {
+    return (
+      <div className={cn("flex items-center justify-center rounded-[16px] border border-white/8 bg-black/20 text-sm text-white/40", tall ? "h-[210px]" : "h-[116px]")}>
+        Chart unavailable
+      </div>
+    );
+  }
+
+  const points = chartPoints(post);
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = Math.max(max - min, 1);
+  const path = points
+    .map((value, index) => {
+      const x = (index / (points.length - 1)) * 100;
+      const y = 88 - ((value - min) / range) * 68;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const positive = (post.roiCurrentPct ?? 0) >= 0;
+
+  return (
+    <div className={cn("relative overflow-hidden rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[210px]" : "h-[116px]")}>
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:25%_25%]" />
+      <div className="absolute left-3 top-3 flex items-center gap-2 text-xs font-semibold text-white">
+        <span>{post.tokenSymbol ? `$${post.tokenSymbol}` : "TOKEN"}/USDT</span>
+        <span className={positive ? "text-lime-300" : "text-rose-300"}>{pct(post.roiCurrentPct)}</span>
+      </div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-x-3 bottom-4 top-8 h-[calc(100%-48px)] w-[calc(100%-24px)] overflow-visible">
+        <path d={`${path} L 100 100 L 0 100 Z`} fill={positive ? "rgba(132,255,74,0.12)" : "rgba(251,113,133,0.12)"} />
+        <path d={path} fill="none" stroke={positive ? "#a9ff34" : "#fb7185"} strokeWidth="2.2" vectorEffect="non-scaling-stroke" />
+      </svg>
+    </div>
+  );
+}
+
+function PostHeader({ post, badge }: { post: Post; badge?: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar className="h-11 w-11 border border-lime-300/16">
+          <AvatarImage src={getAvatarUrl(post.author.id, post.author.image)} />
+          <AvatarFallback className="bg-white/[0.06] text-white/70">
+            {(post.author.name || post.author.username || "?").charAt(0)}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link to={`/profile/${post.author.id}`} className="truncate text-sm font-semibold text-white hover:text-lime-200">
+              {post.author.username || post.author.name}
+            </Link>
+            {post.author.isVerified ? <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-cyan-300" /> : null}
+            {post.author.reputationTier ? (
+              <span className="rounded-full border border-amber-300/24 bg-amber-300/10 px-2 py-0.5 text-[10px] font-bold text-amber-200">
+                {post.author.reputationTier}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-0.5 text-xs text-white/42">
+            @{post.author.username || post.author.name} - {timeAgo(post.createdAt)}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {badge ? (
+          <span className="rounded-full border border-lime-300/16 bg-lime-300/10 px-3 py-1 text-[11px] font-semibold text-lime-200">
+            {badge}
+          </span>
+        ) : null}
+        <MoreVertical className="h-4 w-4 text-white/34" />
+      </div>
+    </div>
+  );
+}
+
+function EngagementFooter({ post, onLike, onRepost, onComment }: FeedV2PostCardProps) {
+  const navigate = useNavigate();
+  return (
+    <div className="mt-4 flex items-center justify-between border-t border-white/8 pt-3 text-xs text-white/48">
+      <button type="button" onClick={() => onLike?.(post.id)} className={cn("inline-flex items-center gap-2 hover:text-lime-200", post.isLiked && "text-lime-300")}>
+        <Heart className="h-4 w-4" />
+        {post._count.likes}
+      </button>
+      <button type="button" onClick={() => navigate(`/post/${post.id}`)} className="inline-flex items-center gap-2 hover:text-lime-200">
+        <MessageSquare className="h-4 w-4" />
+        {post._count.comments}
+      </button>
+      <button type="button" onClick={() => onRepost?.(post.id)} className={cn("inline-flex items-center gap-2 hover:text-lime-200", post.isReposted && "text-lime-300")}>
+        <Repeat2 className="h-4 w-4" />
+        {post._count.reposts}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const content = window.prompt("Reply to this post");
+          if (content?.trim()) void onComment?.(post.id, content.trim());
+        }}
+        className="inline-flex items-center gap-2 hover:text-lime-200"
+      >
+        <BarChart3 className="h-4 w-4" />
+        {compact(post.viewCount)}
+      </button>
+      <Bookmark className="h-4 w-4 text-white/36" />
+    </div>
+  );
+}
+
+export function FeedPostCallCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  const direction = inferDirection(post);
+  const positive = direction !== "SHORT";
+  return (
+    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]">
+      <PostHeader post={post} badge={typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70 ? "High Conviction" : undefined} />
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <h2 className="text-xl font-semibold tracking-tight text-white">{signalTitle(post)}</h2>
+        {direction ? (
+          <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold", positive ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
+            {direction}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <Metric label="Entry" value={compact(post.entryMcap, "$")} />
+        <Metric label="Targets" value={post.roiPeakPct !== null ? pct(post.roiPeakPct) : "Unavailable"} />
+        <Metric label="Stop Loss" value="Unavailable" />
+        <Metric label="Leverage" value="Unavailable" />
+      </div>
+
+      <div className="mt-4">
+        <MiniChart post={post} tall />
+      </div>
+
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        <AiMetric icon={Zap} label="AI Score" value={typeof post.confidenceScore === "number" ? post.confidenceScore.toFixed(1) : "--"} sub={post.highConvictionScore ? "Conviction" : "Unavailable"} />
+        <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Live signal"} />
+        <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub="Derived from trusted activity" />
+        <AiMetric icon={TrendingDown} label="Risk Level" value={riskLabel(post)} sub={post.bundleRiskLabel || "Backend risk"} />
+      </div>
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
+export function FeedPostWhaleCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  const snapshot = post.walletTradeSnapshot;
+  const whaleValueUsd = snapshot?.holdingUsd ?? snapshot?.boughtUsd ?? snapshot?.soldUsd ?? snapshot?.totalPnlUsd ?? null;
+  return (
+    <article className="rounded-[18px] border border-cyan-300/12 bg-[linear-gradient(180deg,rgba(6,13,18,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostHeader post={post} badge="Whale Alert" />
+      <h2 className="mt-4 text-xl font-semibold tracking-tight text-white">{tokenLabel(post)} WHALE ACTIVITY</h2>
+      <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <Metric label="Amount" value={snapshot?.netAmount != null ? compact(snapshot.netAmount) : "Unavailable"} />
+        <Metric label="Value" value={compact(whaleValueUsd, "$")} />
+        <Metric label="From" value={snapshot?.source || "Unavailable"} />
+        <Metric label="To" value={post.contractAddress ? `${post.contractAddress.slice(0, 6)}...${post.contractAddress.slice(-4)}` : "Unavailable"} />
+      </div>
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
+export function FeedPostPollCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  return (
+    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostHeader post={post} badge="Poll" />
+      <h2 className="mt-4 text-lg font-semibold text-white">{displayContent(post)}</h2>
+      <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+          <Vote className="h-4 w-4 text-lime-300" />
+          Poll results unavailable
+        </div>
+        <p className="mt-2 text-sm leading-6 text-white/50">
+          This post is marked as a poll, but the backend does not yet provide poll options, vote counts, or expiration metadata.
+        </p>
+      </div>
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
+export function FeedPostRaidCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  return (
+    <article className="rounded-[18px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostHeader post={post} badge="Raid" />
+      <h2 className="mt-4 text-xl font-semibold text-white">{tokenLabel(post)} RAID UPDATE</h2>
+      <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+      <div className="mt-4 rounded-[16px] border border-lime-300/12 bg-lime-300/8 p-4 text-sm text-white/58">
+        Raid room data is only shown when this post is linked to a backend raid campaign.
+      </div>
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
+export function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  return (
+    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostHeader post={post} badge="Discussion" />
+      <p className="mt-4 text-[15px] leading-7 text-white/72">{displayContent(post)}</p>
+      {post.contractAddress ? <TokenPreview post={post} /> : null}
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
+export function FeedPostNewsCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  return (
+    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostHeader post={post} badge="News" />
+      <h2 className="mt-4 text-xl font-semibold text-white">{tokenLabel(post)} UPDATE</h2>
+      <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+      {post.contractAddress ? <TokenPreview post={post} /> : null}
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function AiMetric({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub: string }) {
+  return (
+    <div className="rounded-[16px] border border-lime-300/10 bg-lime-300/[0.045] px-3 py-3">
+      <div className="flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-lime-300/14 bg-black/24">
+          <Icon className="h-4 w-4 text-lime-300" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{label}</div>
+          <div className="truncate text-sm font-semibold text-lime-200">{value}</div>
+        </div>
+      </div>
+      <div className="mt-2 truncate text-xs text-white/42">{sub}</div>
+    </div>
+  );
+}
+
+function TokenPreview({ post }: { post: Post }) {
+  return (
+    <Link to={post.contractAddress ? `/token/${post.contractAddress}` : "#"} className="mt-4 flex items-center justify-between gap-3 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 hover:bg-white/[0.05]">
+      <div className="flex min-w-0 items-center gap-3">
+        {post.tokenImage ? <img src={post.tokenImage} alt="" className="h-9 w-9 rounded-full object-cover" /> : null}
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-white">{tokenLabel(post)}</div>
+          <div className="truncate text-xs text-white/42">{post.contractAddress}</div>
+        </div>
+      </div>
+      <div className={cn("text-sm font-semibold", (post.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+        {pct(post.roiCurrentPct)}
+      </div>
+    </Link>
+  );
+}
+
+export function FeedV2PostCard(props: FeedV2PostCardProps) {
+  const kind = inferKind(props.post);
+  if (kind === "whale") return <FeedPostWhaleCard {...props} />;
+  if (kind === "poll") return <FeedPostPollCard {...props} />;
+  if (kind === "raid") return <FeedPostRaidCard {...props} />;
+  if (kind === "news") return <FeedPostNewsCard {...props} />;
+  if (kind === "call") return <FeedPostCallCard {...props} />;
+  return <FeedPostDiscussionCard {...props} />;
+}

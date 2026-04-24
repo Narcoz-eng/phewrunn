@@ -2,6 +2,8 @@ const RESERVED_PROFILE_HANDLES = new Set([
   "admin",
   "api",
   "assets",
+  "bundle-checker",
+  "communities",
   "docs",
   "feed",
   "leaderboard",
@@ -10,7 +12,10 @@ const RESERVED_PROFILE_HANDLES = new Set([
   "post",
   "privacy",
   "profile",
+  "raids",
+  "terminal",
   "terms",
+  "token",
   "welcome",
 ]);
 

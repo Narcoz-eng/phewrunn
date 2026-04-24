@@ -178,6 +178,7 @@ model Follow {
 model Post {
   id              String    @id @default(cuid())
   content         String
+  postType        String    @default("alpha") // alpha, discussion, chart, poll, raid, news
   authorId        String
   author          User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
   tokenId         String?
@@ -252,6 +253,7 @@ model Post {
   @@index([authorId, settledAt]) // For time-based stats queries
   @@index([settled, settledAt]) // For settlement batch queries
   @@index([createdAt])
+  @@index([postType, createdAt])
   @@index([createdAt, id])
   @@index([createdAt, authorId])
   @@index([authorId, createdAt])

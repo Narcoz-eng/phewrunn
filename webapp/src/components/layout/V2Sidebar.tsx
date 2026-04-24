@@ -37,10 +37,10 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: "/", label: "Feed", icon: Activity, match: (pathname) => pathname === "/" },
   {
-    to: "/terminal?mode=raids",
+    to: "/raids",
     label: "X Raids",
     icon: Crosshair,
-    match: (pathname, search) => pathname.startsWith("/terminal") && search.includes("mode=raids"),
+    match: (pathname) => pathname.startsWith("/raids"),
   },
   {
     to: "/terminal",
@@ -52,7 +52,7 @@ const navItems: NavItem[] = [
   { to: "/bundle-checker", label: "Bundle Checker", icon: Boxes, match: (pathname) => pathname.startsWith("/bundle-checker") },
   { label: "Portfolio", icon: Wallet, disabled: true },
   { to: "/leaderboard", label: "Leaderboard", icon: Trophy, match: (pathname) => pathname.startsWith("/leaderboard") },
-  { label: "Communities", icon: Users, disabled: true },
+  { to: "/communities", label: "Communities", icon: Users, match: (pathname) => pathname.startsWith("/communities") },
   { label: "AI Intelligence", icon: Zap, disabled: true },
   { to: "/notifications", label: "Notifications", icon: Bell, badge: "12", match: (pathname) => pathname.startsWith("/notifications") },
   { label: "Messages", icon: Mail, disabled: true },
@@ -174,7 +174,7 @@ export function V2Sidebar() {
             <div className="mt-2 grid gap-2">
               {[
                 { label: "New Call", hint: "Share alpha", icon: Activity, onClick: () => navigate("/") },
-                { label: "Create Raid", hint: "Open community room", icon: Flame, disabled: true },
+                { label: "Create Raid", hint: "Open raid room", icon: Flame, onClick: () => navigate("/raids") },
                 { label: "AI Scan", hint: "Analyze token", icon: Zap, onClick: () => navigate("/bundle-checker") },
                 { label: "Wallet Tracker", hint: "Smart money flow", icon: ShieldCheck, disabled: true },
               ].map((item) => {

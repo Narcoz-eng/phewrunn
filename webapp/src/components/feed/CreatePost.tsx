@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, AlertTriangle, Loader2, ExternalLink, Camera, Lock, Skull } from "lucide-react";
+import { Loader2, ExternalLink, Camera, Lock, Skull } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { User, detectContractAddress, LIQUIDATION_LEVEL, getAvatarUrl } from "@/types";
 import { toast } from "sonner";
@@ -14,18 +14,85 @@ import {
 } from "@/components/ui/tooltip";
 import { PhewSendIcon } from "@/components/icons/PhewIcons";
 
-const COMPOSER_ACTIONS = [
-  { label: "Image", tone: "default" },
-  { label: "Chart", tone: "default" },
-  { label: "Long", tone: "lime" },
-  { label: "Short", tone: "rose" },
-  { label: "Raid", tone: "amber" },
-  { label: "Poll", tone: "default" },
-] as const;
+type ComposerMode = "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
+
+const COMPOSER_ACTIONS: Array<{
+  id: ComposerMode;
+  label: string;
+  prefix: string;
+  tone: "default" | "lime" | "amber" | "cyan" | "violet";
+  placeholder: string;
+  submitLabel: string;
+}> = [
+  {
+    id: "alpha",
+    label: "Alpha",
+    prefix: "[alpha]",
+    tone: "lime",
+    placeholder: "Drop an alpha thesis. Add entry, target, risk, and paste a token CA for live context.",
+    submitLabel: "Post Alpha",
+  },
+  {
+    id: "discussion",
+    label: "Discussion",
+    prefix: "[discussion]",
+    tone: "default",
+    placeholder: "Start a trader discussion. Ask a question, share context, or open a room thread.",
+    submitLabel: "Post Discussion",
+  },
+  {
+    id: "chart",
+    label: "Chart",
+    prefix: "[chart]",
+    tone: "cyan",
+    placeholder: "Share chart context. Paste a token CA and describe the setup.",
+    submitLabel: "Post Chart",
+  },
+  {
+    id: "poll",
+    label: "Poll",
+    prefix: "[poll]",
+    tone: "violet",
+    placeholder: "Create a poll prompt with clear options and an expiration window.",
+    submitLabel: "Post Poll",
+  },
+  {
+    id: "raid",
+    label: "Raid",
+    prefix: "[raid]",
+    tone: "amber",
+    placeholder: "Share a raid update. Link the target, goal, or room context.",
+    submitLabel: "Post Raid",
+  },
+  {
+    id: "news",
+    label: "News",
+    prefix: "[news]",
+    tone: "default",
+    placeholder: "Share market or community news with source context.",
+    submitLabel: "Post News",
+  },
+];
+
+function composerToneClass(action: (typeof COMPOSER_ACTIONS)[number], isActive: boolean): string {
+  if (isActive) {
+    return "border-lime-300/40 bg-lime-300/[0.16] text-lime-100 shadow-[0_0_22px_rgba(169,255,52,0.12)]";
+  }
+
+  if (action.tone === "lime") return "border-lime-300/20 bg-lime-300/10 text-lime-200";
+  if (action.tone === "amber") return "border-amber-300/20 bg-amber-300/10 text-amber-200";
+  if (action.tone === "cyan") return "border-cyan-300/20 bg-cyan-300/10 text-cyan-200";
+  if (action.tone === "violet") return "border-violet-300/20 bg-violet-300/10 text-violet-200";
+  return "border-white/8 bg-black/20 text-white/56";
+}
+
+function stripComposerPrefix(content: string): string {
+  return content.replace(/^\[(alpha|discussion|chart|poll|raid|news)\]\s*/i, "").trim();
+}
 
 interface CreatePostProps {
   user: User | null;
-  onSubmit: (content: string) => Promise<void>;
+  onSubmit: (content: string, postType: ComposerMode) => Promise<void>;
   isSubmitting: boolean;
   isAuthPending?: boolean;
 }
@@ -159,6 +226,7 @@ export function CreatePost({
 }: CreatePostProps) {
   const navigate = useNavigate();
   const [content, setContent] = useState("");
+  const [mode, setMode] = useState<ComposerMode>("alpha");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
   const [isFetchingToken, setIsFetchingToken] = useState(false);
@@ -168,6 +236,7 @@ export function CreatePost({
   const isComposerDisabled = isSubmitting || isLiquidated || isAuthPending;
   const detected = detectContractAddress(content);
   const charCount = content.length;
+  const activeMode = COMPOSER_ACTIONS.find((action) => action.id === mode) ?? COMPOSER_ACTIONS[0];
 
   // Fetch token info from Dexscreener with debounce
   const fetchTokenInfo = useCallback(async (address: string, chainType: "solana" | "evm") => {
@@ -255,7 +324,9 @@ export function CreatePost({
       return;
     }
 
-    await onSubmit(trimmedContent);
+    const typedContent = stripComposerPrefix(trimmedContent);
+
+    await onSubmit(typedContent || trimmedContent, mode);
     setContent("");
     setTokenInfo(null);
   };
@@ -321,15 +392,10 @@ export function CreatePost({
                 <button
                   key={action.label}
                   type="button"
+                  onClick={() => setMode(action.id)}
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
-                    action.tone === "lime"
-                      ? "border-lime-300/20 bg-lime-300/10 text-lime-200"
-                      : action.tone === "rose"
-                        ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
-                        : action.tone === "amber"
-                          ? "border-amber-300/20 bg-amber-300/10 text-amber-200"
-                          : "border-white/8 bg-black/20 text-white/56"
+                    composerToneClass(action, mode === action.id)
                   )}
                 >
                   {action.label}
@@ -348,7 +414,7 @@ export function CreatePost({
                 ? "Posting disabled - Account liquidated"
                 : isAuthPending
                   ? "Signing you in..."
-                  : "Post signal, discussion, or raid update. Paste a token CA to attach live token context."
+                  : activeMode.placeholder
             }
             value={content}
             onChange={(e) => !isLiquidated && !isAuthPending && setContent(e.target.value)}
@@ -460,7 +526,7 @@ export function CreatePost({
                 </span>
               )}
               {!detected && charCount >= MIN_CHARS ? (
-                <span className="text-xs text-white/34">Posting as discussion / room update</span>
+                <span className="text-xs text-white/34">Posting as {activeMode.label.toLowerCase()}</span>
               ) : null}
               {detected && charCount >= MIN_CHARS ? (
                 <span className="text-xs text-lime-200/80">Token context attached</span>
@@ -498,7 +564,7 @@ export function CreatePost({
               ) : (
                 <>
                   <PhewSendIcon className="h-4 w-4" />
-                  <span>Post Signal</span>
+                  <span>{activeMode.submitLabel}</span>
                 </>
               )}
             </Button>

@@ -81,6 +81,7 @@ export interface TokenBundleCluster {
 export interface Post {
   id: string;
   content: string;
+  postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
   authorId: string;
   author: PostAuthor;
   contractAddress: string | null;

@@ -8,6 +8,8 @@ import { prisma, withPrismaRetry, isPrismaPoolPressureActive } from "../prisma.j
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import {
   CreatePostSchema,
+  PostTypeSchema,
+  type PostType,
   CreateCommentSchema,
   FeedQuerySchema,
   detectContractAddress,
@@ -211,6 +213,25 @@ type EndpointConcurrencyLimiter = {
   tryAcquire: () => EndpointConcurrencyLease | null;
   current: () => number;
 };
+
+const POST_TYPE_PREFIX_RE = /^\[(alpha|discussion|chart|poll|raid|news)\]\s*/i;
+
+function normalizePostType(input: unknown, content: string, hasDetectedToken: boolean): PostType {
+  const parsed = PostTypeSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+
+  const prefixMatch = content.match(POST_TYPE_PREFIX_RE);
+  if (prefixMatch?.[1]) {
+    const prefixed = PostTypeSchema.safeParse(prefixMatch[1].toLowerCase());
+    if (prefixed.success) return prefixed.data;
+  }
+
+  return hasDetectedToken ? "alpha" : "discussion";
+}
+
+function stripPostTypePrefix(content: string): string {
+  return content.replace(POST_TYPE_PREFIX_RE, "").trim();
+}
 
 type JobDispatchRecord = {
   jobName: EnqueueInternalJobInput["jobName"];
@@ -1502,6 +1523,7 @@ async function loadEmergencyFeedPosts(
 
   return minimalPosts.map((post) => ({
     ...post,
+    postType: "alpha",
     contractAddress: null,
     chainType: null,
     tokenName: null,
@@ -1548,6 +1570,7 @@ async function loadPrimaryFeedPosts(
             select: {
               id: true,
               content: true,
+              postType: true,
               authorId: true,
               contractAddress: true,
               chainType: true,
@@ -1610,6 +1633,7 @@ async function loadPrimaryFeedPosts(
           select: {
             id: true,
             content: true,
+            postType: true,
             authorId: true,
             contractAddress: true,
             chainType: true,
@@ -1690,6 +1714,7 @@ async function loadPrimaryFeedPosts(
         )) as any[];
         return legacyPosts.map((post) => ({
           ...post,
+          postType: "alpha",
           tokenName: null,
           tokenSymbol: null,
           tokenImage: null,
@@ -1741,6 +1766,7 @@ async function loadPrimaryFeedPosts(
         )) as any[];
         return minimalPosts.map((post) => ({
           ...post,
+          postType: "alpha",
           contractAddress: null,
           chainType: null,
           entryMcap: null,
@@ -1887,6 +1913,7 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
   return rows.map((row: Record<string, unknown>) => ({
     id: row.id,
     content: row.content ?? "",
+    postType: row.postType ?? "alpha",
     authorId: row.authorId,
     contractAddress: row.contractAddress ?? null,
     chainType: row.chainType ?? null,
@@ -1984,6 +2011,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
     prisma.$queryRaw<Array<{
       id: string;
       content: string;
+      postType: string | null;
       authorId: string;
       contractAddress: string | null;
       chainType: string | null;
@@ -2018,6 +2046,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
       SELECT
         p.id,
         p.content,
+        p."postType",
         p."authorId",
         p."contractAddress",
         p."chainType",
@@ -2061,6 +2090,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
   return rows.map((row) => ({
     id: row.id,
     content: row.content,
+    postType: row.postType ?? "alpha",
     authorId: row.authorId,
     contractAddress: row.contractAddress ?? null,
     chainType: row.chainType ?? null,
@@ -2811,6 +2841,7 @@ async function resolveCreatePostMarketContext(params: {
 function buildCreatePostResponse(params: {
   id: string;
   content: string;
+  postType: PostType;
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
@@ -2831,6 +2862,7 @@ function buildCreatePostResponse(params: {
   return {
     id: params.id,
     content: params.content,
+    postType: params.postType,
     authorId: params.authorId,
     contractAddress: params.contractAddress,
     chainType: params.chainType,
@@ -2857,6 +2889,7 @@ function buildCreatePostResponse(params: {
 
 async function createPostRawFallback(params: {
   content: string;
+  postType: PostType;
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
@@ -2897,6 +2930,7 @@ async function createPostRawFallback(params: {
   return buildCreatePostResponse({
     id,
     content: params.content,
+    postType: params.postType,
     authorId: params.authorId,
     contractAddress: params.contractAddress,
     chainType: params.chainType,
@@ -5694,76 +5728,75 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     }, 429);
   }
 
-  const { content } = c.req.valid("json");
-
-  // Detect contract address - REQUIRED for posting
-  const detected = detectContractAddress(content);
-
-  if (!detected) {
-    return c.json({
-      error: {
-        message: "A valid Contract Address is required to post",
-        code: "CA_REQUIRED"
-      }
-    }, 400);
-  }
+  const body = c.req.valid("json");
+  const strippedContent = stripPostTypePrefix(body.content);
+  const detected = detectContractAddress(strippedContent);
+  const postType = normalizePostType(body.postType, body.content, Boolean(detected));
+  const content = strippedContent.length > 0 ? strippedContent : body.content.trim();
 
   const alphaCreatedAt = new Date();
-  const existingAlphaInBucket = await findEarliestAlphaInBucket({
-    authorId: user.id,
-    contractAddress: detected.address,
-    createdAt: alphaCreatedAt,
-  });
-  if (existingAlphaInBucket) {
-    const bucketStart = getAlphaScoreBucketStart(alphaCreatedAt);
-    const resetAt = new Date(bucketStart.getTime() + ALPHA_SCORE_WINDOW_MS);
-    const resetInMinutes = Math.max(
-      1,
-      Math.ceil((resetAt.getTime() - Date.now()) / (60 * 1000))
-    );
-    return c.json(
-      {
-        error: {
-          message:
-            "You already posted this contract in the current scoring window. Wait before posting it again.",
-          code: "ALPHA_COOLDOWN_ACTIVE",
-          data: {
-            contractAddress: detected.address,
-            resetAt: resetAt.toISOString(),
-            resetInMinutes,
+  if (detected) {
+    const existingAlphaInBucket = await findEarliestAlphaInBucket({
+      authorId: user.id,
+      contractAddress: detected.address,
+      createdAt: alphaCreatedAt,
+    });
+    if (existingAlphaInBucket) {
+      const bucketStart = getAlphaScoreBucketStart(alphaCreatedAt);
+      const resetAt = new Date(bucketStart.getTime() + ALPHA_SCORE_WINDOW_MS);
+      const resetInMinutes = Math.max(
+        1,
+        Math.ceil((resetAt.getTime() - Date.now()) / (60 * 1000))
+      );
+      return c.json(
+        {
+          error: {
+            message:
+              "You already posted this contract in the current scoring window. Wait before posting it again.",
+            code: "ALPHA_COOLDOWN_ACTIVE",
+            data: {
+              contractAddress: detected.address,
+              resetAt: resetAt.toISOString(),
+              resetInMinutes,
+            },
           },
         },
-      },
-      429
-    );
+        429
+      );
+    }
   }
 
-  const { marketCapResult, heliusTokenMetadata } = await resolveCreatePostMarketContext({
-    address: detected.address,
-    chainType: detected.chainType,
-  });
-  const entryMcap = marketCapResult.mcap;
+  const marketContext = detected
+    ? await resolveCreatePostMarketContext({
+        address: detected.address,
+        chainType: detected.chainType,
+      })
+    : null;
+  const marketCapResult = marketContext?.marketCapResult ?? null;
+  const heliusTokenMetadata = marketContext?.heliusTokenMetadata ?? null;
+  const entryMcap = marketCapResult?.mcap ?? null;
 
   const createPostData = {
     content,
+    postType,
     authorId: user.id,
-    contractAddress: detected.address,
-    chainType: detected.chainType,
+    contractAddress: detected?.address ?? null,
+    chainType: detected?.chainType ?? null,
     entryMcap,
     currentMcap: entryMcap,
     // Store token metadata (Helius-first for names/symbol, Dex-first for image)
-    tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult.tokenName ?? null,
-    tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult.tokenSymbol ?? null,
-    tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
-    dexscreenerUrl: marketCapResult.dexscreenerUrl ?? null,
-    trackingMode: TRACKING_MODE_ACTIVE, // New posts start in active tracking mode
-    lastMcapUpdate: new Date(),
+    tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult?.tokenName ?? null,
+    tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult?.tokenSymbol ?? null,
+    tokenImage: marketCapResult?.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
+    dexscreenerUrl: marketCapResult?.dexscreenerUrl ?? null,
+    trackingMode: detected ? TRACKING_MODE_ACTIVE : null,
+    lastMcapUpdate: detected ? new Date() : null,
   };
 
   let post: ReturnType<typeof buildCreatePostResponse>;
 
   try {
-    post = await prisma.post.create({
+    const createdPost = await prisma.post.create({
       data: createPostData,
       include: {
         author: {
@@ -5786,6 +5819,10 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
         },
       },
     });
+    post = {
+      ...createdPost,
+      postType: normalizePostType(createdPost.postType, createdPost.content, Boolean(createdPost.contractAddress)),
+    };
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
       throw error;
@@ -5796,16 +5833,17 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     });
     post = await createPostRawFallback({
       content: createPostData.content,
+      postType: createPostData.postType,
       authorId: createPostData.authorId,
       contractAddress: createPostData.contractAddress,
       chainType: createPostData.chainType,
       entryMcap: createPostData.entryMcap,
       currentMcap: createPostData.currentMcap,
       author: authorSnapshot,
-      tokenName: marketCapResult.tokenName ?? heliusTokenMetadata?.tokenName ?? null,
-      tokenSymbol: marketCapResult.tokenSymbol ?? heliusTokenMetadata?.tokenSymbol ?? null,
-      tokenImage: marketCapResult.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
-      dexscreenerUrl: marketCapResult.dexscreenerUrl ?? null,
+      tokenName: marketCapResult?.tokenName ?? heliusTokenMetadata?.tokenName ?? null,
+      tokenSymbol: marketCapResult?.tokenSymbol ?? heliusTokenMetadata?.tokenSymbol ?? null,
+      tokenImage: marketCapResult?.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
+      dexscreenerUrl: marketCapResult?.dexscreenerUrl ?? null,
     });
   }
 
@@ -5815,10 +5853,12 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     authorUsername: authorSnapshot.username,
     postId: post.id,
   });
-  queuePostCreateSettlement({
-    postId: post.id,
-    createdAt: alphaCreatedAt,
-  });
+  if (createPostData.contractAddress) {
+    queuePostCreateSettlement({
+      postId: post.id,
+      createdAt: alphaCreatedAt,
+    });
+  }
   queuePostCreateIntelligenceRefresh({
     postId: post.id,
     contractAddress: createPostData.contractAddress,
