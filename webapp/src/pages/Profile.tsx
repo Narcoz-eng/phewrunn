@@ -67,6 +67,7 @@ import { BannerPicker } from "@/components/profile/BannerPicker";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2, ImageIcon } from "lucide-react";
 import { ProfileUnifiedSurface, type SharedProfileTab } from "@/components/profile/ProfileUnifiedSurface";
+import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 import {
   buildTraderPerformanceVm,
   buildTraderPerformanceVmFromSnapshot,
@@ -254,6 +255,7 @@ export default function Profile() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [profileTab, setProfileTab] = useState<SharedProfileTab>("overview");
+  const [profileSearch, setProfileSearch] = useState("");
   const [mainTab, setMainTab] = useState<MainTab>("posts");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [performancePeriod, setPerformancePeriod] = useState<PerformancePeriod>("30d");
@@ -1456,6 +1458,16 @@ export default function Profile() {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 sm:px-5">
+        <div className="flex justify-end">
+          <V2PageTopbar
+            value={profileSearch}
+            onChange={setProfileSearch}
+            placeholder="Search tokens, users, raids..."
+            className="w-full lg:max-w-[560px]"
+          />
+        </div>
+      </section>
       <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
         <Dialog
           open={isCropDialogOpen}
