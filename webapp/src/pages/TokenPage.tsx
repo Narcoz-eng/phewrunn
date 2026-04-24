@@ -7,7 +7,7 @@ import {
   getChartBucketMs,
   mergeLiveSamplesIntoCandles,
 } from "@/lib/live-candle-stream";
-import { Post, PostAuthor, ReactionCounts, TokenActiveRaidResponse, TokenCommunityRoom, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
+import { DiscoveryFeedSidebarResponse, Post, PostAuthor, ReactionCounts, TokenActiveRaidResponse, TokenCommunityRoom, TokenSocialSignalPost, TokenSocialSignals, formatMarketCap, formatTimeAgo, getAvatarUrl } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, Share2, ShieldAlert, Users, Activity, Flame, Target, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -2709,6 +2709,36 @@ export default function TokenPage() {
     },
   });
   const socialSignals = socialSignalsQuery.data ?? null;
+  const discoverySidebarQuery = useQuery<DiscoveryFeedSidebarResponse>({
+    queryKey: ["discovery", "feed-sidebar"],
+    staleTime: 45_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
+    queryFn: () => api.get<DiscoveryFeedSidebarResponse>("/api/discovery/feed-sidebar"),
+  });
+  const discoverySidebar = discoverySidebarQuery.data ?? null;
+  const sidebarTopGainers = discoverySidebar?.topGainers ?? [];
+  const sidebarLiveRaids = discoverySidebar?.liveRaids ?? [];
+  const smartMoneyFlowRows = useMemo(
+    () =>
+      topHolderRows
+        .map((holder) => ({
+          address: holder.ownerAddress ?? holder.address,
+          label: holder.phewHandle ? `@${holder.phewHandle}` : formatHolderAddress(holder.ownerAddress ?? holder.address),
+          valueUsd: holder.valueUsd,
+          behavior: getHolderBehavior(holder.tradeSnapshot),
+          boughtAmount: holder.tradeSnapshot?.boughtAmount ?? null,
+          soldAmount: holder.tradeSnapshot?.soldAmount ?? null,
+          netAmount: holder.tradeSnapshot?.netAmount ?? null,
+        }))
+        .filter((row) => typeof row.valueUsd === "number" && Number.isFinite(row.valueUsd) && row.valueUsd > 0)
+        .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0))
+        .slice(0, 5),
+    [topHolderRows]
+  );
+  const sentimentBullPct = Math.max(0, Math.min(100, sentimentView.bullishPct));
+  const sentimentBearPct = Math.max(0, Math.min(100, sentimentView.bearishPct));
   const socialSignalQueries = useMemo(() => {
     const queries = socialSignals?.matchedQueries?.length
       ? socialSignals.matchedQueries
@@ -3839,6 +3869,107 @@ export default function TokenPage() {
                             </div>
                           </div>
                         )}
+
+                        <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Top conviction tokens</div>
+                            <div className="text-xs text-white/38">Live</div>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {sidebarTopGainers.slice(0, 5).map((item, index) => (
+                              <Link
+                                key={`${item.address}:${index}`}
+                                to={`/token/${item.address}`}
+                                className="flex items-center justify-between rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5 transition hover:bg-white/[0.06]"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-semibold text-white">{item.symbol ? `$${item.symbol}` : "Token"}</div>
+                                  <div className="text-[11px] text-white/42">
+                                    {typeof item.liquidity === "number" ? `${formatMarketMetric(item.liquidity)} liq` : "Liquidity pending"}
+                                  </div>
+                                </div>
+                                <div className="text-xs font-semibold text-white/40">
+                                  {typeof item.highConvictionScore === "number"
+                                    ? `${item.highConvictionScore.toFixed(1)} HC`
+                                    : typeof item.confidenceScore === "number"
+                                      ? `${item.confidenceScore.toFixed(1)} confidence`
+                                      : "N/A"}
+                                </div>
+                              </Link>
+                            ))}
+                            {!sidebarTopGainers.length ? (
+                              <div className="rounded-[14px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                                Discovery gainers are syncing.
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Smart money flow</div>
+                          <div className="mt-1 text-xs text-white/46">Derived from top-holder wallet scans and behavior tags.</div>
+                          <div className="mt-3 space-y-2">
+                            {smartMoneyFlowRows.map((row) => (
+                              <a
+                                key={row.address}
+                                href={buildChainExplorerUrl(token.chainType === "solana" ? "solana" : "ethereum", "address", row.address)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center justify-between rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5 transition hover:bg-white/[0.06]"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-semibold text-white">{row.label}</div>
+                                  <div className="text-[11px] text-white/42">
+                                    {row.behavior === "accumulating" ? "Accumulating" : row.behavior === "selling" ? "Selling" : "Holding"}
+                                    {typeof row.boughtAmount === "number" && Number.isFinite(row.boughtAmount) ? ` • Bought ${formatHolderAmount(row.boughtAmount)}` : ""}
+                                    {typeof row.soldAmount === "number" && Number.isFinite(row.soldAmount) && row.soldAmount > 0 ? ` • Sold ${formatHolderAmount(row.soldAmount)}` : ""}
+                                  </div>
+                                </div>
+                                <div
+                                  className={cn(
+                                    "text-sm font-semibold",
+                                    typeof row.netAmount === "number" && Number.isFinite(row.netAmount)
+                                      ? row.netAmount >= 0
+                                        ? "text-emerald-300"
+                                        : "text-rose-300"
+                                      : "text-white"
+                                  )}
+                                >
+                                  {typeof row.netAmount === "number" && Number.isFinite(row.netAmount)
+                                    ? `${row.netAmount >= 0 ? "+" : ""}${formatHolderAmount(row.netAmount)}`
+                                    : formatMarketMetric(row.valueUsd)}
+                                </div>
+                              </a>
+                            ))}
+                            {!smartMoneyFlowRows.length ? (
+                              <div className="rounded-[14px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                                Holder trade snapshots are still resolving.
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Market sentiment</div>
+                            <div className="text-xs font-medium text-white/46">{sentimentView.score.toFixed(0)}/100</div>
+                          </div>
+                          <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
+                            <div className="h-full bg-[linear-gradient(90deg,#6dff7a,#a9ff34)]" style={{ width: `${sentimentBullPct}%` }} />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-xs">
+                            <span className="text-emerald-300">Bullish {sentimentBullPct.toFixed(0)}%</span>
+                            <span className="text-rose-300">Bearish {sentimentBearPct.toFixed(0)}%</span>
+                          </div>
+                          {sidebarLiveRaids[0] ? (
+                            <Link
+                              to={`/raids/${sidebarLiveRaids[0].tokenAddress}/${sidebarLiveRaids[0].id}`}
+                              className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-[14px] border border-lime-300/20 bg-lime-300/10 text-sm font-semibold text-lime-200 transition hover:bg-lime-300/14"
+                            >
+                              Open live raid
+                            </Link>
+                          ) : null}
+                        </div>
                       </>
                     }
                   />
@@ -4461,4 +4592,3 @@ export default function TokenPage() {
     </div>
   );
 }
-
