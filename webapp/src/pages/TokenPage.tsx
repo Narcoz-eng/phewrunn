@@ -106,6 +106,17 @@ type TokenChartCandlesResponse = {
   network: string | null;
 };
 
+type TokenDepthLevel = {
+  price: number;
+  size: number;
+  total: number;
+};
+
+type TokenDepthResponse = {
+  bids: TokenDepthLevel[];
+  asks: TokenDepthLevel[];
+};
+
 type TokenTrader = PostAuthor & {
   callsCount: number;
   avgConfidenceScore: number;
@@ -614,6 +625,14 @@ function formatTokenPrice(value: number): string {
   if (Math.abs(value) < 0.01) return `$${value.toFixed(6)}`;
   if (Math.abs(value) < 1) return `$${value.toFixed(4)}`;
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+function formatUsd(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
+  return `$${value.toFixed(2)}`;
 }
 
 function formatChartTimelineTick(timestampMs: number, spanMs: number): string {
@@ -2502,6 +2521,26 @@ export default function TokenPage() {
     },
   });
 
+  const depthQuery = useQuery<TokenDepthResponse>({
+    queryKey: ["token-page-depth", token?.address, token?.pairAddress, token?.chainType],
+    enabled: Boolean(token?.address),
+    staleTime: 8_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    refetchInterval: token?.address ? 10_000 : false,
+    queryFn: async () => {
+      if (!token?.address) {
+        return { bids: [], asks: [] };
+      }
+      return api.post<TokenDepthResponse>("/api/posts/terminal/depth", {
+        tokenMint: token.address,
+        chainType: token.chainType,
+        pairAddress: token.pairAddress ?? undefined,
+      });
+    },
+  });
+
   const chartData = useMemo(
     () => {
       const basePoints = [...(historicalChartQuery.data ?? token?.chart ?? [])]
@@ -2736,6 +2775,10 @@ export default function TokenPage() {
   );
   const sentimentBullPct = Math.max(0, Math.min(100, sentimentView.bullishPct));
   const sentimentBearPct = Math.max(0, Math.min(100, sentimentView.bearishPct));
+  const depthBids = depthQuery.data?.bids?.slice(0, 6) ?? [];
+  const depthAsks = depthQuery.data?.asks?.slice(0, 6) ?? [];
+  const liveFeedRows = displayTimeline.slice(0, 6);
+  const tokenNewsRows = socialSignals?.latestPosts?.slice(0, 5) ?? [];
   const socialSignalQueries = useMemo(() => {
     const queries = socialSignals?.matchedQueries?.length
       ? socialSignals.matchedQueries
@@ -3951,6 +3994,187 @@ export default function TokenPage() {
                       </>
                     }
                   />
+
+                  <div className="grid gap-4 xl:grid-cols-4">
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4 xl:col-span-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">AI analysis</div>
+                      <div className="mt-2 text-3xl font-semibold text-[#41e8cf]">
+                        {typeof token.confidenceScore === "number" ? token.confidenceScore.toFixed(1) : "--"}
+                        <span className="ml-1 text-base text-white/34">/100</span>
+                      </div>
+                      <div className="mt-2 text-xs text-white/48">
+                        {typeof token.marketHealthScore === "number"
+                          ? `Market health ${token.marketHealthScore.toFixed(0)}/100`
+                          : "Market health resolving"}
+                      </div>
+                      <div className="mt-4 grid gap-2">
+                        <TokenTerminalMetricCard label="Setup" value={typeof token.setupQualityScore === "number" ? `${token.setupQualityScore.toFixed(0)}` : "--"} detail="Structure score" />
+                        <TokenTerminalMetricCard label="Opportunity" value={typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}` : "--"} detail="Timing score" />
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4 xl:col-span-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Order book</div>
+                        <div className="text-xs text-white/42">{depthQuery.isFetching ? "Updating" : "Live"}</div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] uppercase tracking-[0.14em] text-white/34">
+                        <span>Price</span>
+                        <span className="text-right">Size</span>
+                        <span className="text-right">Total</span>
+                      </div>
+                      <div className="mt-2 space-y-1.5">
+                        {depthAsks.map((level, index) => (
+                          <div key={`ask-${index}`} className="grid grid-cols-3 gap-2 rounded-[10px] border border-rose-500/16 bg-rose-500/8 px-2 py-1.5 text-xs">
+                            <span className="font-mono text-rose-300">{formatUsd(level.price)}</span>
+                            <span className="text-right text-white/68">{formatMarketMetric(level.size)}</span>
+                            <span className="text-right text-white/82">{formatUsd(level.total)}</span>
+                          </div>
+                        ))}
+                        {depthBids.map((level, index) => (
+                          <div key={`bid-${index}`} className="grid grid-cols-3 gap-2 rounded-[10px] border border-lime-300/16 bg-lime-300/8 px-2 py-1.5 text-xs">
+                            <span className="font-mono text-lime-300">{formatUsd(level.price)}</span>
+                            <span className="text-right text-white/68">{formatMarketMetric(level.size)}</span>
+                            <span className="text-right text-white/82">{formatUsd(level.total)}</span>
+                          </div>
+                        ))}
+                        {!depthAsks.length && !depthBids.length ? (
+                          <div className="rounded-[12px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                            Depth is still loading for this pair.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4 xl:col-span-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Recent calls</div>
+                        <Link to="#token-recent-calls" className="text-xs text-lime-300 hover:text-lime-200">View all</Link>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {recentCalls.slice(0, 3).map((call) => (
+                          <div key={call.id} className="rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
+                            <div className="truncate text-sm font-semibold text-white">{call.tokenSymbol ? `$${call.tokenSymbol}` : call.content || "Call"}</div>
+                            <div className="mt-1 text-xs text-white/42">
+                              {call.author.handle ? `@${call.author.handle}` : call.author.name || "Trader"} · {formatTimeAgo(call.createdAt)}
+                            </div>
+                          </div>
+                        ))}
+                        {!recentCalls.length ? (
+                          <div className="rounded-[12px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">{recentCallsEmptyCopy}</div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4 xl:col-span-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Active raids</div>
+                        <div className="text-xs text-white/42">{sidebarLiveRaids.length ? "Live" : "Idle"}</div>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {sidebarLiveRaids.slice(0, 3).map((raid) => (
+                          <Link
+                            key={raid.id}
+                            to={`/raids/${raid.tokenAddress}/${raid.id}`}
+                            className="block rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5 transition hover:bg-white/[0.06]"
+                          >
+                            <div className="truncate text-sm font-semibold text-white">{raid.tokenSymbol ? `$${raid.tokenSymbol}` : "Raid"}</div>
+                            <div className="mt-1 text-xs text-white/42">{raid.objective}</div>
+                            <div className="mt-1 text-xs text-lime-300">{raid.participantCount.toLocaleString()} joined</div>
+                          </Link>
+                        ))}
+                        {!sidebarLiveRaids.length ? (
+                          <div className="rounded-[12px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                            No active coordinated raid is open right now.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-4">
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Whale activity</div>
+                      <div className="mt-3 space-y-2">
+                        {smartMoneyFlowRows.slice(0, 5).map((row) => (
+                          <a
+                            key={`whale-${row.address}`}
+                            href={buildChainExplorerUrl(token.chainType === "solana" ? "solana" : "ethereum", "address", row.address)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center justify-between rounded-[12px] border border-white/8 bg-white/[0.03] px-3 py-2"
+                          >
+                            <span className="truncate text-sm text-white">{row.label}</span>
+                            <span className="text-xs text-white/72">{formatMarketMetric(row.valueUsd)}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Heatmap</div>
+                        <div className="text-xs text-white/42">24h</div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {sidebarTopGainers.slice(0, 9).map((item) => (
+                          <Link
+                            key={`heat-${item.address}`}
+                            to={`/token/${item.address}`}
+                            className="rounded-[10px] border border-lime-300/18 bg-lime-300/12 px-2 py-2 text-center text-xs text-lime-100 transition hover:bg-lime-300/20"
+                          >
+                            <div className="truncate font-semibold">{item.symbol ? `$${item.symbol}` : "Token"}</div>
+                            <div className="mt-0.5 text-[10px] text-lime-200/78">
+                              {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Live feed</div>
+                      <div className="mt-3 space-y-2">
+                        {liveFeedRows.map((event) => {
+                          const copy = buildTimelineCopy(event);
+                          return (
+                            <div key={event.id} className="rounded-[12px] border border-white/8 bg-white/[0.03] px-3 py-2">
+                              <div className="truncate text-sm text-white">{copy.title}</div>
+                              <div className="mt-0.5 text-xs text-white/42">{formatTimeAgo(event.timestamp)}</div>
+                            </div>
+                          );
+                        })}
+                        {!liveFeedRows.length ? (
+                          <div className="rounded-[12px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                            No live feed events yet.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">News & updates</div>
+                      <div className="mt-3 space-y-2">
+                        {tokenNewsRows.map((post) => (
+                          <a
+                            key={post.id}
+                            href={post.url ?? buildXSearchUrl(token?.symbol ? `$${token.symbol}` : token?.address ?? "")}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block rounded-[12px] border border-white/8 bg-white/[0.03] px-3 py-2 transition hover:bg-white/[0.06]"
+                          >
+                            <div className="line-clamp-2 text-sm text-white">{post.text}</div>
+                            <div className="mt-1 text-xs text-white/42">{formatTimeAgo(post.createdAt)}</div>
+                          </a>
+                        ))}
+                        {!tokenNewsRows.length ? (
+                          <div className="rounded-[12px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                            Matched X updates are syncing.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </motion.section>
             ) : null}
