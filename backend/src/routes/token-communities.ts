@@ -462,10 +462,14 @@ function serializeSubmission(
       level: number;
       isVerified: boolean;
     };
-    boosts?: Array<{ userId: string }>;
+    boosts?: Array<{ userId: string; createdAt?: Date }>;
   },
 ) {
   const boostCount = submission.boosts?.length ?? 0;
+  const latestBoostedAt = submission.boosts?.reduce<Date | null>((latest, boost) => {
+    if (!boost.createdAt) return latest;
+    return !latest || boost.createdAt.getTime() > latest.getTime() ? boost.createdAt : latest;
+  }, null);
   return {
     id: submission.id,
     memeOptionId: submission.memeOptionId,
@@ -477,9 +481,38 @@ function serializeSubmission(
     createdAt: submission.createdAt.toISOString(),
     updatedAt: submission.updatedAt.toISOString(),
     boostCount,
+    latestBoostedAt: latestBoostedAt?.toISOString() ?? null,
     isBoostedByViewer: Boolean(viewerId && submission.boosts?.some((boost) => boost.userId === viewerId)),
     user: serializeCommunityAuthor(submission.user),
   };
+}
+
+function buildRaidMilestones(postedCount: number, participantCount: number) {
+  const target = Math.max(10, Math.ceil(Math.max(participantCount, 1) / 10) * 10);
+  return [
+    { label: "First wave", threshold: Math.max(3, Math.ceil(target * 0.25)) },
+    { label: "Pressure line", threshold: Math.max(5, Math.ceil(target * 0.5)) },
+    { label: "Trend break", threshold: Math.max(8, Math.ceil(target * 0.75)) },
+    { label: "Resistance break", threshold: target },
+    { label: "Overdrive", threshold: Math.ceil(target * 1.25) },
+  ].map((milestone) => ({
+    ...milestone,
+    unlocked: postedCount >= milestone.threshold,
+  }));
+}
+
+function buildChoiceCounts(submissions: Array<{ memeOptionId: string; copyOptionId: string }>) {
+  return submissions.reduce(
+    (counts, submission) => {
+      counts.memeChoiceCounts[submission.memeOptionId] = (counts.memeChoiceCounts[submission.memeOptionId] ?? 0) + 1;
+      counts.copyChoiceCounts[submission.copyOptionId] = (counts.copyChoiceCounts[submission.copyOptionId] ?? 0) + 1;
+      return counts;
+    },
+    {
+      memeChoiceCounts: {} as Record<string, number>,
+      copyChoiceCounts: {} as Record<string, number>,
+    },
+  );
 }
 
 async function fanoutRaidStartedNotifications(params: {
@@ -1220,7 +1253,7 @@ async function loadRaidDetailView(
               },
             },
             boosts: {
-              select: { userId: true },
+              select: { userId: true, createdAt: true },
             },
           },
           orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
@@ -1255,6 +1288,86 @@ async function loadRaidDetailView(
   const participantCount = raid.participants.length;
   const postedCount = visibleSubmissions.length;
   const milestoneTarget = Math.max(10, Math.ceil(participantCount / 10) * 10);
+  const milestones = buildRaidMilestones(postedCount, participantCount);
+  const progressPct = milestoneTarget > 0 ? Math.min(100, Math.round((postedCount / milestoneTarget) * 100)) : 0;
+  const now = new Date();
+  const endsAtDate = raid.closedAt ?? new Date(raid.openedAt.getTime() + 24 * 60 * 60 * 1000);
+  const openHours = Math.max((now.getTime() - raid.openedAt.getTime()) / 3_600_000, 0.1);
+  const remainingHours = raid.closedAt ? 0 : Math.max((endsAtDate.getTime() - now.getTime()) / 3_600_000, 0);
+  const boostCount = visibleSubmissions.reduce((sum, submission) => sum + (submission.boosts?.length ?? 0), 0);
+  const postedVelocityPerHour = Number((postedCount / openHours).toFixed(2));
+  const boostVelocityPerHour = Number((boostCount / openHours).toFixed(2));
+  const projectedPostedCount = Math.round(postedCount + postedVelocityPerHour * remainingHours);
+  const activationRatePct = participantCount > 0 ? Math.round((postedCount / participantCount) * 100) : 0;
+  const boostDensity = postedCount > 0 ? Number((boostCount / postedCount).toFixed(1)) : 0;
+  const pressureScore = Math.min(
+    100,
+    Math.round(progressPct * 0.42 + Math.min(activationRatePct, 100) * 0.28 + Math.min(boostDensity * 12, 100) * 0.18 + Math.min(postedVelocityPerHour * 12, 100) * 0.12),
+  );
+  const socialSignal =
+    pressureScore >= 80
+      ? "Raid pressure is compounding across posted links and boosts."
+      : pressureScore >= 55
+        ? "Room execution is building, but more posted proof is needed."
+        : "Raid has joined interest but needs visible execution to break out.";
+  const serializedParticipants = raid.participants.map((participant) => serializeParticipantWithUser(participant));
+  const serializedSubmissions = visibleSubmissions.map((submission) =>
+    serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]),
+  );
+  const leaderboard = serializedSubmissions
+    .map((submission) => ({
+      ...submission,
+      submissionId: submission.id,
+      impactScore:
+        submission.boostCount * 5 +
+        (submission.postedAt ? 15 : 0) +
+        Math.min(submission.user.level, 50),
+    }))
+    .sort((a, b) => b.impactScore - a.impactScore);
+  const topDriver = leaderboard[0] ?? null;
+  const viewerParticipant =
+    viewerId
+      ? serializedParticipants.find((participant) => participant.user?.id === viewerId) ?? null
+      : null;
+  const viewerSubmission =
+    viewerId ? serializedSubmissions.find((submission) => submission.user.id === viewerId) ?? null : null;
+  const participantEvents = serializedParticipants.slice(0, 40).map((participant) => ({
+    id: `participant:${participant.id}`,
+    kind: participant.status === "posted" ? "participant_posted" : participant.status === "launched" ? "kit_launched" : "joined",
+    body:
+      participant.status === "posted"
+        ? "linked an X post and advanced the raid proof count."
+        : participant.status === "launched"
+          ? "launched the raid kit and is ready to post proof."
+          : "joined the raid room.",
+    createdAt: (participant.postedAt ?? participant.launchedAt ?? participant.joinedAt),
+    user: participant.user,
+  }));
+  const submissionEvents = serializedSubmissions.flatMap((submission) => {
+    const events = [
+      {
+        id: `submission:${submission.id}`,
+        kind: "submission",
+        body: submission.composerText,
+        createdAt: submission.postedAt ?? submission.updatedAt,
+        user: submission.user,
+      },
+    ];
+    if (submission.latestBoostedAt) {
+      events.push({
+        id: `boost:${submission.id}`,
+        kind: "boost",
+        body: `${submission.boostCount} boost${submission.boostCount === 1 ? "" : "s"} concentrated on this raid post.`,
+        createdAt: submission.latestBoostedAt,
+        user: submission.user,
+      });
+    }
+    return events;
+  });
+  const updates = [...participantEvents, ...submissionEvents]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, 80);
+  const { memeChoiceCounts, copyChoiceCounts } = buildChoiceCounts(raid.submissions);
 
   const logoAsset = assets.find((asset) => asset.kind === "logo") ?? null;
   const bannerAsset = assets.find((asset) => asset.kind === "banner") ?? null;
@@ -1271,10 +1384,13 @@ async function loadRaidDetailView(
       closedAt: raid.closedAt?.toISOString() ?? null,
       createdAt: raid.createdAt.toISOString(),
       updatedAt: raid.updatedAt.toISOString(),
+      endsAt: endsAtDate.toISOString(),
       participantCount,
       postedCount,
       milestoneTarget,
-      progressPct: milestoneTarget > 0 ? Math.min(100, Math.round((postedCount / milestoneTarget) * 100)) : 0,
+      progressPct,
+      memeChoiceCounts,
+      copyChoiceCounts,
       token: {
         address: token.address,
         symbol: token.symbol,
@@ -1283,33 +1399,41 @@ async function loadRaidDetailView(
       },
       createdBy: serializeCommunityAuthor(raid.createdBy),
     },
-    participants: raid.participants.map((participant) => serializeParticipantWithUser(participant)),
-    leaderboard: visibleSubmissions
-      .map((submission) => ({
-        ...serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]),
-        impactScore:
-          (submission.boosts?.length ?? 0) * 5 +
-          (submission.postedAt ? 15 : 0) +
-          submission.user.level,
-      }))
-      .sort((a, b) => b.impactScore - a.impactScore),
-    updates: raid.submissions.map((submission) =>
-      serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]),
-    ),
+    submissions: serializedSubmissions,
+    participants: serializedParticipants,
+    leaderboard,
+    updates,
+    milestones,
+    intelligence: {
+      pressureScore,
+      activationRatePct,
+      postedVelocityPerHour,
+      boostVelocityPerHour,
+      projectedPostedCount,
+      projectedCompletionPct: milestoneTarget > 0 ? Math.min(100, Math.round((projectedPostedCount / milestoneTarget) * 100)) : 0,
+      boostDensity,
+      socialSignal,
+      nextBestAction:
+        !viewerParticipant
+          ? "Join the room to start contributing to raid execution."
+          : !viewerSubmission
+            ? "Launch the creative kit, then submit your public X proof."
+            : !viewerSubmission.xPostUrl
+              ? "Paste your X post link so the room can count your execution."
+              : "Boost high-quality raid posts to compound the room pressure.",
+      topDriver: topDriver
+        ? {
+            user: topDriver.user,
+            boostCount: topDriver.boostCount,
+            impactScore: topDriver.impactScore,
+          }
+        : null,
+    },
+    myParticipant: viewerParticipant,
+    mySubmission: viewerSubmission,
     viewerState: {
-      participant:
-        viewerId
-          ? raid.participants
-              .filter((participant) => participant.userId === viewerId)
-              .map((participant) => serializeParticipantWithUser(participant))[0] ?? null
-          : null,
-      submission:
-        viewerId
-          ? raid.submissions
-              .filter((submission) => submission.user.id === viewerId)
-              .map((submission) => serializeSubmission(viewerId, submission as Parameters<typeof serializeSubmission>[1]))[0] ??
-            null
-          : null,
+      participant: viewerParticipant,
+      submission: viewerSubmission,
     },
     communityAssets: {
       logo: logoAsset ? serializeCommunityAsset(token.address, logoAsset) : null,

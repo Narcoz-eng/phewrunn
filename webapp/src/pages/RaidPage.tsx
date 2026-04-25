@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   BrainCircuit,
-  ExternalLink,
   Megaphone,
+  Radio,
   ShieldCheck,
   TimerReset,
   Trophy,
@@ -67,6 +67,7 @@ export default function RaidPage() {
   const myParticipant = raidQuery.data?.myParticipant ?? null;
   const mySubmission = raidQuery.data?.mySubmission ?? null;
   const milestones = useMemo(() => raidQuery.data?.milestones ?? [], [raidQuery.data?.milestones]);
+  const intelligence = raidQuery.data?.intelligence ?? null;
   const communityAssets = raidQuery.data?.communityAssets ?? null;
   const firstCopy = raid?.copyOptions?.[0] ?? null;
   const firstMeme = raid?.memeOptions?.[0] ?? null;
@@ -75,31 +76,28 @@ export default function RaidPage() {
     () => leaderboard.reduce((sum, entry) => sum + entry.boostCount, 0),
     [leaderboard]
   );
+  const countdownTarget = raid?.endsAt ?? raid?.closedAt ?? null;
+  const pressureScore = intelligence?.pressureScore ?? Math.min(100, Math.round((raid?.progressPct ?? 0) * 0.7 + Math.min(totalBoosts * 4, 30)));
 
   const activityFeed = useMemo(() => {
-    const updateRows = updates.map((update) => ({
+    return updates.map((update) => ({
       id: `update-${update.id}`,
-      kind: update.kind === "submission" ? "Submission" : "Raid Update",
+      kind:
+        update.kind === "submission"
+          ? "Posted Proof"
+          : update.kind === "boost"
+            ? "Boost Spike"
+            : update.kind === "kit_launched"
+              ? "Kit Launched"
+              : update.kind === "joined"
+                ? "New Raider"
+                : "Raid Update",
       title: update.user?.username || update.user?.name || "Room system",
       body: update.body,
       createdAt: update.createdAt,
       href: null as string | null,
-    }));
-
-    const submissionRows = submissions
-      .filter((submission) => submission.xPostUrl)
-      .map((submission) => ({
-        id: `submission-${submission.id}`,
-        kind: "Posted Link",
-        title: submission.user.username || submission.user.name,
-        body: submission.composerText,
-        createdAt: submission.postedAt || submission.updatedAt,
-        href: submission.xPostUrl,
-      }));
-
-    return [...updateRows, ...submissionRows]
-      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-      .slice(0, 12);
+      href: update.kind === "submission" ? submissions.find((submission) => submission.id === update.id.replace("submission:", ""))?.xPostUrl ?? null : null,
+    })).slice(0, 12);
   }, [submissions, updates]);
   const normalizedSearch = search.trim().toLowerCase();
   const filteredActivityFeed = useMemo(() => {
@@ -303,7 +301,7 @@ export default function RaidPage() {
                 <HeroMetric label="Participants" value={formatCompact(raid.participantCount)} detail="Joined room members" />
                 <HeroMetric label="Posted Links" value={formatCompact(raid.postedCount)} detail="Verified live posts" />
                 <HeroMetric label="Milestone Target" value={formatCompact(raid.milestoneTarget)} detail="Room goal" />
-                <HeroMetric label="Time Left" value={raid.closedAt ? "Closed" : formatRelativeCountdown(raid.closedAt)} detail={raid.closedAt ? "Historical raid" : "Live countdown"} />
+                <HeroMetric label="Time Left" value={raid.closedAt ? "Closed" : formatRelativeCountdown(countdownTarget)} detail={raid.closedAt ? "Historical raid" : "24h room cycle"} />
               </div>
 
               <div className="mt-5 rounded-[26px] border border-white/8 bg-white/[0.03] p-4">
@@ -311,7 +309,7 @@ export default function RaidPage() {
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Raid Progress</div>
                     <div className="mt-2 text-sm text-white/56">
-                      Progress comes directly from the raid detail payload and tracks posted execution against the active raid target.
+                      {intelligence?.socialSignal ?? "Progress tracks joined raiders, submitted X proof, and boosts from the active room."}
                     </div>
                   </div>
                   <div className="text-2xl font-semibold text-white">{raid.progressPct}%</div>
@@ -329,7 +327,28 @@ export default function RaidPage() {
           </div>
 
           <div className="border-l border-white/8 bg-[linear-gradient(180deg,rgba(9,13,15,0.92),rgba(5,8,10,0.98))] p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
+            <div className="rounded-[26px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.18),transparent_38%),rgba(0,0,0,0.24)] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Room Pressure</div>
+                  <div className="mt-2 text-4xl font-semibold tracking-[-0.06em] text-white">{pressureScore}</div>
+                </div>
+                <div className="flex h-14 w-14 items-center justify-center rounded-full border border-lime-300/20 bg-lime-300/10 shadow-[0_0_34px_rgba(169,255,52,0.16)]">
+                  <Radio className="h-6 w-6 text-lime-200" />
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <PressureCell label="Proof rate" value={`${intelligence?.activationRatePct ?? 0}%`} />
+                <PressureCell label="Post velocity" value={`${intelligence?.postedVelocityPerHour ?? 0}/h`} />
+                <PressureCell label="Boost velocity" value={`${intelligence?.boostVelocityPerHour ?? 0}/h`} />
+                <PressureCell label="Projected" value={`${intelligence?.projectedCompletionPct ?? raid.progressPct}%`} />
+              </div>
+              <div className="mt-4 rounded-[18px] border border-white/8 bg-black/24 p-3 text-xs leading-5 text-white/56">
+                {intelligence?.nextBestAction ?? "Join, launch creative, submit proof, and boost live posts to move the room."}
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Raid Chat</div>
                 <div className="mt-1 text-sm font-semibold text-white">Chat unavailable</div>
@@ -338,7 +357,7 @@ export default function RaidPage() {
                 Requires endpoint
               </span>
             </div>
-            <div className="mt-4 rounded-[22px] border border-dashed border-white/12 bg-black/20 px-4 py-8 text-sm leading-6 text-white/50">
+            <div className="mt-4 rounded-[22px] border border-dashed border-white/12 bg-black/20 px-4 py-6 text-sm leading-6 text-white/50">
               Persisted raid chat is intentionally disabled until a backend chat endpoint exists. The room still shows real live execution through joined raiders, submitted X links, boosts, and stored updates below.
             </div>
 
@@ -370,6 +389,28 @@ export default function RaidPage() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.14fr)_340px]">
         <div className="space-y-4">
+          <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">About This Raid</div>
+                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">Resistance brief</h2>
+              </div>
+              <span className="rounded-full border border-lime-300/14 bg-lime-300/8 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-lime-200">
+                {raid.status}
+              </span>
+            </div>
+            <div className="mt-4 text-sm leading-7 text-white/58">
+              {raid.objective}. The room combines committed participants, launched raid kits, public X proof, and peer boosts into one execution score. This is social execution telemetry, not token price PnL.
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-5">
+              <ProgressCell label="Target" value={raid.token?.symbol ? `$${raid.token.symbol}` : "Token"} />
+              <ProgressCell label="Proof" value={formatCompact(raid.postedCount)} />
+              <ProgressCell label="Pressure" value={`${pressureScore}/100`} />
+              <ProgressCell label="Driver" value={intelligence?.topDriver?.user.username || intelligence?.topDriver?.user.name || "Open"} />
+              <ProgressCell label="Cycle" value={raid.closedAt ? "Closed" : "24h"} />
+            </div>
+          </section>
+
           <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -519,10 +560,10 @@ export default function RaidPage() {
                             type="button"
                             variant="outline"
                             onClick={() => boostMutation.mutate(entry.submissionId)}
-                            disabled={boostMutation.isPending}
+                            disabled={boostMutation.isPending || Boolean(entry.isBoostedByViewer)}
                             className="h-9 rounded-[14px] border-white/10 bg-white/[0.04] px-4 text-white/80 hover:bg-white/[0.08] hover:text-white"
                           >
-                            Boost
+                            {entry.isBoostedByViewer ? "Boosted" : "Boost"}
                           </Button>
                         ) : null
                       }
@@ -633,7 +674,16 @@ function ProgressCell({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-3">
       <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{label}</div>
-      <div className="mt-2 text-sm font-semibold text-white">{value}</div>
+      <div className="mt-2 truncate text-sm font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function PressureCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[16px] border border-white/8 bg-black/24 px-3 py-3">
+      <div className="text-[9px] uppercase tracking-[0.14em] text-white/34">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-white">{value}</div>
     </div>
   );
 }

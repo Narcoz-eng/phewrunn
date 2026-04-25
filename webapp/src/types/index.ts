@@ -389,6 +389,7 @@ export interface TokenRaidSubmission {
   createdAt: string;
   updatedAt: string;
   boostCount: number;
+  latestBoostedAt: string | null;
   isBoostedByViewer: boolean;
   user: TokenCommunityAuthor;
 }
@@ -401,6 +402,7 @@ export interface TokenRaidCampaign {
   copyOptions: TokenRaidCopyOption[];
   openedAt: string;
   closedAt: string | null;
+  endsAt?: string | null;
   createdAt: string;
   updatedAt: string;
   threadId?: string | null;
@@ -521,6 +523,12 @@ export interface BundleCheckerGraphNode {
   weight: number;
   riskLabel?: "high" | "medium" | "low" | "external";
   highlight?: boolean;
+  address?: string | null;
+  valueUsd?: number | null;
+  supplyPct?: number | null;
+  clusterLabel?: string | null;
+  relationStrength?: number | null;
+  evidence?: string | null;
 }
 
 export interface BundleCheckerGraphEdge {
@@ -569,6 +577,18 @@ export interface BundleCheckerResponse {
   };
   behaviorSeries: BundleCheckerBehaviorPoint[];
   relatedTokens: BundleCheckerRelatedToken[];
+  riskFactors?: Array<{
+    key: string;
+    label: string;
+    score: number;
+    detail: string;
+  }>;
+  aiInsight?: {
+    summary: string;
+    recommendation: string;
+    trendDeltaPct: number | null;
+    severity: "high" | "medium" | "low" | string;
+  };
 }
 
 export interface TokenCommunitySummaryResponse {
@@ -620,6 +640,23 @@ export interface TokenRaidDetailUpdate {
   user: TokenCommunityAuthor | null;
 }
 
+export interface TokenRaidDetailIntelligence {
+  pressureScore: number;
+  activationRatePct: number;
+  postedVelocityPerHour: number;
+  boostVelocityPerHour: number;
+  projectedPostedCount: number;
+  projectedCompletionPct: number;
+  boostDensity: number;
+  socialSignal: string;
+  nextBestAction: string;
+  topDriver: {
+    user: TokenCommunityAuthor;
+    boostCount: number;
+    impactScore: number;
+  } | null;
+}
+
 export interface TokenRaidDetailResponse {
   campaign: TokenRaidCampaign | null;
   submissions: TokenRaidSubmission[];
@@ -637,12 +674,19 @@ export interface TokenRaidDetailResponse {
   }>;
   leaderboard: Array<{
     submissionId: string;
+    id?: string;
     boostCount: number;
     postedAt: string | null;
+    latestBoostedAt?: string | null;
+    composerText?: string;
+    xPostUrl?: string | null;
+    impactScore?: number;
+    isBoostedByViewer?: boolean;
     user: TokenCommunityAuthor;
   }>;
   updates: TokenRaidDetailUpdate[];
   milestones: TokenRaidDetailMilestone[];
+  intelligence?: TokenRaidDetailIntelligence;
 }
 
 export interface TerminalDepthLevel {

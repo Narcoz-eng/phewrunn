@@ -52,6 +52,11 @@ type BundleWalletNode = {
   valueUsd: number;
   kind: "cluster" | "wallet" | "token";
   riskLabel: "high" | "medium" | "low" | "external";
+  address?: string | null;
+  clusterLabel?: string | null;
+  supplyPct?: number | null;
+  relationStrength?: number | null;
+  evidence?: string | null;
 };
 
 function inferNodeRisk(value: number): "high" | "medium" | "low" {
@@ -65,7 +70,7 @@ function parseClusterEvidence(
   clusterId: string,
   clusterLabel: string,
   estimatedSupplyPct: number,
-): { nodes: BundleWalletNode[]; edges: Array<{ source: string; target: string; weight: number }> } {
+): { nodes: BundleWalletNode[]; edges: Array<{ source: string; target: string; weight: number; relationLabel: string | null }> } {
   const baseNodeId = `cluster:${clusterId}`;
   const nodes: BundleWalletNode[] = [
     {
@@ -74,9 +79,13 @@ function parseClusterEvidence(
       valueUsd: estimatedSupplyPct,
       kind: "cluster",
       riskLabel: inferNodeRisk(estimatedSupplyPct),
+      clusterLabel,
+      supplyPct: estimatedSupplyPct,
+      relationStrength: Math.max(1, Math.min(100, Math.round(estimatedSupplyPct * 2.2))),
+      evidence: `${clusterLabel} controls an estimated ${estimatedSupplyPct.toFixed(2)}% of supply.`,
     },
   ];
-  const edges: Array<{ source: string; target: string; weight: number }> = [];
+  const edges: Array<{ source: string; target: string; weight: number; relationLabel: string | null }> = [];
   if (!evidenceJson || typeof evidenceJson !== "object") {
     return { nodes, edges };
   }
@@ -99,17 +108,29 @@ function parseClusterEvidence(
           : null;
     if (!rawAddress) continue;
     const nodeId = `wallet:${rawAddress}`;
+    const relationStrength = Math.max(1, Math.round(toFiniteNumber(candidate.overlapPct ?? candidate.weight ?? 1)));
+    const valueUsd = toFiniteNumber(candidate.valueUsd ?? candidate.usdValue ?? candidate.exposureUsd);
+    const overlapPct = toFiniteNumber(candidate.overlapPct ?? candidate.weight ?? estimatedSupplyPct);
     nodes.push({
       id: nodeId,
       label: rawAddress,
-      valueUsd: toFiniteNumber(candidate.valueUsd ?? candidate.usdValue ?? candidate.exposureUsd),
+      valueUsd,
       kind: "wallet",
-      riskLabel: inferNodeRisk(toFiniteNumber(candidate.overlapPct ?? candidate.weight ?? estimatedSupplyPct)),
+      riskLabel: inferNodeRisk(overlapPct),
+      address: rawAddress,
+      clusterLabel,
+      supplyPct: estimatedSupplyPct,
+      relationStrength,
+      evidence:
+        typeof candidate.reason === "string"
+          ? candidate.reason
+          : `${relationStrength}/100 relationship strength inside ${clusterLabel}.`,
     });
     edges.push({
       source: baseNodeId,
       target: nodeId,
-      weight: Math.max(1, Math.round(toFiniteNumber(candidate.overlapPct ?? candidate.weight ?? 1))),
+      weight: relationStrength,
+      relationLabel: `Shared ${clusterLabel} behavior (${relationStrength}/100)`,
     });
   }
 
@@ -185,7 +206,7 @@ bundleCheckerRouter.get(
         riskLabel: "external",
       },
     ];
-    const graphEdges: Array<{ source: string; target: string; weight: number }> = [];
+    const graphEdges: Array<{ source: string; target: string; weight: number; relationLabel: string | null }> = [];
     const linkedWallets: Array<{ address: string; exposureUsd: number; clusterLabel: string; supplyPct: number; relationStrength: number }> = [];
 
     for (const cluster of token.clusters) {
@@ -201,6 +222,7 @@ bundleCheckerRouter.get(
           source: `token:${token.id}`,
           target: clusterNodeId,
           weight: Math.max(2, Math.round(cluster.estimatedSupplyPct)),
+          relationLabel: `${cluster.clusterLabel} supply concentration`,
         });
       }
       graphNodes.push(...parsed.nodes);
@@ -226,6 +248,62 @@ bundleCheckerRouter.get(
       bundleRiskLabel: token.bundleRiskLabel,
     });
     const riskLabel = inferRiskLabel(riskScore);
+    const edgeCount = graphEdges.length;
+    const clusterCount = token.clusters.length;
+    const bundledSupplyPct = toFiniteNumber(token.estimatedBundledSupplyPct);
+    const bundledWalletCount = toFiniteNumber(token.bundledWalletCount);
+    const walletDensityScore = Math.max(0, Math.min(100, Math.round(edgeCount * 7 + bundledWalletCount * 2.4)));
+    const supplyConcentrationScore = Math.max(0, Math.min(100, Math.round(bundledSupplyPct * 2.25)));
+    const clusterConcentrationScore = Math.max(0, Math.min(100, Math.round(clusterCount * 13 + bundledSupplyPct)));
+    const liquiditySensitivityScore = Math.max(
+      0,
+      Math.min(100, Math.round((toFiniteNumber(token.volume24h) / Math.max(toFiniteNumber(token.liquidity), 1)) * 22))
+    );
+    const trend = token.snapshots
+      .map((snapshot) => snapshot.estimatedBundledSupplyPct)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const firstTrend = trend[0] ?? null;
+    const lastTrend = trend[trend.length - 1] ?? null;
+    const trendDelta =
+      typeof firstTrend === "number" && typeof lastTrend === "number" ? lastTrend - firstTrend : null;
+    const riskFactors = [
+      {
+        key: "wallet_interconnectivity",
+        label: "Wallet interconnectivity",
+        score: walletDensityScore,
+        detail: `${edgeCount.toLocaleString()} resolved relationship edges across ${bundledWalletCount.toLocaleString()} linked wallets.`,
+      },
+      {
+        key: "supply_concentration",
+        label: "Bundled supply concentration",
+        score: supplyConcentrationScore,
+        detail: `${bundledSupplyPct.toFixed(2)}% of supply appears coordinated or clustered.`,
+      },
+      {
+        key: "cluster_concentration",
+        label: "Cluster concentration",
+        score: clusterConcentrationScore,
+        detail: `${clusterCount.toLocaleString()} cluster${clusterCount === 1 ? "" : "s"} detected from stored evidence.`,
+      },
+      {
+        key: "liquidity_sensitivity",
+        label: "Liquidity sensitivity",
+        score: liquiditySensitivityScore,
+        detail: `${token.volume24h != null ? "$" + Math.round(token.volume24h).toLocaleString() : "Unknown"} 24h volume versus ${token.liquidity != null ? "$" + Math.round(token.liquidity).toLocaleString() : "unknown"} liquidity.`,
+      },
+    ];
+    const aiInsight =
+      riskScore >= 70
+        ? `High coordination risk: ${clusterCount} cluster${clusterCount === 1 ? "" : "s"} and ${bundledWalletCount} linked wallets create a meaningful supply control pocket. ${trendDelta != null ? `Bundled supply ${trendDelta >= 0 ? "increased" : "decreased"} ${Math.abs(trendDelta).toFixed(2)} pts across captured snapshots.` : "Trend history is limited."}`
+        : riskScore >= 40
+          ? `Moderate coordination pressure: ${clusterCount} cluster${clusterCount === 1 ? "" : "s"} detected with ${bundledSupplyPct.toFixed(2)}% estimated bundled supply. Watch for synchronized distribution into high-volume spikes.`
+          : `Low current bundle pressure: resolved clusters do not show dominant supply control. Continue monitoring because new holder snapshots can change this quickly.`;
+    const recommendation =
+      riskScore >= 70
+        ? "Avoid or size defensively until cluster pressure eases."
+        : riskScore >= 40
+          ? "Trade with caution and require confirmation from liquidity and holder trend."
+          : "Monitor normally; no dominant bundle risk detected from current evidence.";
 
     return c.json({
       data: {
@@ -267,12 +345,18 @@ bundleCheckerRouter.get(
             weight: Math.max(1, Math.round(node.valueUsd || 1)),
             highlight: node.kind === "token",
             riskLabel: node.riskLabel,
+            address: node.address ?? null,
+            valueUsd: node.valueUsd,
+            supplyPct: node.supplyPct ?? null,
+            clusterLabel: node.clusterLabel ?? null,
+            relationStrength: node.relationStrength ?? null,
+            evidence: node.evidence ?? null,
           })),
           edges: graphEdges.map((edge) => ({
             source: edge.source,
             target: edge.target,
             weight: edge.weight,
-            relationLabel: null,
+            relationLabel: edge.relationLabel,
           })),
         },
         behaviorSeries: token.snapshots.map((snapshot) => ({
@@ -288,6 +372,13 @@ bundleCheckerRouter.get(
             name: token.name,
           },
         ],
+        riskFactors,
+        aiInsight: {
+          summary: aiInsight,
+          recommendation,
+          trendDeltaPct: trendDelta,
+          severity: riskLabel,
+        },
       },
     });
   },

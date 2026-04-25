@@ -48,6 +48,13 @@ function riskStroke(score: number | null | undefined) {
   return "rgb(190 242 100)";
 }
 
+function riskBg(score: number | null | undefined) {
+  if (score === null || score === undefined || !Number.isFinite(score)) return "rgba(148,163,184,0.52)";
+  if (score >= 75) return "rgba(251,113,133,0.82)";
+  if (score >= 45) return "rgba(251,191,36,0.82)";
+  return "rgba(190,242,100,0.82)";
+}
+
 function clampScore(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, value));
@@ -117,6 +124,53 @@ function nodeClass(node: BundleCheckerGraphNode, selected: boolean, hovered: boo
   return cn(base, active && "ring-2 ring-white/60", "border-white/16 bg-white/[0.075] text-[8px] text-white/72");
 }
 
+function describeNode(node: BundleCheckerGraphNode, edges: BundleCheckerGraphEdge[]) {
+  if (node.evidence) return node.evidence;
+  if (node.kind === "token") return "Root token node. All cluster evidence is measured against this asset.";
+  if (node.kind === "cluster") {
+    return `${node.clusterLabel || node.label} groups ${edges.length} directly connected wallet relationships.`;
+  }
+  return `${node.label} has ${edges.length} graph relationship${edges.length === 1 ? "" : "s"} in this bundle view.`;
+}
+
+function relationshipScore(edges: BundleCheckerGraphEdge[]) {
+  if (!edges.length) return 0;
+  return Math.min(100, Math.round(edges.reduce((sum, edge) => sum + edge.weight, 0) / edges.length));
+}
+
+function buildFallbackRiskFactors(bundle: BundleCheckerResponse) {
+  const edgeCount = bundle.graph.edges.length;
+  const clusterCount = bundle.bundlesDetected;
+  const walletCount = bundle.totalWallets;
+  const concentration = clampScore(bundle.bundledSupplyPct);
+  return [
+    {
+      key: "wallet_interconnectivity",
+      label: "Wallet interconnectivity",
+      score: clampScore(edgeCount * 8),
+      detail: `${formatCompact(edgeCount)} resolved edges`,
+    },
+    {
+      key: "funds_moved_together",
+      label: "Funds moved together",
+      score: concentration,
+      detail: `${formatPct(bundle.bundledSupplyPct)} bundled supply`,
+    },
+    {
+      key: "cluster_concentration",
+      label: "Cluster concentration",
+      score: clampScore(clusterCount * 14),
+      detail: `${formatCompact(clusterCount)} linked clusters`,
+    },
+    {
+      key: "linked_wallet_density",
+      label: "Linked wallet density",
+      score: clampScore(walletCount * 3),
+      detail: `${formatCompact(walletCount)} wallets resolved`,
+    },
+  ];
+}
+
 export default function BundleChecker() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [draft, setDraft] = useState(searchParams.get("token") ?? "");
@@ -149,37 +203,28 @@ export default function BundleChecker() {
         : [],
     [bundle?.graph.edges, selectedNode],
   );
+  const selectedNodeRelationshipScore = useMemo(() => relationshipScore(selectedNodeEdges), [selectedNodeEdges]);
   const behaviorMax = useMemo(() => Math.max(...(bundle?.behaviorSeries.map((point) => point.bundledSupplyPct ?? 0) ?? [1]), 1), [bundle?.behaviorSeries]);
   const graphIsSparse = Boolean(bundle && (bundle.graph.nodes.length < 4 || bundle.graph.edges.length < 2));
   const riskFactors = useMemo(() => {
     if (!bundle) return [];
-    const edgeCount = bundle.graph.edges.length;
-    const clusterCount = bundle.bundlesDetected;
-    const walletCount = bundle.totalWallets;
-    const concentration = clampScore(bundle.bundledSupplyPct);
-    return [
-      {
-        label: "Wallet interconnectivity",
-        value: clampScore(edgeCount * 8),
-        detail: `${formatCompact(edgeCount)} resolved edges`,
-      },
-      {
-        label: "Funds moved together",
-        value: concentration,
-        detail: `${formatPct(bundle.bundledSupplyPct)} bundled supply`,
-      },
-      {
-        label: "Cluster concentration",
-        value: clampScore(clusterCount * 14),
-        detail: `${formatCompact(clusterCount)} linked clusters`,
-      },
-      {
-        label: "Linked wallet density",
-        value: clampScore(walletCount * 3),
-        detail: `${formatCompact(walletCount)} wallets resolved`,
-      },
-    ];
+    return (bundle.riskFactors?.length ? bundle.riskFactors : buildFallbackRiskFactors(bundle)).map((factor) => ({
+      label: factor.label,
+      value: clampScore(factor.score),
+      detail: factor.detail,
+    }));
   }, [bundle]);
+  const behaviorPath = useMemo(() => {
+    const series = bundle?.behaviorSeries ?? [];
+    if (series.length < 2) return "";
+    return series
+      .map((point, index) => {
+        const x = (index / (series.length - 1)) * 100;
+        const y = 92 - (((point.bundledSupplyPct ?? 0) / behaviorMax) * 78);
+        return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${Math.max(8, Math.min(92, y)).toFixed(2)}`;
+      })
+      .join(" ");
+  }, [behaviorMax, bundle?.behaviorSeries]);
 
   const handleSearch = () => {
     const next = draft.trim();
@@ -299,16 +344,22 @@ export default function BundleChecker() {
                           hoveredNodeId === edge.target;
                         const strength = Math.max(0.16, Math.min(0.72, edge.weight / 22));
                         return (
-                          <line
-                            key={`${edge.source}-${edge.target}-${index}`}
-                            x1={source.x}
-                            y1={source.y}
-                            x2={target.x}
-                            y2={target.y}
-                            stroke={selected ? "rgba(169,255,52,0.72)" : "rgba(255,255,255,0.42)"}
-                            strokeOpacity={selected ? 0.88 : strength}
-                            strokeWidth={selected ? Math.max(0.7, Math.min(1.8, edge.weight / 8)) : Math.max(0.22, Math.min(1.25, edge.weight / 12))}
-                          />
+                          <g key={`${edge.source}-${edge.target}-${index}`}>
+                            <line
+                              x1={source.x}
+                              y1={source.y}
+                              x2={target.x}
+                              y2={target.y}
+                              stroke={selected ? "rgba(169,255,52,0.72)" : "rgba(255,255,255,0.42)"}
+                              strokeOpacity={selected ? 0.88 : strength}
+                              strokeWidth={selected ? Math.max(0.7, Math.min(1.8, edge.weight / 8)) : Math.max(0.22, Math.min(1.25, edge.weight / 12))}
+                            />
+                            {edge.weight >= 55 ? (
+                              <circle r="0.75" fill="rgba(169,255,52,0.92)">
+                                <animateMotion dur={`${Math.max(3, 8 - edge.weight / 18)}s`} repeatCount="indefinite" path={`M${source.x} ${source.y} L${target.x} ${target.y}`} />
+                              </circle>
+                            ) : null}
+                          </g>
                         );
                       })}
                     </svg>
@@ -331,6 +382,7 @@ export default function BundleChecker() {
                             title={node.label}
                             aria-label={`Inspect ${node.label}`}
                           >
+                            {node.riskLabel === "high" ? <span className="absolute inset-[-8px] rounded-full border border-rose-300/18 animate-pulse" /> : null}
                             <span className="max-w-[90%] truncate px-1">{node.kind === "wallet" ? "" : node.label}</span>
                           </button>
                         );
@@ -366,11 +418,18 @@ export default function BundleChecker() {
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                       <StatBox label="Kind" value={selectedNode.kind} />
                       <StatBox label="Weight" value={formatCompact(selectedNode.weight)} />
-                      <StatBox label="Risk" value={selectedNode.riskLabel ?? "external"} />
-                      <StatBox label="Edges" value={formatCompact(selectedNodeEdges.length)} />
+                      <StatBox label="Supply" value={formatPct(selectedNode.supplyPct)} />
+                      <StatBox label="Strength" value={`${selectedNodeRelationshipScore}/100`} />
                     </div>
-                    <div className="mt-3 truncate text-xs text-white/42">
-                      {selectedNodeEdges[0]?.relationLabel || "No relation label supplied"}
+                    <div className="mt-3 text-xs leading-5 text-white/50">
+                      {describeNode(selectedNode, selectedNodeEdges)}
+                    </div>
+                    <div className="mt-3 space-y-1.5">
+                      {selectedNodeEdges.slice(0, 3).map((edge) => (
+                        <div key={`${edge.source}-${edge.target}`} className="truncate rounded-[10px] border border-white/8 bg-white/[0.04] px-2 py-1.5 text-[11px] text-white/46">
+                          {edge.relationLabel || `${edge.weight}/100 relationship`}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ) : null}
@@ -401,12 +460,24 @@ export default function BundleChecker() {
               </section>
               <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
                 <h3 className="text-sm font-semibold">Behavior Over Time</h3>
-                <div className="mt-4 flex h-[140px] items-end gap-2">
-                  {bundle.behaviorSeries.length ? bundle.behaviorSeries.map((point, index) => (
-                    <div key={`${point.timestamp}-${index}`} className="flex flex-1 flex-col justify-end">
-                      <div className="rounded-t bg-lime-300/75" style={{ height: `${Math.max(12, ((point.bundledSupplyPct ?? 0) / behaviorMax) * 100)}%` }} />
-                    </div>
-                  )) : <div className="m-auto text-sm text-white/44">No historical snapshots.</div>}
+                <div className="relative mt-4 h-[140px] overflow-hidden rounded-[14px] border border-white/8 bg-black/20">
+                  {bundle.behaviorSeries.length ? (
+                    <>
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-3 h-[calc(100%-24px)] w-[calc(100%-24px)]">
+                        <path d={`${behaviorPath} L 100 100 L 0 100 Z`} fill="rgba(169,255,52,0.12)" />
+                        <path d={behaviorPath} fill="none" stroke="rgba(169,255,52,0.92)" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.4" vectorEffect="non-scaling-stroke" />
+                      </svg>
+                      <div className="absolute bottom-3 left-3 right-3 flex items-end gap-1.5">
+                        {bundle.behaviorSeries.map((point, index) => (
+                          <div key={`${point.timestamp}-${index}`} className="flex h-9 flex-1 flex-col justify-end">
+                            <div className="rounded-t bg-lime-300/42" style={{ height: `${Math.max(10, ((point.bundledSupplyPct ?? 0) / behaviorMax) * 100)}%` }} />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-white/44">No historical snapshots.</div>
+                  )}
                 </div>
               </section>
             </div>
@@ -444,10 +515,20 @@ export default function BundleChecker() {
                 <Info className="h-4 w-4" />
                 AI Insight
               </div>
-              <p className="mt-4 text-sm leading-6 text-white/58">
-                This analysis is generated only from resolved bundle data. Sparse or missing backend evidence stays unavailable instead of rendering synthetic clusters.
+              <p className="mt-4 text-sm leading-6 text-white/62">
+                {bundle.aiInsight?.summary || "This analysis is generated only from resolved bundle data. Sparse or missing backend evidence stays unavailable instead of rendering synthetic clusters."}
               </p>
-              <div className="mt-4 text-sm font-semibold text-white">Recommendation: <span className={riskTone(bundle.riskSummary.score)}>{(bundle.riskSummary.score ?? 0) >= 45 ? "Caution" : "Monitor"}</span></div>
+              {bundle.aiInsight?.trendDeltaPct !== null && bundle.aiInsight?.trendDeltaPct !== undefined ? (
+                <div className="mt-4 rounded-[14px] border border-white/8 bg-black/20 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Bundle trend delta</div>
+                  <div className={cn("mt-1 text-lg font-semibold", bundle.aiInsight.trendDeltaPct > 0 ? "text-rose-300" : "text-lime-300")}>
+                    {bundle.aiInsight.trendDeltaPct > 0 ? "+" : ""}{bundle.aiInsight.trendDeltaPct.toFixed(2)} pts
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-4 text-sm font-semibold text-white">
+                Recommendation: <span className={riskTone(bundle.riskSummary.score)}>{bundle.aiInsight?.recommendation || ((bundle.riskSummary.score ?? 0) >= 45 ? "Caution" : "Monitor")}</span>
+              </div>
             </section>
           </aside>
         </div>
@@ -509,7 +590,7 @@ function RiskFactorRow({ label, value, detail }: { label: string; value: number;
         <span className={cn("font-semibold", riskTone(value))}>{value.toFixed(0)}/100</span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
-        <div className="h-full rounded-full" style={{ width: `${value}%`, background: riskStroke(value) }} />
+        <div className="h-full rounded-full" style={{ width: `${value}%`, background: riskBg(value) }} />
       </div>
       <div className="mt-2 text-xs text-white/38">{detail}</div>
     </div>
