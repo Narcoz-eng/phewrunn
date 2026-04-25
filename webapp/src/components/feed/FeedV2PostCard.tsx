@@ -1,7 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import { BarChart3, Heart, LineChart, MessageSquare, MoreVertical, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { TerminalAggregateResponse, TerminalCandle } from "@/components/token/pro-terminal/types";
 import { getAvatarUrl, type Post } from "@/types";
 
 type FeedV2PostCardProps = {
@@ -54,7 +57,7 @@ function inferKind(post: Post): FeedPostKind {
   if (post.postType === "raid") return "raid";
   if (post.postType === "discussion") return "discussion";
   if (post.postType === "chart") return "chart";
-  if (post.postType === "alpha") return post.contractAddress || post.tokenSymbol ? "call" : "discussion";
+  if (post.postType === "alpha") return "call";
 
   if (post.walletTradeSnapshot) return "whale";
   if (post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
@@ -107,17 +110,6 @@ function smartMoneyLabel(post: Post): string {
   return "Unavailable";
 }
 
-function chartPoints(post: Post): number[] {
-  const start = typeof post.entryMcap === "number" && post.entryMcap > 0 ? post.entryMcap : 1;
-  const end = typeof post.currentMcap === "number" && post.currentMcap > 0 ? post.currentMcap : start;
-  const peak = typeof post.roiPeakPct === "number" ? start * (1 + post.roiPeakPct / 100) : Math.max(start, end);
-  return [start, start * 1.04, start * 0.98, peak * 0.72, peak * 0.88, end * 0.94, end];
-}
-
-function hasMarketChartData(post: Post): boolean {
-  return post.entryMcap !== null || post.currentMcap !== null || post.roiCurrentPct !== null;
-}
-
 function callMetrics(post: Post): Array<{ label: string; value: string }> {
   const metrics: Array<{ label: string; value: string }> = [];
   if (typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)) {
@@ -142,52 +134,114 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
   return metrics.slice(0, 4);
 }
 
-function MiniChart({ post, tall = false }: { post: Post; tall?: boolean }) {
-  if (!hasMarketChartData(post)) {
+function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolean }) {
+  const tokenAddress = post.contractAddress?.trim();
+  const chartQuery = useQuery({
+    queryKey: ["feed", "mini-candles", tokenAddress, "1h"],
+    queryFn: () =>
+      api.get<TerminalAggregateResponse>(
+        `/api/tokens/${encodeURIComponent(tokenAddress ?? "")}/terminal?timeframe=1h`,
+        { cache: "default" }
+      ),
+    enabled: Boolean(tokenAddress),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const candles = chartQuery.data?.chart.candles.slice(-48) ?? [];
+  const coverage = chartQuery.data?.chart.coverage;
+
+  if (!tokenAddress) {
     return (
-      <div className={cn("flex items-center justify-center rounded-[16px] border border-white/8 bg-black/20 text-sm text-white/40", tall ? "h-[210px]" : "h-[116px]")}>
-        Chart unavailable
+      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[220px]" : "h-[118px]")}>
+        <div className="text-sm font-semibold text-white/72">No token chart</div>
+        <div className="mt-1 text-xs text-white/40">Add a token address to attach live candle coverage.</div>
       </div>
     );
   }
 
-  const points = chartPoints(post);
-  const min = Math.min(...points);
-  const max = Math.max(...points);
+  if (chartQuery.isLoading) {
+    return (
+      <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-black/20", tall ? "h-[220px]" : "h-[118px]")}>
+        <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.045),transparent)]" />
+        <div className="flex h-full items-center justify-center text-sm text-white/42">Loading live candles...</div>
+      </div>
+    );
+  }
+
+  if (!candles.length) {
+    return (
+      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[220px]" : "h-[118px]")}>
+        <div className="text-sm font-semibold text-white/72">Candles unavailable</div>
+        <div className="mt-1 text-xs text-white/40">
+          {coverage?.unavailableReason || "The backend did not return candle coverage for this token."}
+        </div>
+      </div>
+    );
+  }
+
+  const values = candles.flatMap((candle) => [candle.high, candle.low]).filter((value) => Number.isFinite(value));
+  const volumes = candles.map((candle) => candle.volume).filter((value) => Number.isFinite(value));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
   const range = Math.max(max - min, 1);
-  const path = points
-    .map((value, index) => {
-      const x = (index / (points.length - 1)) * 100;
-      const y = 88 - ((value - min) / range) * 68;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const positive = (post.roiCurrentPct ?? 0) >= 0;
+  const maxVolume = Math.max(...volumes, 1);
+  const last = candles[candles.length - 1] as TerminalCandle;
+  const first = candles[0] as TerminalCandle;
+  const positive = last.close >= first.open;
+  const candleWidth = 100 / candles.length;
+  const y = (value: number) => 8 + (1 - (value - min) / range) * 64;
 
   return (
-    <div className={cn("relative overflow-hidden rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[210px]" : "h-[116px]")}>
+    <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[220px]" : "h-[118px]")}>
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:25%_25%]" />
-      <div className="absolute inset-x-0 bottom-0 h-12 bg-[linear-gradient(180deg,transparent,rgba(0,0,0,0.34))]" />
-      <div className="absolute left-3 top-3 flex items-center gap-2 text-xs font-semibold text-white">
+      <div className="absolute left-3 top-3 z-10 flex items-center gap-2 text-xs font-semibold text-white">
         <span>{post.tokenSymbol ? `$${post.tokenSymbol}` : "TOKEN"}/USDT</span>
+        <span className="rounded-md border border-white/10 bg-black/30 px-1.5 py-0.5 text-white/58">1h</span>
         <span className={positive ? "text-lime-300" : "text-rose-300"}>{pct(post.roiCurrentPct)}</span>
       </div>
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-x-3 bottom-4 top-8 h-[calc(100%-48px)] w-[calc(100%-24px)] overflow-visible">
-        <path d={`${path} L 100 100 L 0 100 Z`} fill={positive ? "rgba(132,255,74,0.12)" : "rgba(251,113,133,0.12)"} />
-        <path d={path} fill="none" stroke={positive ? "#a9ff34" : "#fb7185"} strokeWidth="2.2" vectorEffect="non-scaling-stroke" />
-      </svg>
-      <div className="absolute bottom-3 left-3 right-3 flex h-9 items-end gap-1.5">
-        {points.map((value, index) => {
-          const height = 22 + ((value - min) / range) * 68;
+      <div className="absolute right-3 top-3 z-10 rounded-md bg-lime-300 px-2 py-0.5 text-[11px] font-bold text-slate-950">
+        {last.close.toPrecision(7)}
+      </div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-x-3 bottom-3 top-8 h-[calc(100%-44px)] w-[calc(100%-24px)] overflow-visible">
+        {candles.map((candle, index) => {
+          const x = index * candleWidth + candleWidth / 2;
+          const openY = y(candle.open);
+          const closeY = y(candle.close);
+          const highY = y(candle.high);
+          const lowY = y(candle.low);
+          const up = candle.close >= candle.open;
+          const bodyTop = Math.min(openY, closeY);
+          const bodyHeight = Math.max(1.2, Math.abs(closeY - openY));
           return (
-            <span
-              key={`${value}-${index}`}
-              className={cn("flex-1 rounded-t-sm opacity-50", index % 3 === 1 ? "bg-rose-400/70" : "bg-lime-300/70")}
-              style={{ height: `${Math.min(100, height)}%` }}
+            <g key={`${candle.timestamp}-${index}`}>
+              <line x1={x} x2={x} y1={highY} y2={lowY} stroke={up ? "#a9ff34" : "#ef4444"} strokeWidth="0.28" vectorEffect="non-scaling-stroke" />
+              <rect
+                x={x - candleWidth * 0.28}
+                y={bodyTop}
+                width={Math.max(0.35, candleWidth * 0.56)}
+                height={bodyHeight}
+                fill={up ? "#39d353" : "#ef4444"}
+                opacity="0.92"
+              />
+            </g>
+          );
+        })}
+        {candles.map((candle, index) => {
+          const x = index * candleWidth;
+          const height = Math.max(1, (candle.volume / maxVolume) * 18);
+          const up = candle.close >= candle.open;
+          return (
+            <rect
+              key={`v-${candle.timestamp}-${index}`}
+              x={x}
+              y={98 - height}
+              width={Math.max(0.3, candleWidth * 0.62)}
+              height={height}
+              fill={up ? "rgba(57,211,83,0.46)" : "rgba(239,68,68,0.42)"}
             />
           );
         })}
-      </div>
+      </svg>
     </div>
   );
 }
@@ -318,18 +372,9 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       )}
 
-      {hasMarketChartData(post) ? (
-        <div className="mt-4">
-          <MiniChart post={post} tall />
-        </div>
-      ) : (
-        <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 p-4">
-          <div className="text-sm font-semibold text-white">Token context pending</div>
-          <p className="mt-1 text-sm leading-6 text-white/50">
-            This call has structured type data, but live market candles are not available yet. No chart metrics are inferred.
-          </p>
-        </div>
-      )}
+      <div className="mt-4">
+        <FeedMiniCandleChart post={post} tall />
+      </div>
 
       {post.contractAddress ? (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -456,15 +501,9 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
         </div>
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
-      {hasMarketChartData(post) ? (
-        <div className="mt-4">
-          <MiniChart post={post} tall />
-        </div>
-      ) : (
-        <div className="mt-4 rounded-[16px] border border-cyan-300/12 bg-cyan-300/[0.05] p-4 text-sm leading-6 text-cyan-100/70">
-          Chart data is not attached to this setup yet. The post remains a chart post, but no candles are fabricated.
-        </div>
-      )}
+      <div className="mt-4">
+        <FeedMiniCandleChart post={post} tall />
+      </div>
       <div className="mt-3 grid gap-2 md:grid-cols-3">
         <Metric label="Setup Quality" value={typeof post.setupQualityScore === "number" ? post.setupQualityScore.toFixed(1) : "Unavailable"} />
         <Metric label="Market Health" value={typeof post.marketHealthScore === "number" ? post.marketHealthScore.toFixed(1) : "Unavailable"} />

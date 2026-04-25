@@ -7,6 +7,17 @@ function toNumber(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function nullableNumber(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function growthPct(current: number | null | undefined, previous: number | null | undefined): number | null {
+  const currentValue = nullableNumber(current);
+  const previousValue = nullableNumber(previous);
+  if (currentValue === null || previousValue === null || previousValue <= 0) return null;
+  return ((currentValue - previousValue) / previousValue) * 100;
+}
+
 function normalizeTokenLabel(token: { symbol: string | null; name: string | null }): string {
   return token.symbol?.trim() || token.name?.trim() || "Unknown";
 }
@@ -56,6 +67,16 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         hotAlphaScore: true,
         sentimentScore: true,
         updatedAt: true,
+        snapshots: {
+          select: {
+            capturedAt: true,
+            marketCap: true,
+            liquidity: true,
+            volume24h: true,
+          },
+          orderBy: { capturedAt: "desc" },
+          take: 24,
+        },
       },
       orderBy: [{ highConvictionScore: "desc" }, { confidenceScore: "desc" }, { updatedAt: "desc" }],
       take: 8,
@@ -148,25 +169,81 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
     }),
   ]);
 
+  const tokenRows = topTokens.map((token) => {
+    const latestSnapshot = token.snapshots[0] ?? null;
+    const comparisonSnapshot =
+      token.snapshots.find((snapshot) => Date.now() - snapshot.capturedAt.getTime() >= 20 * 60 * 60 * 1000) ??
+      token.snapshots[token.snapshots.length - 1] ??
+      null;
+    const marketCap = nullableNumber(latestSnapshot?.marketCap) ?? null;
+    const liquidity = nullableNumber(latestSnapshot?.liquidity) ?? nullableNumber(token.liquidity);
+    const volume24h = nullableNumber(latestSnapshot?.volume24h) ?? nullableNumber(token.volume24h);
+    const marketCapChange24hPct = growthPct(marketCap, comparisonSnapshot?.marketCap);
+    const liquidityChange24hPct = growthPct(liquidity, comparisonSnapshot?.liquidity);
+    const volumeChange24hPct = growthPct(volume24h, comparisonSnapshot?.volume24h);
+    const change24hPct =
+      marketCapChange24hPct ??
+      liquidityChange24hPct ??
+      volumeChange24hPct ??
+      null;
+
+    return {
+      token,
+      marketCap,
+      liquidity,
+      volume24h,
+      change24hPct,
+      marketCapChange24hPct,
+      liquidityChange24hPct,
+      volumeChange24hPct,
+    };
+  });
+
+  const aggregateMarketCap = tokenRows.reduce((sum, row) => sum + toNumber(row.marketCap), 0);
+  const aggregateVolume24h = tokenRows.reduce((sum, row) => sum + toNumber(row.volume24h), 0);
+  const marketStats = {
+    marketCap: aggregateMarketCap > 0 ? aggregateMarketCap : null,
+    volume24h: aggregateVolume24h > 0 ? aggregateVolume24h : null,
+    btcDominance: null,
+    marketCapChangePct: null,
+    volume24hChangePct: null,
+    btcDominanceChangePct: null,
+    coverage: {
+      marketCap: aggregateMarketCap > 0 ? "tracked_tokens" : "unavailable",
+      volume24h: aggregateVolume24h > 0 ? "tracked_tokens" : "unavailable",
+      btcDominance: "unavailable",
+      unavailableReason:
+        aggregateMarketCap > 0 || aggregateVolume24h > 0
+          ? "BTC dominance requires a global market data provider and is intentionally not inferred from tracked tokens."
+          : "No tracked token market snapshots are currently available.",
+    },
+  };
+
   const topGainers = topTokens
-    .map((token) => ({
-      id: token.id,
-      address: token.address,
-      symbol: normalizeTokenLabel(token),
-      name: token.name,
-      imageUrl: token.imageUrl,
-      confidenceScore: token.confidenceScore,
-      highConvictionScore: token.highConvictionScore,
-      hotAlphaScore: token.hotAlphaScore,
-      liquidity: token.liquidity,
-      volume24h: token.volume24h,
-    }))
+    .map((token) => {
+      const row = tokenRows.find((item) => item.token.id === token.id);
+      return {
+        id: token.id,
+        address: token.address,
+        symbol: normalizeTokenLabel(token),
+        name: token.name,
+        imageUrl: token.imageUrl,
+        confidenceScore: token.confidenceScore,
+        highConvictionScore: token.highConvictionScore,
+        hotAlphaScore: token.hotAlphaScore,
+        liquidity: row?.liquidity ?? token.liquidity,
+        volume24h: row?.volume24h ?? token.volume24h,
+        marketCap: row?.marketCap ?? null,
+        change24hPct: row?.change24hPct ?? null,
+        changeSource: row?.change24hPct !== null ? "snapshots" : "unavailable",
+      };
+    })
     .sort(
       (a, b) =>
-        toNumber(b.highConvictionScore) +
-        toNumber(b.confidenceScore) +
-        toNumber(b.hotAlphaScore) -
-        (toNumber(a.highConvictionScore) + toNumber(a.confidenceScore) + toNumber(a.hotAlphaScore)),
+        toNumber(b.change24hPct) +
+        toNumber(b.highConvictionScore) * 0.35 +
+        toNumber(b.confidenceScore) * 0.2 -
+        (toNumber(a.change24hPct) + toNumber(a.highConvictionScore) * 0.35 + toNumber(a.confidenceScore) * 0.2),
     )
     .slice(0, 5);
 
@@ -241,6 +318,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
 
   return c.json({
     data: {
+      marketStats,
       topGainers,
       liveRaids: liveRaids.map((raid) => ({
         id: raid.id,
@@ -274,6 +352,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
             summary: `${normalizeTokenLabel(aiSpotlightSource)} is leading live conviction, confidence, and momentum signals right now.`,
           }
         : null,
+      whaleActivity: [],
     },
   });
 });

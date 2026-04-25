@@ -1,275 +1,245 @@
-import { ArrowUpRight, BrainCircuit, TrendingUp, Users, Zap } from "lucide-react";
+import type { ReactNode } from "react";
+import { ArrowUpRight, BrainCircuit, RadioTower, Waves } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { cn } from "@/lib/utils";
 import type { DiscoveryFeedSidebarResponse } from "@/types";
 
-function formatCompactMetric(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
-  if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(0)}`;
-}
-
-function avgMetric(values: Array<number | null | undefined>): number | null {
-  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  if (!finite.length) return null;
-  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
-}
-
 type FeedV2RightRailProps = {
   discovery: DiscoveryFeedSidebarResponse | undefined;
 };
 
+function formatUsd(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  if (Math.abs(value) >= 1_000_000_000_000) return `$${(value / 1_000_000_000_000).toFixed(2)}T`;
+  if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(value < 1 ? 6 : 2)}`;
+}
+
+function formatPct(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function RailCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
+  return (
+    <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-[15px] font-semibold tracking-tight text-white">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function TokenAvatar({ src, label }: { src?: string | null; label: string }) {
+  return src ? (
+    <img src={src} alt="" className="h-7 w-7 rounded-full border border-white/10 object-cover" loading="lazy" />
+  ) : (
+    <span className="flex h-7 w-7 items-center justify-center rounded-full border border-lime-300/18 bg-lime-300/[0.08] text-[10px] font-bold text-lime-200">
+      {label.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+
 export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
   const navigate = useNavigate();
   const topGainers = discovery?.topGainers ?? [];
-  const liveRaid = discovery?.liveRaids?.[0] ?? null;
+  const liveRaids = discovery?.liveRaids ?? [];
   const trendingCalls = discovery?.trendingCalls ?? [];
-  const trendingCommunities = discovery?.trendingCommunities ?? [];
-  const aiSpotlight = discovery?.aiSpotlight ?? null;
-  const trackedMarketCount = topGainers.length;
-  const avgLiquidity = avgMetric(topGainers.map((item) => item.liquidity));
-  const avgVolume = avgMetric(topGainers.map((item) => item.volume24h));
-  const avgConviction = avgMetric(topGainers.map((item) => item.highConvictionScore));
-  const activeRaidProgressPct = liveRaid
-    ? Math.max(8, Math.min(100, (liveRaid.postedCount / Math.max(liveRaid.participantCount, 1)) * 100))
-    : 0;
+  const aiWatchlist = topGainers
+    .filter((item) => typeof item.confidenceScore === "number" || typeof item.highConvictionScore === "number")
+    .slice(0, 5);
+  const whaleRows = discovery?.whaleActivity ?? [];
+  const marketStats = discovery?.marketStats ?? null;
 
   return (
-    <aside className="space-y-4">
-      <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-        <div className="grid grid-cols-3 gap-2">
-          <div className="rounded-[18px] border border-white/8 bg-white/[0.035] px-3 py-3">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Tracked</div>
-            <div className="mt-1 text-lg font-semibold text-white">{trackedMarketCount || "--"}</div>
-          </div>
-          <div className="rounded-[18px] border border-white/8 bg-white/[0.035] px-3 py-3">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Avg Vol</div>
-            <div className="mt-1 text-lg font-semibold text-white">{formatCompactMetric(avgVolume)}</div>
-          </div>
-          <div className="rounded-[18px] border border-white/8 bg-white/[0.035] px-3 py-3">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">AI</div>
-            <div className="mt-1 text-lg font-semibold text-lime-300">{typeof avgConviction === "number" ? avgConviction.toFixed(0) : "--"}</div>
-          </div>
+    <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
+      <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5">
+        <div className="grid grid-cols-3 divide-x divide-white/8 overflow-hidden rounded-[12px] border border-white/8 bg-white/[0.025]">
+          {[
+            ["Market Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct)],
+            ["24h Volume", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct)],
+            ["BTC Dominance", marketStats?.btcDominance != null ? `${marketStats.btcDominance.toFixed(1)}%` : "--", formatPct(marketStats?.btcDominanceChangePct)],
+          ].map(([label, value, delta]) => (
+            <div key={label} className="px-3 py-2.5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
+              <div className="mt-1 text-[15px] font-bold text-white">{value}</div>
+              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "--" ? "text-white/30" : "text-lime-300")}>
+                {delta}
+              </div>
+            </div>
+          ))}
         </div>
-        <div className="mt-2 rounded-[18px] border border-lime-300/10 bg-lime-300/[0.045] px-3 py-2 text-xs text-white/50">
-          Liquidity baseline {formatCompactMetric(avgLiquidity)} across the current discovery set.
-        </div>
+        {marketStats?.coverage?.btcDominance === "unavailable" ? (
+          <div className="mt-2 text-[11px] leading-4 text-white/34">{marketStats.coverage.unavailableReason}</div>
+        ) : null}
       </section>
 
-      <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-          <TrendingUp className="h-3.5 w-3.5 text-lime-300" />
-          Top gainers
-        </div>
-        <div className="mt-4 space-y-3">
-          {topGainers.slice(0, 5).map((item) => (
+      <RailCard
+        title="Top Gainers"
+        action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}
+      >
+        <div className="space-y-2">
+          {topGainers.slice(0, 5).map((item, index) => (
             <button
               key={item.id}
               type="button"
               onClick={() => navigate(`/token/${item.address}`)}
-              className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
+              className="flex w-full items-center gap-3 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
             >
+              <span className="w-4 text-center text-sm font-semibold text-white/70">{index + 1}</span>
+              <TokenAvatar src={item.imageUrl} label={item.symbol || item.name || "?"} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-white">
-                  {item.symbol || item.name || item.address.slice(0, 6)}
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/42">
-                  <span>Conviction {typeof item.highConvictionScore === "number" ? item.highConvictionScore.toFixed(0) : "--"}</span>
-                  <span>Confidence {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}</span>
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/34">
-                  <span>Vol {formatCompactMetric(item.volume24h)}</span>
-                  <span>Liq {formatCompactMetric(item.liquidity)}</span>
-                </div>
+                <div className="truncate text-sm font-bold text-white">{item.symbol || item.name || "Token"}</div>
+                <div className="text-[11px] text-white/38">{formatUsd(item.marketCap ?? item.liquidity)}</div>
               </div>
-              <div className="text-right">
-                <div className="text-sm font-semibold text-lime-300">
-                  {typeof item.highConvictionScore === "number" ? `${item.highConvictionScore.toFixed(0)}/100` : "--"}
-                </div>
-                <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-white/34">Signal stack</div>
+              <div className={cn("text-sm font-bold", (item.change24hPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+                {formatPct(item.change24hPct)}
               </div>
             </button>
           ))}
-          {!topGainers.length ? <p className="text-sm leading-6 text-white/48">No live token conviction data is available.</p> : null}
+          {!topGainers.length ? <p className="text-sm leading-6 text-white/48">Tracked token gainers will appear after market snapshots are available.</p> : null}
         </div>
-      </section>
+      </RailCard>
 
-      <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(10,15,14,0.96),rgba(7,10,13,0.98))] p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">Raid pressure</div>
-            <div className="mt-1 text-sm font-semibold text-white">{liveRaid?.objective || "No active raid pulse"}</div>
-          </div>
-          <V2StatusPill tone="live">{liveRaid ? "Live" : "Idle"}</V2StatusPill>
+      <RailCard title="Active X Raids" action={<V2StatusPill tone={liveRaids.length ? "live" : "idle"}>{liveRaids.length ? "Live" : "Idle"}</V2StatusPill>}>
+        <div className="space-y-3">
+          {liveRaids.slice(0, 2).map((raid) => {
+            const progress = Math.max(8, Math.min(100, (raid.postedCount / Math.max(raid.participantCount, 1)) * 100));
+            return (
+              <div key={raid.id} className="rounded-[14px] border border-white/8 bg-white/[0.025] p-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full border border-lime-300/20 bg-black/30">
+                    <RadioTower className="h-4 w-4 text-lime-300" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-bold text-white">{raid.tokenSymbol ? `$${raid.tokenSymbol} RAID` : "Live raid"}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-white/44">Target: {raid.objective}</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <div className="text-white/38">Participants</div>
+                    <div className="font-semibold text-white">{raid.participantCount.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-white/38">Posts</div>
+                    <div className="font-semibold text-white">{raid.postedCount.toLocaleString()}</div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#12d7aa)]" style={{ width: `${progress}%` }} />
+                  </div>
+                  <span className="text-[11px] text-white/54">{progress.toFixed(0)}%</span>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => navigate(`/raids/${raid.tokenAddress}/${raid.id}`)}
+                  className="mt-3 h-8 w-full rounded-[10px] bg-[linear-gradient(135deg,#a9ff34,#12d7aa)] text-xs font-bold text-slate-950 hover:brightness-105"
+                >
+                  Join Raid
+                </Button>
+              </div>
+            );
+          })}
+          {!liveRaids.length ? <p className="text-sm leading-6 text-white/48">No active raid rooms are open right now.</p> : null}
         </div>
-        {liveRaid ? (
-          <>
-            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Participants</div>
-                <div className="mt-1 text-lg font-semibold text-white">{liveRaid.participantCount.toLocaleString()}</div>
-              </div>
-              <div className="rounded-[18px] border border-white/8 bg-white/[0.04] px-3 py-3">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Posts launched</div>
-                <div className="mt-1 text-lg font-semibold text-white">{liveRaid.postedCount.toLocaleString()}</div>
-              </div>
-            </div>
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-white/34">
-                <span>Raid throughput</span>
-                <span>{activeRaidProgressPct.toFixed(0)}%</span>
-              </div>
-              <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/8">
-                <div
-                  className="h-full rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.96),rgba(45,212,191,0.88))]"
-                  style={{ width: `${activeRaidProgressPct}%` }}
-                />
-              </div>
-              <div className="mt-2 text-xs text-white/46">
-                {liveRaid.tokenSymbol || "This token"} has {liveRaid.postedCount.toLocaleString()} live submissions against {liveRaid.participantCount.toLocaleString()} active raiders.
-              </div>
-            </div>
-            <Button
-              type="button"
-              onClick={() => navigate(`/raids/${liveRaid.tokenAddress}/${liveRaid.id}`)}
-              className="mt-4 h-11 w-full rounded-full border border-lime-300/30 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.88))] text-sm font-semibold text-slate-950"
-            >
-              Join raid
-            </Button>
-          </>
-        ) : (
-          <p className="mt-3 text-sm text-white/48">A live coordinated campaign will surface here as soon as one opens.</p>
-        )}
-      </section>
+      </RailCard>
 
-      <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-          <Zap className="h-3.5 w-3.5 text-cyan-300" />
-          Trending calls
-        </div>
-        <div className="mt-4 space-y-3">
-          {trendingCalls.slice(0, 4).map((item) => (
+      <RailCard title="Trending Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Hot</span>}>
+        <div className="space-y-2">
+          {trendingCalls.slice(0, 5).map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => navigate(`/post/${item.id}`)}
-              className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
+              className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
             >
+              <TokenAvatar src={item.tokenImage} label={item.tokenSymbol || item.tokenName || "?"} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-white">{item.title || item.tokenSymbol || item.tokenName || "Tracked call"}</div>
-                <div className="mt-0.5 truncate text-xs text-white/42">
-                  @{item.authorHandle || "trader"} - {item.direction || "Signal"}
+                <div className="truncate text-sm font-bold text-white">
+                  {item.tokenSymbol ? `$${item.tokenSymbol}` : item.title || "Call"} <span className="text-lime-300">{item.direction ?? ""}</span>
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/34">
-                  <span>Conviction {typeof item.conviction === "number" ? item.conviction.toFixed(0) : "--"}</span>
-                  <span>Confidence {typeof item.confidence === "number" ? item.confidence.toFixed(0) : "--"}</span>
-                </div>
+                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}</div>
               </div>
-              <div className="text-right">
-                <div className={cn("text-sm font-semibold", typeof item.roiCurrentPct === "number" && item.roiCurrentPct >= 0 ? "text-lime-300" : "text-white")}>
-                  {typeof item.roiCurrentPct === "number" ? `${item.roiCurrentPct >= 0 ? "+" : ""}${item.roiCurrentPct.toFixed(1)}%` : "--"}
-                </div>
-                <ArrowUpRight className="ml-auto mt-1 h-4 w-4 text-white/34" />
+              <div className={cn("text-sm font-bold", (item.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+                {formatPct(item.roiCurrentPct)}
               </div>
             </button>
           ))}
-          {!trendingCalls.length ? <p className="text-sm leading-6 text-white/48">No trending call data is available.</p> : null}
+          {!trendingCalls.length ? <p className="text-sm leading-6 text-white/48">No ranked calls have enough signal yet.</p> : null}
         </div>
-      </section>
+      </RailCard>
 
-      {aiSpotlight ? (
-        <section className="rounded-[28px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(11,16,13,0.96),rgba(7,10,12,0.99))] p-4">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-            <BrainCircuit className="h-3.5 w-3.5 text-lime-200" />
-            AI watchlist
-          </div>
-          <div className="mt-3 rounded-[22px] border border-lime-300/14 bg-lime-300/8 p-4">
-            <div className="text-sm font-semibold text-white">{aiSpotlight.ticker || aiSpotlight.title}</div>
-            <p className="mt-2 text-sm leading-6 text-white/62">{aiSpotlight.summary}</p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Confidence</div>
-                <div className="mt-1 text-lg font-semibold text-white">
-                  {typeof aiSpotlight.confidenceScore === "number" ? `${aiSpotlight.confidenceScore.toFixed(0)}/100` : "--"}
+      <RailCard title="AI Watchlist">
+        <div className="space-y-2">
+          {aiWatchlist.map((item) => {
+            const score = item.highConvictionScore ?? item.confidenceScore ?? item.hotAlphaScore ?? null;
+            return (
+              <button
+                key={`ai-${item.id}`}
+                type="button"
+                onClick={() => navigate(`/token/${item.address}`)}
+                className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
+              >
+                <TokenAvatar src={item.imageUrl} label={item.symbol || item.name || "?"} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-bold text-white">{item.symbol || item.name || "Token"}</div>
+                  <div className="text-[11px] text-white/40">{score != null && score >= 75 ? "High Conviction" : score != null && score >= 55 ? "Bullish" : "Monitoring"}</div>
                 </div>
-              </div>
-              <div className="rounded-[16px] border border-white/8 bg-black/20 px-3 py-3">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Timing</div>
-                <div className="mt-1 text-lg font-semibold text-white">{aiSpotlight.timingTier || "Monitoring"}</div>
-              </div>
-            </div>
-            <Button
+                <div className="text-sm font-bold text-lime-300">{score != null ? score.toFixed(1) : "--"}</div>
+              </button>
+            );
+          })}
+          {!aiWatchlist.length ? <p className="text-sm leading-6 text-white/48">AI watchlist needs token intelligence coverage.</p> : null}
+        </div>
+      </RailCard>
+
+      <RailCard title="Whale Activity" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
+        <div className="space-y-2">
+          {whaleRows.slice(0, 4).map((item) => (
+            <button
+              key={`whale-${item.id}`}
               type="button"
-              variant="ghost"
-              onClick={() => (aiSpotlight.tokenAddress ? navigate(`/token/${aiSpotlight.tokenAddress}`) : undefined)}
-              className="mt-4 h-10 rounded-full border border-white/10 bg-black/20 px-4 text-white/76 hover:bg-white/[0.08] hover:text-white"
+              onClick={() => {
+                if (item.explorerUrl) {
+                  window.open(item.explorerUrl, "_blank", "noopener,noreferrer");
+                }
+              }}
+              className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
             >
-              Open watch
-            </Button>
+              <Waves className="h-4 w-4 text-cyan-300" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-bold text-white">{item.tokenSymbol ? `$${item.tokenSymbol}` : "Tracked token"}</div>
+                <div className="truncate text-[11px] text-white/40">{item.action}{item.amount ? ` · ${item.amount}` : ""}</div>
+              </div>
+              <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
+            </button>
+          ))}
+          {!whaleRows.length ? <p className="text-sm leading-6 text-white/48">Whale rows require on-chain transfer coverage. No synthetic wallet activity is shown.</p> : null}
+        </div>
+      </RailCard>
+
+      {discovery?.aiSpotlight ? (
+        <button
+          type="button"
+          onClick={() => navigate(`/token/${discovery.aiSpotlight?.tokenAddress}`)}
+          className="flex w-full items-center gap-3 rounded-[16px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.16),transparent_34%),linear-gradient(180deg,rgba(8,13,18,0.98),rgba(4,8,11,0.99))] p-3.5 text-left hover:border-lime-300/24"
+        >
+          <BrainCircuit className="h-5 w-5 text-lime-300" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-lime-200/70">AI Spotlight</div>
+            <div className="truncate text-sm font-bold text-white">{discovery.aiSpotlight.ticker || discovery.aiSpotlight.title}</div>
           </div>
-        </section>
+          <ArrowUpRight className="h-4 w-4 text-white/42" />
+        </button>
       ) : null}
-
-      <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-            <BrainCircuit className="h-3.5 w-3.5 text-cyan-300" />
-            AI watchlist
-          </div>
-          <div className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-white/44">Live</div>
-        </div>
-        <div className="mt-4 space-y-3">
-          {topGainers.slice(0, 4).map((item) => (
-            <button
-              key={`watch-${item.id}`}
-              type="button"
-              onClick={() => navigate(`/token/${item.address}`)}
-              className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-white">{item.symbol || item.name || item.address.slice(0, 6)}</div>
-                <div className="truncate text-xs text-white/42">
-                  Hot alpha {typeof item.hotAlphaScore === "number" ? item.hotAlphaScore.toFixed(0) : "--"} - Vol {formatCompactMetric(item.volume24h)}
-                </div>
-              </div>
-              <div className="text-sm font-semibold text-cyan-200">
-                {typeof item.confidenceScore === "number" ? item.confidenceScore.toFixed(0) : "--"}
-              </div>
-            </button>
-          ))}
-          {!topGainers.length ? <p className="text-sm leading-6 text-white/48">No AI watchlist entries are available.</p> : null}
-        </div>
-      </section>
-
-      <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
-          <Users className="h-3.5 w-3.5 text-lime-300" />
-          Community momentum
-        </div>
-        <div className="mt-4 space-y-3">
-          {trendingCommunities.slice(0, 4).map((community) => (
-            <button
-              key={community.tokenAddress}
-              type="button"
-              onClick={() => navigate(`/communities/${community.tokenAddress}`)}
-              className="flex w-full items-center justify-between rounded-[18px] border border-white/8 bg-white/[0.03] px-3 py-3 text-left transition hover:bg-white/[0.06]"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-white">{community.xCashtag || community.name}</div>
-                <div className="mt-0.5 truncate text-xs text-white/42">
-                  {community.memberCount.toLocaleString()} members - {community.threadCount.toLocaleString()} threads - {community.raidCount.toLocaleString()} raids
-                </div>
-              </div>
-              <ArrowUpRight className="h-4 w-4 text-white/34" />
-            </button>
-          ))}
-          {!trendingCommunities.length ? <p className="text-sm leading-6 text-white/48">No community momentum data is available.</p> : null}
-        </div>
-      </section>
     </aside>
   );
 }

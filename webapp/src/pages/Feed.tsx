@@ -2598,9 +2598,9 @@ export default function Feed() {
   });
   return (
     <div className="space-y-4">
-      <main className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_340px]">
+      <main className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_344px]">
         <div className="space-y-4">
-          <section className="relative overflow-hidden rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 shadow-[0_28px_70px_-48px_rgba(15,20,28,0.9)] sm:px-5">
+          <section className="relative overflow-hidden px-1 py-1">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h1 className="text-[24px] font-semibold tracking-tight text-white">FEED</h1>
@@ -2612,7 +2612,7 @@ export default function Feed() {
                 value={searchQuery}
                 onChange={handleSearchChange}
                 placeholder="Search token, user, or wallet..."
-                className="lg:min-w-[520px]"
+                className="lg:min-w-[430px]"
               />
             </div>
           </section>
@@ -2625,8 +2625,8 @@ export default function Feed() {
             initialMode={requestedComposerMode}
           />
 
-          <section className="rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                <div className="flex flex-wrap gap-1.5">
+          <section className="rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="flex flex-wrap items-center gap-2">
                   {FEED_TAB_ITEMS.map((tab) => {
                     const Icon = tab.icon;
                     const active = tab.id === activeTab;
@@ -2636,10 +2636,10 @@ export default function Feed() {
                         type="button"
                         onClick={() => handleTabChange(tab.id)}
                         className={cn(
-                          "inline-flex h-10 items-center gap-2 rounded-[12px] border px-4 text-sm font-medium transition-all",
+                          "relative inline-flex h-9 items-center gap-2 rounded-[10px] px-3 text-sm font-semibold transition-all",
                           active
-                            ? "border-lime-300/25 bg-[linear-gradient(135deg,rgba(169,255,52,0.18),rgba(45,212,191,0.14))] text-white shadow-[0_0_0_1px_rgba(163,230,53,0.08)]"
-                            : "border-white/8 bg-white/[0.03] text-white/56 hover:bg-white/[0.06] hover:text-white/84"
+                            ? "bg-lime-300/[0.08] text-lime-200 after:absolute after:inset-x-2 after:-bottom-2 after:h-0.5 after:rounded-full after:bg-lime-300"
+                            : "text-white/54 hover:bg-white/[0.045] hover:text-white/84"
                         )}
                       >
                         {Icon ? <Icon className={cn("h-4 w-4", active ? "text-lime-200" : "text-white/40")} /> : null}
@@ -2647,6 +2647,13 @@ export default function Feed() {
                       </button>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    className="ml-auto inline-flex h-9 items-center rounded-[10px] border border-white/8 bg-white/[0.025] px-3 text-xs font-semibold text-white/46 hover:bg-white/[0.055] hover:text-white/78"
+                  >
+                    Refresh
+                  </button>
                 </div>
           </section>
 

@@ -1,96 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ArrowDownRight, ArrowUpRight, BarChart3, FileText, Image, Loader2, Lock, MessageSquare, RadioTower, Vote } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { BarChart3, FileText, Flame, Loader2, ExternalLink, Camera, Lock, MessageSquare, RadioTower, Skull, Vote } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { User, detectContractAddress, LIQUIDATION_LEVEL, getAvatarUrl } from "@/types";
+import { getAvatarUrl, LIQUIDATION_LEVEL, type Post, type User } from "@/types";
 import { toast } from "sonner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { PhewSendIcon } from "@/components/icons/PhewIcons";
 
-type ComposerMode = "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
-
-const COMPOSER_ACTIONS: Array<{
-  id: ComposerMode;
-  label: string;
-  tone: "default" | "lime" | "amber" | "cyan" | "violet";
-  placeholder: string;
-  submitLabel: string;
-  icon: typeof Flame;
-}> = [
-  {
-    id: "alpha",
-    label: "Alpha",
-    tone: "lime",
-    placeholder: "Drop an alpha thesis. Add entry, target, risk, and paste a token CA for live context.",
-    submitLabel: "Post Alpha",
-    icon: Flame,
-  },
-  {
-    id: "discussion",
-    label: "Discussion",
-    tone: "default",
-    placeholder: "Start a trader discussion. Ask a question, share context, or open a room thread.",
-    submitLabel: "Post Discussion",
-    icon: MessageSquare,
-  },
-  {
-    id: "chart",
-    label: "Chart",
-    tone: "cyan",
-    placeholder: "Share chart context. Paste a token CA and describe the setup.",
-    submitLabel: "Post Chart",
-    icon: BarChart3,
-  },
-  {
-    id: "poll",
-    label: "Poll",
-    tone: "violet",
-    placeholder: "Create a poll prompt with clear options and an expiration window.",
-    submitLabel: "Post Poll",
-    icon: Vote,
-  },
-  {
-    id: "raid",
-    label: "Raid",
-    tone: "amber",
-    placeholder: "Share a raid update. Link the target, goal, or room context.",
-    submitLabel: "Post Raid",
-    icon: RadioTower,
-  },
-  {
-    id: "news",
-    label: "News",
-    tone: "default",
-    placeholder: "Share market or community news with source context.",
-    submitLabel: "Post News",
-    icon: FileText,
-  },
-];
-
-function composerToneClass(action: (typeof COMPOSER_ACTIONS)[number], isActive: boolean): string {
-  if (isActive) {
-    return "border-lime-300/40 bg-lime-300/[0.16] text-lime-100 shadow-[0_0_22px_rgba(169,255,52,0.12)]";
-  }
-
-  if (action.tone === "lime") return "border-lime-300/20 bg-lime-300/10 text-lime-200";
-  if (action.tone === "amber") return "border-amber-300/20 bg-amber-300/10 text-amber-200";
-  if (action.tone === "cyan") return "border-cyan-300/20 bg-cyan-300/10 text-cyan-200";
-  if (action.tone === "violet") return "border-violet-300/20 bg-violet-300/10 text-violet-200";
-  return "border-white/8 bg-black/20 text-white/56";
-}
-
-function stripComposerPrefix(content: string): string {
-  const modes = COMPOSER_ACTIONS.map((action) => action.id).join("|");
-  return content.replace(new RegExp(`^\\[(${modes})\\]\\s*`, "i"), "").trim();
-}
+type ComposerMode = NonNullable<Post["postType"]>;
+type ComposerIntent = "image" | "chart" | "long" | "short" | "raid" | "poll" | "discussion" | "news";
 
 interface CreatePostProps {
   user: User | null;
@@ -100,343 +19,137 @@ interface CreatePostProps {
   initialMode?: ComposerMode | null;
 }
 
-interface TokenInfo {
-  name: string;
-  symbol: string;
-  imageUrl: string | null;
-  priceUsd: number | null;
-  marketCap: number;
-  liquidityUsd: number | null;
-  volume24hUsd: number | null;
-  priceChange24hPct: number | null;
-  dexscreenerUrl: string;
-}
-
 const MIN_CHARS = 10;
 const MAX_CHARS = 400;
 
-type DexTokenRef = {
-  address?: string;
-  name?: string;
-  symbol?: string;
-  icon?: string;
-  logoURI?: string;
-};
+const INTENTS: Array<{
+  id: ComposerIntent;
+  label: string;
+  icon: typeof Image;
+  postType: ComposerMode | null;
+  disabled?: boolean;
+  unavailableReason?: string;
+}> = [
+  { id: "image", label: "Image", icon: Image, postType: null, disabled: true, unavailableReason: "Image upload is not enabled for feed posts yet." },
+  { id: "chart", label: "Chart", icon: BarChart3, postType: "chart" },
+  { id: "long", label: "Long", icon: ArrowUpRight, postType: "alpha" },
+  { id: "short", label: "Short", icon: ArrowDownRight, postType: "alpha" },
+  { id: "raid", label: "Raid", icon: RadioTower, postType: "raid" },
+  { id: "poll", label: "Poll", icon: Vote, postType: "poll" },
+  { id: "discussion", label: "Discussion", icon: MessageSquare, postType: "discussion" },
+  { id: "news", label: "News", icon: FileText, postType: "news" },
+];
 
-type DexPair = {
-  chainId?: string;
-  url?: string;
-  baseToken?: DexTokenRef;
-  quoteToken?: DexTokenRef;
-  priceUsd?: string | number;
-  marketCap?: string | number;
-  fdv?: string | number;
-  liquidity?: {
-    usd?: string | number;
-  };
-  volume?: {
-    h24?: string | number;
-  };
-  priceChange?: {
-    h24?: string | number;
-  };
-  info?: {
-    imageUrl?: string;
-    header?: string;
-    openGraph?: string;
-  };
-};
-
-function normalizeAddress(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
+function modeToIntent(mode: ComposerMode | null | undefined): ComposerIntent {
+  if (mode === "chart") return "chart";
+  if (mode === "poll") return "poll";
+  if (mode === "raid") return "raid";
+  if (mode === "discussion") return "discussion";
+  if (mode === "news") return "news";
+  return "long";
 }
 
-function normalizeChain(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized === "eth") return "ethereum";
-  if (normalized === "sol") return "solana";
-  return normalized;
+function placeholderFor(intent: ComposerIntent): string {
+  if (intent === "chart") return "Share the setup, timeframe, invalidation, and token address if available...";
+  if (intent === "short") return "What is the short thesis? Add invalidation and token address if available...";
+  if (intent === "raid") return "Share raid target, room context, and what action traders should take...";
+  if (intent === "poll") return "Ask the room a clean market question...";
+  if (intent === "discussion") return "Start a thread for traders, communities, or token context...";
+  if (intent === "news") return "Headline, source, and why it matters...";
+  return "What's your alpha today?";
 }
 
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
+function postTypeForIntent(intent: ComposerIntent): ComposerMode {
+  return INTENTS.find((item) => item.id === intent)?.postType ?? "alpha";
 }
 
-function pickTokenFromPair(pair: DexPair, address: string): DexTokenRef | null {
-  const target = normalizeAddress(address);
-  if (target && normalizeAddress(pair.baseToken?.address) === target) return pair.baseToken ?? null;
-  if (target && normalizeAddress(pair.quoteToken?.address) === target) return pair.quoteToken ?? null;
-  return pair.baseToken ?? pair.quoteToken ?? null;
+function normalizeContentForIntent(content: string, intent: ComposerIntent): string {
+  const trimmed = content.trim();
+  if (intent === "long" && !/\blong\b/i.test(trimmed)) return `LONG ${trimmed}`;
+  if (intent === "short" && !/\bshort\b/i.test(trimmed)) return `SHORT ${trimmed}`;
+  return trimmed;
 }
 
-function pickPair(pairs: DexPair[], address: string, chainType: "solana" | "evm"): DexPair | null {
-  if (!pairs.length) return null;
-  const target = normalizeAddress(address);
-  const expectedChain = normalizeChain(chainType === "solana" ? "solana" : "ethereum");
-  const ranked = [...pairs].sort((a, b) => {
-    const score = (pair: DexPair): number => {
-      const baseMatch = normalizeAddress(pair.baseToken?.address) === target;
-      const quoteMatch = normalizeAddress(pair.quoteToken?.address) === target;
-      const chainMatch = normalizeChain(pair.chainId) === expectedChain;
-      let value = 0;
-      if (baseMatch && chainMatch) value += 120;
-      else if (quoteMatch && chainMatch) value += 95;
-      else if (baseMatch) value += 70;
-      else if (quoteMatch) value += 50;
-      if (chainMatch) value += 20;
-      if (pair.url) value += 5;
-      return value;
-    };
-
-    const scoreDelta = score(b) - score(a);
-    if (scoreDelta !== 0) return scoreDelta;
-    const liquidityDelta = (toFiniteNumber(b.liquidity?.usd) ?? 0) - (toFiniteNumber(a.liquidity?.usd) ?? 0);
-    if (liquidityDelta !== 0) return liquidityDelta;
-    return (toFiniteNumber(b.volume?.h24) ?? 0) - (toFiniteNumber(a.volume?.h24) ?? 0);
-  });
-  return ranked[0] ?? null;
-}
-
-function pickImageFromPair(pair: DexPair, token: DexTokenRef | null): string | null {
-  const candidates = [
-    token?.icon,
-    token?.logoURI,
-    pair.info?.imageUrl,
-    pair.info?.header,
-    pair.info?.openGraph,
-  ];
-  for (const candidate of candidates) {
-    const value = candidate?.trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-export function CreatePost({
-  user,
-  onSubmit,
-  isSubmitting,
-  isAuthPending = false,
-  initialMode = null,
-}: CreatePostProps) {
+export function CreatePost({ user, onSubmit, isSubmitting, isAuthPending = false, initialMode = null }: CreatePostProps) {
   const navigate = useNavigate();
-  const [content, setContent] = useState("");
-  const [mode, setMode] = useState<ComposerMode>("alpha");
-  const [pollOptions, setPollOptions] = useState(["", ""]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
-  const [isFetchingToken, setIsFetchingToken] = useState(false);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const [content, setContent] = useState("");
+  const [intent, setIntent] = useState<ComposerIntent>(() => modeToIntent(initialMode));
+  const [pollOptions, setPollOptions] = useState(["", ""]);
 
   const isLiquidated = user !== null && user.level <= LIQUIDATION_LEVEL;
-  const isComposerDisabled = isSubmitting || isLiquidated || isAuthPending;
-  const detected = detectContractAddress(content);
+  const selected = INTENTS.find((item) => item.id === intent) ?? INTENTS[2];
+  const postType = postTypeForIntent(intent);
+  const disabled = isSubmitting || isLiquidated || isAuthPending;
   const charCount = content.length;
-  const activeMode = COMPOSER_ACTIONS.find((action) => action.id === mode) ?? COMPOSER_ACTIONS[0];
+  const canSubmit = !disabled && charCount >= MIN_CHARS && charCount <= MAX_CHARS;
 
   useEffect(() => {
     if (!initialMode) return;
-    setMode(initialMode);
+    setIntent(modeToIntent(initialMode));
     textareaRef.current?.focus();
-    textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [initialMode]);
 
-  // Fetch token info from Dexscreener with debounce
-  const fetchTokenInfo = useCallback(async (address: string, chainType: "solana" | "evm") => {
-    setIsFetchingToken(true);
-    try {
-      const chain = chainType === "solana" ? "solana" : "ethereum";
-      const endpoints = [
-        `https://api.dexscreener.com/tokens/v1/${chain}/${address}`,
-        `https://api.dexscreener.com/latest/dex/tokens/${address}`,
-      ];
+  const cleanPollOptions = useMemo(
+    () => pollOptions.map((option) => option.trim()).filter(Boolean),
+    [pollOptions]
+  );
 
-      let bestPair: DexPair | null = null;
-      for (const endpoint of endpoints) {
-        const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
-        if (!response.ok) continue;
-        const payload = (await response.json()) as DexPair[] | { pairs?: DexPair[] | null };
-        const pairs = Array.isArray(payload) ? payload : (payload?.pairs ?? []);
-        const picked = pickPair(pairs, address, chainType);
-        if (picked) {
-          bestPair = picked;
-          break;
-        }
-      }
-
-      if (!bestPair) {
-        setTokenInfo(null);
-        return;
-      }
-
-      const token = pickTokenFromPair(bestPair, address);
-      setTokenInfo({
-        name: token?.name || bestPair.baseToken?.name || "Unknown",
-        symbol: token?.symbol || bestPair.baseToken?.symbol || "???",
-        imageUrl: pickImageFromPair(bestPair, token),
-        priceUsd: toFiniteNumber(bestPair.priceUsd),
-        marketCap: toFiniteNumber(bestPair.marketCap) ?? toFiniteNumber(bestPair.fdv) ?? 0,
-        liquidityUsd: toFiniteNumber(bestPair.liquidity?.usd),
-        volume24hUsd: toFiniteNumber(bestPair.volume?.h24),
-        priceChange24hPct: toFiniteNumber(bestPair.priceChange?.h24),
-        dexscreenerUrl:
-          bestPair.url || `https://dexscreener.com/${chainType === "solana" ? "solana" : "ethereum"}/${address}`,
-      });
-    } catch {
-      setTokenInfo(null);
-    } finally {
-      setIsFetchingToken(false);
-    }
-  }, []);
-
-  // Debounced token fetch when CA is detected
-  useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-
-    if (detected) {
-      debounceRef.current = setTimeout(() => {
-        fetchTokenInfo(detected.address, detected.chainType);
-      }, 500);
-    } else {
-      setTokenInfo(null);
-    }
-
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-    };
-  }, [detected, fetchTokenInfo]);
-
-  const handleSubmit = async () => {
+  async function handleSubmit() {
     if (isLiquidated) {
-      toast.error("Account Liquidated: Reputation too low");
+      toast.error("Account liquidated. Posting is locked until reputation improves.");
       return;
     }
-
-    const trimmedContent = content.trim();
-    if (trimmedContent.length < MIN_CHARS) {
-      toast.error(`Post must be at least ${MIN_CHARS} characters`);
+    if (!canSubmit) {
+      toast.error(charCount < MIN_CHARS ? `Post must be at least ${MIN_CHARS} characters` : `Post must be under ${MAX_CHARS} characters`);
       return;
     }
-
-    if (trimmedContent.length > MAX_CHARS) {
-      toast.error(`Post must be less than ${MAX_CHARS} characters`);
-      return;
-    }
-
-    const typedContent = stripComposerPrefix(trimmedContent);
-    const cleanPollOptions = pollOptions.map((option) => option.trim()).filter(Boolean);
-    if (mode === "poll" && cleanPollOptions.length < 2) {
+    if (postType === "poll" && cleanPollOptions.length < 2) {
       toast.error("Poll posts need at least two options");
       return;
     }
 
-    await onSubmit(typedContent || trimmedContent, mode, mode === "poll" ? { pollOptions: cleanPollOptions } : undefined);
+    await onSubmit(
+      normalizeContentForIntent(content, intent),
+      postType,
+      postType === "poll" ? { pollOptions: cleanPollOptions } : undefined
+    );
     setContent("");
     setPollOptions(["", ""]);
-    setTokenInfo(null);
-  };
+    setIntent("long");
+  }
 
   if (!user) return null;
 
   return (
-    <div
-      className={cn(
-        "rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,8,12,0.98))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all sm:p-4",
-        isLiquidated && "border-red-600/30 bg-red-950/10"
-      )}
-    >
-      {isLiquidated && (
-        <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-red-600/50 bg-red-600/20 p-4">
-          <Skull className="mt-0.5 h-6 w-6 shrink-0 text-red-500" />
-          <div>
-            <p className="text-sm font-bold text-red-500 uppercase tracking-wide">LIQUIDATED</p>
-            <p className="mt-1 text-xs text-red-300">
-              You are at level -5 (liquidation). You cannot post new alphas until your level improves.
-            </p>
-          </div>
+    <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,19,0.97),rgba(4,8,12,0.99))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+      {isLiquidated ? (
+        <div className="mb-3 rounded-[12px] border border-rose-400/24 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
+          Posting disabled because this account is below the reputation threshold.
         </div>
-      )}
-
+      ) : null}
       <div className="flex gap-3">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => navigate("/profile")}
-                className="group relative flex-shrink-0"
-              >
-                <Avatar className="h-11 w-11 border border-white/10 transition-colors group-hover:border-lime-300/30">
-                  <AvatarImage src={getAvatarUrl(user.id, user.image)} />
-                  <AvatarFallback className="bg-white/[0.04] text-white/70">
-                    {user.name?.charAt(0) || "?"}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Camera className="h-4 w-4 text-white" />
-                </div>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Edit profile picture</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <button type="button" onClick={() => navigate("/profile")} className="shrink-0">
+          <Avatar className="h-11 w-11 border border-lime-300/18">
+            <AvatarImage src={getAvatarUrl(user.id, user.image)} />
+            <AvatarFallback className="bg-white/[0.06] text-white/70">{user.name?.charAt(0) || "?"}</AvatarFallback>
+          </Avatar>
+        </button>
 
-        <div className="flex-1 space-y-2.5">
+        <div className="min-w-0 flex-1">
           <textarea
             ref={textareaRef}
-            placeholder={
-              isLiquidated
-                ? "Posting disabled - Account liquidated"
-                : isAuthPending
-                  ? "Signing you in..."
-                  : activeMode.placeholder
-            }
-            value={content}
-            onChange={(e) => !isLiquidated && !isAuthPending && setContent(e.target.value)}
-            disabled={isComposerDisabled}
             rows={2}
-            className={cn(
-              "min-h-[58px] w-full resize-y rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(11,15,21,0.96),rgba(7,10,14,0.98))] px-4 py-3 text-sm leading-6 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
-              "placeholder:text-white/32 focus:border-lime-300/20 focus:outline-none focus:ring-2 focus:ring-lime-300/12",
-              (isLiquidated || isAuthPending) && "cursor-not-allowed opacity-40 grayscale"
-            )}
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            disabled={disabled}
+            placeholder={isAuthPending ? "Signing you in..." : placeholderFor(intent)}
+            className="min-h-[50px] w-full resize-none rounded-[12px] border border-white/8 bg-black/20 px-4 py-3 text-sm leading-5 text-white outline-none placeholder:text-white/35 focus:border-lime-300/24 focus:ring-2 focus:ring-lime-300/10 disabled:opacity-50"
           />
-          {isAuthPending ? (
-            <p className="text-xs text-white/44">
-              Signing you in...
-            </p>
-          ) : null}
 
-          {mode === "poll" ? (
-            <div className="rounded-[20px] border border-white/8 bg-black/20 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Poll Options</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={pollOptions.length >= 6}
-                  onClick={() => setPollOptions((current) => [...current, ""])}
-                  className="h-7 rounded-full px-3 text-xs text-white/62"
-                >
-                  Add option
-                </Button>
-              </div>
-              <div className="space-y-2">
+          {intent === "poll" ? (
+            <div className="mt-2 rounded-[12px] border border-white/8 bg-white/[0.025] p-2">
+              <div className="grid gap-2">
                 {pollOptions.map((option, index) => (
                   <Input
                     key={index}
@@ -444,175 +157,73 @@ export function CreatePost({
                     onChange={(event) =>
                       setPollOptions((current) => current.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
                     }
-                    placeholder={`Option ${index + 1}`}
-                    className="h-10 rounded-[14px] border-white/8 bg-white/[0.03] text-sm text-white placeholder:text-white/30"
+                    placeholder={`Poll option ${index + 1}`}
+                    className="h-9 rounded-[10px] border-white/8 bg-black/20 text-sm text-white placeholder:text-white/30"
                   />
                 ))}
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={pollOptions.length >= 6}
+                onClick={() => setPollOptions((current) => [...current, ""])}
+                className="mt-2 h-8 rounded-[10px] px-3 text-xs text-white/62"
+              >
+                Add option
+              </Button>
             </div>
           ) : null}
 
-          {detected && (
-            <div className="animate-fade-in-up rounded-[20px] border border-lime-300/14 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(45,212,191,0.04))] p-3.5">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase",
-                      detected.chainType === "solana"
-                        ? "border-cyan-300/30 bg-cyan-300/12 text-cyan-200"
-                        : "border-lime-300/30 bg-lime-300/12 text-lime-200"
-                    )}
-                  >
-                    {detected.chainType}
-                  </span>
-                  <code className="font-mono text-xs text-white/50">
-                    {detected.address.slice(0, 6)}...{detected.address.slice(-4)}
-                  </code>
-                </div>
-
-                {isFetchingToken ? (
-                  <div className="flex items-center gap-2 text-xs text-white/44">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    <span>Fetching token info...</span>
-                  </div>
-                ) : tokenInfo ? (
-                  <a
-                    href={tokenInfo.dexscreenerUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-xs font-semibold text-white/78 transition-colors hover:bg-white/[0.08]"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    Dexscreener
-                  </a>
-                ) : null}
-              </div>
-
-              {tokenInfo && !isFetchingToken && (
-                <div className="mt-3 animate-fade-in border-t border-white/8 pt-3">
-                  <div className="flex items-center gap-2">
-                    {tokenInfo.imageUrl ? (
-                      <img
-                        src={tokenInfo.imageUrl}
-                        alt={tokenInfo.symbol}
-                        className="h-6 w-6 rounded-full border border-white/10 object-cover"
-                        loading="lazy"
-                      />
-                    ) : null}
-                    <span className="text-sm font-semibold text-white">
-                      {tokenInfo.symbol}
-                    </span>
-                    <span className="text-xs text-white/44">
-                      {tokenInfo.name}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-white/52">
-                    {tokenInfo.priceUsd != null ? (
-                      <span>Price: ${tokenInfo.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
-                    ) : null}
-                    {tokenInfo.marketCap > 0 ? <span>MCap: ${tokenInfo.marketCap.toLocaleString()}</span> : null}
-                    {tokenInfo.liquidityUsd != null ? <span>Liquidity: ${tokenInfo.liquidityUsd.toLocaleString()}</span> : null}
-                    {tokenInfo.volume24hUsd != null ? <span>24h Vol: ${tokenInfo.volume24hUsd.toLocaleString()}</span> : null}
-                    {tokenInfo.priceChange24hPct != null ? (
-                      <span className={tokenInfo.priceChange24hPct >= 0 ? "text-emerald-300" : "text-rose-300"}>
-                        24h: {tokenInfo.priceChange24hPct >= 0 ? "+" : ""}
-                        {tokenInfo.priceChange24hPct.toFixed(2)}%
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="mt-2 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              {COMPOSER_ACTIONS.map((action) => {
-                const Icon = action.icon;
+              {INTENTS.map((item) => {
+                const Icon = item.icon;
+                const active = item.id === intent;
                 return (
                   <button
-                    key={action.label}
+                    key={item.id}
                     type="button"
-                    onClick={() => setMode(action.id)}
+                    disabled={item.disabled}
+                    title={item.unavailableReason}
+                    onClick={() => {
+                      if (item.disabled) {
+                        toast.info(item.unavailableReason);
+                        return;
+                      }
+                      setIntent(item.id);
+                    }}
                     className={cn(
-                      "inline-flex h-9 items-center gap-2 rounded-[12px] border px-3 text-xs font-semibold transition",
-                      composerToneClass(action, mode === action.id)
+                      "inline-flex h-8 items-center gap-1.5 rounded-[9px] border px-2.5 text-xs font-semibold transition",
+                      active
+                        ? "border-lime-300/35 bg-lime-300/[0.13] text-lime-100"
+                        : "border-white/8 bg-white/[0.025] text-white/56 hover:bg-white/[0.055] hover:text-white/78",
+                      item.disabled && "cursor-not-allowed opacity-45"
                     )}
                   >
                     <Icon className="h-3.5 w-3.5" />
-                    {action.label}
+                    {item.label}
                   </button>
                 );
               })}
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-              <span
-                className={cn(
-                  "text-xs font-medium transition-colors",
-                  charCount < MIN_CHARS
-                    ? "text-white/40"
-                    : charCount <= MAX_CHARS
-                    ? "text-white/74"
-                    : "text-rose-300"
-                )}
-              >
-                {charCount}/{MAX_CHARS}
+            <div className="flex items-center justify-between gap-3">
+              <span className={cn("text-xs", charCount > MAX_CHARS ? "text-rose-300" : charCount >= MIN_CHARS ? "text-white/54" : "text-white/34")}>
+                {charCount}/{MAX_CHARS} · {selected.label}
               </span>
-              {charCount > 0 && charCount < MIN_CHARS && (
-                <span className="text-xs text-white/40">
-                  (min {MIN_CHARS})
-                </span>
-              )}
-              {!detected && charCount >= MIN_CHARS ? (
-                <span className="text-xs text-white/34">Posting as {activeMode.label.toLowerCase()}</span>
-              ) : null}
-              {detected && charCount >= MIN_CHARS ? (
-                <span className="text-xs text-lime-200/80">Token context attached</span>
-              ) : null}
-              </div>
-
-            <Button
-              onClick={handleSubmit}
-              disabled={isComposerDisabled}
-              size="sm"
-              className={cn(
-                "relative overflow-hidden gap-2 rounded-2xl px-4",
-                isLiquidated
-                  ? "bg-red-900/50 text-red-400 border border-red-600/50 cursor-not-allowed hover:bg-red-900/50"
-                  : "border border-lime-300/24 bg-[linear-gradient(135deg,rgba(169,255,52,0.96),rgba(45,212,191,0.9))] text-slate-950 hover:brightness-[1.05]",
-                "transition-all duration-200",
-                !isLiquidated && "hover:scale-[1.02] active:scale-[0.98]"
-              )}
-            >
-              {isLiquidated ? (
-                <>
-                  <Lock className="h-4 w-4" />
-                  <span>Locked</span>
-                </>
-              ) : isAuthPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Signing you in...</span>
-                </>
-              ) : isSubmitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Posting...</span>
-                </>
-              ) : (
-                <>
-                  <PhewSendIcon className="h-4 w-4" />
-                  <span>{activeMode.submitLabel}</span>
-                </>
-              )}
-            </Button>
+              <Button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!canSubmit || isSubmitting}
+                className="h-9 rounded-[10px] bg-[linear-gradient(135deg,#a9ff34,#12d7aa)] px-5 text-sm font-bold text-slate-950 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isLiquidated ? <Lock className="mr-2 h-4 w-4" /> : isSubmitting || isAuthPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Post
+              </Button>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

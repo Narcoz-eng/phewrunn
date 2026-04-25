@@ -471,6 +471,9 @@ export interface DiscoverySidebarMover {
   hotAlphaScore: number | null;
   volume24h: number | null;
   liquidity: number | null;
+  marketCap?: number | null;
+  change24hPct?: number | null;
+  changeSource?: string | null;
 }
 
 export interface DiscoverySidebarRaid {
@@ -527,11 +530,35 @@ export interface DiscoverySidebarAiSpotlight {
 }
 
 export interface DiscoveryFeedSidebarResponse {
+  marketStats?: {
+    marketCap: number | null;
+    volume24h: number | null;
+    btcDominance: number | null;
+    marketCapChangePct: number | null;
+    volume24hChangePct: number | null;
+    btcDominanceChangePct: number | null;
+    coverage?: {
+      marketCap: string;
+      volume24h: string;
+      btcDominance: string;
+      unavailableReason?: string | null;
+    };
+  };
   topGainers: DiscoverySidebarMover[];
   liveRaids: DiscoverySidebarRaid[];
   trendingCalls: DiscoverySidebarCall[];
   trendingCommunities: DiscoverySidebarCommunity[];
   aiSpotlight: DiscoverySidebarAiSpotlight | null;
+  whaleActivity?: Array<{
+    id: string;
+    tokenSymbol: string | null;
+    tokenImage: string | null;
+    action: string;
+    amount: string | null;
+    valueUsd: number | null;
+    explorerUrl: string | null;
+    createdAt: string;
+  }>;
 }
 
 export interface BundleCheckerLinkedWallet {
