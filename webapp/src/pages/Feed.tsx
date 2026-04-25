@@ -1202,6 +1202,17 @@ export default function Feed() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<FeedTab>("latest");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
+  const requestedComposerMode = useMemo(() => {
+    const value = searchParams.get("compose");
+    return value === "alpha" ||
+      value === "discussion" ||
+      value === "chart" ||
+      value === "poll" ||
+      value === "raid" ||
+      value === "news"
+      ? value
+      : null;
+  }, [searchParams]);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const [hasUserScrolledForAutoLoad, setHasUserScrolledForAutoLoad] = useState(false);
   const [pendingLatestFirstPage, setPendingLatestFirstPage] = useState<FeedPage | null>(null);
@@ -2571,6 +2582,7 @@ export default function Feed() {
             onSubmit={handleCreatePost}
             isSubmitting={createPostMutation.isPending}
             isAuthPending={isAuthWritePending}
+            initialMode={requestedComposerMode}
           />
 
           <section className="rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">

@@ -17,7 +17,7 @@ import type {
   DiscoverySidebarRaid,
 } from "@/types";
 
-type CommunityTab = "feed" | "calls" | "members" | "about" | "raids";
+type CommunityTab = "feed" | "calls" | "members" | "about" | "raids" | "events";
 
 function formatCompact(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "--";
@@ -249,23 +249,17 @@ export default function CommunityPage() {
                 { value: "members", label: "Members" },
                 { value: "about", label: "About" },
                 { value: "raids", label: "Raids" },
-                { value: "events", label: "Events", disabled: true },
+                { value: "events", label: "Events" },
               ].map((item) => (
                 <button
                   key={item.value}
                   type="button"
-                  disabled={item.disabled}
-                  title={item.disabled ? "Events require a community events endpoint before this tab can be enabled." : undefined}
-                  onClick={() => {
-                    if (!item.disabled) setTab(item.value as CommunityTab);
-                  }}
+                  onClick={() => setTab(item.value as CommunityTab)}
                   className={cn(
                     "relative pb-2 text-sm font-medium transition",
-                    item.disabled
-                      ? "cursor-not-allowed text-white/24"
-                      : tab === item.value
-                        ? "text-lime-200"
-                        : "text-white/44 hover:text-white/72"
+                    tab === item.value
+                      ? "text-lime-200"
+                      : "text-white/44 hover:text-white/72"
                   )}
                 >
                   {item.label}
@@ -471,6 +465,13 @@ export default function CommunityPage() {
                 />
               )}
             </section>
+          ) : null}
+
+          {tab === "events" ? (
+            <CommunityEmptyState
+              title="Events require scheduling data"
+              body="The community events tab is intentionally unavailable until a backend events endpoint can persist calendars, RSVPs, and reminders. No synthetic events are shown."
+            />
           ) : null}
         </div>
 

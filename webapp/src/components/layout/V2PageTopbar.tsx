@@ -1,4 +1,5 @@
-import { Bell, Mail, Search } from "lucide-react";
+import { Bell, Search } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-client";
@@ -17,6 +18,7 @@ export function V2PageTopbar({
   className?: string;
 }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   return (
     <div className={cn("flex items-center gap-3", className)}>
@@ -30,11 +32,14 @@ export function V2PageTopbar({
           aria-label={placeholder}
         />
       </div>
-      <Button type="button" variant="ghost" size="icon" className="h-11 w-11 rounded-[10px] border border-white/10 bg-white/[0.035] text-white/62 hover:bg-white/[0.07] hover:text-white">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={() => navigate("/notifications")}
+        className="h-11 w-11 rounded-[10px] border border-white/10 bg-white/[0.035] text-white/62 hover:bg-white/[0.07] hover:text-white"
+      >
         <Bell className="h-4 w-4" />
-      </Button>
-      <Button type="button" variant="ghost" size="icon" className="h-11 w-11 rounded-[10px] border border-white/10 bg-white/[0.035] text-white/62 hover:bg-white/[0.07] hover:text-white">
-        <Mail className="h-4 w-4" />
       </Button>
       <Avatar className="h-11 w-11 border border-lime-300/20">
         <AvatarImage src={user ? getAvatarUrl(user.id, user.image) : undefined} />

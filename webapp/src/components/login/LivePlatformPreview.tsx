@@ -160,7 +160,7 @@ export function LivePlatformPreview() {
                       {formatSignedPercent(item.priceChange24hPct)}
                     </div>
                     <div className="mt-1 text-xs text-white/44">
-                      Vol {formatCompact(item.volume24h)} • Liq {formatCompact(item.liquidity)}
+                      Vol {formatCompact(item.volume24h)} | Liq {formatCompact(item.liquidity)}
                     </div>
                   </div>
                 ))}
@@ -259,7 +259,7 @@ export function LivePlatformPreview() {
                         {entry.user.username || entry.user.name}
                       </div>
                       <div className="text-xs text-white/42">
-                        {entry.performance.callsCount} calls • {typeof entry.performance.winRate === "number" ? `${entry.performance.winRate.toFixed(1)}%` : "--"} win
+                        {entry.performance.callsCount} calls | {typeof entry.performance.winRate === "number" ? `${entry.performance.winRate.toFixed(1)}%` : "--"} win
                       </div>
                     </div>
                     <div className="text-sm font-semibold text-lime-300">
@@ -282,7 +282,7 @@ export function LivePlatformPreview() {
                       {call.title || (call.ticker ? `$${call.ticker}` : "Call")}
                     </div>
                     <div className="mt-1 text-xs text-white/42">
-                      {formatSignedPercent(call.roiCurrentPct)} current • {call.callsCount} calls
+                      {formatSignedPercent(call.roiCurrentPct)} current | {call.callsCount} calls
                     </div>
                   </div>
                 ))}

@@ -122,7 +122,7 @@ export default function CommunitiesIndexPage() {
           </div>
           <h2 className="mt-5 text-xl font-semibold text-white">No community rooms are indexed yet</h2>
           <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/54">
-            The Communities route is wired to real discovery data. Once backend community profiles exist, they appear here instead of a hardcoded token room.
+            The Communities route is wired to real discovery data. Once backend community profiles exist, they appear here as indexed rooms only.
           </p>
         </section>
       )}

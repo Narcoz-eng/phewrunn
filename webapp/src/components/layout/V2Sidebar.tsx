@@ -7,14 +7,11 @@ import {
   Flame,
   Globe2,
   LogOut,
-  Mail,
-  MoreHorizontal,
   Settings,
   ShieldCheck,
   Trophy,
   UserRound,
   Users,
-  Wallet,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -50,17 +47,13 @@ const navItems: NavItem[] = [
       (pathname.startsWith("/terminal") && !search.includes("mode=raids")) || pathname.startsWith("/token/"),
   },
   { to: "/bundle-checker", label: "Bundle Checker", icon: Boxes, match: (pathname) => pathname.startsWith("/bundle-checker") },
-  { label: "Portfolio", icon: Wallet, disabled: true },
   { to: "/leaderboard", label: "Leaderboard", icon: Trophy, match: (pathname) => pathname.startsWith("/leaderboard") },
   { to: "/communities", label: "Communities", icon: Users, match: (pathname) => pathname.startsWith("/communities") },
-  { label: "AI Intelligence", icon: Zap, disabled: true },
-  { to: "/notifications", label: "Notifications", icon: Bell, badge: "12", match: (pathname) => pathname.startsWith("/notifications") },
-  { label: "Messages", icon: Mail, disabled: true },
+  { to: "/notifications", label: "Notifications", icon: Bell, match: (pathname) => pathname.startsWith("/notifications") },
   { to: "/profile", label: "Profile", icon: UserRound, match: (pathname) => pathname.startsWith("/profile") },
-  { label: "More", icon: MoreHorizontal, disabled: true },
 ];
 
-const mobileNavItems = [navItems[0], navItems[1], navItems[2], navItems[5], navItems[10]].filter(Boolean);
+const mobileNavItems = [navItems[0], navItems[1], navItems[2], navItems[4], navItems[7]].filter(Boolean);
 
 function SidebarNavItems({ mobile = false }: { mobile?: boolean }) {
   const location = useLocation();
@@ -173,7 +166,7 @@ export function V2Sidebar() {
             <div className="px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/36">Quick Actions</div>
             <div className="mt-2 grid gap-2">
               {[
-                { label: "New Call", hint: "Share alpha", icon: Activity, onClick: () => navigate("/") },
+                { label: "New Call", hint: "Share alpha", icon: Activity, onClick: () => navigate("/?compose=alpha") },
                 { label: "Create Raid", hint: "Open raid room", icon: Flame, onClick: () => navigate("/raids") },
                 { label: "AI Scan", hint: "Analyze token", icon: Zap, onClick: () => navigate("/bundle-checker") },
                 { label: "Wallet Tracker", hint: "Smart money flow", icon: ShieldCheck, disabled: true },
@@ -185,6 +178,7 @@ export function V2Sidebar() {
                     type="button"
                     onClick={item.disabled ? undefined : item.onClick}
                     disabled={item.disabled}
+                    title={item.disabled ? "Wallet tracker requires a wallet-flow endpoint before it can be enabled." : undefined}
                     className="flex items-center gap-2.5 rounded-[12px] border border-white/[0.07] bg-white/[0.03] px-2.5 py-2 text-left transition hover:border-lime-300/20 hover:bg-white/[0.055] disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-white/[0.07] bg-black/20">
@@ -201,13 +195,13 @@ export function V2Sidebar() {
           </div>
 
           <div className="flex items-center justify-between px-1 pb-1 text-white/48">
-            <button type="button" className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Settings">
+            <button type="button" onClick={() => navigate("/profile")} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Profile settings">
               <Settings className="h-4 w-4" />
             </button>
-            <button type="button" className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Security">
+            <button type="button" onClick={() => navigate("/profile")} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Wallet security">
               <ShieldCheck className="h-4 w-4" />
             </button>
-            <button type="button" className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Language">
+            <button type="button" disabled title="Language preferences require a localization settings endpoint." className="cursor-not-allowed rounded-xl p-2 opacity-45" aria-label="Language unavailable">
               <Globe2 className="h-4 w-4" />
             </button>
             <button type="button" onClick={signOut} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Sign out">

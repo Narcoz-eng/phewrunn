@@ -1,4 +1,4 @@
-import { BarChart3, Bookmark, Heart, LineChart, MessageSquare, MoreVertical, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Heart, LineChart, MessageSquare, MoreVertical, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -208,15 +208,6 @@ function EngagementFooter({ post, onLike, onRepost }: FeedV2PostCardProps) {
         <BarChart3 className="h-4 w-4" />
         {compact(post.viewCount)}
       </span>
-      <button
-        type="button"
-        disabled
-        title="Save requires the watchlist endpoint"
-        className="inline-flex cursor-not-allowed items-center gap-2 text-white/28"
-      >
-        <Bookmark className="h-4 w-4" />
-        <span className="sr-only">Save unavailable</span>
-      </button>
     </div>
   );
 }

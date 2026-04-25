@@ -97,6 +97,7 @@ interface CreatePostProps {
   onSubmit: (content: string, postType: ComposerMode, options?: { pollOptions?: string[] }) => Promise<void>;
   isSubmitting: boolean;
   isAuthPending?: boolean;
+  initialMode?: ComposerMode | null;
 }
 
 interface TokenInfo {
@@ -225,6 +226,7 @@ export function CreatePost({
   onSubmit,
   isSubmitting,
   isAuthPending = false,
+  initialMode = null,
 }: CreatePostProps) {
   const navigate = useNavigate();
   const [content, setContent] = useState("");
@@ -240,6 +242,13 @@ export function CreatePost({
   const detected = detectContractAddress(content);
   const charCount = content.length;
   const activeMode = COMPOSER_ACTIONS.find((action) => action.id === mode) ?? COMPOSER_ACTIONS[0];
+
+  useEffect(() => {
+    if (!initialMode) return;
+    setMode(initialMode);
+    textareaRef.current?.focus();
+    textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [initialMode]);
 
   // Fetch token info from Dexscreener with debounce
   const fetchTokenInfo = useCallback(async (address: string, chainType: "solana" | "evm") => {
