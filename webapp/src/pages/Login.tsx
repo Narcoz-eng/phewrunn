@@ -11,7 +11,7 @@ import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyContext";
 import { LivePlatformPreview } from "@/components/login/LivePlatformPreview";
 import { Button } from "@/components/ui/button";
-import { Loader2, Mail, ShieldCheck } from "lucide-react";
+import { Loader2, Send, ShieldCheck, WalletCards } from "lucide-react";
 
 function Background() {
   return (
@@ -63,32 +63,30 @@ function PrivyLoginButton() {
   return (
     <div className="space-y-3">
       <div className="grid gap-3">
-        <button
-          type="button"
-          className={buttonClassName}
-          onClick={() => login({ loginMethods: ["twitter"] })}
-          disabled={isSyncing || isRetryBlocked}
-        >
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-white/10 bg-white/[0.05] text-xl font-black shadow-[0_12px_36px_-20px_rgba(255,255,255,0.18)]">
-            X
-          </span>
-          <span className="text-sm font-semibold text-white/82">
-            {privyReady ? "X (Twitter)" : "Initializing..."}
-          </span>
-        </button>
-        <button
-          type="button"
-          className={buttonClassName}
-          onClick={() => login({ loginMethods: ["email"] })}
-          disabled={isSyncing || isRetryBlocked}
-        >
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-lime-300/18 bg-lime-300/10 text-lime-200 shadow-[0_12px_36px_-20px_rgba(169,255,52,0.34)]">
-            <Mail className="h-5 w-5" />
-          </span>
-          <span className="text-sm font-semibold text-white/82">
-            {privyReady ? "Email" : "Initializing..."}
-          </span>
-        </button>
+        {[
+          { label: "X (Twitter)", method: "twitter" as const, icon: "X" },
+          { label: "Wallet", method: "wallet" as const, icon: WalletCards },
+          { label: "Telegram", method: "telegram" as const, icon: Send },
+          { label: "Google", method: "google" as const, icon: "G" },
+        ].map((item) => {
+          const Icon = typeof item.icon === "string" ? null : item.icon;
+          return (
+            <button
+              key={item.method}
+              type="button"
+              className={buttonClassName}
+              onClick={() => login({ loginMethods: [item.method] })}
+              disabled={isSyncing || isRetryBlocked}
+            >
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-lime-300/18 bg-lime-300/10 text-lg font-black text-lime-200 shadow-[0_12px_36px_-20px_rgba(169,255,52,0.34)]">
+                {Icon ? <Icon className="h-5 w-5" /> : item.icon}
+              </span>
+              <span className="text-sm font-semibold text-white/82">
+                {privyReady ? item.label : "Initializing..."}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {visibleStatus ? <p className="pt-0.5 text-center text-[11px] text-muted-foreground">{visibleStatus}</p> : null}
@@ -101,7 +99,7 @@ function FallbackLoginButton() {
   return (
     <div className="space-y-4">
       <div className="grid gap-3">
-        {["X", "Email"].map((label) => (
+        {["X", "Wallet", "Telegram", "Google"].map((label) => (
           <Button key={label} type="button" variant="outline" className="h-14 justify-start rounded-[18px] opacity-50" disabled>
             <div className="flex items-center gap-3">
               <Loader2 className="h-5 w-5 animate-spin" />

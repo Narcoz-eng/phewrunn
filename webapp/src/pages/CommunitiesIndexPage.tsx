@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { ArrowUpRight, Loader2, RadioTower, Users } from "lucide-react";
 import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
@@ -7,6 +8,7 @@ import { api } from "@/lib/api";
 import type { DiscoveryFeedSidebarResponse } from "@/types";
 
 export default function CommunitiesIndexPage() {
+  const [search, setSearch] = useState("");
   const communitiesQuery = useQuery({
     queryKey: ["discovery", "communities-index"],
     queryFn: () => api.get<DiscoveryFeedSidebarResponse>("/api/discovery/feed-sidebar"),
@@ -15,8 +17,37 @@ export default function CommunitiesIndexPage() {
     refetchOnWindowFocus: false,
   });
 
-  const communities = communitiesQuery.data?.trendingCommunities ?? [];
-  const liveRaids = communitiesQuery.data?.liveRaids ?? [];
+  const communities = useMemo(
+    () => communitiesQuery.data?.trendingCommunities ?? [],
+    [communitiesQuery.data?.trendingCommunities]
+  );
+  const liveRaids = useMemo(
+    () => communitiesQuery.data?.liveRaids ?? [],
+    [communitiesQuery.data?.liveRaids]
+  );
+  const searchQuery = search.trim().toLowerCase();
+  const filteredCommunities = useMemo(() => {
+    if (!searchQuery) return communities;
+    return communities.filter((community) =>
+      [
+        community.name,
+        community.xCashtag,
+        community.headline,
+        community.tokenAddress,
+      ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery))
+    );
+  }, [communities, searchQuery]);
+  const filteredLiveRaids = useMemo(() => {
+    if (!searchQuery) return liveRaids;
+    return liveRaids.filter((raid) =>
+      [
+        raid.objective,
+        raid.tokenSymbol,
+        raid.tokenAddress,
+        raid.status,
+      ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery))
+    );
+  }, [liveRaids, searchQuery]);
 
   return (
     <div className="space-y-4">
@@ -26,7 +57,12 @@ export default function CommunitiesIndexPage() {
             <h1 className="text-[24px] font-semibold tracking-tight text-white">COMMUNITIES</h1>
             <p className="mt-1 text-[13px] leading-5 text-white/54">Token rooms, active calls, and coordinated raid hubs.</p>
           </div>
-          <V2PageTopbar placeholder="Search posts, users, tokens..." className="lg:min-w-[520px]" />
+          <V2PageTopbar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search communities, tokens, raids..."
+            className="lg:min-w-[520px]"
+          />
         </div>
       </section>
 
@@ -43,11 +79,12 @@ export default function CommunitiesIndexPage() {
                 <h2 className="text-lg font-semibold text-white">Active Community Rooms</h2>
                 <p className="mt-1 text-sm text-white/48">Real token communities discovered from backend room activity.</p>
               </div>
-              <V2StatusPill tone="live">{communities.length} Live</V2StatusPill>
+              <V2StatusPill tone="live">{filteredCommunities.length} Live</V2StatusPill>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              {communities.map((community) => (
+            {filteredCommunities.length ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {filteredCommunities.map((community) => (
                 <Link
                   key={community.tokenAddress}
                   to={`/communities/${community.tokenAddress}`}
@@ -87,8 +124,21 @@ export default function CommunitiesIndexPage() {
                     ))}
                   </div>
                 </Link>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-[280px] items-center justify-center rounded-[18px] border border-white/8 bg-black/20 px-6 py-12 text-center">
+                <div>
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-lime-300/18 bg-lime-300/8">
+                    <Users className="h-6 w-6 text-lime-300" />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold text-white">No rooms match that search</h3>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/50">
+                    Search is applied to indexed community names, cashtags, token addresses, headlines, and live raid metadata.
+                  </p>
+                </div>
+              </div>
+            )}
           </section>
 
           <aside className="space-y-4">
@@ -98,8 +148,8 @@ export default function CommunitiesIndexPage() {
                 Community Raid Pulse
               </div>
               <div className="mt-4 space-y-3">
-                {liveRaids.length ? (
-                  liveRaids.map((raid) => (
+                {filteredLiveRaids.length ? (
+                  filteredLiveRaids.map((raid) => (
                     <Link key={raid.id} to={`/raids/${raid.tokenAddress}/${raid.id}`} className="block rounded-[16px] border border-white/8 bg-white/[0.03] px-3 py-3 hover:bg-white/[0.055]">
                       <div className="flex items-center justify-between gap-3">
                         <span className="truncate text-sm font-semibold text-white">{raid.tokenSymbol ? `$${raid.tokenSymbol} RAID` : "Live Raid"}</span>
@@ -109,7 +159,9 @@ export default function CommunitiesIndexPage() {
                     </Link>
                   ))
                 ) : (
-                  <p className="text-sm leading-6 text-white/50">No active community raid is available from the backend right now.</p>
+                  <p className="text-sm leading-6 text-white/50">
+                    {searchQuery ? "No live raid matches this search." : "No active community raid is available from the backend right now."}
+                  </p>
                 )}
               </div>
             </section>

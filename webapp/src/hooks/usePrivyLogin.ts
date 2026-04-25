@@ -38,7 +38,7 @@ type VisibleAuthStatus =
   | "rate_limited"
   | "logout_in_progress";
 
-type LoginMethodOverride = "email" | "twitter";
+type LoginMethodOverride = "email" | "twitter" | "wallet" | "telegram" | "google";
 
 type StartLoginOptions = {
   loginMethods?: LoginMethodOverride[];

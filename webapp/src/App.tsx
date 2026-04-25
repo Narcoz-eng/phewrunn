@@ -103,6 +103,27 @@ function MissingHandleGate({ children }: { children: ReactNode }) {
   );
 }
 
+function AuthAwareNotFoundRoute() {
+  const location = useLocation();
+  const { isAuthenticated, hasLiveSession, isReady } = useAuth();
+
+  if (!isReady) {
+    return <PageSkeleton />;
+  }
+
+  if (!isAuthenticated || !hasLiveSession) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
+      />
+    );
+  }
+
+  return <NotFound />;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -181,9 +202,13 @@ function AnimatedRoutes() {
           <Route
             path="/profile/:userId"
             element={
-              <WithSolanaRuntime>
-                <UserProfile />
-              </WithSolanaRuntime>
+              <ProtectedRoute>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <UserProfile />
+                  </WithSolanaRuntime>
+                </WithProductShell>
+              </ProtectedRoute>
             }
           />
           <Route
@@ -315,12 +340,16 @@ function AnimatedRoutes() {
           <Route
             path="/:userId"
             element={
-              <WithSolanaRuntime>
-                <PublicHandleProfileRoute />
-              </WithSolanaRuntime>
+              <ProtectedRoute>
+                <WithProductShell>
+                  <WithSolanaRuntime>
+                    <PublicHandleProfileRoute />
+                  </WithSolanaRuntime>
+                </WithProductShell>
+              </ProtectedRoute>
             }
           />
-          <Route path="*" element={<NotFound />} />
+          <Route path="*" element={<AuthAwareNotFoundRoute />} />
         </Routes>
       </motion.div>
     </AnimatePresence>

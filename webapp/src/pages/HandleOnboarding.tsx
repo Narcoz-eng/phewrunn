@@ -3,10 +3,9 @@ import { useMutation } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, AtSign, Loader2, LogOut, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { BrandLogo } from "@/components/BrandLogo";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LivePlatformPreview } from "@/components/login/LivePlatformPreview";
 import { useAuth, useSession, updateCachedAuthUser } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -125,76 +124,25 @@ export default function HandleOnboarding() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(153,230,200,0.18),_transparent_38%),linear-gradient(180deg,#0b0f10_0%,#111617_100%)] text-white">
-      <header className="border-b border-white/10 bg-black/20 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5 sm:px-6">
-          <BrandLogo size="sm" showTagline />
-          <div className="flex items-center gap-3">
-            <ThemeToggle size="icon" className="h-9 w-9 border-white/10 bg-white/5 text-white hover:bg-white/10" />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void signOut()}
-              className="gap-1.5 text-white/75 hover:bg-white/10 hover:text-white"
-            >
-              <LogOut className="h-4 w-4" />
-              Switch account
-            </Button>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen overflow-hidden bg-background text-white">
+      <div className="fixed inset-0 z-0 overflow-hidden">
+        <LivePlatformPreview />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(169,255,52,0.06),transparent_24%),linear-gradient(180deg,rgba(2,5,7,0.42),rgba(2,5,7,0.92))]" />
+        <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" />
+      </div>
 
-      <main className="mx-auto flex min-h-[calc(100vh-65px)] max-w-5xl items-center px-5 py-10 sm:px-6">
-        <div className="grid w-full gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="space-y-5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100/90">
-              <Sparkles className="h-3.5 w-3.5" />
-              First-time setup
-            </div>
-            <div className="space-y-3">
-              <h1 className="max-w-xl text-4xl font-black tracking-tight text-white sm:text-5xl">
-                Pick the handle your profile will live on.
-              </h1>
-              <p className="max-w-lg text-sm leading-relaxed text-white/70 sm:text-base">
-                This is the path people will open, follow, and share. Keep it clean.
-                You can change it later, but only once every 7 days.
-              </p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
-                  Profile URL
-                </p>
-                <p className="mt-2 text-xl font-semibold text-emerald-100">
-                  phew.run/{normalizedHandle || "your_handle"}
-                </p>
-                <p className="mt-2 text-sm text-white/60">
-                  This becomes your public profile link.
-                </p>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
-                  What works
-                </p>
-                <p className="mt-2 text-base font-semibold text-white">Lowercase, numbers, underscores</p>
-                <p className="mt-2 text-sm text-white/60">
-                  Keep it between 3 and 20 characters.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-[32px] border border-white/10 bg-black/35 p-5 shadow-[0_30px_90px_-40px_rgba(0,0,0,0.85)] backdrop-blur-2xl sm:p-6">
+      <main className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10 sm:px-6">
+        <div className="w-full max-w-[460px]">
+          <section className="rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(6,10,12,0.84),rgba(3,7,9,0.95))] p-6 shadow-[0_34px_96px_-52px_rgba(0,0,0,0.95)] backdrop-blur-3xl sm:p-7">
             <div className="space-y-5">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
-                  Creator handle
-                </p>
-                <h2 className="mt-2 text-2xl font-bold text-white">Finish sign-in</h2>
+                <div className="inline-flex items-center gap-2 rounded-full border border-lime-300/18 bg-lime-300/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-lime-100">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  First-time setup
+                </div>
+                <h1 className="mt-4 text-2xl font-semibold tracking-[-0.04em] text-white">Claim your handle</h1>
                 <p className="mt-2 text-sm text-white/65">
-                  @{session.user.name || session.user.email?.split("@")[0] || "creator"} will appear under this handle.
+                  Choose the profile path people will open, follow, and share.
                 </p>
               </div>
 
@@ -202,7 +150,7 @@ export default function HandleOnboarding() {
                 <label className="block text-sm font-medium text-white/80" htmlFor="profile-handle">
                   Handle
                 </label>
-                <div className="flex items-center gap-3 rounded-[24px] border border-white/10 bg-white/5 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                <div className="flex items-center gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                   <AtSign className="h-4 w-4 text-emerald-200/80" />
                   <Input
                     id="profile-handle"
@@ -223,7 +171,7 @@ export default function HandleOnboarding() {
                   />
                 </div>
                 <p className="text-xs text-white/50">
-                  Use lowercase letters, numbers, and underscores. No spaces in the final URL.
+                  Lowercase letters, numbers, and underscores. Between 3 and 20 characters.
                 </p>
                 {validationMessage ? (
                   <p className="text-xs font-medium text-amber-200">{validationMessage}</p>
@@ -238,7 +186,7 @@ export default function HandleOnboarding() {
                 type="button"
                 onClick={handleSubmit}
                 disabled={saveHandleMutation.isPending || !!validationMessage}
-                className="h-14 w-full justify-between rounded-[22px] bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] px-5 text-sm font-semibold text-slate-950 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.75)] hover:brightness-105"
+                className="h-14 w-full justify-between rounded-[18px] bg-[linear-gradient(135deg,#c7f5a6_0%,#98e9dc_100%)] px-5 text-sm font-semibold text-slate-950 shadow-[0_24px_60px_-30px_rgba(152,233,220,0.75)] hover:brightness-105"
               >
                 <span className="flex items-center gap-2">
                   {saveHandleMutation.isPending ? (
@@ -250,6 +198,15 @@ export default function HandleOnboarding() {
                 </span>
                 <ArrowRight className="h-4 w-4" />
               </Button>
+
+              <button
+                type="button"
+                onClick={() => void signOut()}
+                className="mx-auto flex items-center gap-1.5 text-xs text-white/42 transition hover:text-lime-200"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Switch account
+              </button>
             </div>
           </section>
         </div>
