@@ -63,17 +63,17 @@ export function LeaderboardPodium({ rows }: { rows: LeaderboardRowVM[] }) {
           <article
             key={row.id}
             className={cn(
-              "relative overflow-hidden rounded-[16px] border bg-[linear-gradient(180deg,rgba(10,17,19,0.98),rgba(4,8,10,0.99))] px-5 py-5 text-center",
+              "relative overflow-hidden rounded-[18px] border bg-[linear-gradient(180deg,rgba(10,17,19,0.98),rgba(4,8,10,0.99))] px-5 py-5 text-center",
               medal,
-              isFirst ? "min-h-[300px] shadow-[0_0_54px_-24px_rgba(251,191,36,0.8)] md:order-2" : "min-h-[252px]",
+              isFirst ? "min-h-[336px] shadow-[0_0_72px_-20px_rgba(251,191,36,0.95)] md:order-2" : "min-h-[276px]",
               row.rank === 2 && "md:order-1",
               row.rank === 3 && "md:order-3"
             )}
           >
-            <div className={cn("mx-auto flex items-center justify-center rounded-full border font-black", isFirst ? "h-16 w-16 text-4xl text-yellow-200" : "h-11 w-11 text-xl text-white/82")}>
+            <div className={cn("mx-auto flex items-center justify-center rounded-full border font-black shadow-[0_0_40px_-20px_currentColor]", isFirst ? "h-20 w-20 text-5xl text-yellow-200" : "h-12 w-12 text-2xl text-white/82")}>
               {row.rank}
             </div>
-            <Avatar className={cn("mx-auto mt-3 border border-lime-300/20", isFirst ? "h-20 w-20" : "h-16 w-16")}>
+            <Avatar className={cn("mx-auto mt-3 border border-lime-300/20", isFirst ? "h-24 w-24" : "h-16 w-16")}>
               <AvatarImage src={row.avatarUrl ?? undefined} />
               <AvatarFallback className="bg-white/[0.06] text-white">{row.avatarFallback}</AvatarFallback>
             </Avatar>

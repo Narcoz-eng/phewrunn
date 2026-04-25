@@ -1,12 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  BrainCircuit,
-  LineChart,
-  Radar,
-  Trophy,
-} from "lucide-react";
 import { useAuth, useSession } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import { buildProfilePath } from "@/lib/profile-path";
@@ -19,7 +13,6 @@ import {
 import { cn } from "@/lib/utils";
 import { getAvatarUrl, type User } from "@/types";
 import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
-import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
 import { V2Surface } from "@/components/ui/v2/V2Surface";
 import { V2TabBar } from "@/components/ui/v2/V2TabBar";
 import { LeaderboardPodium } from "@/components/leaderboard/LeaderboardPodium";
@@ -88,11 +81,6 @@ type TopUserEntry = {
 type TopUsersResponse = {
   data: TopUserEntry[];
 };
-
-function formatSignedPercent(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-}
 
 function buildTopUsersCacheKey(kind: string): string {
   return `phew.leaderboard.${kind}:v2`;
@@ -322,49 +310,9 @@ export default function Leaderboard() {
   const topMoverRows = useMemo(() => callRows.slice(0, 5), [callRows]);
   const raidLeaderRows = useMemo(() => raidRows.slice(0, 5), [raidRows]);
 
-  const leaderStats = useMemo(() => {
-    const entries = performanceQuery.data?.data ?? [];
-    const bestAvgRoi = entries.reduce((best, entry) => {
-      const value = entry.performance.avgRoi ?? Number.NEGATIVE_INFINITY;
-      return value > best ? value : best;
-    }, Number.NEGATIVE_INFINITY);
-    const totalSettledCalls = entries.reduce((sum, entry) => sum + entry.performance.settledCount, 0);
-    const averageWinRate =
-      entries.length > 0
-        ? entries.reduce((sum, entry) => sum + (entry.performance.winRate ?? 0), 0) / entries.length
-        : null;
-
-    return [
-      {
-        label: "Tracked Traders",
-        value: entries.length.toLocaleString(),
-        hint: "Board-wide ranked rows",
-        icon: Trophy,
-      },
-      {
-        label: "Settled Calls",
-        value: totalSettledCalls.toLocaleString(),
-        hint: "Call board only",
-        icon: Radar,
-      },
-      {
-        label: "Best Avg Call ROI",
-        value: Number.isFinite(bestAvgRoi) ? formatSignedPercent(bestAvgRoi) : "--",
-        hint: "Signal performance, not wallet PnL",
-        icon: LineChart,
-      },
-      {
-        label: "Avg Win Rate",
-        value: averageWinRate !== null ? `${averageWinRate.toFixed(1)}%` : "--",
-        hint: "Across ranked callers",
-        icon: BrainCircuit,
-      },
-    ];
-  }, [performanceQuery.data?.data]);
-
   return (
-    <div className="space-y-5 text-white">
-      <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-4 sm:px-5">
+    <div className="space-y-4 text-white">
+      <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.97),rgba(3,7,10,0.99))] px-4 py-3.5 sm:px-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-[26px] font-semibold tracking-tight text-white">Leaderboard</h1>
@@ -379,22 +327,7 @@ export default function Leaderboard() {
         </div>
       </section>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {leaderStats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <V2MetricCard
-              key={stat.label}
-              label={stat.label}
-              value={stat.value}
-              hint={stat.hint}
-              accent={<Icon className="h-5 w-5 text-lime-300" />}
-            />
-          );
-        })}
-      </div>
-
-      <V2Surface className="p-4 sm:p-5">
+      <V2Surface className="p-3 sm:p-3.5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <V2TabBar
             value={board}

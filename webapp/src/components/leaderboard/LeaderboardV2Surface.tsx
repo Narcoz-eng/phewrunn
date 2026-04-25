@@ -59,7 +59,7 @@ export function LeaderboardRankTable({
 }) {
   return (
     <V2Surface className="overflow-hidden p-0">
-      <div className="flex items-center justify-between gap-3 border-b border-white/8 px-5 py-4">
+      <div className="flex items-center justify-between gap-3 border-b border-white/8 px-5 py-3.5">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Rank Table</div>
           <h2 className="mt-1 text-lg font-semibold text-white">{title}</h2>
@@ -72,13 +72,13 @@ export function LeaderboardRankTable({
         <table className="min-w-[840px] w-full border-collapse text-left">
           <thead>
             <tr className="border-b border-white/8 text-[10px] uppercase tracking-[0.16em] text-white/36">
-              <th className="w-16 px-5 py-3 font-semibold">Rank</th>
-              <th className="px-3 py-3 font-semibold">User</th>
-              <th className="px-3 py-3 font-semibold">Signal ROI</th>
-              <th className="px-3 py-3 font-semibold">Win Rate</th>
-              <th className="px-3 py-3 font-semibold">Calls</th>
-              <th className="px-3 py-3 font-semibold">Followers</th>
-              <th className="px-3 py-3 font-semibold">Trend</th>
+              <th className="w-16 px-5 py-2.5 font-semibold">Rank</th>
+              <th className="px-3 py-2.5 font-semibold">User</th>
+              <th className="px-3 py-2.5 font-semibold">Signal ROI</th>
+              <th className="px-3 py-2.5 font-semibold">Win Rate</th>
+              <th className="px-3 py-2.5 font-semibold">Calls</th>
+              <th className="px-3 py-2.5 font-semibold">Followers</th>
+              <th className="px-3 py-2.5 font-semibold">Trend</th>
             </tr>
           </thead>
           <tbody>
@@ -93,7 +93,7 @@ export function LeaderboardRankTable({
                     isCurrent && "bg-lime-300/[0.07] outline outline-1 outline-lime-300/35"
                   )}
                 >
-                  <td className="px-5 py-3">
+                  <td className="px-5 py-2.5">
                     <span
                       className={cn(
                         "inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold",
@@ -109,7 +109,7 @@ export function LeaderboardRankTable({
                       {row.rank}
                     </span>
                   </td>
-                  <td className="px-3 py-3">
+                  <td className="px-3 py-2.5">
                     <div className="flex items-center gap-3">
                       <Avatar className="h-9 w-9 border border-white/10">
                         <AvatarImage src={row.avatarUrl ?? undefined} />
@@ -124,13 +124,13 @@ export function LeaderboardRankTable({
                       </div>
                     </div>
                   </td>
-                  <td className={cn("px-3 py-3 text-sm font-semibold", row.valueTone === "loss" ? "text-red-300" : "text-[#76ff44]")}>
+                  <td className={cn("px-3 py-2.5 text-sm font-semibold", row.valueTone === "loss" ? "text-red-300" : "text-[#76ff44]")}>
                     {row.valueLabel}
                   </td>
-                  <td className="px-3 py-3 text-sm text-white/78">{row.changeLabel ?? "--"}</td>
-                  <td className="px-3 py-3 text-sm text-white/78">{parseCalls(row.metadataLabel)}</td>
-                  <td className="px-3 py-3 text-sm text-white/78">{row.followersLabel}</td>
-                  <td className="px-3 py-3"><LeaderboardTrend row={row} /></td>
+                  <td className="px-3 py-2.5 text-sm text-white/78">{row.changeLabel ?? "--"}</td>
+                  <td className="px-3 py-2.5 text-sm text-white/78">{parseCalls(row.metadataLabel)}</td>
+                  <td className="px-3 py-2.5 text-sm text-white/78">{row.followersLabel}</td>
+                  <td className="px-3 py-2.5"><LeaderboardTrend row={row} /></td>
                 </tr>
               );
             })}
@@ -176,15 +176,19 @@ export function LeaderboardRightRail({
   return (
     <div className="space-y-4">
       <RailCard title="Top Movers" badge={period.toUpperCase()}>
-        {topMovers.slice(0, 5).map((row) => (
+        {topMovers.slice(0, 5).map((row, index) => (
           <button key={row.id} type="button" onClick={() => onSelectRow(row)} className="flex w-full items-center justify-between gap-3 rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left hover:bg-white/[0.06]">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-white">{row.displayName}</div>
-              <div className="truncate text-xs text-white/42">{row.changeLabel ?? row.metadataLabel}</div>
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="text-sm font-semibold text-white/42">{index + 1}</span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">{row.displayName}</div>
+                <div className="truncate text-xs text-white/42">{row.changeLabel ?? row.metadataLabel}</div>
+              </div>
             </div>
             <span className={cn("text-sm font-semibold", row.valueTone === "loss" ? "text-red-300" : "text-[#76ff44]")}>{row.valueLabel}</span>
           </button>
         ))}
+        {!topMovers.length ? <RailEmpty>Top movers appear once settled call-performance rows are available.</RailEmpty> : null}
       </RailCard>
 
       <RailCard title="AI Highlights">
@@ -196,6 +200,7 @@ export function LeaderboardRightRail({
             </p>
           </div>
         ))}
+        {!topMovers.length ? <RailEmpty>AI highlights are generated from real ranked call outcomes.</RailEmpty> : null}
       </RailCard>
 
       <RailCard title="Active Raid Leaders" badge="Live">
@@ -208,6 +213,7 @@ export function LeaderboardRightRail({
             <span className="text-sm font-semibold text-lime-300">{row.valueLabel}</span>
           </div>
         ))}
+        {!raidLeaders.length ? <RailEmpty>Raid leaders appear once live community activity is ranked.</RailEmpty> : null}
       </RailCard>
 
       <RailCard title="Leaderboard Legend">
@@ -269,5 +275,13 @@ function RailCard({ title, badge, children }: { title: string; badge?: string; c
       </div>
       <div className="space-y-3">{children}</div>
     </V2Surface>
+  );
+}
+
+function RailEmpty({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded-[14px] border border-dashed border-white/12 bg-black/20 px-3 py-3 text-xs leading-5 text-white/46">
+      {children}
+    </div>
   );
 }
