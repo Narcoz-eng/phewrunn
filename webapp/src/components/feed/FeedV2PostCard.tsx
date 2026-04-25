@@ -1,4 +1,4 @@
-import { BarChart3, Bookmark, Heart, MessageSquare, MoreVertical, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Bookmark, Heart, LineChart, MessageSquare, MoreVertical, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -13,7 +13,7 @@ type FeedV2PostCardProps = {
   onPollVote?: (postId: string, optionId: string) => Promise<void> | void;
 };
 
-type FeedPostKind = "call" | "whale" | "poll" | "raid" | "news" | "discussion";
+type FeedPostKind = "call" | "chart" | "whale" | "poll" | "raid" | "news" | "discussion";
 
 function compact(value: number | null | undefined, prefix = ""): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "--";
@@ -49,9 +49,10 @@ function inferDirection(post: Post): "LONG" | "SHORT" | null {
 }
 
 function inferKind(post: Post): FeedPostKind {
-  if (post.postType === "alpha" || post.postType === "chart") return post.contractAddress || post.tokenSymbol ? "call" : "discussion";
-  if (post.postType === "discussion" || post.postType === "news" || post.postType === "poll" || post.postType === "raid") return post.postType;
   if (post.walletTradeSnapshot) return "whale";
+  if (post.postType === "chart") return "chart";
+  if (post.postType === "alpha") return post.contractAddress || post.tokenSymbol ? "call" : "discussion";
+  if (post.postType === "discussion" || post.postType === "news" || post.postType === "poll" || post.postType === "raid") return post.postType;
 
   if (post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
   return "discussion";
@@ -68,6 +69,14 @@ function tokenLabel(post: Post): string {
 function signalTitle(post: Post): string {
   const direction = inferDirection(post);
   return `${tokenLabel(post)}${direction ? ` ${direction}` : ""}`;
+}
+
+function headline(post: Post): string {
+  const clean = displayContent(post);
+  const firstLine = clean.split(/\n+/)[0]?.trim();
+  if (!firstLine) return tokenLabel(post);
+  if (firstLine.length <= 72) return firstLine;
+  return `${firstLine.slice(0, 69).trim()}...`;
 }
 
 function riskLabel(post: Post): string {
@@ -179,7 +188,7 @@ function PostHeader({ post, badge }: { post: Post; badge?: string }) {
   );
 }
 
-function EngagementFooter({ post, onLike, onRepost, onComment }: FeedV2PostCardProps) {
+function EngagementFooter({ post, onLike, onRepost }: FeedV2PostCardProps) {
   const navigate = useNavigate();
   return (
     <div className="mt-4 flex items-center justify-between border-t border-white/8 pt-3 text-xs text-white/48">
@@ -195,18 +204,19 @@ function EngagementFooter({ post, onLike, onRepost, onComment }: FeedV2PostCardP
         <Repeat2 className="h-4 w-4" />
         {post._count.reposts}
       </button>
-      <button
-        type="button"
-        onClick={() => {
-          const content = window.prompt("Reply to this post");
-          if (content?.trim()) void onComment?.(post.id, content.trim());
-        }}
-        className="inline-flex items-center gap-2 hover:text-lime-200"
-      >
+      <span className="inline-flex items-center gap-2">
         <BarChart3 className="h-4 w-4" />
         {compact(post.viewCount)}
+      </span>
+      <button
+        type="button"
+        disabled
+        title="Save requires the watchlist endpoint"
+        className="inline-flex cursor-not-allowed items-center gap-2 text-white/28"
+      >
+        <Bookmark className="h-4 w-4" />
+        <span className="sr-only">Save unavailable</span>
       </button>
-      <Bookmark className="h-4 w-4 text-white/36" />
     </div>
   );
 }
@@ -342,15 +352,60 @@ export function FeedPostPollCard(props: FeedV2PostCardProps) {
   );
 }
 
+export function FeedPostChartCard(props: FeedV2PostCardProps) {
+  const { post } = props;
+  return (
+    <article className="rounded-[18px] border border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.10),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostHeader post={post} badge="Chart" />
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200/72">
+            <LineChart className="h-3.5 w-3.5" />
+            Chart setup
+          </div>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">{tokenLabel(post)} Technical Setup</h2>
+        </div>
+        <div className="rounded-[12px] border border-cyan-300/18 bg-cyan-300/[0.08] px-3 py-2 text-right">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-white/34">Timeframe</div>
+          <div className="text-sm font-semibold text-cyan-100">{post.timingTier || post.activityStatusLabel || "Live"}</div>
+        </div>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+      <div className="mt-4">
+        <MiniChart post={post} tall />
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        <Metric label="Setup Quality" value={typeof post.setupQualityScore === "number" ? post.setupQualityScore.toFixed(1) : "Unavailable"} />
+        <Metric label="Market Health" value={typeof post.marketHealthScore === "number" ? post.marketHealthScore.toFixed(1) : "Unavailable"} />
+        <Metric label="Current Move" value={pct(post.roiCurrentPct)} />
+      </div>
+      {post.contractAddress ? <TokenPreview post={post} /> : null}
+      <EngagementFooter {...props} />
+    </article>
+  );
+}
+
 export function FeedPostRaidCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
     <article className="rounded-[18px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
       <PostHeader post={post} badge="Raid" />
-      <h2 className="mt-4 text-xl font-semibold text-white">{tokenLabel(post)} RAID UPDATE</h2>
+      <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-200/72">
+        <RadioTower className="h-3.5 w-3.5" />
+        Raid signal
+      </div>
+      <h2 className="mt-1 text-xl font-semibold text-white">{tokenLabel(post)} RAID UPDATE</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
-      <div className="mt-4 rounded-[16px] border border-lime-300/12 bg-lime-300/8 p-4 text-sm text-white/58">
-        Raid room data is only shown when this post is linked to a backend raid campaign.
+      <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+        <div className="rounded-[16px] border border-lime-300/12 bg-lime-300/8 p-4 text-sm text-white/58">
+          Raid room data is shown only when this post is linked to a backend raid campaign.
+        </div>
+        <Link
+          to="/raids"
+          className="inline-flex min-h-14 items-center justify-center rounded-[14px] border border-lime-300/22 bg-lime-300/[0.12] px-4 text-sm font-semibold text-lime-100 hover:bg-lime-300/[0.18]"
+        >
+          View Rooms
+        </Link>
       </div>
       <EngagementFooter {...props} />
     </article>
@@ -372,9 +427,10 @@ export function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
 export function FeedPostNewsCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
-    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className="rounded-[18px] border border-amber-300/12 bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.10),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
       <PostHeader post={post} badge="News" />
-      <h2 className="mt-4 text-xl font-semibold text-white">{tokenLabel(post)} UPDATE</h2>
+      <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/72">Market news</div>
+      <h2 className="mt-1 text-xl font-semibold text-white">{headline(post)}</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
       {post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
@@ -431,6 +487,7 @@ export function FeedV2PostCard(props: FeedV2PostCardProps) {
   if (kind === "poll") return <FeedPostPollCard {...props} />;
   if (kind === "raid") return <FeedPostRaidCard {...props} />;
   if (kind === "news") return <FeedPostNewsCard {...props} />;
+  if (kind === "chart") return <FeedPostChartCard {...props} />;
   if (kind === "call") return <FeedPostCallCard {...props} />;
   return <FeedPostDiscussionCard {...props} />;
 }

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, ExternalLink, Camera, Lock, Skull } from "lucide-react";
+import { BarChart3, FileText, Flame, Loader2, ExternalLink, Camera, Lock, MessageSquare, RadioTower, Skull, Vote } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { User, detectContractAddress, LIQUIDATION_LEVEL, getAvatarUrl } from "@/types";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ const COMPOSER_ACTIONS: Array<{
   tone: "default" | "lime" | "amber" | "cyan" | "violet";
   placeholder: string;
   submitLabel: string;
+  icon: typeof Flame;
 }> = [
   {
     id: "alpha",
@@ -30,6 +31,7 @@ const COMPOSER_ACTIONS: Array<{
     tone: "lime",
     placeholder: "Drop an alpha thesis. Add entry, target, risk, and paste a token CA for live context.",
     submitLabel: "Post Alpha",
+    icon: Flame,
   },
   {
     id: "discussion",
@@ -37,6 +39,7 @@ const COMPOSER_ACTIONS: Array<{
     tone: "default",
     placeholder: "Start a trader discussion. Ask a question, share context, or open a room thread.",
     submitLabel: "Post Discussion",
+    icon: MessageSquare,
   },
   {
     id: "chart",
@@ -44,6 +47,7 @@ const COMPOSER_ACTIONS: Array<{
     tone: "cyan",
     placeholder: "Share chart context. Paste a token CA and describe the setup.",
     submitLabel: "Post Chart",
+    icon: BarChart3,
   },
   {
     id: "poll",
@@ -51,6 +55,7 @@ const COMPOSER_ACTIONS: Array<{
     tone: "violet",
     placeholder: "Create a poll prompt with clear options and an expiration window.",
     submitLabel: "Post Poll",
+    icon: Vote,
   },
   {
     id: "raid",
@@ -58,6 +63,7 @@ const COMPOSER_ACTIONS: Array<{
     tone: "amber",
     placeholder: "Share a raid update. Link the target, goal, or room context.",
     submitLabel: "Post Raid",
+    icon: RadioTower,
   },
   {
     id: "news",
@@ -65,6 +71,7 @@ const COMPOSER_ACTIONS: Array<{
     tone: "default",
     placeholder: "Share market or community news with source context.",
     submitLabel: "Post News",
+    icon: FileText,
   },
 ];
 
@@ -338,7 +345,7 @@ export function CreatePost({
   return (
     <div
       className={cn(
-        "rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,8,12,0.98))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all sm:p-5",
+        "rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,8,12,0.98))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all sm:p-4",
         isLiquidated && "border-red-600/30 bg-red-950/10"
       )}
     >
@@ -379,36 +386,7 @@ export function CreatePost({
           </Tooltip>
         </TooltipProvider>
 
-        <div className="flex-1 space-y-3">
-          <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/38">
-                Composer Modes
-              </div>
-              <div className="text-[11px] uppercase tracking-[0.16em] text-white/30">
-                Text first, token context optional
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {COMPOSER_ACTIONS.map((action) => (
-                <button
-                  key={action.label}
-                  type="button"
-                  onClick={() => setMode(action.id)}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
-                    composerToneClass(action, mode === action.id)
-                  )}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-            <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-white/34">
-              Compose a signal, chart thesis, raid update, poll, or plain discussion thread.
-            </div>
-          </div>
-
+        <div className="flex-1 space-y-2.5">
           <textarea
             ref={textareaRef}
             placeholder={
@@ -421,9 +399,9 @@ export function CreatePost({
             value={content}
             onChange={(e) => !isLiquidated && !isAuthPending && setContent(e.target.value)}
             disabled={isComposerDisabled}
-            rows={4}
+            rows={2}
             className={cn(
-              "min-h-[128px] w-full resize-y rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(11,15,21,0.96),rgba(7,10,14,0.98))] px-4 py-3 text-sm leading-7 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
+              "min-h-[58px] w-full resize-y rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(11,15,21,0.96),rgba(7,10,14,0.98))] px-4 py-3 text-sm leading-6 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
               "placeholder:text-white/32 focus:border-lime-300/20 focus:outline-none focus:ring-2 focus:ring-lime-300/12",
               (isLiquidated || isAuthPending) && "cursor-not-allowed opacity-40 grayscale"
             )}
@@ -539,8 +517,29 @@ export function CreatePost({
             </div>
           )}
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {COMPOSER_ACTIONS.map((action) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.label}
+                    type="button"
+                    onClick={() => setMode(action.id)}
+                    className={cn(
+                      "inline-flex h-9 items-center gap-2 rounded-[12px] border px-3 text-xs font-semibold transition",
+                      composerToneClass(action, mode === action.id)
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {action.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
               <span
                 className={cn(
                   "text-xs font-medium transition-colors",
@@ -564,7 +563,7 @@ export function CreatePost({
               {detected && charCount >= MIN_CHARS ? (
                 <span className="text-xs text-lime-200/80">Token context attached</span>
               ) : null}
-            </div>
+              </div>
 
             <Button
               onClick={handleSubmit}
@@ -601,6 +600,7 @@ export function CreatePost({
                 </>
               )}
             </Button>
+            </div>
           </div>
         </div>
       </div>

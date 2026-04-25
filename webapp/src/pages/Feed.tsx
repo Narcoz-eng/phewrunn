@@ -2566,17 +2566,15 @@ export default function Feed() {
             </div>
           </section>
 
-          <section className="rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.97),rgba(6,10,14,0.99))] p-3 shadow-[0_22px_58px_-42px_rgba(0,0,0,0.88)]">
-            <CreatePost
-              user={user ?? null}
-              onSubmit={handleCreatePost}
-              isSubmitting={createPostMutation.isPending}
-              isAuthPending={isAuthWritePending}
-            />
-          </section>
+          <CreatePost
+            user={user ?? null}
+            onSubmit={handleCreatePost}
+            isSubmitting={createPostMutation.isPending}
+            isAuthPending={isAuthWritePending}
+          />
 
           <section className="rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   {FEED_TAB_ITEMS.map((tab) => {
                     const Icon = tab.icon;
                     const active = tab.id === activeTab;
@@ -2586,7 +2584,7 @@ export default function Feed() {
                         type="button"
                         onClick={() => handleTabChange(tab.id)}
                         className={cn(
-                          "inline-flex h-11 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-all",
+                          "inline-flex h-10 items-center gap-2 rounded-[12px] border px-4 text-sm font-medium transition-all",
                           active
                             ? "border-lime-300/25 bg-[linear-gradient(135deg,rgba(169,255,52,0.18),rgba(45,212,191,0.14))] text-white shadow-[0_0_0_1px_rgba(163,230,53,0.08)]"
                             : "border-white/8 bg-white/[0.03] text-white/56 hover:bg-white/[0.06] hover:text-white/84"
@@ -2618,7 +2616,7 @@ export default function Feed() {
             </div>
           ) : null}
 
-          <section className="space-y-4">
+          <section className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
@@ -2750,7 +2748,7 @@ export default function Feed() {
                 estimateItemHeight={560}
                 overscanPx={1400}
                 renderItem={(post, index) => (
-                  <div className={index < displayedPosts.length - 1 ? "pb-4" : undefined}>
+                  <div className={index < displayedPosts.length - 1 ? "pb-3" : undefined}>
                     <div
                       className="animate-fade-in-up"
                       style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}
