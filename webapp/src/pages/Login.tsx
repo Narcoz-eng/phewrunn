@@ -10,15 +10,17 @@ import {
 import { usePrivyLogin } from "@/hooks/usePrivyLogin";
 import { usePrivyAvailable } from "@/components/PrivyContext";
 import { LivePlatformPreview } from "@/components/login/LivePlatformPreview";
+import { EXACT_LOGO_IMAGE_SRC } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
-import { Loader2, Send, ShieldCheck, WalletCards } from "lucide-react";
+import { Loader2, Send, WalletCards } from "lucide-react";
 
 function Background() {
   return (
     <div className="fixed inset-0 z-0 overflow-hidden">
-      <LivePlatformPreview />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(169,255,52,0.06),transparent_24%),linear-gradient(180deg,rgba(2,5,7,0.38),rgba(2,5,7,0.9))]" />
-      <div className="absolute inset-0 bg-black/18 backdrop-blur-[2px]" />
+      <LivePlatformPreview cinematic />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(169,255,52,0.04),transparent_28%),linear-gradient(180deg,rgba(1,4,6,0.08),rgba(1,4,6,0.62))]" />
+      <div className="absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-black/54 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/72 to-transparent" />
     </div>
   );
 }
@@ -58,7 +60,7 @@ function PrivyLoginButton() {
   }, [navigate, syncError]);
 
   const buttonClassName =
-    "group flex h-14 items-center justify-start gap-4 rounded-[18px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,21,24,0.98),rgba(9,12,15,0.98))] px-4 text-left text-white transition-all duration-300 hover:-translate-y-0.5 hover:border-lime-300/28 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50";
+    "group flex h-[68px] items-center justify-start gap-5 rounded-[22px] border border-white/14 bg-[linear-gradient(180deg,rgba(12,17,20,0.86),rgba(5,9,12,0.92))] px-5 text-left text-white shadow-[0_20px_70px_-42px_rgba(0,0,0,0.94)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:border-lime-300/36 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <div className="space-y-3">
@@ -78,10 +80,10 @@ function PrivyLoginButton() {
               onClick={() => login({ loginMethods: [item.method] })}
               disabled={isSyncing || isRetryBlocked}
             >
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-lime-300/18 bg-lime-300/10 text-lg font-black text-lime-200 shadow-[0_12px_36px_-20px_rgba(169,255,52,0.34)]">
+              <span className="inline-flex h-12 w-12 items-center justify-center rounded-[16px] border border-lime-300/22 bg-lime-300/10 text-2xl font-black text-lime-200 shadow-[0_12px_36px_-20px_rgba(169,255,52,0.34)]">
                 {Icon ? <Icon className="h-5 w-5" /> : item.icon}
               </span>
-              <span className="text-sm font-semibold text-white/82">
+              <span className="text-lg font-semibold text-white/90">
                 {privyReady ? item.label : "Initializing..."}
               </span>
             </button>
@@ -89,7 +91,7 @@ function PrivyLoginButton() {
         })}
       </div>
 
-      {visibleStatus ? <p className="pt-0.5 text-center text-[11px] text-muted-foreground">{visibleStatus}</p> : null}
+      {visibleStatus ? <p className="pt-0.5 text-center text-xs text-white/56">{visibleStatus}</p> : null}
       {visibleSyncError ? <p className="text-center text-[11px] text-red-400">{visibleSyncError}</p> : null}
     </div>
   );
@@ -100,7 +102,7 @@ function FallbackLoginButton() {
     <div className="space-y-4">
       <div className="grid gap-3">
         {["X", "Wallet", "Telegram", "Google"].map((label) => (
-          <Button key={label} type="button" variant="outline" className="h-14 justify-start rounded-[18px] opacity-50" disabled>
+          <Button key={label} type="button" variant="outline" className="h-[68px] justify-start rounded-[22px] opacity-50" disabled>
             <div className="flex items-center gap-3">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm font-semibold">{label}</span>
@@ -112,30 +114,17 @@ function FallbackLoginButton() {
   );
 }
 
-function LoginCard({ privyAvailable }: { privyAvailable: boolean }) {
+function AuthConnectors({ privyAvailable }: { privyAvailable: boolean }) {
   return (
     <motion.div
-      className="w-full max-w-[420px]"
+      className="w-full max-w-[500px]"
       initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay: 0.08, ease: "easeOut" }}
     >
-      <div className="relative overflow-hidden rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(6,10,12,0.82),rgba(3,7,9,0.94))] p-6 shadow-[0_34px_96px_-52px_rgba(0,0,0,0.95)] backdrop-blur-3xl sm:p-7">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_24%),radial-gradient(circle_at_top_right,rgba(65,232,207,0.08),transparent_28%)]" />
-
-        <div className="relative">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-[16px] border border-lime-300/18 bg-lime-300/10 text-lime-200">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.26em] text-lime-200/70">Access required</div>
-              <h1 className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">Enter Phew.run</h1>
-            </div>
-          </div>
-          <p className="mt-4 text-sm leading-6 text-white/58">
-            Sign in to unlock the live platform behind this screen.
-          </p>
+      <div className="relative">
+        <div className="mb-4 text-center text-sm font-medium text-white/58">
+          Continue with
         </div>
 
         <motion.div
@@ -146,11 +135,52 @@ function LoginCard({ privyAvailable }: { privyAvailable: boolean }) {
         >
           {privyAvailable ? <PrivyLoginButton /> : <FallbackLoginButton />}
         </motion.div>
+      </div>
+    </motion.div>
+  );
+}
 
-        <div className="mt-6 border-t border-white/8 pt-4 text-[11px] leading-6 text-white/42">
-          Supported sign-in methods only. Invite-gated accounts route through the access-code flow automatically.
+function BrandHero() {
+  return (
+    <motion.div
+      className="text-center"
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.48, ease: "easeOut" }}
+    >
+      <div className="mx-auto flex items-center justify-center gap-5">
+        <img
+          src={EXACT_LOGO_IMAGE_SRC}
+          alt=""
+          aria-hidden="true"
+          className="h-20 w-20 rounded-[24px] object-cover shadow-[0_0_60px_-18px_rgba(169,255,52,0.72)] sm:h-24 sm:w-24"
+          loading="eager"
+          decoding="async"
+        />
+        <div className="text-left">
+          <div className="text-5xl font-black uppercase leading-none tracking-[-0.055em] text-white sm:text-7xl">
+            Phew<span className="bg-gradient-to-r from-[#A9FF34] via-[#76FF44] to-[#41E8CF] bg-clip-text text-transparent">.run</span>
+          </div>
+          <div className="mt-3 text-center text-[11px] font-semibold uppercase tracking-[0.38em] text-white/78 sm:text-sm">
+            A Phew Running The Internet
+          </div>
         </div>
       </div>
+
+      <h1 className="mx-auto mt-20 max-w-[860px] text-balance text-6xl font-black uppercase leading-[0.95] tracking-[-0.06em] sm:text-7xl lg:text-[5.8rem]">
+        <span className="block bg-gradient-to-r from-[#B9FF4D] via-[#83FF46] to-[#29E6D0] bg-clip-text text-transparent drop-shadow-[0_0_40px_rgba(97,255,155,0.18)]">
+          Phew.
+        </span>
+        <span className="block bg-gradient-to-r from-[#B9FF4D] via-[#83FF46] to-[#29E6D0] bg-clip-text text-transparent drop-shadow-[0_0_40px_rgba(97,255,155,0.18)]">
+          Running The Internet.
+        </span>
+      </h1>
+
+      <p className="mx-auto mt-7 max-w-[660px] text-balance text-xl leading-8 text-white/74 sm:text-2xl">
+        Social calls. AI intelligence. X raids. Communities.
+        <br className="hidden sm:block" />
+        Trading terminal. All in one place.
+      </p>
     </motion.div>
   );
 }
@@ -186,9 +216,12 @@ export default function Login() {
       <Background />
 
       <main className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
-        <div className="mx-auto w-full max-w-[420px]">
-          <LoginCard privyAvailable={privyAvailable} />
-          <p className="mt-5 text-center text-[11px] text-white/44">
+        <div className="mx-auto flex w-full max-w-[920px] flex-col items-center">
+          <BrandHero />
+          <div className="mt-10 w-full max-w-[500px]">
+            <AuthConnectors privyAvailable={privyAvailable} />
+          </div>
+          <p className="mt-7 text-center text-sm text-white/58">
             By signing in you agree to{" "}
             <Link to="/terms" className="text-lime-200 hover:text-lime-100">
               Terms of Service

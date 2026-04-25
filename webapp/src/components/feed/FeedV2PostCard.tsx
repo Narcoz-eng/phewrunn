@@ -111,6 +111,30 @@ function chartPoints(post: Post): number[] {
   return [start, start * 1.04, start * 0.98, peak * 0.72, peak * 0.88, end * 0.94, end];
 }
 
+function callMetrics(post: Post): Array<{ label: string; value: string }> {
+  const metrics: Array<{ label: string; value: string }> = [];
+  if (typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)) {
+    metrics.push({ label: "Entry MCap", value: compact(post.entryMcap, "$") });
+  }
+  if (typeof post.currentMcap === "number" && Number.isFinite(post.currentMcap)) {
+    metrics.push({ label: "Current MCap", value: compact(post.currentMcap, "$") });
+  }
+  if (typeof post.roiPeakPct === "number" && Number.isFinite(post.roiPeakPct)) {
+    metrics.push({ label: "Peak Move", value: pct(post.roiPeakPct) });
+  }
+  if (typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct)) {
+    metrics.push({ label: "Live Move", value: pct(post.roiCurrentPct) });
+  }
+  if (typeof post.confidenceScore === "number" && Number.isFinite(post.confidenceScore)) {
+    metrics.push({ label: "Confidence", value: `${post.confidenceScore.toFixed(0)}/100` });
+  }
+  if (post.tokenRiskScore !== null || post.bundlePenaltyScore !== null) {
+    metrics.push({ label: "Risk", value: riskLabel(post) });
+  }
+
+  return metrics.slice(0, 4);
+}
+
 function MiniChart({ post, tall = false }: { post: Post; tall?: boolean }) {
   const hasChartData = post.entryMcap !== null || post.currentMcap !== null || post.roiCurrentPct !== null;
   if (!hasChartData) {
@@ -137,6 +161,7 @@ function MiniChart({ post, tall = false }: { post: Post; tall?: boolean }) {
   return (
     <div className={cn("relative overflow-hidden rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[210px]" : "h-[116px]")}>
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:25%_25%]" />
+      <div className="absolute inset-x-0 bottom-0 h-12 bg-[linear-gradient(180deg,transparent,rgba(0,0,0,0.34))]" />
       <div className="absolute left-3 top-3 flex items-center gap-2 text-xs font-semibold text-white">
         <span>{post.tokenSymbol ? `$${post.tokenSymbol}` : "TOKEN"}/USDT</span>
         <span className={positive ? "text-lime-300" : "text-rose-300"}>{pct(post.roiCurrentPct)}</span>
@@ -145,6 +170,18 @@ function MiniChart({ post, tall = false }: { post: Post; tall?: boolean }) {
         <path d={`${path} L 100 100 L 0 100 Z`} fill={positive ? "rgba(132,255,74,0.12)" : "rgba(251,113,133,0.12)"} />
         <path d={path} fill="none" stroke={positive ? "#a9ff34" : "#fb7185"} strokeWidth="2.2" vectorEffect="non-scaling-stroke" />
       </svg>
+      <div className="absolute bottom-3 left-3 right-3 flex h-9 items-end gap-1.5">
+        {points.map((value, index) => {
+          const height = 22 + ((value - min) / range) * 68;
+          return (
+            <span
+              key={`${value}-${index}`}
+              className={cn("flex-1 rounded-t-sm opacity-50", index % 3 === 1 ? "bg-rose-400/70" : "bg-lime-300/70")}
+              style={{ height: `${Math.min(100, height)}%` }}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -216,6 +253,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const { post } = props;
   const direction = inferDirection(post);
   const positive = direction !== "SHORT";
+  const metrics = callMetrics(post);
   return (
     <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]">
       <PostHeader post={post} badge={typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70 ? "High Conviction" : undefined} />
@@ -229,12 +267,17 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-        <Metric label="Entry" value={compact(post.entryMcap, "$")} />
-        <Metric label="Targets" value={post.roiPeakPct !== null ? pct(post.roiPeakPct) : "Unavailable"} />
-        <Metric label="Stop Loss" value="Unavailable" />
-        <Metric label="Leverage" value="Unavailable" />
-      </div>
+      {metrics.length ? (
+        <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {metrics.map((metric) => (
+            <Metric key={metric.label} label={metric.label} value={metric.value} />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 text-sm text-white/48">
+          Token metrics attach after a token address or market snapshot is present.
+        </div>
+      )}
 
       <div className="mt-4">
         <MiniChart post={post} tall />

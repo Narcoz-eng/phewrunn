@@ -339,17 +339,19 @@ export default function Leaderboard() {
               { value: "xp", label: "XP / Level", badge: "Progression board" },
             ]}
           />
-          <V2TabBar
-            value={period}
-            onChange={(value) => setPeriod(value as PerformancePeriod)}
-            items={[
-              { value: "24h", label: "24H" },
-              { value: "7d", label: "7D" },
-              { value: "30d", label: "30D" },
-              { value: "all", label: "All Time" },
-            ]}
-            className="xl:ml-auto"
-          />
+          {board === "calls" ? (
+            <V2TabBar
+              value={period}
+              onChange={(value) => setPeriod(value as PerformancePeriod)}
+              items={[
+                { value: "24h", label: "24H" },
+                { value: "7d", label: "7D" },
+                { value: "30d", label: "30D" },
+                { value: "all", label: "All Time" },
+              ]}
+              className="xl:ml-auto"
+            />
+          ) : null}
         </div>
       </V2Surface>
 

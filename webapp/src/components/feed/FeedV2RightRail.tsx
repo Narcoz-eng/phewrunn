@@ -13,6 +13,12 @@ function formatCompactMetric(value: number | null | undefined): string {
   return `$${value.toFixed(0)}`;
 }
 
+function avgMetric(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (!finite.length) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
 type FeedV2RightRailProps = {
   discovery: DiscoveryFeedSidebarResponse | undefined;
 };
@@ -24,6 +30,10 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
   const trendingCalls = discovery?.trendingCalls ?? [];
   const trendingCommunities = discovery?.trendingCommunities ?? [];
   const aiSpotlight = discovery?.aiSpotlight ?? null;
+  const trackedMarketCount = topGainers.length;
+  const avgLiquidity = avgMetric(topGainers.map((item) => item.liquidity));
+  const avgVolume = avgMetric(topGainers.map((item) => item.volume24h));
+  const avgConviction = avgMetric(topGainers.map((item) => item.highConvictionScore));
   const activeRaidProgressPct = liveRaid
     ? Math.max(8, Math.min(100, (liveRaid.postedCount / Math.max(liveRaid.participantCount, 1)) * 100))
     : 0;
@@ -31,9 +41,29 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
   return (
     <aside className="space-y-4">
       <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-[18px] border border-white/8 bg-white/[0.035] px-3 py-3">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Tracked</div>
+            <div className="mt-1 text-lg font-semibold text-white">{trackedMarketCount || "--"}</div>
+          </div>
+          <div className="rounded-[18px] border border-white/8 bg-white/[0.035] px-3 py-3">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">Avg Vol</div>
+            <div className="mt-1 text-lg font-semibold text-white">{formatCompactMetric(avgVolume)}</div>
+          </div>
+          <div className="rounded-[18px] border border-white/8 bg-white/[0.035] px-3 py-3">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">AI</div>
+            <div className="mt-1 text-lg font-semibold text-lime-300">{typeof avgConviction === "number" ? avgConviction.toFixed(0) : "--"}</div>
+          </div>
+        </div>
+        <div className="mt-2 rounded-[18px] border border-lime-300/10 bg-lime-300/[0.045] px-3 py-2 text-xs text-white/50">
+          Liquidity baseline {formatCompactMetric(avgLiquidity)} across the current discovery set.
+        </div>
+      </section>
+
+      <section className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.96),rgba(5,9,13,0.99))] p-4">
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/34">
           <TrendingUp className="h-3.5 w-3.5 text-lime-300" />
-          Top conviction
+          Top gainers
         </div>
         <div className="mt-4 space-y-3">
           {topGainers.slice(0, 5).map((item) => (
