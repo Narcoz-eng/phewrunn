@@ -41,6 +41,18 @@ function riskTone(score: number | null | undefined) {
   return "text-lime-300";
 }
 
+function riskStroke(score: number | null | undefined) {
+  if (score === null || score === undefined || !Number.isFinite(score)) return "rgb(148 163 184)";
+  if (score >= 75) return "rgb(251 113 133)";
+  if (score >= 45) return "rgb(251 191 36)";
+  return "rgb(190 242 100)";
+}
+
+function clampScore(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
 function buildGraphLayout(nodes: BundleCheckerGraphNode[], edges: BundleCheckerGraphEdge[]): GraphLayoutNode[] {
   const tokenNode = nodes.find((node) => node.kind === "token") ?? nodes[0];
   if (!tokenNode) return [];
@@ -130,7 +142,44 @@ export default function BundleChecker() {
   const graphLayout = useMemo(() => (bundle ? buildGraphLayout(bundle.graph.nodes, bundle.graph.edges) : []), [bundle]);
   const graphNodeMap = useMemo(() => new Map(graphLayout.map((node) => [node.id, node])), [graphLayout]);
   const selectedNode = selectedNodeId ? graphNodeMap.get(selectedNodeId) ?? null : null;
+  const selectedNodeEdges = useMemo(
+    () =>
+      selectedNode
+        ? bundle?.graph.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id) ?? []
+        : [],
+    [bundle?.graph.edges, selectedNode],
+  );
   const behaviorMax = useMemo(() => Math.max(...(bundle?.behaviorSeries.map((point) => point.bundledSupplyPct ?? 0) ?? [1]), 1), [bundle?.behaviorSeries]);
+  const graphIsSparse = Boolean(bundle && (bundle.graph.nodes.length < 4 || bundle.graph.edges.length < 2));
+  const riskFactors = useMemo(() => {
+    if (!bundle) return [];
+    const edgeCount = bundle.graph.edges.length;
+    const clusterCount = bundle.bundlesDetected;
+    const walletCount = bundle.totalWallets;
+    const concentration = clampScore(bundle.bundledSupplyPct);
+    return [
+      {
+        label: "Wallet interconnectivity",
+        value: clampScore(edgeCount * 8),
+        detail: `${formatCompact(edgeCount)} resolved edges`,
+      },
+      {
+        label: "Funds moved together",
+        value: concentration,
+        detail: `${formatPct(bundle.bundledSupplyPct)} bundled supply`,
+      },
+      {
+        label: "Cluster concentration",
+        value: clampScore(clusterCount * 14),
+        detail: `${formatCompact(clusterCount)} linked clusters`,
+      },
+      {
+        label: "Linked wallet density",
+        value: clampScore(walletCount * 3),
+        detail: `${formatCompact(walletCount)} wallets resolved`,
+      },
+    ];
+  }, [bundle]);
 
   const handleSearch = () => {
     const next = draft.trim();
@@ -221,57 +270,74 @@ export default function BundleChecker() {
                 <div className="rounded-[10px] border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/60">{bundle.graph.nodes.length} nodes</div>
               </div>
               <div className="relative mt-4 h-[500px] overflow-hidden rounded-[16px] border border-white/8 bg-[radial-gradient(circle_at_50%_50%,rgba(169,255,52,0.10),transparent_25%),linear-gradient(180deg,rgba(0,0,0,0.26),rgba(0,0,0,0.42))]">
-                <svg
-                  className="absolute inset-0 h-full w-full transition-transform duration-200"
-                  style={{ transform: `scale(${zoom})`, transformOrigin: "50% 50%" }}
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                >
-                  {bundle.graph.edges.map((edge, index) => {
-                    const source = graphNodeMap.get(edge.source);
-                    const target = graphNodeMap.get(edge.target);
-                    if (!source || !target) return null;
-                    const selected =
-                      selectedNodeId === edge.source ||
-                      selectedNodeId === edge.target ||
-                      hoveredNodeId === edge.source ||
-                      hoveredNodeId === edge.target;
-                    return (
-                      <line
-                        key={`${edge.source}-${edge.target}-${index}`}
-                        x1={source.x}
-                        y1={source.y}
-                        x2={target.x}
-                        y2={target.y}
-                        stroke={selected ? "rgba(169,255,52,0.62)" : "rgba(255,255,255,0.13)"}
-                        strokeWidth={Math.max(0.2, Math.min(1.4, edge.weight / 10))}
-                      />
-                    );
-                  })}
-                </svg>
-                <div
-                  className="absolute inset-0 transition-transform duration-200"
-                  style={{ transform: `scale(${zoom})`, transformOrigin: "50% 50%" }}
-                >
-                {graphLayout.map((node) => {
-                  const selected = node.id === selectedNodeId;
-                  const hovered = node.id === hoveredNodeId;
-                  return (
-                    <button
-                      key={node.id}
-                      type="button"
-                      onClick={() => setSelectedNodeId(node.id)}
-                      onMouseEnter={() => setHoveredNodeId(node.id)}
-                      onMouseLeave={() => setHoveredNodeId(null)}
-                      className={nodeClass(node, selected, hovered)}
-                      style={{ left: `${node.x}%`, top: `${node.y}%`, width: `${nodeSize(node)}px`, height: `${nodeSize(node)}px` }}
-                      title={node.label}
+                {graphIsSparse ? (
+                  <div className="absolute inset-0 flex items-center justify-center p-8">
+                    <div className="max-w-[520px] rounded-[18px] border border-dashed border-white/14 bg-black/45 p-6 text-center backdrop-blur">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-lime-200">Sparse evidence</div>
+                      <h3 className="mt-3 text-2xl font-semibold">Not enough resolved relationships</h3>
+                      <p className="mt-3 text-sm leading-6 text-white/54">
+                        The backend returned {bundle.graph.nodes.length} nodes and {bundle.graph.edges.length} edges. The forensic graph stays unavailable until real cluster evidence contains enough linked wallets.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <svg
+                      className="absolute inset-0 h-full w-full transition-transform duration-200"
+                      style={{ transform: `scale(${zoom})`, transformOrigin: "50% 50%" }}
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
                     >
-                      <span className="max-w-[90%] truncate px-1">{node.kind === "wallet" ? "" : node.label}</span>
-                    </button>
-                  );
-                })}
-                </div>
+                      {bundle.graph.edges.map((edge, index) => {
+                        const source = graphNodeMap.get(edge.source);
+                        const target = graphNodeMap.get(edge.target);
+                        if (!source || !target) return null;
+                        const selected =
+                          selectedNodeId === edge.source ||
+                          selectedNodeId === edge.target ||
+                          hoveredNodeId === edge.source ||
+                          hoveredNodeId === edge.target;
+                        const strength = Math.max(0.16, Math.min(0.72, edge.weight / 22));
+                        return (
+                          <line
+                            key={`${edge.source}-${edge.target}-${index}`}
+                            x1={source.x}
+                            y1={source.y}
+                            x2={target.x}
+                            y2={target.y}
+                            stroke={selected ? "rgba(169,255,52,0.72)" : "rgba(255,255,255,0.42)"}
+                            strokeOpacity={selected ? 0.88 : strength}
+                            strokeWidth={selected ? Math.max(0.7, Math.min(1.8, edge.weight / 8)) : Math.max(0.22, Math.min(1.25, edge.weight / 12))}
+                          />
+                        );
+                      })}
+                    </svg>
+                    <div
+                      className="absolute inset-0 transition-transform duration-200"
+                      style={{ transform: `scale(${zoom})`, transformOrigin: "50% 50%" }}
+                    >
+                      {graphLayout.map((node) => {
+                        const selected = node.id === selectedNodeId;
+                        const hovered = node.id === hoveredNodeId;
+                        return (
+                          <button
+                            key={node.id}
+                            type="button"
+                            onClick={() => setSelectedNodeId(node.id)}
+                            onMouseEnter={() => setHoveredNodeId(node.id)}
+                            onMouseLeave={() => setHoveredNodeId(null)}
+                            className={nodeClass(node, selected, hovered)}
+                            style={{ left: `${node.x}%`, top: `${node.y}%`, width: `${nodeSize(node)}px`, height: `${nodeSize(node)}px` }}
+                            title={node.label}
+                            aria-label={`Inspect ${node.label}`}
+                          >
+                            <span className="max-w-[90%] truncate px-1">{node.kind === "wallet" ? "" : node.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
                 <div className="absolute right-4 top-4 rounded-[12px] border border-white/10 bg-black/35 p-3 text-xs text-white/58 backdrop-blur">
                   <div className="mb-2 font-semibold uppercase tracking-[0.16em] text-white/42">Legend</div>
                   <LegendDot className="bg-rose-400" label="High Risk" />
@@ -280,18 +346,20 @@ export default function BundleChecker() {
                   <LegendDot className="bg-cyan-300" label="Token" />
                   <LegendDot className="bg-white/45" label="External" />
                 </div>
-                <div className="absolute bottom-4 left-4 flex gap-2">
-                  <button type="button" onClick={() => setZoom(1)} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
-                    <Maximize2 className="h-4 w-4" />
-                  </button>
-                  <button type="button" onClick={() => setZoom((value) => Math.min(1.8, value + 0.15))} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
-                    <Plus className="h-4 w-4" />
-                  </button>
-                  <button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.15))} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
-                    <Minus className="h-4 w-4" />
-                  </button>
-                </div>
-                {selectedNode ? (
+                {!graphIsSparse ? (
+                  <div className="absolute bottom-4 left-4 flex gap-2">
+                    <button type="button" onClick={() => setZoom(1)} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
+                      <Maximize2 className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => setZoom((value) => Math.min(1.8, value + 0.15))} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
+                      <Plus className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.15))} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
+                      <Minus className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : null}
+                {selectedNode && !graphIsSparse ? (
                   <div className="absolute bottom-4 right-4 w-[260px] rounded-[14px] border border-lime-300/18 bg-black/55 p-4 backdrop-blur">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-lime-200">Selected node</div>
                     <div className="mt-2 truncate text-sm font-semibold">{selectedNode.label}</div>
@@ -299,6 +367,10 @@ export default function BundleChecker() {
                       <StatBox label="Kind" value={selectedNode.kind} />
                       <StatBox label="Weight" value={formatCompact(selectedNode.weight)} />
                       <StatBox label="Risk" value={selectedNode.riskLabel ?? "external"} />
+                      <StatBox label="Edges" value={formatCompact(selectedNodeEdges.length)} />
+                    </div>
+                    <div className="mt-3 truncate text-xs text-white/42">
+                      {selectedNodeEdges[0]?.relationLabel || "No relation label supplied"}
                     </div>
                   </div>
                 ) : null}
@@ -318,13 +390,13 @@ export default function BundleChecker() {
               <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
                 <h3 className="text-sm font-semibold">Top Wallets In Cluster</h3>
                 <div className="mt-4 space-y-2">
-                  {bundle.linkedWallets.slice(0, 5).map((wallet) => (
+                  {bundle.linkedWallets.length ? bundle.linkedWallets.slice(0, 5).map((wallet) => (
                     <div key={wallet.address} className="grid grid-cols-[1fr_70px_70px] gap-2 text-xs">
                       <span className="truncate text-white/72">{wallet.label || `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`}</span>
                       <span className="text-right text-rose-300">{formatCompact(wallet.relationStrength)}</span>
                       <span className="text-right text-white/52">{formatPct(wallet.supplyPct)}</span>
                     </div>
-                  ))}
+                  )) : <div className="rounded-[12px] border border-dashed border-white/12 p-4 text-sm text-white/44">No linked wallet evidence returned.</div>}
                 </div>
               </section>
               <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
@@ -346,10 +418,7 @@ export default function BundleChecker() {
                 <AlertTriangle className="h-4 w-4 text-rose-300" />
                 Risk Overview
               </div>
-              <div className={cn("mt-5 text-center text-5xl font-semibold", riskTone(bundle.riskSummary.score))}>
-                {typeof bundle.riskSummary.score === "number" ? bundle.riskSummary.score.toFixed(0) : "--"}
-              </div>
-              <div className="mt-2 text-center text-sm font-semibold text-white/62">{bundle.riskSummary.label || "Pending"}</div>
+              <RiskGauge score={bundle.riskSummary.score} label={bundle.riskSummary.label} />
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <StatBox label="Risk Score" value={typeof bundle.riskSummary.score === "number" ? `${bundle.riskSummary.score.toFixed(0)}/100` : "--"} />
                 <StatBox label="Confidence" value={bundle.riskSummary.label || "Unknown"} />
@@ -363,11 +432,10 @@ export default function BundleChecker() {
 
             <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-5">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Risk Factors</div>
-              <div className="mt-4 space-y-3 text-sm">
-                <MetricLine label="Wallet interconnectivity" value={formatCompact(bundle.graph.edges.length)} />
-                <MetricLine label="Funds moved together" value={formatPct(bundle.bundledSupplyPct)} />
-                <MetricLine label="Shared interactions" value={formatCompact(bundle.bundlesDetected)} />
-                <MetricLine label="Linked risky entity" value={bundle.riskSummary.label || "Unknown"} />
+              <div className="mt-4 space-y-4">
+                {riskFactors.map((factor) => (
+                  <RiskFactorRow key={factor.label} {...factor} />
+                ))}
               </div>
             </section>
 
@@ -402,6 +470,48 @@ function StatBox({ label, value }: { label: string; value: string }) {
     <div className="rounded-[12px] border border-white/8 bg-black/20 px-3 py-2">
       <div className="text-[9px] uppercase tracking-[0.14em] text-white/34">{label}</div>
       <div className="mt-1 truncate text-sm font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function RiskGauge({ score, label }: { score: number | null | undefined; label: string | null | undefined }) {
+  const pct = clampScore(score);
+  const dash = 157;
+  const offset = dash - (dash * pct) / 100;
+  return (
+    <div className="relative mx-auto mt-5 h-[132px] max-w-[230px]">
+      <svg className="h-full w-full" viewBox="0 0 120 76" role="img" aria-label={`Risk score ${typeof score === "number" ? score.toFixed(0) : "unavailable"}`}>
+        <path d="M10 62 A50 50 0 0 1 110 62" fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="10" strokeLinecap="round" />
+        <path
+          d="M10 62 A50 50 0 0 1 110 62"
+          fill="none"
+          stroke={riskStroke(score)}
+          strokeWidth="10"
+          strokeLinecap="round"
+          strokeDasharray={dash}
+          strokeDashoffset={offset}
+          className="drop-shadow-[0_0_16px_rgba(169,255,52,0.22)]"
+        />
+      </svg>
+      <div className="absolute inset-x-0 bottom-1 text-center">
+        <div className={cn("text-5xl font-semibold", riskTone(score))}>{typeof score === "number" ? score.toFixed(0) : "--"}</div>
+        <div className="mt-1 text-sm font-semibold text-white/62">{label || "Pending"}</div>
+      </div>
+    </div>
+  );
+}
+
+function RiskFactorRow({ label, value, detail }: { label: string; value: number; detail: string }) {
+  return (
+    <div className="rounded-[12px] border border-white/8 bg-black/18 p-3">
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="text-white/70">{label}</span>
+        <span className={cn("font-semibold", riskTone(value))}>{value.toFixed(0)}/100</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
+        <div className="h-full rounded-full" style={{ width: `${value}%`, background: riskStroke(value) }} />
+      </div>
+      <div className="mt-2 text-xs text-white/38">{detail}</div>
     </div>
   );
 }
