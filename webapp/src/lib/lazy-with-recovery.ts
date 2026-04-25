@@ -50,7 +50,13 @@ function reloadOnce(scope: string): boolean {
     // ignore storage access errors and attempt a best-effort reload
   }
 
-  window.location.reload();
+  void navigator.serviceWorker?.getRegistrations?.()
+    .then((registrations) => Promise.all(registrations.map((registration) => registration.update().catch(() => undefined))))
+    .catch(() => undefined);
+
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set("__phew_refresh", String(Date.now()));
+  window.location.replace(nextUrl.toString());
   return true;
 }
 

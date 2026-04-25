@@ -12,6 +12,7 @@ import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AuthInitializer } from "@/components/AuthInitializer";
 import { V2AppShell } from "@/components/layout/V2AppShell";
+import SolanaRouteProvider from "@/components/SolanaRouteProvider";
 import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
@@ -44,10 +45,6 @@ const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
 const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
 const AccessCodeEntry = lazyPage(() => import("./pages/AccessCodeEntry"), "route:access-code");
-const SolanaRouteProvider = lazyPage(
-  () => import("./components/SolanaRouteProvider"),
-  "provider:solana-route"
-);
 
 // Loading fallback component
 function PageSkeleton() {
