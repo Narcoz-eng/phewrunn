@@ -3389,14 +3389,15 @@ function isEligibleForRankedFeed(
     return true;
   }
 
+  if (kind === "early-runners" && call.postType === "raid") {
+    return true;
+  }
+
   if (call.bullishSignalsSuppressed || !call.isTradable || call.marketHealthScore < 38 || call.opportunityScore < 40) {
     return false;
   }
 
   const roiCurrentPct = call.roiCurrentPct;
-  if (kind === "early-runners" && call.postType === "raid") {
-    return true;
-  }
   if (kind === "hot-alpha") {
     return (
       call.hotAlphaScore >= HOT_ALPHA_THRESHOLD &&
