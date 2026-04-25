@@ -4,6 +4,7 @@ import { z } from "zod";
 import { type AuthVariables } from "../auth.js";
 import { listFeedCalls } from "../services/intelligence/engine.js";
 import { triggerOrganicSettlementWakeup } from "./posts.js";
+import { PostTypeSchema } from "../types.js";
 
 export const feedRouter = new Hono<{ Variables: AuthVariables }>();
 
@@ -11,6 +12,7 @@ const FeedQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(40).optional(),
   cursor: z.string().trim().min(1).optional(),
   search: z.string().trim().max(120).optional(),
+  postType: PostTypeSchema.optional(),
 });
 
 feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
@@ -49,6 +51,7 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
     limit: query.limit,
     cursor: query.cursor ?? null,
     search: query.search ?? null,
+    postType: query.postType,
   });
 
   c.header("Vary", "Cookie");

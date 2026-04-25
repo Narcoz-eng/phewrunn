@@ -49,11 +49,14 @@ function inferDirection(post: Post): "LONG" | "SHORT" | null {
 }
 
 function inferKind(post: Post): FeedPostKind {
-  if (post.walletTradeSnapshot) return "whale";
+  if (post.postType === "poll") return "poll";
+  if (post.postType === "news") return "news";
+  if (post.postType === "raid") return "raid";
+  if (post.postType === "discussion") return "discussion";
   if (post.postType === "chart") return "chart";
   if (post.postType === "alpha") return post.contractAddress || post.tokenSymbol ? "call" : "discussion";
-  if (post.postType === "discussion" || post.postType === "news" || post.postType === "poll" || post.postType === "raid") return post.postType;
 
+  if (post.walletTradeSnapshot) return "whale";
   if (post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
   return "discussion";
 }

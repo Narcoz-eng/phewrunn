@@ -27,6 +27,7 @@ import { fanoutTokenSignalAlerts } from "./alerts.js";
 import { getCachedMarketCapSnapshot, type MarketCapResult } from "../marketcap.js";
 import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../../lib/job-queue.js";
 import { isRedisConfigured, cacheGetJson, cacheSetJson } from "../../lib/redis.js";
+import type { PostType } from "../../types.js";
 
 const TOKEN_INTELLIGENCE_STALE_MS = 15 * 60 * 1000;
 const TRADER_METRICS_STALE_MS = 6 * 60 * 60 * 1000;
@@ -150,6 +151,8 @@ const TOKEN_SELECT = Prisma.validator<Prisma.TokenSelect>()({
 const CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   id: true,
   content: true,
+  postType: true,
+  pollExpiresAt: true,
   authorId: true,
   tokenId: true,
   contractAddress: true,
@@ -199,6 +202,8 @@ const CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
 const FEED_CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   id: true,
   content: true,
+  postType: true,
+  pollExpiresAt: true,
   authorId: true,
   tokenId: true,
   contractAddress: true,
@@ -285,6 +290,7 @@ export type FeedArgs = {
   limit?: number;
   cursor?: string | null;
   search?: string | null;
+  postType?: PostType;
 };
 
 type FeedCountSummary = {
@@ -294,7 +300,19 @@ type FeedCountSummary = {
   reactions: number;
 };
 
+type FeedPollSummary = {
+  totalVotes: number;
+  viewerOptionId: string | null;
+  options: Array<{
+    id: string;
+    label: string;
+    votes: number;
+    percentage: number;
+  }>;
+};
+
 export type EnrichedCall = CallRecord & {
+  poll: FeedPollSummary | null;
   isLiked: boolean;
   isReposted: boolean;
   isFollowingAuthor: boolean;
@@ -1051,6 +1069,11 @@ export function invalidateViewerSocialCaches(viewerId: string | null | undefined
   clearCacheEntriesByPrefix(dailyLeaderboardsInFlight, `leaderboards:daily:${normalizedViewerId}`);
   clearCacheEntriesByPrefix(firstCallerLeaderboardsCache, `leaderboards:first-callers:${normalizedViewerId}`);
   clearCacheEntriesByPrefix(firstCallerLeaderboardsInFlight, `leaderboards:first-callers:${normalizedViewerId}`);
+}
+
+export function invalidateFeedListCaches(): void {
+  feedListCache.clear();
+  feedListInFlight.clear();
 }
 
 function buildTokenMapFromRecords(records: CallRecord[]): Map<string, TokenRecord> {
@@ -2688,6 +2711,58 @@ async function readLatestTokenGrowthById(tokenIds: string[]): Promise<
   return growthByTokenId;
 }
 
+async function buildFeedPollSummaries(postIds: string[], viewerId: string | null): Promise<Map<string, FeedPollSummary>> {
+  if (postIds.length === 0) return new Map();
+
+  const [options, voteCounts, viewerVotes] = await Promise.all([
+    prisma.postPollOption.findMany({
+      where: { postId: { in: postIds } },
+      orderBy: [{ postId: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+      select: { id: true, postId: true, label: true },
+    }),
+    prisma.postPollVote.groupBy({
+      by: ["postId", "optionId"],
+      where: { postId: { in: postIds } },
+      _count: { _all: true },
+    }),
+    viewerId
+      ? prisma.postPollVote.findMany({
+          where: { postId: { in: postIds }, userId: viewerId },
+          select: { postId: true, optionId: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const votesByOptionId = new Map<string, number>();
+  const totalsByPostId = new Map<string, number>();
+  for (const count of voteCounts) {
+    const votes = count._count._all;
+    votesByOptionId.set(count.optionId, votes);
+    totalsByPostId.set(count.postId, (totalsByPostId.get(count.postId) ?? 0) + votes);
+  }
+
+  const viewerVoteByPostId = new Map(viewerVotes.map((vote) => [vote.postId, vote.optionId]));
+  const summaries = new Map<string, FeedPollSummary>();
+  for (const option of options) {
+    const totalVotes = totalsByPostId.get(option.postId) ?? 0;
+    const optionVotes = votesByOptionId.get(option.id) ?? 0;
+    const summary = summaries.get(option.postId) ?? {
+      totalVotes,
+      viewerOptionId: viewerVoteByPostId.get(option.postId) ?? null,
+      options: [],
+    };
+    summary.options.push({
+      id: option.id,
+      label: option.label,
+      votes: optionVotes,
+      percentage: totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 1000) / 10 : 0,
+    });
+    summaries.set(option.postId, summary);
+  }
+
+  return summaries;
+}
+
 async function hydrateCalls(
   records: CallRecord[],
   viewerId: string | null,
@@ -2802,6 +2877,13 @@ async function hydrateCalls(
     bucket.push(call);
     callsByTokenId.set(call.tokenId, bucket);
   }
+
+  const pollPostIds = records
+    .filter((record) => record.postType === "poll")
+    .map((record) => record.id);
+  const pollSummariesByPostId = pollPostIds.length
+    ? await buildFeedPollSummaries(pollPostIds, viewerId)
+    : new Map<string, FeedPollSummary>();
 
   const enriched: EnrichedCall[] = [];
   const postIntelligenceUpdates: Promise<unknown>[] = [];
@@ -3014,6 +3096,10 @@ async function hydrateCalls(
 
     enriched.push({
       ...record,
+      poll:
+        record.postType === "poll"
+          ? pollSummariesByPostId.get(record.id) ?? { totalVotes: 0, viewerOptionId: null, options: [] }
+          : null,
       token,
       isLiked: socialState.likedPostIds.has(record.id),
       isReposted: socialState.repostedPostIds.has(record.id),
@@ -3592,7 +3678,8 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
   const viewerKey = args.viewerId ?? "anonymous";
   const searchKey = sanitizeCacheKeyPart(args.search);
   const cursorKey = sanitizeCacheKeyPart(args.cursor);
-  const cacheKey = `feed:${args.kind}:${viewerKey}:${searchKey}:${cursorKey}:${limit}`;
+  const postTypeKey = args.postType ?? "all-types";
+  const cacheKey = `feed:${args.kind}:${viewerKey}:${searchKey}:${cursorKey}:${postTypeKey}:${limit}`;
   const ttlMs =
     args.kind === "following" || args.viewerId
       ? PERSONALIZED_FEED_RESULT_CACHE_TTL_MS
@@ -3651,6 +3738,9 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
       const searchWhere = buildSearchWhere(args.search);
       if (searchWhere) {
         whereClauses.push(searchWhere);
+      }
+      if (args.postType) {
+        whereClauses.push({ postType: args.postType });
       }
 
       if (args.kind === "following") {

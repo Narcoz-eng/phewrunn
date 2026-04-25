@@ -55,6 +55,7 @@ import {
   normalizeProfileHandleInput,
 } from "@/lib/profile-path";
 import { getCachedPostsForAuthor, syncPostsIntoQueryCache } from "@/lib/post-query-cache";
+import { applyPostPollVote } from "@/lib/post-poll";
 import {
   getBestCachedProfileSnapshot,
   mergeProfileSnapshotIntoExtendedUser,
@@ -369,6 +370,7 @@ export default function Profile() {
       level: session.user.level ?? cachedProfileBySession?.level ?? 0,
       xp: session.user.xp ?? cachedProfileBySession?.xp ?? 0,
       bio: session.user.bio ?? cachedProfileBySession?.bio ?? null,
+      bannerImage: session.user.bannerImage ?? cachedProfileBySession?.bannerImage ?? null,
       isAdmin: session.user.isAdmin ?? cachedProfileBySession?.isAdmin ?? false,
       isVerified: session.user.isVerified ?? cachedProfileBySession?.isVerified,
       tradeFeeRewardsEnabled:
@@ -652,11 +654,18 @@ export default function Profile() {
     }
     syncProfileSnapshotAcrossCaches(queryClient, {
       id: user.id,
+      name: user.name ?? null,
+      email: user.email ?? null,
       username: user.username ?? null,
       image: user.image ?? null,
+      bio: user.bio ?? null,
+      bannerImage: user.bannerImage ?? null,
       level: user.level,
       xp: user.xp,
       isVerified: user.isVerified,
+      tradeFeeRewardsEnabled: user.tradeFeeRewardsEnabled ?? null,
+      tradeFeeShareBps: user.tradeFeeShareBps ?? null,
+      tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? null,
       createdAt: user.createdAt,
       followersCount: user.followersCount ?? null,
       followingCount: user.followingCount ?? null,
@@ -681,11 +690,18 @@ export default function Profile() {
     }
     syncProfileSnapshotAcrossCaches(queryClient, {
       id: mergedUser.id,
+      name: mergedUser.name ?? null,
+      email: mergedUser.email ?? null,
       username: mergedUser.username ?? null,
       image: mergedUser.image ?? null,
+      bio: mergedUser.bio ?? null,
+      bannerImage: mergedUser.bannerImage ?? null,
       level: mergedUser.level,
       xp: mergedUser.xp,
       isVerified: mergedUser.isVerified,
+      tradeFeeRewardsEnabled: mergedUser.tradeFeeRewardsEnabled ?? null,
+      tradeFeeShareBps: mergedUser.tradeFeeShareBps ?? null,
+      tradeFeePayoutAddress: mergedUser.tradeFeePayoutAddress ?? null,
       createdAt: mergedUser.createdAt,
       followersCount: mergedUser.followersCount ?? null,
       followingCount: mergedUser.followingCount ?? null,
@@ -738,11 +754,18 @@ export default function Profile() {
       }
       syncProfileSnapshotAcrossCaches(queryClient, {
         id: updatedUser.id,
+        name: updatedUser.name ?? null,
+        email: updatedUser.email ?? null,
         username: updatedUser.username ?? null,
         image: updatedUser.image ?? null,
+        bio: updatedUser.bio ?? null,
+        bannerImage: updatedUser.bannerImage ?? null,
         level: updatedUser.level,
         xp: updatedUser.xp,
         isVerified: updatedUser.isVerified,
+        tradeFeeRewardsEnabled: updatedUser.tradeFeeRewardsEnabled ?? null,
+        tradeFeeShareBps: updatedUser.tradeFeeShareBps ?? null,
+        tradeFeePayoutAddress: updatedUser.tradeFeePayoutAddress ?? null,
         createdAt: updatedUser.createdAt,
         followersCount: updatedUser.followersCount ?? null,
         followingCount: updatedUser.followingCount ?? null,
@@ -770,16 +793,50 @@ export default function Profile() {
     },
     onSuccess: (updated) => {
       queryClient.setQueryData(["profile", "fee-settings", user?.id], updated);
-      queryClient.setQueryData<ExtendedUser | undefined>(profileMeQueryKey, (prev) =>
+      const applyFeeSettings = <T extends ExtendedUser | undefined>(prev: T): T =>
         prev
-          ? {
+          ? ({
               ...prev,
               tradeFeeRewardsEnabled: updated.tradeFeeRewardsEnabled,
               tradeFeeShareBps: updated.tradeFeeShareBps,
               tradeFeePayoutAddress: updated.tradeFeePayoutAddress,
-            }
-          : prev
+            } as T)
+          : prev;
+      const nextProfileUser = applyFeeSettings(
+        queryClient.getQueryData<ExtendedUser | undefined>(profileMeQueryKey)
       );
+      queryClient.setQueryData<ExtendedUser | undefined>(profileMeQueryKey, nextProfileUser);
+      if (nextProfileUser && meProfileCacheKey) {
+        writeSessionCache(meProfileCacheKey, nextProfileUser);
+      }
+      if (nextProfileUser) {
+        syncProfileSnapshotAcrossCaches(queryClient, {
+          id: nextProfileUser.id,
+          name: nextProfileUser.name ?? null,
+          email: nextProfileUser.email ?? null,
+          username: nextProfileUser.username ?? null,
+          image: nextProfileUser.image ?? null,
+          bio: nextProfileUser.bio ?? null,
+          bannerImage: nextProfileUser.bannerImage ?? null,
+          level: nextProfileUser.level,
+          xp: nextProfileUser.xp,
+          isVerified: nextProfileUser.isVerified,
+          tradeFeeRewardsEnabled: updated.tradeFeeRewardsEnabled,
+          tradeFeeShareBps: updated.tradeFeeShareBps,
+          tradeFeePayoutAddress: updated.tradeFeePayoutAddress,
+          createdAt: nextProfileUser.createdAt,
+          followersCount: nextProfileUser.followersCount ?? null,
+          followingCount: nextProfileUser.followingCount ?? null,
+          postsCount: nextProfileUser.postsCount ?? null,
+          winsCount: nextProfileUser.winsCount ?? null,
+          lossesCount: nextProfileUser.lossesCount ?? null,
+        });
+        updateCachedAuthUser({
+          tradeFeeRewardsEnabled: updated.tradeFeeRewardsEnabled,
+          tradeFeeShareBps: updated.tradeFeeShareBps,
+          tradeFeePayoutAddress: updated.tradeFeePayoutAddress,
+        });
+      }
       toast.success("Fee settings saved");
     },
     onError: (error: ApiError) => {
@@ -831,13 +888,30 @@ export default function Profile() {
 
   const pollVoteMutation = useMutation({
     mutationFn: async ({ postId, optionId }: { postId: string; optionId: string }) => {
-      await api.post(`/api/posts/${postId}/poll-vote`, { optionId });
+      const poll = await api.post<NonNullable<Post["poll"]>>(`/api/posts/${postId}/poll-vote`, { optionId });
+      return { postId, poll };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["profile", "posts", user?.id] });
-      queryClient.invalidateQueries({ queryKey: ["profile", "reposts", user?.id] });
+    onMutate: ({ postId, optionId }) => {
+      queryClient.setQueryData<Post[]>(["profile", "posts", user?.id], (current) =>
+        current?.map((post) => (post.id === postId ? applyPostPollVote(post, optionId) : post))
+      );
+      queryClient.setQueryData<Post[]>(["profile", "reposts", user?.id], (current) =>
+        current?.map((post) => (post.id === postId ? applyPostPollVote(post, optionId) : post))
+      );
     },
-    onError: () => toast.error("Failed to vote"),
+    onSuccess: ({ postId, poll }) => {
+      queryClient.setQueryData<Post[]>(["profile", "posts", user?.id], (current) =>
+        current?.map((post) => (post.id === postId ? { ...post, poll } : post))
+      );
+      queryClient.setQueryData<Post[]>(["profile", "reposts", user?.id], (current) =>
+        current?.map((post) => (post.id === postId ? { ...post, poll } : post))
+      );
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ["profile", "posts", user?.id] });
+      void queryClient.invalidateQueries({ queryKey: ["profile", "reposts", user?.id] });
+      toast.error("Failed to vote");
+    },
   });
 
   // Handle image upload
@@ -1002,7 +1076,7 @@ export default function Profile() {
     }
 
     const updateData: { username?: string; bio?: string; image?: string; bannerImage?: string } = {
-      bio: editBio.trim() || undefined,
+      bio: editBio.trim(),
     };
 
     if (normalizedHandle !== currentNormalizedHandle) {

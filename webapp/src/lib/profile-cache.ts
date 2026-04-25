@@ -10,8 +10,11 @@ type ProfileStatsLike = {
 
 type PublicProfileLike = {
   id?: string | null;
+  name?: string | null;
   username?: string | null;
   image?: string | null;
+  bio?: string | null;
+  bannerImage?: string | null;
   level?: number | null;
   xp?: number | null;
   isVerified?: boolean;
@@ -21,11 +24,18 @@ type PublicProfileLike = {
 
 type ExtendedProfileLike = {
   id: string;
+  name?: string | null;
+  email?: string | null;
   username?: string | null;
   image?: string | null;
+  bio?: string | null;
+  bannerImage?: string | null;
   level?: number | null;
   xp?: number | null;
   isVerified?: boolean;
+  tradeFeeRewardsEnabled?: boolean | null;
+  tradeFeeShareBps?: number | null;
+  tradeFeePayoutAddress?: string | null;
   createdAt?: string | null;
   followersCount?: number | null;
   followingCount?: number | null;
@@ -41,11 +51,18 @@ type SessionCacheEnvelope<T> = {
 
 export type ProfileCacheSnapshot = {
   id: string;
+  name?: string | null;
+  email?: string | null;
   username?: string | null;
   image?: string | null;
+  bio?: string | null;
+  bannerImage?: string | null;
   level?: number | null;
   xp?: number | null;
   isVerified?: boolean;
+  tradeFeeRewardsEnabled?: boolean | null;
+  tradeFeeShareBps?: number | null;
+  tradeFeePayoutAddress?: string | null;
   createdAt?: string | null;
   followersCount?: number | null;
   followingCount?: number | null;
@@ -102,8 +119,11 @@ function snapshotFromPublicProfile(profile: PublicProfileLike | null | undefined
 
   return {
     id,
+    name: profile?.name ?? null,
     username: profile?.username ?? null,
     image: profile?.image ?? null,
+    bio: profile?.bio ?? null,
+    bannerImage: profile?.bannerImage ?? null,
     level: typeof profile?.level === "number" && Number.isFinite(profile.level) ? profile.level : null,
     xp: typeof profile?.xp === "number" && Number.isFinite(profile.xp) ? profile.xp : null,
     isVerified: typeof profile?.isVerified === "boolean" ? profile.isVerified : undefined,
@@ -124,11 +144,22 @@ function snapshotFromExtendedProfile(profile: ExtendedProfileLike | null | undef
 
   return {
     id,
+    name: profile?.name ?? null,
+    email: profile?.email ?? null,
     username: profile?.username ?? null,
     image: profile?.image ?? null,
+    bio: profile?.bio ?? null,
+    bannerImage: profile?.bannerImage ?? null,
     level: typeof profile?.level === "number" && Number.isFinite(profile.level) ? profile.level : null,
     xp: typeof profile?.xp === "number" && Number.isFinite(profile.xp) ? profile.xp : null,
     isVerified: typeof profile?.isVerified === "boolean" ? profile.isVerified : undefined,
+    tradeFeeRewardsEnabled:
+      typeof profile?.tradeFeeRewardsEnabled === "boolean" ? profile.tradeFeeRewardsEnabled : null,
+    tradeFeeShareBps:
+      typeof profile?.tradeFeeShareBps === "number" && Number.isFinite(profile.tradeFeeShareBps)
+        ? profile.tradeFeeShareBps
+        : null,
+    tradeFeePayoutAddress: profile?.tradeFeePayoutAddress ?? null,
     createdAt: profile?.createdAt ?? null,
     followersCount: hasFiniteCount(profile?.followersCount) ? profile.followersCount : null,
     followingCount: hasFiniteCount(profile?.followingCount) ? profile.followingCount : null,
@@ -167,8 +198,12 @@ function mergeSnapshot(
 
   return {
     id: current.id,
+    name: current.name ?? incoming.name ?? null,
+    email: current.email ?? incoming.email ?? null,
     username: current.username ?? incoming.username ?? null,
     image: current.image ?? incoming.image ?? null,
+    bio: current.bio ?? incoming.bio ?? null,
+    bannerImage: current.bannerImage ?? incoming.bannerImage ?? null,
     level:
       typeof current.level === "number" && Number.isFinite(current.level)
         ? current.level
@@ -178,6 +213,15 @@ function mergeSnapshot(
         ? current.xp
         : incoming.xp ?? null,
     isVerified: typeof current.isVerified === "boolean" ? current.isVerified : incoming.isVerified,
+    tradeFeeRewardsEnabled:
+      typeof current.tradeFeeRewardsEnabled === "boolean"
+        ? current.tradeFeeRewardsEnabled
+        : incoming.tradeFeeRewardsEnabled ?? null,
+    tradeFeeShareBps:
+      typeof current.tradeFeeShareBps === "number" && Number.isFinite(current.tradeFeeShareBps)
+        ? current.tradeFeeShareBps
+        : incoming.tradeFeeShareBps ?? null,
+    tradeFeePayoutAddress: current.tradeFeePayoutAddress ?? incoming.tradeFeePayoutAddress ?? null,
     createdAt: current.createdAt ?? incoming.createdAt ?? null,
     followersCount: preferCount(current.followersCount, incoming.followersCount) ?? null,
     followingCount: preferCount(current.followingCount, incoming.followingCount) ?? null,
@@ -251,12 +295,25 @@ export function mergeProfileSnapshotIntoExtendedUser<T extends ExtendedProfileLi
 
   return {
     ...user,
+    name: user.name ?? snapshot.name ?? null,
+    email: user.email ?? snapshot.email ?? null,
     username: user.username ?? snapshot.username ?? null,
     image: user.image ?? snapshot.image ?? null,
+    bio: user.bio ?? snapshot.bio ?? null,
+    bannerImage: user.bannerImage ?? snapshot.bannerImage ?? null,
     level:
       typeof user.level === "number" && Number.isFinite(user.level) ? user.level : snapshot.level ?? undefined,
     xp: typeof user.xp === "number" && Number.isFinite(user.xp) ? user.xp : snapshot.xp ?? undefined,
     isVerified: typeof user.isVerified === "boolean" ? user.isVerified : snapshot.isVerified,
+    tradeFeeRewardsEnabled:
+      typeof user.tradeFeeRewardsEnabled === "boolean"
+        ? user.tradeFeeRewardsEnabled
+        : snapshot.tradeFeeRewardsEnabled ?? undefined,
+    tradeFeeShareBps:
+      typeof user.tradeFeeShareBps === "number" && Number.isFinite(user.tradeFeeShareBps)
+        ? user.tradeFeeShareBps
+        : snapshot.tradeFeeShareBps ?? undefined,
+    tradeFeePayoutAddress: user.tradeFeePayoutAddress ?? snapshot.tradeFeePayoutAddress ?? null,
     createdAt: user.createdAt ?? snapshot.createdAt ?? null,
     followersCount: preferCount(user.followersCount, snapshot.followersCount) ?? user.followersCount ?? null,
     followingCount: preferCount(user.followingCount, snapshot.followingCount) ?? user.followingCount ?? null,
@@ -277,8 +334,11 @@ function mergeSnapshotIntoPublicProfile<T extends PublicProfileLike>(
   const existingStats = user.stats ?? {};
   return {
     ...user,
+    name: user.name ?? snapshot.name ?? null,
     username: user.username ?? snapshot.username ?? null,
     image: user.image ?? snapshot.image ?? null,
+    bio: user.bio ?? snapshot.bio ?? null,
+    bannerImage: user.bannerImage ?? snapshot.bannerImage ?? null,
     level:
       typeof user.level === "number" && Number.isFinite(user.level) ? user.level : snapshot.level ?? null,
     xp: typeof user.xp === "number" && Number.isFinite(user.xp) ? user.xp : snapshot.xp ?? null,
@@ -357,11 +417,18 @@ export function syncProfileSnapshotAcrossCaches(
       ? mergeProfileSnapshotIntoExtendedUser(currentMe, snapshot)
       : ({
           id: snapshot.id,
+          name: snapshot.name ?? null,
+          email: snapshot.email ?? null,
           username: snapshot.username ?? null,
           image: snapshot.image ?? null,
+          bio: snapshot.bio ?? null,
+          bannerImage: snapshot.bannerImage ?? null,
           level: snapshot.level ?? 0,
           xp: snapshot.xp ?? 0,
           isVerified: snapshot.isVerified,
+          tradeFeeRewardsEnabled: snapshot.tradeFeeRewardsEnabled ?? null,
+          tradeFeeShareBps: snapshot.tradeFeeShareBps ?? null,
+          tradeFeePayoutAddress: snapshot.tradeFeePayoutAddress ?? null,
           createdAt: snapshot.createdAt ?? null,
           followersCount: snapshot.followersCount ?? null,
           followingCount: snapshot.followingCount ?? null,
@@ -390,8 +457,11 @@ export function syncProfileSnapshotAcrossCaches(
         ? mergeSnapshotIntoPublicProfile(currentProfile, snapshot)
         : ({
             id: snapshot.id,
+            name: snapshot.name ?? null,
             username: snapshot.username ?? null,
             image: snapshot.image ?? null,
+            bio: snapshot.bio ?? null,
+            bannerImage: snapshot.bannerImage ?? null,
             level: snapshot.level ?? null,
             xp: snapshot.xp ?? null,
             isVerified: snapshot.isVerified,

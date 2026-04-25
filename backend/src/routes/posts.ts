@@ -69,6 +69,7 @@ import {
   computeRealtimeIntelligenceSnapshots,
   getEnrichedCallById,
   INTELLIGENCE_CALL_SELECT,
+  invalidateFeedListCaches,
   refreshTokenIntelligenceByAddress,
   type IntelligenceCallRecord,
   type RealtimePostIntelligenceSnapshot,
@@ -2236,6 +2237,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
 export function invalidatePostReadCaches(options?: { leaderboard?: boolean }): void {
   feedResponseCache.clear();
   feedSharedResponseCache.clear();
+  invalidateFeedListCaches();
   clearMarketCapSnapshotCache();
   sharedAlphaAuthorCache.clear();
   sharedAlphaWarmInFlight.clear();

@@ -53,6 +53,7 @@ import {
   syncFollowStateAcrossPostCaches,
   syncPostsIntoQueryCache,
 } from "@/lib/post-query-cache";
+import { applyPostPollVote } from "@/lib/post-poll";
 import { PhewFollowIcon, PhewRepostIcon } from "@/components/icons/PhewIcons";
 import { ShareableProfileCard } from "@/components/profile/ShareableProfileCard";
 import { Share2 } from "lucide-react";
@@ -685,13 +686,30 @@ export default function UserProfile() {
 
   const pollVoteMutation = useMutation({
     mutationFn: async ({ postId, optionId }: { postId: string; optionId: string }) => {
-      await api.post(`/api/posts/${postId}/poll-vote`, { optionId });
+      const poll = await api.post<NonNullable<Post["poll"]>>(`/api/posts/${postId}/poll-vote`, { optionId });
+      return { postId, poll };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
-      queryClient.invalidateQueries({ queryKey: userRepostsQueryKey });
+    onMutate: ({ postId, optionId }) => {
+      queryClient.setQueryData<Post[]>(userPostsQueryKey, (current) =>
+        current?.map((post) => (post.id === postId ? applyPostPollVote(post, optionId) : post))
+      );
+      queryClient.setQueryData<Post[]>(userRepostsQueryKey, (current) =>
+        current?.map((post) => (post.id === postId ? applyPostPollVote(post, optionId) : post))
+      );
     },
-    onError: () => toast.error("Failed to vote"),
+    onSuccess: ({ postId, poll }) => {
+      queryClient.setQueryData<Post[]>(userPostsQueryKey, (current) =>
+        current?.map((post) => (post.id === postId ? { ...post, poll } : post))
+      );
+      queryClient.setQueryData<Post[]>(userRepostsQueryKey, (current) =>
+        current?.map((post) => (post.id === postId ? { ...post, poll } : post))
+      );
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: userPostsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: userRepostsQueryKey });
+      toast.error("Failed to vote");
+    },
   });
 
   // Handlers

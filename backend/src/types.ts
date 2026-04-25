@@ -24,6 +24,17 @@ export const UserSchema = z.object({
 
 export type User = z.infer<typeof UserSchema>;
 
+const ProfileImageSchema = z
+  .string()
+  .trim()
+  .max(2_800_000, "Profile image is too large")
+  .refine((value) => {
+    if (z.string().url().safeParse(value).success) {
+      return true;
+    }
+    return /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
+  }, "Profile image must be a valid image URL or cropped data image");
+
 export const UpdateProfileSchema = z
   .object({
     username: z
@@ -34,7 +45,7 @@ export const UpdateProfileSchema = z
       .regex(/^[a-zA-Z0-9_]+$/, "Handle can only contain letters, numbers, and underscores")
       .optional(),
     bio: z.string().max(200).optional(),
-    image: z.string().url().optional(),
+    image: ProfileImageSchema.optional(),
     bannerImage: z.union([z.string().url(), z.string().regex(/^[a-z0-9-]+$/)]).optional(),
     tradeFeeRewardsEnabled: z.boolean().optional(),
     tradeFeeShareBps: z.number().int().min(0).max(50).optional(),

@@ -18,7 +18,8 @@ import { cn } from "@/lib/utils";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { hasResolvedBundleEvidence, isBundlePlaceholderState } from "@/lib/bundle-intelligence";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
-import { syncPostsIntoQueryCache } from "@/lib/post-query-cache";
+import { getCachedPostsForAuthor, syncPostsIntoQueryCache } from "@/lib/post-query-cache";
+import { applyPostPollVote } from "@/lib/post-poll";
 import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
 
 interface FeedPage {
@@ -404,6 +405,9 @@ function mergePostWithCachedRealtimeState(
   }
 
   let didChange = false;
+  let nextPostType = post.postType;
+  let nextPollExpiresAt = post.pollExpiresAt ?? null;
+  let nextPoll = post.poll ?? null;
   let nextCurrentMcap = post.currentMcap;
   let nextSettled = post.settled;
   let nextSettledAt = post.settledAt;
@@ -490,6 +494,23 @@ function mergePostWithCachedRealtimeState(
   const fetchedLooksLikeBaselineCurrent =
     post.currentMcap === null ||
     (post.entryMcap !== null && post.currentMcap === post.entryMcap);
+
+  if (!post.postType && cachedPost.postType) {
+    nextPostType = cachedPost.postType;
+    didChange = true;
+  }
+
+  if ((post.pollExpiresAt ?? null) == null && cachedPost.pollExpiresAt) {
+    nextPollExpiresAt = cachedPost.pollExpiresAt;
+    didChange = true;
+  }
+
+  if (post.postType === "poll" || nextPostType === "poll") {
+    if ((!post.poll || post.poll.options.length === 0) && cachedPost.poll && cachedPost.poll.options.length > 0) {
+      nextPoll = cachedPost.poll;
+      didChange = true;
+    }
+  }
 
   if (cachedLooksLikeLiveCurrent && fetchedLooksLikeBaselineCurrent) {
     nextCurrentMcap = cachedPost.currentMcap;
@@ -1052,6 +1073,9 @@ function mergePostWithCachedRealtimeState(
 
   return {
     ...post,
+    postType: nextPostType,
+    pollExpiresAt: nextPollExpiresAt,
+    poll: nextPoll,
     currentMcap: nextCurrentMcap,
     settled: nextSettled,
     settledAt: nextSettledAt,
@@ -2336,6 +2360,16 @@ export default function Feed() {
       if (activeTab !== "latest" || effectiveSearchQuery) {
         prependPostToFeed("latest", "");
       }
+      if (newPost.authorId === session?.user?.id) {
+        queryClient.setQueriesData<Post[]>({ queryKey: ["profile", "posts"] }, (currentPosts) => {
+          if (!currentPosts) return currentPosts;
+          return [newPost, ...currentPosts.filter((post) => post.id !== newPost.id)];
+        });
+        writeSessionCache(`phew.profile.posts:${newPost.authorId}`, [
+          newPost,
+          ...getCachedPostsForAuthor(queryClient, newPost.authorId).filter((post) => post.id !== newPost.id),
+        ]);
+      }
       toast.success("Post published");
       // Refresh user data in case level changed
       refetchUser();
@@ -2447,6 +2481,9 @@ export default function Feed() {
       const poll = await api.post<NonNullable<Post["poll"]>>(`/api/posts/${postId}/poll-vote`, { optionId });
       return { postId, poll };
     },
+    onMutate: ({ postId, optionId }) => {
+      updateInfinitePosts((post) => (post.id === postId ? applyPostPollVote(post, optionId) : post));
+    },
     onSuccess: ({ postId, poll }) => {
       updateInfinitePosts((post) => (post.id === postId ? { ...post, poll } : post));
     },
@@ -2455,6 +2492,7 @@ export default function Feed() {
         handleWriteSessionExpired();
         return;
       }
+      queryClient.invalidateQueries({ queryKey: getFeedQueryKey(activeTab, effectiveSearchQuery, feedViewerScope) });
       toast.error(error instanceof ApiError ? error.message : "Failed to vote");
     },
   });

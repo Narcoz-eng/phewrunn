@@ -2720,6 +2720,9 @@ export default function TokenPage() {
   const discoverySidebar = discoverySidebarQuery.data ?? null;
   const sidebarTopGainers = useMemo(() => discoverySidebar?.topGainers ?? [], [discoverySidebar?.topGainers]);
   const sidebarLiveRaids = useMemo(() => discoverySidebar?.liveRaids ?? [], [discoverySidebar?.liveRaids]);
+  const topHolders = mergedTopHolders;
+  const topHolderRows = topHolders.slice(0, 10);
+  const hasLiveHolderDistribution = topHolderRows.length > 0;
   const marketStripItems = useMemo(() => {
     const currentToken = token
       ? [{
@@ -2968,9 +2971,6 @@ export default function TokenPage() {
   }, [setTokenTab, shouldAutoOpenTradePanel]);
 
   const showTokenLoading = !token && isLoading;
-  const topHolders = mergedTopHolders;
-  const topHolderRows = topHolders.slice(0, 10);
-  const hasLiveHolderDistribution = topHolderRows.length > 0;
   const topHolderSectionCopy = holderIntelligencePending
     ? "Scanning top wallets and role tags for this token."
     : "Top wallets and role tags from the latest chain scan.";
