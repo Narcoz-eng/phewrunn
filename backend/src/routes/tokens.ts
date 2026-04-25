@@ -4,7 +4,7 @@ import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { isPrismaPoolPressureActive, isTransientPrismaError, prisma } from "../prisma.js";
-import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
+import { getCachedMarketCapSnapshot, type MarketCapResult } from "../services/marketcap.js";
 import {
   analyzeSolanaTokenDistribution,
   peekCachedSolanaTokenDistribution,
@@ -15,6 +15,11 @@ import {
   invalidateViewerSocialCaches,
 } from "../services/intelligence/engine.js";
 import { loadTokenSocialSignals } from "../services/token-social-signals.js";
+import {
+  buildTerminalDepthPayload,
+  fetchBestChartCandles,
+  loadChartTrades,
+} from "./posts.js";
 import {
   computeStateAwareIntelligenceScores,
   computeConfidenceScore,
@@ -100,6 +105,11 @@ const TokenAddressParamSchema = z.object({
 const TokenLiveQuerySchema = z.object({
   fresh: z.string().optional(),
 });
+const TokenTerminalQuerySchema = z
+  .object({
+    timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1D"]).optional().default("5m"),
+  })
+  .strict();
 const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
@@ -507,6 +517,156 @@ function emptyReactionCounts(): ReactionCounts {
     based: 0,
     printed: 0,
     rug: 0,
+  };
+}
+
+type TerminalCoverageState = "live" | "partial" | "unavailable";
+
+function terminalCoverage(
+  state: TerminalCoverageState,
+  source: string,
+  unavailableReason: string | null = null
+) {
+  return { state, source, unavailableReason };
+}
+
+function clampTerminalScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
+}
+
+function toTerminalInterval(value: z.infer<typeof TokenTerminalQuerySchema>["timeframe"]) {
+  switch (value) {
+    case "1m":
+      return { timeframe: "minute" as const, aggregate: 1, limit: 180 };
+    case "5m":
+      return { timeframe: "minute" as const, aggregate: 5, limit: 180 };
+    case "15m":
+      return { timeframe: "minute" as const, aggregate: 15, limit: 180 };
+    case "1h":
+      return { timeframe: "hour" as const, aggregate: 1, limit: 168 };
+    case "4h":
+      return { timeframe: "hour" as const, aggregate: 4, limit: 168 };
+    case "1D":
+      return { timeframe: "day" as const, aggregate: 1, limit: 180 };
+    default:
+      return { timeframe: "minute" as const, aggregate: 5, limit: 180 };
+  }
+}
+
+function buildDeterministicTokenAvatar(address: string, symbol: string | null | undefined): string {
+  const seed = encodeURIComponent(`${symbol ?? "TOKEN"}:${address.toLowerCase()}`);
+  return `https://api.dicebear.com/9.x/identicon/svg?seed=${seed}&backgroundColor=050b0e&iconColor=a3e635,14f195`;
+}
+
+function terminalMarketFallback(error: unknown): MarketCapResult {
+  return {
+    mcap: null,
+    priceUsd: null,
+    liquidityUsd: null,
+    volume24hUsd: null,
+    priceChange24hPct: null,
+    error: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function buildSignalExplanation(args: {
+  hasMarket: boolean;
+  hasTrades: boolean;
+  hasSocial: boolean;
+  hasRisk: boolean;
+  token: TokenRoutePayload;
+}): string {
+  const parts: string[] = [];
+  if (args.hasMarket) parts.push("market/liquidity");
+  if (args.hasTrades) parts.push("live trades");
+  if (args.hasSocial) parts.push("calls/social pressure");
+  if (args.hasRisk) parts.push("holder/risk scan");
+  if (parts.length === 0) {
+    return "Not enough signal: no fresh market, social, trade, or holder coverage is available.";
+  }
+  const status = args.token.activityStatusLabel ?? args.token.activityStatus ?? "terminal coverage";
+  return `Derived from ${parts.join(", ")} with ${status.toLowerCase()} context.`;
+}
+
+function deriveTerminalSignals(args: {
+  token: TokenRoutePayload;
+  recentTradeCount: number;
+  activeRaidCount: number;
+}) {
+  const { token, recentTradeCount, activeRaidCount } = args;
+  const hasMarket = Boolean(
+    (typeof token.volume24h === "number" && token.volume24h > 0) ||
+      (typeof token.liquidity === "number" && token.liquidity > 0)
+  );
+  const hasTrades = recentTradeCount > 0;
+  const hasSocial = token.recentCalls.length > 0 || activeRaidCount > 0;
+  const hasRisk = typeof token.tokenRiskScore === "number" || typeof token.top10HolderPct === "number";
+  const sourceCount = [hasMarket, hasTrades, hasSocial, hasRisk].filter(Boolean).length;
+  const baseConfidence =
+    typeof token.confidenceScore === "number" && Number.isFinite(token.confidenceScore)
+      ? token.confidenceScore
+      : null;
+  const conviction =
+    typeof token.highConvictionScore === "number" && Number.isFinite(token.highConvictionScore)
+      ? token.highConvictionScore
+      : baseConfidence;
+  const momentumInputs = [
+    token.hotAlphaScore,
+    token.earlyRunnerScore,
+    token.marketHealthScore,
+    hasTrades ? Math.min(100, recentTradeCount * 3) : null,
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const momentum =
+    momentumInputs.length > 0
+      ? momentumInputs.reduce((sum, value) => sum + value, 0) / momentumInputs.length
+      : null;
+  const smartMoney =
+    typeof token.opportunityScore === "number" || hasRisk
+      ? clampTerminalScore(
+          (token.opportunityScore ?? 50) +
+            (typeof token.top10HolderPct === "number" && token.top10HolderPct < 45 ? 8 : 0) -
+            (typeof token.tokenRiskScore === "number" ? Math.max(0, token.tokenRiskScore - 70) * 0.35 : 0)
+        )
+      : null;
+  const riskScore =
+    typeof token.tokenRiskScore === "number"
+      ? clampTerminalScore(token.tokenRiskScore)
+      : typeof token.top10HolderPct === "number"
+        ? clampTerminalScore(Math.max(15, Math.min(85, token.top10HolderPct)))
+        : null;
+  const coverageState: TerminalCoverageState =
+    sourceCount >= 3 ? "live" : sourceCount >= 1 ? "partial" : "unavailable";
+  const explanation = buildSignalExplanation({ hasMarket, hasTrades, hasSocial, hasRisk, token });
+
+  return {
+    coverage: terminalCoverage(
+      coverageState,
+      "phew-derived",
+      coverageState === "unavailable" ? "No usable market, trade, social, or holder signals are available." : null
+    ),
+    conviction: conviction === null ? null : clampTerminalScore(conviction),
+    confidence: baseConfidence === null ? null : clampTerminalScore(baseConfidence),
+    momentum: momentum === null ? null : clampTerminalScore(momentum),
+    smartMoney,
+    riskScore,
+    sentiment: {
+      bullishPct: token.sentiment.bullishPct,
+      bearishPct: token.sentiment.bearishPct,
+      score: token.sentiment.score,
+      sourceCount:
+        (token.sentiment.reactions?.alpha ?? 0) +
+        (token.sentiment.reactions?.based ?? 0) +
+        (token.sentiment.reactions?.printed ?? 0) +
+        (token.sentiment.reactions?.rug ?? 0),
+    },
+    labels: [
+      conviction !== null && conviction >= 85 ? "High conviction" : null,
+      momentum !== null && momentum >= 70 ? "Momentum rising" : null,
+      hasTrades ? "Live prints detected" : null,
+      activeRaidCount > 0 ? "Raid pressure" : null,
+      hasRisk && (riskScore ?? 0) < 45 ? "Cleaner holder risk" : null,
+    ].filter((label): label is string => Boolean(label)),
+    explanation,
   };
 }
 
@@ -1359,6 +1519,325 @@ tokensRouter.get(
     }
   }
 });
+
+tokensRouter.get(
+  "/:tokenAddress/terminal",
+  zValidator("param", TokenAddressParamSchema),
+  zValidator("query", TokenTerminalQuerySchema),
+  async (c) => {
+    const { tokenAddress } = c.req.valid("param");
+    const { timeframe } = c.req.valid("query");
+    const viewer = c.get("user");
+    const overview = await getTokenOverviewByAddress(tokenAddress, viewer?.id ?? null);
+
+    if (!overview) {
+      return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
+    }
+
+    const token = overview.token;
+    const chartRequest = toTerminalInterval(timeframe);
+    const normalizedChain = token.chainType === "solana" ? "solana" : "ethereum";
+
+    const [marketSnapshot, chartResultSettled, tradeResultSettled, depthResultSettled, marketStrip, activeRaids, community] =
+      await Promise.all([
+        getCachedMarketCapSnapshot(token.address, token.chainType).catch((error) => terminalMarketFallback(error)),
+        fetchBestChartCandles({
+          tokenAddress: token.address,
+          poolAddress: token.pairAddress ?? undefined,
+          chainType: normalizedChain,
+          timeframe: chartRequest.timeframe,
+          aggregate: chartRequest.aggregate,
+          limit: chartRequest.limit,
+        }).then(
+          (result) => ({ ok: true as const, result }),
+          (error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) })
+        ),
+        loadChartTrades({
+          tokenAddress: token.address,
+          pairAddress: token.pairAddress ?? undefined,
+          chainType: normalizedChain,
+          limit: 40,
+        }).then(
+          (trades) => ({ ok: true as const, trades }),
+          (error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error), trades: [] })
+        ),
+        normalizedChain === "solana"
+          ? buildTerminalDepthPayload({
+              tokenMint: token.address,
+              chainType: "solana",
+              pairAddress: token.pairAddress ?? undefined,
+            }).then(
+              (depth) => ({ ok: true as const, depth }),
+              (error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error), depth: null })
+            )
+          : Promise.resolve({
+              ok: false as const,
+              error: "Depth approximation currently requires a Solana Jupiter route.",
+              depth: null,
+            }),
+        prisma.token.findMany({
+          orderBy: [{ highConvictionScore: "desc" }, { volume24h: "desc" }, { updatedAt: "desc" }],
+          take: 6,
+          select: {
+            address: true,
+            chainType: true,
+            symbol: true,
+            name: true,
+            imageUrl: true,
+            volume24h: true,
+            liquidity: true,
+            highConvictionScore: true,
+            confidenceScore: true,
+          },
+        }).catch(() => []),
+        prisma.tokenRaidCampaign
+          .findMany({
+            where: { tokenId: token.id, status: "active" },
+            orderBy: { openedAt: "desc" },
+            take: 4,
+            include: {
+              participants: { select: { id: true, postedAt: true } },
+              submissions: { select: { id: true, postedAt: true } },
+            },
+          })
+          .catch(() => []),
+        prisma.tokenCommunityProfile
+          .findUnique({
+            where: { tokenId: token.id },
+            select: {
+              id: true,
+              headline: true,
+              xCashtag: true,
+              whyLine: true,
+              mascotName: true,
+              _count: { select: { posts: true } },
+            },
+          })
+          .catch(() => null),
+      ]);
+
+    const priceUsd =
+      typeof marketSnapshot.priceUsd === "number" && Number.isFinite(marketSnapshot.priceUsd)
+        ? marketSnapshot.priceUsd
+        : null;
+    const imageUrl =
+      marketSnapshot.tokenImage ??
+      token.imageUrl ??
+      buildDeterministicTokenAvatar(token.address, token.symbol);
+
+    if (marketSnapshot.tokenImage && marketSnapshot.tokenImage !== token.imageUrl) {
+      void prisma.token
+        .update({
+          where: { id: token.id },
+          data: {
+            imageUrl: marketSnapshot.tokenImage,
+            dexscreenerUrl: marketSnapshot.dexscreenerUrl ?? token.dexscreenerUrl,
+            pairAddress: marketSnapshot.pairAddress ?? token.pairAddress,
+            dexId: marketSnapshot.dexId ?? token.dexId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    const chartSource = chartResultSettled.ok ? chartResultSettled.result.source : "chart-provider";
+    const chartNetwork = chartResultSettled.ok ? chartResultSettled.result.network : null;
+    const candles = chartResultSettled.ok ? chartResultSettled.result.candles : [];
+    const chartCoverage = candles.length > 1
+      ? terminalCoverage("live", chartSource)
+      : terminalCoverage(
+          "unavailable",
+          chartSource,
+          chartResultSettled.ok
+            ? "Candles unavailable from the configured market data source."
+            : chartResultSettled.error
+        );
+    const trades = tradeResultSettled.trades;
+    const depthMode = depthResultSettled.ok ? "liquidity_depth_approximation" : "unavailable";
+    const signals = deriveTerminalSignals({
+      token,
+      recentTradeCount: trades.length,
+      activeRaidCount: activeRaids.length,
+    });
+
+    const marketStripRows = (marketStrip as Array<{
+      address: string;
+      chainType: string;
+      symbol: string | null;
+      name: string | null;
+      imageUrl: string | null;
+      volume24h: number | null;
+      liquidity: number | null;
+      highConvictionScore: number | null;
+      confidenceScore: number | null;
+    }>).map((row) => ({
+      address: row.address,
+      chainType: row.chainType,
+      symbol: row.symbol,
+      name: row.name,
+      imageUrl: row.imageUrl ?? buildDeterministicTokenAvatar(row.address, row.symbol),
+      priceUsd: null,
+      priceChange24hPct: null,
+      volume24h: row.volume24h,
+      liquidity: row.liquidity,
+      score: row.highConvictionScore ?? row.confidenceScore,
+      coverage: terminalCoverage("partial", "token-index", "Price/change require live market metadata for each strip asset."),
+    }));
+
+    const activeRaidRows = activeRaids.map((raid) => {
+      const participantCount = raid.participants.length;
+      const postedCount = raid.submissions.filter((submission) => submission.postedAt).length;
+      return {
+        id: raid.id,
+        status: raid.status,
+        objective: raid.objective,
+        activeKey: raid.activeKey,
+        participantCount,
+        postedCount,
+        progressPct: participantCount > 0 ? Math.round((postedCount / participantCount) * 100) : 0,
+        openedAt: raid.openedAt.toISOString(),
+      };
+    });
+
+    const whaleRows = token.topHolders.slice(0, 5).map((holder, index) => ({
+      id: `${holder.address}:${index}`,
+      wallet: holder.ownerAddress ?? holder.address,
+      label: holder.label ?? "Holder wallet",
+      action: "holder-scan",
+      valueUsd: holder.valueUsd ?? null,
+      supplyPct: holder.supplyPct ?? null,
+      confidence: holder.badges.length > 0 ? Math.min(100, 55 + holder.badges.length * 10) : null,
+      explorerUrl: null,
+    }));
+
+    if (viewer?.id) {
+      c.header("Vary", "Cookie");
+    }
+
+    return c.json(
+      {
+        data: {
+          generatedAt: new Date().toISOString(),
+          timeframe,
+          token: {
+            id: token.id,
+            address: token.address,
+            chainType: token.chainType,
+            symbol: marketSnapshot.tokenSymbol ?? token.symbol,
+            name: marketSnapshot.tokenName ?? token.name,
+            imageUrl,
+            fallbackImageUrl: buildDeterministicTokenAvatar(token.address, token.symbol),
+            dexscreenerUrl: marketSnapshot.dexscreenerUrl ?? token.dexscreenerUrl,
+            pairAddress: marketSnapshot.pairAddress ?? token.pairAddress,
+            dexId: marketSnapshot.dexId ?? token.dexId,
+            priceUsd,
+            priceChange24hPct: marketSnapshot.priceChange24hPct ?? null,
+            marketCap: marketSnapshot.mcap ?? token.marketCap,
+            liquidity: marketSnapshot.liquidityUsd ?? token.liquidity,
+            volume24h: marketSnapshot.volume24hUsd ?? token.volume24h,
+            holderCount: token.holderCount,
+            isTradable: token.isTradable,
+            isFollowing: token.isFollowing,
+            communityExists: token.communityExists,
+          },
+          coverage: {
+            metadata: terminalCoverage(imageUrl ? "live" : "partial", marketSnapshot.tokenImage ? "dexscreener" : "token-cache"),
+            market: terminalCoverage(
+              priceUsd !== null || marketSnapshot.mcap !== null || token.marketCap !== null ? "live" : "partial",
+              marketSnapshot.error ? "token-cache" : "dexscreener",
+              marketSnapshot.error ?? null
+            ),
+            chart: chartCoverage,
+            trades: terminalCoverage(
+              trades.length > 0 ? "live" : "unavailable",
+              trades.length > 0 ? "birdeye" : "birdeye",
+              trades.length > 0 ? null : "Recent trades unavailable from the configured trade feed."
+            ),
+            depth: terminalCoverage(
+              depthResultSettled.ok ? "partial" : "unavailable",
+              depthResultSettled.ok ? "jupiter-derived-depth" : "jupiter",
+              depthResultSettled.ok ? "Derived from route quotes; not a centralized orderbook." : depthResultSettled.error
+            ),
+          },
+          marketStrip: marketStripRows,
+          chart: {
+            candles,
+            source: chartResultSettled.ok ? chartSource : "unavailable",
+            network: chartNetwork,
+            coverage: chartCoverage,
+          },
+          marketFlow: {
+            mode: depthMode,
+            bids: depthResultSettled.depth?.bids ?? [],
+            asks: depthResultSettled.depth?.asks ?? [],
+            spread: depthResultSettled.depth?.spread ?? null,
+            depthSeries: depthResultSettled.depth?.depthSeries ?? [],
+            recentTrades: trades,
+            coverage: {
+              depth: terminalCoverage(
+                depthResultSettled.ok ? "partial" : "unavailable",
+                depthResultSettled.ok ? "jupiter-derived-depth" : "jupiter",
+                depthResultSettled.ok ? "Derived from route quotes; not a centralized orderbook." : depthResultSettled.error
+              ),
+              trades: terminalCoverage(
+                trades.length > 0 ? "live" : "unavailable",
+                trades.length > 0 ? "birdeye" : "birdeye",
+                trades.length > 0 ? null : "Recent trades unavailable from the configured trade feed."
+              ),
+            },
+          },
+          execution: {
+            supported: normalizedChain === "solana" && token.isTradable,
+            provider: normalizedChain === "solana" ? "jupiter" : null,
+            unavailableReason:
+              normalizedChain !== "solana"
+                ? "Execution is currently enabled for Solana Jupiter routes only."
+                : token.isTradable
+                  ? null
+                  : "This token is not marked tradable by the token intelligence engine.",
+          },
+          intelligence: signals,
+          smartMoney: {
+            coverage: terminalCoverage(whaleRows.length > 0 ? "partial" : "unavailable", "holder-scan"),
+            rows: whaleRows,
+          },
+          community: community
+            ? {
+                id: community.id,
+                exists: true,
+                headline: community.headline,
+                cashtag: community.xCashtag,
+                whyLine: community.whyLine,
+                mascotName: community.mascotName,
+                postsCount: community._count.posts,
+              }
+            : {
+                id: null,
+                exists: false,
+                headline: null,
+                cashtag: null,
+                whyLine: null,
+                mascotName: null,
+                postsCount: 0,
+              },
+          recentCalls: token.recentCalls.slice(0, 8),
+          topCallers: token.topTraders.slice(0, 5),
+          activeRaids: activeRaidRows,
+          news: token.timeline.slice(0, 5).map((event) => ({
+            id: event.id,
+            eventType: event.eventType,
+            timestamp: event.timestamp,
+            headline: event.eventType.replace(/_/g, " "),
+            marketCap: event.marketCap,
+            liquidity: event.liquidity,
+            volume: event.volume,
+          })),
+        },
+      },
+      200,
+      buildTokenRouteHeaders(Boolean(viewer?.id))
+    );
+  }
+);
 
 tokensRouter.get("/:tokenAddress", zValidator("param", TokenAddressParamSchema), async (c) => {
   const { tokenAddress } = c.req.valid("param");

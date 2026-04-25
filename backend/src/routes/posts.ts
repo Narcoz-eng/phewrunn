@@ -8680,7 +8680,7 @@ function buildChartTradesCacheKey(payload: ChartTradesQuery): string {
   ].join(":");
 }
 
-async function loadChartTrades(payload: ChartTradesQuery) {
+export async function loadChartTrades(payload: ChartTradesQuery) {
   if (!hasBirdeyeTradeFeedConfig()) {
     return [];
   }
@@ -8762,7 +8762,7 @@ async function fetchDerivedTerminalQuote(params: {
   return JupiterQuoteResponseSchema.parse(JSON.parse(response.bodyText));
 }
 
-async function buildTerminalDepthPayload(payload: TerminalDepthRequest) {
+export async function buildTerminalDepthPayload(payload: TerminalDepthRequest) {
   if (payload.chainType !== "solana") {
     throw new Error("TERMINAL_DEPTH_SOLANA_ONLY");
   }
@@ -9385,7 +9385,7 @@ async function fetchBirdeyeCandles(payload: ChartCandlesPayload): Promise<ChartC
   throw new Error(errors.join(" | ") || "Birdeye returned insufficient candle data");
 }
 
-async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
+export async function fetchBestChartCandles(payload: ChartCandlesPayload): Promise<ChartCandlesFetchResult> {
   const isSolana = payload.chainType === "solana";
   const candidates: Array<{
     source: ChartCandlesSource;
