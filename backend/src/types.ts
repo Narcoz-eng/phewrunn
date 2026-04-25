@@ -128,6 +128,8 @@ export type PostType = z.infer<typeof PostTypeSchema>;
 export const CreatePostSchema = z.object({
   content: z.string().min(10, "Post must be at least 10 characters").max(400, "Post must be less than 400 characters"),
   postType: PostTypeSchema.optional(),
+  pollOptions: z.array(z.string().trim().min(1).max(120)).min(2).max(6).optional(),
+  pollExpiresAt: z.string().datetime().optional(),
 });
 
 export type CreatePost = z.infer<typeof CreatePostSchema>;
@@ -136,6 +138,7 @@ export const PostSchema = z.object({
   id: z.string(),
   content: z.string(),
   postType: PostTypeSchema.default("alpha"),
+  pollExpiresAt: z.string().nullable().optional(),
   authorId: z.string(),
   author: z.object({
     id: z.string(),
@@ -487,6 +490,7 @@ export type Comment = z.infer<typeof CommentSchema>;
 // Feed query params
 export const FeedQuerySchema = z.object({
   sort: z.enum(["latest", "trending"]).default("latest"),
+  postType: PostTypeSchema.optional(),
   following: z.preprocess(
     (val) => val === "true" || val === true,
     z.boolean().default(false)

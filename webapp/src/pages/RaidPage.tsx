@@ -116,11 +116,6 @@ export default function RaidPage() {
     onSuccess: invalidateRaid,
   });
 
-  const regenerateMutation = useMutation({
-    mutationFn: async () => api.post(`/api/tokens/${tokenAddress}/community/raids/${raidId}/regenerate`),
-    onSuccess: invalidateRaid,
-  });
-
   const launchMutation = useMutation({
     mutationFn: async () => {
       if (!firstCopy || !firstMeme) throw new Error("No raid creative available");
@@ -257,7 +252,7 @@ export default function RaidPage() {
                         Join Raid
                       </Button>
                     ) : null}
-                    {!raid.closedAt && firstCopy && firstMeme ? (
+                    {!raid.closedAt && myParticipant && firstCopy && firstMeme ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -266,17 +261,6 @@ export default function RaidPage() {
                         className="h-12 rounded-[18px] border-white/10 bg-white/[0.04] px-6 text-white/80 hover:bg-white/[0.08] hover:text-white"
                       >
                         Launch Kit
-                      </Button>
-                    ) : null}
-                    {!raid.closedAt ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => regenerateMutation.mutate()}
-                        disabled={!canPerformAuthenticatedWrites || regenerateMutation.isPending}
-                        className="h-12 rounded-[18px] border-white/10 bg-white/[0.04] px-6 text-white/80 hover:bg-white/[0.08] hover:text-white"
-                      >
-                        Refresh Creative
                       </Button>
                     ) : null}
                     <Button
@@ -362,22 +346,28 @@ export default function RaidPage() {
               )}
             </div>
 
-            <div className="mt-4 rounded-[18px] border border-white/8 bg-black/20 p-3">
-              <Input
-                value={xPostUrl}
-                onChange={(event) => setXPostUrl(event.target.value)}
-                placeholder={mySubmission?.xPostUrl || "Paste your X post link to prove execution"}
-                className="h-11 border-white/10 bg-transparent text-white placeholder:text-white/30"
-              />
-              <Button
-                type="button"
-                onClick={() => submitMutation.mutate()}
-                disabled={!canPerformAuthenticatedWrites || !xPostUrl.trim() || submitMutation.isPending}
-                className="mt-3 h-10 w-full rounded-[14px] text-slate-950"
-              >
-                Submit Live Link
-              </Button>
-            </div>
+            {mySubmission ? (
+              <div className="mt-4 rounded-[18px] border border-white/8 bg-black/20 p-3">
+                <Input
+                  value={xPostUrl}
+                  onChange={(event) => setXPostUrl(event.target.value)}
+                  placeholder={mySubmission.xPostUrl || "Paste your X post link to prove execution"}
+                  className="h-11 border-white/10 bg-transparent text-white placeholder:text-white/30"
+                />
+                <Button
+                  type="button"
+                  onClick={() => submitMutation.mutate()}
+                  disabled={!canPerformAuthenticatedWrites || !xPostUrl.trim() || submitMutation.isPending}
+                  className="mt-3 h-10 w-full rounded-[14px] text-slate-950"
+                >
+                  Submit Live Link
+                </Button>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[18px] border border-dashed border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/46">
+                Join and launch the raid kit before submitting a live X post link.
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -551,6 +541,12 @@ export default function RaidPage() {
         </div>
 
         <div className="space-y-4">
+          <V2RightRailCard eyebrow="Live Raid Chat" title="Unavailable" tone="soft">
+            <div className="rounded-[18px] border border-dashed border-white/10 bg-black/20 px-4 py-6 text-sm leading-6 text-white/50">
+              Live chat is not exposed until a persisted raid chat endpoint is available. Room activity below is real and comes from submissions, boosts, and stored raid updates.
+            </div>
+          </V2RightRailCard>
+
           <V2RightRailCard eyebrow="Top Raiders" title="Leaderboard" tone="soft">
             <div className="space-y-3">
               {leaderboard.slice(0, 5).length ? (

@@ -57,6 +57,8 @@ export type LeaderboardRowVM = {
     symbol: string | null;
     image: string | null;
   }>;
+  trendPoints: number[];
+  followersLabel: string;
 };
 
 export type LeaderboardPinnedRankVM = {
@@ -100,6 +102,7 @@ type LeaderboardPerformanceEntry = {
     name: string;
     image: string | null;
     isVerified?: boolean;
+    followersCount?: number | null;
   };
   performance: {
     avgRoi: number | null;
@@ -114,6 +117,7 @@ type LeaderboardPerformanceEntry = {
     symbol: string | null;
     image: string | null;
   }>;
+  trendPoints?: number[];
 };
 
 export type UserPerformanceSnapshot = {
@@ -497,6 +501,8 @@ export function buildLeaderboardRowsVm(
               : "loss"
           : "neutral",
       recentTokens: item.recentTokens ?? [],
+      trendPoints: item.trendPoints ?? [],
+      followersLabel: formatCompactNumber(item.user.followersCount ?? 0),
     };
   });
 }

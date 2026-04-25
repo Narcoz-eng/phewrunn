@@ -1704,6 +1704,11 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
           username: true,
           image: true,
           isVerified: true,
+          _count: {
+            select: {
+              followers: true,
+            },
+          },
         },
       })
     : [];
@@ -1741,6 +1746,22 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
     recentTokensByUser.set(call.authorId, existing);
   }
 
+  const trendPointsByUser = new Map<string, number[]>();
+  const sortedMetricRows = metricRows
+    .filter((row) => rankedTraderIds.includes(row.traderId))
+    .slice()
+    .sort((left, right) => left.bucketDate.getTime() - right.bucketDate.getTime());
+  for (const row of sortedMetricRows) {
+    const value =
+      typeof row.avgRoi === "number" && Number.isFinite(row.avgRoi)
+        ? Math.round(row.avgRoi * 100) / 100
+        : null;
+    if (value === null) continue;
+    const points = trendPointsByUser.get(row.traderId) ?? [];
+    points.push(value);
+    trendPointsByUser.set(row.traderId, points.slice(-18));
+  }
+
   const currentUser = c.get("user");
   const currentUserRank =
     currentUser?.id
@@ -1759,6 +1780,11 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
             username: true,
             image: true,
             isVerified: true,
+            _count: {
+              select: {
+                followers: true,
+              },
+            },
           },
         }))
       : null;
@@ -1778,6 +1804,7 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
             username: user.username,
             image: user.image,
             isVerified: user.isVerified,
+            followersCount: user._count.followers,
           },
           performance: {
             avgRoi: entry.avgRoi,
@@ -1788,6 +1815,7 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
             firstCallCount: entry.firstCallCount,
           },
           recentTokens: (recentTokensByUser.get(user.id) ?? []).slice(0, 3),
+          trendPoints: trendPointsByUser.get(user.id) ?? [],
         };
       })
       .filter(Boolean),
@@ -1802,6 +1830,7 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
                 username: currentUserRankedUser.username,
                 image: currentUserRankedUser.image,
                 isVerified: currentUserRankedUser.isVerified,
+                followersCount: currentUserRankedUser._count.followers,
               },
               performance: {
                 avgRoi: currentUserRankedEntry.avgRoi,
@@ -1812,6 +1841,7 @@ leaderboardRouter.get("/performance", zValidator("query", LeaderboardPerformance
                 firstCallCount: currentUserRankedEntry.firstCallCount,
               },
               recentTokens: (recentTokensByUser.get(currentUserRankedUser.id) ?? []).slice(0, 3),
+              trendPoints: trendPointsByUser.get(currentUserRankedUser.id) ?? [],
             },
           }
         : null,

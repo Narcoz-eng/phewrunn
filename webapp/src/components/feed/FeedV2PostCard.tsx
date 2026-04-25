@@ -10,6 +10,7 @@ type FeedV2PostCardProps = {
   onLike?: (postId: string) => Promise<void> | void;
   onRepost?: (postId: string) => Promise<void> | void;
   onComment?: (postId: string, content: string) => Promise<void> | void;
+  onPollVote?: (postId: string, optionId: string) => Promise<void> | void;
 };
 
 type FeedPostKind = "call" | "whale" | "poll" | "raid" | "news" | "discussion";
@@ -50,12 +51,8 @@ function inferDirection(post: Post): "LONG" | "SHORT" | null {
 function inferKind(post: Post): FeedPostKind {
   if (post.postType === "alpha" || post.postType === "chart") return post.contractAddress || post.tokenSymbol ? "call" : "discussion";
   if (post.postType === "discussion" || post.postType === "news" || post.postType === "poll" || post.postType === "raid") return post.postType;
+  if (post.walletTradeSnapshot) return "whale";
 
-  const content = post.content.toLowerCase();
-  if (content.includes("[poll]") || content.includes("#poll") || content.startsWith("poll:")) return "poll";
-  if (content.includes("[raid]") || content.includes("#raid") || content.includes(" raid ")) return "raid";
-  if (content.includes("[news]") || content.includes("#news") || content.startsWith("news:")) return "news";
-  if (content.includes("whale") || content.includes("accumulation") || content.includes("moved off exchange")) return "whale";
   if (post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
   return "discussion";
 }
@@ -242,6 +239,17 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         <MiniChart post={post} tall />
       </div>
 
+      {post.contractAddress ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link
+            to={`/token/${post.contractAddress}`}
+            className="inline-flex h-9 items-center rounded-[12px] border border-lime-300/20 bg-lime-300/[0.1] px-3 text-xs font-semibold text-lime-100 hover:bg-lime-300/[0.16]"
+          >
+            Open Terminal
+          </Link>
+        </div>
+      ) : null}
+
       <div className="mt-3 grid gap-2 md:grid-cols-4">
         <AiMetric icon={Zap} label="AI Score" value={typeof post.confidenceScore === "number" ? post.confidenceScore.toFixed(1) : "--"} sub={post.highConvictionScore ? "Conviction" : "Unavailable"} />
         <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Live signal"} />
@@ -274,20 +282,61 @@ export function FeedPostWhaleCard(props: FeedV2PostCardProps) {
 }
 
 export function FeedPostPollCard(props: FeedV2PostCardProps) {
-  const { post } = props;
+  const { post, onPollVote } = props;
+  const poll = post.poll;
+  const expiresAt = post.pollExpiresAt ? new Date(post.pollExpiresAt) : null;
+  const expired = expiresAt ? expiresAt.getTime() <= Date.now() : false;
   return (
     <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
       <PostHeader post={post} badge="Poll" />
       <h2 className="mt-4 text-lg font-semibold text-white">{displayContent(post)}</h2>
+      {poll && poll.options.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {poll.options.map((option) => {
+            const selected = poll.viewerOptionId === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => {
+                  if (!expired) void onPollVote?.(post.id, option.id);
+                }}
+                disabled={expired || selected}
+                className={cn(
+                  "relative w-full overflow-hidden rounded-[14px] border px-3 py-2.5 text-left transition",
+                  selected
+                    ? "border-lime-300/32 bg-lime-300/[0.08]"
+                    : "border-white/8 bg-white/[0.03] hover:border-lime-300/20 hover:bg-white/[0.05]",
+                  expired && "cursor-not-allowed opacity-70"
+                )}
+              >
+                <span
+                  className="absolute inset-y-0 left-0 bg-lime-300/[0.12]"
+                  style={{ width: `${Math.max(0, Math.min(option.percentage, 100))}%` }}
+                />
+                <span className="relative flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-white/82">{option.label}</span>
+                  <span className="text-xs font-semibold text-lime-200">{option.percentage.toFixed(option.percentage % 1 === 0 ? 0 : 1)}%</span>
+                </span>
+              </button>
+            );
+          })}
+          <div className="flex items-center justify-between text-xs text-white/42">
+            <span>{poll.totalVotes} vote{poll.totalVotes === 1 ? "" : "s"}</span>
+            <span>{expired ? "Expired" : expiresAt ? `Ends ${expiresAt.toLocaleString()}` : "No expiration"}</span>
+          </div>
+        </div>
+      ) : (
       <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-white">
           <Vote className="h-4 w-4 text-lime-300" />
-          Poll results unavailable
+          Poll options unavailable
         </div>
         <p className="mt-2 text-sm leading-6 text-white/50">
-          This post is marked as a poll, but the backend does not yet provide poll options, vote counts, or expiration metadata.
+          This legacy poll post predates structured poll options and cannot accept votes.
         </p>
       </div>
+      )}
       <EngagementFooter {...props} />
     </article>
   );

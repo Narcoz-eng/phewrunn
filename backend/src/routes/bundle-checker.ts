@@ -51,7 +51,14 @@ type BundleWalletNode = {
   label: string;
   valueUsd: number;
   kind: "cluster" | "wallet" | "token";
+  riskLabel: "high" | "medium" | "low" | "external";
 };
+
+function inferNodeRisk(value: number): "high" | "medium" | "low" {
+  if (value >= 20) return "high";
+  if (value >= 8) return "medium";
+  return "low";
+}
 
 function parseClusterEvidence(
   evidenceJson: unknown,
@@ -66,6 +73,7 @@ function parseClusterEvidence(
       label: clusterLabel,
       valueUsd: estimatedSupplyPct,
       kind: "cluster",
+      riskLabel: inferNodeRisk(estimatedSupplyPct),
     },
   ];
   const edges: Array<{ source: string; target: string; weight: number }> = [];
@@ -80,7 +88,7 @@ function parseClusterEvidence(
       ? record.linkedWallets
       : [];
 
-  for (const wallet of walletsRaw.slice(0, 8)) {
+  for (const wallet of walletsRaw.slice(0, 24)) {
     if (!wallet || typeof wallet !== "object") continue;
     const candidate = wallet as Record<string, unknown>;
     const rawAddress =
@@ -96,6 +104,7 @@ function parseClusterEvidence(
       label: rawAddress,
       valueUsd: toFiniteNumber(candidate.valueUsd ?? candidate.usdValue ?? candidate.exposureUsd),
       kind: "wallet",
+      riskLabel: inferNodeRisk(toFiniteNumber(candidate.overlapPct ?? candidate.weight ?? estimatedSupplyPct)),
     });
     edges.push({
       source: baseNodeId,
@@ -173,10 +182,11 @@ bundleCheckerRouter.get(
         label: token.symbol?.trim() || token.name?.trim() || token.address,
         valueUsd: toFiniteNumber(token.volume24h),
         kind: "token",
+        riskLabel: "external",
       },
     ];
     const graphEdges: Array<{ source: string; target: string; weight: number }> = [];
-    const linkedWallets: Array<{ address: string; exposureUsd: number; clusterLabel: string }> = [];
+    const linkedWallets: Array<{ address: string; exposureUsd: number; clusterLabel: string; supplyPct: number; relationStrength: number }> = [];
 
     for (const cluster of token.clusters) {
       const parsed = parseClusterEvidence(
@@ -202,6 +212,8 @@ bundleCheckerRouter.get(
           address: node.label,
           exposureUsd: node.valueUsd,
           clusterLabel: cluster.clusterLabel,
+          supplyPct: cluster.estimatedSupplyPct,
+          relationStrength: node.riskLabel === "high" ? 90 : node.riskLabel === "medium" ? 65 : 35,
         });
       }
     }
@@ -244,8 +256,8 @@ bundleCheckerRouter.get(
             address: wallet.address,
             label: wallet.clusterLabel,
             valueUsd: wallet.exposureUsd,
-            supplyPct: null,
-            relationStrength: null,
+            supplyPct: wallet.supplyPct,
+            relationStrength: wallet.relationStrength,
           })),
         graph: {
           nodes: graphNodes.map((node) => ({
@@ -254,6 +266,7 @@ bundleCheckerRouter.get(
             kind: node.kind,
             weight: Math.max(1, Math.round(node.valueUsd || 1)),
             highlight: node.kind === "token",
+            riskLabel: node.riskLabel,
           })),
           edges: graphEdges.map((edge) => ({
             source: edge.source,

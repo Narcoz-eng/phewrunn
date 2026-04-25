@@ -270,6 +270,47 @@ function roomBadgeTone(badge: string): string {
   return "border-border/60 bg-secondary text-muted-foreground";
 }
 
+function threadKindMeta(kind: TokenCommunityThread["kind"]) {
+  if (kind === "alpha") {
+    return {
+      label: "Alpha",
+      card: "border-lime-300/18 bg-[linear-gradient(180deg,rgba(169,255,52,0.08),rgba(4,7,10,0.96))]",
+      badge: "border-lime-300/25 bg-lime-300/10 text-lime-200",
+      accent: "bg-lime-300",
+    };
+  }
+  if (kind === "chart") {
+    return {
+      label: "Chart",
+      card: "border-cyan-300/16 bg-[linear-gradient(180deg,rgba(45,212,191,0.07),rgba(4,7,10,0.96))]",
+      badge: "border-cyan-300/24 bg-cyan-300/10 text-cyan-100",
+      accent: "bg-cyan-300",
+    };
+  }
+  if (kind === "news") {
+    return {
+      label: "News",
+      card: "border-amber-300/16 bg-[linear-gradient(180deg,rgba(251,191,36,0.06),rgba(4,7,10,0.96))]",
+      badge: "border-amber-300/25 bg-amber-300/10 text-amber-200",
+      accent: "bg-amber-300",
+    };
+  }
+  if (kind === "raid") {
+    return {
+      label: "Raid",
+      card: "border-fuchsia-300/16 bg-[linear-gradient(180deg,rgba(217,70,239,0.07),rgba(4,7,10,0.96))]",
+      badge: "border-fuchsia-300/24 bg-fuchsia-300/10 text-fuchsia-100",
+      accent: "bg-fuchsia-300",
+    };
+  }
+  return {
+    label: kind === "discussion" ? "Discussion" : "Thread",
+    card: "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(4,7,10,0.96))]",
+    badge: "border-white/10 bg-white/[0.04] text-white/58",
+    accent: "bg-white/24",
+  };
+}
+
 function MetricChip({
   label,
   value,
@@ -429,9 +470,11 @@ function ThreadCard({
   });
 
   const isOwner = viewer?.id === thread.author.id || viewer?.isAdmin;
+  const kindMeta = threadKindMeta(thread.kind);
 
   return (
-    <div className="rounded-[26px] border border-border/60 bg-white/75 p-4 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.42)] dark:bg-white/[0.04]">
+    <div className={cn("relative overflow-hidden rounded-[26px] border p-4 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.42)]", kindMeta.card)}>
+      <div className={cn("absolute inset-y-5 left-0 w-1 rounded-r-full", kindMeta.accent)} />
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Avatar className="h-10 w-10 border border-border">
@@ -449,14 +492,21 @@ function ThreadCard({
                   Pinned
                 </span>
               ) : null}
-              {thread.kind === "raid" ? (
-                <span className="rounded-full border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-                  Raid
-                </span>
-              ) : null}
+              <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]", kindMeta.badge)}>
+                {kindMeta.label}
+              </span>
             </div>
             {thread.title ? <div className="mt-1 text-base font-semibold text-foreground">{thread.title}</div> : null}
             <p className="mt-2 text-sm leading-6 text-foreground/90">{thread.content}</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <MetricChip
+                label={thread.kind === "alpha" ? "Signal thread" : thread.kind === "chart" ? "Setup thread" : thread.kind === "news" ? "Source thread" : thread.kind === "raid" ? "Raid thread" : "Discussion"}
+                value={kindMeta.label}
+                accent={thread.kind === "alpha" || thread.kind === "raid"}
+              />
+              <MetricChip label="Replies" value={formatCount(thread.replyCount)} />
+              <MetricChip label="Activity" value={formatTimeAgo(thread.lastActivityAt)} />
+            </div>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <button
                 type="button"
@@ -594,6 +644,7 @@ export function TokenCommunitySection({
   const [nextThreadCursor, setNextThreadCursor] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState("");
   const [threadContent, setThreadContent] = useState("");
+  const [threadPostType, setThreadPostType] = useState<"alpha" | "discussion" | "chart" | "poll" | "raid" | "news">("discussion");
   const [raidObjective, setRaidObjective] = useState("");
   const [selectedMemeId, setSelectedMemeId] = useState<string | null>(null);
   const [selectedCopyId, setSelectedCopyId] = useState<string | null>(null);
@@ -909,10 +960,12 @@ export function TokenCommunitySection({
       api.post<TokenCommunityThread>(`/api/tokens/${tokenAddress}/community/threads`, {
         title: threadTitle.trim() || undefined,
         content: threadContent.trim(),
+        postType: threadPostType,
       }),
     onSuccess: async () => {
       setThreadTitle("");
       setThreadContent("");
+      setThreadPostType("discussion");
       await resetThreadFeed();
       await queryClient.invalidateQueries({ queryKey: ["token-community-room", tokenAddress] });
     },
@@ -2003,6 +2056,31 @@ export function TokenCommunitySection({
                   </div>
                   {canWriteInRoom ? (
                     <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        {(["alpha", "discussion", "chart", "raid", "news"] as const).map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setThreadPostType(type)}
+                            className={cn(
+                              "rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition-colors",
+                              threadPostType === type
+                                ? "border-lime-300/30 bg-lime-300/12 text-lime-100"
+                                : "border-border/60 bg-secondary/60 text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {type === "alpha" ? "Alpha" : type}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          disabled
+                          title="Community thread polls require dedicated community poll storage. Feed polls are available from the main composer."
+                          className="rounded-full border border-border/60 bg-secondary/35 px-3 py-1.5 text-xs font-semibold text-muted-foreground/70"
+                        >
+                          Poll unavailable
+                        </button>
+                      </div>
                       <Input
                         value={threadTitle}
                         onChange={(event) => setThreadTitle(event.target.value)}

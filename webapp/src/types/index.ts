@@ -82,6 +82,17 @@ export interface Post {
   id: string;
   content: string;
   postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
+  pollExpiresAt?: string | null;
+  poll?: {
+    totalVotes: number;
+    viewerOptionId: string | null;
+    options: Array<{
+      id: string;
+      label: string;
+      votes: number;
+      percentage: number;
+    }>;
+  } | null;
   authorId: string;
   author: PostAuthor;
   contractAddress: string | null;
@@ -310,7 +321,7 @@ export interface TokenCommunityThread {
   id: string;
   title: string | null;
   content: string;
-  kind: "general" | "raid" | string;
+  kind: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news" | "general" | string;
   raidCampaignId: string | null;
   replyCount: number;
   isPinned: boolean;
@@ -508,6 +519,7 @@ export interface BundleCheckerGraphNode {
   label: string;
   kind: "token" | "cluster" | "wallet" | string;
   weight: number;
+  riskLabel?: "high" | "medium" | "low" | "external";
   highlight?: boolean;
 }
 
@@ -584,6 +596,7 @@ export interface TokenCommunitySummaryResponse {
 
 export interface TokenCommunityTopCall {
   id: string;
+  postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
   ticker: string | null;
   title: string | null;
   conviction: string | null;
@@ -992,6 +1005,7 @@ export interface Notification {
   post: {
     id: string;
     content: string;
+    postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
     contractAddress: string | null;
   } | null;
   createdAt: string;

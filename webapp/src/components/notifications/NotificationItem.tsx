@@ -151,6 +151,11 @@ export function NotificationItem({
   const hasMergedItems = mergedItems.length > 1;
   const mergedCount = notification.mergedCount ?? mergedItems.length;
   const toneLabel = formatNotificationTone(notification);
+  const postTypeLabel = notification.post?.postType
+    ? notification.post.postType === "alpha"
+      ? "Trade Call"
+      : notification.post.postType.replace("-", " ")
+    : null;
   const cardTransition = prefersReducedMotion
     ? { duration: 0 }
     : { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
@@ -245,7 +250,7 @@ export function NotificationItem({
               {fromUser ? `@${fromUser.username || fromUser.name}` : "PHEW"}
             </span>
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/44">
-              {toneLabel}
+              {postTypeLabel || toneLabel}
             </span>
             <span className="text-xs text-white/42">{formatTimeAgo(notification.createdAt)}</span>
             {!notification.read ? <span className="h-2 w-2 rounded-full bg-lime-300 shrink-0" /> : null}

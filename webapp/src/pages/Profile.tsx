@@ -7,7 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import { User, Post, getAvatarUrl, calculatePercentChange, LIQUIDATION_LEVEL, type ProfileHubResponse } from "@/types";
 import { LevelBadge, LevelBar } from "@/components/feed/LevelBar";
 import { getLevelLabel, isInDangerZone, getDangerMessage } from "@/lib/level-utils";
-import { PostCard } from "@/components/feed/PostCard";
+import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { UserStats, RecentTrade, WalletData } from "@/components/profile/ProfileDashboard";
 import { TraderIntelligenceCard } from "@/components/profile/TraderIntelligenceCard";
@@ -829,6 +829,17 @@ export default function Profile() {
     },
   });
 
+  const pollVoteMutation = useMutation({
+    mutationFn: async ({ postId, optionId }: { postId: string; optionId: string }) => {
+      await api.post(`/api/posts/${postId}/poll-vote`, { optionId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profile", "posts", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["profile", "reposts", user?.id] });
+    },
+    onError: () => toast.error("Failed to vote"),
+  });
+
   // Handle image upload
   const handleImageClick = () => {
     if (isEditing) {
@@ -1326,12 +1337,13 @@ export default function Profile() {
                   renderItem={(post, index) => (
                     <div className={index < filteredPosts.length - 1 ? "pb-4" : undefined}>
                       <div className="animate-fade-in-up" style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
-                        <PostCard
+                        <FeedV2PostCard
                           post={post}
                           currentUserId={user?.id}
                           onLike={handleLike}
                           onRepost={handleRepost}
                           onComment={handleComment}
+                          onPollVote={handlePollVote}
                         />
                       </div>
                     </div>
@@ -1371,12 +1383,13 @@ export default function Profile() {
               renderItem={(post, index) => (
                 <div className={index < reposts.length - 1 ? "pb-4" : undefined}>
                   <div className="animate-fade-in-up" style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
-                    <PostCard
+                    <FeedV2PostCard
                       post={post}
                       currentUserId={user?.id}
                       onLike={handleLike}
                       onRepost={handleRepost}
                       onComment={handleComment}
+                      onPollVote={handlePollVote}
                     />
                   </div>
                 </div>
@@ -1401,6 +1414,10 @@ export default function Profile() {
   // Handle comment
   const handleComment = async (postId: string, content: string) => {
     commentMutation.mutate({ postId, content });
+  };
+
+  const handlePollVote = async (postId: string, optionId: string) => {
+    pollVoteMutation.mutate({ postId, optionId });
   };
 
   // Format join date

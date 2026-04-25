@@ -82,6 +82,7 @@ model User {
   communityThreads   TokenCommunityThread[] @relation("TokenCommunityThreadAuthor")
   communityReplies   TokenCommunityReply[] @relation("TokenCommunityReplyAuthor")
   communityThreadReactions TokenCommunityThreadReaction[] @relation("TokenCommunityThreadReactionUser")
+  postPollVotes      PostPollVote[] @relation("PostPollVoteUser")
   raidsCreated       TokenRaidCampaign[] @relation("TokenRaidCampaignCreator")
   raidParticipants   TokenRaidParticipant[] @relation("TokenRaidParticipantUser")
   raidSubmissions    TokenRaidSubmission[] @relation("TokenRaidSubmissionUser")
@@ -179,6 +180,7 @@ model Post {
   id              String    @id @default(cuid())
   content         String
   postType        String    @default("alpha") // alpha, discussion, chart, poll, raid, news
+  pollExpiresAt   DateTime?
   authorId        String
   author          User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
   tokenId         String?
@@ -246,6 +248,8 @@ model Post {
   tradeFeeEvents  TradeFeeEvent[]
   reports         Report[]
   tokenEvents     TokenEvent[]
+  pollOptions     PostPollOption[]
+  pollVotes       PostPollVote[] @relation("PostPollVotePost")
   token           Token?    @relation(fields: [tokenId], references: [id], onDelete: SetNull)
 
   // Indexes for efficient queries
@@ -582,6 +586,35 @@ model TokenFollow {
 
   @@unique([userId, tokenId])
   @@index([tokenId, createdAt])
+}
+
+model PostPollOption {
+  id        String   @id @default(cuid())
+  postId    String
+  label     String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  post  Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  votes PostPollVote[]
+
+  @@index([postId, sortOrder])
+}
+
+model PostPollVote {
+  id        String   @id @default(cuid())
+  postId    String
+  optionId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post   Post           @relation("PostPollVotePost", fields: [postId], references: [id], onDelete: Cascade)
+  option PostPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user   User           @relation("PostPollVoteUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([optionId])
+  @@index([userId, createdAt])
 }
 
 model TokenCommunityProfile {

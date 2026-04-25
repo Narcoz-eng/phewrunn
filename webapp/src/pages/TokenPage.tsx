@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle, BarChart3, Coins, Copy, ExternalLink, Loader2, Share2, ShieldAlert, Users, Activity, Flame, Target, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BundleScanLoop, isBundleScanPending } from "@/components/feed/BundleScanLoop";
-import { PostCard } from "@/components/feed/PostCard";
+import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { TokenScanningState } from "@/components/feed/TokenScanningState";
 import {
   hasResolvedBundleEvidence,
@@ -38,9 +38,9 @@ import { toast } from "sonner";
 import { PhewTradeIcon } from "@/components/icons/PhewIcons";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { DirectTokenTradePanel } from "@/components/token/DirectTokenTradePanel";
+import { TerminalExecutionGrid } from "@/components/token/TerminalExecutionGrid";
 import { useTradePanelLiveFeed } from "@/lib/trade-panel-live";
 import { TradeTransactionsFeed } from "@/components/feed/TradeTransactionsFeed";
-import { TradeTerminalLayout } from "@/components/feed/TradeTerminalLayout";
 import { V2MetricCard } from "@/components/ui/v2/V2MetricCard";
 import { V2SectionHeader } from "@/components/ui/v2/V2SectionHeader";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
@@ -2718,8 +2718,40 @@ export default function TokenPage() {
     queryFn: () => api.get<DiscoveryFeedSidebarResponse>("/api/discovery/feed-sidebar"),
   });
   const discoverySidebar = discoverySidebarQuery.data ?? null;
-  const sidebarTopGainers = discoverySidebar?.topGainers ?? [];
-  const sidebarLiveRaids = discoverySidebar?.liveRaids ?? [];
+  const sidebarTopGainers = useMemo(() => discoverySidebar?.topGainers ?? [], [discoverySidebar?.topGainers]);
+  const sidebarLiveRaids = useMemo(() => discoverySidebar?.liveRaids ?? [], [discoverySidebar?.liveRaids]);
+  const marketStripItems = useMemo(() => {
+    const currentToken = token
+      ? [{
+          id: `token:${token.address}`,
+          label: token.symbol ? `$${token.symbol}` : `${token.address.slice(0, 4)}...${token.address.slice(-4)}`,
+          value: formatTokenPrice(Number(liveTokenQuery.data?.priceUsd ?? token.priceUsd ?? Number.NaN)),
+          meta:
+            typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct)
+              ? `${liveChartPriceChangePct >= 0 ? "+" : ""}${liveChartPriceChangePct.toFixed(2)}%`
+              : "Live token",
+          href: `/token/${token.address}`,
+          tone: typeof liveChartPriceChangePct === "number" && liveChartPriceChangePct < 0 ? "loss" as const : "gain" as const,
+        }]
+      : [];
+    const discoveryItems = sidebarTopGainers
+      .filter((item) => item.address !== token?.address)
+      .slice(0, 5)
+      .map((item) => ({
+        id: `discovery:${item.address}`,
+        label: item.symbol ? `$${item.symbol}` : item.name || `${item.address.slice(0, 4)}...${item.address.slice(-4)}`,
+        value: typeof item.liquidity === "number" && Number.isFinite(item.liquidity) ? formatMarketMetric(item.liquidity) : "Liquidity pending",
+        meta:
+          typeof item.highConvictionScore === "number" && Number.isFinite(item.highConvictionScore)
+            ? `${item.highConvictionScore.toFixed(1)} HC`
+            : typeof item.confidenceScore === "number" && Number.isFinite(item.confidenceScore)
+              ? `${item.confidenceScore.toFixed(1)} confidence`
+              : "Discovery",
+        href: `/token/${item.address}`,
+        tone: "gain" as const,
+      }));
+    return [...currentToken, ...discoveryItems].slice(0, 6);
+  }, [liveChartPriceChangePct, liveTokenQuery.data?.priceUsd, sidebarTopGainers, token]);
   const smartMoneyFlowRows = useMemo(
     () =>
       topHolderRows
@@ -3037,6 +3069,32 @@ export default function TokenPage() {
             initial="hidden"
             animate="visible"
           >
+            <motion.section variants={sectionVariants}>
+              <div className="overflow-hidden rounded-[22px] border border-white/8 bg-[#070b12] shadow-[0_18px_70px_rgba(0,0,0,0.22)]">
+                {marketStripItems.length ? (
+                  <div className="flex min-h-12 items-center overflow-x-auto">
+                    {marketStripItems.map((item) => (
+                      <Link
+                        key={item.id}
+                        to={item.href}
+                        className="flex min-w-[210px] items-center justify-between gap-4 border-r border-white/8 px-4 py-3 transition hover:bg-white/[0.04]"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-white">{item.label}</div>
+                          <div className="mt-0.5 truncate text-[11px] text-white/38">{item.value}</div>
+                        </div>
+                        <div className={cn("shrink-0 text-xs font-semibold", item.tone === "loss" ? "text-rose-300" : "text-lime-300")}>
+                          {item.meta}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 text-sm text-white/46">Market strip is waiting for live discovery data.</div>
+                )}
+              </div>
+            </motion.section>
+
             <motion.section id="token-hero-band" variants={sectionVariants}>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.52fr)_420px]">
                 <V2Surface tone="accent" className="relative overflow-hidden p-0">
@@ -3732,8 +3790,8 @@ export default function TokenPage() {
                     </div>
                   </div>
 
-                  <TradeTerminalLayout
-                    left={
+                  <TerminalExecutionGrid
+                    chart={
                       <>
                         <div className="terminal-soft-card rounded-[26px] px-4 py-4">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3822,7 +3880,7 @@ export default function TokenPage() {
                         />
                       </>
                     }
-                    right={
+                    trade={
                       <>
                         <div className="terminal-soft-card rounded-[26px] px-4 py-4">
                           <div className="flex items-start justify-between gap-3">
@@ -3845,8 +3903,9 @@ export default function TokenPage() {
                             />
                             <TokenTerminalMetricCard
                               label="Advanced route"
-                              value="DefiTuna"
-                              detail="Reserved for trigger orders and advanced execution when asset support is enabled."
+                              value="Unavailable"
+                              detail="Trigger orders stay disabled until the execution backend supports them."
+                              tone="loss"
                             />
                           </div>
                         </div>
@@ -3869,6 +3928,10 @@ export default function TokenPage() {
                             </div>
                           </div>
                         )}
+                      </>
+                    }
+                    intelligence={
+                      <>
 
                         <div className="terminal-soft-card rounded-[26px] px-4 py-4">
                           <div className="flex items-center justify-between gap-3">
@@ -3969,6 +4032,37 @@ export default function TokenPage() {
                               Open live raid
                             </Link>
                           ) : null}
+                        </div>
+
+                        <div className="terminal-soft-card rounded-[26px] px-4 py-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/34">Active raids</div>
+                            <div className="text-xs text-white/38">{sidebarLiveRaids.length} live</div>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {sidebarLiveRaids.slice(0, 3).map((raid) => (
+                              <Link
+                                key={raid.id}
+                                to={`/raids/${raid.tokenAddress}/${raid.id}`}
+                                className="block rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-3 transition hover:bg-white/[0.06]"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-white">{raid.objective}</div>
+                                    <div className="mt-1 text-[11px] text-white/42">
+                                      {raid.tokenSymbol ? `$${raid.tokenSymbol}` : "Token"} | {raid.participantCount.toLocaleString()} participants
+                                    </div>
+                                  </div>
+                                  <div className="text-xs font-semibold text-lime-300">{raid.postedCount.toLocaleString()} posts</div>
+                                </div>
+                              </Link>
+                            ))}
+                            {!sidebarLiveRaids.length ? (
+                              <div className="rounded-[14px] border border-dashed border-white/12 px-3 py-3 text-xs text-white/46">
+                                No live raid is attached to the current discovery stream.
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </>
                     }
@@ -4572,7 +4666,7 @@ export default function TokenPage() {
                 </div>
                 {recentCalls.length > 0 ? (
                   recentCalls.map((post) => (
-                    <PostCard
+                    <FeedV2PostCard
                       key={post.id}
                       post={post}
                       currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}

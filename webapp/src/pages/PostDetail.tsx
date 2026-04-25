@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Post } from "@/types";
-import { PostCard } from "@/components/feed/PostCard";
+import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertCircle } from "lucide-react";
@@ -101,10 +101,9 @@ export default function PostDetail() {
               </Button>
             </div>
           ) : post ? (
-            <PostCard
+            <FeedV2PostCard
               post={post}
               currentUserId={canPerformAuthenticatedWrites ? session?.user?.id : undefined}
-              enableRealtimePricePolling
               onLike={async (postId) => {
                 if (!guardPostInteraction()) return;
                 try {
@@ -135,6 +134,15 @@ export default function PostDetail() {
                   await api.post(`/api/posts/${postId}/comments`, { content });
                 } catch (e) {
                   console.error("Comment failed:", e);
+                }
+              }}
+              onPollVote={async (postId, optionId) => {
+                if (!guardPostInteraction()) return;
+                try {
+                  await api.post(`/api/posts/${postId}/poll-vote`, { optionId });
+                  await queryClient.invalidateQueries({ queryKey: ["post", postId] });
+                } catch (e) {
+                  console.error("Poll vote failed:", e);
                 }
               }}
             />

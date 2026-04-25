@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, ExternalLink, Camera, Lock, Skull } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,6 @@ type ComposerMode = "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
 const COMPOSER_ACTIONS: Array<{
   id: ComposerMode;
   label: string;
-  prefix: string;
   tone: "default" | "lime" | "amber" | "cyan" | "violet";
   placeholder: string;
   submitLabel: string;
@@ -27,7 +27,6 @@ const COMPOSER_ACTIONS: Array<{
   {
     id: "alpha",
     label: "Alpha",
-    prefix: "[alpha]",
     tone: "lime",
     placeholder: "Drop an alpha thesis. Add entry, target, risk, and paste a token CA for live context.",
     submitLabel: "Post Alpha",
@@ -35,7 +34,6 @@ const COMPOSER_ACTIONS: Array<{
   {
     id: "discussion",
     label: "Discussion",
-    prefix: "[discussion]",
     tone: "default",
     placeholder: "Start a trader discussion. Ask a question, share context, or open a room thread.",
     submitLabel: "Post Discussion",
@@ -43,7 +41,6 @@ const COMPOSER_ACTIONS: Array<{
   {
     id: "chart",
     label: "Chart",
-    prefix: "[chart]",
     tone: "cyan",
     placeholder: "Share chart context. Paste a token CA and describe the setup.",
     submitLabel: "Post Chart",
@@ -51,7 +48,6 @@ const COMPOSER_ACTIONS: Array<{
   {
     id: "poll",
     label: "Poll",
-    prefix: "[poll]",
     tone: "violet",
     placeholder: "Create a poll prompt with clear options and an expiration window.",
     submitLabel: "Post Poll",
@@ -59,7 +55,6 @@ const COMPOSER_ACTIONS: Array<{
   {
     id: "raid",
     label: "Raid",
-    prefix: "[raid]",
     tone: "amber",
     placeholder: "Share a raid update. Link the target, goal, or room context.",
     submitLabel: "Post Raid",
@@ -67,7 +62,6 @@ const COMPOSER_ACTIONS: Array<{
   {
     id: "news",
     label: "News",
-    prefix: "[news]",
     tone: "default",
     placeholder: "Share market or community news with source context.",
     submitLabel: "Post News",
@@ -87,12 +81,13 @@ function composerToneClass(action: (typeof COMPOSER_ACTIONS)[number], isActive: 
 }
 
 function stripComposerPrefix(content: string): string {
-  return content.replace(/^\[(alpha|discussion|chart|poll|raid|news)\]\s*/i, "").trim();
+  const modes = COMPOSER_ACTIONS.map((action) => action.id).join("|");
+  return content.replace(new RegExp(`^\\[(${modes})\\]\\s*`, "i"), "").trim();
 }
 
 interface CreatePostProps {
   user: User | null;
-  onSubmit: (content: string, postType: ComposerMode) => Promise<void>;
+  onSubmit: (content: string, postType: ComposerMode, options?: { pollOptions?: string[] }) => Promise<void>;
   isSubmitting: boolean;
   isAuthPending?: boolean;
 }
@@ -227,6 +222,7 @@ export function CreatePost({
   const navigate = useNavigate();
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<ComposerMode>("alpha");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
   const [isFetchingToken, setIsFetchingToken] = useState(false);
@@ -325,9 +321,15 @@ export function CreatePost({
     }
 
     const typedContent = stripComposerPrefix(trimmedContent);
+    const cleanPollOptions = pollOptions.map((option) => option.trim()).filter(Boolean);
+    if (mode === "poll" && cleanPollOptions.length < 2) {
+      toast.error("Poll posts need at least two options");
+      return;
+    }
 
-    await onSubmit(typedContent || trimmedContent, mode);
+    await onSubmit(typedContent || trimmedContent, mode, mode === "poll" ? { pollOptions: cleanPollOptions } : undefined);
     setContent("");
+    setPollOptions(["", ""]);
     setTokenInfo(null);
   };
 
@@ -430,6 +432,37 @@ export function CreatePost({
             <p className="text-xs text-white/44">
               Signing you in...
             </p>
+          ) : null}
+
+          {mode === "poll" ? (
+            <div className="rounded-[20px] border border-white/8 bg-black/20 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Poll Options</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={pollOptions.length >= 6}
+                  onClick={() => setPollOptions((current) => [...current, ""])}
+                  className="h-7 rounded-full px-3 text-xs text-white/62"
+                >
+                  Add option
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {pollOptions.map((option, index) => (
+                  <Input
+                    key={index}
+                    value={option}
+                    onChange={(event) =>
+                      setPollOptions((current) => current.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
+                    }
+                    placeholder={`Option ${index + 1}`}
+                    className="h-10 rounded-[14px] border-white/8 bg-white/[0.03] text-sm text-white placeholder:text-white/30"
+                  />
+                ))}
+              </div>
+            </div>
           ) : null}
 
           {detected && (

@@ -418,6 +418,7 @@ type RawNotificationRow = {
   fromUserImage: string | null;
   fromUserLevel: number | null;
   postContent: string | null;
+  postType: string | null;
   postContractAddress: string | null;
 };
 
@@ -462,6 +463,7 @@ function mapRawNotificationRow(row: RawNotificationRow) {
       ? {
           id: row.postId,
           content: row.postContent ?? "",
+          postType: row.postType ?? (row.postContractAddress ? "alpha" : "discussion"),
           contractAddress: row.postContractAddress ?? null,
         }
       : null,
@@ -510,6 +512,7 @@ async function queryNotificationsRaw(userId: string, includeDismissed: boolean):
         fu.image AS "fromUserImage",
         fu.level AS "fromUserLevel",
         p.content AS "postContent",
+        p."postType" AS "postType",
         p."contractAddress" AS "postContractAddress"
       FROM "Notification" n
       LEFT JOIN "User" fu ON fu.id = n."fromUserId"
@@ -545,6 +548,7 @@ async function queryNotificationsRaw(userId: string, includeDismissed: boolean):
         fu.image AS "fromUserImage",
         fu.level AS "fromUserLevel",
         p.content AS "postContent",
+        p."postType" AS "postType",
         p."contractAddress" AS "postContractAddress"
       FROM "Notification" n
       LEFT JOIN "User" fu ON fu.id = n."fromUserId"
@@ -791,6 +795,7 @@ async function queryNotificationByIdRaw(notificationId: string): Promise<ReturnT
       fu.image AS "fromUserImage",
       fu.level AS "fromUserLevel",
       p.content AS "postContent",
+      p."postType" AS "postType",
       p."contractAddress" AS "postContractAddress"
     FROM "Notification" n
     LEFT JOIN "User" fu ON fu.id = n."fromUserId"

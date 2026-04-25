@@ -18,7 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 
-export type SharedProfileTab = "overview" | "calls" | "raids" | "portfolio" | "stats";
+export type SharedProfileTab = "overview" | "posts" | "calls" | "raids" | "portfolio" | "badges" | "activity";
 
 type PeriodTab = {
   key: PerformancePeriod;
@@ -461,12 +461,14 @@ export function ProfileUnifiedSurface({
         </div>
       </section>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-7">
         <ProfileTabButton active={profileTab === "overview"} label="Overview" onClick={() => onProfileTabChange("overview")} />
+        <ProfileTabButton active={profileTab === "posts"} label="Posts" onClick={() => onProfileTabChange("posts")} />
         <ProfileTabButton active={profileTab === "calls"} label="Calls" badge={callBadge} onClick={() => onProfileTabChange("calls")} />
         <ProfileTabButton active={profileTab === "raids"} label="X Raids" badge={raidBadge} onClick={() => onProfileTabChange("raids")} />
         <ProfileTabButton active={profileTab === "portfolio"} label="Portfolio" badge={portfolioBadge} onClick={() => onProfileTabChange("portfolio")} />
-        <ProfileTabButton active={profileTab === "stats"} label="Stats" onClick={() => onProfileTabChange("stats")} />
+        <ProfileTabButton active={profileTab === "badges"} label="Badges" onClick={() => onProfileTabChange("badges")} />
+        <ProfileTabButton active={profileTab === "activity"} label="Activity" onClick={() => onProfileTabChange("activity")} />
       </div>
 
       {profileTab === "overview" ? (
@@ -801,7 +803,59 @@ export function ProfileUnifiedSurface({
         </div>
       ) : null}
 
-      {profileTab === "calls" ? callsContent : null}
+      {profileTab === "posts" ? callsContent : null}
+
+      {profileTab === "calls" ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
+          <OverviewCard eyebrow="Top Calls" title="Signal/call performance, not wallet profit">
+            <div className="space-y-3">
+              {hub.topCalls.length ? hub.topCalls.map((call) => (
+                <div key={call.id} className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-lime-300/18 bg-lime-300/10 px-2.5 py-0.5 text-[10px] uppercase tracking-[0.16em] text-lime-200">
+                          Signal ROI
+                        </span>
+                        <div className="truncate text-sm font-semibold text-white">
+                          {call.ticker ? `$${call.ticker}` : call.title || "Tracked call"}
+                        </div>
+                      </div>
+                      {call.title ? <div className="mt-2 text-sm leading-6 text-white/52">{call.title}</div> : null}
+                      <div className="mt-3 text-[11px] uppercase tracking-[0.16em] text-white/34">
+                        Posted {formatShortDate(call.createdAt)}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className={cn("text-lg font-semibold", toneClass(call.roiCurrentPct ?? call.roiPeakPct))}>
+                        {formatSignedPercent(call.roiCurrentPct ?? call.roiPeakPct)}
+                      </div>
+                      <div className="mt-1 text-[11px] text-white/38">call performance</div>
+                    </div>
+                  </div>
+                </div>
+              )) : (
+                <div className="rounded-[22px] border border-dashed border-white/12 bg-white/[0.02] px-4 py-10 text-center text-sm text-white/54">
+                  No token-linked call outcomes are available for this profile yet.
+                </div>
+              )}
+            </div>
+          </OverviewCard>
+          <div className="space-y-4">
+            {statsAside}
+            <OverviewCard eyebrow="Call Integrity" title="What this number means">
+              <div className="space-y-3">
+                <MetricListRow label="Signal ROI" value={performanceLabel} tone={toneClass(totalProfitPercent)} />
+                <MetricListRow label="Win Rate" value={`${hub.performanceSummary.winRate?.toFixed(0) ?? "0"}%`} tone="text-lime-300" />
+                <MetricListRow label="Tracked Calls" value={formatCompact(hub.performanceSummary.totalCalls)} />
+                <div className="rounded-[20px] border border-cyan-300/16 bg-cyan-300/8 px-4 py-3 text-sm leading-6 text-white/56">
+                  These values are derived from published signal outcomes. They do not claim realized wallet or portfolio PnL.
+                </div>
+              </div>
+            </OverviewCard>
+          </div>
+        </div>
+      ) : null}
 
       {profileTab === "raids" ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
@@ -920,9 +974,82 @@ export function ProfileUnifiedSurface({
         </div>
       ) : null}
 
-      {profileTab === "stats" ? (
+      {profileTab === "badges" ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
-          <OverviewCard eyebrow="Reputation Metrics" title="Signal breakdown">
+          <OverviewCard eyebrow="Badges" title="Proof of reputation">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {hub.badges.length ? hub.badges.map((badge) => (
+                <div
+                  key={badge.id}
+                  className={cn(
+                    "rounded-[22px] border px-4 py-5 text-center",
+                    badge.tone === "xp" && "border-lime-300/25 bg-lime-300/10 text-lime-200",
+                    badge.tone === "live" && "border-cyan-300/25 bg-cyan-300/10 text-cyan-200",
+                    badge.tone !== "xp" && badge.tone !== "live" && "border-white/10 bg-white/[0.04] text-white/74"
+                  )}
+                >
+                  <div className="text-sm font-semibold capitalize">{badge.label}</div>
+                  <div className="mt-2 text-[11px] uppercase tracking-[0.16em] opacity-70">{badge.tone}</div>
+                </div>
+              )) : (
+                <div className="rounded-[22px] border border-dashed border-white/12 bg-white/[0.02] px-4 py-10 text-center text-sm text-white/54">
+                  No verified badge cluster is available yet.
+                </div>
+              )}
+            </div>
+          </OverviewCard>
+          <div className="space-y-4">
+            <OverviewCard eyebrow="Badge Inputs" title="How reputation is earned">
+              <div className="space-y-3">
+                {signalStats.map((metric) => (
+                  <MetricListRow key={metric.label} label={metric.label} value={metric.value} />
+                ))}
+              </div>
+            </OverviewCard>
+          </div>
+        </div>
+      ) : null}
+
+      {profileTab === "activity" ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
+          <OverviewCard eyebrow="Activity" title="Calls, raids, and profile momentum">
+            <div className="space-y-3">
+              {recentActivity.length ? recentActivity.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-start justify-between gap-4 rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          "rounded-full border px-2.5 py-0.5 text-[10px] uppercase tracking-[0.16em]",
+                          item.type === "call"
+                            ? "border-lime-300/18 bg-lime-300/10 text-lime-200"
+                            : "border-cyan-300/18 bg-cyan-300/10 text-cyan-200"
+                        )}
+                      >
+                        {item.type === "call" ? "Signal" : "Raid"}
+                      </span>
+                      <div className="truncate text-sm font-semibold text-white">{item.label}</div>
+                    </div>
+                    <div className="mt-1 text-xs text-white/46">{item.meta}</div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className={cn("text-sm font-semibold", item.tone)}>{item.value}</div>
+                    <div className="mt-1 text-[11px] uppercase tracking-[0.16em] text-white/34">{item.dateLabel}</div>
+                  </div>
+                </div>
+              )) : (
+                <div className="rounded-[20px] border border-dashed border-white/12 bg-white/[0.02] px-4 py-10 text-sm text-white/54">
+                  Activity will appear here when calls or raid participation become visible on this profile.
+                </div>
+              )}
+            </div>
+          </OverviewCard>
+          <div className="space-y-4">
+            {statsAside}
+            <OverviewCard eyebrow="Reputation Metrics" title="Signal breakdown">
             <div className="grid gap-3 md:grid-cols-2">
               {hub.reputationMetrics.map((metric) => (
                 <div key={`${metric.label}:${metric.value}`} className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
@@ -931,7 +1058,7 @@ export function ProfileUnifiedSurface({
                 </div>
               ))}
               <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-white/34">Total Profit</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-white/34">Signal ROI</div>
                 <div className={cn("mt-2 text-[1.8rem] font-semibold leading-none", toneClass(hub.performanceSummary.totalProfitPercent))}>
                   {typeof hub.performanceSummary.totalProfitPercent === "number"
                     ? `${hub.performanceSummary.totalProfitPercent >= 0 ? "+" : ""}${hub.performanceSummary.totalProfitPercent.toFixed(1)}%`
@@ -944,8 +1071,6 @@ export function ProfileUnifiedSurface({
               </div>
             </div>
           </OverviewCard>
-          <div className="space-y-4">
-            {statsAside}
             <OverviewCard eyebrow="Status" title="Profile posture">
               <div className="grid gap-3">
                 {[

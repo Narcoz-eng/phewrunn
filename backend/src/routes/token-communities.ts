@@ -96,6 +96,7 @@ const CreateThreadSchema = z
   .object({
     title: z.string().trim().min(4).max(80).optional(),
     content: z.string().trim().min(6).max(600),
+    postType: z.enum(["alpha", "discussion", "chart", "poll", "raid", "news"]).optional(),
   })
   .strict();
 
@@ -1052,6 +1053,7 @@ async function loadCommunitySummaryView(
       select: {
         id: true,
         content: true,
+        postType: true,
         contractAddress: true,
         tokenSymbol: true,
         tokenName: true,
@@ -1127,6 +1129,7 @@ async function loadCommunitySummaryView(
     topCalls: topCalls.map((call) => ({
       id: call.id,
       content: call.content,
+      postType: call.postType ?? (call.contractAddress ? "alpha" : "discussion"),
       contractAddress: call.contractAddress,
       tokenSymbol: call.tokenSymbol,
       tokenName: call.tokenName,
@@ -2326,6 +2329,12 @@ tokenCommunitiesRouter.post(
       await requireExistingCommunity(token.id);
       await requireCommunityMembership(token.id, viewer.id);
       const payload = c.req.valid("json");
+      if (payload.postType === "poll") {
+        return c.json(
+          { error: { message: "Community thread polls require dedicated community poll storage.", code: "COMMUNITY_POLL_UNAVAILABLE" } },
+          400,
+        );
+      }
 
       const thread = await prisma.tokenCommunityThread.create({
         data: {
@@ -2333,7 +2342,7 @@ tokenCommunitiesRouter.post(
           authorId: viewer.id,
           title: payload.title?.trim() || null,
           content: payload.content.trim(),
-          kind: "general",
+          kind: payload.postType ?? "discussion",
           lastActivityAt: new Date(),
         },
         select: {
@@ -2763,6 +2772,7 @@ tokenCommunitiesRouter.get(
         select: {
           id: true,
           content: true,
+          postType: true,
           contractAddress: true,
           tokenSymbol: true,
           tokenName: true,
@@ -2793,6 +2803,7 @@ tokenCommunitiesRouter.get(
         data: posts.map((post) => ({
           id: post.id,
           content: post.content,
+          postType: post.postType ?? (post.contractAddress ? "alpha" : "discussion"),
           contractAddress: post.contractAddress,
           tokenSymbol: post.tokenSymbol,
           tokenName: post.tokenName,

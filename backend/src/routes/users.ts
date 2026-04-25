@@ -6,7 +6,7 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { prisma, withPrismaRetry, isTransientPrismaError } from "../prisma.js";
-import { invalidatePostReadCaches } from "./posts.js";
+import { attachPollSummaries, invalidatePostReadCaches } from "./posts.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
@@ -366,6 +366,8 @@ type RawResolvedUserIdentifier = {
 type RawUserPostRow = {
   id: string;
   content: string;
+  postType: string | null;
+  pollExpiresAt: Date | null;
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
@@ -397,6 +399,8 @@ function mapRawUserPostRow(row: RawUserPostRow) {
   return {
     id: row.id,
     content: row.content,
+    postType: row.postType ?? (row.contractAddress ? "alpha" : "discussion"),
+    pollExpiresAt: row.pollExpiresAt ?? null,
     authorId: row.authorId,
     contractAddress: row.contractAddress ?? null,
     chainType: row.chainType ?? null,
@@ -991,6 +995,8 @@ async function loadProfileHubPayload(identifier: string, viewerId: string | null
       select: {
         id: true,
         content: true,
+        postType: true,
+        pollExpiresAt: true,
         chainType: true,
         tokenSymbol: true,
         tokenName: true,
@@ -1276,6 +1282,8 @@ async function findUserPostsRaw(authorId: string): Promise<any[]> {
     SELECT
       p.id,
       p.content,
+      p."postType",
+      p."pollExpiresAt",
       p."authorId",
       p."contractAddress",
       p."chainType",
@@ -1315,6 +1323,8 @@ async function findUserRepostsRaw(userId: string): Promise<any[]> {
     SELECT
       p.id,
       p.content,
+      p."postType",
+      p."pollExpiresAt",
       p."authorId",
       p."contractAddress",
       p."chainType",
@@ -3743,6 +3753,8 @@ usersRouter.get("/:identifier/posts", async (c) => {
         select: {
           id: true,
           content: true,
+          postType: true,
+          pollExpiresAt: true,
           authorId: true,
           contractAddress: true,
           chainType: true,
@@ -3842,6 +3854,7 @@ usersRouter.get("/:identifier/posts", async (c) => {
     postIds: posts.map((p) => p.id),
   });
 
+  posts = await attachPollSummaries(posts, currentUser?.id ?? null);
   const publicResponsePayload = buildPublicSocialPostPayload(posts as SocialPostRecord[]);
   writeUserRouteCache(userPostsRouteCache, postsCacheKey, postsRedisKey, publicResponsePayload);
 
@@ -3973,6 +3986,8 @@ usersRouter.get("/:identifier/reposts", async (c) => {
             select: {
               id: true,
               content: true,
+              postType: true,
+              pollExpiresAt: true,
               authorId: true,
               contractAddress: true,
               chainType: true,
@@ -4066,7 +4081,7 @@ usersRouter.get("/:identifier/reposts", async (c) => {
   }
 
   // Get current user's interactions with these posts
-  const posts = reposts.map((r) => r.post);
+  const posts = await attachPollSummaries(reposts.map((r) => r.post), currentUser?.id ?? null);
   const authorIds = [...new Set(posts.map((post) => post.authorId).filter((authorId) => authorId !== currentUser?.id))];
   const { userLikes, userReposts, followingAuthorIds } = await getMixedAuthorPostInteractionsSafely({
     currentUserId: currentUser?.id,

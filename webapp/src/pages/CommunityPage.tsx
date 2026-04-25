@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Flame, Users } from "lucide-react";
@@ -82,13 +82,61 @@ export default function CommunityPage() {
   const summary = summaryQuery.data ?? null;
   const room = roomQuery.data ?? null;
   const profile = profileQuery.data ?? null;
-  const topCalls = topCallsQuery.data ?? [];
-  const raids = raidsQuery.data ?? [];
+  const topCalls = useMemo(() => topCallsQuery.data ?? [], [topCallsQuery.data]);
+  const raids = useMemo(() => raidsQuery.data ?? [], [raidsQuery.data]);
   const activeRaid = summary?.activeRaid ?? raids[0] ?? null;
   const featuredTopCall = topCalls[0] ?? null;
   const heroName = summary?.hero.xCashtag || profile?.xCashtag || room?.xCashtag || "Community";
   const heroImage = summary?.hero.imageUrl || room?.assets.logo?.renderUrl || room?.assets.mascot?.renderUrl || undefined;
   const banner = summary?.hero.bannerUrl || room?.assets.banner?.renderUrl || undefined;
+  const searchQuery = search.trim().toLowerCase();
+  const filteredTopCalls = useMemo(() => {
+    if (!searchQuery) return topCalls;
+    return topCalls.filter((call) =>
+      [
+        call.ticker,
+        call.title,
+        call.conviction,
+        call.author.username,
+        call.author.name,
+      ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery))
+    );
+  }, [searchQuery, topCalls]);
+  const filteredRaids = useMemo(() => {
+    if (!searchQuery) return raids;
+    return raids.filter((raid) =>
+      [raid.objective, raid.status, raid.tokenSymbol].some((value) =>
+        String(value ?? "").toLowerCase().includes(searchQuery)
+      )
+    );
+  }, [raids, searchQuery]);
+  const filteredMembers = useMemo(() => {
+    const members = summary?.onlineMembers ?? [];
+    if (!searchQuery) return members;
+    return members.filter((member) =>
+      [member.user.username, member.user.name].some((value) =>
+        String(value ?? "").toLowerCase().includes(searchQuery)
+      )
+    );
+  }, [searchQuery, summary?.onlineMembers]);
+  const filteredContributors = useMemo(() => {
+    const contributors = summary?.topContributors ?? [];
+    if (!searchQuery) return contributors;
+    return contributors.filter((contributor) =>
+      [contributor.user.username, contributor.user.name, contributor.badge].some((value) =>
+        String(value ?? "").toLowerCase().includes(searchQuery)
+      )
+    );
+  }, [searchQuery, summary?.topContributors]);
+  const filteredRecentRaids = useMemo(() => {
+    const recentRaids = summary?.recentRaids ?? [];
+    if (!searchQuery) return recentRaids;
+    return recentRaids.filter((raid) =>
+      [raid.objective, raid.status, raid.tokenSymbol].some((value) =>
+        String(value ?? "").toLowerCase().includes(searchQuery)
+      )
+    );
+  }, [searchQuery, summary?.recentRaids]);
   const isLoading = summaryQuery.isLoading || roomQuery.isLoading;
   if (isLoading) {
     return (
@@ -110,6 +158,7 @@ export default function CommunityPage() {
       </section>
     );
   }
+
 
   return (
     <div className="space-y-5">
@@ -175,9 +224,11 @@ export default function CommunityPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-11 rounded-[16px] border-white/10 bg-white/[0.04] px-5 text-white/80 hover:bg-white/[0.08] hover:text-white"
+                  disabled
+                  title="Invite links require referral tracking before they can be enabled."
+                  className="h-11 rounded-[16px] border-white/10 bg-white/[0.03] px-5 text-white/40"
                 >
-                  + Invite
+                  Invite unavailable
                 </Button>
                 {activeRaid ? (
                   <Link to={`/raids/${tokenAddress}/${activeRaid.id}`} className="inline-flex h-11 items-center rounded-[16px] border border-lime-300/20 bg-[linear-gradient(90deg,rgba(169,255,52,0.96),rgba(45,212,191,0.9))] px-5 text-sm font-semibold text-slate-950">
@@ -198,14 +249,23 @@ export default function CommunityPage() {
                 { value: "members", label: "Members" },
                 { value: "about", label: "About" },
                 { value: "raids", label: "Raids" },
+                { value: "events", label: "Events", disabled: true },
               ].map((item) => (
                 <button
                   key={item.value}
                   type="button"
-                  onClick={() => setTab(item.value as CommunityTab)}
+                  disabled={item.disabled}
+                  title={item.disabled ? "Events require a community events endpoint before this tab can be enabled." : undefined}
+                  onClick={() => {
+                    if (!item.disabled) setTab(item.value as CommunityTab);
+                  }}
                   className={cn(
                     "relative pb-2 text-sm font-medium transition",
-                    tab === item.value ? "text-lime-200" : "text-white/44 hover:text-white/72"
+                    item.disabled
+                      ? "cursor-not-allowed text-white/24"
+                      : tab === item.value
+                        ? "text-lime-200"
+                        : "text-white/44 hover:text-white/72"
                   )}
                 >
                   {item.label}
@@ -298,7 +358,7 @@ export default function CommunityPage() {
 
           {tab === "calls" ? (
             <section className="space-y-4">
-              {topCalls.map((call) => (
+              {filteredTopCalls.length ? filteredTopCalls.map((call) => (
                 <div key={call.id} className="rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -325,7 +385,12 @@ export default function CommunityPage() {
                     <MiniMetric label="Peak ROI" value={formatPct(call.roiPeakPct)} />
                   </div>
                 </div>
-              ))}
+              )) : (
+                <CommunityEmptyState
+                  title={searchQuery ? "No calls match this search" : "No ranked calls yet"}
+                  body={searchQuery ? "Try another user, token, or conviction label." : "Calls will appear here after the community posts token-linked alpha with measurable outcomes."}
+                />
+              )}
             </section>
           ) : null}
 
@@ -334,7 +399,7 @@ export default function CommunityPage() {
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Members</div>
               <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">Online members</h2>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {summary.onlineMembers.map((member) => (
+                {filteredMembers.length ? filteredMembers.map((member) => (
                   <div key={`${member.user.id}:${member.joinedAt}`} className="flex items-center gap-3 rounded-[20px] border border-white/8 bg-black/20 px-4 py-4">
                     <Avatar className="h-11 w-11 border border-white/8">
                       <AvatarImage src={member.user.image ?? undefined} />
@@ -347,7 +412,13 @@ export default function CommunityPage() {
                       <div className="text-xs text-white/42">Joined {new Date(member.joinedAt).toLocaleDateString()}</div>
                     </div>
                   </div>
-                ))}
+                )) : (
+                  <CommunityEmptyState
+                    title={searchQuery ? "No members match this search" : "No members online"}
+                    body={searchQuery ? "Search is applied to usernames and display names." : "Online members will appear here when room activity resumes."}
+                    compact
+                  />
+                )}
               </div>
             </section>
           ) : null}
@@ -376,7 +447,7 @@ export default function CommunityPage() {
 
           {tab === "raids" ? (
             <section className="space-y-4">
-              {raids.map((raid) => (
+              {filteredRaids.length ? filteredRaids.map((raid) => (
                 <Link key={raid.id} to={`/raids/${tokenAddress}/${raid.id}`} className="block rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5 transition hover:border-lime-300/16 hover:bg-white/[0.04]">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -393,7 +464,12 @@ export default function CommunityPage() {
                     </span>
                   </div>
                 </Link>
-              ))}
+              )) : (
+                <CommunityEmptyState
+                  title={searchQuery ? "No raids match this search" : "No raids available"}
+                  body={searchQuery ? "Search is applied to raid objective, status, and token symbol." : "Raid rooms will appear here when this community launches a real campaign."}
+                />
+              )}
             </section>
           ) : null}
         </div>
@@ -402,7 +478,7 @@ export default function CommunityPage() {
           <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Contributors Leaderboard</div>
             <div className="mt-4 space-y-3">
-              {summary.topContributors.slice(0, 5).map((contributor, index) => (
+              {filteredContributors.length ? filteredContributors.slice(0, 5).map((contributor, index) => (
                 <div key={contributor.user.id} className="flex items-center justify-between gap-4 rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/[0.04] text-sm font-semibold text-lime-200">
@@ -415,7 +491,13 @@ export default function CommunityPage() {
                   </div>
                   <div className="text-sm font-semibold text-lime-300">{formatCompact(contributor.contributionScore)}</div>
                 </div>
-              ))}
+              )) : (
+                <CommunityEmptyState
+                  title={searchQuery ? "No contributors match" : "No contributors yet"}
+                  body={searchQuery ? "Search is applied to contributor names and badges." : "Contributor ranks need real room participation."}
+                  compact
+                />
+              )}
             </div>
           </section>
 
@@ -432,7 +514,7 @@ export default function CommunityPage() {
           <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Online Members</div>
             <div className="mt-4 flex items-center">
-              {summary.onlineMembers.slice(0, 5).map((member, index) => (
+              {filteredMembers.slice(0, 5).map((member, index) => (
                 <Avatar key={`${member.user.id}:${member.joinedAt}`} className={cn("h-12 w-12 border-2 border-[#091115]", index > 0 && "-ml-3")}>
                   <AvatarImage src={member.user.image ?? undefined} />
                   <AvatarFallback className="bg-white/[0.04] text-white">
@@ -441,7 +523,7 @@ export default function CommunityPage() {
                 </Avatar>
               ))}
               <div className="ml-3 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/62">
-                +{Math.max(summary.hero.onlineNowEstimate - summary.onlineMembers.length, 0)}
+                +{Math.max(summary.hero.onlineNowEstimate - filteredMembers.length, 0)}
               </div>
             </div>
           </section>
@@ -466,7 +548,9 @@ export default function CommunityPage() {
                   </div>
                   <div>
                     <div className="text-xl font-semibold text-white">{activeRaid.objective}</div>
-                    <div className="mt-1 text-sm text-white/50">Target: trend this token on X</div>
+                    <div className="mt-1 text-sm text-white/50">
+                      Opened {new Date(activeRaid.openedAt).toLocaleString()}
+                    </div>
                   </div>
                 </div>
                 <MetricRow label="Participants" value={formatCompact(activeRaid.participantCount)} />
@@ -488,7 +572,7 @@ export default function CommunityPage() {
           <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Recent Raids</div>
             <div className="mt-4 space-y-3">
-              {summary.recentRaids.length ? summary.recentRaids.map((raid) => (
+              {filteredRecentRaids.length ? filteredRecentRaids.map((raid) => (
                 <Link key={raid.id} to={`/raids/${tokenAddress}/${raid.id}`} className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-black/20 px-3 py-3 transition hover:bg-white/[0.04]">
                   <div>
                     <div className="text-sm font-semibold text-white">{raid.objective}</div>
@@ -498,7 +582,7 @@ export default function CommunityPage() {
                 </Link>
               )) : (
                 <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/46">
-                  No recent raids visible yet.
+                  {searchQuery ? "No recent raids match this search." : "No recent raids visible yet."}
                 </div>
               )}
             </div>
@@ -543,6 +627,28 @@ function MetricRow({ label, value }: { label: string; value: string }) {
     <div className="rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-white/66">
       {label}
       <span className="float-right font-semibold text-white">{value}</span>
+    </div>
+  );
+}
+
+function CommunityEmptyState({
+  title,
+  body,
+  compact = false,
+}: {
+  title: string;
+  body: string;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-[24px] border border-dashed border-white/12 bg-white/[0.025] text-center",
+        compact ? "px-4 py-6" : "px-6 py-10"
+      )}
+    >
+      <div className="text-sm font-semibold text-white">{title}</div>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/46">{body}</p>
     </div>
   );
 }

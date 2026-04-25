@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Info, Lock, Maximize2, Minus, Plus, Search } from "lucide-react";
+import { AlertTriangle, Info, Maximize2, Minus, Plus, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -95,17 +95,22 @@ function nodeSize(node: BundleCheckerGraphNode) {
   return Math.max(12, Math.min(20, 12 + node.weight * 0.6));
 }
 
-function nodeClass(node: BundleCheckerGraphNode, selected: boolean) {
+function nodeClass(node: BundleCheckerGraphNode, selected: boolean, hovered: boolean) {
   const base = "absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-center font-semibold shadow-[0_0_44px_rgba(0,0,0,0.45)] transition";
-  if (node.kind === "token") return cn(base, selected ? "ring-2 ring-cyan-200" : "", "border-cyan-300/40 bg-cyan-300/14 text-[10px] text-cyan-100");
-  if (node.kind === "cluster") return cn(base, selected ? "ring-2 ring-lime-200" : "", "border-lime-300/38 bg-lime-300/14 text-[9px] text-lime-100");
-  return cn(base, selected ? "ring-2 ring-white/60" : "", "border-white/16 bg-white/[0.075] text-[8px] text-white/72");
+  const active = selected || hovered;
+  if (node.kind === "token") return cn(base, active && "ring-2 ring-cyan-200", "border-cyan-300/40 bg-cyan-300/14 text-[10px] text-cyan-100");
+  if (node.riskLabel === "high") return cn(base, active && "ring-2 ring-rose-200", "border-rose-300/50 bg-rose-400/18 text-[9px] text-rose-100 shadow-[0_0_42px_rgba(251,113,133,0.25)]");
+  if (node.riskLabel === "medium") return cn(base, active && "ring-2 ring-amber-200", "border-amber-300/45 bg-amber-400/16 text-[9px] text-amber-100 shadow-[0_0_42px_rgba(251,191,36,0.18)]");
+  if (node.riskLabel === "low") return cn(base, active && "ring-2 ring-lime-200", "border-lime-300/38 bg-lime-300/14 text-[9px] text-lime-100");
+  return cn(base, active && "ring-2 ring-white/60", "border-white/16 bg-white/[0.075] text-[8px] text-white/72");
 }
 
 export default function BundleChecker() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [draft, setDraft] = useState(searchParams.get("token") ?? "");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const identifier = searchParams.get("token")?.trim() ?? "";
 
   useEffect(() => {
@@ -131,6 +136,8 @@ export default function BundleChecker() {
     const next = draft.trim();
     setSearchParams(next ? { token: next } : {});
     setSelectedNodeId(null);
+    setHoveredNodeId(null);
+    setZoom(1);
   };
 
   const topKpis = bundle
@@ -185,13 +192,8 @@ export default function BundleChecker() {
               Analyze
             </Button>
           </div>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/40">
-            <span>Examples:</span>
-            {["0x3f5...a42b", "0xabc...1234", "PixelCoin", "AsteroidShiba"].map((example) => (
-              <button key={example} type="button" onClick={() => setDraft(example)} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-white/68">
-                {example}
-              </button>
-            ))}
+          <div className="mt-3 text-xs text-white/40">
+            Search resolves against real token records only. Sparse targets show an intentional unavailable state instead of synthetic clusters.
           </div>
         </div>
       </section>
@@ -219,12 +221,21 @@ export default function BundleChecker() {
                 <div className="rounded-[10px] border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/60">{bundle.graph.nodes.length} nodes</div>
               </div>
               <div className="relative mt-4 h-[500px] overflow-hidden rounded-[16px] border border-white/8 bg-[radial-gradient(circle_at_50%_50%,rgba(169,255,52,0.10),transparent_25%),linear-gradient(180deg,rgba(0,0,0,0.26),rgba(0,0,0,0.42))]">
-                <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <svg
+                  className="absolute inset-0 h-full w-full transition-transform duration-200"
+                  style={{ transform: `scale(${zoom})`, transformOrigin: "50% 50%" }}
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                >
                   {bundle.graph.edges.map((edge, index) => {
                     const source = graphNodeMap.get(edge.source);
                     const target = graphNodeMap.get(edge.target);
                     if (!source || !target) return null;
-                    const selected = selectedNodeId === edge.source || selectedNodeId === edge.target;
+                    const selected =
+                      selectedNodeId === edge.source ||
+                      selectedNodeId === edge.target ||
+                      hoveredNodeId === edge.source ||
+                      hoveredNodeId === edge.target;
                     return (
                       <line
                         key={`${edge.source}-${edge.target}-${index}`}
@@ -238,14 +249,21 @@ export default function BundleChecker() {
                     );
                   })}
                 </svg>
+                <div
+                  className="absolute inset-0 transition-transform duration-200"
+                  style={{ transform: `scale(${zoom})`, transformOrigin: "50% 50%" }}
+                >
                 {graphLayout.map((node) => {
                   const selected = node.id === selectedNodeId;
+                  const hovered = node.id === hoveredNodeId;
                   return (
                     <button
                       key={node.id}
                       type="button"
                       onClick={() => setSelectedNodeId(node.id)}
-                      className={nodeClass(node, selected)}
+                      onMouseEnter={() => setHoveredNodeId(node.id)}
+                      onMouseLeave={() => setHoveredNodeId(null)}
+                      className={nodeClass(node, selected, hovered)}
                       style={{ left: `${node.x}%`, top: `${node.y}%`, width: `${nodeSize(node)}px`, height: `${nodeSize(node)}px` }}
                       title={node.label}
                     >
@@ -253,6 +271,7 @@ export default function BundleChecker() {
                     </button>
                   );
                 })}
+                </div>
                 <div className="absolute right-4 top-4 rounded-[12px] border border-white/10 bg-black/35 p-3 text-xs text-white/58 backdrop-blur">
                   <div className="mb-2 font-semibold uppercase tracking-[0.16em] text-white/42">Legend</div>
                   <LegendDot className="bg-rose-400" label="High Risk" />
@@ -262,11 +281,15 @@ export default function BundleChecker() {
                   <LegendDot className="bg-white/45" label="External" />
                 </div>
                 <div className="absolute bottom-4 left-4 flex gap-2">
-                  {[Maximize2, Plus, Minus, Lock].map((Icon, index) => (
-                    <button key={index} type="button" className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62">
-                      <Icon className="h-4 w-4" />
-                    </button>
-                  ))}
+                  <button type="button" onClick={() => setZoom(1)} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
+                    <Maximize2 className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => setZoom((value) => Math.min(1.8, value + 0.15))} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
+                    <Plus className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.15))} className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-black/35 text-white/62 hover:text-white">
+                    <Minus className="h-4 w-4" />
+                  </button>
                 </div>
                 {selectedNode ? (
                   <div className="absolute bottom-4 right-4 w-[260px] rounded-[14px] border border-lime-300/18 bg-black/55 p-4 backdrop-blur">
@@ -275,6 +298,7 @@ export default function BundleChecker() {
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                       <StatBox label="Kind" value={selectedNode.kind} />
                       <StatBox label="Weight" value={formatCompact(selectedNode.weight)} />
+                      <StatBox label="Risk" value={selectedNode.riskLabel ?? "external"} />
                     </div>
                   </div>
                 ) : null}

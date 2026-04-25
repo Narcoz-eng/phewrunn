@@ -2,21 +2,30 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import type { LeaderboardRowVM } from "@/viewmodels/trader-performance";
 
-function sparkPath(seed: string) {
-  let hash = 0;
-  for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) % 9973;
-  const points = Array.from({ length: 18 }, (_, index) => {
-    const y = 38 - ((Math.sin((index + hash) * 0.72) + 1) * 10 + index * 0.9);
-    return `${index * 7},${Math.max(8, Math.min(42, y))}`;
-  });
-  return points.join(" ");
+function sparkPath(points: number[]) {
+  if (points.length < 2) return "";
+  const max = Math.max(...points);
+  const min = Math.min(...points);
+  const range = max - min || 1;
+  return points
+    .map((point, index) => {
+      const x = (index / Math.max(points.length - 1, 1)) * 120;
+      const y = 42 - ((point - min) / range) * 34;
+      return `${x.toFixed(2)},${Math.max(6, Math.min(42, y)).toFixed(2)}`;
+    })
+    .join(" ");
 }
 
-export function LeaderboardSparkline({ id, tone = "lime" }: { id: string; tone?: "lime" | "red" }) {
+export function LeaderboardSparkline({ points, tone = "lime" }: { points: number[]; tone?: "lime" | "red" }) {
+  const path = sparkPath(points);
+  if (!path) {
+    return <div className="flex h-12 items-center justify-center text-[11px] uppercase tracking-[0.14em] text-white/28">No trend</div>;
+  }
+
   return (
     <svg viewBox="0 0 120 48" className="h-12 w-full overflow-visible" aria-hidden="true">
       <polyline
-        points={sparkPath(id)}
+        points={path}
         fill="none"
         stroke={tone === "red" ? "rgba(248,113,113,0.88)" : "rgba(169,255,52,0.86)"}
         strokeWidth="2"
@@ -85,7 +94,7 @@ export function LeaderboardPodium({ rows }: { rows: LeaderboardRowVM[] }) {
               </div>
             </div>
             <div className="mt-3">
-              <LeaderboardSparkline id={row.id} tone={row.valueTone === "loss" ? "red" : "lime"} />
+              <LeaderboardSparkline points={row.trendPoints} tone={row.valueTone === "loss" ? "red" : "lime"} />
             </div>
           </article>
         );

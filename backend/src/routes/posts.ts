@@ -216,21 +216,112 @@ type EndpointConcurrencyLimiter = {
 
 const POST_TYPE_PREFIX_RE = /^\[(alpha|discussion|chart|poll|raid|news)\]\s*/i;
 
-function normalizePostType(input: unknown, content: string, hasDetectedToken: boolean): PostType {
+function normalizePostType(input: unknown, hasDetectedToken: boolean): PostType {
   const parsed = PostTypeSchema.safeParse(input);
   if (parsed.success) return parsed.data;
-
-  const prefixMatch = content.match(POST_TYPE_PREFIX_RE);
-  if (prefixMatch?.[1]) {
-    const prefixed = PostTypeSchema.safeParse(prefixMatch[1].toLowerCase());
-    if (prefixed.success) return prefixed.data;
-  }
 
   return hasDetectedToken ? "alpha" : "discussion";
 }
 
 function stripPostTypePrefix(content: string): string {
   return content.replace(POST_TYPE_PREFIX_RE, "").trim();
+}
+
+function normalizePostTypeField(value: unknown, hasDetectedToken: boolean): PostType {
+  return normalizePostType(value, hasDetectedToken);
+}
+
+type PollSummary = {
+  totalVotes: number;
+  viewerOptionId: string | null;
+  options: Array<{
+    id: string;
+    label: string;
+    votes: number;
+    percentage: number;
+  }>;
+};
+
+type PostLikeRecord = {
+  id: string;
+  postType?: unknown;
+  contractAddress?: string | null;
+  pollExpiresAt?: Date | string | null;
+  [key: string]: unknown;
+};
+
+function normalizePostApiPayload<T extends PostLikeRecord>(post: T): T & { postType: PostType; pollExpiresAt: string | null } {
+  const pollExpiresAt = post.pollExpiresAt instanceof Date
+    ? post.pollExpiresAt.toISOString()
+    : typeof post.pollExpiresAt === "string"
+      ? post.pollExpiresAt
+      : null;
+  return {
+    ...post,
+    postType: normalizePostTypeField(post.postType, Boolean(post.contractAddress)),
+    pollExpiresAt,
+  };
+}
+
+async function buildPollSummariesForPosts(postIds: string[], viewerUserId?: string | null): Promise<Map<string, PollSummary>> {
+  if (postIds.length === 0) return new Map();
+
+  const [options, votes, viewerVotes] = await Promise.all([
+    prisma.postPollOption.findMany({
+      where: { postId: { in: postIds } },
+      orderBy: [{ postId: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+      select: { id: true, postId: true, label: true, sortOrder: true },
+    }),
+    prisma.postPollVote.groupBy({
+      by: ["postId", "optionId"],
+      where: { postId: { in: postIds } },
+      _count: { _all: true },
+    }),
+    viewerUserId
+      ? prisma.postPollVote.findMany({
+          where: { postId: { in: postIds }, userId: viewerUserId },
+          select: { postId: true, optionId: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const votesByOption = new Map<string, number>();
+  const totalsByPost = new Map<string, number>();
+  for (const row of votes) {
+    const count = row._count._all;
+    votesByOption.set(row.optionId, count);
+    totalsByPost.set(row.postId, (totalsByPost.get(row.postId) ?? 0) + count);
+  }
+
+  const viewerVoteByPost = new Map(viewerVotes.map((vote) => [vote.postId, vote.optionId]));
+  const summaries = new Map<string, PollSummary>();
+  for (const option of options) {
+    const totalVotes = totalsByPost.get(option.postId) ?? 0;
+    const optionVotes = votesByOption.get(option.id) ?? 0;
+    const current = summaries.get(option.postId) ?? {
+      totalVotes,
+      viewerOptionId: viewerVoteByPost.get(option.postId) ?? null,
+      options: [],
+    };
+    current.options.push({
+      id: option.id,
+      label: option.label,
+      votes: optionVotes,
+      percentage: totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 1000) / 10 : 0,
+    });
+    summaries.set(option.postId, current);
+  }
+  return summaries;
+}
+
+export async function attachPollSummaries<T extends PostLikeRecord>(posts: T[], viewerUserId?: string | null): Promise<Array<T & { postType: PostType; pollExpiresAt: string | null; poll: PollSummary | null }>> {
+  const normalized = posts.map((post) => normalizePostApiPayload(post));
+  const pollPostIds = normalized.filter((post) => post.postType === "poll").map((post) => post.id);
+  const summaries = await buildPollSummariesForPosts(pollPostIds, viewerUserId);
+  return normalized.map((post) => ({
+    ...post,
+    poll: post.postType === "poll" ? summaries.get(post.id) ?? { totalVotes: 0, viewerOptionId: null, options: [] } : null,
+  }));
 }
 
 type JobDispatchRecord = {
@@ -515,6 +606,7 @@ function buildFeedResponseCacheKey(params: {
   limit: number;
   cursor?: string;
   search?: string;
+  postType?: PostType;
 }): string {
   return [
     params.userId ?? "anon",
@@ -523,6 +615,7 @@ function buildFeedResponseCacheKey(params: {
     String(params.limit),
     params.cursor ?? "",
     (params.search ?? "").trim().toLowerCase(),
+    params.postType ?? "all-types",
   ].join(":");
 }
 
@@ -532,6 +625,7 @@ function buildFeedSharedResponseCacheKey(params: {
   limit: number;
   cursor?: string;
   search?: string;
+  postType?: PostType;
 }): string {
   return [
     params.sort,
@@ -539,6 +633,7 @@ function buildFeedSharedResponseCacheKey(params: {
     String(params.limit),
     params.cursor ?? "",
     (params.search ?? "").trim().toLowerCase(),
+    params.postType ?? "all-types",
   ].join(":");
 }
 
@@ -1524,6 +1619,7 @@ async function loadEmergencyFeedPosts(
   return minimalPosts.map((post) => ({
     ...post,
     postType: "alpha",
+    pollExpiresAt: null,
     contractAddress: null,
     chainType: null,
     tokenName: null,
@@ -1571,6 +1667,7 @@ async function loadPrimaryFeedPosts(
               id: true,
               content: true,
               postType: true,
+              pollExpiresAt: true,
               authorId: true,
               contractAddress: true,
               chainType: true,
@@ -1634,6 +1731,7 @@ async function loadPrimaryFeedPosts(
             id: true,
             content: true,
             postType: true,
+            pollExpiresAt: true,
             authorId: true,
             contractAddress: true,
             chainType: true,
@@ -1715,6 +1813,7 @@ async function loadPrimaryFeedPosts(
         return legacyPosts.map((post) => ({
           ...post,
           postType: "alpha",
+          pollExpiresAt: null,
           tokenName: null,
           tokenSymbol: null,
           tokenImage: null,
@@ -1767,6 +1866,7 @@ async function loadPrimaryFeedPosts(
         return minimalPosts.map((post) => ({
           ...post,
           postType: "alpha",
+          pollExpiresAt: null,
           contractAddress: null,
           chainType: null,
           entryMcap: null,
@@ -1934,6 +2034,7 @@ async function loadEmergencyFeedPostsRawMinimal(params: {
     createdAt: row.createdAt,
     viewCount: toFiniteNumber(row.viewCount, 0),
     dexscreenerUrl: row.dexscreenerUrl ?? null,
+    pollExpiresAt: row.pollExpiresAt ?? null,
     author: {
       id: row.authorId,
       name: row.authorName ?? "Anonymous",
@@ -2012,6 +2113,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
       id: string;
       content: string;
       postType: string | null;
+      pollExpiresAt: Date | null;
       authorId: string;
       contractAddress: string | null;
       chainType: string | null;
@@ -2047,6 +2149,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
         p.id,
         p.content,
         p."postType",
+        p."pollExpiresAt",
         p."authorId",
         p."contractAddress",
         p."chainType",
@@ -2091,6 +2194,7 @@ async function loadEmergencyFeedPostsRawFull(params: {
     id: row.id,
     content: row.content,
     postType: row.postType ?? "alpha",
+    pollExpiresAt: row.pollExpiresAt ?? null,
     authorId: row.authorId,
     contractAddress: row.contractAddress ?? null,
     chainType: row.chainType ?? null,
@@ -2842,6 +2946,7 @@ function buildCreatePostResponse(params: {
   id: string;
   content: string;
   postType: PostType;
+  pollExpiresAt: Date | string | null;
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
@@ -2863,6 +2968,7 @@ function buildCreatePostResponse(params: {
     id: params.id,
     content: params.content,
     postType: params.postType,
+    pollExpiresAt: params.pollExpiresAt instanceof Date ? params.pollExpiresAt.toISOString() : params.pollExpiresAt,
     authorId: params.authorId,
     contractAddress: params.contractAddress,
     chainType: params.chainType,
@@ -2890,6 +2996,7 @@ function buildCreatePostResponse(params: {
 async function createPostRawFallback(params: {
   content: string;
   postType: PostType;
+  pollExpiresAt: Date | null;
   authorId: string;
   contractAddress: string | null;
   chainType: string | null;
@@ -2907,21 +3014,25 @@ async function createPostRawFallback(params: {
     INSERT INTO "Post" (
       id,
       content,
+      "postType",
       "authorId",
       "contractAddress",
       "chainType",
       "entryMcap",
       "currentMcap",
+      "pollExpiresAt",
       "createdAt",
       "updatedAt"
     ) VALUES (
       ${id},
       ${params.content},
+      ${params.postType},
       ${params.authorId},
       ${params.contractAddress},
       ${params.chainType},
       ${params.entryMcap},
       ${params.currentMcap},
+      ${params.pollExpiresAt},
       ${now},
       ${now}
     )
@@ -2931,6 +3042,7 @@ async function createPostRawFallback(params: {
     id,
     content: params.content,
     postType: params.postType,
+    pollExpiresAt: params.pollExpiresAt,
     authorId: params.authorId,
     contractAddress: params.contractAddress,
     chainType: params.chainType,
@@ -2940,8 +3052,8 @@ async function createPostRawFallback(params: {
     tokenSymbol: params.tokenSymbol,
     tokenImage: params.tokenImage,
     dexscreenerUrl: params.dexscreenerUrl,
-    trackingMode: TRACKING_MODE_ACTIVE,
-    lastMcapUpdate: now,
+    trackingMode: params.contractAddress ? TRACKING_MODE_ACTIVE : null,
+    lastMcapUpdate: params.contractAddress ? now : null,
     createdAt: now,
     author: params.author,
   });
@@ -4953,9 +5065,9 @@ postsRouter.get("/", async (c) => {
 
   // Parse query params
   const parsed = FeedQuerySchema.safeParse(queryParams);
-  const { sort, following, limit, cursor, search } = parsed.success
+  const { sort, following, limit, cursor, search, postType } = parsed.success
     ? parsed.data
-    : { sort: "latest" as const, following: false, limit: 10, cursor: undefined, search: undefined };
+    : { sort: "latest" as const, following: false, limit: 10, cursor: undefined, search: undefined, postType: undefined };
   const shouldUsePublicResponseCaching = !user && !following && !cursor && !search?.trim();
   c.header("Vary", "Cookie");
   c.header(
@@ -4971,6 +5083,7 @@ postsRouter.get("/", async (c) => {
     limit,
     cursor,
     search,
+    postType,
   });
   const sharedFeedCacheKey = buildFeedSharedResponseCacheKey({
     sort,
@@ -4978,6 +5091,7 @@ postsRouter.get("/", async (c) => {
     limit,
     cursor,
     search,
+    postType,
   });
   let feedDegradedMode = isFeedDegradedCircuitOpen();
   const readStaleFeedPayload = async (): Promise<FeedResponsePayload | null> => {
@@ -5108,6 +5222,10 @@ postsRouter.get("/", async (c) => {
   if (sort === "trending") {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     whereConditions.push({ createdAt: { gte: sevenDaysAgo } });
+  }
+
+  if (postType) {
+    whereConditions.push({ postType });
   }
 
   // If following filter is true, only show posts from followed users (NOT including user's own posts)
@@ -5536,7 +5654,7 @@ postsRouter.get("/", async (c) => {
     return postWithSharedAlpha;
   });
 
-  const responsePosts = postsWithUpdatedMcap;
+  const responsePosts = await attachPollSummaries(postsWithUpdatedMcap, user?.id ?? null);
   const totalPostsHint = !cursor ? await readTotalPostCountHint() : null;
   const responsePayload: FeedResponsePayload = {
     data: responsePosts,
@@ -5731,8 +5849,37 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
   const body = c.req.valid("json");
   const strippedContent = stripPostTypePrefix(body.content);
   const detected = detectContractAddress(strippedContent);
-  const postType = normalizePostType(body.postType, body.content, Boolean(detected));
+  const postType = normalizePostType(body.postType, Boolean(detected));
   const content = strippedContent.length > 0 ? strippedContent : body.content.trim();
+  const pollOptions = [...new Set((body.pollOptions ?? []).map((option) => option.trim()).filter(Boolean))];
+  const pollExpiresAt = body.pollExpiresAt ? new Date(body.pollExpiresAt) : null;
+
+  if (postType === "poll" && pollOptions.length < 2) {
+    return c.json({
+      error: {
+        message: "Poll posts require at least two options.",
+        code: "POLL_OPTIONS_REQUIRED",
+      },
+    }, 400);
+  }
+
+  if (postType !== "poll" && pollOptions.length > 0) {
+    return c.json({
+      error: {
+        message: "Poll options can only be submitted with poll posts.",
+        code: "POLL_OPTIONS_UNSUPPORTED",
+      },
+    }, 400);
+  }
+
+  if (pollExpiresAt && pollExpiresAt.getTime() <= Date.now()) {
+    return c.json({
+      error: {
+        message: "Poll expiration must be in the future.",
+        code: "POLL_EXPIRATION_INVALID",
+      },
+    }, 400);
+  }
 
   const alphaCreatedAt = new Date();
   if (detected) {
@@ -5779,6 +5926,7 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
   const createPostData = {
     content,
     postType,
+    pollExpiresAt,
     authorId: user.id,
     contractAddress: detected?.address ?? null,
     chainType: detected?.chainType ?? null,
@@ -5821,7 +5969,8 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     });
     post = {
       ...createdPost,
-      postType: normalizePostType(createdPost.postType, createdPost.content, Boolean(createdPost.contractAddress)),
+      postType: normalizePostType(createdPost.postType, Boolean(createdPost.contractAddress)),
+      pollExpiresAt: createdPost.pollExpiresAt?.toISOString() ?? null,
     };
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
@@ -5834,6 +5983,7 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
     post = await createPostRawFallback({
       content: createPostData.content,
       postType: createPostData.postType,
+      pollExpiresAt: createPostData.pollExpiresAt,
       authorId: createPostData.authorId,
       contractAddress: createPostData.contractAddress,
       chainType: createPostData.chainType,
@@ -5846,6 +5996,18 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
       dexscreenerUrl: marketCapResult?.dexscreenerUrl ?? null,
     });
   }
+
+  if (createPostData.postType === "poll" && pollOptions.length >= 2) {
+    await prisma.postPollOption.createMany({
+      data: pollOptions.map((label, index) => ({
+        postId: post.id,
+        label,
+        sortOrder: index,
+      })),
+    });
+  }
+
+  const [postWithPoll] = await attachPollSummaries([post], user.id);
 
   queuePostCreateFanout({
     authorId: user.id,
@@ -5881,7 +6043,7 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
 
   return c.json({
     data: {
-      ...post,
+      ...postWithPoll,
       isLiked: false,
       isReposted: false,
     }
@@ -6457,8 +6619,9 @@ postsRouter.get("/:id", async (c) => {
       throw new Error("__POST_NOT_FOUND__");
     }
 
+    const [normalizedPost] = await attachPollSummaries([post], null);
     const publicPayload = {
-      ...post,
+      ...normalizedPost,
       isLiked: false,
       isReposted: false,
     } satisfies Record<string, unknown>;
@@ -6735,6 +6898,54 @@ postsRouter.delete("/:id/repost", requireNotBanned, async (c) => {
   invalidatePostDetailCache(postId);
 
   return c.json({ data: { reposted: false, repostCount } });
+});
+
+const PollVoteSchema = z.object({
+  optionId: z.string().trim().min(1),
+});
+
+postsRouter.post("/:id/poll-vote", requireNotBanned, zValidator("json", PollVoteSchema), async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ error: { message: "Unauthorized", code: "UNAUTHORIZED" } }, 401);
+  }
+
+  const postId = c.req.param("id");
+  const { optionId } = c.req.valid("json");
+  const post = await prisma.post.findUnique({
+    where: { id: postId },
+    select: { id: true, postType: true, pollExpiresAt: true },
+  });
+  if (!post) {
+    return c.json({ error: { message: "Post not found", code: "NOT_FOUND" } }, 404);
+  }
+  if (normalizePostType(post.postType, false) !== "poll") {
+    return c.json({ error: { message: "This post is not a poll.", code: "NOT_POLL" } }, 400);
+  }
+  if (post.pollExpiresAt && post.pollExpiresAt.getTime() <= Date.now()) {
+    return c.json({ error: { message: "This poll has expired.", code: "POLL_EXPIRED" } }, 400);
+  }
+
+  const option = await prisma.postPollOption.findFirst({
+    where: { id: optionId, postId },
+    select: { id: true },
+  });
+  if (!option) {
+    return c.json({ error: { message: "Poll option not found.", code: "POLL_OPTION_NOT_FOUND" } }, 404);
+  }
+
+  await prisma.postPollVote.upsert({
+    where: { postId_userId: { postId, userId: user.id } },
+    create: { postId, optionId, userId: user.id },
+    update: { optionId },
+  });
+
+  const [summaryPost] = await attachPollSummaries([{ id: postId, postType: "poll", pollExpiresAt: post.pollExpiresAt }], user.id);
+  invalidatePostReadCaches();
+  if (!summaryPost?.poll) {
+    return c.json({ error: { message: "Poll summary unavailable.", code: "POLL_SUMMARY_UNAVAILABLE" } }, 500);
+  }
+  return c.json({ data: summaryPost.poll });
 });
 
 // Get comments for a post

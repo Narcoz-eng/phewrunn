@@ -1118,6 +1118,15 @@ function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: strin
   if (tab === "following") {
     params.set("following", "true");
   }
+  const tabPostType =
+    tab === "early-runners"
+      ? "raid"
+      : tab === "hot-alpha" || tab === "high-conviction"
+        ? "alpha"
+        : null;
+  if (tabPostType) {
+    params.set("postType", tabPostType);
+  }
   if (search && search.length >= 3) {
     params.set("search", search);
   }
@@ -1417,6 +1426,15 @@ export default function Feed() {
 
     if (search && search.length >= 3) {
       params.set("search", search);
+    }
+    const tabPostType =
+      tab === "early-runners"
+        ? "raid"
+        : tab === "hot-alpha" || tab === "high-conviction"
+          ? "alpha"
+          : null;
+    if (tabPostType) {
+      params.set("postType", tabPostType);
     }
     params.set("limit", String(FEED_PAGE_SIZE));
     if (pageParam) {
@@ -2271,8 +2289,8 @@ export default function Feed() {
 
   // Create post mutation
   const createPostMutation = useMutation({
-    mutationFn: async ({ content, postType }: { content: string; postType: NonNullable<Post["postType"]> }) => {
-      const newPost = await api.post<Post>("/api/posts", { content, postType });
+    mutationFn: async ({ content, postType, pollOptions }: { content: string; postType: NonNullable<Post["postType"]>; pollOptions?: string[] }) => {
+      const newPost = await api.post<Post>("/api/posts", { content, postType, pollOptions });
       return newPost;
     },
     onSuccess: (newPost) => {
@@ -2413,12 +2431,29 @@ export default function Feed() {
     },
   });
 
+  const pollVoteMutation = useMutation({
+    mutationFn: async ({ postId, optionId }: { postId: string; optionId: string }) => {
+      const poll = await api.post<NonNullable<Post["poll"]>>(`/api/posts/${postId}/poll-vote`, { optionId });
+      return { postId, poll };
+    },
+    onSuccess: ({ postId, poll }) => {
+      updateInfinitePosts((post) => (post.id === postId ? { ...post, poll } : post));
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        handleWriteSessionExpired();
+        return;
+      }
+      toast.error(error instanceof ApiError ? error.message : "Failed to vote");
+    },
+  });
+
   // Handlers
-  const handleCreatePost = async (content: string, postType: NonNullable<Post["postType"]>) => {
+  const handleCreatePost = async (content: string, postType: NonNullable<Post["postType"]>, options?: { pollOptions?: string[] }) => {
     if (guardPendingAuthWrite()) {
       return;
     }
-    await createPostMutation.mutateAsync({ content, postType });
+    await createPostMutation.mutateAsync({ content, postType, pollOptions: options?.pollOptions });
   };
 
   const handleLike = async (postId: string) => {
@@ -2446,6 +2481,13 @@ export default function Feed() {
       return;
     }
     await commentMutation.mutateAsync({ postId, content });
+  };
+
+  const handlePollVote = async (postId: string, optionId: string) => {
+    if (guardPendingAuthWrite()) {
+      return;
+    }
+    await pollVoteMutation.mutateAsync({ postId, optionId });
   };
 
   const handleTabChange = (tab: FeedTab) => {
@@ -2719,6 +2761,7 @@ export default function Feed() {
                             onLike={handleLike}
                             onRepost={handleRepost}
                             onComment={handleComment}
+                            onPollVote={handlePollVote}
                           />
                     </div>
                   </div>

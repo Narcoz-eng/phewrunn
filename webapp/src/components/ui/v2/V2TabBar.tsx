@@ -5,6 +5,7 @@ export type V2TabBarItem<T extends string> = {
   value: T;
   label: ReactNode;
   badge?: ReactNode;
+  disabled?: boolean;
 };
 
 export function V2TabBar<T extends string>({
@@ -26,8 +27,9 @@ export function V2TabBar<T extends string>({
           <button
             key={item.value}
             type="button"
+            disabled={item.disabled}
             onClick={() => onChange(item.value)}
-            className={cn("v2-tabbar-item", active && "v2-tabbar-item-active")}
+            className={cn("v2-tabbar-item", active && "v2-tabbar-item-active", item.disabled && "cursor-not-allowed opacity-50")}
           >
             <span>{item.label}</span>
             {item.badge ? <span className="text-[10px] text-white/48">{item.badge}</span> : null}

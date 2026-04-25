@@ -96,6 +96,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
       select: {
         id: true,
         content: true,
+        postType: true,
         tokenSymbol: true,
         tokenName: true,
         tokenImage: true,
@@ -184,6 +185,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
 
       return {
         id: post.id,
+        postType: post.postType ?? (post.contractAddress ? "alpha" : "discussion"),
         title: post.tokenSymbol ? `$${post.tokenSymbol}` : post.tokenName ?? "Tracked call",
         tokenSymbol: post.tokenSymbol ?? post.tokenName ?? "Call",
         tokenName: post.tokenName,
