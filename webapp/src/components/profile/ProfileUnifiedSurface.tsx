@@ -114,7 +114,7 @@ function ProfileTabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex min-w-0 items-center justify-center gap-2 rounded-full border px-4 py-3 text-sm font-medium transition-colors",
+        "flex min-w-0 items-center justify-center gap-2 rounded-[12px] border px-3 py-2.5 text-sm font-medium transition-colors",
         active
           ? "border-lime-300/35 bg-lime-300/12 text-white shadow-[0_0_0_1px_rgba(163,230,53,0.08)]"
           : "border-white/8 bg-white/[0.03] text-white/58 hover:bg-white/[0.06] hover:text-white/86"
@@ -136,7 +136,7 @@ function HeroMetric({
   return (
     <div>
       <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">{label}</div>
-      <div className="mt-2 text-[1.8rem] font-semibold leading-none text-white">{value}</div>
+      <div className="mt-2 text-[1.45rem] font-semibold leading-none text-white">{value}</div>
     </div>
   );
 }
@@ -274,11 +274,11 @@ export function ProfileUnifiedSurface({
     .slice(0, 6);
 
   return (
-    <div className="space-y-5 pb-24">
-      <section className="overflow-hidden rounded-[34px] border border-white/8 bg-[#080b12] shadow-[0_26px_90px_rgba(0,0,0,0.32)]">
-        <div className="relative px-5 pb-6 pt-5 sm:px-6">
+    <div className="space-y-4 pb-24">
+      <section className="overflow-hidden rounded-[22px] border border-white/8 bg-[#080b12] shadow-[0_26px_90px_rgba(0,0,0,0.32)]">
+        <div className="relative px-5 pb-5 pt-[86px] sm:px-6">
           {hub.hero.bannerImage ? (
-            <div className="absolute inset-x-0 top-0 h-[260px] overflow-hidden">
+            <div className="absolute inset-x-0 top-0 h-[235px] overflow-hidden">
               <div
                 className="absolute inset-0 bg-cover bg-center opacity-35"
                 style={{ backgroundImage: `url("${hub.hero.bannerImage}")` }}
@@ -288,25 +288,13 @@ export function ProfileUnifiedSurface({
           ) : (
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(163,230,53,0.22),transparent_30%),radial-gradient(circle_at_80%_0%,rgba(34,211,238,0.18),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
           )}
-          <div className="relative space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-lime-300/20 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,15,0.72),rgba(3,6,10,0.82))] px-4 py-3 text-[11px] uppercase tracking-[0.26em] text-white/68">
-              <div>
-                <span className="text-lime-300">THIS IS A REPUTATION SURFACE</span>
-                <span className="ml-3 text-white/48">
-                  {isOwnProfile ? "This profile ranks identity, calls, raids, and trust." : "Public trader identity, ranked by real activity."}
-                </span>
-              </div>
-              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] tracking-[0.2em] text-white/54">
-                Signal and wallet are separated
-              </div>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_360px]">
-              <div className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,13,20,0.88),rgba(4,8,12,0.94))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:p-6">
-                <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-                  <Avatar className="h-28 w-28 shrink-0 rounded-[32px] border border-lime-300/25 shadow-[0_0_0_1px_rgba(163,230,53,0.12)]">
+          <div className="relative space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
+              <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,13,20,0.88),rgba(4,8,12,0.94))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+                  <Avatar className="h-24 w-24 shrink-0 rounded-[26px] border border-lime-300/25 shadow-[0_0_0_1px_rgba(163,230,53,0.12)]">
                     <AvatarImage src={avatarUrl} alt={hub.hero.name ?? hub.hero.username ?? "Trader"} />
-                    <AvatarFallback className="rounded-[32px] bg-white/5 text-3xl text-white">
+                    <AvatarFallback className="rounded-[26px] bg-white/5 text-3xl text-white">
                       {(hub.hero.name ?? hub.hero.username ?? "?").charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
@@ -324,8 +312,8 @@ export function ProfileUnifiedSurface({
                       </div>
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
-                      <h1 className="min-w-0 truncate text-[2.4rem] font-semibold leading-none text-white sm:text-[3.2rem]">
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <h1 className="min-w-0 truncate text-[2rem] font-semibold leading-none text-white sm:text-[2.45rem]">
                         {hub.hero.name ?? hub.hero.username ?? "Trader"}
                       </h1>
                       {hub.hero.isVerified ? <VerifiedBadge className="h-5 w-5 text-cyan-300" /> : null}
@@ -345,9 +333,8 @@ export function ProfileUnifiedSurface({
                       <span>{hub.performanceSummary.totalCalls} tracked calls</span>
                     </div>
 
-                    <p className="mt-4 max-w-3xl text-[1rem] leading-7 text-white/68">
-                      {hub.hero.bio ||
-                        "This is a reputation surface powered by settled signal performance, raid participation, AI scoring, and wallet visibility when a public snapshot is available."}
+                    <p className="mt-3 max-w-3xl text-[0.95rem] leading-6 text-white/68">
+                      {hub.hero.bio || "No bio added yet."}
                     </p>
 
                     {heroBadges.length ? (
@@ -368,14 +355,16 @@ export function ProfileUnifiedSurface({
                       </div>
                     ) : null}
 
-                    <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-                      <HeroMetric label="Followers" value={formatCompact(hub.hero.followersCount)} />
+                    <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
                       <HeroMetric label="Following" value={formatCompact(hub.hero.followingCount)} />
-                      <HeroMetric label="Signal Win Rate" value={`${hub.performanceSummary.winRate?.toFixed(0) ?? "0"}%`} />
-                      <HeroMetric label="Calls Tracked" value={formatCompact(hub.performanceSummary.totalCalls)} />
+                      <HeroMetric label="Followers" value={formatCompact(hub.hero.followersCount)} />
+                      <HeroMetric label="AI Score" value={hub.aiScore.score?.toFixed(1) ?? "0.0"} />
+                      <HeroMetric label="Calls" value={formatCompact(hub.performanceSummary.totalCalls)} />
+                      <HeroMetric label="Win Rate" value={`${hub.performanceSummary.winRate?.toFixed(0) ?? "0"}%`} />
+                      <HeroMetric label="Signal ROI" value={performanceLabel} />
                     </div>
 
-                    <div className="mt-5 rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                    <div className="mt-4 rounded-[18px] border border-white/8 bg-white/[0.03] p-3">
                       <div className="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.22em] text-white/44">
                         <span>{hub.xp.xp.toLocaleString()} XP</span>
                         <span>Next level {hub.xp.nextLevelXp.toLocaleString()}</span>
@@ -387,7 +376,7 @@ export function ProfileUnifiedSurface({
                         />
                       </div>
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-white/54">
-                        <span>XP progression tracks calls, raids, and contributor trust.</span>
+                        <span>XP tracks calls, raids, and contributor trust.</span>
                         <span className="font-semibold text-lime-200">{hub.xp.progressPct.toFixed(0)}%</span>
                       </div>
                     </div>
@@ -396,7 +385,7 @@ export function ProfileUnifiedSurface({
               </div>
 
               <div className="grid gap-3">
-                <div className="rounded-[28px] border border-lime-300/18 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_34%),linear-gradient(180deg,rgba(7,10,15,0.98),rgba(4,7,11,0.98))] p-5 shadow-[0_16px_60px_rgba(120,255,67,0.08)]">
+                <div className="rounded-[20px] border border-lime-300/18 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.12),transparent_34%),linear-gradient(180deg,rgba(7,10,15,0.98),rgba(4,7,11,0.98))] p-4 shadow-[0_16px_60px_rgba(120,255,67,0.08)]">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">Reputation command center</div>
@@ -407,18 +396,18 @@ export function ProfileUnifiedSurface({
                         {reputationBand?.label ?? "Real call outcomes, raid impact, and AI quality all feed this surface."}
                       </div>
                     </div>
-                    <div className="rounded-[20px] border border-lime-300/18 bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-200">
+                    <div className="rounded-[14px] border border-lime-300/18 bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-200">
                       {hub.aiScore.percentile ?? hub.aiScore.label}
                     </div>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="rounded-[20px] border border-white/8 bg-[#090d15] p-4">
+                    <div className="rounded-[16px] border border-white/8 bg-[#090d15] p-3">
                       <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">AI trader score</div>
                       <div className="mt-3 text-[2.5rem] font-semibold leading-none text-white">
                         {hub.aiScore.score?.toFixed(1) ?? "0.0"}
                       </div>
                     </div>
-                    <div className="rounded-[20px] border border-white/8 bg-[#090d15] p-4">
+                    <div className="rounded-[16px] border border-white/8 bg-[#090d15] p-3">
                       <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">Contributor impact</div>
                       <div className="mt-3 text-[2.5rem] font-semibold leading-none text-white">
                         {formatCompact(hub.raidImpact.contributionScore)}
@@ -440,10 +429,10 @@ export function ProfileUnifiedSurface({
                   </div>
                 </div>
 
-                <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.98),rgba(5,9,13,0.98))] p-4">
+                <div className="rounded-[20px] border border-white/8 bg-[linear-gradient(180deg,rgba(9,13,20,0.98),rgba(5,9,13,0.98))] p-4">
                   <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">Level progression</div>
                   <div className="mt-3 text-lg font-semibold text-white">
-                    Level {hub.xp.level} • {hub.xp.xp.toLocaleString()} / {hub.xp.nextLevelXp.toLocaleString()} XP
+                    Level {hub.xp.level}{" - "}{hub.xp.xp.toLocaleString()} / {hub.xp.nextLevelXp.toLocaleString()} XP
                   </div>
                   <div className="mt-2 text-sm text-white/54">This profile grows as real calls settle and raids convert into visible impact.</div>
                   <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/8">
@@ -461,7 +450,7 @@ export function ProfileUnifiedSurface({
         </div>
       </section>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-7">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-7">
         <ProfileTabButton active={profileTab === "overview"} label="Overview" onClick={() => onProfileTabChange("overview")} />
         <ProfileTabButton active={profileTab === "posts"} label="Posts" onClick={() => onProfileTabChange("posts")} />
         <ProfileTabButton active={profileTab === "calls"} label="Calls" badge={callBadge} onClick={() => onProfileTabChange("calls")} />

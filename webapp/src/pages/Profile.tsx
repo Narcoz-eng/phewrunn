@@ -1485,7 +1485,7 @@ export default function Profile() {
           />
         </div>
       </section>
-      <main className="app-page-shell !max-w-[980px] !px-0 !py-0">
+      <main className="app-page-shell !max-w-[1180px] !px-0 !py-0">
         <Dialog
           open={isCropDialogOpen}
           onOpenChange={(open) => {
