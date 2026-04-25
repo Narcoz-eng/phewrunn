@@ -645,6 +645,7 @@ export function TokenCommunitySection({
   const [threadTitle, setThreadTitle] = useState("");
   const [threadContent, setThreadContent] = useState("");
   const [threadPostType, setThreadPostType] = useState<"alpha" | "discussion" | "chart" | "poll" | "raid" | "news">("discussion");
+  const [threadPollOptions, setThreadPollOptions] = useState(["", ""]);
   const [raidObjective, setRaidObjective] = useState("");
   const [selectedMemeId, setSelectedMemeId] = useState<string | null>(null);
   const [selectedCopyId, setSelectedCopyId] = useState<string | null>(null);
@@ -961,13 +962,23 @@ export function TokenCommunitySection({
         title: threadTitle.trim() || undefined,
         content: threadContent.trim(),
         postType: threadPostType,
+        pollOptions:
+          threadPostType === "poll"
+            ? threadPollOptions.map((option) => option.trim()).filter(Boolean)
+            : undefined,
       }),
     onSuccess: async () => {
       setThreadTitle("");
       setThreadContent("");
       setThreadPostType("discussion");
+      setThreadPollOptions(["", ""]);
       await resetThreadFeed();
-      await queryClient.invalidateQueries({ queryKey: ["token-community-room", tokenAddress] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["token-community-room", tokenAddress] }),
+        queryClient.invalidateQueries({ queryKey: ["posts"] }),
+        queryClient.invalidateQueries({ queryKey: ["profile", "posts"] }),
+      ]);
+      toast.success("Posted to community and global feed");
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to create thread");
@@ -2057,7 +2068,7 @@ export function TokenCommunitySection({
                   {canWriteInRoom ? (
                     <div className="mt-4 space-y-3">
                       <div className="flex flex-wrap gap-2">
-                        {(["alpha", "discussion", "chart", "raid", "news"] as const).map((type) => (
+                        {(["alpha", "discussion", "chart", "poll", "raid", "news"] as const).map((type) => (
                           <button
                             key={type}
                             type="button"
@@ -2072,14 +2083,6 @@ export function TokenCommunitySection({
                             {type === "alpha" ? "Alpha" : type}
                           </button>
                         ))}
-                        <button
-                          type="button"
-                          disabled
-                          title="Community thread polls require dedicated community poll storage. Feed polls are available from the main composer."
-                          className="rounded-full border border-border/60 bg-secondary/35 px-3 py-1.5 text-xs font-semibold text-muted-foreground/70"
-                        >
-                          Poll unavailable
-                        </button>
                       </div>
                       <Input
                         value={threadTitle}
@@ -2093,11 +2096,56 @@ export function TokenCommunitySection({
                         className="min-h-[120px] rounded-[20px] border-border/60 bg-background/70"
                         placeholder={room.viewer.showWelcomeBanner ? "Introduce yourself or drop your first take..." : "Start a thread for the room..."}
                       />
+                      {threadPostType === "poll" ? (
+                        <div className="space-y-2 rounded-[18px] border border-border/60 bg-secondary/45 p-3">
+                          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            Poll options
+                          </div>
+                          {threadPollOptions.map((option, index) => (
+                            <Input
+                              key={index}
+                              value={option}
+                              onChange={(event) => {
+                                const next = [...threadPollOptions];
+                                next[index] = event.target.value;
+                                setThreadPollOptions(next);
+                              }}
+                              className="rounded-[14px] border-border/60 bg-background/70"
+                              placeholder={`Option ${index + 1}`}
+                            />
+                          ))}
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="rounded-full"
+                              disabled={threadPollOptions.length >= 6}
+                              onClick={() => setThreadPollOptions((current) => [...current, ""])}
+                            >
+                              Add option
+                            </Button>
+                            {threadPollOptions.length > 2 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="rounded-full"
+                                onClick={() => setThreadPollOptions((current) => current.slice(0, -1))}
+                              >
+                                Remove option
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="flex justify-end">
                         <Button
                           className="rounded-full"
                           onClick={() => createThreadMutation.mutate()}
-                          disabled={!threadContent.trim() || createThreadMutation.isPending}
+                          disabled={
+                            !threadContent.trim() ||
+                            createThreadMutation.isPending ||
+                            (threadPostType === "poll" && threadPollOptions.filter((option) => option.trim()).length < 2)
+                          }
                         >
                           {createThreadMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                           Post to room

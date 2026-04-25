@@ -82,6 +82,26 @@ export interface Post {
   id: string;
   content: string;
   postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
+  communityId?: string | null;
+  community?: {
+    id: string;
+    tokenId: string;
+    tokenAddress: string;
+    chainType: string;
+    symbol: string | null;
+    name: string | null;
+    image: string | null;
+    xCashtag: string | null;
+    dexscreenerUrl?: string | null;
+    token?: {
+      address: string;
+      chainType: string;
+      symbol: string | null;
+      name: string | null;
+      imageUrl: string | null;
+      dexscreenerUrl: string | null;
+    };
+  } | null;
   pollExpiresAt?: string | null;
   poll?: {
     totalVotes: number;
@@ -157,6 +177,12 @@ export interface Post {
   currentReactionType?: ReactionType | null;
   threadCount?: number;
   radarReasons?: string[];
+  feedScore?: number;
+  feedReasons?: string[];
+  repostContext?: {
+    createdAt: string;
+    user: PostAuthor;
+  } | null;
   // Shared by others (reposters)
   sharedBy?: PostAuthor[];
   // Shared Alpha - users who posted same CA within 48h

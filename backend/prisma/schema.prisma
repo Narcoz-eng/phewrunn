@@ -184,6 +184,7 @@ model Post {
   authorId        String
   author          User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
   tokenId         String?
+  communityId     String?
 
   // Contract Address tracking
   contractAddress String?
@@ -251,6 +252,7 @@ model Post {
   pollOptions     PostPollOption[]
   pollVotes       PostPollVote[] @relation("PostPollVotePost")
   token           Token?    @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  community       TokenCommunityProfile? @relation("TokenCommunityPosts", fields: [communityId], references: [id], onDelete: SetNull)
 
   // Indexes for efficient queries
   @@index([authorId, settled]) // For user stats queries
@@ -261,6 +263,7 @@ model Post {
   @@index([createdAt, id])
   @@index([createdAt, authorId])
   @@index([authorId, createdAt])
+  @@index([communityId, createdAt])
   @@index([contractAddress, createdAt])
   @@index([settled, createdAt])
   @@index([settled, isWin, authorId])
@@ -638,6 +641,7 @@ model TokenCommunityProfile {
   token     Token  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
   createdBy User?  @relation("TokenCommunityProfileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User?  @relation("TokenCommunityProfileUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  posts     Post[] @relation("TokenCommunityPosts")
 
   @@index([createdById, createdAt])
   @@index([updatedById, updatedAt])

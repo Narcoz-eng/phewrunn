@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { prisma } from "../prisma.js";
-import { findTokenByAddress } from "../services/intelligence/engine.js";
+import { findTokenByAddress, invalidateFeedListCaches } from "../services/intelligence/engine.js";
 import { invalidateNotificationsCache } from "./notifications.js";
 import {
   COMMUNITY_ASSET_KIND_VALUES,
@@ -97,6 +97,8 @@ const CreateThreadSchema = z
     title: z.string().trim().min(4).max(80).optional(),
     content: z.string().trim().min(6).max(600),
     postType: z.enum(["alpha", "discussion", "chart", "poll", "raid", "news"]).optional(),
+    pollOptions: z.array(z.string().trim().min(1).max(120)).min(2).max(6).optional(),
+    pollExpiresAt: z.string().datetime().optional(),
   })
   .strict();
 
@@ -2450,60 +2452,145 @@ tokenCommunitiesRouter.post(
     try {
       const viewer = c.get("user")!;
       const token = await resolveTokenByAddressOrThrow(c.req.valid("param").tokenAddress);
-      await requireExistingCommunity(token.id);
+      const community = await requireExistingCommunity(token.id);
       await requireCommunityMembership(token.id, viewer.id);
       const payload = c.req.valid("json");
-      if (payload.postType === "poll") {
+      const postType = payload.postType ?? "discussion";
+      const pollOptions = [...new Set((payload.pollOptions ?? []).map((option) => option.trim()).filter(Boolean))];
+      const pollExpiresAt = payload.pollExpiresAt ? new Date(payload.pollExpiresAt) : null;
+      if (postType === "poll" && pollOptions.length < 2) {
         return c.json(
-          { error: { message: "Community thread polls require dedicated community poll storage.", code: "COMMUNITY_POLL_UNAVAILABLE" } },
+          { error: { message: "Community polls require at least two options.", code: "POLL_OPTIONS_REQUIRED" } },
+          400,
+        );
+      }
+      if (postType !== "poll" && pollOptions.length > 0) {
+        return c.json(
+          { error: { message: "Poll options can only be submitted with poll posts.", code: "POLL_OPTIONS_UNSUPPORTED" } },
+          400,
+        );
+      }
+      if (pollExpiresAt && pollExpiresAt.getTime() <= Date.now()) {
+        return c.json(
+          { error: { message: "Poll expiration must be in the future.", code: "POLL_EXPIRATION_INVALID" } },
           400,
         );
       }
 
-      const thread = await prisma.tokenCommunityThread.create({
-        data: {
-          tokenId: token.id,
-          authorId: viewer.id,
-          title: payload.title?.trim() || null,
-          content: payload.content.trim(),
-          kind: payload.postType ?? "discussion",
-          lastActivityAt: new Date(),
-        },
-        select: {
-          id: true,
-          title: true,
-          content: true,
-          kind: true,
-          raidCampaignId: true,
-          replyCount: true,
-          isPinned: true,
-          lastActivityAt: true,
-          deletedAt: true,
-          createdAt: true,
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              image: true,
-              level: true,
-              isVerified: true,
+      const canonicalContent = payload.title?.trim()
+        ? `${payload.title.trim()}\n\n${payload.content.trim()}`
+        : payload.content.trim();
+      const useTokenAsSignalContext = postType === "alpha" || postType === "chart" || postType === "raid";
+      const result = await prisma.$transaction(async (tx) => {
+        const post = await tx.post.create({
+          data: {
+            content: canonicalContent,
+            postType,
+            pollExpiresAt,
+            authorId: viewer.id,
+            communityId: community.id,
+            tokenId: token.id,
+            contractAddress: useTokenAsSignalContext ? token.address : null,
+            chainType: useTokenAsSignalContext ? token.chainType : null,
+            tokenName: useTokenAsSignalContext ? token.name : null,
+            tokenSymbol: useTokenAsSignalContext ? token.symbol : null,
+            tokenImage: useTokenAsSignalContext ? token.imageUrl : null,
+            dexscreenerUrl: useTokenAsSignalContext ? token.dexscreenerUrl : null,
+            trackingMode: useTokenAsSignalContext ? "active" : null,
+            lastMcapUpdate: null,
+          },
+          select: { id: true },
+        });
+
+        if (postType === "poll" && pollOptions.length >= 2) {
+          await tx.postPollOption.createMany({
+            data: pollOptions.map((label, index) => ({
+              postId: post.id,
+              label,
+              sortOrder: index,
+            })),
+          });
+        }
+
+        const thread = await tx.tokenCommunityThread.create({
+          data: {
+            tokenId: token.id,
+            authorId: viewer.id,
+            title: payload.title?.trim() || null,
+            content: payload.content.trim(),
+            kind: postType,
+            lastActivityAt: new Date(),
+          },
+          select: {
+            id: true,
+            title: true,
+            content: true,
+            kind: true,
+            raidCampaignId: true,
+            replyCount: true,
+            isPinned: true,
+            lastActivityAt: true,
+            deletedAt: true,
+            createdAt: true,
+            author: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                image: true,
+                level: true,
+                isVerified: true,
+              },
+            },
+            reactions: {
+              select: {
+                emoji: true,
+                userId: true,
+              },
             },
           },
-          reactions: {
-            select: {
-              emoji: true,
-              userId: true,
-            },
-          },
-        },
+        });
+        return { thread, postId: post.id };
       });
+      const thread = result.thread;
       await mutateCommunityMemberStats({
         tokenId: token.id,
         userId: viewer.id,
         threadCount: 1,
         lastActiveAt: new Date(),
       });
+
+      const members = await prisma.tokenFollow.findMany({
+        where: { tokenId: token.id, userId: { not: viewer.id } },
+        select: { userId: true },
+        take: 500,
+      });
+      if (members.length > 0) {
+        const actor = thread.author.username || thread.author.name || "A community member";
+        await prisma.notification.createMany({
+          data: members.map((member) => ({
+            userId: member.userId,
+            type: "community_post",
+            message: `${actor} posted in ${community.xCashtag || token.symbol || token.name || "your community"}`,
+            postId: result.postId,
+            fromUserId: viewer.id,
+            entityType: "community",
+            entityId: community.id,
+            reasonCode: `community_post:${postType}`,
+            payload: {
+              postType,
+              tokenAddress: token.address,
+              communityId: community.id,
+            },
+            priority: postType === "alpha" || postType === "raid" ? 3 : 1,
+          })),
+          skipDuplicates: true,
+        });
+        for (const member of members) {
+          invalidateNotificationsCache(member.userId);
+        }
+      }
+      invalidateFeedListCaches();
 
       return c.json({ data: serializeThread(viewer.id, thread) }, 201);
     } catch (error) {

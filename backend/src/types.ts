@@ -139,6 +139,7 @@ export type PostType = z.infer<typeof PostTypeSchema>;
 export const CreatePostSchema = z.object({
   content: z.string().min(10, "Post must be at least 10 characters").max(400, "Post must be less than 400 characters"),
   postType: PostTypeSchema.optional(),
+  communityId: z.string().trim().min(1).optional(),
   pollOptions: z.array(z.string().trim().min(1).max(120)).min(2).max(6).optional(),
   pollExpiresAt: z.string().datetime().optional(),
 });

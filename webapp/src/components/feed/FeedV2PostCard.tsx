@@ -114,6 +114,10 @@ function chartPoints(post: Post): number[] {
   return [start, start * 1.04, start * 0.98, peak * 0.72, peak * 0.88, end * 0.94, end];
 }
 
+function hasMarketChartData(post: Post): boolean {
+  return post.entryMcap !== null || post.currentMcap !== null || post.roiCurrentPct !== null;
+}
+
 function callMetrics(post: Post): Array<{ label: string; value: string }> {
   const metrics: Array<{ label: string; value: string }> = [];
   if (typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)) {
@@ -139,8 +143,7 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
 }
 
 function MiniChart({ post, tall = false }: { post: Post; tall?: boolean }) {
-  const hasChartData = post.entryMcap !== null || post.currentMcap !== null || post.roiCurrentPct !== null;
-  if (!hasChartData) {
+  if (!hasMarketChartData(post)) {
     return (
       <div className={cn("flex items-center justify-center rounded-[16px] border border-white/8 bg-black/20 text-sm text-white/40", tall ? "h-[210px]" : "h-[116px]")}>
         Chart unavailable
@@ -228,6 +231,38 @@ function PostHeader({ post, badge }: { post: Post; badge?: string }) {
   );
 }
 
+function PostContextStrip({ post }: { post: Post }) {
+  const context: string[] = [];
+  if (post.repostContext?.user) {
+    context.push(`Reposted by ${post.repostContext.user.username || post.repostContext.user.name}`);
+  }
+  if (post.community) {
+    context.push(
+      `from ${
+        post.community.xCashtag ||
+        post.community.symbol ||
+        post.community.token?.symbol ||
+        post.community.name ||
+        post.community.token?.name ||
+        "community"
+      } community`
+    );
+  }
+  if (post.feedReasons?.length) {
+    context.push(post.feedReasons.slice(0, 2).join(" + "));
+  }
+  if (context.length === 0) return null;
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-lime-200/62">
+      {context.map((item) => (
+        <span key={item} className="rounded-full border border-lime-300/12 bg-lime-300/[0.055] px-2.5 py-1">
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function EngagementFooter({ post, onLike, onRepost }: FeedV2PostCardProps) {
   const navigate = useNavigate();
   return (
@@ -259,6 +294,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const metrics = callMetrics(post);
   return (
     <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge={typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70 ? "High Conviction" : undefined} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <h2 className="text-xl font-semibold tracking-tight text-white">{signalTitle(post)}</h2>
@@ -282,9 +318,18 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       )}
 
-      <div className="mt-4">
-        <MiniChart post={post} tall />
-      </div>
+      {hasMarketChartData(post) ? (
+        <div className="mt-4">
+          <MiniChart post={post} tall />
+        </div>
+      ) : (
+        <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 p-4">
+          <div className="text-sm font-semibold text-white">Token context pending</div>
+          <p className="mt-1 text-sm leading-6 text-white/50">
+            This call has structured type data, but live market candles are not available yet. No chart metrics are inferred.
+          </p>
+        </div>
+      )}
 
       {post.contractAddress ? (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -314,6 +359,7 @@ export function FeedPostWhaleCard(props: FeedV2PostCardProps) {
   const whaleValueUsd = snapshot?.holdingUsd ?? snapshot?.boughtUsd ?? snapshot?.soldUsd ?? snapshot?.totalPnlUsd ?? null;
   return (
     <article className="rounded-[18px] border border-cyan-300/12 bg-[linear-gradient(180deg,rgba(6,13,18,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge="Whale Alert" />
       <h2 className="mt-4 text-xl font-semibold tracking-tight text-white">{tokenLabel(post)} WHALE ACTIVITY</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
@@ -335,6 +381,7 @@ export function FeedPostPollCard(props: FeedV2PostCardProps) {
   const expired = expiresAt ? expiresAt.getTime() <= Date.now() : false;
   return (
     <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge="Poll" />
       <h2 className="mt-4 text-lg font-semibold text-white">{displayContent(post)}</h2>
       {poll && poll.options.length > 0 ? (
@@ -393,6 +440,7 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
     <article className="rounded-[18px] border border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.10),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge="Chart" />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -408,9 +456,15 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
         </div>
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
-      <div className="mt-4">
-        <MiniChart post={post} tall />
-      </div>
+      {hasMarketChartData(post) ? (
+        <div className="mt-4">
+          <MiniChart post={post} tall />
+        </div>
+      ) : (
+        <div className="mt-4 rounded-[16px] border border-cyan-300/12 bg-cyan-300/[0.05] p-4 text-sm leading-6 text-cyan-100/70">
+          Chart data is not attached to this setup yet. The post remains a chart post, but no candles are fabricated.
+        </div>
+      )}
       <div className="mt-3 grid gap-2 md:grid-cols-3">
         <Metric label="Setup Quality" value={typeof post.setupQualityScore === "number" ? post.setupQualityScore.toFixed(1) : "Unavailable"} />
         <Metric label="Market Health" value={typeof post.marketHealthScore === "number" ? post.marketHealthScore.toFixed(1) : "Unavailable"} />
@@ -426,6 +480,7 @@ export function FeedPostRaidCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
     <article className="rounded-[18px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge="Raid" />
       <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-200/72">
         <RadioTower className="h-3.5 w-3.5" />
@@ -453,6 +508,7 @@ export function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
     <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge="Discussion" />
       <p className="mt-4 text-[15px] leading-7 text-white/72">{displayContent(post)}</p>
       {post.contractAddress ? <TokenPreview post={post} /> : null}
@@ -465,6 +521,7 @@ export function FeedPostNewsCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
     <article className="rounded-[18px] border border-amber-300/12 bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.10),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+      <PostContextStrip post={post} />
       <PostHeader post={post} badge="News" />
       <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/72">Market news</div>
       <h2 className="mt-1 text-xl font-semibold text-white">{headline(post)}</h2>

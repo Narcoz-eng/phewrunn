@@ -2438,6 +2438,8 @@ export default function Feed() {
             }
           : post
       );
+      void queryClient.invalidateQueries({ queryKey: ["profile", "reposts"] });
+      void queryClient.invalidateQueries({ queryKey: ["posts"] });
     },
     onError: (error) => {
       if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {

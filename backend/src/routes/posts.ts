@@ -325,6 +325,80 @@ export async function attachPollSummaries<T extends PostLikeRecord>(posts: T[], 
   }));
 }
 
+type PostCommunityPayload = {
+  id: string;
+  tokenId: string;
+  xCashtag: string | null;
+  token: {
+    id: string;
+    address: string;
+    chainType: string;
+    symbol: string | null;
+    name: string | null;
+    imageUrl: string | null;
+    dexscreenerUrl: string | null;
+  };
+};
+
+function serializePostCommunity(community: PostCommunityPayload | null | undefined) {
+  if (!community) return null;
+  return {
+    id: community.id,
+    tokenId: community.tokenId,
+    xCashtag: community.xCashtag,
+    tokenAddress: community.token.address,
+    chainType: community.token.chainType,
+    symbol: community.token.symbol,
+    name: community.token.name,
+    image: community.token.imageUrl,
+    dexscreenerUrl: community.token.dexscreenerUrl,
+  };
+}
+
+async function resolveCommunityPostContext(communityId: string | null | undefined, userId: string) {
+  if (!communityId) return null;
+
+  const community = await prisma.tokenCommunityProfile.findUnique({
+    where: { id: communityId },
+    select: {
+      id: true,
+      tokenId: true,
+      xCashtag: true,
+      token: {
+        select: {
+          id: true,
+          address: true,
+          chainType: true,
+          symbol: true,
+          name: true,
+          imageUrl: true,
+          dexscreenerUrl: true,
+        },
+      },
+    },
+  });
+
+  if (!community) {
+    throw new Error("COMMUNITY_NOT_FOUND");
+  }
+
+  const membership = await prisma.tokenFollow.findUnique({
+    where: {
+      userId_tokenId: {
+        userId,
+        tokenId: community.tokenId,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!membership) {
+    throw new Error("COMMUNITY_JOIN_REQUIRED");
+  }
+
+  return community;
+}
+
 type JobDispatchRecord = {
   jobName: EnqueueInternalJobInput["jobName"];
   idempotencyKey: string;
@@ -1670,6 +1744,7 @@ async function loadPrimaryFeedPosts(
               postType: true,
               pollExpiresAt: true,
               authorId: true,
+              communityId: true,
               contractAddress: true,
               chainType: true,
               tokenName: true,
@@ -1709,6 +1784,24 @@ async function loadPrimaryFeedPosts(
                   reposts: true,
                 },
               },
+              community: {
+                select: {
+                  id: true,
+                  tokenId: true,
+                  xCashtag: true,
+                  token: {
+                    select: {
+                      id: true,
+                      address: true,
+                      chainType: true,
+                      symbol: true,
+                      name: true,
+                      imageUrl: true,
+                      dexscreenerUrl: true,
+                    },
+                  },
+                },
+              },
             },
           } as any),
         {
@@ -1734,6 +1827,7 @@ async function loadPrimaryFeedPosts(
             postType: true,
             pollExpiresAt: true,
             authorId: true,
+            communityId: true,
             contractAddress: true,
             chainType: true,
             tokenName: true,
@@ -5855,6 +5949,18 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
   const content = strippedContent.length > 0 ? strippedContent : body.content.trim();
   const pollOptions = [...new Set((body.pollOptions ?? []).map((option) => option.trim()).filter(Boolean))];
   const pollExpiresAt = body.pollExpiresAt ? new Date(body.pollExpiresAt) : null;
+  let communityContext: Awaited<ReturnType<typeof resolveCommunityPostContext>> = null;
+  try {
+    communityContext = await resolveCommunityPostContext(body.communityId, user.id);
+  } catch (error) {
+    if (error instanceof Error && error.message === "COMMUNITY_NOT_FOUND") {
+      return c.json({ error: { message: "Community not found.", code: "COMMUNITY_NOT_FOUND" } }, 404);
+    }
+    if (error instanceof Error && error.message === "COMMUNITY_JOIN_REQUIRED") {
+      return c.json({ error: { message: "Join this community before posting.", code: "COMMUNITY_JOIN_REQUIRED" } }, 403);
+    }
+    throw error;
+  }
 
   if (postType === "poll" && pollOptions.length < 2) {
     return c.json({
@@ -5924,26 +6030,34 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
   const marketCapResult = marketContext?.marketCapResult ?? null;
   const heliusTokenMetadata = marketContext?.heliusTokenMetadata ?? null;
   const entryMcap = marketCapResult?.mcap ?? null;
+  const communityToken = communityContext?.token ?? null;
+  const communityTokenAppliesToPost =
+    Boolean(communityToken) && !detected && (postType === "alpha" || postType === "chart" || postType === "raid");
 
   const createPostData = {
     content,
     postType,
     pollExpiresAt,
     authorId: user.id,
-    contractAddress: detected?.address ?? null,
-    chainType: detected?.chainType ?? null,
+    communityId: communityContext?.id ?? null,
+    tokenId: communityContext?.tokenId ?? null,
+    contractAddress: detected?.address ?? (communityTokenAppliesToPost ? communityToken?.address ?? null : null),
+    chainType: detected?.chainType ?? (communityTokenAppliesToPost ? communityToken?.chainType ?? null : null),
     entryMcap,
     currentMcap: entryMcap,
     // Store token metadata (Helius-first for names/symbol, Dex-first for image)
-    tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult?.tokenName ?? null,
-    tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult?.tokenSymbol ?? null,
-    tokenImage: marketCapResult?.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
-    dexscreenerUrl: marketCapResult?.dexscreenerUrl ?? null,
-    trackingMode: detected ? TRACKING_MODE_ACTIVE : null,
+    tokenName: heliusTokenMetadata?.tokenName ?? marketCapResult?.tokenName ?? (communityTokenAppliesToPost ? communityToken?.name ?? null : null),
+    tokenSymbol: heliusTokenMetadata?.tokenSymbol ?? marketCapResult?.tokenSymbol ?? (communityTokenAppliesToPost ? communityToken?.symbol ?? null : null),
+    tokenImage: marketCapResult?.tokenImage ?? heliusTokenMetadata?.tokenImage ?? (communityTokenAppliesToPost ? communityToken?.imageUrl ?? null : null),
+    dexscreenerUrl: marketCapResult?.dexscreenerUrl ?? (communityTokenAppliesToPost ? communityToken?.dexscreenerUrl ?? null : null),
+    trackingMode: detected || communityTokenAppliesToPost ? TRACKING_MODE_ACTIVE : null,
     lastMcapUpdate: detected ? new Date() : null,
   };
 
-  let post: ReturnType<typeof buildCreatePostResponse>;
+  let post: ReturnType<typeof buildCreatePostResponse> & {
+    communityId?: string | null;
+    community?: ReturnType<typeof serializePostCommunity>;
+  };
 
   try {
     const createdPost = await prisma.post.create({
@@ -5967,12 +6081,31 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
             reposts: true,
           },
         },
+        community: {
+          select: {
+            id: true,
+            tokenId: true,
+            xCashtag: true,
+            token: {
+              select: {
+                id: true,
+                address: true,
+                chainType: true,
+                symbol: true,
+                name: true,
+                imageUrl: true,
+                dexscreenerUrl: true,
+              },
+            },
+          },
+        },
       },
     });
     post = {
       ...createdPost,
       postType: normalizePostType(createdPost.postType, Boolean(createdPost.contractAddress)),
       pollExpiresAt: createdPost.pollExpiresAt?.toISOString() ?? null,
+      community: serializePostCommunity(createdPost.community),
     };
   } catch (error) {
     if (!isPrismaSchemaDriftError(error) && !isPrismaClientError(error)) {
@@ -5997,6 +6130,8 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
       tokenImage: marketCapResult?.tokenImage ?? heliusTokenMetadata?.tokenImage ?? null,
       dexscreenerUrl: marketCapResult?.dexscreenerUrl ?? null,
     });
+    post.communityId = communityContext?.id ?? null;
+    post.community = serializePostCommunity(communityContext);
   }
 
   if (createPostData.postType === "poll" && pollOptions.length >= 2) {
@@ -6006,6 +6141,29 @@ postsRouter.post("/", requireNotBanned, zValidator("json", CreatePostSchema), as
         label,
         sortOrder: index,
       })),
+    });
+  }
+
+  if (communityContext) {
+    await prisma.tokenCommunityMemberStats.upsert({
+      where: {
+        tokenId_userId: {
+          tokenId: communityContext.tokenId,
+          userId: user.id,
+        },
+      },
+      create: {
+        tokenId: communityContext.tokenId,
+        userId: user.id,
+        threadCount: 1,
+        contributionScore: 6,
+        lastActiveAt: new Date(),
+      },
+      update: {
+        threadCount: { increment: 1 },
+        contributionScore: { increment: 6 },
+        lastActiveAt: new Date(),
+      },
     });
   }
 

@@ -148,6 +148,23 @@ const TOKEN_SELECT = Prisma.validator<Prisma.TokenSelect>()({
   updatedAt: true,
 });
 
+const POST_COMMUNITY_SELECT = Prisma.validator<Prisma.TokenCommunityProfileSelect>()({
+  id: true,
+  tokenId: true,
+  xCashtag: true,
+  token: {
+    select: {
+      id: true,
+      address: true,
+      chainType: true,
+      symbol: true,
+      name: true,
+      imageUrl: true,
+      dexscreenerUrl: true,
+    },
+  },
+});
+
 const CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   id: true,
   content: true,
@@ -155,6 +172,7 @@ const CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   pollExpiresAt: true,
   authorId: true,
   tokenId: true,
+  communityId: true,
   contractAddress: true,
   chainType: true,
   tokenName: true,
@@ -189,6 +207,7 @@ const CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   updatedAt: true,
   author: { select: AUTHOR_SELECT },
   token: { select: TOKEN_SELECT },
+  community: { select: POST_COMMUNITY_SELECT },
   _count: {
     select: {
       likes: true,
@@ -206,6 +225,7 @@ const FEED_CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   pollExpiresAt: true,
   authorId: true,
   tokenId: true,
+  communityId: true,
   contractAddress: true,
   chainType: true,
   tokenName: true,
@@ -240,6 +260,7 @@ const FEED_CALL_SELECT = Prisma.validator<Prisma.PostSelect>()({
   updatedAt: true,
   author: { select: AUTHOR_SELECT },
   token: { select: TOKEN_SELECT },
+  community: { select: POST_COMMUNITY_SELECT },
 });
 
 const THREAD_COMMENT_SELECT = Prisma.validator<Prisma.CommentSelect>()({
@@ -316,6 +337,12 @@ export type EnrichedCall = CallRecord & {
   isLiked: boolean;
   isReposted: boolean;
   isFollowingAuthor: boolean;
+  feedScore: number;
+  feedReasons: string[];
+  repostContext: {
+    createdAt: Date;
+    user: Pick<AuthorRecord, "id" | "name" | "username" | "image" | "level" | "xp" | "isVerified" | "trustScore" | "reputationTier">;
+  } | null;
   currentReactionType: string | null;
   reactionCounts: ReactionCounts;
   confidenceScore: number;
@@ -3104,6 +3131,9 @@ async function hydrateCalls(
       isLiked: socialState.likedPostIds.has(record.id),
       isReposted: socialState.repostedPostIds.has(record.id),
       isFollowingAuthor: socialState.followedAuthorIds.has(record.authorId),
+      feedScore: 0,
+      feedReasons: [],
+      repostContext: null,
       currentReactionType: socialState.reactionByPostId.get(record.id) ?? null,
       reactionCounts,
       confidenceScore,
@@ -3300,6 +3330,15 @@ async function getFollowingSnapshot(viewerId: string | null): Promise<{
 
 function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
   const sorted = [...calls];
+  const hasFeedScores = sorted.some((call) => call.feedScore > 0);
+  if (hasFeedScores) {
+    return sorted.sort((left, right) => {
+      const scoreDelta = right.feedScore - left.feedScore;
+      if (scoreDelta !== 0) return scoreDelta;
+      const createdDelta = right.createdAt.getTime() - left.createdAt.getTime();
+      return createdDelta !== 0 ? createdDelta : right.id.localeCompare(left.id);
+    });
+  }
   if (kind === "latest" || kind === "following") {
     return sorted.sort((left, right) => {
       const delta = right.createdAt.getTime() - left.createdAt.getTime();
@@ -3343,6 +3382,7 @@ function isEligibleForRankedFeed(
     | "opportunityScore"
     | "bullishSignalsSuppressed"
     | "isTradable"
+    | "postType"
   >
 ): boolean {
   if (kind === "latest" || kind === "following") {
@@ -3354,6 +3394,9 @@ function isEligibleForRankedFeed(
   }
 
   const roiCurrentPct = call.roiCurrentPct;
+  if (kind === "early-runners" && call.postType === "raid") {
+    return true;
+  }
   if (kind === "hot-alpha") {
     return (
       call.hotAlphaScore >= HOT_ALPHA_THRESHOLD &&
@@ -3384,6 +3427,168 @@ function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): Enriched
   }
 
   return calls.filter((call) => isEligibleForRankedFeed(kind, call));
+}
+
+function postTypeWeight(postType: unknown): number {
+  switch (postType) {
+    case "alpha":
+      return 10;
+    case "chart":
+      return 8;
+    case "raid":
+      return 9;
+    case "poll":
+      return 5;
+    case "news":
+      return 6;
+    case "discussion":
+      return 4;
+    default:
+      return 3;
+  }
+}
+
+function computeFeedScoreForCall(
+  kind: FeedKind,
+  call: EnrichedCall,
+  followedTraderIds: Set<string>,
+  followedTokenIds: Set<string>
+): { score: number; reasons: string[] } {
+  const ageHours = Math.max(0.15, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
+  const freshnessWeight = Math.exp(-ageHours / 24) * 28;
+  const authorTrust = finite(call.author.trustScore ?? 0);
+  const authorLevelScore = Math.min(100, Math.max(0, finite(call.author.level ?? 0) * 3));
+  const authorRoiScore = Math.max(0, Math.min(100, finite(call.author.avgRoi30d ?? 0)));
+  const authorReputationWeight = Math.max(authorTrust, authorLevelScore, authorRoiScore) * 0.18;
+  const engagement =
+    (call._count.likes ?? 0) * 2 +
+    (call._count.comments ?? call.threadCount ?? 0) * 3 +
+    (call._count.reposts ?? 0) * 5 +
+    (call._count.reactions ?? 0);
+  const engagementVelocityWeight = Math.min(24, (engagement / ageHours) * 3.5);
+  const tokenSignalWeight =
+    call.postType === "alpha" || call.postType === "chart"
+      ? Math.max(finite(call.confidenceScore), finite(call.highConvictionScore), finite(call.hotAlphaScore)) * 0.2
+      : 0;
+  const isFollowedAuthor = followedTraderIds.has(call.authorId);
+  const isFollowedToken = Boolean(call.tokenId && followedTokenIds.has(call.tokenId));
+  const isJoinedCommunity = Boolean(call.community?.tokenId && followedTokenIds.has(call.community.tokenId));
+  const communityContextWeight = call.communityId
+    ? isJoinedCommunity
+      ? 13
+      : 6
+    : 0;
+  const personalizationWeight = (isFollowedAuthor ? 12 : 0) + (isFollowedToken ? 10 : 0);
+  const raidPressureWeight =
+    call.postType === "raid"
+      ? Math.min(18, 8 + (call._count.comments ?? 0) * 1.4 + (call._count.reposts ?? 0) * 2.2)
+      : 0;
+  const repostBoost = call.repostContext ? 8 : 0;
+  const riskPenalty = Math.max(finite(call.bundlePenaltyScore), finite(call.tokenRiskScore ?? 0)) >= 70 ? 14 : 0;
+  const spamPenalty =
+    authorTrust > 0 && authorTrust < 18 && call.content.trim().length < 48 && engagement < 2 ? 8 : 0;
+
+  const kindBoost =
+    kind === "hot-alpha"
+      ? finite(call.hotAlphaScore) * 0.18
+      : kind === "high-conviction"
+        ? finite(call.highConvictionScore) * 0.18
+        : kind === "early-runners"
+          ? call.postType === "raid"
+            ? raidPressureWeight
+            : finite(call.earlyRunnerScore) * 0.18
+          : 0;
+
+  const score = clampScore(
+    freshnessWeight +
+      authorReputationWeight +
+      engagementVelocityWeight +
+      postTypeWeight(call.postType) +
+      tokenSignalWeight +
+      communityContextWeight +
+      personalizationWeight +
+      raidPressureWeight +
+      repostBoost +
+      kindBoost -
+      riskPenalty -
+      spamPenalty
+  );
+
+  const reasons: string[] = [];
+  if (tokenSignalWeight >= 14 || call.highConvictionScore >= HIGH_CONVICTION_THRESHOLD) reasons.push("High conviction");
+  if (engagementVelocityWeight >= 10) reasons.push("Fast engagement");
+  if (authorReputationWeight >= 12) reasons.push("Trusted caller");
+  if (communityContextWeight >= 6) reasons.push(isJoinedCommunity ? "Your community" : "Community momentum");
+  if (raidPressureWeight >= 10) reasons.push("Raid pressure");
+  if (finite(call.trustedTraderCount) > 0) reasons.push("Smart money detected");
+  if (call.repostContext) reasons.push("Repost momentum");
+  if (riskPenalty > 0) reasons.push("Risk adjusted");
+  if (reasons.length === 0) reasons.push("Fresh signal");
+
+  return { score: Math.round(score * 10) / 10, reasons: reasons.slice(0, 4) };
+}
+
+async function loadRepostContexts(postIds: string[]): Promise<Map<string, EnrichedCall["repostContext"]>> {
+  if (postIds.length === 0) return new Map();
+  const reposts = await prisma.repost.findMany({
+    where: { postId: { in: postIds } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      postId: true,
+      createdAt: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          username: true,
+          image: true,
+          level: true,
+          xp: true,
+          isVerified: true,
+          trustScore: true,
+          reputationTier: true,
+        },
+      },
+    },
+    take: Math.max(20, postIds.length * 2),
+  });
+  const contexts = new Map<string, EnrichedCall["repostContext"]>();
+  for (const repost of reposts) {
+    if (contexts.has(repost.postId)) continue;
+    contexts.set(repost.postId, {
+      createdAt: repost.createdAt,
+      user: repost.user,
+    });
+  }
+  return contexts;
+}
+
+async function applyFeedRankingContext(
+  kind: FeedKind,
+  calls: EnrichedCall[],
+  followedTraderIds: string[],
+  followedTokenIds: string[]
+): Promise<EnrichedCall[]> {
+  if (calls.length === 0) return calls;
+  const [feedCounts, repostContexts] = await Promise.all([
+    loadFeedCountSummaries(calls.map((item) => item.id)),
+    loadRepostContexts(calls.map((item) => item.id)),
+  ]);
+  const followedTraderSet = new Set(followedTraderIds);
+  const followedTokenSet = new Set(followedTokenIds);
+  return calls.map((call) => {
+    const withCounts = {
+      ...call,
+      _count: feedCounts.get(call.id) ?? call._count,
+      repostContext: repostContexts.get(call.id) ?? null,
+    };
+    const ranking = computeFeedScoreForCall(kind, withCounts, followedTraderSet, followedTokenSet);
+    return {
+      ...withCounts,
+      feedScore: ranking.score,
+      feedReasons: ranking.reasons,
+    };
+  });
 }
 
 function shouldPriorityRefreshFeed(args: FeedArgs): boolean {
@@ -3720,10 +3925,9 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
 
   const request = (async () => {
     const computeFeedResult = async (): Promise<FeedListResult> => {
-      const { followedTraderIds, followedTokenIds } =
-        args.kind === "following"
-          ? await getFollowingSnapshot(args.viewerId)
-          : { followedTraderIds: [], followedTokenIds: [] };
+      const { followedTraderIds, followedTokenIds } = args.viewerId
+        ? await getFollowingSnapshot(args.viewerId)
+        : { followedTraderIds: [], followedTokenIds: [] };
       if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) {
         return {
           items: [],
@@ -3793,7 +3997,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         },
       })) as CallRecord[];
 
-      const sortedHydrated = sortCalls(
+      const initiallyHydrated = sortCalls(
         args.kind,
         await hydrateCalls(records, args.viewerId, {
           refreshTraders: false,
@@ -3803,12 +4007,16 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           preferStoredIntelligence: preferStoredFeedIntelligence,
         })
       );
-      const baseHydrated = filterCallsForFeedKind(args.kind, sortedHydrated);
-      const hydrated = filterCallsForFeedKind(
+      const baseHydrated = filterCallsForFeedKind(args.kind, initiallyHydrated);
+      const hydratedBeforeRanking = filterCallsForFeedKind(
         args.kind,
         isDirectChronologicalFeed
           ? await refreshPriorityFeedSlice(args, records, baseHydrated)
           : baseHydrated
+      );
+      const hydrated = sortCalls(
+        args.kind,
+        await applyFeedRankingContext(args.kind, hydratedBeforeRanking, followedTraderIds, followedTokenIds)
       );
       const startIndex =
         isDirectChronologicalFeed && cursorBoundary
@@ -3817,18 +4025,13 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
             ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
             : 0;
       const items = hydrated.slice(startIndex, startIndex + limit);
-      const feedCounts = await loadFeedCountSummaries(items.map((item) => item.id));
-      const itemsWithCounts = items.map((item) => ({
-        ...item,
-        _count: feedCounts.get(item.id) ?? item._count,
-      }));
       const nextCursor =
         items.length === limit && hydrated[startIndex + limit]
           ? items[items.length - 1]?.id ?? null
           : null;
 
       return {
-        items: itemsWithCounts,
+        items,
         hasMore: startIndex + limit < hydrated.length,
         nextCursor,
         totalItems: hydrated.length,
