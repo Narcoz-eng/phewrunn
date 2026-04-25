@@ -176,7 +176,7 @@ export default function CommunityPage() {
           />
         </div>
       </section>
-      <section className="overflow-hidden rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))]">
+      <section className="overflow-hidden rounded-[20px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,16,0.98),rgba(4,7,10,0.98))]">
         <div className="relative">
           {banner ? (
             <div className="absolute inset-0">
@@ -186,10 +186,10 @@ export default function CommunityPage() {
           ) : (
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(45,212,191,0.12),transparent_28%),linear-gradient(180deg,rgba(4,9,12,0.24),rgba(4,9,12,0.94))]" />
           )}
-          <div className="relative p-5 sm:p-6 lg:p-7">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="relative p-4 sm:p-5 lg:p-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div className="flex items-start gap-4">
-                <Avatar className="h-24 w-24 rounded-[28px] border border-lime-300/20 shadow-[0_24px_64px_-28px_rgba(169,255,52,0.42)]">
+                <Avatar className="h-20 w-20 rounded-[22px] border border-lime-300/20 shadow-[0_24px_64px_-28px_rgba(169,255,52,0.42)]">
                   <AvatarImage src={heroImage} />
                   <AvatarFallback className="bg-white/[0.04] text-2xl font-semibold text-white">
                     {heroName.charAt(0)}
@@ -206,7 +206,7 @@ export default function CommunityPage() {
                       </span>
                     ) : null}
                   </div>
-                  <h1 className="mt-4 text-4xl font-semibold tracking-[-0.05em] text-white sm:text-5xl">
+                  <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">
                     {heroName}
                   </h1>
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-white/56">
@@ -242,7 +242,7 @@ export default function CommunityPage() {
               </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap gap-6 border-t border-white/8 pt-4">
+            <div className="mt-5 flex flex-wrap gap-6 border-t border-white/8 pt-4">
               {[
                 { value: "feed", label: "Feed" },
                 { value: "calls", label: "Top Calls" },
@@ -274,7 +274,7 @@ export default function CommunityPage() {
               ))}
             </div>
 
-            <div className="mt-6 grid gap-3 md:grid-cols-4 xl:grid-cols-6">
+            <div className="mt-5 grid gap-3 md:grid-cols-4 xl:grid-cols-6">
               <HeroStat label="Members" value={formatCompact(summary.hero.memberCount)} />
               <HeroStat label="Online" value={formatCompact(summary.hero.onlineNowEstimate)} />
               <HeroStat label="Posts" value={formatCompact(summary.stats.posts)} />
@@ -286,10 +286,10 @@ export default function CommunityPage() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_300px_320px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
         <div className="space-y-4">
           {(tab === "feed" || tab === "calls") && summary.pinnedCall ? (
-            <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5 sm:p-6">
+            <section className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-4 sm:p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Pinned Call</div>
@@ -474,8 +474,8 @@ export default function CommunityPage() {
           ) : null}
         </div>
 
-        <div className="space-y-4">
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+        <aside className="flex flex-col gap-4">
+          <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Contributors Leaderboard</div>
             <div className="mt-4 space-y-3">
               {filteredContributors.length ? filteredContributors.slice(0, 5).map((contributor, index) => (
@@ -486,7 +486,7 @@ export default function CommunityPage() {
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-white">{contributor.user.username || contributor.user.name}</div>
-                      <div className="text-xs text-white/42">{contributor.badge} • {contributor.currentRaidStreak} streak</div>
+                      <div className="text-xs text-white/42">{contributor.badge}{" - "}{contributor.currentRaidStreak} streak</div>
                     </div>
                   </div>
                   <div className="text-sm font-semibold text-lime-300">{formatCompact(contributor.contributionScore)}</div>
@@ -501,7 +501,7 @@ export default function CommunityPage() {
             </div>
           </section>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+          <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Room Metrics</div>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <MiniMetric label="Members" value={formatCompact(summary.stats.members)} />
@@ -511,7 +511,7 @@ export default function CommunityPage() {
             </div>
           </section>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+          <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Online Members</div>
             <div className="mt-4 flex items-center">
               {filteredMembers.slice(0, 5).map((member, index) => (
@@ -527,10 +527,7 @@ export default function CommunityPage() {
               </div>
             </div>
           </section>
-        </div>
-
-        <div className="space-y-4">
-          <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-5">
+          <section className="order-first rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,15,0.98),rgba(4,7,9,0.98))] p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Live Raid</div>
               <span className={cn(
@@ -569,7 +566,7 @@ export default function CommunityPage() {
             )}
           </section>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+          <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Recent Raids</div>
             <div className="mt-4 space-y-3">
               {filteredRecentRaids.length ? filteredRecentRaids.map((raid) => (
@@ -588,7 +585,7 @@ export default function CommunityPage() {
             </div>
           </section>
 
-          <section className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+          <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-4">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">
               <Users className="h-4 w-4 text-lime-200" />
               Room Signals
@@ -607,7 +604,7 @@ export default function CommunityPage() {
               ))}
             </div>
           </section>
-        </div>
+        </aside>
       </div>
     </div>
   );
