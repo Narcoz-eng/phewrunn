@@ -17,7 +17,7 @@ export function TerminalExecutionGrid({
   return (
     <div
       className={cn(
-        "grid gap-3 2xl:grid-cols-[minmax(680px,1fr)_360px_320px] xl:grid-cols-[minmax(560px,1fr)_340px] xl:items-start",
+        "grid gap-3 2xl:grid-cols-[minmax(760px,1fr)_340px_318px] xl:grid-cols-[minmax(620px,1fr)_340px] xl:items-start",
         className
       )}
     >

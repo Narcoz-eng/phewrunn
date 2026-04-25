@@ -48,7 +48,7 @@ export default function TokenTelemetryCharts({
 }: TokenTelemetryChartsProps) {
   return (
     <>
-      <div className="h-[340px] w-full">
+      <div className="h-[380px] w-full 2xl:h-[420px]">
         {hasLiveChartTelemetry ? (
           <div className="h-full rounded-[24px] border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015))] p-3 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.01))]">
             <CandlestickChart

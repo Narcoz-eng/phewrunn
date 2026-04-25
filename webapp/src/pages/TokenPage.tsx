@@ -3064,7 +3064,7 @@ export default function TokenPage() {
           </V2Surface>
         ) : (
           <motion.div
-            className="space-y-5"
+            className="space-y-3"
             variants={containerVariants}
             initial="hidden"
             animate="visible"
@@ -3096,10 +3096,10 @@ export default function TokenPage() {
             </motion.section>
 
             <motion.section id="token-hero-band" variants={sectionVariants}>
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.52fr)_420px]">
+              <div className="grid gap-3">
                 <V2Surface tone="accent" className="relative overflow-hidden p-0">
                   {token.communityBannerUrl ? (
-                    <div className="relative h-36 border-b border-white/8 sm:h-44">
+                    <div className="absolute inset-0 opacity-70">
                       <div
                         className="absolute inset-0 bg-cover bg-center opacity-55"
                         style={{ backgroundImage: `url("${token.communityBannerUrl}")` }}
@@ -3117,16 +3117,16 @@ export default function TokenPage() {
                     />
                   )}
 
-                  <div className="relative space-y-6 p-5 sm:p-6 lg:p-7">
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-white/8 bg-black/20 px-4 py-3 text-[11px] uppercase tracking-[0.22em] text-white/58">
+                  <div className="relative space-y-3 p-4 sm:p-5">
+                    <div className="hidden flex-wrap items-center justify-between gap-3 rounded-[24px] border border-white/8 bg-black/20 px-4 py-3 text-[11px] uppercase tracking-[0.22em] text-white/58">
                       <span className="text-lime-300">Token intelligence control tower</span>
                       <span>Execution, holder structure, raid pressure, and call context stay separated but visible together.</span>
                     </div>
 
-                    <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                       <div className="flex min-w-0 items-start gap-4">
                         <div className="relative shrink-0">
-                          <div className="flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-[28px] border border-lime-300/25 bg-black/20 shadow-[0_28px_64px_-28px_rgba(169,255,52,0.45)] backdrop-blur-md">
+                          <div className="flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-[24px] border border-lime-300/25 bg-black/20 shadow-[0_28px_64px_-28px_rgba(169,255,52,0.45)] backdrop-blur-md">
                             {token.imageUrl ? (
                               <img src={token.imageUrl} alt={token.symbol ?? "Token"} className="h-full w-full object-cover" />
                             ) : (
@@ -3149,8 +3149,8 @@ export default function TokenPage() {
                             </V2StatusPill>
                           </div>
 
-                          <div className="mt-4 flex flex-wrap items-end gap-x-3 gap-y-2">
-                            <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                          <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-2">
+                            <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
                               {token.symbol || token.address.slice(0, 6)}
                             </h1>
                             <div className="pb-1 text-base text-white/56">
@@ -3158,8 +3158,8 @@ export default function TokenPage() {
                             </div>
                           </div>
 
-                          <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
-                            <div className="text-[2.2rem] font-semibold leading-none tracking-tight text-white sm:text-[2.9rem]">
+                          <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-2">
+                            <div className="text-[2rem] font-semibold leading-none tracking-tight text-white sm:text-[2.35rem]">
                               {formatTokenPrice(Number(liveTokenQuery.data?.priceUsd ?? token.priceUsd ?? Number.NaN))}
                             </div>
                             <div
@@ -3204,7 +3204,7 @@ export default function TokenPage() {
                             </a>
                           </div>
 
-                          <p className="mt-4 max-w-3xl text-sm leading-6 text-white/62">
+                          <p className="hidden max-w-3xl text-sm leading-6 text-white/62">
                             This page answers what the token is doing right now, why it matters, who is active around it, and what action is available next across market, intelligence, community, and raid systems.
                           </p>
 
@@ -3323,7 +3323,7 @@ export default function TokenPage() {
                       />
                     </div>
 
-                    <div className="grid gap-3 xl:grid-cols-4">
+                    <div className="hidden gap-3 xl:grid-cols-4">
                       <div className="rounded-[24px] border border-white/8 bg-white/[0.04] px-4 py-4">
                         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">Token State</div>
                         <div className="mt-2 text-sm font-semibold text-white">
@@ -3358,7 +3358,7 @@ export default function TokenPage() {
                   </div>
                 </V2Surface>
 
-                <div className="space-y-4">
+                <div className="hidden space-y-4">
                   <V2Surface className="p-5" tone="soft">
                     <V2SectionHeader
                       eyebrow="AI Conviction"
@@ -3543,8 +3543,8 @@ export default function TokenPage() {
             </motion.section>
 
             <motion.section variants={sectionVariants}>
-              <div className="overflow-hidden rounded-[30px] border border-white/8 bg-[#070b12] px-4 py-4 shadow-[0_24px_90px_rgba(0,0,0,0.26)] sm:px-5">
-                <div className="grid gap-2 lg:grid-cols-7">
+              <div className="overflow-hidden rounded-[20px] border border-white/8 bg-[#070b12] px-2 py-2 shadow-[0_18px_64px_rgba(0,0,0,0.22)] sm:px-2.5">
+                <div className="grid gap-1.5 lg:grid-cols-7">
                   {[
                     { key: "overview", label: "Overview", active: activeTokenTab === "trade" },
                     { key: "trade", label: "Trading Terminal", active: activeTokenTab === "trade" },
@@ -3559,7 +3559,7 @@ export default function TokenPage() {
                       type="button"
                       onClick={() => handleTokenSurfaceRail(item.key as TokenSurfaceRailItem)}
                       className={cn(
-                        "rounded-full border px-4 py-3 text-sm font-medium transition-colors",
+                        "rounded-[14px] border px-3 py-2 text-xs font-semibold transition-colors",
                         item.active
                           ? "border-lime-300/30 bg-lime-300/12 text-white shadow-[0_0_0_1px_rgba(163,230,53,0.08)]"
                           : "border-white/8 bg-white/[0.03] text-white/58 hover:bg-white/[0.06] hover:text-white/84"
@@ -3645,12 +3645,12 @@ export default function TokenPage() {
             {/* ── SECTION 3: CHART + QUICK BUY ── */}
             {activeTokenTab === "trade" ? (
               <motion.section id="token-terminal-section" variants={sectionVariants} className="terminal-card overflow-hidden">
-                <div className="border-b border-white/6 px-5 py-4 sm:px-6">
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                <div className="border-b border-white/6 px-4 py-3 sm:px-5">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                     <div>
                       <div className="text-[11px] uppercase tracking-[0.24em] text-white/36">Trading terminal</div>
                       <div className="mt-2 flex flex-wrap items-center gap-3">
-                        <div className="text-[2.5rem] font-semibold leading-none tracking-tight text-white">
+                        <div className="text-[2rem] font-semibold leading-none tracking-tight text-white">
                           {formatMarketMetric(displayMarketCap)}
                         </div>
                         {typeof liveChartPriceChangePct === "number" && Number.isFinite(liveChartPriceChangePct) ? (
@@ -3665,7 +3665,7 @@ export default function TokenPage() {
                           </span>
                         ) : null}
                       </div>
-                      <div className="mt-2 text-sm text-white/42">
+                      <div className="mt-1 text-xs text-white/42">
                         {tradePanelHasConnectedStream
                           ? `${liveChartSourceLabel} is driving chart and recent trade updates.`
                           : tradePanelUsingFallbackPolling
@@ -3688,8 +3688,8 @@ export default function TokenPage() {
                   </div>
                 </div>
 
-                <div className="space-y-5 px-5 py-5 sm:px-6">
-                  <div className="grid gap-3 lg:grid-cols-4">
+                <div className="space-y-3 px-4 py-4 sm:px-5">
+                  <div className="hidden gap-3 lg:grid-cols-4">
                     <TokenTerminalMetricCard label="Liquidity" value={formatMarketMetric(token.liquidity)} detail="Current onchain depth" />
                     <TokenTerminalMetricCard label="24h volume" value={formatMarketMetric(token.volume24h)} detail="Rolling execution flow" />
                     <TokenTerminalMetricCard
@@ -3711,7 +3711,7 @@ export default function TokenPage() {
                     />
                   </div>
 
-                  <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="hidden gap-4 xl:grid-cols-2">
                     <div className="terminal-soft-card rounded-[26px] px-4 py-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
