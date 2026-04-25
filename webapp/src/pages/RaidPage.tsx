@@ -101,6 +101,30 @@ export default function RaidPage() {
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
       .slice(0, 12);
   }, [submissions, updates]);
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredActivityFeed = useMemo(() => {
+    if (!normalizedSearch) return activityFeed;
+    return activityFeed.filter((item) =>
+      `${item.kind} ${item.title} ${item.body}`.toLowerCase().includes(normalizedSearch)
+    );
+  }, [activityFeed, normalizedSearch]);
+  const filteredParticipants = useMemo(() => {
+    if (!normalizedSearch) return participants;
+    return participants.filter((participant) =>
+      [
+        participant.user?.username,
+        participant.user?.name,
+        participant.status,
+        participant.currentStep,
+      ].filter(Boolean).join(" ").toLowerCase().includes(normalizedSearch)
+    );
+  }, [normalizedSearch, participants]);
+  const filteredLeaderboard = useMemo(() => {
+    if (!normalizedSearch) return leaderboard;
+    return leaderboard.filter((entry) =>
+      [entry.user.username, entry.user.name, String(entry.boostCount)].filter(Boolean).join(" ").toLowerCase().includes(normalizedSearch)
+    );
+  }, [leaderboard, normalizedSearch]);
 
   const invalidateRaid = async () => {
     await Promise.all([
@@ -307,43 +331,15 @@ export default function RaidPage() {
           <div className="border-l border-white/8 bg-[linear-gradient(180deg,rgba(9,13,15,0.92),rgba(5,8,10,0.98))] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Activity</div>
-                <div className="mt-1 text-sm font-semibold text-white">Room pulse</div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Raid Chat</div>
+                <div className="mt-1 text-sm font-semibold text-white">Chat unavailable</div>
               </div>
-              <span className="rounded-full border border-lime-300/18 bg-lime-300/8 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-lime-200">
-                Live
+              <span className="rounded-full border border-amber-300/18 bg-amber-300/8 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-amber-200">
+                Requires endpoint
               </span>
             </div>
-            <div className="mt-4 space-y-3">
-              {activityFeed.length ? (
-                activityFeed.slice(0, 6).map((item) => (
-                  <div key={item.id} className="rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white">{item.title}</div>
-                        <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-lime-200">{item.kind}</div>
-                      </div>
-                      <div className="text-[11px] text-white/36">
-                        {new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </div>
-                    </div>
-                    <div className="mt-2 text-sm leading-6 text-white/62">{item.body}</div>
-                    {item.href ? (
-                      <a
-                        href={item.href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-lime-300"
-                      >
-                        Open X link
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
-                  </div>
-                ))
-              ) : (
-                <EmptyCopy text="No room activity has been recorded yet." />
-              )}
+            <div className="mt-4 rounded-[22px] border border-dashed border-white/12 bg-black/20 px-4 py-8 text-sm leading-6 text-white/50">
+              Persisted raid chat is intentionally disabled until a backend chat endpoint exists. The room still shows real live execution through joined raiders, submitted X links, boosts, and stored updates below.
             </div>
 
             {mySubmission ? (
@@ -465,8 +461,8 @@ export default function RaidPage() {
 
             <div className="mt-5 space-y-3">
               {tab === "activity" ? (
-                activityFeed.length ? (
-                  activityFeed.map((item) => (
+                filteredActivityFeed.length ? (
+                  filteredActivityFeed.map((item) => (
                     <StreamCard
                       key={item.id}
                       label={item.kind}
@@ -488,13 +484,13 @@ export default function RaidPage() {
                     />
                   ))
                 ) : (
-                  <EmptyCopy text="No update stream yet." />
+                  <EmptyCopy text={normalizedSearch ? "No room activity matches this search." : "No update stream yet."} />
                 )
               ) : null}
 
               {tab === "participants" ? (
-                participants.length ? (
-                  participants.map((participant) => (
+                filteredParticipants.length ? (
+                  filteredParticipants.map((participant) => (
                     <StreamCard
                       key={participant.id}
                       label={participant.currentStep || "Joined"}
@@ -504,13 +500,13 @@ export default function RaidPage() {
                     />
                   ))
                 ) : (
-                  <EmptyCopy text="No participants visible yet." />
+                  <EmptyCopy text={normalizedSearch ? "No participants match this search." : "No participants visible yet."} />
                 )
               ) : null}
 
               {tab === "leaderboard" ? (
-                leaderboard.length ? (
-                  leaderboard.map((entry, index) => (
+                filteredLeaderboard.length ? (
+                  filteredLeaderboard.map((entry, index) => (
                     <StreamCard
                       key={entry.submissionId}
                       label={`#${index + 1}`}
@@ -533,7 +529,7 @@ export default function RaidPage() {
                     />
                   ))
                 ) : (
-                  <EmptyCopy text="No leaderboard activity yet." />
+                  <EmptyCopy text={normalizedSearch ? "No leaderboard entries match this search." : "No leaderboard activity yet."} />
                 )
               ) : null}
             </div>
@@ -541,12 +537,6 @@ export default function RaidPage() {
         </div>
 
         <div className="space-y-4">
-          <V2RightRailCard eyebrow="Live Raid Chat" title="Unavailable" tone="soft">
-            <div className="rounded-[18px] border border-dashed border-white/10 bg-black/20 px-4 py-6 text-sm leading-6 text-white/50">
-              Live chat is not exposed until a persisted raid chat endpoint is available. Room activity below is real and comes from submissions, boosts, and stored raid updates.
-            </div>
-          </V2RightRailCard>
-
           <V2RightRailCard eyebrow="Top Raiders" title="Leaderboard" tone="soft">
             <div className="space-y-3">
               {leaderboard.slice(0, 5).length ? (
@@ -579,21 +569,25 @@ export default function RaidPage() {
             </div>
           </V2RightRailCard>
 
-          <V2RightRailCard eyebrow="Creative Stack" title="Stored raid assets" tone="soft">
+          <V2RightRailCard eyebrow="Raid Rewards" title="Milestone pool" tone="soft">
             <div className="space-y-3">
-              {raid.copyOptions.slice(0, 2).map((option) => (
-                <div key={option.id} className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4">
-                  <div className="text-sm font-semibold text-white">{option.label}</div>
-                  <div className="mt-1 text-xs text-white/42">{option.style} / {option.voiceLabel}</div>
-                  <div className="mt-3 text-xs leading-6 text-white/56">{option.text}</div>
+              <div className="rounded-[22px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.14),transparent_34%),rgba(0,0,0,0.22)] px-4 py-4">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-white/38">Current output</div>
+                <div className="mt-2 text-3xl font-semibold text-white">{formatCompact(raid.postedCount)}</div>
+                <div className="mt-1 text-xs text-white/46">posted links toward {formatCompact(raid.milestoneTarget)} target</div>
+              </div>
+              {milestones.slice(0, 5).map((milestone) => (
+                <div key={milestone.label} className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-black/20 px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">{milestone.label}</div>
+                    <div className="mt-0.5 text-xs text-white/42">{formatCompact(milestone.threshold)} required</div>
+                  </div>
+                  <div className={cn("text-xs font-semibold", milestone.unlocked ? "text-lime-300" : "text-white/38")}>
+                    {milestone.unlocked ? "Unlocked" : "Locked"}
+                  </div>
                 </div>
               ))}
-              {raid.memeOptions.slice(0, 2).map((option) => (
-                <div key={option.id} className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4">
-                  <div className="text-sm font-semibold text-white">{option.title}</div>
-                  <div className="mt-1 text-xs text-white/42">{option.toneLabel}</div>
-                </div>
-              ))}
+              {!milestones.length ? <EmptyCopy text="Reward milestones are unavailable for this room." /> : null}
             </div>
           </V2RightRailCard>
 
