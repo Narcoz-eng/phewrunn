@@ -1,20 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { usePrivy } from "@privy-io/react-auth";
 import {
-  getAuthUiState,
-  isPrivyAuthBootstrapStatePending,
   isExplicitLogoutCoolingDown,
-  isRecentExplicitLogoutSuppressed,
   readCachedAuthUserSnapshot,
-  useAuth,
-  usePrivyAuthBootstrapSnapshot,
-  usePrivySyncFailureSnapshot,
   useSession,
 } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyContext";
-import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
 import { V2AppShell } from "@/components/layout/V2AppShell";
+
+const ProtectedRouteWithPrivy = lazy(() =>
+  import("@/components/ProtectedRouteWithPrivy").then((mod) => ({
+    default: mod.ProtectedRouteWithPrivy,
+  }))
+);
 
 function isProductRoute(pathname: string): boolean {
   return (
@@ -67,10 +65,10 @@ function RouteLoading({ label }: { label: string }) {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
+    <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-4">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        <span className="text-muted-foreground text-sm">{label}</span>
+        <span className="text-sm text-muted-foreground">{label}</span>
       </div>
     </div>
   );
@@ -115,25 +113,6 @@ function useStoredAuthHint(): boolean {
 
 function hasCompletedHandle(username: string | null | undefined): boolean {
   return typeof username === "string" && username.trim().length > 0;
-}
-
-function getPrivyHandoffLabel(state: ReturnType<typeof getAuthUiState>, detail: string | null, graceExpired: boolean): string {
-  void detail;
-  void graceExpired;
-  switch (state) {
-    case "hydrating":
-      return "Connecting...";
-    case "finalizing_identity_verification":
-      return "Signing you in...";
-    case "rate_limited":
-      return "Sign-in failed. Please retry.";
-    case "connecting_backend_session":
-      return "Signing you in...";
-    case "logout_in_progress":
-      return "Connecting...";
-    default:
-      return "Signing you in...";
-  }
 }
 
 function ProtectedRouteFallback({
@@ -217,388 +196,6 @@ function ProtectedRouteFallback({
   return <>{children}</>;
 }
 
-function ProtectedRouteWithPrivy({
-  children,
-  allowMissingUsername,
-}: {
-  children: React.ReactNode;
-  allowMissingUsername: boolean;
-}) {
-  const { data: session, isPending, hasLiveSession } = useSession();
-  const { refetch } = useAuth();
-  const { ready, authenticated } = usePrivy();
-  const bootstrapSnapshot = usePrivyAuthBootstrapSnapshot();
-  const location = useLocation();
-  const hadTokenHint = useRef(useStoredAuthHint());
-  const [graceExpired, setGraceExpired] = useState(false);
-  const sessionRecoveryAttemptRef = useRef<{
-    key: string | null;
-    startedAt: number;
-  }>({
-    key: null,
-    startedAt: 0,
-  });
-  const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
-  const effectiveUser = session?.user ?? cachedUser;
-  const privySyncFailureSnapshot = usePrivySyncFailureSnapshot();
-  const logoutCooldownActive = isExplicitLogoutCoolingDown();
-  const recentlyLoggedOut =
-    logoutCooldownActive || isRecentExplicitLogoutSuppressed();
-  const privySyncFailure = !effectiveUser ? privySyncFailureSnapshot : null;
-  const activeLoginIntent =
-    !effectiveUser && !recentlyLoggedOut ? readPrivyLoginIntent() : null;
-  const hasOAuthReturnHint = activeLoginIntent?.method === "twitter";
-  const hasPrivyHydrationHint =
-    bootstrapSnapshot?.state === "privy_hydrating" && !effectiveUser && !recentlyLoggedOut;
-  const hasPrivyFinalizationHint =
-    bootstrapSnapshot?.state === "awaiting_identity_verification_finalization" &&
-    !effectiveUser &&
-    !recentlyLoggedOut;
-  const hasPrivySyncHint = ready && authenticated && !effectiveUser && !recentlyLoggedOut;
-  const authUiState = getAuthUiState({
-    snapshot: bootstrapSnapshot,
-    privyAuthenticated: authenticated,
-    logoutCoolingDown: recentlyLoggedOut,
-  });
-  const shouldHoldAuthenticatedPrivyState =
-    ready &&
-    authenticated &&
-    !recentlyLoggedOut &&
-    !privySyncFailure &&
-    bootstrapSnapshot?.state !== "failed" &&
-    bootstrapSnapshot?.state !== "failed_rate_limited";
-  const shouldHoldForConfirmedSession = Boolean(effectiveUser) && !hasLiveSession;
-  const shouldHoldForRecovery =
-    hasPrivyHydrationHint ||
-    hasPrivyFinalizationHint ||
-    hasPrivySyncHint ||
-    shouldHoldAuthenticatedPrivyState ||
-    hasOAuthReturnHint ||
-    shouldHoldForConfirmedSession ||
-    hadTokenHint.current;
-  const routeAuthStage =
-    isPending
-      ? "trying_to_connect"
-      : effectiveUser && hasLiveSession
-        ? "authenticated"
-        : privySyncFailure
-          ? "failed"
-          : hasPrivyHydrationHint ||
-              hasPrivyFinalizationHint ||
-              hasPrivySyncHint ||
-              shouldHoldAuthenticatedPrivyState ||
-              shouldHoldForConfirmedSession ||
-              hadTokenHint.current
-            ? "trying_to_connect"
-            : "anonymous";
-
-  useEffect(() => {
-    console.info("[AuthColdStart] protected route stage", {
-      stage: routeAuthStage,
-      pathname: location.pathname,
-      ready,
-      authenticated,
-      effectiveUserId: effectiveUser?.id ?? null,
-      hasLiveSession,
-      isPending,
-      hasPrivyHydrationHint,
-      hasPrivyFinalizationHint,
-      hasPrivySyncHint,
-      authUiState,
-      shouldHoldAuthenticatedPrivyState,
-      hasOAuthReturnHint,
-      shouldHoldForConfirmedSession,
-      hadTokenHint: hadTokenHint.current,
-      privySyncFailure: privySyncFailure?.message ?? null,
-    });
-  }, [
-    authenticated,
-    effectiveUser?.id,
-    hasLiveSession,
-    hasPrivyHydrationHint,
-    hasPrivyFinalizationHint,
-    hasOAuthReturnHint,
-    hasPrivySyncHint,
-    authUiState,
-    isPending,
-    location.pathname,
-    privySyncFailure?.message,
-    ready,
-    routeAuthStage,
-    shouldHoldAuthenticatedPrivyState,
-    shouldHoldForConfirmedSession,
-  ]);
-
-  useEffect(() => {
-    if (!effectiveUser || routeAuthStage !== "trying_to_connect") {
-      return;
-    }
-    console.warn("[AuthColdStart] protected route is holding pending state despite recovered user", {
-      pathname: location.pathname,
-      effectiveUserId: effectiveUser.id,
-      hasLiveSession,
-      isPending,
-      hasPrivyHydrationHint,
-      hasPrivyFinalizationHint,
-      hasPrivySyncHint,
-      authUiState,
-      shouldHoldForConfirmedSession,
-      privySyncFailure: privySyncFailure?.message ?? null,
-    });
-  }, [
-    effectiveUser,
-    hasLiveSession,
-    hasPrivyHydrationHint,
-    hasPrivyFinalizationHint,
-    hasPrivySyncHint,
-    authUiState,
-    isPending,
-    location.pathname,
-    privySyncFailure?.message,
-    routeAuthStage,
-    shouldHoldForConfirmedSession,
-  ]);
-
-  useEffect(() => {
-    if (
-      (effectiveUser && hasLiveSession) ||
-      isPending ||
-      !shouldHoldForRecovery
-    ) {
-      if (!isPending) {
-        setGraceExpired(false);
-      }
-      return;
-    }
-    const timer = window.setTimeout(
-      () => setGraceExpired(true),
-      hasPrivyHydrationHint || hasPrivySyncHint || hasOAuthReturnHint || shouldHoldForConfirmedSession ? 12_000 : 4_000
-    );
-    return () => window.clearTimeout(timer);
-  }, [effectiveUser, hasLiveSession, hasOAuthReturnHint, hasPrivyHydrationHint, hasPrivySyncHint, isPending, shouldHoldForConfirmedSession, shouldHoldForRecovery]);
-
-  useEffect(() => {
-    const shouldAttemptSessionRecovery =
-      !recentlyLoggedOut &&
-      !isPending &&
-      !privySyncFailure &&
-      (
-        (Boolean(effectiveUser) && !hasLiveSession) ||
-        (
-          !effectiveUser &&
-          (
-            (ready && authenticated) ||
-            bootstrapSnapshot?.state === "authenticated" ||
-            isPrivyAuthBootstrapStatePending(bootstrapSnapshot?.state) ||
-            hadTokenHint.current
-          )
-        )
-      );
-
-    if (!shouldAttemptSessionRecovery) {
-      return;
-    }
-
-    const recoveryKey = [
-      location.pathname,
-      effectiveUser?.id ?? "anonymous",
-      hasLiveSession ? "live" : "pending",
-      ready ? "ready" : "not_ready",
-      authenticated ? "authenticated" : "not_authenticated",
-      bootstrapSnapshot?.state ?? "none",
-      bootstrapSnapshot?.userId ?? "none",
-      hadTokenHint.current ? "had_hint" : "no_hint",
-    ].join(":");
-    const lastAttempt = sessionRecoveryAttemptRef.current;
-    if (lastAttempt.key === recoveryKey && Date.now() - lastAttempt.startedAt < 4000) {
-      return;
-    }
-
-    sessionRecoveryAttemptRef.current = {
-      key: recoveryKey,
-      startedAt: Date.now(),
-    };
-
-    void refetch().catch((error) => {
-      console.warn("[AuthFlow] ProtectedRoute session recovery probe failed", {
-        recoveryKey,
-        pathname: location.pathname,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }, [
-    authenticated,
-    bootstrapSnapshot?.state,
-    bootstrapSnapshot?.userId,
-    effectiveUser,
-    hasLiveSession,
-    isPending,
-    location.pathname,
-    privySyncFailure,
-    ready,
-    recentlyLoggedOut,
-    refetch,
-  ]);
-
-  if (effectiveUser) {
-    hadTokenHint.current = false;
-  }
-
-  if (isPending && !effectiveUser) {
-    return <RouteLoading label="Connecting..." />;
-  }
-
-  if (!effectiveUser) {
-    if (privySyncFailure) {
-      return (
-        <LoggedNavigate
-          to="/login"
-          replace
-          state={{
-            from: location.pathname + location.search + location.hash,
-            syncError: privySyncFailure.message,
-          }}
-          reason="privy_no_effective_user_with_sync_failure"
-          context={{
-            pathname: location.pathname,
-            ready,
-            authenticated,
-            hasLiveSession,
-            isPending,
-            hasPrivySyncHint,
-            hadTokenHint: hadTokenHint.current,
-            graceExpired,
-            privySyncFailure: privySyncFailure.message,
-          }}
-        />
-      );
-    }
-    if (shouldHoldAuthenticatedPrivyState) {
-      return (
-        <RouteLoading
-          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
-        />
-      );
-    }
-    if (hasOAuthReturnHint && !ready && !privySyncFailure) {
-      return <RouteLoading label="Connecting..." />;
-    }
-    if (hasPrivyHydrationHint) {
-      return <RouteLoading label="Connecting..." />;
-    }
-    if (hasPrivyFinalizationHint) {
-      return <RouteLoading label="Signing you in..." />;
-    }
-    if (hasPrivySyncHint) {
-      // Don't hold if bootstrap has terminally failed — redirect to login so user can retry
-      if (
-        bootstrapSnapshot?.state === "failed" ||
-        bootstrapSnapshot?.state === "failed_rate_limited"
-      ) {
-        return (
-          <LoggedNavigate
-            to="/login"
-            replace
-            reason="privy_sync_hint_with_failed_bootstrap"
-            context={{
-              pathname: location.pathname,
-              ready,
-              authenticated,
-              hasLiveSession,
-              bootstrapState: bootstrapSnapshot?.state ?? null,
-              graceExpired,
-            }}
-          />
-        );
-      }
-      if (privySyncFailure && graceExpired) {
-        return (
-          <LoggedNavigate
-            to="/login"
-            replace
-            reason="privy_sync_hint_with_sync_failure"
-            context={{
-              pathname: location.pathname,
-              ready,
-              authenticated,
-              hasLiveSession,
-              bootstrapState: bootstrapSnapshot?.state ?? null,
-              graceExpired,
-            }}
-          />
-        );
-      }
-      return <RouteLoading label="Signing you in..." />;
-    }
-    if (hadTokenHint.current && !graceExpired) {
-      return <RouteLoading label="Signing you in..." />;
-    }
-    return (
-      <LoggedNavigate
-        to="/login"
-        replace
-        reason="privy_no_effective_user"
-        context={{
-          pathname: location.pathname,
-          ready,
-          authenticated,
-          hasLiveSession,
-          isPending,
-          hasPrivySyncHint,
-          hadTokenHint: hadTokenHint.current,
-          graceExpired,
-        }}
-      />
-    );
-  }
-
-  if (!hasLiveSession) {
-    if (privySyncFailure) {
-      return (
-        <LoggedNavigate
-          to="/login"
-          replace
-          state={{
-            from: location.pathname + location.search + location.hash,
-            syncError: privySyncFailure.message,
-          }}
-          reason="privy_effective_user_without_live_session_after_sync_failure"
-          context={{
-            pathname: location.pathname,
-            ready,
-            authenticated,
-            effectiveUserId: effectiveUser.id,
-            hasLiveSession,
-            isPending,
-            graceExpired,
-            privySyncFailure: privySyncFailure.message,
-          }}
-        />
-      );
-    }
-    if (shouldHoldAuthenticatedPrivyState) {
-      return (
-        <RouteLoading
-          label={getPrivyHandoffLabel(authUiState, bootstrapSnapshot?.detail ?? null, graceExpired)}
-        />
-      );
-    }
-    return <RouteLoading label="Signing you in..." />;
-  }
-
-  if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {
-    return (
-      <Navigate
-        to="/welcome"
-        replace
-        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
-      />
-    );
-  }
-
-  return <>{children}</>;
-}
-
 export function ProtectedRoute({
   children,
   allowMissingUsername = false,
@@ -607,18 +204,21 @@ export function ProtectedRoute({
   allowMissingUsername?: boolean;
 }) {
   const privyAvailable = usePrivyAvailable();
+  const fallback = (
+    <ProtectedRouteFallback allowMissingUsername={allowMissingUsername}>
+      {children}
+    </ProtectedRouteFallback>
+  );
 
   if (!privyAvailable) {
-    return (
-      <ProtectedRouteFallback allowMissingUsername={allowMissingUsername}>
-        {children}
-      </ProtectedRouteFallback>
-    );
+    return fallback;
   }
 
   return (
-    <ProtectedRouteWithPrivy allowMissingUsername={allowMissingUsername}>
-      {children}
-    </ProtectedRouteWithPrivy>
+    <Suspense fallback={fallback}>
+      <ProtectedRouteWithPrivy allowMissingUsername={allowMissingUsername}>
+        {children}
+      </ProtectedRouteWithPrivy>
+    </Suspense>
   );
 }

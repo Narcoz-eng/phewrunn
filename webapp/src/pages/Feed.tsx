@@ -281,6 +281,44 @@ function sortPostsNewestFirst(items: Post[]): Post[] {
   });
 }
 
+function feedSignalScore(post: Post): number {
+  const scores = [
+    post.highConvictionScore,
+    post.confidenceScore,
+    post.hotAlphaScore,
+    post.earlyRunnerScore,
+    post.signal?.aiScore,
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const signal = scores.length ? Math.max(...scores) : 0;
+  const performance =
+    typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct)
+      ? Math.min(30, Math.max(-20, post.roiCurrentPct) * 0.18)
+      : 0;
+  const engagement =
+    Math.min(18, (post._count?.comments ?? 0) * 2 + (post._count?.reposts ?? 0) * 3 + (post.viewCount ?? 0) * 0.02);
+  const trusted = typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0 ? 18 : 0;
+  const repostPenalty = post.repostContext ? 16 : 0;
+  const zeroMovePenalty = post.contractAddress && post.roiCurrentPct === 0 && post.roiPeakPct === 0 ? 12 : 0;
+  return signal + performance + engagement + trusted - repostPenalty - zeroMovePenalty;
+}
+
+function isAlphaGradeFeedPost(post: Post, tab: FeedTab, search: string): boolean {
+  if (search.trim()) return true;
+  if (post.postType === "poll" || post.postType === "news") return true;
+  const score = feedSignalScore(post);
+  if (tab === "latest") return score >= 42;
+  if (tab === "following") return score >= 34 || !post.contractAddress;
+  return score >= 38;
+}
+
+function sortPostsBySignal(items: Post[]): Post[] {
+  return [...items].sort((a, b) => {
+    const scoreDelta = feedSignalScore(b) - feedSignalScore(a);
+    if (Math.abs(scoreDelta) >= 0.5) return scoreDelta;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
 function isRecentFeedPost(post: Pick<Post, "createdAt"> | null | undefined): boolean {
   if (!post?.createdAt) return false;
   const createdAtMs = new Date(post.createdAt).getTime();
@@ -1732,11 +1770,13 @@ export default function Feed() {
 
   const posts = useMemo(() => {
     const mergedPosts = postsPages?.pages.flatMap((page) => page.items) ?? [];
+    const alphaGradePosts = mergedPosts.filter((post) => isAlphaGradeFeedPost(post, activeTab, effectiveSearchQuery));
     if (activeTab === "hot-alpha" || activeTab === "early-runners" || activeTab === "high-conviction") {
-      return mergedPosts;
+      return sortPostsBySignal(alphaGradePosts);
     }
-    return sortPostsNewestFirst(mergedPosts);
-  }, [activeTab, postsPages?.pages]);
+    if (activeTab === "latest") return sortPostsBySignal(alphaGradePosts);
+    return sortPostsNewestFirst(alphaGradePosts);
+  }, [activeTab, effectiveSearchQuery, postsPages?.pages]);
   useEffect(() => {
     if (!posts.length) return;
     syncPostsIntoQueryCache(queryClient, posts);

@@ -101,7 +101,6 @@ export default function RaidPage() {
       title: update.user?.username || update.user?.name || "Room system",
       body: update.body,
       createdAt: update.createdAt,
-      href: null as string | null,
       href: update.kind === "submission" ? submissions.find((submission) => submission.id === update.id.replace("submission:", ""))?.xPostUrl ?? null : null,
     })).slice(0, 12);
   }, [submissions, updates]);

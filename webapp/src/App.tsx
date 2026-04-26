@@ -10,10 +10,7 @@ import { AuthProvider, useAuth } from "@/lib/auth-client";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AuthInitializer } from "@/components/AuthInitializer";
 import { V2AppShell } from "@/components/layout/V2AppShell";
-import SolanaRouteProvider from "@/components/SolanaRouteProvider";
-import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { subscribeToAppRealtime } from "@/lib/realtime/app-realtime-client";
@@ -45,6 +42,16 @@ const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
 const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
 const AccessCodeEntry = lazyPage(() => import("./pages/AccessCodeEntry"), "route:access-code");
+const PrivyWalletProvider = lazy(() =>
+  import("@/components/PrivyWalletProvider").then((mod) => ({
+    default: mod.PrivyWalletProvider,
+  }))
+);
+const AuthInitializer = lazy(() =>
+  import("@/components/AuthInitializer").then((mod) => ({
+    default: mod.AuthInitializer,
+  }))
+);
 
 // Loading fallback component
 function PageSkeleton() {
@@ -86,9 +93,11 @@ function ProductContentSkeleton() {
   );
 }
 
-function WithSolanaRuntime({ children }: { children: ReactNode }) {
-  return <SolanaRouteProvider>{children}</SolanaRouteProvider>;
-}
+const WithSolanaRuntime = lazy(() =>
+  import("@/components/SolanaRouteProvider").then((mod) => ({
+    default: mod.default,
+  }))
+);
 
 function WithProductShell({ children }: { children: ReactNode }) {
   return (
@@ -418,7 +427,21 @@ function RealtimeInvalidationBridge() {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <Suspense fallback={<PageSkeleton />}>
+      <Suspense
+        fallback={
+          <AuthProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter>
+                <MissingHandleGate>
+                  <AnimatedRoutes />
+                </MissingHandleGate>
+              </BrowserRouter>
+            </TooltipProvider>
+          </AuthProvider>
+        }
+      >
         <PrivyWalletProvider>
           <AuthProvider>
             <AuthInitializer>
