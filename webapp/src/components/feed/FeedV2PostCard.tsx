@@ -59,8 +59,8 @@ function inferKind(post: Post): FeedPostKind {
   if (post.postType === "chart") return "chart";
   if (post.postType === "alpha") return "call";
 
-  if (post.walletTradeSnapshot) return "whale";
-  if (post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
+  if (post.walletTradeSnapshot || post.itemType === "whale") return "whale";
+  if (post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress || post.tokenSymbol || post.entryMcap !== null || typeof post.confidenceScore === "number") return "call";
   return "discussion";
 }
 
@@ -69,7 +69,9 @@ function displayContent(post: Post): string {
 }
 
 function tokenLabel(post: Post): string {
-  return post.tokenSymbol ? `$${post.tokenSymbol}` : post.tokenName || "Alpha";
+  const symbol = post.signal?.tokenSymbol ?? post.tokenContext?.symbol ?? post.tokenSymbol;
+  const name = post.tokenContext?.name ?? post.tokenName;
+  return symbol ? `$${symbol}` : name || "Alpha";
 }
 
 function signalTitle(post: Post): string {
@@ -86,6 +88,7 @@ function headline(post: Post): string {
 }
 
 function riskLabel(post: Post): string {
+  if (post.signal?.riskLabel) return post.signal.riskLabel;
   const risk = post.tokenRiskScore ?? post.bundlePenaltyScore;
   if (typeof risk !== "number") return "Unavailable";
   if (risk >= 70) return "High";
@@ -94,7 +97,7 @@ function riskLabel(post: Post): string {
 }
 
 function momentumLabel(post: Post): string {
-  const value = post.hotAlphaScore ?? post.earlyRunnerScore ?? post.roiCurrentPct;
+  const value = post.signal?.momentumScore ?? post.hotAlphaScore ?? post.earlyRunnerScore ?? post.roiCurrentPct;
   if (typeof value !== "number") return "Unavailable";
   if (value >= 80) return "Very High";
   if (value >= 55) return "High";
@@ -103,6 +106,9 @@ function momentumLabel(post: Post): string {
 }
 
 function smartMoneyLabel(post: Post): string {
+  if (typeof post.signal?.smartMoneyScore === "number") {
+    return `${post.signal.smartMoneyScore.toFixed(1)}/100`;
+  }
   if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
     return `${post.trustedTraderCount} trusted`;
   }
@@ -110,6 +116,9 @@ function smartMoneyLabel(post: Post): string {
 }
 
 function smartMoneySubLabel(post: Post): string {
+  if (typeof post.signal?.smartMoneyScore === "number") {
+    return post.signal.scoreReasons.find((reason) => reason.toLowerCase().includes("trusted")) ?? "Derived by shared signal engine";
+  }
   if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
     return "Verified trader overlap";
   }
@@ -120,6 +129,9 @@ function smartMoneySubLabel(post: Post): string {
 }
 
 function aiSignalValue(post: Post): string {
+  if (typeof post.signal?.aiScore === "number" && Number.isFinite(post.signal.aiScore)) {
+    return post.signal.aiScore.toFixed(1);
+  }
   if (typeof post.confidenceScore !== "number" || !Number.isFinite(post.confidenceScore)) {
     return "Not enough signal";
   }
@@ -127,6 +139,15 @@ function aiSignalValue(post: Post): string {
 }
 
 function aiSignalSubLabel(post: Post): string {
+  if (post.signal?.aiScoreCoverage.state === "unavailable") {
+    return post.signal.aiScoreCoverage.unavailableReason ?? "Not enough source coverage";
+  }
+  if (post.signal?.aiScoreCoverage.state === "partial") {
+    return post.signal.aiScoreCoverage.unavailableReason ?? "Partial source coverage";
+  }
+  if (post.signal?.convictionLabel) {
+    return post.signal.convictionLabel;
+  }
   if (typeof post.confidenceScore !== "number" || !Number.isFinite(post.confidenceScore)) {
     return "Needs token or engagement data";
   }
@@ -138,6 +159,12 @@ function aiSignalSubLabel(post: Post): string {
 
 function callMetrics(post: Post): Array<{ label: string; value: string }> {
   const metrics: Array<{ label: string; value: string }> = [];
+  if (typeof post.signal?.price === "number" && Number.isFinite(post.signal.price)) {
+    metrics.push({ label: "Price", value: `$${post.signal.price.toPrecision(6)}` });
+  }
+  if (typeof post.signal?.priceChange24h === "number" && Number.isFinite(post.signal.priceChange24h)) {
+    metrics.push({ label: "24H Move", value: pct(post.signal.priceChange24h) });
+  }
   if (typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)) {
     metrics.push({ label: "Entry MCap", value: compact(post.entryMcap, "$") });
   }
@@ -150,8 +177,10 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
   if (typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct)) {
     metrics.push({ label: "Live Move", value: pct(post.roiCurrentPct) });
   }
-  if (typeof post.confidenceScore === "number" && Number.isFinite(post.confidenceScore)) {
-    metrics.push({ label: "Confidence", value: `${post.confidenceScore.toFixed(0)}/100` });
+  if (typeof post.signal?.aiScore === "number" && Number.isFinite(post.signal.aiScore)) {
+    metrics.push({ label: "AI Signal", value: `${post.signal.aiScore.toFixed(0)}/100` });
+  } else if (typeof post.confidenceScore === "number" && Number.isFinite(post.confidenceScore)) {
+    metrics.push({ label: "AI Signal", value: `${post.confidenceScore.toFixed(0)}/100` });
   }
   if (post.tokenRiskScore !== null || post.bundlePenaltyScore !== null) {
     metrics.push({ label: "Risk", value: riskLabel(post) });
@@ -161,7 +190,8 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
 }
 
 function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolean }) {
-  const tokenAddress = post.contractAddress?.trim();
+  const tokenAddress = (post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress)?.trim();
+  const tokenSymbol = post.signal?.tokenSymbol ?? post.tokenContext?.symbol ?? post.tokenSymbol;
   const chartQuery = useQuery({
     queryKey: ["feed", "mini-candles", tokenAddress, "1h"],
     queryFn: () =>
@@ -180,7 +210,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
     return (
       <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[220px]" : "h-[118px]")}>
         <div className="text-sm font-semibold text-white/72">No token chart</div>
-        <div className="mt-1 text-xs text-white/40">Add a token address to attach live candle coverage.</div>
+        <div className="mt-1 text-xs text-white/40">{post.signal?.candlesCoverage.unavailableReason ?? "Add a token address to attach live candle coverage."}</div>
       </div>
     );
   }
@@ -199,7 +229,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
       <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[220px]" : "h-[118px]")}>
         <div className="text-sm font-semibold text-white/72">Candles unavailable</div>
         <div className="mt-1 text-xs text-white/40">
-          {coverage?.unavailableReason || "The backend did not return candle coverage for this token."}
+          {coverage?.unavailableReason || post.signal?.candlesCoverage.unavailableReason || "The backend did not return candle coverage for this token."}
         </div>
       </div>
     );
@@ -221,7 +251,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
     <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[220px]" : "h-[118px]")}>
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:25%_25%]" />
       <div className="absolute left-3 top-3 z-10 flex items-center gap-2 text-xs font-semibold text-white">
-        <span>{post.tokenSymbol ? `$${post.tokenSymbol}` : "TOKEN"}/USDT</span>
+        <span>{tokenSymbol ? `$${tokenSymbol}` : "TOKEN"}/USDT</span>
         <span className="rounded-md border border-white/10 bg-black/30 px-1.5 py-0.5 text-white/58">1h</span>
         <span className={positive ? "text-lime-300" : "text-rose-300"}>{pct(post.roiCurrentPct)}</span>
       </div>
@@ -328,7 +358,7 @@ function PostContextStrip({ post }: { post: Post }) {
       } community`
     );
   }
-  const scoreReasons = post.scoreReasons?.length ? post.scoreReasons : post.feedReasons;
+  const scoreReasons = post.signal?.scoreReasons?.length ? post.signal.scoreReasons : post.scoreReasons?.length ? post.scoreReasons : post.feedReasons;
   if (scoreReasons?.length) {
     context.push(scoreReasons.slice(0, 2).join(" + "));
   }
@@ -373,10 +403,11 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const direction = inferDirection(post);
   const positive = direction !== "SHORT";
   const metrics = callMetrics(post);
+  const terminalAddress = post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress;
   return (
     <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]">
       <PostContextStrip post={post} />
-      <PostHeader post={post} badge={typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70 ? "High Conviction" : undefined} />
+      <PostHeader post={post} badge={post.signal?.convictionLabel && post.signal.convictionLabel !== "Not enough signal" ? post.signal.convictionLabel : typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70 ? "High Conviction" : undefined} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <h2 className="text-xl font-semibold tracking-tight text-white">{signalTitle(post)}</h2>
         {direction ? (
@@ -403,10 +434,10 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         <FeedMiniCandleChart post={post} tall />
       </div>
 
-      {post.contractAddress ? (
+      {terminalAddress ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <Link
-            to={`/token/${post.contractAddress}`}
+            to={`/terminal?token=${encodeURIComponent(terminalAddress)}&post=${encodeURIComponent(post.id)}&timeframe=1h`}
             className="inline-flex h-9 items-center rounded-[12px] border border-lime-300/20 bg-lime-300/[0.1] px-3 text-xs font-semibold text-lime-100 hover:bg-lime-300/[0.16]"
           >
             Open Terminal
@@ -418,7 +449,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         <AiMetric icon={Zap} label="AI Signal" value={aiSignalValue(post)} sub={aiSignalSubLabel(post)} />
         <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Live signal"} />
         <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub={smartMoneySubLabel(post)} />
-        <AiMetric icon={TrendingDown} label="Risk Level" value={riskLabel(post)} sub={post.bundleRiskLabel || "Backend risk"} />
+        <AiMetric icon={TrendingDown} label="Risk Level" value={riskLabel(post)} sub={post.signal?.riskScore != null ? "Shared signal engine" : post.bundleRiskLabel || "Risk coverage pending"} />
       </div>
       <EngagementFooter {...props} />
     </article>
@@ -536,7 +567,7 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
         <Metric label="Market Health" value={typeof post.marketHealthScore === "number" ? post.marketHealthScore.toFixed(1) : "Unavailable"} />
         <Metric label="Current Move" value={pct(post.roiCurrentPct)} />
       </div>
-      {post.contractAddress ? <TokenPreview post={post} /> : null}
+      {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
   );
@@ -577,7 +608,7 @@ export function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Discussion" />
       <p className="mt-4 text-[15px] leading-7 text-white/72">{displayContent(post)}</p>
-      {post.contractAddress ? <TokenPreview post={post} /> : null}
+      {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
   );
@@ -592,7 +623,7 @@ export function FeedPostNewsCard(props: FeedV2PostCardProps) {
       <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/72">Market news</div>
       <h2 className="mt-1 text-xl font-semibold text-white">{headline(post)}</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
-      {post.contractAddress ? <TokenPreview post={post} /> : null}
+      {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
   );
@@ -625,13 +656,15 @@ function AiMetric({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: 
 }
 
 function TokenPreview({ post }: { post: Post }) {
+  const address = post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress;
+  const logo = post.signal?.tokenLogo ?? post.tokenContext?.logo ?? post.tokenImage;
   return (
-    <Link to={post.contractAddress ? `/token/${post.contractAddress}` : "#"} className="mt-4 flex items-center justify-between gap-3 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 hover:bg-white/[0.05]">
+    <Link to={address ? `/token/${address}` : "#"} className="mt-4 flex items-center justify-between gap-3 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 hover:bg-white/[0.05]">
       <div className="flex min-w-0 items-center gap-3">
-        {post.tokenImage ? <img src={post.tokenImage} alt="" className="h-9 w-9 rounded-full object-cover" /> : null}
+        {logo ? <img src={logo} alt="" className="h-9 w-9 rounded-full object-cover" /> : null}
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-white">{tokenLabel(post)}</div>
-          <div className="truncate text-xs text-white/42">{post.contractAddress}</div>
+          <div className="truncate text-xs text-white/42">{address}</div>
         </div>
       </div>
       <div className={cn("text-sm font-semibold", (post.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>

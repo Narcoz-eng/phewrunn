@@ -78,9 +78,35 @@ export interface TokenBundleCluster {
   evidenceJson?: unknown;
 }
 
+export interface FeedCoverage {
+  state: "live" | "partial" | "unavailable";
+  source: string;
+  unavailableReason: string | null;
+}
+
+export interface FeedSignal {
+  tokenAddress: string | null;
+  tokenSymbol: string | null;
+  tokenLogo: string | null;
+  chain: string | null;
+  price: number | null;
+  priceChange24h: number | null;
+  candlesCoverage: FeedCoverage;
+  aiScore: number | null;
+  aiScoreCoverage: FeedCoverage;
+  momentumScore: number | null;
+  smartMoneyScore: number | null;
+  riskScore: number | null;
+  convictionLabel: string;
+  riskLabel: string;
+  scoreReasons: string[];
+  unavailableReasons: string[];
+}
+
 export interface Post {
   id: string;
   content: string;
+  itemType?: "post" | "repost" | "raid" | "whale" | "system";
   postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
   communityId?: string | null;
   community?: {
@@ -177,6 +203,27 @@ export interface Post {
   currentReactionType?: ReactionType | null;
   threadCount?: number;
   radarReasons?: string[];
+  signal?: FeedSignal | null;
+  tokenContext?: {
+    address: string | null;
+    symbol: string | null;
+    name: string | null;
+    logo: string | null;
+    chain: string | null;
+    dexscreenerUrl: string | null;
+  } | null;
+  engagement?: {
+    likes: number;
+    comments: number;
+    reposts: number;
+    reactions: number;
+    views: number;
+    velocity: number;
+  };
+  coverage?: {
+    signal: FeedCoverage;
+    candles: FeedCoverage;
+  };
   feedScore?: number;
   feedReasons?: string[];
   scoreReasons?: string[];

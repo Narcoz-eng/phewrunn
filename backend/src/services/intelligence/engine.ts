@@ -332,11 +332,58 @@ type FeedPollSummary = {
   }>;
 };
 
+type FeedSignalCoverageState = "live" | "partial" | "unavailable";
+
+type FeedSignalCoverage = {
+  state: FeedSignalCoverageState;
+  source: string;
+  unavailableReason: string | null;
+};
+
+type FeedSignalContract = {
+  tokenAddress: string | null;
+  tokenSymbol: string | null;
+  tokenLogo: string | null;
+  chain: string | null;
+  price: number | null;
+  priceChange24h: number | null;
+  candlesCoverage: FeedSignalCoverage;
+  aiScore: number | null;
+  aiScoreCoverage: FeedSignalCoverage;
+  momentumScore: number | null;
+  smartMoneyScore: number | null;
+  riskScore: number | null;
+  convictionLabel: string;
+  riskLabel: string;
+  scoreReasons: string[];
+  unavailableReasons: string[];
+};
+
+type FeedTokenContext = {
+  address: string | null;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  chain: string | null;
+  dexscreenerUrl: string | null;
+};
+
 export type EnrichedCall = CallRecord & {
+  itemType: "post" | "repost" | "raid" | "whale" | "system";
   poll: FeedPollSummary | null;
   isLiked: boolean;
   isReposted: boolean;
   isFollowingAuthor: boolean;
+  tokenContext: FeedTokenContext | null;
+  signal: FeedSignalContract | null;
+  engagement: FeedCountSummary & {
+    views: number;
+    velocity: number;
+  };
+  coverage: {
+    signal: FeedSignalCoverage;
+    candles: FeedSignalCoverage;
+  };
   feedScore: number;
   feedReasons: string[];
   scoreReasons: string[];
@@ -1542,6 +1589,140 @@ function buildRadarReasons(args: {
     reasons.push("risk profile acceptable");
   }
   return reasons.slice(0, 4);
+}
+
+function feedCoverage(
+  state: FeedSignalCoverageState,
+  source: string,
+  unavailableReason: string | null = null
+): FeedSignalCoverage {
+  return { state, source, unavailableReason };
+}
+
+function signalRiskLabel(score: number | null): string {
+  if (typeof score !== "number" || !Number.isFinite(score)) return "Unavailable";
+  if (score >= 70) return "High";
+  if (score >= 40) return "Medium";
+  return "Low";
+}
+
+function signalConvictionLabel(score: number | null): string {
+  if (typeof score !== "number" || !Number.isFinite(score)) return "Not enough signal";
+  if (score >= 82) return "High conviction";
+  if (score >= 65) return "Bullish";
+  if (score >= 45) return "Monitoring";
+  return "Low conviction";
+}
+
+function buildFeedTokenContext(record: CallRecord, token: TokenRecord | null): FeedTokenContext | null {
+  const address = token?.address ?? record.contractAddress ?? null;
+  const symbol = token?.symbol ?? record.tokenSymbol ?? null;
+  const name = token?.name ?? record.tokenName ?? null;
+  const logo = token?.imageUrl ?? record.tokenImage ?? null;
+  const chain = token?.chainType ?? record.chainType ?? null;
+  const dexscreenerUrl = token?.dexscreenerUrl ?? record.dexscreenerUrl ?? null;
+
+  if (!address && !symbol && !name) return null;
+  return { address, symbol, name, logo, chain, dexscreenerUrl };
+}
+
+function buildFeedSignalContract(args: {
+  record: CallRecord;
+  token: TokenRecord | null;
+  confidenceScore: number | null;
+  hotAlphaScore: number | null;
+  earlyRunnerScore: number | null;
+  highConvictionScore: number | null;
+  opportunityScore: number | null;
+  tokenRiskScore: number | null;
+  trustedTraderCount: number;
+  radarReasons: string[];
+}): FeedSignalContract | null {
+  const { record, token } = args;
+  const tokenAddress = token?.address ?? record.contractAddress ?? null;
+  const tokenSymbol = token?.symbol ?? record.tokenSymbol ?? null;
+  const tokenLogo = token?.imageUrl ?? record.tokenImage ?? null;
+  const chain = token?.chainType ?? record.chainType ?? null;
+  if (!tokenAddress && !tokenSymbol && !tokenLogo) return null;
+
+  const unavailableReasons: string[] = [];
+  const hasMarket =
+    typeof token?.liquidity === "number" ||
+    typeof token?.volume24h === "number" ||
+    typeof record.currentMcap === "number";
+  const hasSocial =
+    args.trustedTraderCount > 0 ||
+    args.radarReasons.length > 0 ||
+    typeof record.threadCount === "number" ||
+    record._count.likes + record._count.comments + record._count.reposts > 0;
+  const hasRisk = typeof args.tokenRiskScore === "number" || typeof token?.top10HolderPct === "number";
+  const sourceCount = [hasMarket, hasSocial, hasRisk].filter(Boolean).length;
+
+  if (!tokenAddress) unavailableReasons.push("No token address attached.");
+  if (!hasMarket) unavailableReasons.push("No market/liquidity snapshot attached.");
+  if (!hasRisk) unavailableReasons.push("Holder/risk coverage is not resolved.");
+  if (typeof args.confidenceScore !== "number") unavailableReasons.push("AI score requires market or social signal coverage.");
+
+  const aiCoverage =
+    sourceCount >= 2
+      ? feedCoverage("live", "phew-signal-engine")
+      : sourceCount === 1
+        ? feedCoverage("partial", "phew-signal-engine", "Signal is based on partial market/social coverage.")
+        : feedCoverage("unavailable", "phew-signal-engine", "No usable market, social, or risk coverage is available.");
+  const candlesCoverage = tokenAddress
+    ? token?.pairAddress || token?.dexscreenerUrl || record.dexscreenerUrl
+      ? feedCoverage("partial", "terminal-aggregate", "Candles are loaded by the shared terminal aggregate on demand.")
+      : feedCoverage("unavailable", "terminal-aggregate", "No tradable pair is attached for OHLCV candles.")
+    : feedCoverage("unavailable", "terminal-aggregate", "No token address is attached for OHLCV candles.");
+
+  const momentumInputs = [args.hotAlphaScore, args.earlyRunnerScore, record.roiCurrentPct].filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value)
+  );
+  const momentumScore =
+    momentumInputs.length > 0
+      ? roundMetricOrZero(momentumInputs.reduce((sum, value) => sum + value, 0) / momentumInputs.length)
+      : null;
+  const smartMoneyScore =
+    args.trustedTraderCount > 0
+      ? clampScore(Math.min(100, 48 + args.trustedTraderCount * 9 + finite(args.opportunityScore) * 0.16))
+      : typeof token?.top10HolderPct === "number" || typeof args.tokenRiskScore === "number"
+        ? clampScore(
+            50 +
+              (typeof token?.top10HolderPct === "number" && token.top10HolderPct < 45 ? 10 : 0) -
+              Math.max(0, finite(args.tokenRiskScore, 50) - 70) * 0.35
+          )
+        : null;
+  const riskScore =
+    typeof args.tokenRiskScore === "number"
+      ? roundMetricOrZero(args.tokenRiskScore)
+      : typeof token?.top10HolderPct === "number"
+        ? roundMetricOrZero(Math.max(15, Math.min(85, token.top10HolderPct)))
+        : null;
+  const aiScore = typeof args.confidenceScore === "number" ? roundMetricOrZero(args.confidenceScore) : null;
+  const scoreReasons = [
+    ...args.radarReasons,
+    args.trustedTraderCount > 0 ? `${args.trustedTraderCount} trusted trader${args.trustedTraderCount === 1 ? "" : "s"}` : null,
+    hasRisk && riskScore !== null ? `Risk ${signalRiskLabel(riskScore).toLowerCase()}` : null,
+  ].filter((reason): reason is string => Boolean(reason)).slice(0, 5);
+
+  return {
+    tokenAddress,
+    tokenSymbol,
+    tokenLogo,
+    chain,
+    price: null,
+    priceChange24h: null,
+    candlesCoverage,
+    aiScore,
+    aiScoreCoverage: aiCoverage,
+    momentumScore,
+    smartMoneyScore: smartMoneyScore === null ? null : roundMetricOrZero(smartMoneyScore),
+    riskScore,
+    convictionLabel: signalConvictionLabel(args.highConvictionScore ?? aiScore),
+    riskLabel: signalRiskLabel(riskScore),
+    scoreReasons,
+    unavailableReasons: unavailableReasons.slice(0, 4),
+  };
 }
 
 function computeEntryQualityScore(args: {
@@ -3121,9 +3302,33 @@ async function hydrateCalls(
       momentumPct: Math.max(roiCurrentPct ?? 0, mcapGrowthPct),
       tokenRiskScore: token?.tokenRiskScore ?? null,
     });
+    const tokenContext = buildFeedTokenContext(record, token);
+    const signal = buildFeedSignalContract({
+      record,
+      token,
+      confidenceScore,
+      hotAlphaScore,
+      earlyRunnerScore,
+      highConvictionScore,
+      opportunityScore: scoreState.opportunityScore,
+      tokenRiskScore: token?.tokenRiskScore ?? null,
+      trustedTraderCount,
+      radarReasons,
+    });
+    const countSummary = {
+      likes: record._count.likes,
+      comments: record._count.comments,
+      reposts: record._count.reposts,
+      reactions: record._count.reactions,
+    };
+    const ageHoursForVelocity = Math.max(0.2, (Date.now() - record.createdAt.getTime()) / (60 * 60 * 1000));
+    const engagementVelocity =
+      ((countSummary.likes * 2 + countSummary.comments * 3 + countSummary.reposts * 5 + countSummary.reactions) /
+        ageHoursForVelocity);
 
     enriched.push({
       ...record,
+      itemType: record.postType === "raid" ? "raid" : "post",
       poll:
         record.postType === "poll"
           ? pollSummariesByPostId.get(record.id) ?? { totalVotes: 0, viewerOptionId: null, options: [] }
@@ -3132,6 +3337,17 @@ async function hydrateCalls(
       isLiked: socialState.likedPostIds.has(record.id),
       isReposted: socialState.repostedPostIds.has(record.id),
       isFollowingAuthor: socialState.followedAuthorIds.has(record.authorId),
+      tokenContext,
+      signal,
+      engagement: {
+        ...countSummary,
+        views: record.viewCount,
+        velocity: roundMetricOrZero(engagementVelocity),
+      },
+      coverage: {
+        signal: signal?.aiScoreCoverage ?? feedCoverage("unavailable", "phew-signal-engine", "No signal context resolved."),
+        candles: signal?.candlesCoverage ?? feedCoverage("unavailable", "terminal-aggregate", "No token context resolved."),
+      },
       feedScore: 0,
       feedReasons: [],
       scoreReasons: [],
@@ -3586,11 +3802,21 @@ async function applyFeedRankingContext(
       repostContext: repostContexts.get(call.id) ?? null,
     };
     const ranking = computeFeedScoreForCall(kind, withCounts, followedTraderSet, followedTokenSet);
+    const scoreReasons = Array.from(
+      new Set([...ranking.reasons, ...(withCounts.signal?.scoreReasons ?? [])])
+    ).slice(0, 6);
     return {
       ...withCounts,
+      itemType: withCounts.repostContext ? "repost" : withCounts.itemType,
+      signal: withCounts.signal
+        ? {
+            ...withCounts.signal,
+            scoreReasons,
+          }
+        : null,
       feedScore: ranking.score,
-      feedReasons: ranking.reasons,
-      scoreReasons: ranking.reasons,
+      feedReasons: scoreReasons,
+      scoreReasons,
     };
   });
 }
