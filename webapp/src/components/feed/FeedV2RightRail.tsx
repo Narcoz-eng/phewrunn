@@ -5,9 +5,12 @@ import { Button } from "@/components/ui/button";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { cn } from "@/lib/utils";
 import type { DiscoveryFeedSidebarResponse } from "@/types";
+import type { FeedTab } from "./FeedHeader";
 
 type FeedV2RightRailProps = {
   discovery: DiscoveryFeedSidebarResponse | undefined;
+  onFilterFeed?: (query: string) => void;
+  onSelectTab?: (tab: FeedTab) => void;
 };
 
 function formatUsd(value: number | null | undefined): string {
@@ -46,7 +49,7 @@ function TokenAvatar({ src, label }: { src?: string | null; label: string }) {
   );
 }
 
-export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
+export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2RightRailProps) {
   const navigate = useNavigate();
   const topGainers = discovery?.topGainers ?? [];
   const liveRaids = discovery?.liveRaids ?? [];
@@ -56,6 +59,12 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
     .slice(0, 5);
   const whaleRows = discovery?.whaleActivity ?? [];
   const marketStats = discovery?.marketStats ?? null;
+  const filterByToken = (symbol?: string | null, address?: string | null): boolean => {
+    const query = symbol ? `$${symbol}` : address ?? "";
+    if (!query || !onFilterFeed) return false;
+    onFilterFeed?.(query);
+    return true;
+  };
 
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
@@ -89,7 +98,9 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
             <button
               key={item.id}
               type="button"
-              onClick={() => navigate(`/token/${item.address}`)}
+              onClick={() => {
+                if (!filterByToken(item.symbol || item.name, item.address)) navigate(`/token/${item.address}`);
+              }}
               className="flex w-full items-center gap-3 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
             >
               <span className="w-4 text-center text-sm font-semibold text-white/70">{index + 1}</span>
@@ -145,6 +156,16 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
                 >
                   Join Raid
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    filterByToken(raid.tokenSymbol, raid.tokenAddress);
+                    onSelectTab?.("early-runners");
+                  }}
+                  className="mt-2 h-7 w-full rounded-[9px] border border-white/8 bg-white/[0.035] text-[11px] font-semibold text-white/58 hover:border-lime-300/18 hover:text-lime-100"
+                >
+                  Filter raid activity
+                </button>
               </div>
             );
           })}
@@ -185,7 +206,9 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
               <button
                 key={`ai-${item.id}`}
                 type="button"
-                onClick={() => navigate(`/token/${item.address}`)}
+                onClick={() => {
+                  if (!filterByToken(item.symbol || item.name, item.address)) navigate(`/token/${item.address}`);
+                }}
                 className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
               >
                 <TokenAvatar src={item.imageUrl} label={item.symbol || item.name || "?"} />
@@ -208,7 +231,9 @@ export function FeedV2RightRail({ discovery }: FeedV2RightRailProps) {
               key={`whale-${item.id}`}
               type="button"
               onClick={() => {
-                if (item.explorerUrl) {
+                if (item.tokenSymbol) {
+                  filterByToken(item.tokenSymbol, null);
+                } else if (item.explorerUrl) {
                   window.open(item.explorerUrl, "_blank", "noopener,noreferrer");
                 }
               }}

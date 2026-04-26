@@ -577,6 +577,24 @@ export function ProTerminalSurface({ initialTokenAddress = null }: ProTerminalSu
                   <div className="truncate text-sm font-semibold text-white">{focusedCall.content.slice(0, 58)}</div>
                   <div className="text-xs font-bold text-lime-300">{formatPct(focusedCall.roiCurrentPct)}</div>
                 </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="rounded-lg border border-white/8 bg-black/20 px-2 py-1.5">
+                    <div className="text-white/34">AI</div>
+                    <div className="font-semibold text-lime-200">{focusedCall.signal?.aiScore != null ? focusedCall.signal.aiScore.toFixed(1) : "--"}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/8 bg-black/20 px-2 py-1.5">
+                    <div className="text-white/34">Momentum</div>
+                    <div className="font-semibold text-lime-200">{focusedCall.signal?.momentumScore != null ? focusedCall.signal.momentumScore.toFixed(1) : "--"}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/8 bg-black/20 px-2 py-1.5">
+                    <div className="text-white/34">Smart money</div>
+                    <div className="font-semibold text-lime-200">{focusedCall.signal?.smartMoneyScore != null ? focusedCall.signal.smartMoneyScore.toFixed(1) : "--"}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/8 bg-black/20 px-2 py-1.5">
+                    <div className="text-white/34">Risk</div>
+                    <div className="font-semibold text-lime-200">{focusedCall.signal?.riskLabel ?? "--"}</div>
+                  </div>
+                </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {(focusedCall.signal?.scoreReasons ?? focusedCall.scoreReasons ?? focusedCall.feedReasons ?? []).slice(0, 2).map((reason) => (
                     <span key={reason} className="rounded-full border border-lime-300/14 bg-lime-300/10 px-2 py-1 text-[10px] font-semibold text-lime-100">
@@ -588,6 +606,15 @@ export function ProTerminalSurface({ initialTokenAddress = null }: ProTerminalSu
                   ) : null}
                 </div>
               </Link>
+              <div className="mt-3 space-y-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/34">Related calls timeline</div>
+                {terminal.recentCalls.filter((post) => post.id !== focusedCall.id).slice(0, 3).map((post) => (
+                  <Link key={post.id} to={`/post/${post.id}`} className="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs hover:bg-white/[0.045]">
+                    <span className="truncate text-white/58">{post.content.slice(0, 34)}</span>
+                    <span className="ml-2 shrink-0 font-semibold text-lime-300">{formatPct(post.roiCurrentPct)}</span>
+                  </Link>
+                ))}
+              </div>
             </RailPanel>
           ) : null}
 

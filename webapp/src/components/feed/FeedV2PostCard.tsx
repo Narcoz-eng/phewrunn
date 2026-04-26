@@ -17,7 +17,12 @@ type FeedV2PostCardProps = {
 };
 
 type FeedPostKind = "call" | "chart" | "whale" | "poll" | "raid" | "news" | "discussion";
-type SignalTier = "strong" | "partial" | "weak";
+type SignalTier = "strong" | "medium" | "partial" | "weak";
+type DecisionBadge = {
+  label: "STRONG" | "MEDIUM" | "PARTIAL" | "WEAK";
+  tone: "strong" | "medium" | "partial" | "weak";
+  reason: string;
+};
 
 function compact(value: number | null | undefined, prefix = ""): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "--";
@@ -36,8 +41,10 @@ function pct(value: number | null | undefined): string {
 function timeAgo(value: string): string {
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return "";
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return "now";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 15) return "just now";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
@@ -83,6 +90,7 @@ function signalTitle(post: Post): string {
 function signalTier(post: Post): SignalTier {
   const score = post.signal?.aiScore ?? post.highConvictionScore ?? post.confidenceScore ?? null;
   if (typeof score === "number" && score >= 75 && post.signal?.aiScoreCoverage.state !== "unavailable") return "strong";
+  if (typeof score === "number" && score >= 55 && post.signal?.aiScoreCoverage.state !== "unavailable") return "medium";
   if (post.signal?.aiScoreCoverage.state === "partial" || post.signal?.aiScoreCoverage.state === "live") return "partial";
   return "weak";
 }
@@ -94,7 +102,9 @@ function shellClass(post: Post, kind: FeedPostKind): string {
       "relative overflow-hidden rounded-[18px] border p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]",
       tier === "strong"
         ? "border-lime-300/22 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.13),transparent_30%),linear-gradient(180deg,rgba(8,14,17,0.99),rgba(3,8,10,0.99))]"
-        : tier === "partial"
+          : tier === "medium"
+            ? "border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.08),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))]"
+          : tier === "partial"
           ? "border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.08),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))]"
           : "border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.94),rgba(3,8,11,0.98))]"
     );
@@ -189,9 +199,45 @@ function aiSignalSubLabel(post: Post): string {
   return "Derived from live backend signals";
 }
 
-function topSignalReasons(post: Post): string[] {
+function scoreReasonSource(post: Post): string[] {
   const reasons = post.signal?.scoreReasons?.length ? post.signal.scoreReasons : post.scoreReasons?.length ? post.scoreReasons : post.feedReasons ?? [];
-  return reasons.slice(0, 2);
+  return reasons;
+}
+
+function dominantReason(post: Post): string {
+  const reasons = scoreReasonSource(post);
+  return reasons[0] ?? post.signal?.convictionLabel ?? (post.community ? "Community momentum" : "Fresh signal");
+}
+
+function decisionBadge(post: Post): DecisionBadge {
+  const tier = signalTier(post);
+  if (tier === "strong") return { label: "STRONG", tone: "strong", reason: dominantReason(post) };
+  if (tier === "medium") return { label: "MEDIUM", tone: "medium", reason: dominantReason(post) };
+  if (tier === "partial") return { label: "PARTIAL", tone: "partial", reason: post.signal?.aiScoreCoverage.unavailableReason ?? dominantReason(post) };
+  return { label: "WEAK", tone: "weak", reason: post.signal?.aiScoreCoverage.unavailableReason ?? dominantReason(post) };
+}
+
+function interactionTotal(post: Post): number {
+  return Math.max(0, post._count.likes + post._count.comments + post._count.reposts);
+}
+
+function engagementVelocityLabel(post: Post): string {
+  const explicit = post.engagement?.velocity;
+  if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
+    return `+${Math.round(explicit)} interactions/hr`;
+  }
+  const timestamp = new Date(post.createdAt).getTime();
+  const ageMinutes = Number.isFinite(timestamp) ? Math.max(1, Math.floor((Date.now() - timestamp) / 60_000)) : 1;
+  const total = interactionTotal(post);
+  if (total > 0 && ageMinutes <= 10) {
+    return `+${total} interactions in ${ageMinutes} min`;
+  }
+  if (total > 0) return `${total} total interactions`;
+  return "Engagement warming up";
+}
+
+function recentActionLabel(post: Post, noun = "detected"): string {
+  return `${noun} ${timeAgo(post.createdAt)} ago`;
 }
 
 function callMetrics(post: Post): Array<{ label: string; value: string }> {
@@ -395,10 +441,14 @@ function PostContextStrip({ post }: { post: Post }) {
       } community`
     );
   }
-  const scoreReasons = post.signal?.scoreReasons?.length ? post.signal.scoreReasons : post.scoreReasons?.length ? post.scoreReasons : post.feedReasons;
-  if (scoreReasons?.length) {
-    context.push(scoreReasons.slice(0, 2).join(" + "));
+  if (post.feedReasons?.some((reason) => reason.toLowerCase().includes("follow"))) {
+    context.push("You follow this caller");
   }
+  if (post.feedReasons?.some((reason) => reason.toLowerCase().includes("community")) && post.community) {
+    context.push("From your community");
+  }
+  const reason = dominantReason(post);
+  if (reason && !context.includes(reason)) context.push(reason);
   if (context.length === 0) return null;
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-lime-200/62">
@@ -441,8 +491,8 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const positive = direction !== "SHORT";
   const metrics = callMetrics(post);
   const terminalAddress = post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress;
-  const reasons = topSignalReasons(post);
   const tier = signalTier(post);
+  const decision = decisionBadge(post);
   return (
     <article className={shellClass(post, "call")}>
       {tier === "strong" ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
@@ -460,15 +510,25 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
       </div>
       <p className="mt-2 text-sm leading-5 text-white/66">{displayContent(post)}</p>
 
-      {reasons.length ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {reasons.map((reason) => (
-            <span key={reason} className="rounded-[9px] border border-lime-300/14 bg-lime-300/[0.07] px-2.5 py-1 text-[11px] font-semibold text-lime-100/82">
-              {reason}
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "rounded-[10px] border px-2.5 py-1 text-[11px] font-black tracking-[0.12em]",
+            decision.tone === "strong" && "border-lime-300/28 bg-lime-300/[0.16] text-lime-100 shadow-[0_0_24px_rgba(169,255,52,0.16)]",
+            decision.tone === "medium" && "border-lime-300/18 bg-lime-300/[0.08] text-lime-200",
+            decision.tone === "partial" && "border-cyan-300/18 bg-cyan-300/[0.08] text-cyan-100",
+            decision.tone === "weak" && "border-white/10 bg-white/[0.04] text-white/48"
+          )}
+        >
+          {decision.label}
+        </span>
+        <span className="rounded-[10px] border border-white/8 bg-white/[0.035] px-2.5 py-1 text-[11px] font-semibold text-white/68">
+          {decision.reason}
+        </span>
+        <span className="rounded-[10px] border border-white/8 bg-black/20 px-2.5 py-1 text-[11px] font-semibold text-white/42">
+          {engagementVelocityLabel(post)}
+        </span>
+      </div>
 
       {metrics.length ? (
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -483,7 +543,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
       )}
 
       <div className="mt-3">
-        <FeedMiniCandleChart post={post} tall />
+        <FeedMiniCandleChart post={post} tall={tier !== "weak"} />
       </div>
 
       {terminalAddress ? (
@@ -519,6 +579,9 @@ export function FeedPostWhaleCard(props: FeedV2PostCardProps) {
       <div className="mt-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-200/72">
         <Waves className="h-4 w-4" />
         On-chain flow
+        <span className="rounded-full border border-cyan-300/12 bg-cyan-300/[0.07] px-2 py-0.5 text-[10px] normal-case tracking-normal text-cyan-100/72">
+          {recentActionLabel(post)}
+        </span>
       </div>
       <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">{tokenLabel(post)} WHALE ACTIVITY</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
@@ -545,6 +608,9 @@ export function FeedPostPollCard(props: FeedV2PostCardProps) {
       <div className="mt-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-violet-200/72">
         <Vote className="h-4 w-4" />
         Community poll
+        <span className="rounded-full border border-violet-300/12 bg-violet-300/[0.07] px-2 py-0.5 text-[10px] normal-case tracking-normal text-violet-100/72">
+          {engagementVelocityLabel(post)}
+        </span>
       </div>
       <h2 className="mt-1 text-xl font-semibold text-white">{displayContent(post)}</h2>
       {poll && poll.options.length > 0 ? (
@@ -643,6 +709,9 @@ export function FeedPostRaidCard(props: FeedV2PostCardProps) {
       <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-200/72">
         <RadioTower className="h-3.5 w-3.5" />
         Raid signal
+        <span className="rounded-full border border-lime-300/12 bg-lime-300/[0.07] px-2 py-0.5 text-[10px] normal-case tracking-normal text-lime-100/72">
+          {engagementVelocityLabel(post)}
+        </span>
       </div>
       <h2 className="mt-1 text-xl font-semibold text-white">{tokenLabel(post)} RAID UPDATE</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>

@@ -2767,7 +2767,11 @@ export default function Feed() {
           )}
           </section>
         </div>
-        <FeedV2RightRail discovery={discoverySidebar} />
+        <FeedV2RightRail
+          discovery={discoverySidebar}
+          onFilterFeed={handleSearchChange}
+          onSelectTab={handleTabChange}
+        />
       </main>
     </div>
   );
