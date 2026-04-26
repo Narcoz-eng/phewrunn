@@ -70,12 +70,32 @@ function PublicHandleProfileRoute() {
   return <UserProfile />;
 }
 
+function ProductContentSkeleton() {
+  return (
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="space-y-3">
+        <Skeleton className="h-20 w-full rounded-[18px] bg-white/[0.05]" />
+        <Skeleton className="h-32 w-full rounded-[18px] bg-white/[0.05]" />
+        <Skeleton className="h-56 w-full rounded-[18px] bg-white/[0.05]" />
+      </div>
+      <div className="hidden space-y-3 lg:block">
+        <Skeleton className="h-28 w-full rounded-[18px] bg-white/[0.05]" />
+        <Skeleton className="h-44 w-full rounded-[18px] bg-white/[0.05]" />
+      </div>
+    </div>
+  );
+}
+
 function WithSolanaRuntime({ children }: { children: ReactNode }) {
   return <SolanaRouteProvider>{children}</SolanaRouteProvider>;
 }
 
 function WithProductShell({ children }: { children: ReactNode }) {
-  return <V2AppShell>{children}</V2AppShell>;
+  return (
+    <V2AppShell>
+      <Suspense fallback={<ProductContentSkeleton />}>{children}</Suspense>
+    </V2AppShell>
+  );
 }
 
 function hasCompletedHandle(username: string | null | undefined): boolean {

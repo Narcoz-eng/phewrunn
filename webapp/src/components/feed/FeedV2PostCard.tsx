@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Waves, Zap, type LucideIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -273,17 +273,25 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
 }
 
 function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolean }) {
+  const queryClient = useQueryClient();
   const tokenAddress = (post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress)?.trim();
   const tokenSymbol = post.signal?.tokenSymbol ?? post.tokenContext?.symbol ?? post.tokenSymbol;
+  const shouldFetchCandles = Boolean(tokenAddress) && post.signal?.candlesCoverage.state !== "unavailable";
+  const terminalQueryKey = ["terminal-aggregate-v1", tokenAddress, "1h"] as const;
+  const cachedTerminal = tokenAddress
+    ? queryClient.getQueryData<TerminalAggregateResponse>(terminalQueryKey)
+    : undefined;
   const chartQuery = useQuery({
-    queryKey: ["feed", "mini-candles", tokenAddress, "1h"],
+    queryKey: terminalQueryKey,
     queryFn: () =>
       api.get<TerminalAggregateResponse>(
         `/api/tokens/${encodeURIComponent(tokenAddress ?? "")}/terminal?timeframe=1h`,
         { cache: "default" }
       ),
-    enabled: Boolean(tokenAddress),
-    staleTime: 60_000,
+    enabled: shouldFetchCandles,
+    initialData: cachedTerminal,
+    staleTime: 120_000,
+    gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
   });
   const candles = chartQuery.data?.chart.candles.slice(-48) ?? [];
@@ -300,9 +308,9 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
 
   if (chartQuery.isLoading) {
     return (
-      <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-black/20", tall ? "h-[220px]" : "h-[118px]")}>
+      <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-black/20", tall ? "h-[104px]" : "h-[76px]")}>
         <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.045),transparent)]" />
-        <div className="flex h-full items-center justify-center text-sm text-white/42">Loading live candles...</div>
+        <div className="flex h-full items-center justify-center text-xs font-semibold text-white/38">Resolving market candles...</div>
       </div>
     );
   }

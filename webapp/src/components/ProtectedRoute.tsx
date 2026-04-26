@@ -110,7 +110,7 @@ function ProtectedRouteFallback({
     hadTokenHint.current = false;
   }
 
-  if (isPending) {
+  if (isPending && !effectiveUser) {
     return <RouteLoading label="Connecting..." />;
   }
 
@@ -162,10 +162,6 @@ function ProtectedRouteFallback({
         state={{ from: `${location.pathname}${location.search}${location.hash}` }}
       />
     );
-  }
-
-  if (!session?.user) {
-    return <RouteLoading label="Connecting..." />;
   }
 
   return <>{children}</>;
@@ -398,7 +394,7 @@ function ProtectedRouteWithPrivy({
     hadTokenHint.current = false;
   }
 
-  if (isPending) {
+  if (isPending && !effectiveUser) {
     return <RouteLoading label="Connecting..." />;
   }
 
