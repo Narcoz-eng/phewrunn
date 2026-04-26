@@ -742,6 +742,7 @@ export interface TokenRaidDetailUpdate {
 }
 
 export interface TokenRaidDetailIntelligence {
+  coverage: FeedCoverage;
   pressureScore: number;
   activationRatePct: number;
   postedVelocityPerHour: number;

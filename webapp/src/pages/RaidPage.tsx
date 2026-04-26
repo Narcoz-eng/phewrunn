@@ -68,6 +68,12 @@ export default function RaidPage() {
   const mySubmission = raidQuery.data?.mySubmission ?? null;
   const milestones = useMemo(() => raidQuery.data?.milestones ?? [], [raidQuery.data?.milestones]);
   const intelligence = raidQuery.data?.intelligence ?? null;
+  const intelligenceCoverage = intelligence?.coverage ?? {
+    state: "unavailable" as const,
+    source: "raid-room-execution",
+    unavailableReason: "Raid intelligence coverage was not returned by the backend.",
+  };
+  const canRenderProjectedIntelligence = intelligenceCoverage.state !== "unavailable";
   const communityAssets = raidQuery.data?.communityAssets ?? null;
   const firstCopy = raid?.copyOptions?.[0] ?? null;
   const firstMeme = raid?.memeOptions?.[0] ?? null;
@@ -77,7 +83,7 @@ export default function RaidPage() {
     [leaderboard]
   );
   const countdownTarget = raid?.endsAt ?? raid?.closedAt ?? null;
-  const pressureScore = intelligence?.pressureScore ?? Math.min(100, Math.round((raid?.progressPct ?? 0) * 0.7 + Math.min(totalBoosts * 4, 30)));
+  const pressureScore = canRenderProjectedIntelligence ? intelligence?.pressureScore ?? null : null;
 
   const activityFeed = useMemo(() => {
     return updates.map((update) => ({
@@ -309,7 +315,9 @@ export default function RaidPage() {
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Raid Progress</div>
                     <div className="mt-2 text-sm text-white/56">
-                      {intelligence?.socialSignal ?? "Progress tracks joined raiders, submitted X proof, and boosts from the active room."}
+                      {canRenderProjectedIntelligence
+                        ? intelligence?.socialSignal
+                        : intelligenceCoverage.unavailableReason ?? "Raid intelligence is unavailable until execution data exists."}
                     </div>
                   </div>
                   <div className="text-2xl font-semibold text-white">{raid.progressPct}%</div>
@@ -331,20 +339,22 @@ export default function RaidPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[11px] uppercase tracking-[0.18em] text-white/38">Live Room Pressure</div>
-                  <div className="mt-2 text-4xl font-semibold tracking-[-0.06em] text-white">{pressureScore}</div>
+                  <div className="mt-2 text-4xl font-semibold tracking-[-0.06em] text-white">{pressureScore ?? "--"}</div>
                 </div>
                 <div className="flex h-14 w-14 items-center justify-center rounded-full border border-lime-300/20 bg-lime-300/10 shadow-[0_0_34px_rgba(169,255,52,0.16)]">
                   <Radio className="h-6 w-6 text-lime-200" />
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <PressureCell label="Proof rate" value={`${intelligence?.activationRatePct ?? 0}%`} />
-                <PressureCell label="Post velocity" value={`${intelligence?.postedVelocityPerHour ?? 0}/h`} />
-                <PressureCell label="Boost velocity" value={`${intelligence?.boostVelocityPerHour ?? 0}/h`} />
-                <PressureCell label="Projected" value={`${intelligence?.projectedCompletionPct ?? raid.progressPct}%`} />
+                <PressureCell label="Proof rate" value={canRenderProjectedIntelligence ? `${intelligence?.activationRatePct ?? 0}%` : "--"} />
+                <PressureCell label="Post velocity" value={canRenderProjectedIntelligence ? `${intelligence?.postedVelocityPerHour ?? 0}/h` : "--"} />
+                <PressureCell label="Boost velocity" value={canRenderProjectedIntelligence ? `${intelligence?.boostVelocityPerHour ?? 0}/h` : "--"} />
+                <PressureCell label="Projected" value={canRenderProjectedIntelligence ? `${intelligence?.projectedCompletionPct ?? raid.progressPct}%` : "--"} />
               </div>
               <div className="mt-4 rounded-[18px] border border-white/8 bg-black/24 p-3 text-xs leading-5 text-white/56">
-                {intelligence?.nextBestAction ?? "Join, launch creative, submit proof, and boost live posts to move the room."}
+                {canRenderProjectedIntelligence
+                  ? intelligence?.nextBestAction
+                  : intelligenceCoverage.unavailableReason ?? "Join or submit proof to unlock raid intelligence."}
               </div>
             </div>
 
@@ -405,8 +415,8 @@ export default function RaidPage() {
             <div className="mt-5 grid gap-3 md:grid-cols-5">
               <ProgressCell label="Target" value={raid.token?.symbol ? `$${raid.token.symbol}` : "Token"} />
               <ProgressCell label="Proof" value={formatCompact(raid.postedCount)} />
-              <ProgressCell label="Pressure" value={`${pressureScore}/100`} />
-              <ProgressCell label="Driver" value={intelligence?.topDriver?.user.username || intelligence?.topDriver?.user.name || "Open"} />
+              <ProgressCell label="Pressure" value={pressureScore !== null ? `${pressureScore}/100` : "--"} />
+              <ProgressCell label="Driver" value={canRenderProjectedIntelligence ? intelligence?.topDriver?.user.username || intelligence?.topDriver?.user.name || "Open" : "--"} />
               <ProgressCell label="Cycle" value={raid.closedAt ? "Closed" : "24h"} />
             </div>
           </section>

@@ -40,7 +40,8 @@ function inferRiskScore(params: {
   return Math.max(0, Math.min(99, Math.round(base + derived + labelBoost)));
 }
 
-function inferRiskLabel(score: number): "high" | "medium" | "low" {
+function inferRiskLabel(score: number, hasExplicitEvidence: boolean): "high" | "medium" | "low" | "not_enough_evidence" {
+  if (!hasExplicitEvidence) return "not_enough_evidence";
   if (score >= 70) return "high";
   if (score >= 40) return "medium";
   return "low";
@@ -240,14 +241,20 @@ bundleCheckerRouter.get(
       }
     }
 
-    const riskScore = inferRiskScore({
+    const hasExplicitRiskEvidence =
+      token.clusters.length > 0 ||
+      graphEdges.length > 0 ||
+      (typeof token.estimatedBundledSupplyPct === "number" && Number.isFinite(token.estimatedBundledSupplyPct) && token.estimatedBundledSupplyPct > 0) ||
+      (typeof token.bundledWalletCount === "number" && Number.isFinite(token.bundledWalletCount) && token.bundledWalletCount > 0) ||
+      (typeof token.tokenRiskScore === "number" && Number.isFinite(token.tokenRiskScore) && token.tokenRiskScore > 0);
+    const riskScore = hasExplicitRiskEvidence ? inferRiskScore({
       tokenRiskScore: token.tokenRiskScore,
       clusterCount: token.clusters.length,
       bundledSupplyPct: token.estimatedBundledSupplyPct,
       bundledWalletCount: token.bundledWalletCount,
       bundleRiskLabel: token.bundleRiskLabel,
-    });
-    const riskLabel = inferRiskLabel(riskScore);
+    }) : null;
+    const riskLabel = inferRiskLabel(riskScore ?? 0, hasExplicitRiskEvidence);
     const edgeCount = graphEdges.length;
     const clusterCount = token.clusters.length;
     const bundledSupplyPct = toFiniteNumber(token.estimatedBundledSupplyPct);
@@ -266,7 +273,7 @@ bundleCheckerRouter.get(
     const lastTrend = trend[trend.length - 1] ?? null;
     const trendDelta =
       typeof firstTrend === "number" && typeof lastTrend === "number" ? lastTrend - firstTrend : null;
-    const riskFactors = [
+    const riskFactors = hasExplicitRiskEvidence ? [
       {
         key: "wallet_interconnectivity",
         label: "Wallet interconnectivity",
@@ -291,17 +298,22 @@ bundleCheckerRouter.get(
         score: liquiditySensitivityScore,
         detail: `${token.volume24h != null ? "$" + Math.round(token.volume24h).toLocaleString() : "Unknown"} 24h volume versus ${token.liquidity != null ? "$" + Math.round(token.liquidity).toLocaleString() : "unknown"} liquidity.`,
       },
-    ];
+    ] : [];
+    const resolvedRiskScore = riskScore ?? 0;
     const aiInsight =
-      riskScore >= 70
+      !hasExplicitRiskEvidence
+        ? "Not enough bundle evidence: the backend did not return clusters, linked wallets, or bundled supply measurements for this target."
+        : resolvedRiskScore >= 70
         ? `High coordination risk: ${clusterCount} cluster${clusterCount === 1 ? "" : "s"} and ${bundledWalletCount} linked wallets create a meaningful supply control pocket. ${trendDelta != null ? `Bundled supply ${trendDelta >= 0 ? "increased" : "decreased"} ${Math.abs(trendDelta).toFixed(2)} pts across captured snapshots.` : "Trend history is limited."}`
-        : riskScore >= 40
+        : resolvedRiskScore >= 40
           ? `Moderate coordination pressure: ${clusterCount} cluster${clusterCount === 1 ? "" : "s"} detected with ${bundledSupplyPct.toFixed(2)}% estimated bundled supply. Watch for synchronized distribution into high-volume spikes.`
           : `Low current bundle pressure: resolved clusters do not show dominant supply control. Continue monitoring because new holder snapshots can change this quickly.`;
     const recommendation =
-      riskScore >= 70
+      !hasExplicitRiskEvidence
+        ? "Not enough evidence; do not treat this as clean."
+        : resolvedRiskScore >= 70
         ? "Avoid or size defensively until cluster pressure eases."
-        : riskScore >= 40
+        : resolvedRiskScore >= 40
           ? "Trade with caution and require confirmation from liquidity and holder trend."
           : "Monitor normally; no dominant bundle risk detected from current evidence.";
 

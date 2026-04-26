@@ -600,7 +600,9 @@
   }
 
   .v2-sidebar {
-    @apply fixed inset-y-0 left-0 z-40 w-[14.5rem] flex-col border-r border-white/[0.07] px-4 py-4;
+    @apply fixed inset-y-0 left-0 z-40 h-screen w-[14.5rem] flex-col overflow-y-auto overscroll-contain border-r border-white/[0.07] px-4 py-4;
+    scrollbar-gutter: stable;
+    scroll-behavior: smooth;
     background:
       radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 24%),
       radial-gradient(circle at bottom left, rgba(45, 212, 191, 0.08), transparent 30%),

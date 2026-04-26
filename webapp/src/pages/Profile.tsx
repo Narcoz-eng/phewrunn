@@ -1247,7 +1247,7 @@ export default function Profile() {
     const fallbackAiScore =
       performanceSnapshot?.periodMetrics?.[performancePeriod]?.trustScore ??
       performanceSnapshot?.callMetrics?.trustScore ??
-      winRate;
+      null;
     const fallbackCalls = [...posts]
       .sort((left, right) => (right.roiCurrentPct ?? right.roiPeakPct ?? 0) - (left.roiCurrentPct ?? left.roiPeakPct ?? 0))
       .slice(0, 4)
@@ -1284,7 +1284,7 @@ export default function Profile() {
       },
       aiScore: {
         score: typeof fallbackAiScore === "number" && Number.isFinite(fallbackAiScore) ? fallbackAiScore : null,
-        label: typeof fallbackAiScore === "number" && fallbackAiScore >= 80 ? "elite" : "developing",
+        label: typeof fallbackAiScore === "number" && fallbackAiScore >= 80 ? "elite" : "unavailable",
         percentile: typeof fallbackAiScore === "number" && fallbackAiScore >= 80 ? "Top 10%" : null,
       },
       topCalls: fallbackCalls,
@@ -1302,7 +1302,7 @@ export default function Profile() {
         { label: "Followers", value: `${followersCount}` },
         { label: "Calls", value: `${totalSettled}` },
         { label: "Win Rate", value: `${winRate}%` },
-        { label: "AI Score", value: typeof fallbackAiScore === "number" ? fallbackAiScore.toFixed(1) : "0.0" },
+        { label: "AI Score", value: typeof fallbackAiScore === "number" ? fallbackAiScore.toFixed(1) : "Unavailable" },
       ],
       portfolioSnapshot: walletOverview
         ? {

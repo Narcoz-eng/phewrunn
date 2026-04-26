@@ -1306,6 +1306,12 @@ async function loadRaidDetailView(
     100,
     Math.round(progressPct * 0.42 + Math.min(activationRatePct, 100) * 0.28 + Math.min(boostDensity * 12, 100) * 0.18 + Math.min(postedVelocityPerHour * 12, 100) * 0.12),
   );
+  const intelligenceCoverageState =
+    participantCount > 0 || postedCount > 0 || boostCount > 0 ? "live" : "unavailable";
+  const intelligenceUnavailableReason =
+    intelligenceCoverageState === "unavailable"
+      ? "Raid intelligence requires joined participants, submitted proof, or boosts before projections are available."
+      : null;
   const socialSignal =
     pressureScore >= 80
       ? "Raid pressure is compounding across posted links and boosts."
@@ -1407,6 +1413,11 @@ async function loadRaidDetailView(
     updates,
     milestones,
     intelligence: {
+      coverage: {
+        state: intelligenceCoverageState,
+        source: "raid-room-execution",
+        unavailableReason: intelligenceUnavailableReason,
+      },
       pressureScore,
       activationRatePct,
       postedVelocityPerHour,

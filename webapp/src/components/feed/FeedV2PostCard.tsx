@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Waves, Zap, type LucideIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
@@ -23,6 +24,34 @@ type DecisionBadge = {
   tone: "strong" | "medium" | "partial" | "weak";
   reason: string;
 };
+
+function useNearViewport(rootMargin = "450px") {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [isNearViewport, setIsNearViewport] = useState(false);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || isNearViewport) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setIsNearViewport(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setIsNearViewport(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isNearViewport, rootMargin]);
+
+  return { ref, isNearViewport };
+}
 
 function compact(value: number | null | undefined, prefix = ""): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "--";
@@ -135,7 +164,7 @@ function riskLabel(post: Post): string {
   if (typeof risk !== "number") return "Unavailable";
   if (risk >= 70) return "High";
   if (risk >= 40) return "Medium";
-  return "Low";
+  return "Lower";
 }
 
 function momentumLabel(post: Post): string {
@@ -165,9 +194,9 @@ function smartMoneySubLabel(post: Post): string {
     return "Verified trader overlap";
   }
   if (typeof post.bundlePenaltyScore === "number") {
-    return post.bundlePenaltyScore <= 35 ? "Bundle risk is clean" : "Bundle risk requires review";
+    return post.bundlePenaltyScore <= 35 ? "Bundle scan found no high-risk cluster" : "Bundle risk requires review";
   }
-  return "Awaiting trusted wallet coverage";
+  return "Wallet-signal coverage unavailable";
 }
 
 function aiSignalValue(post: Post): string {
@@ -206,7 +235,12 @@ function scoreReasonSource(post: Post): string[] {
 
 function dominantReason(post: Post): string {
   const reasons = scoreReasonSource(post);
-  return reasons[0] ?? post.signal?.convictionLabel ?? (post.community ? "Community momentum" : "Fresh signal");
+  if (reasons[0]) return reasons[0];
+  if (post.signal?.convictionLabel && post.signal.convictionLabel.toLowerCase() !== "neutral") {
+    return post.signal.convictionLabel;
+  }
+  if (post.signal?.unavailableReasons?.[0]) return post.signal.unavailableReasons[0];
+  return post.community ? "Community context available" : "Signal coverage unavailable";
 }
 
 function decisionBadge(post: Post): DecisionBadge {
@@ -274,9 +308,10 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
 
 function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolean }) {
   const queryClient = useQueryClient();
+  const { ref, isNearViewport } = useNearViewport();
   const tokenAddress = (post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress)?.trim();
   const tokenSymbol = post.signal?.tokenSymbol ?? post.tokenContext?.symbol ?? post.tokenSymbol;
-  const shouldFetchCandles = Boolean(tokenAddress) && post.signal?.candlesCoverage.state !== "unavailable";
+  const shouldFetchCandles = Boolean(tokenAddress) && isNearViewport && post.signal?.candlesCoverage.state !== "unavailable";
   const terminalQueryKey = ["terminal-aggregate-v1", tokenAddress, "1h"] as const;
   const cachedTerminal = tokenAddress
     ? queryClient.getQueryData<TerminalAggregateResponse>(terminalQueryKey)
@@ -299,16 +334,25 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
 
   if (!tokenAddress) {
     return (
-      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
+      <div ref={ref} className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
         <div className="text-sm font-semibold text-white/72">No token chart</div>
         <div className="mt-1 text-xs text-white/40">{post.signal?.candlesCoverage.unavailableReason ?? "Add a token address to attach live candle coverage."}</div>
       </div>
     );
   }
 
+  if (!isNearViewport && !cachedTerminal) {
+    return (
+      <div ref={ref} className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
+        <div className="text-sm font-semibold text-white/72">Chart queued</div>
+        <div className="mt-1 text-xs text-white/40">Candle data loads when this card is near the viewport.</div>
+      </div>
+    );
+  }
+
   if (chartQuery.isLoading) {
     return (
-      <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-black/20", tall ? "h-[104px]" : "h-[76px]")}>
+      <div ref={ref} className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-black/20", tall ? "h-[104px]" : "h-[76px]")}>
         <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.045),transparent)]" />
         <div className="flex h-full items-center justify-center text-xs font-semibold text-white/38">Resolving market candles...</div>
       </div>
@@ -317,7 +361,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
 
   if (!candles.length) {
     return (
-      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
+      <div ref={ref} className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
         <div className="text-sm font-semibold text-white/72">Market chart unavailable</div>
         <div className="mt-1 text-xs text-white/40">
           {coverage?.unavailableReason || post.signal?.candlesCoverage.unavailableReason || "The backend did not return candle coverage for this token."}
@@ -339,7 +383,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
   const y = (value: number) => 8 + (1 - (value - min) / range) * 64;
 
   return (
-    <div className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[220px]" : "h-[118px]")}>
+    <div ref={ref} className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,7,10,0.99))]", tall ? "h-[220px]" : "h-[118px]")}>
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:25%_25%]" />
       <div className="absolute left-3 top-3 z-10 flex items-center gap-2 text-xs font-semibold text-white">
         <span>{tokenSymbol ? `$${tokenSymbol}` : "TOKEN"}/USDT</span>

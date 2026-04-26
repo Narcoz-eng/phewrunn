@@ -104,7 +104,24 @@ type TokenChartCandlesResponse = {
   candles: TokenChartCandle[];
   source: TokenChartCandlesSource;
   network: string | null;
+  coverage?: TokenPageCoverage;
 };
+
+type TokenPageCoverageState = "live" | "partial" | "unavailable";
+
+type TokenPageCoverage = {
+  state: TokenPageCoverageState;
+  source: string;
+  unavailableReason: string | null;
+};
+
+function tokenCoverage(
+  state: TokenPageCoverageState,
+  source: string,
+  unavailableReason: string | null = null
+): TokenPageCoverage {
+  return { state, source, unavailableReason };
+}
 
 type TokenTrader = PostAuthor & {
   callsCount: number;
@@ -2462,6 +2479,7 @@ export default function TokenPage() {
           candles: [],
           source: "unknown" as const,
           network: null,
+          coverage: tokenCoverage("unavailable", "token-chart", "Token metadata is required before chart candles can be requested."),
         };
       }
 
@@ -2490,14 +2508,24 @@ export default function TokenPage() {
               candles?: TokenChartCandle[];
               source?: string;
               network?: string | null;
+              coverage?: TokenPageCoverage;
             };
           }
         | null;
       const sourceRaw = payload?.data?.source;
+      const candles = Array.isArray(payload?.data?.candles) ? payload.data.candles : [];
+      const source = sourceRaw === "birdeye" || sourceRaw === "geckoterminal" ? sourceRaw : "unknown";
       return {
-        candles: Array.isArray(payload?.data?.candles) ? payload.data.candles : [],
-        source: sourceRaw === "birdeye" || sourceRaw === "geckoterminal" ? sourceRaw : "unknown",
+        candles,
+        source,
         network: typeof payload?.data?.network === "string" ? payload.data.network : null,
+        coverage:
+          payload?.data?.coverage ??
+          tokenCoverage(
+            candles.length > 1 ? "live" : "unavailable",
+            source,
+            candles.length > 1 ? null : "The chart provider did not return enough OHLCV candles for this token."
+          ),
       };
     },
   });
@@ -2653,6 +2681,15 @@ export default function TokenPage() {
       )
   );
   const hasLiveChartTelemetry = displayLiveChartData.length > 1;
+  const chartCoverage = liveChartQuery.data?.coverage ?? tokenCoverage(
+    hasLiveChartTelemetry ? "live" : hasChartTelemetry ? "partial" : "unavailable",
+    hasLiveChartTelemetry ? liveChartQuery.data?.source ?? "live-chart" : hasChartTelemetry ? "token-history" : "token-chart",
+    hasLiveChartTelemetry
+      ? null
+      : hasChartTelemetry
+        ? "Only historical token snapshots are available; live candle coverage is unavailable."
+        : "No chart coverage was returned for this token."
+  );
   const liveChartPriceChangePct =
     displayLiveChartData.length > 1
       ? ((displayLiveChartData[displayLiveChartData.length - 1]!.close - displayLiveChartData[0]!.open) / displayLiveChartData[0]!.open) * 100
@@ -2660,11 +2697,15 @@ export default function TokenPage() {
   const chartHistorySpanMs =
     chartData.length > 1 ? Math.max(0, chartData[chartData.length - 1]!.ts - chartData[0]!.ts) : 0;
   const liveChartSourceLabel =
-    liveChartQuery.data?.source === "birdeye"
+    chartCoverage.state === "unavailable"
+      ? chartCoverage.unavailableReason ?? "Chart coverage unavailable"
+      : liveChartQuery.data?.source === "birdeye"
       ? "Birdeye live + token stream"
       : liveChartQuery.data?.source === "geckoterminal"
         ? "GeckoTerminal live + token stream"
-        : "Live chart + token stream";
+        : chartCoverage.state === "partial"
+          ? "Historical token snapshots"
+          : "Live chart + token stream";
   const canCreateTokenCommunity = Boolean(session?.user && (session.user.isAdmin || (session.user.level ?? 0) >= 3));
   const createCommunityLockedReason = "Reach level 3 to create a community";
   const communityRoomQuery = useQuery<TokenCommunityRoom>({
@@ -2723,6 +2764,22 @@ export default function TokenPage() {
   const topHolders = mergedTopHolders;
   const topHolderRows = topHolders.slice(0, 10);
   const hasLiveHolderDistribution = topHolderRows.length > 0;
+  const holderCoverage = tokenCoverage(
+    hasLiveHolderDistribution ? "live" : holderIntelligencePending ? "partial" : "unavailable",
+    token?.holderCountSource ?? (hasLiveHolderDistribution ? "holder-scan" : "token-holder-scan"),
+    hasLiveHolderDistribution
+      ? null
+      : holderIntelligencePending
+        ? "Holder intelligence is still resolving from the chain scanner."
+        : "No holder distribution was returned by the latest chain scan."
+  );
+  const socialCoverage = tokenCoverage(
+    socialSignals?.available ? "live" : socialSignalsQuery.isFetching ? "partial" : "unavailable",
+    socialSignals?.source ?? "token-social-signals",
+    socialSignals?.available
+      ? null
+      : socialSignals?.message ?? "External social signal coverage is not available for this token."
+  );
   const marketStripItems = useMemo(() => {
     const currentToken = token
       ? [{
@@ -3317,8 +3374,8 @@ export default function TokenPage() {
                       />
                       <V2MetricCard
                         label="Holders"
-                        value={token.holderCount?.toLocaleString() ?? "N/A"}
-                        hint={token.holderCountSource ? `Source: ${token.holderCountSource}` : "Latest indexed count"}
+                        value={holderCoverage.state !== "unavailable" && token.holderCount ? token.holderCount.toLocaleString() : "--"}
+                        hint={holderCoverage.unavailableReason ?? `Source: ${holderCoverage.source}`}
                         accent={<Users className="h-5 w-5 text-white/44" />}
                       />
                     </div>
@@ -3694,8 +3751,8 @@ export default function TokenPage() {
                     <TokenTerminalMetricCard label="24h volume" value={formatMarketMetric(token.volume24h)} detail="Rolling execution flow" />
                     <TokenTerminalMetricCard
                       label="Holders"
-                      value={token.holderCount?.toLocaleString() ?? "N/A"}
-                      detail={token.holderCountSource ? `Source: ${token.holderCountSource}` : "Latest indexed count"}
+                      value={holderCoverage.state !== "unavailable" && token.holderCount ? token.holderCount.toLocaleString() : "--"}
+                      detail={holderCoverage.unavailableReason ?? `Source: ${holderCoverage.source}`}
                     />
                     <TokenTerminalMetricCard
                       label="Confidence"
@@ -3801,11 +3858,7 @@ export default function TokenPage() {
                                 <h3 className="text-base font-semibold text-white">Market flow</h3>
                               </div>
                               <p className="mt-1 text-xs text-white/34">
-                                {hasLiveChartTelemetry
-                                  ? liveChartSourceLabel
-                                  : hasChartTelemetry
-                                    ? `${chartData.length} historical points loaded`
-                                    : "Awaiting price history"}
+                                {chartCoverage.unavailableReason ?? liveChartSourceLabel}
                               </p>
                             </div>
                             <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -3820,7 +3873,7 @@ export default function TokenPage() {
                           </div>
 
                           <div className="mt-4">
-                            {hasLiveChartTelemetry || hasChartTelemetry ? (
+                            {chartCoverage.state !== "unavailable" && (hasLiveChartTelemetry || hasChartTelemetry) ? (
                               <Suspense
                                 fallback={
                                   <div className="flex h-[360px] items-center justify-center rounded-[24px] border border-white/6 bg-white/[0.03]">
@@ -3862,7 +3915,7 @@ export default function TokenPage() {
                                   <div className="space-y-1">
                                     <div className="text-base font-semibold text-white">Scanning token telemetry</div>
                                     <p className="text-sm text-white/34">
-                                      Pulling price history, live prints, liquidity flow, and holder concentration for this token.
+                                      {chartCoverage.unavailableReason ?? "Chart coverage is unavailable for this token."}
                                     </p>
                                   </div>
                                 </div>
@@ -3918,7 +3971,7 @@ export default function TokenPage() {
                             tokenName={token.name || token.symbol || "Token"}
                             tokenImage={token.imageUrl}
                             tokenPriceUsd={liveTokenQuery.data?.priceUsd ?? null}
-                            liveStateLabel={hasLiveChartTelemetry ? liveChartSourceLabel : "Fallback market route"}
+                            liveStateLabel={chartCoverage.state !== "unavailable" ? liveChartSourceLabel : chartCoverage.unavailableReason ?? "Market route unavailable"}
                           />
                         ) : (
                           <div className="terminal-soft-card rounded-[26px] px-4 py-4">
@@ -4372,11 +4425,11 @@ export default function TokenPage() {
                     </span>
                   ) : socialSignals?.source ? (
                     <span className="rounded-full border border-border/60 bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">
-                      {socialSignals.source}
+                      {socialCoverage.source}
                     </span>
                   ) : null}
                 </div>
-                {socialSignals?.available ? (
+                {socialCoverage.state === "live" && socialSignals?.available ? (
                   <div className="space-y-4">
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div className="rounded-[18px] border border-border/60 bg-secondary/60 p-4">
@@ -4458,7 +4511,7 @@ export default function TokenPage() {
                   </div>
                 ) : (
                   <div className="rounded-[20px] border border-dashed border-border/60 bg-secondary/55 p-4 text-sm text-muted-foreground">
-                    <div>{socialSignals?.message || "External X signals are not connected yet."}</div>
+                    <div>{socialCoverage.unavailableReason || "External X signals are not connected yet."}</div>
                     {socialSignalQueries.length > 0 ? (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {socialSignalQueries.map((query) => (

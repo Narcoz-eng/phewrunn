@@ -138,39 +138,6 @@ function relationshipScore(edges: BundleCheckerGraphEdge[]) {
   return Math.min(100, Math.round(edges.reduce((sum, edge) => sum + edge.weight, 0) / edges.length));
 }
 
-function buildFallbackRiskFactors(bundle: BundleCheckerResponse) {
-  const edgeCount = bundle.graph.edges.length;
-  const clusterCount = bundle.bundlesDetected;
-  const walletCount = bundle.totalWallets;
-  const concentration = clampScore(bundle.bundledSupplyPct);
-  return [
-    {
-      key: "wallet_interconnectivity",
-      label: "Wallet interconnectivity",
-      score: clampScore(edgeCount * 8),
-      detail: `${formatCompact(edgeCount)} resolved edges`,
-    },
-    {
-      key: "funds_moved_together",
-      label: "Funds moved together",
-      score: concentration,
-      detail: `${formatPct(bundle.bundledSupplyPct)} bundled supply`,
-    },
-    {
-      key: "cluster_concentration",
-      label: "Cluster concentration",
-      score: clampScore(clusterCount * 14),
-      detail: `${formatCompact(clusterCount)} linked clusters`,
-    },
-    {
-      key: "linked_wallet_density",
-      label: "Linked wallet density",
-      score: clampScore(walletCount * 3),
-      detail: `${formatCompact(walletCount)} wallets resolved`,
-    },
-  ];
-}
-
 export default function BundleChecker() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [draft, setDraft] = useState(searchParams.get("token") ?? "");
@@ -208,12 +175,17 @@ export default function BundleChecker() {
   const graphIsSparse = Boolean(bundle && (bundle.graph.nodes.length < 4 || bundle.graph.edges.length < 2));
   const riskFactors = useMemo(() => {
     if (!bundle) return [];
-    return (bundle.riskFactors?.length ? bundle.riskFactors : buildFallbackRiskFactors(bundle)).map((factor) => ({
+    return (bundle.riskFactors ?? []).map((factor) => ({
       label: factor.label,
       value: clampScore(factor.score),
       detail: factor.detail,
     }));
   }, [bundle]);
+  const hasExplicitRiskFactors = riskFactors.length > 0;
+  const riskSummaryLabel =
+    bundle?.riskSummary.label === "not_enough_evidence"
+      ? "Not enough evidence"
+      : bundle?.riskSummary.label;
   const behaviorPath = useMemo(() => {
     const series = bundle?.behaviorSeries ?? [];
     if (series.length < 2) return "";
@@ -238,8 +210,8 @@ export default function BundleChecker() {
     ? [
         { label: "Wallets Scanned", value: formatCompact(bundle.totalWallets), hint: "resolved" },
         { label: "Clusters Found", value: formatCompact(bundle.bundlesDetected), hint: "linked sets" },
-        { label: "Risky Clusters", value: bundle.riskSummary.score && bundle.riskSummary.score >= 45 ? formatCompact(bundle.bundlesDetected) : "0", hint: "medium+" },
-        { label: "Avg Risk Score", value: typeof bundle.riskSummary.score === "number" ? bundle.riskSummary.score.toFixed(1) : "--", hint: bundle.riskSummary.label ?? "pending" },
+        { label: "Risky Clusters", value: hasExplicitRiskFactors && bundle.riskSummary.score && bundle.riskSummary.score >= 45 ? formatCompact(bundle.bundlesDetected) : "--", hint: hasExplicitRiskFactors ? "medium+" : "not enough evidence" },
+        { label: "Avg Risk Score", value: typeof bundle.riskSummary.score === "number" ? bundle.riskSummary.score.toFixed(1) : "--", hint: riskSummaryLabel ?? "pending" },
       ]
     : [
         { label: "Wallets Scanned", value: "--", hint: "search first" },
@@ -489,10 +461,10 @@ export default function BundleChecker() {
                 <AlertTriangle className="h-4 w-4 text-rose-300" />
                 Risk Overview
               </div>
-              <RiskGauge score={bundle.riskSummary.score} label={bundle.riskSummary.label} />
+              <RiskGauge score={bundle.riskSummary.score} label={riskSummaryLabel} />
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <StatBox label="Risk Score" value={typeof bundle.riskSummary.score === "number" ? `${bundle.riskSummary.score.toFixed(0)}/100` : "--"} />
-                <StatBox label="Confidence" value={bundle.riskSummary.label || "Unknown"} />
+                <StatBox label="Confidence" value={riskSummaryLabel || "Unknown"} />
                 <StatBox label="Cluster Size" value={formatCompact(bundle.riskSummary.walletCount)} />
                 <StatBox label="Value" value={formatUsd(bundle.riskSummary.totalValueUsd)} />
               </div>
@@ -504,9 +476,13 @@ export default function BundleChecker() {
             <section className="rounded-[18px] border border-white/8 bg-white/[0.03] p-5">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Risk Factors</div>
               <div className="mt-4 space-y-4">
-                {riskFactors.map((factor) => (
+                {riskFactors.length ? riskFactors.map((factor) => (
                   <RiskFactorRow key={factor.label} {...factor} />
-                ))}
+                )) : (
+                  <div className="rounded-[14px] border border-dashed border-white/12 bg-black/20 p-4 text-sm leading-6 text-white/50">
+                    Not enough explicit bundle evidence was returned. This target is not marked clean.
+                  </div>
+                )}
               </div>
             </section>
 
@@ -527,7 +503,7 @@ export default function BundleChecker() {
                 </div>
               ) : null}
               <div className="mt-4 text-sm font-semibold text-white">
-                Recommendation: <span className={riskTone(bundle.riskSummary.score)}>{bundle.aiInsight?.recommendation || ((bundle.riskSummary.score ?? 0) >= 45 ? "Caution" : "Monitor")}</span>
+                Recommendation: <span className={riskTone(bundle.riskSummary.score)}>{bundle.aiInsight?.recommendation || (hasExplicitRiskFactors ? ((bundle.riskSummary.score ?? 0) >= 45 ? "Caution" : "Monitor") : "Not enough evidence")}</span>
               </div>
             </section>
           </aside>
