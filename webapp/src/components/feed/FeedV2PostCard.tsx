@@ -106,8 +106,34 @@ function smartMoneyLabel(post: Post): string {
   if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
     return `${post.trustedTraderCount} trusted`;
   }
-  if (typeof post.bundlePenaltyScore === "number") return post.bundlePenaltyScore <= 35 ? "Clean" : "Watch";
-  return "Unavailable";
+  return "Not enough flow";
+}
+
+function smartMoneySubLabel(post: Post): string {
+  if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
+    return "Verified trader overlap";
+  }
+  if (typeof post.bundlePenaltyScore === "number") {
+    return post.bundlePenaltyScore <= 35 ? "Bundle risk is clean" : "Bundle risk requires review";
+  }
+  return "Awaiting trusted wallet coverage";
+}
+
+function aiSignalValue(post: Post): string {
+  if (typeof post.confidenceScore !== "number" || !Number.isFinite(post.confidenceScore)) {
+    return "Not enough signal";
+  }
+  return post.confidenceScore.toFixed(1);
+}
+
+function aiSignalSubLabel(post: Post): string {
+  if (typeof post.confidenceScore !== "number" || !Number.isFinite(post.confidenceScore)) {
+    return "Needs token or engagement data";
+  }
+  if (typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70) {
+    return "High conviction";
+  }
+  return "Derived from live backend signals";
 }
 
 function callMetrics(post: Post): Array<{ label: string; value: string }> {
@@ -302,8 +328,9 @@ function PostContextStrip({ post }: { post: Post }) {
       } community`
     );
   }
-  if (post.feedReasons?.length) {
-    context.push(post.feedReasons.slice(0, 2).join(" + "));
+  const scoreReasons = post.scoreReasons?.length ? post.scoreReasons : post.feedReasons;
+  if (scoreReasons?.length) {
+    context.push(scoreReasons.slice(0, 2).join(" + "));
   }
   if (context.length === 0) return null;
   return (
@@ -368,7 +395,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       ) : (
         <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 text-sm text-white/48">
-          Token metrics attach after a token address or market snapshot is present.
+          Market metrics are not displayed until a real token address or backend market snapshot is attached.
         </div>
       )}
 
@@ -388,9 +415,9 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
       ) : null}
 
       <div className="mt-3 grid gap-2 md:grid-cols-4">
-        <AiMetric icon={Zap} label="AI Score" value={typeof post.confidenceScore === "number" ? post.confidenceScore.toFixed(1) : "--"} sub={post.highConvictionScore ? "Conviction" : "Unavailable"} />
+        <AiMetric icon={Zap} label="AI Signal" value={aiSignalValue(post)} sub={aiSignalSubLabel(post)} />
         <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Live signal"} />
-        <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub="Derived from trusted activity" />
+        <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub={smartMoneySubLabel(post)} />
         <AiMetric icon={TrendingDown} label="Risk Level" value={riskLabel(post)} sub={post.bundleRiskLabel || "Backend risk"} />
       </div>
       <EngagementFooter {...props} />

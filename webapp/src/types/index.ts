@@ -179,6 +179,7 @@ export interface Post {
   radarReasons?: string[];
   feedScore?: number;
   feedReasons?: string[];
+  scoreReasons?: string[];
   repostContext?: {
     createdAt: string;
     user: PostAuthor;

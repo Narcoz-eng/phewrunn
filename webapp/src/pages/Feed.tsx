@@ -58,7 +58,6 @@ const FEED_RECENT_POST_CACHE_BYPASS_AGE_MS = 2 * 60 * 60 * 1000;
 const FEED_LATEST_CACHE_HYDRATION_MAX_AGE_MS = 15_000;
 const FEED_QUERY_GC_TIME_MS = 5 * 60_000;
 const FEED_AI_REQUEST_TIMEOUT_MS = 4_200;
-const FEED_LEGACY_FALLBACK_TIMEOUT_MS = 2_200;
 
 type AiFeedResponse = {
   data?: {
@@ -68,13 +67,6 @@ type AiFeedResponse = {
     totalPosts?: number | null;
     degraded?: boolean;
   };
-};
-
-type LegacyFeedResponse = {
-  data?: Post[];
-  nextCursor?: string | null;
-  hasMore?: boolean;
-  totalPosts?: number | null;
 };
 
 const FEED_TAB_ITEMS: Array<{
@@ -1132,34 +1124,6 @@ function mergePostWithCachedRealtimeState(
   };
 }
 
-function buildLegacyFeedEndpoint(tab: FeedTab, search: string, pageParam?: string): string {
-  const params = new URLSearchParams();
-  params.set("limit", String(FEED_PAGE_SIZE));
-  params.set(
-    "sort",
-    tab === "hot-alpha" || tab === "high-conviction" ? "trending" : "latest"
-  );
-  if (tab === "following") {
-    params.set("following", "true");
-  }
-  const tabPostType =
-    tab === "early-runners"
-      ? "raid"
-      : tab === "hot-alpha" || tab === "high-conviction"
-        ? "alpha"
-        : null;
-  if (tabPostType) {
-    params.set("postType", tabPostType);
-  }
-  if (search && search.length >= 3) {
-    params.set("search", search);
-  }
-  if (pageParam) {
-    params.set("cursor", pageParam);
-  }
-  return `/api/posts?${params.toString()}`;
-}
-
 function isBackendPoolPressureError(error: unknown): boolean {
   if (error instanceof TimeoutError) {
     return true;
@@ -1534,76 +1498,24 @@ export default function Feed() {
       };
     };
 
-    const readLegacyFeedPayload = async (): Promise<FeedPage> => {
-      const legacyEndpoint = buildLegacyFeedEndpoint(tab, search, pageParam);
-      const response = await api.raw(legacyEndpoint, {
-        cache: requestCacheMode,
-        timeout: FEED_LEGACY_FALLBACK_TIMEOUT_MS,
-      });
-      if (!response.ok) {
-        const json = await response.json().catch(() => null);
-        throw new ApiError(
-          json?.error?.message || `Request failed with status ${response.status}`,
-          response.status,
-          json?.error || json
-        );
-      }
-
-      const json = await response.json().catch(() => null) as LegacyFeedResponse | null;
-      const items = Array.isArray(json?.data) ? json.data : null;
-      if (!items) {
-        throw new ApiError("Legacy feed payload was invalid. Please retry.", response.status, json);
-      }
-
-      const nextCursor = typeof json?.nextCursor === "string" ? json.nextCursor : null;
-      return {
-        items,
-        nextCursor,
-        hasMore: Boolean(json?.hasMore && nextCursor),
-        totalPosts:
-          typeof json?.totalPosts === "number" && Number.isFinite(json.totalPosts)
-            ? json.totalPosts
-            : null,
-      };
-    };
-
     let page: FeedPage;
     try {
       page = await readPrimaryFeedPayload();
-      const shouldFallbackFromEmptyPrimary =
-        !pageParam &&
-        page.items.length === 0 &&
-        (tab === "latest" || tab === "following");
-      if (shouldFallbackFromEmptyPrimary) {
-        page = await readLegacyFeedPayload();
-      }
     } catch (error) {
       if (isBackendPoolPressureError(error)) {
         if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
           return fallbackFirstPage;
         }
         if (tab === "hot-alpha" || tab === "early-runners" || tab === "high-conviction") {
-          try {
-            return await readLegacyFeedPayload();
-          } catch {
-            return {
-              items: [],
-              nextCursor: null,
-              hasMore: false,
-              totalPosts: null,
-            };
-          }
+          return {
+            items: [],
+            nextCursor: null,
+            hasMore: false,
+            totalPosts: null,
+          };
         }
-        throw error;
       }
-      try {
-        page = await readLegacyFeedPayload();
-      } catch {
-        if (shouldUseCachedFirstPageFallback && fallbackFirstPage) {
-          return fallbackFirstPage;
-        }
-        throw error;
-      }
+      throw error;
     }
 
     const items = page.items;

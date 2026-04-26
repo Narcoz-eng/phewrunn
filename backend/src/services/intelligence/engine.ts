@@ -339,6 +339,7 @@ export type EnrichedCall = CallRecord & {
   isFollowingAuthor: boolean;
   feedScore: number;
   feedReasons: string[];
+  scoreReasons: string[];
   repostContext: {
     createdAt: Date;
     user: Pick<AuthorRecord, "id" | "name" | "username" | "image" | "level" | "xp" | "isVerified" | "trustScore" | "reputationTier">;
@@ -3133,6 +3134,7 @@ async function hydrateCalls(
       isFollowingAuthor: socialState.followedAuthorIds.has(record.authorId),
       feedScore: 0,
       feedReasons: [],
+      scoreReasons: [],
       repostContext: null,
       currentReactionType: socialState.reactionByPostId.get(record.id) ?? null,
       reactionCounts,
@@ -3588,6 +3590,7 @@ async function applyFeedRankingContext(
       ...withCounts,
       feedScore: ranking.score,
       feedReasons: ranking.reasons,
+      scoreReasons: ranking.reasons,
     };
   });
 }
