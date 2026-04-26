@@ -170,6 +170,7 @@ export function ProTerminalSurface({ initialTokenAddress = null }: ProTerminalSu
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const tokenAddress = (initialTokenAddress ?? searchParams.get("token") ?? "").trim();
+  const focusedPostId = searchParams.get("post");
   const [draftToken, setDraftToken] = useState(tokenAddress);
   const [timeframe, setTimeframe] = useState<TerminalTimeframe>("5m");
 
@@ -217,6 +218,7 @@ export function ProTerminalSurface({ initialTokenAddress = null }: ProTerminalSu
   const recentTrades = liveFeed.recentTrades.length > 0 ? liveFeed.recentTrades : terminal?.marketFlow.recentTrades ?? [];
   const topRaid = terminal?.activeRaids[0] ?? null;
   const symbol = terminal?.token.symbol ? `$${terminal.token.symbol}` : terminal?.token.name ?? "TOKEN";
+  const focusedCall = terminal?.recentCalls.find((post) => post.id === focusedPostId) ?? null;
 
   const loadToken = (value: string) => {
     const next = value.trim();
@@ -567,6 +569,27 @@ export function ProTerminalSurface({ initialTokenAddress = null }: ProTerminalSu
               )}
             </div>
           </div>
+
+          {focusedCall ? (
+            <RailPanel title="Opened From Feed" actionLabel="Call context">
+              <Link to={`/post/${focusedCall.id}`} className="block rounded-xl border border-lime-300/16 bg-lime-300/[0.06] px-3 py-3 hover:bg-lime-300/[0.09]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="truncate text-sm font-semibold text-white">{focusedCall.content.slice(0, 58)}</div>
+                  <div className="text-xs font-bold text-lime-300">{formatPct(focusedCall.roiCurrentPct)}</div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {(focusedCall.signal?.scoreReasons ?? focusedCall.scoreReasons ?? focusedCall.feedReasons ?? []).slice(0, 2).map((reason) => (
+                    <span key={reason} className="rounded-full border border-lime-300/14 bg-lime-300/10 px-2 py-1 text-[10px] font-semibold text-lime-100">
+                      {reason}
+                    </span>
+                  ))}
+                  {!focusedCall.signal?.scoreReasons?.length && !focusedCall.scoreReasons?.length && !focusedCall.feedReasons?.length ? (
+                    <span className="rounded-full border border-white/8 bg-white/[0.04] px-2 py-1 text-[10px] text-white/46">Signal context pending</span>
+                  ) : null}
+                </div>
+              </Link>
+            </RailPanel>
+          ) : null}
 
           <RailPanel title="Smart Money Flow" actionLabel="View holders">
             {terminal.smartMoney.rows.length ? (

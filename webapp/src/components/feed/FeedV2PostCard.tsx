@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Heart, LineChart, MessageSquare, MoreVertical, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, TrendingDown, TrendingUp, Vote, Waves, Zap, type LucideIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { api } from "@/lib/api";
@@ -17,6 +17,7 @@ type FeedV2PostCardProps = {
 };
 
 type FeedPostKind = "call" | "chart" | "whale" | "poll" | "raid" | "news" | "discussion";
+type SignalTier = "strong" | "partial" | "weak";
 
 function compact(value: number | null | undefined, prefix = ""): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "--";
@@ -77,6 +78,37 @@ function tokenLabel(post: Post): string {
 function signalTitle(post: Post): string {
   const direction = inferDirection(post);
   return `${tokenLabel(post)}${direction ? ` ${direction}` : ""}`;
+}
+
+function signalTier(post: Post): SignalTier {
+  const score = post.signal?.aiScore ?? post.highConvictionScore ?? post.confidenceScore ?? null;
+  if (typeof score === "number" && score >= 75 && post.signal?.aiScoreCoverage.state !== "unavailable") return "strong";
+  if (post.signal?.aiScoreCoverage.state === "partial" || post.signal?.aiScoreCoverage.state === "live") return "partial";
+  return "weak";
+}
+
+function shellClass(post: Post, kind: FeedPostKind): string {
+  const tier = signalTier(post);
+  if (kind === "call") {
+    return cn(
+      "relative overflow-hidden rounded-[18px] border p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]",
+      tier === "strong"
+        ? "border-lime-300/22 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.13),transparent_30%),linear-gradient(180deg,rgba(8,14,17,0.99),rgba(3,8,10,0.99))]"
+        : tier === "partial"
+          ? "border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.08),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))]"
+          : "border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.94),rgba(3,8,11,0.98))]"
+    );
+  }
+  const byKind: Record<FeedPostKind, string> = {
+    call: "",
+    chart: "rounded-[18px] border border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.12),transparent_28%),linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,8,11,0.99))] p-4",
+    whale: "rounded-[18px] border border-cyan-300/16 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.10),transparent_28%),linear-gradient(180deg,rgba(4,12,17,0.98),rgba(3,8,11,0.99))] p-4",
+    poll: "rounded-[18px] border border-violet-300/14 bg-[radial-gradient(circle_at_top_right,rgba(167,139,250,0.10),transparent_28%),linear-gradient(180deg,rgba(9,8,18,0.98),rgba(4,5,11,0.99))] p-4",
+    raid: "rounded-[18px] border border-lime-300/16 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.14),transparent_30%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4",
+    news: "rounded-[18px] border border-amber-300/14 bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_28%),linear-gradient(180deg,rgba(12,10,6,0.98),rgba(7,7,5,0.99))] p-4",
+    discussion: "rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4",
+  };
+  return byKind[kind];
 }
 
 function headline(post: Post): string {
@@ -157,6 +189,11 @@ function aiSignalSubLabel(post: Post): string {
   return "Derived from live backend signals";
 }
 
+function topSignalReasons(post: Post): string[] {
+  const reasons = post.signal?.scoreReasons?.length ? post.signal.scoreReasons : post.scoreReasons?.length ? post.scoreReasons : post.feedReasons ?? [];
+  return reasons.slice(0, 2);
+}
+
 function callMetrics(post: Post): Array<{ label: string; value: string }> {
   const metrics: Array<{ label: string; value: string }> = [];
   if (typeof post.signal?.price === "number" && Number.isFinite(post.signal.price)) {
@@ -208,7 +245,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
 
   if (!tokenAddress) {
     return (
-      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[220px]" : "h-[118px]")}>
+      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
         <div className="text-sm font-semibold text-white/72">No token chart</div>
         <div className="mt-1 text-xs text-white/40">{post.signal?.candlesCoverage.unavailableReason ?? "Add a token address to attach live candle coverage."}</div>
       </div>
@@ -226,8 +263,8 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
 
   if (!candles.length) {
     return (
-      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[220px]" : "h-[118px]")}>
-        <div className="text-sm font-semibold text-white/72">Candles unavailable</div>
+      <div className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
+        <div className="text-sm font-semibold text-white/72">Market chart unavailable</div>
         <div className="mt-1 text-xs text-white/40">
           {coverage?.unavailableReason || post.signal?.candlesCoverage.unavailableReason || "The backend did not return candle coverage for this token."}
         </div>
@@ -404,19 +441,34 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const positive = direction !== "SHORT";
   const metrics = callMetrics(post);
   const terminalAddress = post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress;
+  const reasons = topSignalReasons(post);
+  const tier = signalTier(post);
   return (
-    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]">
+    <article className={shellClass(post, "call")}>
+      {tier === "strong" ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
       <PostContextStrip post={post} />
       <PostHeader post={post} badge={post.signal?.convictionLabel && post.signal.convictionLabel !== "Not enough signal" ? post.signal.convictionLabel : typeof post.highConvictionScore === "number" && post.highConvictionScore >= 70 ? "High Conviction" : undefined} />
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <h2 className="text-xl font-semibold tracking-tight text-white">{signalTitle(post)}</h2>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <h2 className={cn("font-semibold tracking-tight text-white", tier === "strong" ? "text-[22px]" : "text-xl")}>{signalTitle(post)}</h2>
         {direction ? (
           <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold", positive ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
             {direction}
           </span>
         ) : null}
+        {post.signal?.aiScoreCoverage.state === "partial" ? <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">Partial signal</span> : null}
+        {post.signal?.aiScoreCoverage.state === "unavailable" ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-white/48">Signal pending</span> : null}
       </div>
-      <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+      <p className="mt-2 text-sm leading-5 text-white/66">{displayContent(post)}</p>
+
+      {reasons.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {reasons.map((reason) => (
+            <span key={reason} className="rounded-[9px] border border-lime-300/14 bg-lime-300/[0.07] px-2.5 py-1 text-[11px] font-semibold text-lime-100/82">
+              {reason}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {metrics.length ? (
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -430,7 +482,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       )}
 
-      <div className="mt-4">
+      <div className="mt-3">
         <FeedMiniCandleChart post={post} tall />
       </div>
 
@@ -445,7 +497,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       ) : null}
 
-      <div className="mt-3 grid gap-2 md:grid-cols-4">
+      <div className={cn("mt-3 grid gap-2 md:grid-cols-4", tier === "weak" && "opacity-75")}>
         <AiMetric icon={Zap} label="AI Signal" value={aiSignalValue(post)} sub={aiSignalSubLabel(post)} />
         <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Live signal"} />
         <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub={smartMoneySubLabel(post)} />
@@ -461,10 +513,14 @@ export function FeedPostWhaleCard(props: FeedV2PostCardProps) {
   const snapshot = post.walletTradeSnapshot;
   const whaleValueUsd = snapshot?.holdingUsd ?? snapshot?.boughtUsd ?? snapshot?.soldUsd ?? snapshot?.totalPnlUsd ?? null;
   return (
-    <article className="rounded-[18px] border border-cyan-300/12 bg-[linear-gradient(180deg,rgba(6,13,18,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className={shellClass(post, "whale")}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Whale Alert" />
-      <h2 className="mt-4 text-xl font-semibold tracking-tight text-white">{tokenLabel(post)} WHALE ACTIVITY</h2>
+      <div className="mt-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-200/72">
+        <Waves className="h-4 w-4" />
+        On-chain flow
+      </div>
+      <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">{tokenLabel(post)} WHALE ACTIVITY</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
       <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Metric label="Amount" value={snapshot?.netAmount != null ? compact(snapshot.netAmount) : "Unavailable"} />
@@ -483,10 +539,14 @@ export function FeedPostPollCard(props: FeedV2PostCardProps) {
   const expiresAt = post.pollExpiresAt ? new Date(post.pollExpiresAt) : null;
   const expired = expiresAt ? expiresAt.getTime() <= Date.now() : false;
   return (
-    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className={shellClass(post, "poll")}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Poll" />
-      <h2 className="mt-4 text-lg font-semibold text-white">{displayContent(post)}</h2>
+      <div className="mt-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-violet-200/72">
+        <Vote className="h-4 w-4" />
+        Community poll
+      </div>
+      <h2 className="mt-1 text-xl font-semibold text-white">{displayContent(post)}</h2>
       {poll && poll.options.length > 0 ? (
         <div className="mt-4 space-y-2">
           {poll.options.map((option) => {
@@ -542,7 +602,7 @@ export function FeedPostPollCard(props: FeedV2PostCardProps) {
 export function FeedPostChartCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
-    <article className="rounded-[18px] border border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.10),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className={shellClass(post, "chart")}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Chart" />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -575,8 +635,9 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
 
 export function FeedPostRaidCard(props: FeedV2PostCardProps) {
   const { post } = props;
+  const progress = Math.max(8, Math.min(100, (post.engagement?.velocity ?? post._count.reposts * 8 + post._count.comments * 4)));
   return (
-    <article className="rounded-[18px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_30%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className={shellClass(post, "raid")}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Raid" />
       <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-200/72">
@@ -585,9 +646,20 @@ export function FeedPostRaidCard(props: FeedV2PostCardProps) {
       </div>
       <h2 className="mt-1 text-xl font-semibold text-white">{tokenLabel(post)} RAID UPDATE</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
-      <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
-        <div className="rounded-[16px] border border-lime-300/12 bg-lime-300/8 p-4 text-sm text-white/58">
-          Raid room data is shown only when this post is linked to a backend raid campaign.
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+        <div className="rounded-[16px] border border-lime-300/12 bg-lime-300/[0.06] p-4 text-sm text-white/64">
+          <div className="flex items-center justify-between text-xs">
+            <span>Raid pressure</span>
+            <span className="font-bold text-lime-200">{progress.toFixed(0)}%</span>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#12d7aa)]" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+            <Metric label="Replies" value={compact(post._count.comments)} />
+            <Metric label="Reposts" value={compact(post._count.reposts)} />
+            <Metric label="Views" value={compact(post.viewCount)} />
+          </div>
         </div>
         <Link
           to="/raids"
@@ -604,10 +676,16 @@ export function FeedPostRaidCard(props: FeedV2PostCardProps) {
 export function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
-    <article className="rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className={shellClass(post, "discussion")}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Discussion" />
-      <p className="mt-4 text-[15px] leading-7 text-white/72">{displayContent(post)}</p>
+      <div className="mt-4 rounded-[16px] border border-white/8 bg-white/[0.025] p-4">
+        <p className="text-[15px] leading-7 text-white/76">{displayContent(post)}</p>
+        <div className="mt-4 flex items-center gap-3 text-xs text-white/44">
+          <span>{post._count.comments} replies</span>
+          <span>{post.engagement?.velocity ? `${post.engagement.velocity.toFixed(1)} velocity` : "Thread-first"}</span>
+        </div>
+      </div>
       {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
@@ -617,12 +695,20 @@ export function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
 export function FeedPostNewsCard(props: FeedV2PostCardProps) {
   const { post } = props;
   return (
-    <article className="rounded-[18px] border border-amber-300/12 bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.10),transparent_28%),linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4">
+    <article className={shellClass(post, "news")}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="News" />
-      <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/72">Market news</div>
+      <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/72">
+        <Newspaper className="h-4 w-4" />
+        Market news
+      </div>
       <h2 className="mt-1 text-xl font-semibold text-white">{headline(post)}</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
+      {post.dexscreenerUrl ? (
+        <a href={post.dexscreenerUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-amber-100 hover:text-amber-50">
+          Source <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      ) : null}
       {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
