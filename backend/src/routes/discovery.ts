@@ -297,6 +297,10 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
       return hasTokenContext && item.trendScore >= 20 && hasPerformance;
     })
     .sort((a, b) => b.trendScore - a.trendScore)
+    .filter((item, index, rows) => {
+      const key = item.contractAddress?.toLowerCase() || item.tokenSymbol?.toLowerCase() || item.id;
+      return rows.findIndex((row) => (row.contractAddress?.toLowerCase() || row.tokenSymbol?.toLowerCase() || row.id) === key) === index;
+    })
     .slice(0, 5);
 
   const trendingCommunities = communities
@@ -340,18 +344,20 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
     data: {
       marketStats,
       topGainers,
-      liveRaids: liveRaids.map((raid) => ({
-        id: raid.id,
-        objective: raid.objective,
-        status: "active",
-        openedAt: raid.openedAt.toISOString(),
-        participantCount: raid.participants.length,
-        postedCount: raid.submissions.length,
-        tokenAddress: raid.token.address,
-        tokenSymbol: normalizeTokenLabel(raid.token),
-        tokenName: raid.token.name,
-        tokenImageUrl: raid.token.imageUrl,
-      })),
+      liveRaids: liveRaids
+        .filter((raid) => raid.participants.length > 0 || raid.submissions.length > 0)
+        .map((raid) => ({
+          id: raid.id,
+          objective: raid.objective,
+          status: "active",
+          openedAt: raid.openedAt.toISOString(),
+          participantCount: raid.participants.length,
+          postedCount: raid.submissions.length,
+          tokenAddress: raid.token.address,
+          tokenSymbol: normalizeTokenLabel(raid.token),
+          tokenName: raid.token.name,
+          tokenImageUrl: raid.token.imageUrl,
+        })),
       trendingCalls,
       trendingCommunities,
       aiSpotlight: aiSpotlightSource

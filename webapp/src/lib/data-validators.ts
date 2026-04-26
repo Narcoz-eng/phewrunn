@@ -64,10 +64,10 @@ export function isValidSignalScore(value: number | null | undefined, coverageSta
 }
 
 export function isValidSmartMoney(post: Post): boolean {
-  return (
-    isValidSignalScore(post.signal?.smartMoneyScore, post.signal?.aiScoreCoverage.state) ||
-    (finite(post.trustedTraderCount) && post.trustedTraderCount > 0)
-  );
+  if (finite(post.trustedTraderCount) && post.trustedTraderCount > 0) return true;
+  const reasons = post.signal?.scoreReasons ?? [];
+  const hasExplicitReason = reasons.some((reason) => /smart money|trusted trader|wallet flow|whale/i.test(reason));
+  return hasExplicitReason && isValidSignalScore(post.signal?.smartMoneyScore, post.signal?.aiScoreCoverage.state);
 }
 
 export function isValidRiskLabel(label: string | null | undefined, score?: number | null): boolean {

@@ -1685,13 +1685,7 @@ function buildFeedSignalContract(args: {
   const smartMoneyScore =
     args.trustedTraderCount > 0
       ? clampScore(Math.min(100, 48 + args.trustedTraderCount * 9 + finite(args.opportunityScore) * 0.16))
-      : typeof token?.top10HolderPct === "number" || typeof args.tokenRiskScore === "number"
-        ? clampScore(
-            50 +
-              (typeof token?.top10HolderPct === "number" && token.top10HolderPct < 45 ? 10 : 0) -
-              Math.max(0, finite(args.tokenRiskScore, 50) - 70) * 0.35
-          )
-        : null;
+      : null;
   const riskScore =
     typeof args.tokenRiskScore === "number"
       ? roundMetricOrZero(args.tokenRiskScore)

@@ -14,8 +14,58 @@ import {
 } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyContext";
 import { readPrivyLoginIntent } from "@/lib/privy-login-intent";
+import { V2AppShell } from "@/components/layout/V2AppShell";
+
+function isProductRoute(pathname: string): boolean {
+  return (
+    pathname === "/" ||
+    pathname.startsWith("/profile") ||
+    pathname.startsWith("/notifications") ||
+    pathname.startsWith("/leaderboard") ||
+    pathname.startsWith("/post/") ||
+    pathname.startsWith("/token/") ||
+    pathname.startsWith("/terminal") ||
+    pathname.startsWith("/bundle-checker") ||
+    pathname.startsWith("/communities") ||
+    pathname.startsWith("/raids")
+  );
+}
 
 function RouteLoading({ label }: { label: string }) {
+  const location = useLocation();
+
+  if (isProductRoute(location.pathname)) {
+    return (
+      <V2AppShell>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-3">
+            <div className="rounded-[22px] border border-white/[0.07] bg-white/[0.03] px-4 py-4">
+              <div className="h-5 w-32 rounded-full bg-white/[0.08]" />
+              <div className="mt-3 h-4 w-72 max-w-full rounded-full bg-white/[0.055]" />
+            </div>
+            <div className="rounded-[22px] border border-white/[0.07] bg-white/[0.03] p-4">
+              <div className="h-16 rounded-[16px] border border-white/[0.06] bg-black/20" />
+              <div className="mt-3 flex gap-2">
+                <div className="h-8 w-20 rounded-[10px] bg-white/[0.06]" />
+                <div className="h-8 w-20 rounded-[10px] bg-white/[0.06]" />
+                <div className="h-8 w-24 rounded-[10px] bg-white/[0.06]" />
+              </div>
+            </div>
+            <div className="rounded-[22px] border border-white/[0.07] bg-white/[0.025] p-4">
+              <div className="h-4 w-40 rounded-full bg-white/[0.06]" />
+              <div className="mt-4 h-5 w-64 max-w-full rounded-full bg-white/[0.08]" />
+              <div className="mt-3 h-4 w-full rounded-full bg-white/[0.045]" />
+            </div>
+          </div>
+          <div className="hidden space-y-3 lg:block">
+            <div className="h-28 rounded-[22px] border border-white/[0.07] bg-white/[0.03]" />
+            <div className="h-28 rounded-[22px] border border-white/[0.07] bg-white/[0.03]" />
+          </div>
+        </div>
+      </V2AppShell>
+    );
+  }
+
   return (
     <div className="flex items-center justify-center min-h-screen bg-background">
       <div className="flex flex-col items-center gap-4">

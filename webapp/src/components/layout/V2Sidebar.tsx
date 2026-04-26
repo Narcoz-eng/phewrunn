@@ -112,15 +112,16 @@ export function V2Sidebar() {
   return (
     <>
       <aside className="v2-sidebar hidden lg:flex">
+        <div className="v2-sidebar-scroll">
         <div className="px-1">
           <BrandLogo size="md" className="gap-3" />
         </div>
 
-        <nav className="mt-7 flex flex-1 flex-col gap-1.5">
+        <nav className="mt-7 flex flex-col gap-1.5">
           <SidebarNavItems />
         </nav>
 
-        <div className="space-y-4 border-t border-white/[0.07] pt-4">
+        <div className="mt-7 space-y-4 border-t border-white/[0.07] pt-4">
           <div className="flex items-center gap-3">
             <Avatar className="h-12 w-12 border border-lime-300/20">
               <AvatarImage src={user ? getAvatarUrl(user.id, user.image) : undefined} />
@@ -208,6 +209,7 @@ export function V2Sidebar() {
               <LogOut className="h-4 w-4" />
             </button>
           </div>
+        </div>
         </div>
       </aside>
 

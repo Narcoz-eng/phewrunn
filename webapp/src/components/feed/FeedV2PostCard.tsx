@@ -124,8 +124,8 @@ function signalTitle(post: Post): string {
 
 function signalTier(post: Post): SignalTier {
   const score = post.signal?.aiScore ?? post.highConvictionScore ?? post.confidenceScore ?? null;
-  if (isValidSignalScore(score, post.signal?.aiScoreCoverage.state) && score >= 75) return "strong";
-  if (isValidSignalScore(score, post.signal?.aiScoreCoverage.state) && score >= 55) return "medium";
+  if (post.signal?.aiScoreCoverage.state === "live" && isValidSignalScore(score, post.signal.aiScoreCoverage.state) && score >= 75) return "strong";
+  if (post.signal?.aiScoreCoverage.state === "live" && isValidSignalScore(score, post.signal.aiScoreCoverage.state) && score >= 55) return "medium";
   if (post.signal?.aiScoreCoverage.state === "partial" || post.signal?.aiScoreCoverage.state === "live") return "partial";
   return "weak";
 }
@@ -291,10 +291,10 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
   if (typeof post.currentMcap === "number" && Number.isFinite(post.currentMcap)) {
     metrics.push({ label: "Current MCap", value: compact(post.currentMcap, "$") });
   }
-  if (typeof post.roiPeakPct === "number" && Number.isFinite(post.roiPeakPct)) {
+  if (typeof post.roiPeakPct === "number" && Number.isFinite(post.roiPeakPct) && Math.abs(post.roiPeakPct) >= 0.01) {
     metrics.push({ label: "Peak Move", value: pct(post.roiPeakPct) });
   }
-  if (typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct)) {
+  if (typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct) && Math.abs(post.roiCurrentPct) >= 0.01) {
     metrics.push({ label: "Live Move", value: pct(post.roiCurrentPct) });
   }
   if (isValidSignalScore(post.signal?.aiScore, post.signal?.aiScoreCoverage.state)) {
@@ -345,23 +345,9 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
     );
   }
 
-  if (!isNearViewport && !cachedTerminal) {
-    return (
-      <div ref={ref} className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
-        <div className="text-sm font-semibold text-white/72">Chart queued</div>
-        <div className="mt-1 text-xs text-white/40">Candle data loads when this card is near the viewport.</div>
-      </div>
-    );
-  }
+  if (!isNearViewport && !cachedTerminal) return <div ref={ref} />;
 
-  if (chartQuery.isLoading) {
-    return (
-      <div ref={ref} className={cn("relative overflow-hidden rounded-[14px] border border-white/8 bg-black/20", tall ? "h-[104px]" : "h-[76px]")}>
-        <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.045),transparent)]" />
-        <div className="flex h-full items-center justify-center text-xs font-semibold text-white/38">Resolving market candles...</div>
-      </div>
-    );
-  }
+  if (chartQuery.isLoading && !cachedTerminal) return <div ref={ref} />;
 
   if (!hasValidCandles) {
     return (
@@ -549,7 +535,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const terminalAddress = post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress;
   const tier = signalTier(post);
   const decision = decisionBadge(post);
-  const hasTrustedSignal = tier === "strong" || tier === "medium" || tier === "partial";
+  const hasTrustedSignal = tier === "strong";
   return (
     <article className={shellClass(post, "call")}>
       {tier === "strong" ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
@@ -753,34 +739,9 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
         </div>
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{displayContent(post)}</p>
-      <div className="mt-4">
-        <FeedMiniCandleChart post={post} tall />
-      </div>
-      {[
-        isValidSignalScore(post.setupQualityScore, post.signal?.aiScoreCoverage.state)
-          ? { label: "Setup Quality", value: post.setupQualityScore!.toFixed(1) }
-          : null,
-        isValidSignalScore(post.marketHealthScore, post.signal?.aiScoreCoverage.state)
-          ? { label: "Market Health", value: post.marketHealthScore!.toFixed(1) }
-          : null,
-        typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct) && Math.abs(post.roiCurrentPct) >= 0.01
-          ? { label: "Current Move", value: pct(post.roiCurrentPct) }
-          : null,
-      ].filter(Boolean).length ? (
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
-          {[
-            isValidSignalScore(post.setupQualityScore, post.signal?.aiScoreCoverage.state)
-              ? { label: "Setup Quality", value: post.setupQualityScore!.toFixed(1) }
-              : null,
-            isValidSignalScore(post.marketHealthScore, post.signal?.aiScoreCoverage.state)
-              ? { label: "Market Health", value: post.marketHealthScore!.toFixed(1) }
-              : null,
-            typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct) && Math.abs(post.roiCurrentPct) >= 0.01
-              ? { label: "Current Move", value: pct(post.roiCurrentPct) }
-              : null,
-          ].filter((metric): metric is { label: string; value: string } => Boolean(metric)).map((metric) => (
-            <Metric key={metric.label} label={metric.label} value={metric.value} />
-          ))}
+      {signalTier(post) === "strong" ? (
+        <div className="mt-4">
+          <FeedMiniCandleChart post={post} tall />
         </div>
       ) : null}
       {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}

@@ -53,8 +53,13 @@ function TokenAvatar({ src, label }: { src?: string | null; label: string }) {
 export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2RightRailProps) {
   const navigate = useNavigate();
   const topGainers = (discovery?.topGainers ?? []).filter(isValidGainer);
-  const liveRaids = discovery?.liveRaids ?? [];
-  const trendingCalls = (discovery?.trendingCalls ?? []).filter(isValidTrendingCall);
+  const liveRaids = (discovery?.liveRaids ?? []).filter((raid) => raid.participantCount > 0 || raid.postedCount > 0);
+  const trendingCalls = (discovery?.trendingCalls ?? [])
+    .filter(isValidTrendingCall)
+    .filter((item, index, rows) => {
+      const key = item.contractAddress?.toLowerCase() || item.tokenSymbol?.toLowerCase() || item.id;
+      return rows.findIndex((row) => (row.contractAddress?.toLowerCase() || row.tokenSymbol?.toLowerCase() || row.id) === key) === index;
+    });
   const aiWatchlist = topGainers
     .filter((item) => isValidSignalScore(item.confidenceScore) || isValidSignalScore(item.highConvictionScore))
     .slice(0, 5);
@@ -96,6 +101,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
         ) : null}
       </section>
 
+      {topGainers.length ? (
       <RailCard
         title="Top Gainers"
         action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}
@@ -121,11 +127,12 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               </div>
             </button>
           ))}
-          {!topGainers.length ? <p className="text-sm leading-6 text-white/48">No gainers with real non-zero 24h change are available.</p> : null}
         </div>
       </RailCard>
+      ) : null}
 
-      <RailCard title="Active X Raids" action={<V2StatusPill tone={liveRaids.length ? "live" : "idle"}>{liveRaids.length ? "Live" : "Idle"}</V2StatusPill>}>
+      {liveRaids.length ? (
+      <RailCard title="Active X Raids" action={<V2StatusPill tone="live">Live</V2StatusPill>}>
         <div className="space-y-3">
           {liveRaids.slice(0, 2).map((raid) => {
             const progress = Math.max(8, Math.min(100, (raid.postedCount / Math.max(raid.participantCount, 1)) * 100));
@@ -176,10 +183,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               </div>
             );
           })}
-          {!liveRaids.length ? <p className="text-sm leading-6 text-white/48">No active raid rooms are open right now.</p> : null}
         </div>
       </RailCard>
+      ) : null}
 
+      {trendingCalls.length ? (
       <RailCard title="Trending Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Hot</span>}>
         <div className="space-y-2">
           {trendingCalls.slice(0, 5).map((item) => (
@@ -201,10 +209,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               </div>
             </button>
           ))}
-          {!trendingCalls.length ? <p className="text-sm leading-6 text-white/48">No ranked calls have enough signal yet.</p> : null}
         </div>
       </RailCard>
+      ) : null}
 
+      {aiWatchlist.length ? (
       <RailCard title="AI Watchlist">
         <div className="space-y-2">
           {aiWatchlist.map((item) => {
@@ -227,10 +236,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               </button>
             );
           })}
-          {!aiWatchlist.length ? <p className="text-sm leading-6 text-white/48">AI watchlist needs token intelligence coverage.</p> : null}
         </div>
       </RailCard>
+      ) : null}
 
+      {whaleRows.length ? (
       <RailCard title="Whale Activity" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
         <div className="space-y-2">
           {whaleRows.slice(0, 4).map((item) => (
@@ -254,11 +264,12 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
             </button>
           ))}
-          {!whaleRows.length ? <p className="text-sm leading-6 text-white/48">Whale rows require on-chain transfer coverage. No synthetic wallet activity is shown.</p> : null}
         </div>
       </RailCard>
+      ) : null}
 
-      {discovery?.aiSpotlight ? (
+      {discovery?.aiSpotlight &&
+      (isValidSignalScore(discovery.aiSpotlight.confidenceScore) || isValidSignalScore(discovery.aiSpotlight.highConvictionScore)) ? (
         <button
           type="button"
           onClick={() => navigate(`/token/${discovery.aiSpotlight?.tokenAddress}`)}
