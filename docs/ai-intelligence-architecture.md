@@ -790,9 +790,6 @@ Start here, in this order:
 14. [webapp/src/pages/Notifications.tsx](c:/Users/renga/Documents/phewrunn/webapp/src/pages/Notifications.tsx)
     - Support intelligent alert payloads and alert preference navigation.
 
-15. [webapp/src/components/feed/TrendingSection.tsx](c:/Users/renga/Documents/phewrunn/webapp/src/components/feed/TrendingSection.tsx)
-    - Repurpose into radar cards backed by the token intelligence layer instead of the current ad hoc trending endpoint.
-
 ## 8. Step-By-Step Rollout Plan With Acceptance Criteria
 
 ### Phase 1 rollout: hidden backend launch

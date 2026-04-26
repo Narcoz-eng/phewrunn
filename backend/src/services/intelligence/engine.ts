@@ -3742,8 +3742,6 @@ function computeFeedScoreForCall(
   if (finite(call.trustedTraderCount) > 0) reasons.push("Smart money detected");
   if (call.repostContext) reasons.push("Repost momentum");
   if (riskPenalty > 0) reasons.push("Risk adjusted");
-  if (reasons.length === 0) reasons.push("Fresh signal");
-
   return { score: Math.round(score * 10) / 10, reasons: reasons.slice(0, 4) };
 }
 

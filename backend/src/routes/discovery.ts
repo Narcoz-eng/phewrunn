@@ -238,6 +238,18 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         changeSource: row?.change24hPct !== null ? "snapshots" : "unavailable",
       };
     })
+    .filter((item) => {
+      const hasRealChange =
+        typeof item.change24hPct === "number" &&
+        Number.isFinite(item.change24hPct) &&
+        Math.abs(item.change24hPct) >= 0.01 &&
+        item.changeSource !== "unavailable";
+      const hasMarketBasis =
+        (typeof item.marketCap === "number" && Number.isFinite(item.marketCap) && item.marketCap > 0) ||
+        (typeof item.liquidity === "number" && Number.isFinite(item.liquidity) && item.liquidity > 0) ||
+        (typeof item.volume24h === "number" && Number.isFinite(item.volume24h) && item.volume24h > 0);
+      return hasRealChange && hasMarketBasis;
+    })
     .sort(
       (a, b) =>
         toNumber(b.change24hPct) +
@@ -275,6 +287,14 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         confidence: post.confidenceScore,
         roiCurrentPct: post.roiCurrentPct,
       };
+    })
+    .filter((item) => {
+      const hasTokenContext = Boolean(item.contractAddress || item.tokenSymbol || item.tokenName);
+      const hasPerformance =
+        (typeof item.roiCurrentPct === "number" && Number.isFinite(item.roiCurrentPct) && Math.abs(item.roiCurrentPct) >= 0.1) ||
+        (typeof item.conviction === "number" && Number.isFinite(item.conviction) && item.conviction >= 40) ||
+        (typeof item.confidence === "number" && Number.isFinite(item.confidence) && item.confidence >= 40);
+      return hasTokenContext && item.trendScore >= 20 && hasPerformance;
     })
     .sort((a, b) => b.trendScore - a.trendScore)
     .slice(0, 5);

@@ -310,7 +310,7 @@ bundleCheckerRouter.get(
           : `Low current bundle pressure: resolved clusters do not show dominant supply control. Continue monitoring because new holder snapshots can change this quickly.`;
     const recommendation =
       !hasExplicitRiskEvidence
-        ? "Not enough evidence; do not treat this as clean."
+        ? "Not enough evidence; do not treat this as low risk."
         : resolvedRiskScore >= 70
         ? "Avoid or size defensively until cluster pressure eases."
         : resolvedRiskScore >= 40

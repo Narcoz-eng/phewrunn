@@ -224,13 +224,3 @@ export const api = {
   raw: rawRequest,
 };
 
-// Sample endpoint types (extend as needed)
-export interface SampleResponse {
-  message: string;
-  timestamp: string;
-}
-
-// Sample API functions
-export const sampleApi = {
-  getSample: () => api.get<SampleResponse>("/api/sample"),
-};

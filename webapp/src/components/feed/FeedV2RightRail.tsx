@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { cn } from "@/lib/utils";
+import { isValidGainer, isValidMarketStats, isValidSignalScore, isValidTrendingCall } from "@/lib/data-validators";
 import type { DiscoveryFeedSidebarResponse } from "@/types";
 import type { FeedTab } from "./FeedHeader";
 
@@ -51,14 +52,14 @@ function TokenAvatar({ src, label }: { src?: string | null; label: string }) {
 
 export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2RightRailProps) {
   const navigate = useNavigate();
-  const topGainers = discovery?.topGainers ?? [];
+  const topGainers = (discovery?.topGainers ?? []).filter(isValidGainer);
   const liveRaids = discovery?.liveRaids ?? [];
-  const trendingCalls = discovery?.trendingCalls ?? [];
+  const trendingCalls = (discovery?.trendingCalls ?? []).filter(isValidTrendingCall);
   const aiWatchlist = topGainers
-    .filter((item) => typeof item.confidenceScore === "number" || typeof item.highConvictionScore === "number")
+    .filter((item) => isValidSignalScore(item.confidenceScore) || isValidSignalScore(item.highConvictionScore))
     .slice(0, 5);
   const whaleRows = discovery?.whaleActivity ?? [];
-  const marketStats = discovery?.marketStats ?? null;
+  const marketStats = isValidMarketStats(discovery?.marketStats) ? discovery?.marketStats ?? null : null;
   const filterByToken = (symbol?: string | null, address?: string | null): boolean => {
     const query = symbol ? `$${symbol}` : address ?? "";
     if (!query || !onFilterFeed) return false;
@@ -69,6 +70,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
       <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5">
+        {marketStats ? (
         <div className="grid grid-cols-3 divide-x divide-white/8 overflow-hidden rounded-[12px] border border-white/8 bg-white/[0.025]">
           {[
             ["Market Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct)],
@@ -84,6 +86,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             </div>
           ))}
         </div>
+        ) : (
+          <div className="rounded-[12px] border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-sm leading-6 text-white/48">
+            Market stats require live tracked-token snapshots. No inferred global numbers are shown.
+          </div>
+        )}
         {marketStats?.coverage?.btcDominance === "unavailable" ? (
           <div className="mt-2 text-[11px] leading-4 text-white/34">{marketStats.coverage.unavailableReason}</div>
         ) : null}
@@ -114,7 +121,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               </div>
             </button>
           ))}
-          {!topGainers.length ? <p className="text-sm leading-6 text-white/48">Tracked token gainers will appear after market snapshots are available.</p> : null}
+          {!topGainers.length ? <p className="text-sm leading-6 text-white/48">No gainers with real non-zero 24h change are available.</p> : null}
         </div>
       </RailCard>
 

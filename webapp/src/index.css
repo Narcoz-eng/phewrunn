@@ -557,6 +557,9 @@
 
   .v2-shell {
     @apply min-h-screen;
+    min-height: 100dvh;
+    height: 100dvh;
+    overflow: hidden;
     background:
       radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 16%),
       radial-gradient(circle at 82% 4%, rgba(45, 212, 191, 0.12), transparent 18%),
@@ -566,6 +569,11 @@
 
   .v2-shell-main {
     @apply min-h-screen lg:pl-[14.5rem];
+    min-height: 100dvh;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
   }
 
   .v2-shell-content {
@@ -600,9 +608,12 @@
   }
 
   .v2-sidebar {
-    @apply fixed inset-y-0 left-0 z-40 h-screen w-[14.5rem] flex-col overflow-y-auto overscroll-contain border-r border-white/[0.07] px-4 py-4;
+    @apply fixed inset-y-0 left-0 z-40 w-[14.5rem] flex-col overflow-y-auto overscroll-contain border-r border-white/[0.07] px-4 py-4;
+    height: 100dvh;
+    max-height: 100dvh;
     scrollbar-gutter: stable;
     scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
     background:
       radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 24%),
       radial-gradient(circle at bottom left, rgba(45, 212, 191, 0.08), transparent 30%),

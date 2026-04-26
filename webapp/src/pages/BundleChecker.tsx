@@ -480,7 +480,7 @@ export default function BundleChecker() {
                   <RiskFactorRow key={factor.label} {...factor} />
                 )) : (
                   <div className="rounded-[14px] border border-dashed border-white/12 bg-black/20 p-4 text-sm leading-6 text-white/50">
-                    Not enough explicit bundle evidence was returned. This target is not marked clean.
+                    Not enough explicit bundle evidence was returned. This target is not treated as low risk.
                   </div>
                 )}
               </div>

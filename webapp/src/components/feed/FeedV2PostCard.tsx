@@ -5,6 +5,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  isValidCandleSeries,
+  isValidRiskLabel,
+  isValidSignalScore,
+  isValidSmartMoney,
+} from "@/lib/data-validators";
 import type { TerminalAggregateResponse, TerminalCandle } from "@/components/token/pro-terminal/types";
 import { getAvatarUrl, type Post } from "@/types";
 
@@ -118,8 +124,8 @@ function signalTitle(post: Post): string {
 
 function signalTier(post: Post): SignalTier {
   const score = post.signal?.aiScore ?? post.highConvictionScore ?? post.confidenceScore ?? null;
-  if (typeof score === "number" && score >= 75 && post.signal?.aiScoreCoverage.state !== "unavailable") return "strong";
-  if (typeof score === "number" && score >= 55 && post.signal?.aiScoreCoverage.state !== "unavailable") return "medium";
+  if (isValidSignalScore(score, post.signal?.aiScoreCoverage.state) && score >= 75) return "strong";
+  if (isValidSignalScore(score, post.signal?.aiScoreCoverage.state) && score >= 55) return "medium";
   if (post.signal?.aiScoreCoverage.state === "partial" || post.signal?.aiScoreCoverage.state === "live") return "partial";
   return "weak";
 }
@@ -159,12 +165,12 @@ function headline(post: Post): string {
 }
 
 function riskLabel(post: Post): string {
-  if (post.signal?.riskLabel) return post.signal.riskLabel;
+  if (isValidRiskLabel(post.signal?.riskLabel, post.signal?.riskScore)) return post.signal!.riskLabel;
   const risk = post.tokenRiskScore ?? post.bundlePenaltyScore;
   if (typeof risk !== "number") return "Unavailable";
   if (risk >= 70) return "High";
   if (risk >= 40) return "Medium";
-  return "Lower";
+  return "Not enough evidence";
 }
 
 function momentumLabel(post: Post): string {
@@ -177,7 +183,7 @@ function momentumLabel(post: Post): string {
 }
 
 function smartMoneyLabel(post: Post): string {
-  if (typeof post.signal?.smartMoneyScore === "number") {
+  if (isValidSignalScore(post.signal?.smartMoneyScore, post.signal?.aiScoreCoverage.state)) {
     return `${post.signal.smartMoneyScore.toFixed(1)}/100`;
   }
   if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
@@ -187,23 +193,20 @@ function smartMoneyLabel(post: Post): string {
 }
 
 function smartMoneySubLabel(post: Post): string {
-  if (typeof post.signal?.smartMoneyScore === "number") {
+  if (isValidSignalScore(post.signal?.smartMoneyScore, post.signal?.aiScoreCoverage.state)) {
     return post.signal.scoreReasons.find((reason) => reason.toLowerCase().includes("trusted")) ?? "Derived by shared signal engine";
   }
   if (typeof post.trustedTraderCount === "number" && post.trustedTraderCount > 0) {
     return "Verified trader overlap";
   }
-  if (typeof post.bundlePenaltyScore === "number") {
-    return post.bundlePenaltyScore <= 35 ? "Bundle scan found no high-risk cluster" : "Bundle risk requires review";
-  }
   return "Wallet-signal coverage unavailable";
 }
 
 function aiSignalValue(post: Post): string {
-  if (typeof post.signal?.aiScore === "number" && Number.isFinite(post.signal.aiScore)) {
+  if (isValidSignalScore(post.signal?.aiScore, post.signal?.aiScoreCoverage.state)) {
     return post.signal.aiScore.toFixed(1);
   }
-  if (typeof post.confidenceScore !== "number" || !Number.isFinite(post.confidenceScore)) {
+  if (!isValidSignalScore(post.confidenceScore, post.signal?.aiScoreCoverage.state)) {
     return "Not enough signal";
   }
   return post.confidenceScore.toFixed(1);
@@ -279,7 +282,7 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
   if (typeof post.signal?.price === "number" && Number.isFinite(post.signal.price)) {
     metrics.push({ label: "Price", value: `$${post.signal.price.toPrecision(6)}` });
   }
-  if (typeof post.signal?.priceChange24h === "number" && Number.isFinite(post.signal.priceChange24h)) {
+  if (typeof post.signal?.priceChange24h === "number" && Number.isFinite(post.signal.priceChange24h) && Math.abs(post.signal.priceChange24h) >= 0.01) {
     metrics.push({ label: "24H Move", value: pct(post.signal.priceChange24h) });
   }
   if (typeof post.entryMcap === "number" && Number.isFinite(post.entryMcap)) {
@@ -294,12 +297,12 @@ function callMetrics(post: Post): Array<{ label: string; value: string }> {
   if (typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct)) {
     metrics.push({ label: "Live Move", value: pct(post.roiCurrentPct) });
   }
-  if (typeof post.signal?.aiScore === "number" && Number.isFinite(post.signal.aiScore)) {
+  if (isValidSignalScore(post.signal?.aiScore, post.signal?.aiScoreCoverage.state)) {
     metrics.push({ label: "AI Signal", value: `${post.signal.aiScore.toFixed(0)}/100` });
-  } else if (typeof post.confidenceScore === "number" && Number.isFinite(post.confidenceScore)) {
+  } else if (isValidSignalScore(post.confidenceScore, post.signal?.aiScoreCoverage.state)) {
     metrics.push({ label: "AI Signal", value: `${post.confidenceScore.toFixed(0)}/100` });
   }
-  if (post.tokenRiskScore !== null || post.bundlePenaltyScore !== null) {
+  if (isValidRiskLabel(post.signal?.riskLabel, post.signal?.riskScore) || (typeof post.tokenRiskScore === "number" && post.tokenRiskScore >= 40) || (typeof post.bundlePenaltyScore === "number" && post.bundlePenaltyScore >= 40)) {
     metrics.push({ label: "Risk", value: riskLabel(post) });
   }
 
@@ -331,6 +334,7 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
   });
   const candles = chartQuery.data?.chart.candles.slice(-48) ?? [];
   const coverage = chartQuery.data?.chart.coverage;
+  const hasValidCandles = coverage?.state !== "unavailable" && isValidCandleSeries(candles);
 
   if (!tokenAddress) {
     return (
@@ -359,12 +363,12 @@ function FeedMiniCandleChart({ post, tall = false }: { post: Post; tall?: boolea
     );
   }
 
-  if (!candles.length) {
+  if (!hasValidCandles) {
     return (
       <div ref={ref} className={cn("flex flex-col items-center justify-center rounded-[14px] border border-white/8 bg-black/20 px-4 text-center", tall ? "h-[92px]" : "h-[76px]")}>
-        <div className="text-sm font-semibold text-white/72">Market chart unavailable</div>
+        <div className="text-sm font-semibold text-white/72">Chart unavailable</div>
         <div className="mt-1 text-xs text-white/40">
-          {coverage?.unavailableReason || post.signal?.candlesCoverage.unavailableReason || "The backend did not return candle coverage for this token."}
+          {coverage?.unavailableReason || post.signal?.candlesCoverage.unavailableReason || "Insufficient real OHLC movement for a useful preview."}
         </div>
       </div>
     );
@@ -545,6 +549,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
   const terminalAddress = post.signal?.tokenAddress ?? post.tokenContext?.address ?? post.contractAddress;
   const tier = signalTier(post);
   const decision = decisionBadge(post);
+  const hasTrustedSignal = tier === "strong" || tier === "medium" || tier === "partial";
   return (
     <article className={shellClass(post, "call")}>
       {tier === "strong" ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
@@ -582,7 +587,7 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </span>
       </div>
 
-      {metrics.length ? (
+      {hasTrustedSignal && metrics.length ? (
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           {metrics.map((metric) => (
             <Metric key={metric.label} label={metric.label} value={metric.value} />
@@ -590,13 +595,16 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       ) : (
         <div className="mt-4 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 text-sm text-white/48">
-          Market metrics are not displayed until a real token address or backend market snapshot is attached.
+          {post.signal?.aiScoreCoverage.unavailableReason ??
+            "Market metrics are compressed until backend coverage can support a trusted trading signal."}
         </div>
       )}
 
+      {hasTrustedSignal ? (
       <div className="mt-3">
         <FeedMiniCandleChart post={post} tall={tier !== "weak"} />
       </div>
+      ) : null}
 
       {terminalAddress ? (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -609,12 +617,20 @@ export function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       ) : null}
 
-      <div className={cn("mt-3 grid gap-2 md:grid-cols-4", tier === "weak" && "opacity-75")}>
-        <AiMetric icon={Zap} label="AI Signal" value={aiSignalValue(post)} sub={aiSignalSubLabel(post)} />
-        <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Live signal"} />
-        <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub={smartMoneySubLabel(post)} />
-        <AiMetric icon={TrendingDown} label="Risk Level" value={riskLabel(post)} sub={post.signal?.riskScore != null ? "Shared signal engine" : post.bundleRiskLabel || "Risk coverage pending"} />
-      </div>
+      {hasTrustedSignal ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-4">
+          <AiMetric icon={Zap} label="AI Signal" value={aiSignalValue(post)} sub={aiSignalSubLabel(post)} />
+          {isValidSignalScore(post.signal?.momentumScore ?? post.hotAlphaScore ?? post.earlyRunnerScore, post.signal?.aiScoreCoverage.state) ? (
+            <AiMetric icon={TrendingUp} label="Momentum" value={momentumLabel(post)} sub={post.timingTier || "Shared signal engine"} />
+          ) : null}
+          {isValidSmartMoney(post) ? (
+            <AiMetric icon={ShieldCheck} label="Smart Money" value={smartMoneyLabel(post)} sub={smartMoneySubLabel(post)} />
+          ) : null}
+          {isValidRiskLabel(post.signal?.riskLabel, post.signal?.riskScore) || (typeof post.tokenRiskScore === "number" && post.tokenRiskScore >= 40) ? (
+            <AiMetric icon={TrendingDown} label="Risk Level" value={riskLabel(post)} sub={post.signal?.riskScore != null ? "Shared signal engine" : "Risk evidence returned"} />
+          ) : null}
+        </div>
+      ) : null}
       <EngagementFooter {...props} />
     </article>
   );
@@ -740,11 +756,33 @@ export function FeedPostChartCard(props: FeedV2PostCardProps) {
       <div className="mt-4">
         <FeedMiniCandleChart post={post} tall />
       </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-3">
-        <Metric label="Setup Quality" value={typeof post.setupQualityScore === "number" ? post.setupQualityScore.toFixed(1) : "Unavailable"} />
-        <Metric label="Market Health" value={typeof post.marketHealthScore === "number" ? post.marketHealthScore.toFixed(1) : "Unavailable"} />
-        <Metric label="Current Move" value={pct(post.roiCurrentPct)} />
-      </div>
+      {[
+        isValidSignalScore(post.setupQualityScore, post.signal?.aiScoreCoverage.state)
+          ? { label: "Setup Quality", value: post.setupQualityScore!.toFixed(1) }
+          : null,
+        isValidSignalScore(post.marketHealthScore, post.signal?.aiScoreCoverage.state)
+          ? { label: "Market Health", value: post.marketHealthScore!.toFixed(1) }
+          : null,
+        typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct) && Math.abs(post.roiCurrentPct) >= 0.01
+          ? { label: "Current Move", value: pct(post.roiCurrentPct) }
+          : null,
+      ].filter(Boolean).length ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {[
+            isValidSignalScore(post.setupQualityScore, post.signal?.aiScoreCoverage.state)
+              ? { label: "Setup Quality", value: post.setupQualityScore!.toFixed(1) }
+              : null,
+            isValidSignalScore(post.marketHealthScore, post.signal?.aiScoreCoverage.state)
+              ? { label: "Market Health", value: post.marketHealthScore!.toFixed(1) }
+              : null,
+            typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct) && Math.abs(post.roiCurrentPct) >= 0.01
+              ? { label: "Current Move", value: pct(post.roiCurrentPct) }
+              : null,
+          ].filter((metric): metric is { label: string; value: string } => Boolean(metric)).map((metric) => (
+            <Metric key={metric.label} label={metric.label} value={metric.value} />
+          ))}
+        </div>
+      ) : null}
       {post.signal?.tokenAddress || post.tokenContext?.address || post.contractAddress ? <TokenPreview post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
@@ -874,9 +912,11 @@ function TokenPreview({ post }: { post: Post }) {
           <div className="truncate text-xs text-white/42">{address}</div>
         </div>
       </div>
-      <div className={cn("text-sm font-semibold", (post.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
-        {pct(post.roiCurrentPct)}
-      </div>
+      {typeof post.roiCurrentPct === "number" && Number.isFinite(post.roiCurrentPct) && Math.abs(post.roiCurrentPct) >= 0.01 ? (
+        <div className={cn("text-sm font-semibold", post.roiCurrentPct >= 0 ? "text-lime-300" : "text-rose-300")}>
+          {pct(post.roiCurrentPct)}
+        </div>
+      ) : null}
     </Link>
   );
 }

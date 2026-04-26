@@ -664,7 +664,7 @@ function deriveTerminalSignals(args: {
       momentum !== null && momentum >= 70 ? "Momentum rising" : null,
       hasTrades ? "Live prints detected" : null,
       activeRaidCount > 0 ? "Raid pressure" : null,
-      hasRisk && (riskScore ?? 0) < 45 ? "Cleaner holder risk" : null,
+      hasRisk && (riskScore ?? 0) < 45 ? "No high-risk holder concentration detected" : null,
     ].filter((label): label is string => Boolean(label)),
     explanation,
   };

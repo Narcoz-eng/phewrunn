@@ -3445,9 +3445,9 @@ export default function TokenPage() {
                       </div>
                       <div className="mt-4 grid gap-2 sm:grid-cols-2">
                         {[
-                          { label: "Opportunity", value: typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}/100` : "Tracking" },
-                          { label: "Market Health", value: typeof token.marketHealthScore === "number" ? `${token.marketHealthScore.toFixed(0)}/100` : "Tracking" },
-                          { label: "Setup Quality", value: typeof token.setupQualityScore === "number" ? `${token.setupQualityScore.toFixed(0)}/100` : "Tracking" },
+                          { label: "Opportunity", value: typeof token.opportunityScore === "number" ? `${token.opportunityScore.toFixed(0)}/100` : "Coverage pending" },
+                          { label: "Market Health", value: typeof token.marketHealthScore === "number" ? `${token.marketHealthScore.toFixed(0)}/100` : "Coverage pending" },
+                          { label: "Setup Quality", value: typeof token.setupQualityScore === "number" ? `${token.setupQualityScore.toFixed(0)}/100` : "Coverage pending" },
                           { label: "Sentiment", value: `${sentimentView.score.toFixed(0)}/100` },
                         ].map((metric) => (
                           <div key={metric.label} className="rounded-[18px] border border-white/10 bg-white/[0.04] px-3 py-3">
