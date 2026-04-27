@@ -278,6 +278,7 @@ export default function Feed() {
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined),
     maxPages: FEED_MAX_PAGES,
     enabled: activeTab !== "following" || hasLiveSession,
+    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: (failureCount, error) => {

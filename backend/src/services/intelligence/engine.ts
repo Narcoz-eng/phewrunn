@@ -4422,21 +4422,21 @@ function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): Enriched
 function postTypeWeight(postType: unknown): number {
   switch (postType) {
     case "alpha":
-      return 34;
+      return 46;
     case "chart":
-      return 30;
+      return 42;
     case "whale":
-      return 28;
+      return 34;
     case "raid":
-      return 18;
+      return 24;
     case "poll":
-      return -10;
+      return -22;
     case "news":
-      return 4;
+      return -2;
     case "discussion":
-      return -14;
+      return -28;
     default:
-      return -8;
+      return -16;
   }
 }
 
@@ -4454,7 +4454,7 @@ function computeFeedScoreForCall(
     ageHours > 24 && (call.postType === "alpha" || call.postType === "chart") ? Math.min(46, 10 + (ageHours - 24) / 3) : 0;
   const nonAlphaPenalty =
     kind === "latest" && call.postType !== "alpha" && call.postType !== "chart" && call.postType !== "raid"
-      ? Math.min(30, 12 + ageHours * 0.45)
+      ? Math.min(44, 18 + ageHours * 0.7)
       : 0;
   const hasFreshStoredMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
   const marketFreshnessPenalty =

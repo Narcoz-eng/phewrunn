@@ -79,7 +79,7 @@ function riskMeaning(label: string | null | undefined): string | null {
 }
 
 function convictionMeaning(value: string | number | null | undefined, coverage?: FeedCoverage | null): string {
-  if (coverage?.state === "unavailable") return "Insufficient data";
+  if (coverage?.state === "unavailable") return "Awaiting confirmation";
   if (typeof value === "string") {
     const normalized = value.toLowerCase();
     if (normalized.includes("high") || normalized.includes("strong")) return "Strong";
@@ -87,11 +87,11 @@ function convictionMeaning(value: string | number | null | undefined, coverage?:
     if (normalized.includes("low") || normalized.includes("weak")) return "Weak";
   }
   const numeric = typeof value === "number" && Number.isFinite(value) ? value : null;
-  if (numeric === null) return coverage?.state === "partial" ? "Medium" : "Insufficient data";
+  if (numeric === null) return coverage?.state === "partial" ? "Medium" : "Awaiting confirmation";
   if (numeric >= 78) return "Strong";
   if (numeric >= 58) return "Medium";
   if (numeric >= 35) return "Weak";
-  return "Insufficient data";
+  return "Awaiting confirmation";
 }
 
 function scoreMeaning(value: number | null | undefined): string | null {
@@ -103,8 +103,8 @@ function scoreMeaning(value: number | null | undefined): string | null {
 }
 
 function momentumMeaning(value: number | null | undefined, coverage?: FeedCoverage | null): string {
-  if (coverage?.state === "unavailable") return "Insufficient data";
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Flat" : "Insufficient data";
+  if (coverage?.state === "unavailable") return "Awaiting trend";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Flat" : "Awaiting trend";
   if (value >= 82) return "Accelerating";
   if (value >= 58) return "Building";
   if (value >= 35) return "Flat";
@@ -115,13 +115,13 @@ function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount:
   if (trustedTraderCount && trustedTraderCount > 0) {
     if (typeof value === "number" && Number.isFinite(value) && value >= 70) return "Accumulating";
     if (typeof value === "number" && Number.isFinite(value) && value > 0 && value < 40) return "Distributing";
-    return "Inactive";
+    return "No recent flow";
   }
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Inactive" : "Insufficient data";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "No recent flow" : "Flow pending";
   if (value >= 70) return "Accumulating";
-  if (value >= 45) return "Inactive";
-  if (value > 0) return "Inactive";
-  return "Insufficient data";
+  if (value >= 45) return "No recent flow";
+  if (value > 0) return "No recent flow";
+  return "Flow pending";
 }
 
 function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: string }>, fallbackReason: string): string {
@@ -146,8 +146,8 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
   if (conviction === "Medium" && momentum === "Building") {
     return `${token} is developing, with momentum improving but not yet a full-strength signal.`;
   }
-  if (items.every((item) => item.value === "Insufficient data" || item.value === "Unknown")) {
-    return "Intelligence coverage is still too thin to expand this signal.";
+  if (items.every((item) => item.value === "Awaiting confirmation" || item.value === "Awaiting trend" || item.value === "Flow pending" || item.value === "Unknown")) {
+    return `${token} is queued for confirmation as market, wallet, and risk coverage hydrates.`;
   }
   return fallbackReason;
 }
@@ -358,10 +358,10 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function SetupMetric({ label, value, emphasis = false, tone = "neutral" }: { label: string; value: string; emphasis?: boolean; tone?: "positive" | "negative" | "neutral" }) {
   return (
-    <div className={cn("min-w-0 border-l border-white/8 pl-3", emphasis && "border-lime-300/28")}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/34">{label}</div>
+    <div className={cn("min-w-0 rounded-[12px] border border-white/8 bg-black/18 px-3 py-2", emphasis && "border-lime-300/24 bg-lime-300/[0.055]")}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/38">{label}</div>
       <div className={cn(
-        "mt-1 truncate text-sm font-semibold",
+        "mt-1 truncate text-[15px] font-semibold",
         tone === "positive" ? "text-lime-200" : tone === "negative" ? "text-rose-200" : emphasis ? "text-lime-200" : "text-white/82"
       )}>{value}</div>
     </div>
@@ -426,7 +426,7 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
       label: "Smart Money",
       value: smartMoney,
       icon: Waves,
-      tone: smartMoney === "Insufficient data" ? "text-white/44" : "text-cyan-200",
+      tone: smartMoney === "Flow pending" ? "text-white/48" : "text-cyan-200",
     },
     {
       label: "Risk",
@@ -446,7 +446,7 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <div key={item.label} className={cn("flex items-center gap-2 px-3 py-2.5", item.value === "Insufficient data" && "bg-white/[0.012]")}>
+            <div key={item.label} className={cn("flex items-center gap-2 px-3 py-2.5", (item.value === "Awaiting confirmation" || item.value === "Flow pending" || item.value === "Awaiting trend") && "bg-white/[0.012]")}>
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/8 bg-black/28">
                 <Icon className={cn("h-4 w-4", item.tone)} />
               </span>
@@ -584,12 +584,22 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     );
   }
   return (
-    <div ref={containerRef} className="mt-3 overflow-hidden rounded-[12px] border border-white/8 bg-white/[0.018] px-3 py-2.5">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-semibold text-white/52">Chart loading</span>
-        <span className="text-white/34">{preview?.state === "unavailable" ? "Compact view" : "Queued"}</span>
+    <div ref={containerRef} className={cn("mt-4 overflow-hidden rounded-[14px] border border-white/8 bg-[#03080a] p-3", dominant ? "min-h-[260px]" : "min-h-[172px]")}>
+      <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+        <span className="font-semibold text-white/62">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
+        <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-white/40">
+          {preview?.state === "unavailable" ? "Market data loading" : "Hydrating"}
+        </span>
       </div>
-      <div className="mt-2 h-8 overflow-hidden rounded-[8px] bg-[linear-gradient(90deg,rgba(169,255,52,0.10),rgba(18,215,170,0.05),rgba(255,255,255,0.025))]" aria-label={post.coverage?.candles.unavailableReason || reason} />
+      <div className={cn("relative overflow-hidden rounded-[10px] border border-white/6 bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]", dominant ? "h-52" : "h-32")} aria-label={post.coverage?.candles.unavailableReason || reason}>
+        <div className="absolute inset-x-0 top-1/4 border-t border-dashed border-lime-300/10" />
+        <div className="absolute inset-x-0 top-1/2 border-t border-white/5" />
+        <div className="absolute inset-x-0 top-3/4 border-t border-white/5" />
+        <div className="absolute bottom-3 left-4 right-4 h-10 rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.04),rgba(169,255,52,0.15),rgba(18,215,170,0.06))] blur-sm" />
+        <div className="absolute left-4 top-4 text-xs font-semibold text-white/42">
+          {token?.address ? "Loading candles and volume..." : "No active token pair attached yet."}
+        </div>
+      </div>
     </div>
   );
 }
@@ -605,40 +615,40 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const market = payload.market;
   const targetValues = Array.isArray(payload.targets) ? payload.targets.map(formatMarketValue).filter((value): value is string => Boolean(value)) : [];
   const setupMetrics = [
-    market?.current && formatMarketValue(market.current) ? { label: "Current", value: formatMarketValue(market.current)!, emphasis: false, tone: "neutral" as const } : null,
+    { label: "Current", value: market?.current && formatMarketValue(market.current) ? formatMarketValue(market.current)! : "Market data loading", emphasis: true, tone: "neutral" as const },
     market?.liveMove && formatMarketValue(market.liveMove) ? {
       label: "Live Move",
       value: formatMarketValue(market.liveMove)!,
       emphasis: (market.liveMove.value ?? 0) > 0,
       tone: (market.liveMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
-    } : null,
-    market?.entry && formatMarketValue(market.entry) ? { label: "Entry", value: formatMarketValue(market.entry)!, emphasis: true, tone: "neutral" as const } : null,
+    } : { label: "Live Move", value: "Awaiting confirmation", emphasis: false, tone: "neutral" as const },
+    { label: "Entry", value: market?.entry && formatMarketValue(market.entry) ? formatMarketValue(market.entry)! : "Not set", emphasis: false, tone: "neutral" as const },
     market?.peakMove && formatMarketValue(market.peakMove) ? {
       label: "Peak",
       value: formatMarketValue(market.peakMove)!,
       emphasis: (market.peakMove.value ?? 0) > 0,
       tone: (market.peakMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
-    } : null,
-    targetValues.length > 0 ? {
+    } : { label: "Peak", value: "Awaiting move", emphasis: false, tone: "neutral" as const },
+    {
       label: "Targets",
-      value: targetValues.join(" / "),
+      value: targetValues.length > 0 ? targetValues.join(" / ") : "Not set",
       emphasis: false,
-      tone: "positive" as const,
-    } : null,
-    payload.stopLoss && formatMarketValue(payload.stopLoss) ? {
-      label: "Stop",
-      value: formatMarketValue(payload.stopLoss)!,
+      tone: targetValues.length > 0 ? "positive" as const : "neutral" as const,
+    },
+    {
+      label: "Stop Loss",
+      value: payload.stopLoss && formatMarketValue(payload.stopLoss) ? formatMarketValue(payload.stopLoss)! : "Not set",
       emphasis: false,
-      tone: "negative" as const,
-    } : null,
+      tone: payload.stopLoss && formatMarketValue(payload.stopLoss) ? "negative" as const : "neutral" as const,
+    },
     typeof payload.confidence === "number" && Number.isFinite(payload.confidence) ? {
       label: "Confidence",
       value: `${Math.round(payload.confidence)}%`,
       emphasis: payload.confidence >= 70,
       tone: payload.confidence >= 70 ? "positive" as const : "neutral" as const,
-    } : null,
-    post.timingTier ? { label: "Timeframe", value: post.timingTier, emphasis: false, tone: "neutral" as const } : null,
-  ].filter((item): item is { label: string; value: string; emphasis: boolean; tone: "positive" | "negative" | "neutral" } => Boolean(item));
+    } : { label: "Confidence", value: "Awaiting signal", emphasis: false, tone: "neutral" as const },
+    { label: "Timeframe", value: post.timingTier ?? "Not set", emphasis: false, tone: "neutral" as const },
+  ];
   const liveMove = market?.liveMove?.valueType === "live" ? formatSignedPct(market.liveMove.value) : null;
   const staleMarketReason = market?.current?.valueType === "stale" ? market.current.fallbackReason ?? "Current market data is stale." : null;
   return (
@@ -667,22 +677,23 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       </div>
       <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/68">{payload.thesis}</p>
-      {(setupMetrics.length > 0 || terminalAddress) ? (
-        <div className="mt-3 grid gap-3 rounded-[15px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_42%),linear-gradient(90deg,rgba(169,255,52,0.055),rgba(255,255,255,0.018))] px-3 py-3 sm:grid-cols-[repeat(auto-fit,minmax(92px,1fr))_auto]">
-          {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
-          <div className="flex items-center sm:pl-1">
-            <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
+      <div className="mt-3 rounded-[16px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.10),transparent_38%),linear-gradient(180deg,rgba(169,255,52,0.045),rgba(255,255,255,0.018))] p-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/56">Trade plan</div>
+            <div className="mt-0.5 text-xs text-white/38">Structured call context hydrates as market data confirms.</div>
           </div>
+          <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
         </div>
-      ) : null}
-      {(chartIsLive || payload.needsChart) ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}
-      {!liveSignal ? (
-        <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "More market confirmation is needed before expanding this call."} />
-      ) : null}
+        <div className="grid gap-2 sm:grid-cols-4 xl:grid-cols-7">
+          {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
+        </div>
+      </div>
+      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant />
       {staleMarketReason ? (
         <CompactNotice title="Stale market data" reason={staleMarketReason} />
       ) : null}
-      {liveSignal ? <AiReadStrip post={post} convictionLabel={convictionLabel} /> : null}
+      <AiReadStrip post={post} convictionLabel={convictionLabel} />
       {liveSignal ? <WhyShown post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
