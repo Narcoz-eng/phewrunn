@@ -466,7 +466,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         valueUsd: nullableNumber(metadata.valueUsd as number | null | undefined),
         explorerUrl: typeof metadata.explorerUrl === "string" ? metadata.explorerUrl : null,
         createdAt: event.timestamp.toISOString(),
-        source: "helius",
+        source: typeof metadata.source === "string" ? metadata.source : "token-event",
         asOf: event.timestamp.toISOString(),
         coverage: "live",
       };

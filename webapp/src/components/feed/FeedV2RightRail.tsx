@@ -28,10 +28,10 @@ function formatPct(value: number | null | undefined): string {
 }
 
 function convictionLabel(score: number | null): string {
-  if (score === null) return "Signal pending";
-  if (score >= 75) return "High conviction";
-  if (score >= 55) return "Bullish";
-  return "Monitoring";
+  if (score === null) return "Insufficient data";
+  if (score >= 75) return "Strong conviction";
+  if (score >= 55) return "Medium conviction";
+  return "Weak conviction";
 }
 
 function RailCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
@@ -91,7 +91,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
       <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold tracking-tight text-white">Market Snapshot</h2>
+          <h2 className="text-[15px] font-semibold tracking-tight text-white">Signal Pulse</h2>
           <span className="rounded-[8px] border border-lime-300/14 bg-lime-300/[0.08] px-2 py-1 text-[11px] font-semibold text-lime-200">Live</span>
         </div>
         {marketStats ? (
@@ -112,12 +112,12 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
           ))}
         </div>
         ) : (
-          <RailUnavailable message="Market snapshot is waiting for live token coverage." />
+          <RailUnavailable message="Signal pulse is waiting for fresh tracked-token coverage." />
         )}
       </section>
 
       <RailCard
-        title="Top Gainers"
+        title="Top Movers"
         action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}
       >
         {topGainers.length ? (
@@ -144,11 +144,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             ))}
           </div>
         ) : (
-          <RailUnavailable message="No strong 24h movers are ready yet." />
+          <RailUnavailable message="No fresh 24h movers are ready yet." />
         )}
       </RailCard>
 
-      <RailCard title="Active X Raids" action={<V2StatusPill tone="live">Live</V2StatusPill>}>
+      <RailCard title="Live Raids" action={<V2StatusPill tone="live">Live</V2StatusPill>}>
         {liveRaids.length ? (
           <div className="space-y-3">
             {liveRaids.slice(0, 2).map((raid) => {
@@ -206,7 +206,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
         )}
       </RailCard>
 
-      <RailCard title="Trending Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Hot</span>}>
+      <RailCard title="Active Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Fresh</span>}>
         {trendingCalls.length ? (
           <div className="space-y-2">
             {trendingCalls.slice(0, 5).map((item) => (
@@ -230,7 +230,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             ))}
           </div>
         ) : (
-          <RailUnavailable message="Ranked calls are waiting for stronger conviction or velocity." />
+          <RailUnavailable message="Active calls need fresh performance or conviction before surfacing." />
         )}
       </RailCard>
 
@@ -263,7 +263,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
         )}
       </RailCard>
 
-      <RailCard title="Whale Activity" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
+      <RailCard title="Whale Flow" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
         {whaleRows.length ? (
           <div className="space-y-2">
             {whaleRows.slice(0, 4).map((item) => (

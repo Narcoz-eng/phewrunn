@@ -34,6 +34,8 @@ type FeedDebugCounts = {
   afterRanking: number;
   selected: number;
   alphaCandidates: number;
+  selectedCallCandidates?: number;
+  selectedChartPreviews?: number;
   hidden: number;
 };
 
@@ -67,6 +69,16 @@ const FEED_TAB_ITEMS: Array<{
 
 const chartPreviewCache = new Map<string, NonNullable<NonNullable<Post["payload"]>["call"]>["chartPreview"]>();
 
+function chartPreviewKeys(post: Post): string[] {
+  const payload = post.payload;
+  const token = payload?.call?.token ?? payload?.chart?.token ?? post.tokenContext ?? null;
+  return [
+    `post:${post.id}`,
+    token?.address ? `token:${token.chain ?? "any"}:${token.address.toLowerCase()}` : null,
+    token?.symbol ? `symbol:${token.symbol.toLowerCase()}` : null,
+  ].filter((key): key is string => Boolean(key));
+}
+
 function isLiveChartPreview(preview: NonNullable<NonNullable<Post["payload"]>["call"]>["chartPreview"] | null | undefined): boolean {
   return Boolean(preview && preview.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8);
 }
@@ -75,10 +87,10 @@ function stabilizePostChartPreview(post: Post): Post {
   const payload = post.payload;
   const preview = payload?.call?.chartPreview ?? payload?.chart?.chartPreview ?? null;
   if (isLiveChartPreview(preview)) {
-    chartPreviewCache.set(post.id, preview);
+    for (const key of chartPreviewKeys(post)) chartPreviewCache.set(key, preview);
     return post;
   }
-  const cached = chartPreviewCache.get(post.id);
+  const cached = chartPreviewKeys(post).map((key) => chartPreviewCache.get(key)).find(isLiveChartPreview);
   if (!cached || !isLiveChartPreview(cached) || !payload) return post;
   if (payload.call) {
     return { ...post, payload: { ...payload, call: { ...payload.call, chartPreview: cached } } };
@@ -243,7 +255,6 @@ export default function Feed() {
       params.set("limit", String(FEED_PAGE_SIZE));
       if (effectiveSearchQuery) params.set("search", effectiveSearchQuery);
       if (pageParam) params.set("cursor", pageParam);
-      if (activeTab === "early-runners") params.set("postType", "raid");
       endpoint += `?${params.toString()}`;
       return normalizeFeedResponse(await api.get<FeedApiPayload>(endpoint, { cache: "no-store" }));
     },
@@ -281,6 +292,8 @@ export default function Feed() {
   const displayedPosts = useMemo(() => postsPages?.pages.flatMap((page) => page.items) ?? [], [postsPages?.pages]);
   const hasPosts = displayedPosts.length > 0;
   const hasInitialFeedResult = isPostsFetched || Boolean(postsError);
+  const firstPageDebugCounts = postsPages?.pages[0]?.debugCounts ?? null;
+  const showFeedDiagnostics = Boolean(import.meta.env.DEV || user?.isAdmin);
   const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
 
   useEffect(() => {
@@ -564,9 +577,9 @@ export default function Feed() {
               </div>
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50">
                 {displayedPosts.length} visible
-                {postsPages?.pages[0]?.debugCounts ? (
+                {showFeedDiagnostics && firstPageDebugCounts ? (
                   <span className="ml-2 text-white/30">
-                    / {postsPages.pages[0].debugCounts.backendReturned} scanned
+                    / {firstPageDebugCounts.backendReturned} scanned
                   </span>
                 ) : null}
               </div>
@@ -633,7 +646,7 @@ export default function Feed() {
                         : "No feed items yet"}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {effectiveSearchQuery ? "Try a different search term." : "Only backend-ranked, typed feed items are rendered here."}
+                    {effectiveSearchQuery ? "Try a different search term." : "The alpha stream is waiting for ranked feed items."}
                   </p>
                 </div>
               </div>

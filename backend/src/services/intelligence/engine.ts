@@ -576,6 +576,8 @@ type FeedListResult = {
     afterRanking: number;
     selected: number;
     alphaCandidates: number;
+    selectedCallCandidates: number;
+    selectedChartPreviews: number;
     hidden: number;
   };
   degraded?: boolean;
@@ -1793,7 +1795,7 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
 
   const chartCandidates = items
     .filter((item) => (item.payload.call || item.payload.chart) && item.token?.address)
-    .slice(0, 8);
+    .slice(0, 16);
   const raidTokenIds = Array.from(new Set(items
     .filter((item) => item.postType === "raid" && item.tokenId)
     .map((item) => item.tokenId!)
@@ -5050,6 +5052,11 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
       const items = await enrichSelectedFeedPayloads(
         hydrated.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse)
       );
+      const selectedCallCandidates = items.filter((item) => item.payload.call || item.payload.chart).length;
+      const selectedChartPreviews = items.filter((item) => {
+        const preview = item.payload.call?.chartPreview ?? item.payload.chart?.chartPreview ?? null;
+        return preview?.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8;
+      }).length;
       const nextCursor =
         items.length === limit && hydrated[startIndex + limit]
           ? items[items.length - 1]?.id ?? null
@@ -5066,6 +5073,8 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           afterRanking: hydrated.length,
           selected: items.length,
           alphaCandidates,
+          selectedCallCandidates,
+          selectedChartPreviews,
           hidden: Math.max(0, backendReturned - hydrated.length),
         },
       };

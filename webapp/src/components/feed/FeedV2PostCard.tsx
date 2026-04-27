@@ -35,6 +35,11 @@ function formatTradingMetric(value: number, unit: "usd" | "pct" | "score"): stri
   return formatMetric(value, unit);
 }
 
+function formatSignedPct(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
 function formatMarketValue(metric: FeedMarketValue): string | null {
   if (metric.value === null || metric.valueType === "stale" || metric.valueType === "unavailable") return null;
   return formatMetric(metric.value, metric.unit);
@@ -46,6 +51,22 @@ function riskMeaning(label: string | null | undefined): string | null {
   return normalized;
 }
 
+function convictionMeaning(value: string | number | null | undefined, coverage?: FeedCoverage | null): string {
+  if (coverage?.state === "unavailable") return "Insufficient data";
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    if (normalized.includes("high") || normalized.includes("strong")) return "Strong";
+    if (normalized.includes("bullish") || normalized.includes("medium")) return "Medium";
+    if (normalized.includes("low") || normalized.includes("weak")) return "Weak";
+  }
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (numeric === null) return coverage?.state === "partial" ? "Medium" : "Insufficient data";
+  if (numeric >= 78) return "Strong";
+  if (numeric >= 58) return "Medium";
+  if (numeric >= 35) return "Weak";
+  return "Insufficient data";
+}
+
 function scoreMeaning(value: number | null | undefined): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
   if (value >= 82) return "High";
@@ -54,11 +75,11 @@ function scoreMeaning(value: number | null | undefined): string | null {
   return null;
 }
 
-function momentumMeaning(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "No signal";
-  if (value >= 78) return "Strong";
+function momentumMeaning(value: number | null | undefined, coverage?: FeedCoverage | null): string {
+  if (coverage?.state === "unavailable" || typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Insufficient data";
+  if (value >= 82) return "Accelerating";
   if (value >= 58) return "Building";
-  if (value >= 35) return "Weak";
+  if (value >= 35) return "Flat";
   return "Reversing";
 }
 
@@ -66,13 +87,22 @@ function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount:
   if (trustedTraderCount && trustedTraderCount > 0) {
     if (typeof value === "number" && Number.isFinite(value) && value >= 70) return "Accumulating";
     if (typeof value === "number" && Number.isFinite(value) && value > 0 && value < 40) return "Distributing";
-    return "Active";
+    return "Inactive";
   }
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "No data";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Insufficient data";
   if (value >= 70) return "Accumulating";
-  if (value >= 45) return "Active";
+  if (value >= 45) return "Inactive";
   if (value > 0) return "Inactive";
-  return "No data";
+  return "Insufficient data";
+}
+
+function riskState(label: string | null | undefined, riskScore: number | null | undefined): string {
+  const normalized = riskMeaning(label);
+  if (normalized) return normalized;
+  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Unknown";
+  if (riskScore >= 70) return "High";
+  if (riskScore >= 40) return "Medium";
+  return "Low";
 }
 
 function compactAddress(value: string | null | undefined): string | null {
@@ -244,6 +274,19 @@ function EngagementFooter({ post, onLike, onRepost, terminalAddress }: FeedV2Pos
   );
 }
 
+function PrimaryTerminalAction({ address, postId, label = "Open Terminal" }: { address: string | null | undefined; postId: string; label?: string }) {
+  if (!address) return null;
+  return (
+    <Link
+      to={`/terminal?token=${encodeURIComponent(address)}&post=${encodeURIComponent(postId)}&timeframe=1h`}
+      className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[10px] border border-lime-300/22 bg-[linear-gradient(135deg,rgba(169,255,52,0.95),rgba(18,215,170,0.92))] px-3.5 text-xs font-black text-slate-950 shadow-[0_14px_32px_-22px_rgba(169,255,52,0.9)] transition hover:brightness-105"
+    >
+      {label}
+      <ExternalLink className="h-3.5 w-3.5" />
+    </Link>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
@@ -253,11 +296,14 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SetupMetric({ label, value, emphasis = false }: { label: string; value: string; emphasis?: boolean }) {
+function SetupMetric({ label, value, emphasis = false, tone = "neutral" }: { label: string; value: string; emphasis?: boolean; tone?: "positive" | "negative" | "neutral" }) {
   return (
     <div className={cn("min-w-0 border-l border-white/8 pl-3", emphasis && "border-lime-300/28")}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/34">{label}</div>
-      <div className={cn("mt-1 truncate text-sm font-semibold", emphasis ? "text-lime-200" : "text-white/82")}>{value}</div>
+      <div className={cn(
+        "mt-1 truncate text-sm font-semibold",
+        tone === "positive" ? "text-lime-200" : tone === "negative" ? "text-rose-200" : emphasis ? "text-lime-200" : "text-white/82"
+      )}>{value}</div>
     </div>
   );
 }
@@ -298,41 +344,42 @@ function CallTokenLine({ token }: { token: Post["tokenContext"] | null | undefin
 }
 
 function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: string | number | null | undefined }) {
-  const dominantReason = (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find(Boolean) ?? "Signal momentum is being tracked.";
+  const dominantReason = (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find(Boolean) ?? post.coverage?.signal.unavailableReason ?? "Awaiting stronger market confirmation.";
+  const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount);
   const items = [
     {
       label: "Conviction",
-      value: typeof convictionLabel === "number" ? formatTradingMetric(convictionLabel, "score") : convictionLabel ?? scoreMeaning(post.signal?.aiScore) ?? "Live",
+      value: convictionMeaning(convictionLabel ?? post.signal?.aiScore, post.signal?.aiScoreCoverage ?? post.coverage?.signal),
       icon: BrainCircuit,
       tone: "text-lime-200",
     },
     {
       label: "Momentum",
-      value: momentumMeaning(post.signal?.momentumScore),
+      value: momentumMeaning(post.signal?.momentumScore, post.coverage?.signal),
       icon: TrendingUp,
       tone: "text-lime-200",
     },
     {
       label: "Smart Money",
-      value: smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount),
+      value: smartMoney,
       icon: Waves,
-      tone: post.signal?.smartMoneyScore || (post.trustedTraderCount && post.trustedTraderCount > 0) ? "text-cyan-200" : "text-white/48",
+      tone: smartMoney === "Insufficient data" ? "text-white/44" : "text-cyan-200",
     },
     {
       label: "Risk",
-      value: riskMeaning(post.signal?.riskLabel) ?? "No data",
+      value: riskState(post.signal?.riskLabel, post.signal?.riskScore),
       icon: ShieldHalf,
       tone: "text-amber-100",
     },
   ];
   return (
-    <div className="mt-3 overflow-hidden rounded-[14px] border border-lime-300/12 bg-[linear-gradient(180deg,rgba(169,255,52,0.055),rgba(255,255,255,0.025))]">
+    <div className="mt-3 overflow-hidden rounded-[14px] border border-lime-300/12 bg-[linear-gradient(180deg,rgba(169,255,52,0.06),rgba(255,255,255,0.022))]">
       <div className="grid divide-y divide-white/8 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <div key={item.label} className="flex items-center gap-2 px-3 py-2.5">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/8 bg-black/24">
+            <div key={item.label} className={cn("flex items-center gap-2 px-3 py-2.5", item.value === "Insufficient data" && "bg-white/[0.012]")}>
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/8 bg-black/28">
                 <Icon className={cn("h-4 w-4", item.tone)} />
               </span>
               <div className="min-w-0">
@@ -436,12 +483,23 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
   const market = payload.market;
   const setupMetrics = [
-    market?.entry && formatMarketValue(market.entry) ? { label: "Entry", value: formatMarketValue(market.entry)!, emphasis: true } : null,
-    market?.current && formatMarketValue(market.current) ? { label: "Current", value: formatMarketValue(market.current)!, emphasis: false } : null,
-    market?.liveMove && formatMarketValue(market.liveMove) ? { label: "Live Move", value: formatMarketValue(market.liveMove)!, emphasis: (market.liveMove.value ?? 0) > 0 } : null,
-    market?.peakMove && formatMarketValue(market.peakMove) ? { label: "Peak", value: formatMarketValue(market.peakMove)!, emphasis: (market.peakMove.value ?? 0) > 0 } : null,
-    post.timingTier ? { label: "Timeframe", value: post.timingTier, emphasis: false } : null,
-  ].filter((item): item is { label: string; value: string; emphasis: boolean } => Boolean(item));
+    market?.entry && formatMarketValue(market.entry) ? { label: "Entry", value: formatMarketValue(market.entry)!, emphasis: true, tone: "neutral" as const } : null,
+    market?.current && formatMarketValue(market.current) ? { label: "Current", value: formatMarketValue(market.current)!, emphasis: false, tone: "neutral" as const } : null,
+    market?.liveMove && formatMarketValue(market.liveMove) ? {
+      label: "Live Move",
+      value: formatMarketValue(market.liveMove)!,
+      emphasis: (market.liveMove.value ?? 0) > 0,
+      tone: (market.liveMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
+    } : null,
+    market?.peakMove && formatMarketValue(market.peakMove) ? {
+      label: "Peak",
+      value: formatMarketValue(market.peakMove)!,
+      emphasis: (market.peakMove.value ?? 0) > 0,
+      tone: (market.peakMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
+    } : null,
+    post.timingTier ? { label: "Timeframe", value: post.timingTier, emphasis: false, tone: "neutral" as const } : null,
+  ].filter((item): item is { label: string; value: string; emphasis: boolean; tone: "positive" | "negative" | "neutral" } => Boolean(item));
+  const liveMove = market?.liveMove?.valueType === "live" ? formatSignedPct(market.liveMove.value) : null;
   const staleMarketReason = market?.current?.valueType === "stale" ? market.current.fallbackReason ?? "Current market data is stale." : null;
   return (
     <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-3")}>
@@ -460,10 +518,18 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
           </div>
           <CallTokenLine token={payload.token} />
         </div>
+        <div className="flex items-center gap-2">
+          {liveMove ? (
+            <span className={cn("rounded-full border px-2.5 py-1 text-xs font-bold", liveMove.startsWith("-") ? "border-rose-300/20 bg-rose-300/10 text-rose-200" : "border-lime-300/22 bg-lime-300/10 text-lime-200")}>
+              {liveMove}
+            </span>
+          ) : null}
+          <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
+        </div>
       </div>
       <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/68">{payload.thesis}</p>
       {setupMetrics.length > 0 && liveSignal ? (
-        <div className="mt-3 grid gap-2 rounded-[14px] border border-white/8 bg-white/[0.025] px-3 py-3 sm:grid-cols-4">
+        <div className="mt-3 grid gap-2 rounded-[14px] border border-lime-300/10 bg-[linear-gradient(90deg,rgba(169,255,52,0.055),rgba(255,255,255,0.02))] px-3 py-3 sm:grid-cols-5">
           {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
         </div>
       ) : null}
@@ -479,7 +545,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       ) : null}
       {liveSignal ? <AiReadStrip post={post} convictionLabel={convictionLabel} /> : null}
       {liveSignal ? <WhyShown post={post} /> : null}
-      <EngagementFooter {...props} terminalAddress={terminalAddress} />
+      <EngagementFooter {...props} />
     </article>
   );
 }
@@ -488,13 +554,17 @@ function FeedPostChartCard(props: FeedV2PostCardProps) {
   const { post } = props;
   const payload = post.payload?.chart;
   if (!payload) return <FeedUnavailableCard {...props} reason="Chart payload is unavailable." />;
+  const terminalAddress = payload.token?.address ?? post.tokenContext?.address;
   return (
     <article className={cardClass("chart", post.coverage?.signal)}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Chart" />
-      <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200/72">
-        <LineChart className="h-3.5 w-3.5" />
-        Chart setup
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200/72">
+          <LineChart className="h-3.5 w-3.5" />
+          Chart setup
+        </div>
+        <PrimaryTerminalAction address={terminalAddress} postId={post.id} label="Analyze Token" />
       </div>
       <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">{payload.title}</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{payload.thesis}</p>

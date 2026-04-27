@@ -67,6 +67,12 @@ function requireWebhookSecret(c: Context, secret: string): boolean {
   return provided === secret;
 }
 
+function canUseWebhookTestRoute(c: Context): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  const user = c.get("user" as never) as { isAdmin?: boolean } | undefined;
+  return user?.isAdmin === true;
+}
+
 async function dynamicWhaleThreshold(tokenAddress: string, chainType: string): Promise<{
   thresholdUsd: number;
   marketCap: number | null;
@@ -346,4 +352,48 @@ webhooksRouter.post("/infura/ethereum", async (c) => {
   }
   const result = await ingestEvmWhaleEvents(body, "infura");
   return c.json({ data: result });
+});
+
+webhooksRouter.post("/test/whale", async (c) => {
+  if (!canUseWebhookTestRoute(c)) {
+    return c.json({ error: { message: "Webhook test route is unavailable.", code: "NOT_FOUND" } }, 404);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: { message: "Invalid webhook payload", code: "INVALID_JSON" } }, 400);
+  }
+
+  const payload = asRecord(body);
+  if (!payload) {
+    return c.json({ error: { message: "Expected a JSON object.", code: "INVALID_PAYLOAD" } }, 400);
+  }
+
+  const tokenAddress = safeString(payload.tokenAddress);
+  const txHash = safeString(payload.txHash) ?? `test-${Date.now()}`;
+  const valueUsd = finite(payload.valueUsd);
+  const chainType = safeString(payload.chainType) === "ethereum" ? "ethereum" : "solana";
+  if (!tokenAddress || valueUsd === null) {
+    return c.json({ error: { message: "tokenAddress and valueUsd are required.", code: "INVALID_PAYLOAD" } }, 400);
+  }
+
+  const saved = await persistWhaleEvent({
+    source: chainType === "ethereum" ? "test-ethereum" : "test-helius",
+    chainType,
+    tokenAddress,
+    tokenSymbol: safeString(payload.tokenSymbol),
+    tokenName: safeString(payload.tokenName),
+    txHash,
+    wallet: safeString(payload.wallet),
+    amount: finite(payload.amount),
+    valueUsd,
+    direction: safeString(payload.direction) ?? "transfer in",
+    eventType: safeString(payload.eventType) ?? "whale_transfer_in",
+    transactionType: safeString(payload.transactionType) ?? "test_whale_event",
+    timestamp: new Date(),
+  });
+
+  return c.json({ data: { ingested: saved ? 1 : 0, skipped: saved ? 0 : 1, txHash, source: "test" } });
 });
