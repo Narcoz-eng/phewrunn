@@ -28,6 +28,13 @@ function formatPct(value: number | null | undefined): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function convictionLabel(score: number | null): string {
+  if (score === null) return "Signal pending";
+  if (score >= 75) return "High conviction";
+  if (score >= 55) return "Bullish";
+  return "Monitoring";
+}
+
 function RailCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
@@ -230,9 +237,9 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 <TokenAvatar src={item.imageUrl} label={item.symbol || item.name || "?"} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-bold text-white">{item.symbol || item.name || "Token"}</div>
-                  <div className="text-[11px] text-white/40">{score != null && score >= 75 ? "High Conviction" : score != null && score >= 55 ? "Bullish" : "Monitoring"}</div>
+                  <div className="text-[11px] text-white/40">{convictionLabel(score)}</div>
                 </div>
-                <div className="text-sm font-bold text-lime-300">{score != null ? score.toFixed(1) : "--"}</div>
+                <ArrowUpRight className="h-4 w-4 text-lime-300/70" />
               </button>
             );
           })}

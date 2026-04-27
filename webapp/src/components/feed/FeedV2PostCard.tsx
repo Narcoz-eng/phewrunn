@@ -23,7 +23,14 @@ function formatUsd(value: number): string {
 function formatMetric(value: number, unit: "usd" | "pct" | "score"): string {
   if (unit === "usd") return formatUsd(value);
   if (unit === "pct") return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-  return `${value.toFixed(value % 1 === 0 ? 0 : 1)}/100`;
+  if (value >= 82) return "High conviction";
+  if (value >= 65) return "Strong";
+  if (value >= 45) return "Developing";
+  return "Low signal";
+}
+
+function formatTradingMetric(value: number, unit: "usd" | "pct" | "score"): string {
+  return formatMetric(value, unit);
 }
 
 function compact(value: number | null | undefined): string {
@@ -140,6 +147,23 @@ function PostContextStrip({ post }: { post: Post }) {
   );
 }
 
+function WhyShown({ post }: { post: Post }) {
+  const reasons = Array.from(new Set(post.scoreReasons ?? post.feedReasons ?? [])).filter(Boolean).slice(0, 4);
+  if (!reasons.length) return null;
+  return (
+    <div className="mt-3 rounded-[12px] border border-lime-300/12 bg-lime-300/[0.045] px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/58">Why this is shown</div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {reasons.map((reason) => (
+          <span key={reason} className="rounded-full border border-lime-300/12 bg-black/20 px-2 py-0.5 text-[11px] text-lime-50/68">
+            {reason}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EngagementFooter({ post, onLike, onRepost }: FeedV2PostCardProps) {
   const navigate = useNavigate();
   return (
@@ -173,6 +197,15 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SetupMetric({ label, value, emphasis = false }: { label: string; value: string; emphasis?: boolean }) {
+  return (
+    <div className={cn("min-w-0 border-l border-white/8 pl-3", emphasis && "border-lime-300/28")}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/34">{label}</div>
+      <div className={cn("mt-1 truncate text-sm font-semibold", emphasis ? "text-lime-200" : "text-white/82")}>{value}</div>
+    </div>
+  );
+}
+
 function CompactNotice({ title, reason }: { title: string; reason: string }) {
   return (
     <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-dashed border-white/10 bg-white/[0.025] px-3 py-2.5">
@@ -196,31 +229,60 @@ function TokenLine({ token }: { token: Post["tokenContext"] | null | undefined }
   );
 }
 
-function ChartPreviewState({ post, reason }: { post: Post; reason: string }) {
+function ChartPreviewState({ post, reason, dominant = false }: { post: Post; reason: string; dominant?: boolean }) {
   const candles = post.payload?.call?.chartPreview?.candles ?? post.payload?.chart?.chartPreview?.candles ?? null;
-  if (Array.isArray(candles) && candles.length >= 2) {
+  if (Array.isArray(candles) && candles.length >= 12) {
     const minLow = Math.min(...candles.map((candle) => candle.low));
     const maxHigh = Math.max(...candles.map((candle) => candle.high));
-    const width = 320;
-    const height = 104;
-    const points = candles.map((candle, index) => {
-      const x = candles.length <= 1 ? 0 : (index / (candles.length - 1)) * width;
-      const y = maxHigh > minLow ? height - ((candle.close - minLow) / (maxHigh - minLow)) * height : height / 2;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(" ");
+    const maxVolume = Math.max(1, ...candles.map((candle) => candle.volume));
+    const width = 520;
+    const priceHeight = dominant ? 188 : 128;
+    const volumeHeight = dominant ? 42 : 28;
+    const gap = 10;
+    const height = priceHeight + volumeHeight + gap;
+    const candleStep = width / candles.length;
+    const bodyWidth = Math.max(3, Math.min(9, candleStep * 0.58));
+    const yFor = (value: number) => maxHigh > minLow ? priceHeight - ((value - minLow) / (maxHigh - minLow)) * priceHeight : priceHeight / 2;
     const first = candles[0]?.open ?? 0;
     const last = candles[candles.length - 1]?.close ?? 0;
     const movePct = first > 0 ? ((last - first) / first) * 100 : null;
     return (
-      <div className="mt-3 overflow-hidden rounded-[14px] border border-white/8 bg-black/24 p-3">
+      <div className={cn("overflow-hidden rounded-[14px] border border-lime-300/14 bg-black/30 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]", dominant ? "mt-4" : "mt-3")}>
         <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="font-semibold text-white/62">Provider candles</span>
+          <span className="font-semibold text-white/66">Verified market candles</span>
           <span className={cn("font-semibold", (movePct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
             {movePct === null ? "live" : formatMetric(movePct, "pct")}
           </span>
         </div>
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full" role="img" aria-label="Backend chart preview">
-          <polyline fill="none" stroke="rgba(169,255,52,0.86)" strokeWidth="2" points={points} />
+        <svg viewBox={`0 0 ${width} ${height}`} className={cn("w-full", dominant ? "h-60" : "h-40")} role="img" aria-label="Backend candlestick chart preview">
+          <defs>
+            <linearGradient id={`volume-${post.id}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="rgba(169,255,52,0.52)" />
+              <stop offset="100%" stopColor="rgba(18,215,170,0.10)" />
+            </linearGradient>
+          </defs>
+          {[0.25, 0.5, 0.75].map((ratio) => (
+            <line key={ratio} x1="0" x2={width} y1={priceHeight * ratio} y2={priceHeight * ratio} stroke="rgba(255,255,255,0.055)" strokeWidth="1" />
+          ))}
+          {candles.map((candle, index) => {
+            const x = index * candleStep + candleStep / 2;
+            const bullish = candle.close >= candle.open;
+            const openY = yFor(candle.open);
+            const closeY = yFor(candle.close);
+            const highY = yFor(candle.high);
+            const lowY = yFor(candle.low);
+            const bodyY = Math.min(openY, closeY);
+            const bodyH = Math.max(2, Math.abs(closeY - openY));
+            const color = bullish ? "rgba(169,255,52,0.92)" : "rgba(255,82,82,0.88)";
+            const volumeH = Math.max(1, (candle.volume / maxVolume) * volumeHeight);
+            return (
+              <g key={`${candle.timestamp}-${index}`}>
+                <line x1={x} x2={x} y1={highY} y2={lowY} stroke={color} strokeWidth="1.2" />
+                <rect x={x - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyH} rx="1.4" fill={color} />
+                <rect x={x - bodyWidth / 2} y={priceHeight + gap + (volumeHeight - volumeH)} width={bodyWidth} height={volumeH} rx="1" fill={bullish ? `url(#volume-${post.id})` : "rgba(255,82,82,0.22)"} />
+              </g>
+            );
+          })}
         </svg>
       </div>
     );
@@ -239,8 +301,14 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   if (!payload) return <FeedUnavailableCard {...props} reason="Call payload is unavailable." />;
   const terminalAddress = payload.token?.address;
   const liveSignal = post.coverage?.signal.state === "live";
+  const chartIsLive = payload.chartPreview?.state === "live" && Array.isArray(payload.chartPreview.candles) && payload.chartPreview.candles.length >= 12;
+  const entryMetric = payload.metrics.find((metric) => /entry/i.test(metric.label));
+  const currentMetric = payload.metrics.find((metric) => /current/i.test(metric.label));
+  const moveMetric = payload.metrics.find((metric) => /move/i.test(metric.label));
+  const riskMetric = payload.metrics.find((metric) => /risk/i.test(metric.label));
+  const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
   return (
-    <article className={cardClass("call", post.coverage?.signal)}>
+    <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-3")}>
       {liveSignal ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
       <PostContextStrip post={post} />
       <PostHeader post={post} badge={payload.signalLabel ?? (post.coverage?.signal.state === "partial" ? "Partial signal" : undefined)} />
@@ -257,16 +325,34 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       </div>
       <p className="mt-2 text-sm leading-5 text-white/66">{payload.thesis}</p>
       <TokenLine token={payload.token} />
+      {chartIsLive ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}
       {payload.metrics.length > 0 && liveSignal ? (
-        <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-          {payload.metrics.map((metric) => (
-            <Metric key={metric.label} label={metric.label} value={formatMetric(metric.value, metric.unit)} />
-          ))}
+        <div className="mt-4 grid gap-3 rounded-[14px] border border-white/8 bg-white/[0.025] px-3 py-3 sm:grid-cols-4">
+          {entryMetric ? <SetupMetric label="Entry" value={formatTradingMetric(entryMetric.value, entryMetric.unit)} emphasis /> : null}
+          {currentMetric ? <SetupMetric label="Current" value={formatTradingMetric(currentMetric.value, currentMetric.unit)} /> : null}
+          {moveMetric ? <SetupMetric label={moveMetric.label} value={formatTradingMetric(moveMetric.value, moveMetric.unit)} emphasis={moveMetric.value > 0} /> : null}
+          {post.timingTier ? <SetupMetric label="Timeframe" value={post.timingTier} /> : null}
         </div>
       ) : (
         <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "Backend coverage is not strong enough to show trading metrics."} />
       )}
-      {payload.chartPreview ? <ChartPreviewState post={post} reason={payload.chartPreview.unavailableReason ?? "No valid chart preview."} /> : null}
+      {!chartIsLive && payload.chartPreview?.state === "unavailable" ? (
+        <CompactNotice title="Chart hidden" reason={payload.chartPreview.unavailableReason ?? "Validated candles are not available for this call."} />
+      ) : null}
+      {liveSignal ? (
+        <div className="mt-3 grid gap-2 rounded-[14px] border border-lime-300/12 bg-lime-300/[0.045] p-3 md:grid-cols-[180px_1fr]">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/58">AI read</div>
+            <div className="mt-1 text-sm font-semibold text-lime-100">
+              {typeof convictionLabel === "number" ? formatTradingMetric(convictionLabel, "score") : convictionLabel ?? "Signal live"}
+            </div>
+            {riskMetric ? <div className="mt-1 text-xs text-white/42">Risk: {formatTradingMetric(riskMetric.value, riskMetric.unit)}</div> : null}
+          </div>
+          <div className="text-sm leading-5 text-white/58">
+            {(post.scoreReasons ?? post.feedReasons ?? []).slice(0, 2).join(" - ") || "Backend signal coverage is live for this call."}
+          </div>
+        </div>
+      ) : null}
       {terminalAddress ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <Link
@@ -277,12 +363,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
           </Link>
         </div>
       ) : null}
-      {liveSignal && payload.signalScore !== null ? (
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          <Metric label="Signal Score" value={formatMetric(payload.signalScore, "score")} />
-          <Metric label="Coverage" value={post.coverage?.signal.source ?? "phew-signal-engine"} />
-        </div>
-      ) : null}
+      {liveSignal ? <WhyShown post={post} /> : null}
       <EngagementFooter {...props} />
     </article>
   );
