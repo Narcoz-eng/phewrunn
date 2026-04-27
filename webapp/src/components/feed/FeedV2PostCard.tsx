@@ -173,18 +173,32 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function UnavailablePanel({ title, reason }: { title: string; reason: string }) {
+function CompactNotice({ title, reason }: { title: string; reason: string }) {
   return (
-    <div className="mt-4 rounded-[16px] border border-dashed border-white/10 bg-black/20 px-4 py-4">
-      <div className="text-sm font-semibold text-white/72">{title}</div>
-      <div className="mt-1 text-sm leading-5 text-white/46">{reason}</div>
+    <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-dashed border-white/10 bg-white/[0.025] px-3 py-2.5">
+      <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white/34" />
+      <div className="min-w-0">
+        <div className="text-xs font-semibold text-white/62">{title}</div>
+        <div className="mt-0.5 text-xs leading-4 text-white/38">{reason}</div>
+      </div>
+    </div>
+  );
+}
+
+function TokenLine({ token }: { token: Post["tokenContext"] | null | undefined }) {
+  if (!token) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-white/44">
+      {token.symbol ? <span className="font-semibold text-lime-200">${token.symbol}</span> : null}
+      {token.name ? <span>{token.name}</span> : null}
+      {token.address ? <span className="rounded-full border border-white/8 bg-white/[0.03] px-2 py-0.5 font-mono text-[10px]">{token.address.slice(0, 6)}...{token.address.slice(-4)}</span> : null}
     </div>
   );
 }
 
 function ChartPreviewState({ post, reason }: { post: Post; reason: string }) {
   return (
-    <UnavailablePanel
+    <CompactNotice
       title="Chart unavailable"
       reason={post.coverage?.candles.unavailableReason || reason}
     />
@@ -214,6 +228,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
         ) : null}
       </div>
       <p className="mt-2 text-sm leading-5 text-white/66">{payload.thesis}</p>
+      <TokenLine token={payload.token} />
       {payload.metrics.length > 0 && liveSignal ? (
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           {payload.metrics.map((metric) => (
@@ -221,7 +236,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
           ))}
         </div>
       ) : (
-        <UnavailablePanel title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "Backend coverage is not strong enough to show trading metrics."} />
+        <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "Backend coverage is not strong enough to show trading metrics."} />
       )}
       {payload.chartPreview ? <ChartPreviewState post={post} reason={payload.chartPreview.unavailableReason ?? "No valid chart preview."} /> : null}
       {terminalAddress ? (
@@ -259,6 +274,12 @@ function FeedPostChartCard(props: FeedV2PostCardProps) {
       </div>
       <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">{payload.title}</h2>
       <p className="mt-2 text-sm leading-6 text-white/64">{payload.thesis}</p>
+      <TokenLine token={payload.token} />
+      {payload.timeframe ? (
+        <div className="mt-3 inline-flex rounded-full border border-cyan-300/14 bg-cyan-300/[0.08] px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+          {payload.timeframe}
+        </div>
+      ) : null}
       {payload.chartPreview ? <ChartPreviewState post={post} reason={payload.chartPreview.unavailableReason ?? "No valid chart preview."} /> : null}
       <EngagementFooter {...props} />
     </article>
@@ -311,7 +332,7 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
           </div>
         </div>
       ) : (
-        <UnavailablePanel title="Poll unavailable" reason="This post does not include structured poll options." />
+        <CompactNotice title="Poll unavailable" reason="This post does not include structured poll options." />
       )}
       <EngagementFooter {...props} />
     </article>
@@ -330,7 +351,7 @@ function FeedPostRaidCard(props: FeedV2PostCardProps) {
         Raid update
       </div>
       <h2 className="mt-1 text-xl font-semibold text-white">{post.content}</h2>
-      <UnavailablePanel title="Raid metrics unavailable" reason={reason} />
+      <CompactNotice title="Raid compressed" reason={reason} />
       <EngagementFooter {...props} />
     </article>
   );
@@ -383,7 +404,7 @@ function FeedPostWhaleCard(props: FeedV2PostCardProps) {
         <Waves className="h-4 w-4" />
         On-chain flow
       </div>
-      <UnavailablePanel title="Whale payload unavailable" reason={post.payload?.whale?.unavailableReason ?? "No verified whale transaction payload is attached."} />
+      <CompactNotice title="Whale flow unavailable" reason={post.payload?.whale?.unavailableReason ?? "No verified whale transaction payload is attached."} />
       <EngagementFooter {...props} />
     </article>
   );
@@ -400,7 +421,7 @@ function FeedUnavailableCard(props: FeedV2PostCardProps & { reason: string }) {
         Feed item unavailable
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{post.content}</p>
-      <UnavailablePanel title="Payload missing" reason={reason} />
+      <CompactNotice title="Payload missing" reason={reason} />
       <EngagementFooter {...props} />
     </article>
   );

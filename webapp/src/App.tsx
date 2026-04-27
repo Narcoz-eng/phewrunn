@@ -52,6 +52,9 @@ const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
 const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
 const AccessCodeEntry = lazyPage(() => import("./pages/AccessCodeEntry"), "route:access-code");
+const FeedCardLab = import.meta.env.DEV
+  ? lazyPage(() => import("./pages/dev/FeedCardLab"), "route:dev-feed-card-lab")
+  : null;
 
 // Loading fallback component
 function PageSkeleton() {
@@ -411,6 +414,16 @@ function AnimatedRoutes() {
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="/access-code" element={<AccessCodeEntry />} />
+          {FeedCardLab ? (
+            <Route
+              path="/dev/feed-cards"
+              element={
+                <WithProductShell>
+                  <FeedCardLab />
+                </WithProductShell>
+              }
+            />
+          ) : null}
           <Route
             path="/:userId"
             element={

@@ -209,7 +209,7 @@ export function CreatePost({ user, onSubmit, isSubmitting, isAuthPending = false
 
             <div className="flex items-center justify-between gap-3">
               <span className={cn("text-xs", charCount > MAX_CHARS ? "text-rose-300" : charCount >= MIN_CHARS ? "text-white/54" : "text-white/34")}>
-                {charCount}/{MAX_CHARS} · {selected.label}
+                {charCount}/{MAX_CHARS} - {selected.label}
               </span>
               <Button
                 type="button"

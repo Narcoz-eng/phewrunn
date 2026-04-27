@@ -57,7 +57,7 @@ const FEED_TAB_ITEMS: Array<{
 
 function normalizeFeedResponse(data: FeedApiPayload): FeedPage {
   if (!data || !Array.isArray(data.items)) {
-    throw new ApiError("Feed payload was invalid. Please retry.", 500, response);
+    throw new ApiError("Feed payload was invalid. Please retry.", 500, data);
   }
   return {
     items: data.items,
@@ -440,14 +440,14 @@ export default function Feed() {
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
 
   return (
-    <div className="space-y-4">
-      <main className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_344px]">
-        <div className="space-y-4">
+    <div className="space-y-3">
+      <main className="grid gap-3 xl:grid-cols-[minmax(720px,1fr)_344px]">
+        <div className="space-y-3">
           <section className="relative overflow-hidden px-1 py-1">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h1 className="text-[24px] font-semibold tracking-tight text-white">FEED</h1>
-                <p className="mt-1 text-[13px] leading-5 text-white/54">
+                <h1 className="text-[22px] font-semibold tracking-tight text-white">FEED</h1>
+                <p className="mt-0.5 text-[12px] leading-5 text-white/50">
                   Real-time alpha from the smartest traders on the internet.
                 </p>
               </div>
@@ -455,7 +455,7 @@ export default function Feed() {
                 value={searchQuery}
                 onChange={handleSearchChange}
                 placeholder="Search token, user, or wallet..."
-                className="lg:min-w-[430px]"
+                className="lg:min-w-[400px]"
               />
             </div>
           </section>
@@ -468,7 +468,7 @@ export default function Feed() {
             initialMode={requestedComposerMode}
           />
 
-          <section className="rounded-[14px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <section className="rounded-[13px] border border-white/8 bg-[linear-gradient(180deg,rgba(8,12,18,0.92),rgba(6,10,15,0.96))] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
             <div className="flex flex-wrap items-center gap-2">
               {FEED_TAB_ITEMS.map((tab) => {
                 const Icon = tab.icon;
@@ -479,7 +479,7 @@ export default function Feed() {
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
                     className={cn(
-                      "relative inline-flex h-9 items-center gap-2 rounded-[10px] px-3 text-sm font-semibold transition-all",
+                      "relative inline-flex h-8 items-center gap-1.5 rounded-[9px] px-3 text-[13px] font-semibold transition-all",
                       active
                         ? "bg-lime-300/[0.08] text-lime-200 after:absolute after:inset-x-2 after:-bottom-2 after:h-0.5 after:rounded-full after:bg-lime-300"
                         : "text-white/54 hover:bg-white/[0.045] hover:text-white/84"
@@ -493,7 +493,7 @@ export default function Feed() {
               <button
                 type="button"
                 onClick={() => void handleRefresh()}
-                className="ml-auto inline-flex h-9 items-center rounded-[10px] border border-white/8 bg-white/[0.025] px-3 text-xs font-semibold text-white/46 hover:bg-white/[0.055] hover:text-white/78"
+                className="ml-auto inline-flex h-8 items-center rounded-[9px] border border-white/8 bg-white/[0.025] px-3 text-xs font-semibold text-white/46 hover:bg-white/[0.055] hover:text-white/78"
               >
                 {isRefreshing ? "Refreshing" : "Refresh"}
               </button>

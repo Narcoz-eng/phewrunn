@@ -259,7 +259,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               <Waves className="h-4 w-4 text-cyan-300" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-bold text-white">{item.tokenSymbol ? `$${item.tokenSymbol}` : "Tracked token"}</div>
-                <div className="truncate text-[11px] text-white/40">{item.action}{item.amount ? ` · ${item.amount}` : ""}</div>
+                <div className="truncate text-[11px] text-white/40">{item.action}{item.amount ? ` - ${item.amount}` : ""}</div>
               </div>
               <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
             </button>
