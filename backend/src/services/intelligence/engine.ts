@@ -1737,7 +1737,7 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
 
   const chartCandidates = items
     .filter((item) => (item.payload.call || item.payload.chart) && item.token?.address)
-    .slice(0, 4);
+    .slice(0, 8);
   const raidTokenIds = Array.from(new Set(items
     .filter((item) => item.postType === "raid" && item.tokenId)
     .map((item) => item.tokenId!)
@@ -3820,7 +3820,7 @@ async function resolveFeedCursorBoundary(
   cursor: string | null | undefined
 ): Promise<FeedCursorBoundary | null> {
   const normalizedCursor = cursor?.trim();
-  if (!normalizedCursor || (kind !== "latest" && kind !== "following")) {
+  if (!normalizedCursor || kind !== "following") {
     return null;
   }
 
@@ -3858,7 +3858,7 @@ function buildFeedCursorWhere(cursorBoundary: FeedCursorBoundary | null): Prisma
 }
 
 function buildFeedOrderBy(kind: FeedKind): Prisma.PostOrderByWithRelationInput[] {
-  if (kind === "latest" || kind === "following") {
+  if (kind === "following") {
     return [{ createdAt: "desc" }, { id: "desc" }];
   }
 
@@ -3936,7 +3936,7 @@ function sortCalls(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
       return createdDelta !== 0 ? createdDelta : right.id.localeCompare(left.id);
     });
   }
-  if (kind === "latest" || kind === "following") {
+  if (kind === "following") {
     return sorted.sort((left, right) => {
       const delta = right.createdAt.getTime() - left.createdAt.getTime();
       return delta !== 0 ? delta : right.id.localeCompare(left.id);
@@ -4601,7 +4601,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           : whereClauses.length === 1
             ? whereClauses[0]
             : { AND: whereClauses };
-      const isDirectChronologicalFeed = args.kind === "latest" || args.kind === "following";
+      const isDirectChronologicalFeed = args.kind === "following";
       const preferStoredFeedIntelligence = isDirectChronologicalFeed;
       const candidateLimit = isDirectChronologicalFeed
         ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)

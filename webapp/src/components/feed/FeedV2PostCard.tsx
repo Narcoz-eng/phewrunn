@@ -1,6 +1,7 @@
 import { BarChart3, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, Vote, Waves, Zap } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { isValidCandleSeries } from "@/lib/data-validators";
 import { cn } from "@/lib/utils";
 import { getAvatarUrl, type FeedCoverage, type Post } from "@/types";
 
@@ -31,6 +32,12 @@ function formatMetric(value: number, unit: "usd" | "pct" | "score"): string {
 
 function formatTradingMetric(value: number, unit: "usd" | "pct" | "score"): string {
   return formatMetric(value, unit);
+}
+
+function riskMeaning(label: string | null | undefined): string | null {
+  const normalized = label?.trim();
+  if (!normalized || /unknown|neutral|clean|unavailable|pending/i.test(normalized)) return null;
+  return normalized;
 }
 
 function compact(value: number | null | undefined): string {
@@ -231,7 +238,7 @@ function TokenLine({ token }: { token: Post["tokenContext"] | null | undefined }
 
 function ChartPreviewState({ post, reason, dominant = false }: { post: Post; reason: string; dominant?: boolean }) {
   const candles = post.payload?.call?.chartPreview?.candles ?? post.payload?.chart?.chartPreview?.candles ?? null;
-  if (Array.isArray(candles) && candles.length >= 12) {
+  if (isValidCandleSeries(candles) && candles.length >= 12) {
     const minLow = Math.min(...candles.map((candle) => candle.low));
     const maxHigh = Math.max(...candles.map((candle) => candle.high));
     const maxVolume = Math.max(1, ...candles.map((candle) => candle.volume));
@@ -305,7 +312,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const entryMetric = payload.metrics.find((metric) => /entry/i.test(metric.label));
   const currentMetric = payload.metrics.find((metric) => /current/i.test(metric.label));
   const moveMetric = payload.metrics.find((metric) => /move/i.test(metric.label));
-  const riskMetric = payload.metrics.find((metric) => /risk/i.test(metric.label));
+  const riskLabel = riskMeaning(post.signal?.riskLabel);
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
   return (
     <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-3")}>
@@ -346,7 +353,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
             <div className="mt-1 text-sm font-semibold text-lime-100">
               {typeof convictionLabel === "number" ? formatTradingMetric(convictionLabel, "score") : convictionLabel ?? "Signal live"}
             </div>
-            {riskMetric ? <div className="mt-1 text-xs text-white/42">Risk: {formatTradingMetric(riskMetric.value, riskMetric.unit)}</div> : null}
+            {riskLabel ? <div className="mt-1 text-xs text-white/42">Risk: {riskLabel}</div> : null}
           </div>
           <div className="text-sm leading-5 text-white/58">
             {(post.scoreReasons ?? post.feedReasons ?? []).slice(0, 2).join(" - ") || "Backend signal coverage is live for this call."}
@@ -389,7 +396,7 @@ function FeedPostChartCard(props: FeedV2PostCardProps) {
           {payload.timeframe}
         </div>
       ) : null}
-      {payload.chartPreview ? <ChartPreviewState post={post} reason={payload.chartPreview.unavailableReason ?? "No valid chart preview."} /> : null}
+      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} />
       <EngagementFooter {...props} />
     </article>
   );

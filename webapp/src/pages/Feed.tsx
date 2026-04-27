@@ -8,7 +8,7 @@ import { useAuth, useSession } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { applyPostPollVote } from "@/lib/post-poll";
 import { cn } from "@/lib/utils";
-import type { DiscoveryFeedSidebarResponse, Post, User } from "@/types";
+import type { DiscoveryFeedSidebarResponse, FeedTab, Post, User } from "@/types";
 import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { FeedV2RightRail } from "@/components/feed/FeedV2RightRail";
 import { CreatePost } from "@/components/feed/CreatePost";
@@ -18,7 +18,6 @@ import { WindowVirtualList } from "@/components/virtual/WindowVirtualList";
 import { Button } from "@/components/ui/button";
 import { QueryErrorBoundary } from "@/components/QueryErrorBoundary";
 import { V2PageTopbar } from "@/components/layout/V2PageTopbar";
-import type { FeedTab } from "@/components/feed/FeedHeader";
 
 type FeedPage = {
   items: Post[];
@@ -209,7 +208,6 @@ export default function Feed() {
       if (effectiveSearchQuery) params.set("search", effectiveSearchQuery);
       if (pageParam) params.set("cursor", pageParam);
       if (activeTab === "early-runners") params.set("postType", "raid");
-      if (activeTab === "hot-alpha" || activeTab === "high-conviction") params.set("postType", "alpha");
       endpoint += `?${params.toString()}`;
       return normalizeFeedResponse(await api.get<FeedApiPayload>(endpoint, { cache: "no-store" }));
     },

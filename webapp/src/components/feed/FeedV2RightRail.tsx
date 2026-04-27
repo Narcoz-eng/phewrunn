@@ -5,8 +5,7 @@ import { Button } from "@/components/ui/button";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { cn } from "@/lib/utils";
 import { isValidGainer, isValidMarketStats, isValidSignalScore, isValidTrendingCall } from "@/lib/data-validators";
-import type { DiscoveryFeedSidebarResponse } from "@/types";
-import type { FeedTab } from "./FeedHeader";
+import type { DiscoveryFeedSidebarResponse, FeedTab } from "@/types";
 
 type FeedV2RightRailProps = {
   discovery: DiscoveryFeedSidebarResponse | undefined;
@@ -44,6 +43,14 @@ function RailCard({ title, children, action }: { title: string; children: ReactN
       </div>
       {children}
     </section>
+  );
+}
+
+function RailUnavailable({ message }: { message: string }) {
+  return (
+    <div className="rounded-[12px] border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-5 text-white/46">
+      {message}
+    </div>
   );
 }
 
@@ -108,13 +115,13 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
         ) : null}
       </section>
 
-      {topGainers.length ? (
       <RailCard
         title="Top Gainers"
         action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}
       >
-        <div className="space-y-2">
-          {topGainers.slice(0, 5).map((item, index) => (
+        {topGainers.length ? (
+          <div className="space-y-2">
+            {topGainers.slice(0, 5).map((item, index) => (
             <button
               key={item.id}
               type="button"
@@ -133,15 +140,17 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 {formatPct(item.change24hPct)}
               </div>
             </button>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <RailUnavailable message="No gainers with verified non-zero 24h move are available." />
+        )}
       </RailCard>
-      ) : null}
 
-      {liveRaids.length ? (
       <RailCard title="Active X Raids" action={<V2StatusPill tone="live">Live</V2StatusPill>}>
-        <div className="space-y-3">
-          {liveRaids.slice(0, 2).map((raid) => {
+        {liveRaids.length ? (
+          <div className="space-y-3">
+            {liveRaids.slice(0, 2).map((raid) => {
             const progress = Math.max(8, Math.min(100, (raid.postedCount / Math.max(raid.participantCount, 1)) * 100));
             return (
               <div key={raid.id} className="rounded-[14px] border border-white/8 bg-white/[0.025] p-3">
@@ -189,15 +198,17 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 </button>
               </div>
             );
-          })}
-        </div>
+            })}
+          </div>
+        ) : (
+          <RailUnavailable message="No active raid rooms have verified participant or post activity." />
+        )}
       </RailCard>
-      ) : null}
 
-      {trendingCalls.length ? (
       <RailCard title="Trending Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Hot</span>}>
-        <div className="space-y-2">
-          {trendingCalls.slice(0, 5).map((item) => (
+        {trendingCalls.length ? (
+          <div className="space-y-2">
+            {trendingCalls.slice(0, 5).map((item) => (
             <button
               key={item.id}
               type="button"
@@ -215,15 +226,17 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 {formatPct(item.roiCurrentPct)}
               </div>
             </button>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <RailUnavailable message="No ranked calls have enough conviction, velocity, or ROI signal yet." />
+        )}
       </RailCard>
-      ) : null}
 
-      {aiWatchlist.length ? (
       <RailCard title="AI Watchlist">
-        <div className="space-y-2">
-          {aiWatchlist.map((item) => {
+        {aiWatchlist.length ? (
+          <div className="space-y-2">
+            {aiWatchlist.map((item) => {
             const score = item.highConvictionScore ?? item.confidenceScore ?? item.hotAlphaScore ?? null;
             return (
               <button
@@ -242,15 +255,17 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 <ArrowUpRight className="h-4 w-4 text-lime-300/70" />
               </button>
             );
-          })}
-        </div>
+            })}
+          </div>
+        ) : (
+          <RailUnavailable message="Watchlist needs live token intelligence coverage before showing candidates." />
+        )}
       </RailCard>
-      ) : null}
 
-      {whaleRows.length ? (
       <RailCard title="Whale Activity" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
-        <div className="space-y-2">
-          {whaleRows.slice(0, 4).map((item) => (
+        {whaleRows.length ? (
+          <div className="space-y-2">
+            {whaleRows.slice(0, 4).map((item) => (
             <button
               key={`whale-${item.id}`}
               type="button"
@@ -270,10 +285,12 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               </div>
               <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
             </button>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <RailUnavailable message="No verified on-chain whale rows are available for the selected feed." />
+        )}
       </RailCard>
-      ) : null}
 
       {discovery?.aiSpotlight &&
       (isValidSignalScore(discovery.aiSpotlight.confidenceScore) || isValidSignalScore(discovery.aiSpotlight.highConvictionScore)) ? (

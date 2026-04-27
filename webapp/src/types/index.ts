@@ -117,6 +117,8 @@ export interface FeedChartPreview {
   }> | null;
 }
 
+export type FeedTab = "latest" | "hot-alpha" | "early-runners" | "high-conviction" | "following";
+
 export interface FeedItemPayload {
   call: {
     title: string;
