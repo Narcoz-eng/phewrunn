@@ -79,6 +79,16 @@ const envSchema = z.object({
       normalizeOptionalStringEnv,
       z.string().regex(/^\d+(\.\d+)?$/, "HELIUS_WHALE_THRESHOLD_USD must be numeric").optional()
     ),
+  ALCHEMY_WEBHOOK_SECRET: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(8, "ALCHEMY_WEBHOOK_SECRET must be at least 8 characters").optional()),
+  INFURA_WEBHOOK_SECRET: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(8, "INFURA_WEBHOOK_SECRET must be at least 8 characters").optional()),
+  WHALE_THRESHOLD_USD_MIN: z
+    .preprocess(normalizeOptionalStringEnv, z.string().regex(/^\d+(\.\d+)?$/, "WHALE_THRESHOLD_USD_MIN must be numeric").optional()),
+  WHALE_LIQUIDITY_BPS: z
+    .preprocess(normalizeOptionalStringEnv, z.string().regex(/^\d+(\.\d+)?$/, "WHALE_LIQUIDITY_BPS must be numeric").optional()),
+  WHALE_MARKET_CAP_BPS: z
+    .preprocess(normalizeOptionalStringEnv, z.string().regex(/^\d+(\.\d+)?$/, "WHALE_MARKET_CAP_BPS must be numeric").optional()),
 
   // Optional: Solscan Pro API key (holder intelligence / dev wallet enrichment)
   SOLSCAN_API_KEY: z

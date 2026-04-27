@@ -444,8 +444,18 @@ type FeedItemPayload = {
     relatedToken: FeedTokenContext | null;
   } | null;
   whale: {
-    status: "unavailable";
-    unavailableReason: string;
+    status: "live" | "unavailable";
+    unavailableReason: string | null;
+    eventId?: string | null;
+    wallet?: string | null;
+    token?: FeedTokenContext | null;
+    action?: string | null;
+    amount?: number | null;
+    valueUsd?: number | null;
+    txHash?: string | null;
+    explorerUrl?: string | null;
+    timestamp?: string | null;
+    source?: string | null;
   } | null;
   discussion: {
     body: string;
@@ -4216,6 +4226,10 @@ function isEligibleForRankedFeed(
     return true;
   }
 
+  if ((kind === "hot-alpha" || kind === "high-conviction") && call.postType !== "alpha" && call.postType !== "chart") {
+    return false;
+  }
+
   const ageHours = Math.max(0, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
   const hasFreshMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
   const hasLiveSignal = call.coverage?.signal?.state === "live";
@@ -4258,32 +4272,36 @@ function isEligibleForRankedFeed(
 }
 
 function isEligibleForForYou(call: EnrichedCall): boolean {
-  if (call.postType !== "alpha" && call.postType !== "chart") {
-    return true;
-  }
-
   const ageHours = Math.max(0, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
   const engagement =
     (call._count.likes ?? 0) +
     (call._count.comments ?? call.threadCount ?? 0) * 2 +
     (call._count.reposts ?? 0) * 3 +
     (call._count.reactions ?? 0);
+
+  if (call.postType !== "alpha" && call.postType !== "chart") {
+    if (call.postType === "raid") return ageHours <= 72 || engagement >= 4;
+    if (call.postType === "news") return ageHours <= 36 || engagement >= 6;
+    return ageHours <= 12 || engagement >= 10;
+  }
+
   const hasFreshMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
   const hasLiveSignal = call.coverage?.signal?.state === "live";
   const currentPerformance = finite(call.roiCurrentPct);
   const peakPerformance = finite(call.roiPeakPct);
   const stillPerforming = hasFreshMarket && Math.max(currentPerformance, peakPerformance) >= 12;
   const hasRecentEngagement = ageHours <= 24 && engagement >= 2;
+  const hasTokenContext = Boolean(call.contractAddress || call.tokenId || call.tokenSymbol || call.token?.address);
 
   if (ageHours <= 12) {
-    return hasLiveSignal || hasFreshMarket || hasRecentEngagement;
+    return hasTokenContext;
   }
 
   if (ageHours <= 72) {
-    return hasFreshMarket && hasLiveSignal && (hasRecentEngagement || stillPerforming);
+    return hasTokenContext && (hasFreshMarket || hasLiveSignal || hasRecentEngagement || stillPerforming);
   }
 
-  return stillPerforming && hasLiveSignal;
+  return hasTokenContext && (stillPerforming || (hasLiveSignal && hasRecentEngagement));
 }
 
 function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
@@ -4301,19 +4319,21 @@ function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): Enriched
 function postTypeWeight(postType: unknown): number {
   switch (postType) {
     case "alpha":
-      return 10;
+      return 34;
     case "chart":
-      return 8;
+      return 30;
+    case "whale":
+      return 28;
     case "raid":
-      return 9;
+      return 18;
     case "poll":
-      return 5;
+      return -10;
     case "news":
-      return 6;
-    case "discussion":
       return 4;
+    case "discussion":
+      return -14;
     default:
-      return 3;
+      return -8;
   }
 }
 
@@ -4329,6 +4349,10 @@ function computeFeedScoreForCall(
   const freshnessWeight = recentDecay * longTailDecay * 34;
   const staleCallPenalty =
     ageHours > 48 && (call.postType === "alpha" || call.postType === "chart") ? Math.min(26, (ageHours - 48) / 6) : 0;
+  const nonAlphaPenalty =
+    kind === "latest" && call.postType !== "alpha" && call.postType !== "chart" && call.postType !== "raid"
+      ? Math.min(30, 12 + ageHours * 0.45)
+      : 0;
   const hasFreshStoredMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
   const marketFreshnessPenalty =
     call.postType === "alpha" || call.postType === "chart"
@@ -4404,6 +4428,7 @@ function computeFeedScoreForCall(
       kindBoost -
       riskPenalty -
       spamPenalty -
+      nonAlphaPenalty -
       staleCallPenalty -
       marketFreshnessPenalty -
       signalCoveragePenalty
@@ -4418,6 +4443,7 @@ function computeFeedScoreForCall(
   if (callPerformanceWeight >= 8) reasons.push("Call performing");
   if (finite(call.trustedTraderCount) > 0) reasons.push("Smart money detected");
   if (call.repostContext && repostBoost >= 2) reasons.push("Repost momentum");
+  if (kind === "latest" && (call.postType === "alpha" || call.postType === "chart")) reasons.push("Alpha priority");
   if (marketFreshnessPenalty > 0) reasons.push("Market freshness limited");
   if (staleCallPenalty > 0) reasons.push("Age-decayed");
   if (riskPenalty > 0) reasons.push("Risk adjusted");
