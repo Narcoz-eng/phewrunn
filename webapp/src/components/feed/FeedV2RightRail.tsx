@@ -27,8 +27,21 @@ function formatPct(value: number | null | undefined): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function timeAgo(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${Math.max(1, seconds)}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function convictionLabel(score: number | null): string {
-  if (score === null) return "Insufficient data";
+  if (score === null) return "Awaiting signal";
   if (score >= 75) return "Strong conviction";
   if (score >= 55) return "Medium conviction";
   return "Weak conviction";
@@ -221,7 +234,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 <div className="truncate text-sm font-bold text-white">
                   {item.tokenSymbol ? `$${item.tokenSymbol}` : item.title || "Call"} <span className="text-lime-300">{item.direction ?? ""}</span>
                 </div>
-                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}</div>
+                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : ""}</div>
               </div>
               <div className={cn("text-sm font-bold", (item.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
                 {formatPct(item.roiCurrentPct)}
@@ -282,7 +295,9 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               <Waves className="h-4 w-4 text-cyan-300" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-bold text-white">{item.tokenSymbol ? `$${item.tokenSymbol}` : "Tracked token"}</div>
-                <div className="truncate text-[11px] text-white/40">{item.action}{item.amount ? ` - ${item.amount}` : ""}</div>
+                <div className="truncate text-[11px] text-white/40">
+                  {item.action}{item.amount ? ` - ${item.amount}` : ""}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : ""}
+                </div>
               </div>
               <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
             </button>

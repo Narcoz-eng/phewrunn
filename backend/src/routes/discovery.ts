@@ -9,6 +9,7 @@ const DISCOVERY_SNAPSHOT_MAX_AGE_MS = 15 * 60_000;
 const DISCOVERY_CALL_MAX_AGE_MS = 48 * 60 * 60_000;
 const DISCOVERY_TRENDING_CALL_MARKET_MAX_AGE_MS = 5 * 60_000;
 const DISCOVERY_WHALE_MAX_AGE_MS = 24 * 60 * 60_000;
+const DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
 function toNumber(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -452,7 +453,35 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         (toNumber(a.highConvictionScore) + toNumber(a.confidenceScore)),
     )[0];
 
-  const whaleActivity = whaleEvents
+  let effectiveWhaleEvents = whaleEvents;
+  let whaleCoverage: "live" | "recent" = "live";
+  if (effectiveWhaleEvents.length === 0) {
+    effectiveWhaleEvents = await prisma.tokenEvent.findMany({
+      where: {
+        eventType: { in: ["whale_buy", "whale_sell", "whale_transfer_in", "whale_transfer_out", "whale_accumulation", "whale_distribution"] },
+        timestamp: { gte: new Date(Date.now() - DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS) },
+      },
+      select: {
+        id: true,
+        eventType: true,
+        timestamp: true,
+        metadata: true,
+        token: {
+          select: {
+            address: true,
+            symbol: true,
+            name: true,
+            imageUrl: true,
+          },
+        },
+      },
+      orderBy: { timestamp: "desc" },
+      take: 8,
+    });
+    whaleCoverage = "recent";
+  }
+
+  const whaleActivity = effectiveWhaleEvents
     .map((event) => {
       const metadata = event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
         ? event.metadata as Record<string, unknown>
@@ -466,12 +495,12 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         valueUsd: nullableNumber(metadata.valueUsd as number | null | undefined),
         explorerUrl: typeof metadata.explorerUrl === "string" ? metadata.explorerUrl : null,
         createdAt: event.timestamp.toISOString(),
-        source: typeof metadata.source === "string" ? metadata.source : "token-event",
+        source: typeof metadata.source === "string" ? metadata.source : whaleCoverage === "live" ? "token-event" : "token-event-archive",
         asOf: event.timestamp.toISOString(),
-        coverage: "live",
+        coverage: whaleCoverage,
       };
     })
-    .filter((event) => isFreshDate(event.asOf, DISCOVERY_WHALE_MAX_AGE_MS));
+    .filter((event) => isFreshDate(event.asOf, whaleCoverage === "live" ? DISCOVERY_WHALE_MAX_AGE_MS : DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS));
 
   return c.json({
     data: {
@@ -507,7 +536,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
                 ? "High Conviction"
                 : toNumber(aiSpotlightSource.confidenceScore) >= 65
                   ? "Active"
-                  : "Monitoring",
+                  : "Building",
             summary: `${normalizeTokenLabel(aiSpotlightSource)} is leading live conviction, confidence, and momentum signals right now.`,
           }
         : null,

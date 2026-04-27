@@ -147,6 +147,11 @@ export interface FeedItemPayload {
       liveMove: FeedMarketValue | null;
       peakMove: FeedMarketValue | null;
     };
+    targets?: FeedMarketValue[];
+    stopLoss?: FeedMarketValue | null;
+    confidence?: number | null;
+    needsChart?: boolean;
+    hasChartPreview?: boolean;
     signalScore: number | null;
     signalLabel: string | null;
     chartPreview: FeedChartPreview | null;
@@ -156,6 +161,8 @@ export interface FeedItemPayload {
     thesis: string;
     token: Post["tokenContext"] | null;
     timeframe: string | null;
+    needsChart?: boolean;
+    hasChartPreview?: boolean;
     chartPreview: FeedChartPreview | null;
   } | null;
   poll: Post["poll"] | null;
@@ -307,6 +314,7 @@ export interface Post {
     logo: string | null;
     chain: string | null;
     dexscreenerUrl: string | null;
+    pairAddress?: string | null;
   } | null;
   engagement?: {
     likes: number;
@@ -714,7 +722,7 @@ export interface DiscoveryFeedSidebarResponse {
     createdAt: string;
     source?: string | null;
     asOf?: string | null;
-    coverage?: string | null;
+    coverage?: "live" | "recent" | string | null;
   }>;
 }
 

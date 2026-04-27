@@ -1,10 +1,12 @@
+import { useEffect, useRef, useState } from "react";
 import { BarChart3, BrainCircuit, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, ShieldHalf, TrendingUp, Vote, Waves, Zap } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isValidCandleSeries } from "@/lib/data-validators";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 import { getAvatarUrl, type FeedCoverage, type Post } from "@/types";
-import type { FeedMarketValue } from "@/types";
+import type { FeedChartPreview, FeedMarketValue } from "@/types";
 
 type FeedV2PostCardProps = {
   post: Post;
@@ -14,6 +16,31 @@ type FeedV2PostCardProps = {
   onComment?: (postId: string, content: string) => Promise<void> | void;
   onPollVote?: (postId: string, optionId: string) => Promise<void> | void;
 };
+
+const feedChartPreviewCache = new Map<string, { value: FeedChartPreview; expiresAt: number }>();
+
+function feedChartCacheKey(token: Post["tokenContext"] | null | undefined, timeframe = "1h"): string | null {
+  if (!token?.address) return null;
+  return `${token.chain ?? "any"}:${token.address.toLowerCase()}:${timeframe}`;
+}
+
+function getCachedFeedChart(key: string | null): FeedChartPreview | null {
+  if (!key) return null;
+  const cached = feedChartPreviewCache.get(key);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    if (cached) feedChartPreviewCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function setCachedFeedChart(key: string | null, value: FeedChartPreview): void {
+  if (!key) return;
+  const existing = getCachedFeedChart(key);
+  if (existing?.state === "live" && value.state !== "live") return;
+  const ttl = value.state === "live" ? value.maxAgeMs ?? 60_000 : 8_000;
+  feedChartPreviewCache.set(key, { value, expiresAt: Date.now() + ttl });
+}
 
 function formatUsd(value: number): string {
   if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
@@ -27,7 +54,7 @@ function formatMetric(value: number, unit: "usd" | "pct" | "score"): string {
   if (unit === "pct") return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
   if (value >= 82) return "High conviction";
   if (value >= 65) return "Strong";
-  if (value >= 45) return "Developing";
+  if (value >= 45) return "Medium";
   return "Low signal";
 }
 
@@ -95,6 +122,34 @@ function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount:
   if (value >= 45) return "Inactive";
   if (value > 0) return "Inactive";
   return "Insufficient data";
+}
+
+function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: string }>, fallbackReason: string): string {
+  const conviction = items.find((item) => item.label === "Conviction")?.value;
+  const momentum = items.find((item) => item.label === "Momentum")?.value;
+  const smartMoney = items.find((item) => item.label === "Smart Money")?.value;
+  const risk = items.find((item) => item.label === "Risk")?.value;
+  const token = post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "This setup";
+
+  if (smartMoney === "Accumulating" && (momentum === "Accelerating" || momentum === "Building")) {
+    return `${token} has wallet accumulation aligning with ${momentum.toLowerCase()} market momentum.`;
+  }
+  if (conviction === "Strong" && risk === "Low") {
+    return `${token} is ranking as a cleaner high-conviction setup with controlled risk.`;
+  }
+  if (momentum === "Reversing") {
+    return `${token} momentum is weakening; confirmation should matter more than the headline call.`;
+  }
+  if (smartMoney === "Distributing") {
+    return `${token} shows distribution risk, so entries need tighter confirmation.`;
+  }
+  if (conviction === "Medium" && momentum === "Building") {
+    return `${token} is developing, with momentum improving but not yet a full-strength signal.`;
+  }
+  if (items.every((item) => item.value === "Insufficient data" || item.value === "Unknown")) {
+    return "Intelligence coverage is still too thin to expand this signal.";
+  }
+  return fallbackReason;
 }
 
 function riskState(label: string | null | undefined, riskScore: number | null | undefined): string {
@@ -380,8 +435,13 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
       tone: "text-amber-100",
     },
   ];
+  const primaryInsight = aiPrimaryInsight(post, items, dominantReason);
   return (
     <div className="mt-3 overflow-hidden rounded-[14px] border border-lime-300/12 bg-[linear-gradient(180deg,rgba(169,255,52,0.06),rgba(255,255,255,0.022))]">
+      <div className="border-b border-white/8 px-3 py-2.5">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/58">AI read</div>
+        <div className="mt-1 text-sm font-semibold leading-5 text-white/78">{primaryInsight}</div>
+      </div>
       <div className="grid divide-y divide-white/8 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
         {items.map((item) => {
           const Icon = item.icon;
@@ -398,13 +458,63 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
           );
         })}
       </div>
-      <div className="border-t border-white/8 px-3 py-2 text-xs leading-5 text-white/58">{dominantReason}</div>
+      {dominantReason !== primaryInsight ? <div className="border-t border-white/8 px-3 py-2 text-xs leading-5 text-white/50">{dominantReason}</div> : null}
     </div>
   );
 }
 
 function ChartPreviewState({ post, reason, dominant = false }: { post: Post; reason: string; dominant?: boolean }) {
-  const candles = post.payload?.call?.chartPreview?.candles ?? post.payload?.chart?.chartPreview?.candles ?? null;
+  const payloadPreview = post.payload?.call?.chartPreview ?? post.payload?.chart?.chartPreview ?? null;
+  const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
+  const timeframe = post.payload?.chart?.timeframe ?? "1h";
+  const cacheKey = feedChartCacheKey(token, timeframe);
+  const [preview, setPreview] = useState<FeedChartPreview | null>(() => {
+    const cached = getCachedFeedChart(cacheKey);
+    if (cached) return cached;
+    if (payloadPreview?.state === "live") {
+      setCachedFeedChart(cacheKey, payloadPreview);
+      return payloadPreview;
+    }
+    return null;
+  });
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!token?.address || !cacheKey || preview?.state === "live") return;
+    let cancelled = false;
+    const load = async () => {
+      const cached = getCachedFeedChart(cacheKey);
+      if (cached?.state === "live") {
+        if (!cancelled) setPreview(cached);
+        return;
+      }
+      const params = new URLSearchParams({ tokenAddress: token.address! });
+      if (token.pairAddress) params.set("pairAddress", token.pairAddress);
+      if (token.chain) params.set("chainType", token.chain);
+      const result = await api.get<FeedChartPreview>(`/api/feed/chart-preview?${params.toString()}`);
+      setCachedFeedChart(cacheKey, result);
+      if (!cancelled) setPreview(getCachedFeedChart(cacheKey) ?? result);
+    };
+
+    const node = containerRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      void load().catch(() => undefined);
+      return () => { cancelled = true; };
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) {
+        observer.disconnect();
+        void load().catch(() => undefined);
+      }
+    }, { rootMargin: "420px" });
+    observer.observe(node);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [cacheKey, preview?.state, token?.address, token?.chain, token?.pairAddress]);
+
+  const candles = preview?.candles ?? null;
   if (isValidCandleSeries(candles) && candles.length >= 12) {
     const minLow = Math.min(...candles.map((candle) => candle.low));
     const maxHigh = Math.max(...candles.map((candle) => candle.high));
@@ -474,10 +584,13 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     );
   }
   return (
-    <CompactNotice
-      title="Market chart unavailable"
-      reason={post.coverage?.candles.unavailableReason || reason}
-    />
+    <div ref={containerRef} className="mt-3 overflow-hidden rounded-[12px] border border-white/8 bg-white/[0.018] px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-semibold text-white/52">Chart loading</span>
+        <span className="text-white/34">{preview?.state === "unavailable" ? "Compact view" : "Queued"}</span>
+      </div>
+      <div className="mt-2 h-8 overflow-hidden rounded-[8px] bg-[linear-gradient(90deg,rgba(169,255,52,0.10),rgba(18,215,170,0.05),rgba(255,255,255,0.025))]" aria-label={post.coverage?.candles.unavailableReason || reason} />
+    </div>
   );
 }
 
@@ -490,8 +603,8 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const chartIsLive = payload.chartPreview?.state === "live" && isValidCandleSeries(payload.chartPreview.candles);
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
   const market = payload.market;
+  const targetValues = Array.isArray(payload.targets) ? payload.targets.map(formatMarketValue).filter((value): value is string => Boolean(value)) : [];
   const setupMetrics = [
-    market?.entry && formatMarketValue(market.entry) ? { label: "Entry", value: formatMarketValue(market.entry)!, emphasis: true, tone: "neutral" as const } : null,
     market?.current && formatMarketValue(market.current) ? { label: "Current", value: formatMarketValue(market.current)!, emphasis: false, tone: "neutral" as const } : null,
     market?.liveMove && formatMarketValue(market.liveMove) ? {
       label: "Live Move",
@@ -499,11 +612,30 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       emphasis: (market.liveMove.value ?? 0) > 0,
       tone: (market.liveMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
     } : null,
+    market?.entry && formatMarketValue(market.entry) ? { label: "Entry", value: formatMarketValue(market.entry)!, emphasis: true, tone: "neutral" as const } : null,
     market?.peakMove && formatMarketValue(market.peakMove) ? {
       label: "Peak",
       value: formatMarketValue(market.peakMove)!,
       emphasis: (market.peakMove.value ?? 0) > 0,
       tone: (market.peakMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
+    } : null,
+    targetValues.length > 0 ? {
+      label: "Targets",
+      value: targetValues.join(" / "),
+      emphasis: false,
+      tone: "positive" as const,
+    } : null,
+    payload.stopLoss && formatMarketValue(payload.stopLoss) ? {
+      label: "Stop",
+      value: formatMarketValue(payload.stopLoss)!,
+      emphasis: false,
+      tone: "negative" as const,
+    } : null,
+    typeof payload.confidence === "number" && Number.isFinite(payload.confidence) ? {
+      label: "Confidence",
+      value: `${Math.round(payload.confidence)}%`,
+      emphasis: payload.confidence >= 70,
+      tone: payload.confidence >= 70 ? "positive" as const : "neutral" as const,
     } : null,
     post.timingTier ? { label: "Timeframe", value: post.timingTier, emphasis: false, tone: "neutral" as const } : null,
   ].filter((item): item is { label: string; value: string; emphasis: boolean; tone: "positive" | "negative" | "neutral" } => Boolean(item));
@@ -536,22 +668,19 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       </div>
       <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/68">{payload.thesis}</p>
       {(setupMetrics.length > 0 || terminalAddress) ? (
-        <div className="mt-3 grid gap-3 rounded-[15px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_42%),linear-gradient(90deg,rgba(169,255,52,0.055),rgba(255,255,255,0.018))] px-3 py-3 sm:grid-cols-[repeat(5,minmax(0,1fr))_auto]">
+        <div className="mt-3 grid gap-3 rounded-[15px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_42%),linear-gradient(90deg,rgba(169,255,52,0.055),rgba(255,255,255,0.018))] px-3 py-3 sm:grid-cols-[repeat(auto-fit,minmax(92px,1fr))_auto]">
           {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
           <div className="flex items-center sm:pl-1">
             <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
           </div>
         </div>
       ) : null}
-      {chartIsLive ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}
+      {(chartIsLive || payload.needsChart) ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}
       {!liveSignal ? (
         <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "More market confirmation is needed before expanding this call."} />
       ) : null}
       {staleMarketReason ? (
         <CompactNotice title="Stale market data" reason={staleMarketReason} />
-      ) : null}
-      {!chartIsLive && payload.chartPreview?.state === "unavailable" ? (
-        <CompactNotice title="Market chart unavailable" reason={payload.chartPreview.unavailableReason ?? "Candles are not available for this call."} />
       ) : null}
       {liveSignal ? <AiReadStrip post={post} convictionLabel={convictionLabel} /> : null}
       {liveSignal ? <WhyShown post={post} /> : null}

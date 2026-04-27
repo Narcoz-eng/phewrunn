@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables } from "../auth.js";
 import { listFeedCalls } from "../services/intelligence/engine.js";
+import { getFeedChartPreview } from "../services/feed-chart-preview.js";
 import { triggerOrganicSettlementWakeup } from "./posts.js";
 import { PostTypeSchema } from "../types.js";
 
@@ -17,6 +18,23 @@ const FeedQuerySchema = z.object({
 
 const FeedDebugQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
+});
+
+const FeedChartPreviewQuerySchema = z.object({
+  tokenAddress: z.string().trim().min(1),
+  pairAddress: z.string().trim().min(1).optional(),
+  chainType: z.string().trim().min(1).optional(),
+});
+
+feedRouter.get("/chart-preview", zValidator("query", FeedChartPreviewQuerySchema), async (c) => {
+  const query = c.req.valid("query");
+  const preview = await getFeedChartPreview({
+    tokenAddress: query.tokenAddress,
+    pairAddress: query.pairAddress ?? null,
+    chainType: query.chainType ?? null,
+  });
+  c.header("Cache-Control", preview.state === "live" ? "public, max-age=30" : "private, no-store");
+  return c.json({ data: preview });
 });
 
 feedRouter.get("/:kind/debug-ranking", zValidator("query", FeedDebugQuerySchema), async (c) => {

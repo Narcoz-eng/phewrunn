@@ -367,6 +367,7 @@ type FeedTokenContext = {
   logo: string | null;
   chain: string | null;
   dexscreenerUrl: string | null;
+  pairAddress: string | null;
 };
 
 type FeedChartPreview = {
@@ -411,6 +412,11 @@ type FeedItemPayload = {
       liveMove: FeedMarketValue | null;
       peakMove: FeedMarketValue | null;
     };
+    targets: FeedMarketValue[];
+    stopLoss: FeedMarketValue | null;
+    confidence: number | null;
+    needsChart: boolean;
+    hasChartPreview: boolean;
     signalScore: number | null;
     signalLabel: string | null;
     chartPreview: FeedChartPreview | null;
@@ -420,6 +426,8 @@ type FeedItemPayload = {
     thesis: string;
     token: FeedTokenContext | null;
     timeframe: string | null;
+    needsChart: boolean;
+    hasChartPreview: boolean;
     chartPreview: FeedChartPreview | null;
   } | null;
   poll: FeedPollSummary | null;
@@ -1714,8 +1722,8 @@ function signalRiskLabel(score: number | null): string {
 function signalConvictionLabel(score: number | null): string {
   if (typeof score !== "number" || !Number.isFinite(score)) return "Not enough signal";
   if (score >= 82) return "High conviction";
-  if (score >= 65) return "Bullish";
-  if (score >= 45) return "Monitoring";
+  if (score >= 65) return "Medium conviction";
+  if (score >= 45) return "Weak conviction";
   return "Low conviction";
 }
 
@@ -1751,10 +1759,10 @@ function buildUnavailableChartPreview(coverage: FeedSignalCoverage): FeedChartPr
 
 function applyChartPreviewToPayload(payload: FeedItemPayload, chartPreview: FeedChartPreview): FeedItemPayload {
   if (payload.call) {
-    return { ...payload, call: { ...payload.call, chartPreview } };
+    return { ...payload, call: { ...payload.call, chartPreview, hasChartPreview: chartPreview.state === "live" } };
   }
   if (payload.chart) {
-    return { ...payload, chart: { ...payload.chart, chartPreview } };
+    return { ...payload, chart: { ...payload.chart, chartPreview, hasChartPreview: chartPreview.state === "live" } };
   }
   return payload;
 }
@@ -1793,9 +1801,7 @@ function readJsonNumber(value: unknown): number | null {
 async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<EnrichedCall[]> {
   if (items.length === 0) return items;
 
-  const chartCandidates = items
-    .filter((item) => (item.payload.call || item.payload.chart) && item.token?.address)
-    .slice(0, 16);
+  const chartCandidates: EnrichedCall[] = [];
   const raidTokenIds = Array.from(new Set(items
     .filter((item) => item.postType === "raid" && item.tokenId)
     .map((item) => item.tokenId!)
@@ -1804,9 +1810,7 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
     .filter((item) => item.postType === "news" && item.tokenId)
     .map((item) => item.tokenId!)
   ));
-  const marketCandidates = items
-    .filter((item) => item.payload.call && (item.token?.address ?? item.contractAddress))
-    .slice(0, 10);
+  const marketCandidates: EnrichedCall[] = [];
   const whaleTokenIds = Array.from(new Set(items
     .filter((item) => (item.postType === "whale" || item.postType === "alpha" || item.postType === "chart") && item.tokenId)
     .map((item) => item.tokenId!)
@@ -2166,7 +2170,7 @@ function buildFeedItemPayload(args: {
   const body = stripComposerIntentPrefix(args.record.content);
   const symbol = args.tokenContext?.symbol ? `$${args.tokenContext.symbol}` : args.tokenContext?.name ?? "Alpha";
   const direction = inferBackendSignalDirection(args.record.content);
-  const chartPreview = buildUnavailableChartPreview(args.coverage.candles);
+  const needsChart = Boolean(args.tokenContext?.address);
   const liveSignal = args.coverage.signal.state === "live";
   const market = buildStoredCallMarketValues({
     record: args.record,
@@ -2195,9 +2199,14 @@ function buildFeedItemPayload(args: {
     token: args.tokenContext,
     metrics: metrics.slice(0, 4),
     market,
+    targets: [],
+    stopLoss: null,
+    confidence: liveSignal && typeof args.signal?.aiScore === "number" ? args.signal.aiScore : null,
+    needsChart,
+    hasChartPreview: false,
     signalScore: liveSignal && typeof args.signal?.aiScore === "number" ? args.signal.aiScore : null,
     signalLabel: liveSignal ? args.signal?.convictionLabel ?? null : null,
-    chartPreview,
+    chartPreview: null,
   };
 
   switch (args.record.postType) {
@@ -2267,7 +2276,9 @@ function buildFeedItemPayload(args: {
           thesis: body,
           token: args.tokenContext,
           timeframe: args.record.timingTier,
-          chartPreview,
+          needsChart,
+          hasChartPreview: false,
+          chartPreview: null,
         },
         poll: null,
         raid: null,
@@ -2296,9 +2307,10 @@ function buildFeedTokenContext(record: CallRecord, token: TokenRecord | null): F
   const logo = token?.imageUrl ?? record.tokenImage ?? null;
   const chain = token?.chainType ?? record.chainType ?? null;
   const dexscreenerUrl = token?.dexscreenerUrl ?? record.dexscreenerUrl ?? null;
+  const pairAddress = token?.pairAddress ?? null;
 
   if (!address && !symbol && !name) return null;
-  return { address, symbol, name, logo, chain, dexscreenerUrl };
+  return { address, symbol, name, logo, chain, dexscreenerUrl, pairAddress };
 }
 
 function buildFeedSignalContract(args: {
@@ -4373,13 +4385,35 @@ function isEligibleForForYou(call: EnrichedCall): boolean {
   return hasTokenContext && (stillPerforming || (hasLiveSignal && hasRecentEngagement));
 }
 
+function isHardInvalidFeedItem(call: EnrichedCall): boolean {
+  const ageHours = Math.max(0, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
+  const engagement =
+    (call._count.likes ?? 0) +
+    (call._count.comments ?? call.threadCount ?? 0) * 2 +
+    (call._count.reposts ?? 0) * 3 +
+    (call._count.reactions ?? 0);
+  const isAlpha = call.postType === "alpha" || call.postType === "chart";
+  const hasFreshMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
+  const hasLiveSignal = call.coverage?.signal?.state === "live";
+  const currentRoi = finite(call.roiCurrentPct);
+  const peakRoi = finite(call.roiPeakPct);
+
+  if (isAlpha && ageHours > 168 && engagement < 8 && !hasFreshMarket && !hasLiveSignal) return true;
+  if (isAlpha && currentRoi <= -80 && peakRoi < 12) return true;
+  if (isAlpha && ageHours > 72 && !hasFreshMarket && !hasLiveSignal && engagement < 4) return true;
+  if (!isAlpha && call.postType !== "raid" && ageHours > 48 && engagement < 8) return true;
+  return false;
+}
+
 function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
   if (kind === "latest") {
-    return calls;
+    const filtered = calls.filter((call) => !isHardInvalidFeedItem(call));
+    return filtered.length > 0 ? filtered : calls;
   }
 
   if (kind === "following") {
-    return calls;
+    const filtered = calls.filter((call) => !isHardInvalidFeedItem(call));
+    return filtered.length > 0 ? filtered : calls;
   }
 
   return calls.filter((call) => isEligibleForRankedFeed(kind, call));
