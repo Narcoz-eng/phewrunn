@@ -42,55 +42,8 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
-    modulePreload: {
-      resolveDependencies(_filename, deps) {
-        return deps.filter(
-          (dep) =>
-            !dep.includes("vendor-core-") &&
-            !dep.includes("vendor-wallet-auth-") &&
-            !dep.includes("vendor-charts-") &&
-            !dep.includes("vendor-solana-") &&
-            !dep.includes("TokenTelemetryCharts-") &&
-            !dep.includes("Terminal-") &&
-            !dep.includes("TokenPage-")
-        );
-      },
-    },
     commonjsOptions: {
       transformMixedEsModules: true,
-    },
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes("node_modules")) return undefined;
-
-          if (id.includes("recharts") || id.includes("d3-") || id.includes("lightweight-charts")) {
-            return "vendor-charts";
-          }
-          if (id.includes("@privy-io") || id.includes("@walletconnect") || id.includes("@coinbase") || id.includes("@toruslabs")) {
-            return "vendor-wallet-auth";
-          }
-          if (
-            id.includes("@solana") ||
-            id.includes("@coral-xyz") ||
-            id.includes("@project-serum") ||
-            id.includes("bs58") ||
-            id.includes("buffer/")
-          ) {
-            return "vendor-solana";
-          }
-          if (id.includes("framer-motion")) {
-            return "vendor-motion";
-          }
-          if (id.includes("@tanstack")) {
-            return "vendor-query";
-          }
-          if (id.includes("react") || id.includes("react-dom") || id.includes("react-router")) {
-            return "vendor-react";
-          }
-          return "vendor-core";
-        },
-      },
     },
   },
 }));

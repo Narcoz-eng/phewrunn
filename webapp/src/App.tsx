@@ -1,4 +1,12 @@
-import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  type ComponentType,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,7 +18,9 @@ import { AuthProvider, useAuth } from "@/lib/auth-client";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { GuestRoute } from "@/components/GuestRoute";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AuthInitializer } from "@/components/AuthInitializer";
 import { V2AppShell } from "@/components/layout/V2AppShell";
+import { PrivyWalletProvider } from "@/components/PrivyWalletProvider";
 import { isPossiblePublicProfileSegment } from "@/lib/profile-path";
 import { importWithRecovery } from "@/lib/lazy-with-recovery";
 import { subscribeToAppRealtime } from "@/lib/realtime/app-realtime-client";
@@ -42,16 +52,6 @@ const Privacy = lazyPage(() => import("./pages/Privacy"), "route:privacy");
 const Docs = lazyPage(() => import("./pages/Docs"), "route:docs");
 const NotFound = lazyPage(() => import("./pages/NotFound"), "route:not-found");
 const AccessCodeEntry = lazyPage(() => import("./pages/AccessCodeEntry"), "route:access-code");
-const PrivyWalletProvider = lazy(() =>
-  import("@/components/PrivyWalletProvider").then((mod) => ({
-    default: mod.PrivyWalletProvider,
-  }))
-);
-const AuthInitializer = lazy(() =>
-  import("@/components/AuthInitializer").then((mod) => ({
-    default: mod.AuthInitializer,
-  }))
-);
 
 // Loading fallback component
 function PageSkeleton() {
@@ -91,6 +91,51 @@ function ProductContentSkeleton() {
       </div>
     </div>
   );
+}
+
+class AppRouteErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; message: string | null }
+> {
+  state = { hasError: false, message: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : "Route failed to render.",
+    };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("[AppRouteErrorBoundary] route render failed", error, info);
+  }
+
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-6 text-white">
+        <div className="max-w-md rounded-[24px] border border-white/10 bg-white/[0.04] p-6 text-center shadow-2xl">
+          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-lime-300/80">
+            App runtime recovered
+          </div>
+          <h1 className="mt-3 text-2xl font-bold">This route failed to load.</h1>
+          <p className="mt-2 text-sm leading-6 text-white/60">
+            {this.state.message ?? "Reload the app to request a fresh route chunk."}
+          </p>
+          <button
+            type="button"
+            className="mt-5 rounded-[14px] border border-lime-300/30 bg-lime-300/15 px-4 py-2 text-sm font-semibold text-lime-100"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 const WithSolanaRuntime = lazy(() =>
@@ -427,40 +472,26 @@ function RealtimeInvalidationBridge() {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <Suspense
-        fallback={
-          <AuthProvider>
+      <PrivyWalletProvider>
+        <AuthProvider>
+          <AuthInitializer>
+            <RealtimeInvalidationBridge />
             <TooltipProvider>
               <Toaster />
               <Sonner />
               <BrowserRouter>
-                <MissingHandleGate>
-                  <AnimatedRoutes />
-                </MissingHandleGate>
-              </BrowserRouter>
-            </TooltipProvider>
-          </AuthProvider>
-        }
-      >
-        <PrivyWalletProvider>
-          <AuthProvider>
-            <AuthInitializer>
-              <RealtimeInvalidationBridge />
-              <TooltipProvider>
-                <Toaster />
-                <Sonner />
-                <BrowserRouter>
+                <AppRouteErrorBoundary>
                   <Suspense fallback={<PageSkeleton />}>
                     <MissingHandleGate>
                       <AnimatedRoutes />
                     </MissingHandleGate>
                   </Suspense>
-                </BrowserRouter>
-              </TooltipProvider>
-            </AuthInitializer>
-          </AuthProvider>
-        </PrivyWalletProvider>
-      </Suspense>
+                </AppRouteErrorBoundary>
+              </BrowserRouter>
+            </TooltipProvider>
+          </AuthInitializer>
+        </AuthProvider>
+      </PrivyWalletProvider>
     </ThemeProvider>
   </QueryClientProvider>
 );
