@@ -107,7 +107,14 @@ export interface FeedChartPreview {
   state: FeedCoverage["state"];
   source: string;
   unavailableReason: string | null;
-  candles: null;
+  candles: Array<{
+    timestamp: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }> | null;
 }
 
 export interface FeedItemPayload {
@@ -130,13 +137,24 @@ export interface FeedItemPayload {
   } | null;
   poll: Post["poll"] | null;
   raid: {
-    status: "unavailable";
-    unavailableReason: string;
+    status: "live" | "upcoming" | "closed" | "unavailable";
+    unavailableReason: string | null;
+    raidId: string | null;
+    token: Post["tokenContext"] | null;
+    participants: number | null;
+    posts: number | null;
+    progressPct: number | null;
+    openedAt: string | null;
+    closesAt: string | null;
+    ctaRoute: string | null;
+    objective: string | null;
   } | null;
   news: {
     headline: string;
     sourceUrl: string | null;
     summary: string;
+    publishedAt: string | null;
+    relatedToken: Post["tokenContext"] | null;
   } | null;
   whale: {
     status: "unavailable";

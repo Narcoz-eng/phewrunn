@@ -197,6 +197,34 @@ function TokenLine({ token }: { token: Post["tokenContext"] | null | undefined }
 }
 
 function ChartPreviewState({ post, reason }: { post: Post; reason: string }) {
+  const candles = post.payload?.call?.chartPreview?.candles ?? post.payload?.chart?.chartPreview?.candles ?? null;
+  if (Array.isArray(candles) && candles.length >= 2) {
+    const minLow = Math.min(...candles.map((candle) => candle.low));
+    const maxHigh = Math.max(...candles.map((candle) => candle.high));
+    const width = 320;
+    const height = 104;
+    const points = candles.map((candle, index) => {
+      const x = candles.length <= 1 ? 0 : (index / (candles.length - 1)) * width;
+      const y = maxHigh > minLow ? height - ((candle.close - minLow) / (maxHigh - minLow)) * height : height / 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const first = candles[0]?.open ?? 0;
+    const last = candles[candles.length - 1]?.close ?? 0;
+    const movePct = first > 0 ? ((last - first) / first) * 100 : null;
+    return (
+      <div className="mt-3 overflow-hidden rounded-[14px] border border-white/8 bg-black/24 p-3">
+        <div className="mb-2 flex items-center justify-between text-xs">
+          <span className="font-semibold text-white/62">Provider candles</span>
+          <span className={cn("font-semibold", (movePct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+            {movePct === null ? "live" : formatMetric(movePct, "pct")}
+          </span>
+        </div>
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full" role="img" aria-label="Backend chart preview">
+          <polyline fill="none" stroke="rgba(169,255,52,0.86)" strokeWidth="2" points={points} />
+        </svg>
+      </div>
+    );
+  }
   return (
     <CompactNotice
       title="Chart unavailable"
@@ -341,7 +369,8 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
 
 function FeedPostRaidCard(props: FeedV2PostCardProps) {
   const { post } = props;
-  const reason = post.payload?.raid?.unavailableReason ?? "No live raid campaign payload is attached to this feed item.";
+  const raid = post.payload?.raid;
+  const reason = raid?.unavailableReason ?? "No live raid campaign payload is attached to this feed item.";
   return (
     <article className={cardClass("raid", post.coverage?.signal)}>
       <PostContextStrip post={post} />
@@ -350,8 +379,28 @@ function FeedPostRaidCard(props: FeedV2PostCardProps) {
         <RadioTower className="h-3.5 w-3.5" />
         Raid update
       </div>
-      <h2 className="mt-1 text-xl font-semibold text-white">{post.content}</h2>
-      <CompactNotice title="Raid compressed" reason={reason} />
+      <h2 className="mt-1 text-xl font-semibold text-white">{raid?.objective ?? post.content}</h2>
+      {raid?.status !== "unavailable" && raid.raidId ? (
+        <div className="mt-4 rounded-[14px] border border-lime-300/14 bg-lime-300/[0.055] p-3">
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <Metric label="Participants" value={raid.participants?.toLocaleString() ?? "--"} />
+            <Metric label="Posts" value={raid.posts?.toLocaleString() ?? "--"} />
+            <Metric label="Progress" value={raid.progressPct !== null ? `${raid.progressPct}%` : "--"} />
+          </div>
+          {raid.progressPct !== null ? (
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#12d7aa)]" style={{ width: `${Math.max(0, Math.min(100, raid.progressPct))}%` }} />
+            </div>
+          ) : null}
+          {raid.ctaRoute ? (
+            <Link to={raid.ctaRoute} className="mt-3 inline-flex h-8 items-center rounded-[10px] border border-lime-300/20 bg-lime-300/[0.12] px-3 text-xs font-semibold text-lime-100">
+              Open raid room
+            </Link>
+          ) : null}
+        </div>
+      ) : (
+        <CompactNotice title="Raid compressed" reason={reason} />
+      )}
       <EngagementFooter {...props} />
     </article>
   );
@@ -384,6 +433,8 @@ function FeedPostNewsCard(props: FeedV2PostCardProps) {
       </div>
       <h2 className="mt-1 text-xl font-semibold text-white">{payload?.headline ?? post.content}</h2>
       {payload?.summary ? <p className="mt-2 text-sm leading-6 text-white/64">{payload.summary}</p> : null}
+      <TokenLine token={payload?.relatedToken} />
+      {payload?.publishedAt ? <div className="mt-2 text-xs text-white/38">{new Date(payload.publishedAt).toLocaleString()}</div> : null}
       {payload?.sourceUrl ? (
         <a href={payload.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-amber-100 hover:text-amber-50">
           Source <ExternalLink className="h-3.5 w-3.5" />

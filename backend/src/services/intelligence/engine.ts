@@ -25,6 +25,7 @@ import {
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
 import { getCachedMarketCapSnapshot, type MarketCapResult } from "../marketcap.js";
+import { getFeedChartPreview } from "../feed-chart-preview.js";
 import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../../lib/job-queue.js";
 import { isRedisConfigured, cacheGetJson, cacheSetJson } from "../../lib/redis.js";
 import type { PostType } from "../../types.js";
@@ -372,7 +373,14 @@ type FeedChartPreview = {
   state: FeedSignalCoverageState;
   source: string;
   unavailableReason: string | null;
-  candles: null;
+  candles: Array<{
+    timestamp: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }> | null;
 };
 
 type FeedItemPayload = {
@@ -395,13 +403,24 @@ type FeedItemPayload = {
   } | null;
   poll: FeedPollSummary | null;
   raid: {
-    status: "unavailable";
-    unavailableReason: string;
+    status: "live" | "upcoming" | "closed" | "unavailable";
+    unavailableReason: string | null;
+    raidId: string | null;
+    token: FeedTokenContext | null;
+    participants: number | null;
+    posts: number | null;
+    progressPct: number | null;
+    openedAt: string | null;
+    closesAt: string | null;
+    ctaRoute: string | null;
+    objective: string | null;
   } | null;
   news: {
     headline: string;
     sourceUrl: string | null;
     summary: string;
+    publishedAt: string | null;
+    relatedToken: FeedTokenContext | null;
   } | null;
   whale: {
     status: "unavailable";
@@ -1687,6 +1706,145 @@ function buildUnavailableChartPreview(coverage: FeedSignalCoverage): FeedChartPr
   };
 }
 
+function applyChartPreviewToPayload(payload: FeedItemPayload, chartPreview: FeedChartPreview): FeedItemPayload {
+  if (payload.call) {
+    return { ...payload, call: { ...payload.call, chartPreview } };
+  }
+  if (payload.chart) {
+    return { ...payload, chart: { ...payload.chart, chartPreview } };
+  }
+  return payload;
+}
+
+function applyRaidPayload(payload: FeedItemPayload, raid: NonNullable<FeedItemPayload["raid"]>): FeedItemPayload {
+  return { ...payload, raid };
+}
+
+function applyNewsMetadata(payload: FeedItemPayload, news: NonNullable<FeedItemPayload["news"]>): FeedItemPayload {
+  return { ...payload, news };
+}
+
+function readJsonRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function readJsonString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<EnrichedCall[]> {
+  if (items.length === 0) return items;
+
+  const chartCandidates = items
+    .filter((item) => (item.payload.call || item.payload.chart) && item.token?.address)
+    .slice(0, 4);
+  const raidTokenIds = Array.from(new Set(items
+    .filter((item) => item.postType === "raid" && item.tokenId)
+    .map((item) => item.tokenId!)
+  ));
+  const newsTokenIds = Array.from(new Set(items
+    .filter((item) => item.postType === "news" && item.tokenId)
+    .map((item) => item.tokenId!)
+  ));
+
+  const [chartResults, raids, newsEvents] = await Promise.all([
+    withSoftTimeout(
+      Promise.allSettled(
+        chartCandidates.map(async (item) => {
+          const preview = await getFeedChartPreview({
+            tokenAddress: item.token?.address ?? item.contractAddress,
+            pairAddress: item.token?.pairAddress ?? null,
+            chainType: item.token?.chainType ?? item.chainType,
+          });
+          return [item.id, preview] as const;
+        })
+      ),
+      2_600
+    ),
+    raidTokenIds.length
+      ? prisma.tokenRaidCampaign.findMany({
+          where: { tokenId: { in: raidTokenIds }, status: { in: ["active", "upcoming"] } },
+          orderBy: [{ status: "asc" }, { openedAt: "desc" }],
+          include: {
+            token: { select: TOKEN_SELECT },
+            participants: { select: { id: true, postedAt: true } },
+            submissions: { select: { id: true, postedAt: true } },
+          },
+        }).catch(() => [])
+      : Promise.resolve([]),
+    newsTokenIds.length
+      ? prisma.tokenEvent.findMany({
+          where: { tokenId: { in: newsTokenIds } },
+          orderBy: { timestamp: "desc" },
+          take: Math.max(20, newsTokenIds.length * 3),
+        }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  const chartByPostId = new Map<string, FeedChartPreview>();
+  for (const result of chartResults ?? []) {
+    if (result.status === "fulfilled") {
+      chartByPostId.set(result.value[0], result.value[1]);
+    }
+  }
+
+  const raidByTokenId = new Map<string, (typeof raids)[number]>();
+  for (const raid of raids) {
+    if (!raidByTokenId.has(raid.tokenId)) raidByTokenId.set(raid.tokenId, raid);
+  }
+
+  const newsByTokenId = new Map<string, (typeof newsEvents)[number]>();
+  for (const event of newsEvents) {
+    if (!newsByTokenId.has(event.tokenId)) newsByTokenId.set(event.tokenId, event);
+  }
+
+  return items.map((item) => {
+    let payload = item.payload;
+    const chartPreview = chartByPostId.get(item.id);
+    if (chartPreview) {
+      payload = applyChartPreviewToPayload(payload, chartPreview);
+    }
+
+    if (item.postType === "raid" && item.tokenId) {
+      const raid = raidByTokenId.get(item.tokenId);
+      if (raid) {
+        const participantCount = raid.participants.length;
+        const postedCount = raid.submissions.filter((submission) => submission.postedAt).length;
+        const progressPct = participantCount > 0 ? Math.round((postedCount / participantCount) * 100) : null;
+        payload = applyRaidPayload(payload, {
+          status: raid.status === "active" ? "live" : raid.status === "upcoming" ? "upcoming" : "closed",
+          unavailableReason: null,
+          raidId: raid.id,
+          token: buildFeedTokenContext(item, raid.token),
+          participants: participantCount,
+          posts: postedCount,
+          progressPct,
+          openedAt: raid.openedAt.toISOString(),
+          closesAt: raid.closedAt?.toISOString() ?? null,
+          ctaRoute: `/raids/${raid.token.address}/${raid.id}`,
+          objective: raid.objective,
+        });
+      }
+    }
+
+    if (item.postType === "news" && item.payload.news) {
+      const metadata = item.tokenId ? readJsonRecord(newsByTokenId.get(item.tokenId)?.metadata) : null;
+      const event = item.tokenId ? newsByTokenId.get(item.tokenId) : null;
+      payload = applyNewsMetadata(payload, {
+        ...item.payload.news,
+        sourceUrl:
+          readJsonString(metadata?.sourceUrl) ??
+          readJsonString(metadata?.url) ??
+          item.payload.news.sourceUrl,
+        publishedAt: event?.timestamp.toISOString() ?? item.payload.news.publishedAt,
+        relatedToken: item.tokenContext,
+      });
+    }
+
+    return payload === item.payload ? item : { ...item, payload };
+  });
+}
+
 function feedMetric(
   label: string,
   value: number | null | undefined,
@@ -1759,6 +1917,15 @@ function buildFeedItemPayload(args: {
         raid: {
           status: "unavailable",
           unavailableReason: "This feed post is not linked to a live raid campaign payload.",
+          raidId: null,
+          token: args.tokenContext,
+          participants: null,
+          posts: null,
+          progressPct: null,
+          openedAt: null,
+          closesAt: null,
+          ctaRoute: null,
+          objective: null,
         },
         news: null,
         whale: null,
@@ -1774,6 +1941,8 @@ function buildFeedItemPayload(args: {
           headline: body.split(/\n+/)[0]?.trim() || "Market news",
           sourceUrl: args.record.dexscreenerUrl,
           summary: body,
+          publishedAt: args.record.createdAt.toISOString(),
+          relatedToken: args.tokenContext,
         },
         whale: null,
         discussion: null,
@@ -4483,7 +4652,9 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           : args.cursor
             ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
             : 0;
-      const items = hydrated.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse);
+      const items = await enrichSelectedFeedPayloads(
+        hydrated.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse)
+      );
       const nextCursor =
         items.length === limit && hydrated[startIndex + limit]
           ? items[items.length - 1]?.id ?? null
