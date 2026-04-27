@@ -16,7 +16,7 @@ const FeedQuerySchema = z.object({
 });
 
 const FeedDebugQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(20).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
 });
 
 feedRouter.get("/:kind/debug-ranking", zValidator("query", FeedDebugQuerySchema), async (c) => {
@@ -53,6 +53,8 @@ feedRouter.get("/:kind/debug-ranking", zValidator("query", FeedDebugQuerySchema)
     data: {
       kind,
       generatedAt: new Date().toISOString(),
+      returnedCount: result.items.length,
+      nextCursor: result.nextCursor,
       items: result.items.map((item, index) => ({
         rank: index + 1,
         id: item.id,

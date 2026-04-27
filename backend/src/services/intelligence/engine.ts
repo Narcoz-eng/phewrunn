@@ -372,6 +372,8 @@ type FeedTokenContext = {
 type FeedChartPreview = {
   state: FeedSignalCoverageState;
   source: string;
+  fetchedAt: string | null;
+  maxAgeMs: number | null;
   unavailableReason: string | null;
   candles: Array<{
     timestamp: number;
@@ -1720,6 +1722,8 @@ function buildUnavailableChartPreview(coverage: FeedSignalCoverage): FeedChartPr
   return {
     state: "unavailable",
     source: coverage.source,
+    fetchedAt: null,
+    maxAgeMs: null,
     unavailableReason: coverage.unavailableReason ?? "No feed chart preview was provided by the backend.",
     candles: null,
   };
@@ -4199,6 +4203,9 @@ function isEligibleForRankedFeed(
     | "bullishSignalsSuppressed"
     | "isTradable"
     | "postType"
+    | "createdAt"
+    | "lastMcapUpdate"
+    | "coverage"
   >
 ): boolean {
   if (kind === "latest" || kind === "following") {
@@ -4207,6 +4214,18 @@ function isEligibleForRankedFeed(
 
   if (kind === "early-runners" && call.postType === "raid") {
     return true;
+  }
+
+  const ageHours = Math.max(0, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
+  const hasFreshMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
+  const hasLiveSignal = call.coverage?.signal?.state === "live";
+
+  if ((kind === "hot-alpha" || kind === "high-conviction") && ageHours > 72 && !hasFreshMarket) {
+    return false;
+  }
+
+  if ((kind === "hot-alpha" || kind === "high-conviction") && !hasLiveSignal) {
+    return false;
   }
 
   if (call.bullishSignalsSuppressed || !call.isTradable || call.marketHealthScore < 38 || call.opportunityScore < 40) {
@@ -4272,7 +4291,22 @@ function computeFeedScoreForCall(
   followedTokenIds: Set<string>
 ): { score: number; reasons: string[] } {
   const ageHours = Math.max(0.15, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
-  const freshnessWeight = Math.exp(-ageHours / 24) * 28;
+  const recentDecay = Math.exp(-ageHours / 14);
+  const longTailDecay = ageHours <= 24 ? 1 : Math.exp(-(ageHours - 24) / 18);
+  const freshnessWeight = recentDecay * longTailDecay * 34;
+  const staleCallPenalty =
+    ageHours > 48 && (call.postType === "alpha" || call.postType === "chart") ? Math.min(26, (ageHours - 48) / 6) : 0;
+  const hasFreshStoredMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
+  const marketFreshnessPenalty =
+    call.postType === "alpha" || call.postType === "chart"
+      ? hasFreshStoredMarket
+        ? 0
+        : kind === "latest" || kind === "following"
+          ? 7
+          : 16
+      : 0;
+  const signalCoveragePenalty =
+    (kind === "hot-alpha" || kind === "high-conviction") && call.coverage?.signal?.state !== "live" ? 18 : 0;
   const authorTrust = finite(call.author.trustScore ?? 0);
   const authorLevelScore = Math.min(100, Math.max(0, finite(call.author.level ?? 0) * 3));
   const authorRoiScore = Math.max(0, Math.min(100, finite(call.author.avgRoi30d ?? 0)));
@@ -4301,10 +4335,13 @@ function computeFeedScoreForCall(
       ? Math.min(18, 8 + (call._count.comments ?? 0) * 1.4 + (call._count.reposts ?? 0) * 2.2)
       : 0;
   const callPerformanceWeight =
-    call.postType === "alpha" || call.postType === "chart"
+    (call.postType === "alpha" || call.postType === "chart") && hasFreshStoredMarket
       ? Math.max(0, Math.min(28, Math.max(finite(call.roiCurrentPct), finite(call.roiPeakPct)) * 0.55))
       : 0;
-  const repostBoost = call.repostContext ? 8 : 0;
+  const repostAgeHours = call.repostContext
+    ? Math.max(0.15, (Date.now() - call.repostContext.createdAt.getTime()) / (60 * 60 * 1000))
+    : null;
+  const repostBoost = call.repostContext ? Math.max(0, 5 * Math.exp(-(repostAgeHours ?? 0) / 18)) : 0;
   const riskPenalty = Math.max(finite(call.bundlePenaltyScore), finite(call.tokenRiskScore ?? 0)) >= 70 ? 14 : 0;
   const spamPenalty =
     authorTrust > 0 && authorTrust < 18 && call.content.trim().length < 48 && engagement < 2 ? 8 : 0;
@@ -4333,7 +4370,10 @@ function computeFeedScoreForCall(
       repostBoost +
       kindBoost -
       riskPenalty -
-      spamPenalty
+      spamPenalty -
+      staleCallPenalty -
+      marketFreshnessPenalty -
+      signalCoveragePenalty
   );
 
   const reasons: string[] = [];
@@ -4344,7 +4384,9 @@ function computeFeedScoreForCall(
   if (raidPressureWeight >= 10) reasons.push("Raid pressure");
   if (callPerformanceWeight >= 8) reasons.push("Call performing");
   if (finite(call.trustedTraderCount) > 0) reasons.push("Smart money detected");
-  if (call.repostContext) reasons.push("Repost momentum");
+  if (call.repostContext && repostBoost >= 2) reasons.push("Repost momentum");
+  if (marketFreshnessPenalty > 0) reasons.push("Market freshness limited");
+  if (staleCallPenalty > 0) reasons.push("Age-decayed");
   if (riskPenalty > 0) reasons.push("Risk adjusted");
   return { score: Math.round(score * 10) / 10, reasons: reasons.slice(0, 4) };
 }

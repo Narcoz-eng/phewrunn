@@ -106,6 +106,8 @@ export interface FeedSignal {
 export interface FeedChartPreview {
   state: FeedCoverage["state"];
   source: string;
+  fetchedAt?: string | null;
+  maxAgeMs?: number | null;
   unavailableReason: string | null;
   candles: Array<{
     timestamp: number;
@@ -606,6 +608,8 @@ export interface DiscoverySidebarMover {
   marketCap?: number | null;
   change24hPct?: number | null;
   changeSource?: string | null;
+  fetchedAt?: string | null;
+  maxAgeMs?: number | null;
 }
 
 export interface DiscoverySidebarRaid {
@@ -633,6 +637,11 @@ export interface DiscoverySidebarCall {
   conviction: number | null;
   confidence: number | null;
   roiCurrentPct: number | null;
+  asOf?: string | null;
+  source?: string | null;
+  scoreReason?: string | null;
+  staleReason?: string | null;
+  createdAt?: string | null;
 }
 
 export interface DiscoverySidebarCommunity {
@@ -675,6 +684,9 @@ export interface DiscoveryFeedSidebarResponse {
       btcDominance: string;
       unavailableReason?: string | null;
     };
+    source?: string | null;
+    asOf?: string | null;
+    maxAgeMs?: number | null;
   };
   topGainers: DiscoverySidebarMover[];
   liveRaids: DiscoverySidebarRaid[];
@@ -690,6 +702,9 @@ export interface DiscoveryFeedSidebarResponse {
     valueUsd: number | null;
     explorerUrl: string | null;
     createdAt: string;
+    source?: string | null;
+    asOf?: string | null;
+    coverage?: string | null;
   }>;
 }
 

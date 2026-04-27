@@ -10,6 +10,8 @@ type FeedChartPreviewCandle = {
 export type FeedChartPreviewResult = {
   state: "live" | "unavailable";
   source: string;
+  fetchedAt: string | null;
+  maxAgeMs: number | null;
   unavailableReason: string | null;
   candles: FeedChartPreviewCandle[] | null;
 };
@@ -21,6 +23,7 @@ type CacheEntry = {
 
 const FEED_CHART_PREVIEW_CACHE_TTL_MS = 45_000;
 const FEED_CHART_PREVIEW_TIMEOUT_MS = 2_200;
+const FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS = 10 * 60_000;
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const feedChartPreviewCache = new Map<string, CacheEntry>();
 const feedChartPreviewInFlight = new Map<string, Promise<FeedChartPreviewResult>>();
@@ -140,6 +143,23 @@ function isValidPreviewSeries(candles: FeedChartPreviewCandle[]): boolean {
   return rangePct >= 0.05 && (movePct >= 0.03 || bodyCount >= Math.ceil(candles.length * 0.25));
 }
 
+function newestCandleFresh(candles: FeedChartPreviewCandle[]): boolean {
+  const newest = candles[candles.length - 1]?.timestamp;
+  if (!newest) return false;
+  return Date.now() - newest * 1000 <= FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS;
+}
+
+function unavailablePreview(source: string, unavailableReason: string): FeedChartPreviewResult {
+  return {
+    state: "unavailable",
+    source,
+    fetchedAt: new Date().toISOString(),
+    maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
+    unavailableReason,
+    candles: null,
+  };
+}
+
 export async function getFeedChartPreview(params: {
   tokenAddress: string | null | undefined;
   pairAddress: string | null | undefined;
@@ -151,6 +171,8 @@ export async function getFeedChartPreview(params: {
     return {
       state: "unavailable",
       source: "chart-preview",
+      fetchedAt: new Date().toISOString(),
+      maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
       unavailableReason: "No token or pair address is attached for market candles.",
       candles: null,
     };
@@ -191,10 +213,12 @@ export async function getFeedChartPreview(params: {
           );
           if (birdeyeResponse.ok) {
             const candles = parseBirdeyeCandles(await birdeyeResponse.json());
-            if (isValidPreviewSeries(candles)) {
+            if (isValidPreviewSeries(candles) && newestCandleFresh(candles)) {
               return {
                 state: "live",
                 source: "birdeye",
+                fetchedAt: new Date().toISOString(),
+                maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
                 unavailableReason: null,
                 candles,
               } satisfies FeedChartPreviewResult;
@@ -203,12 +227,10 @@ export async function getFeedChartPreview(params: {
         }
 
         if (!pairAddress) {
-          return {
-            state: "unavailable",
-            source: network === "solana" ? "birdeye" : "geckoterminal",
-            unavailableReason: "No pair address is attached for fallback market candles.",
-            candles: null,
-          } satisfies FeedChartPreviewResult;
+          return unavailablePreview(
+            network === "solana" ? "birdeye" : "geckoterminal",
+            "No pair address is attached for fallback market candles."
+          );
         }
 
         const params = new URLSearchParams({
@@ -222,35 +244,30 @@ export async function getFeedChartPreview(params: {
           { headers: { accept: "application/json" }, signal: controller.signal }
         );
         if (!response.ok) {
-          return {
-            state: "unavailable",
-            source: "geckoterminal",
-            unavailableReason: `GeckoTerminal candles unavailable (${response.status}).`,
-            candles: null,
-          } satisfies FeedChartPreviewResult;
+          return unavailablePreview("geckoterminal", `GeckoTerminal candles unavailable (${response.status}).`);
         }
         const candles = parseGeckoCandles(await response.json());
-        if (!isValidPreviewSeries(candles)) {
-          return {
-            state: "unavailable",
-            source: "geckoterminal",
-            unavailableReason: "Provider returned insufficient or flat candle movement.",
-            candles: null,
-          } satisfies FeedChartPreviewResult;
+        if (!isValidPreviewSeries(candles) || !newestCandleFresh(candles)) {
+          return unavailablePreview(
+            "geckoterminal",
+            !newestCandleFresh(candles)
+              ? "Provider candles are stale for feed preview."
+              : "Provider returned insufficient or flat candle movement."
+          );
         }
         return {
           state: "live",
           source: "geckoterminal",
+          fetchedAt: new Date().toISOString(),
+          maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
           unavailableReason: null,
           candles,
         } satisfies FeedChartPreviewResult;
       } catch (error) {
-        return {
-          state: "unavailable",
-          source: "geckoterminal",
-          unavailableReason: error instanceof Error ? error.message : "Chart preview provider failed.",
-          candles: null,
-        } satisfies FeedChartPreviewResult;
+        return unavailablePreview(
+          "geckoterminal",
+          error instanceof Error ? error.message : "Chart preview provider failed."
+        );
       } finally {
         clearTimeout(timeout);
       }

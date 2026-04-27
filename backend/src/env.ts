@@ -72,6 +72,13 @@ const envSchema = z.object({
   // Optional: Helius Solana RPC (wallet holdings/trade snapshot enrichment)
   HELIUS_RPC_URL: z
     .preprocess(normalizeOptionalStringEnv, z.string().url("HELIUS_RPC_URL must be a valid URL").optional()),
+  HELIUS_WEBHOOK_SECRET: z
+    .preprocess(normalizeOptionalStringEnv, z.string().min(8, "HELIUS_WEBHOOK_SECRET must be at least 8 characters").optional()),
+  HELIUS_WHALE_THRESHOLD_USD: z
+    .preprocess(
+      normalizeOptionalStringEnv,
+      z.string().regex(/^\d+(\.\d+)?$/, "HELIUS_WHALE_THRESHOLD_USD must be numeric").optional()
+    ),
 
   // Optional: Solscan Pro API key (holder intelligence / dev wallet enrichment)
   SOLSCAN_API_KEY: z

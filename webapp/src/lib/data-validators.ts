@@ -10,8 +10,15 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function fresh(value: string | null | undefined, maxAgeMs: number | null | undefined): boolean {
+  if (!value || !maxAgeMs || maxAgeMs <= 0) return false;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && Date.now() - time <= maxAgeMs;
+}
+
 export function isValidMarketStats(stats: DiscoveryFeedSidebarResponse["marketStats"] | null | undefined): boolean {
   if (!stats) return false;
+  if (stats.source === "unavailable" || !fresh(stats.asOf, stats.maxAgeMs)) return false;
   const hasMarketCap = finite(stats.marketCap) && stats.marketCap > 0 && stats.coverage?.marketCap !== "unavailable";
   const hasVolume = finite(stats.volume24h) && stats.volume24h > 0 && stats.coverage?.volume24h !== "unavailable";
   return hasMarketCap || hasVolume;
@@ -25,6 +32,7 @@ export function isValidGainer(item: DiscoverySidebarMover | null | undefined): i
     finite(item.change24hPct) &&
     Math.abs(item.change24hPct) >= 0.01 &&
     item.changeSource !== "unavailable" &&
+    fresh(item.fetchedAt, item.maxAgeMs) &&
     ((finite(item.marketCap) && item.marketCap > 0) ||
       (finite(item.liquidity) && item.liquidity > 0) ||
       (finite(item.volume24h) && item.volume24h > 0))
@@ -84,9 +92,10 @@ export function isValidTrendingCall(item: DiscoverySidebarCall | null | undefine
   if (!item) return false;
   const hasToken = Boolean(item.contractAddress || item.tokenSymbol || item.tokenName);
   const hasScore = finite(item.trendScore) && item.trendScore >= 20;
+  const asOfFresh = fresh(item.asOf, 5 * 60 * 1000);
   const hasSignal =
     (finite(item.conviction) && item.conviction >= 40) ||
     (finite(item.confidence) && item.confidence >= 40) ||
     (finite(item.roiCurrentPct) && Math.abs(item.roiCurrentPct) >= 0.1);
-  return hasToken && hasScore && hasSignal;
+  return hasToken && hasScore && asOfFresh && item.source !== "unavailable" && hasSignal;
 }
